@@ -26,14 +26,10 @@ function Root() {
 }
 
 export function App() {
+  // The shell owns width/responsiveness now (sidebar on desktop, column on mobile).
   return (
     <StoreProvider>
-      <div className="mx-auto max-w-md h-full min-h-full flex flex-col relative">
-        {/* hairline frame edges so the mobile column reads as a page on paper */}
-        <div className="absolute inset-y-0 left-0 w-px bg-rule/60 hidden sm:block" />
-        <div className="absolute inset-y-0 right-0 w-px bg-rule/60 hidden sm:block" />
-        <Root />
-      </div>
+      <Root />
     </StoreProvider>
   );
 }

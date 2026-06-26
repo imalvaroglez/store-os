@@ -6,6 +6,7 @@ import {
   Card,
   Money,
   ScreenHeader,
+  Screen,
   Sheet,
   StatRow,
 } from "../../design-system";
@@ -43,7 +44,7 @@ export function HomeScreen() {
   }
 
   return (
-    <div className="p-4">
+    <Screen>
       <ScreenHeader title="Inicio" subtitle={`¿Qué necesitas hacer hoy en ${activeStore.name}?`} />
 
       <Button full size="lg" onClick={() => setCreating(true)} className="mb-4">
@@ -128,6 +129,6 @@ export function HomeScreen() {
       <Sheet open={creating} onClose={() => setCreating(false)} title="Nuevo pedido">
         <OrderForm order={newOrder(activeStore.id)} onDone={() => setCreating(false)} />
       </Sheet>
-    </div>
+    </Screen>
   );
 }

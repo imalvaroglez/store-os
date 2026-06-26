@@ -3,6 +3,7 @@ import {
   Button,
   EmptyState,
   ScreenHeader,
+  Screen,
   Sheet,
   useEntitySheet,
 } from "../../design-system";
@@ -22,7 +23,7 @@ export function OrdersScreen() {
   );
 
   return (
-    <div className="p-4">
+    <Screen>
       <ScreenHeader
         title="Pedidos"
         subtitle={`${orders.filter((o) => o.status !== "paid").length} activos`}
@@ -36,7 +37,7 @@ export function OrdersScreen() {
           icon={<div className="text-6xl">🧾</div>}
         />
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
           {orders.map((o) => (
             <OrderCard key={o.id} order={o} onEdit={() => sheet.openEdit(o)} />
           ))}
@@ -52,6 +53,6 @@ export function OrdersScreen() {
           <OrderForm order={sheet.entity} onDone={sheet.close} />
         )}
       </Sheet>
-    </div>
+    </Screen>
   );
 }

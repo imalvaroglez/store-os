@@ -102,7 +102,8 @@ test("public catalog shows only public products and hides private fields", async
   await expect(page.getByRole("link", { name: "Pedir por WhatsApp" }).first()).toBeVisible();
 });
 
-test("mobile viewport: no horizontal scroll, primary button on-screen", async ({ page }) => {
+test("mobile viewport: no horizontal scroll, primary button on-screen", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "mobile-geometry assertion");
   await gotoSeeded(page, "/");
   const scrollX = await page.evaluate(() => window.scrollX);
   expect(scrollX).toBe(0);

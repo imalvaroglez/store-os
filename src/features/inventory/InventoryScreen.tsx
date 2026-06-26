@@ -5,6 +5,7 @@ import {
   EmptyState,
   IconButton,
   ScreenHeader,
+  Screen,
 } from "../../design-system";
 import { productsForStore } from "../../lib/selectors";
 import { formatMoney } from "../../lib/money";
@@ -28,7 +29,7 @@ export function InventoryScreen() {
   }
 
   return (
-    <div className="p-4">
+    <Screen>
       <ScreenHeader
         title="Inventario"
         subtitle="Ajusta la existencia con −1 / +1"
@@ -41,7 +42,7 @@ export function InventoryScreen() {
           icon={<div className="text-6xl">📦</div>}
         />
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
           {products.map((p) => {
             const low =
               typeof p.lowStockAt === "number" &&
@@ -83,6 +84,6 @@ export function InventoryScreen() {
           })}
         </div>
       )}
-    </div>
+    </Screen>
   );
 }
