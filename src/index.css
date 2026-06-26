@@ -1,0 +1,88 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  "Cuenta Claros" — a paper-ledger aesthetic for Store OS.
+  Warm paper, ink-black type, terracotta + forest accents, tactile pressed states.
+  Money reads in a serif (Fraunces) so amounts feel weighty and real.
+  Sans family is set via tailwind.config.js (font-sans). The serif display class
+  (.serif-display) is defined below as a plain CSS class — not a Tailwind utility —
+  to avoid the font-display name collision and @layer cascade issues.
+*/
+
+:root {
+  --paper: #f6f1e7;
+  --paper-2: #efe7d6;
+  --ink: #1c1917;
+  --ink-soft: #57534e;
+  --rule: #e0d6c0;
+  --terracotta: #c2410c;
+  --terracotta-soft: #fde7d7;
+  --forest: #15803d;
+  --forest-soft: #dcfce7;
+  --rose: #be123c;
+  --rose-soft: #ffe4e6;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--paper);
+  /* subtle ruled-paper warmth: two soft radial washes + a faint grain via gradient */
+  background-image:
+    radial-gradient(1200px 600px at 100% -10%, rgba(194, 65, 12, 0.06), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(21, 128, 61, 0.05), transparent 60%);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Serif for money amounts and headings, with tabular figures so columns line up.
+   Defined here (not as a Tailwind utility) to avoid the font-display name collision
+   and @layer ordering issues. Plain class = always wins the cascade. */
+.serif-display {
+  font-family: "Fraunces", Georgia, "Times New Roman", serif;
+  font-optical-sizing: auto;
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* A hairline "ruled paper" divider used between sections. */
+.rule {
+  background-image: linear-gradient(to right, transparent, var(--rule) 8%, var(--rule) 92%, transparent);
+  height: 1px;
+}
+
+/* Staggered reveal for screen contents. */
+.rise > * {
+  animation: riseIn 0.32s ease-out both;
+}
+.rise > *:nth-child(1) { animation-delay: 0.02s; }
+.rise > *:nth-child(2) { animation-delay: 0.06s; }
+.rise > *:nth-child(3) { animation-delay: 0.10s; }
+.rise > *:nth-child(4) { animation-delay: 0.14s; }
+.rise > *:nth-child(5) { animation-delay: 0.18s; }
+.rise > *:nth-child(6) { animation-delay: 0.22s; }
+
+/* iOS: keep inputs >=16px to avoid zoom-on-focus (text-base in primitives). */
