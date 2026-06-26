@@ -1,30 +1,20 @@
-import { navigate } from "../lib/router";
-import type { StoreType } from "../types";
+import { navigate, visibleNavItems, type Tab } from "./navItems";
 
-export type Tab = "inicio" | "catalogo" | "pedidos" | "clientes" | "inventario";
-
-const TABS: { id: Tab; label: string; path: string }[] = [
-  { id: "inicio", label: "Inicio", path: "/" },
-  { id: "catalogo", label: "Catálogo", path: "/catalogo-admin" },
-  { id: "pedidos", label: "Pedidos", path: "/pedidos" },
-  { id: "clientes", label: "Clientes", path: "/clientes" },
-  { id: "inventario", label: "Inventario", path: "/inventario" },
-];
+// Re-export so existing imports (`import { BottomNav, type Tab }`) keep working.
+export type { Tab };
 
 export function BottomNav({
   active,
   storeType,
 }: {
   active: Tab;
-  storeType: StoreType;
+  storeType: import("../types").StoreType;
 }) {
-  const tabs = TABS.filter(
-    (t) => t.id !== "inventario" || storeType === "inventory_tiered"
-  );
+  const tabs = visibleNavItems(storeType);
 
   return (
     <nav
-      className="fixed bottom-0 inset-x-0 bg-paper/95 backdrop-blur border-t border-rule/80 flex z-30"
+      className="fixed bottom-0 inset-x-0 bg-paper/95 backdrop-blur border-t border-rule/80 flex z-30 md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {tabs.map((t) => {

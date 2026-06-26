@@ -5,6 +5,7 @@ import {
   EmptyState,
   Money,
   ScreenHeader,
+  Screen,
   Sheet,
   StatRow,
   useEntitySheet,
@@ -23,7 +24,7 @@ export function CustomersScreen() {
   const orders = ordersForStore(state.orders, activeStore.id);
 
   return (
-    <div className="p-4">
+    <Screen>
       <ScreenHeader
         title="Clientes"
         subtitle={`${customers.length} ${customers.length === 1 ? "cliente" : "clientes"}`}
@@ -41,7 +42,7 @@ export function CustomersScreen() {
           icon={<div className="text-6xl">👤</div>}
         />
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
           {customers.map((c) => {
             const cOrders = orders.filter((o) => o.customerId === c.id);
             const totalSold = cOrders
@@ -85,6 +86,6 @@ export function CustomersScreen() {
           <CustomerForm customer={sheet.entity} onDone={sheet.close} />
         )}
       </Sheet>
-    </div>
+    </Screen>
   );
 }

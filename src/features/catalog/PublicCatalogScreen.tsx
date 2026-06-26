@@ -32,32 +32,36 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
 
   return (
     <div className="min-h-full bg-paper">
-      <header className="bg-ink text-paper px-5 pt-8 pb-7 relative overflow-hidden">
+      <header className="bg-ink text-paper px-5 md:px-8 pt-8 pb-7 relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.07] bg-[radial-gradient(circle_at_20%_0%,#fff,transparent_45%)]" />
-        <span className="relative inline-block text-[10px] uppercase tracking-[0.2em] text-terracotta-soft font-semibold">
-          Catálogo
-        </span>
-        <h1 className="relative serif-display text-3xl font-semibold mt-1 leading-tight">
-          {store.name}
-        </h1>
-        <p className="relative text-stone-300 text-sm mt-1">
-          {isTiered ? "Catálogo de productos" : "Catálogo bajo pedido"}
-        </p>
-        <a
-          href={createWhatsAppStoreUrl(store)}
-          target="_blank"
-          rel="noreferrer"
-          className="relative inline-block mt-5"
-        >
-          <Button variant="success">Preguntar por WhatsApp</Button>
-        </a>
+        <div className="relative mx-auto max-w-6xl">
+          <span className="inline-block text-[10px] uppercase tracking-[0.2em] text-terracotta-soft font-semibold">
+            Catálogo
+          </span>
+          <h1 className="serif-display text-3xl md:text-4xl font-semibold mt-1 leading-tight">
+            {store.name}
+          </h1>
+          <p className="text-stone-300 text-sm mt-1">
+            {isTiered ? "Catálogo de productos" : "Catálogo bajo pedido"}
+          </p>
+          <a
+            href={createWhatsAppStoreUrl(store)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block mt-5"
+          >
+            <Button variant="success">Preguntar por WhatsApp</Button>
+          </a>
+        </div>
       </header>
 
-      <main className="p-4 space-y-4">
+      <main className="p-4 md:p-8">
+        <div className="mx-auto max-w-6xl">
         {products.length === 0 ? (
           <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." />
         ) : (
-          products.map((p) => {
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {products.map((p) => {
             const price = publicPrice(p);
             return (
               <Card key={p.id} className="overflow-hidden p-0">
@@ -83,8 +87,10 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                 </div>
               </Card>
             );
-          })
+          })}
+          </div>
         )}
+        </div>
       </main>
     </div>
   );

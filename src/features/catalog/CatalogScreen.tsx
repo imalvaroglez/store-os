@@ -6,6 +6,7 @@ import {
   Badge,
   EmptyState,
   ScreenHeader,
+  Screen,
   Sheet,
   ProductImage,
 } from "../../design-system";
@@ -82,7 +83,7 @@ export function CatalogScreen() {
   const products = productsForStore(state.products, activeStore.id);
 
   return (
-    <div className="p-4">
+    <Screen wide>
       <ScreenHeader
         title="Catálogo"
         subtitle={`${products.length} ${products.length === 1 ? "producto" : "productos"}`}
@@ -98,7 +99,7 @@ export function CatalogScreen() {
           icon={<div className="text-6xl">🛍️</div>}
         />
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {products.map((p) => (
             <ProductCard
               key={p.id}
@@ -126,6 +127,6 @@ export function CatalogScreen() {
           <ProductForm product={editing} onDone={() => setEditing(null)} />
         </Sheet>
       )}
-    </div>
+    </Screen>
   );
 }
