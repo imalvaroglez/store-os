@@ -1,0 +1,100 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Archivo:wght@400;500;600;700;800;900&family=Archivo+Black&family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Store OS theme-aware base. ThemeProvider injects per-theme CSS vars
+  (--paper, --ink, --terracotta, radii, shadows, --font-body, --font-display,
+  motion vars, and @keyframes) onto <html data-theme="...">. The :root block
+  below is a fallback default (paper) so the page is correct before first paint.
+  Paper Ledger reproduces the original "Cuenta Claras" look as the default theme.
+*/
+
+:root {
+  --paper: #f6f1e7;
+  --paper-2: #efe7d6;
+  --ink: #1c1917;
+  --ink-soft: #57534e;
+  --rule: #e0d6c0;
+  --terracotta: #c2410c;
+  --terracotta-soft: #fde7d7;
+  --forest: #15803d;
+  --forest-soft: #dcfce7;
+  --rose: #be123c;
+  --rose-soft: #ffe4e6;
+  --surface: #ffffff;
+  --surface-muted: #fbf8f1;
+  --surface-2: #ffffff;
+  --on-surface: #1c1917;
+  --on-surface-soft: #57534e;
+  --border: #e0d6c0;
+  --danger: #be123c;
+  --success: #15803d;
+  --on-accent: #ffffff;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-sheet: 1.5rem;
+  --shadow-card: 0 1px 2px 0 rgb(28 25 23 / 0.05), 0 1px 3px 0 rgb(28 25 23 / 0.07);
+  --shadow-lift: 0 6px 24px -4px rgb(28 25 23 / 0.18);
+  --label-tracking: 0.12em;
+  --card-tilt: 0deg;
+  --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --motion-fast: 0.15s;
+  --motion-base: 0.24s;
+  --motion-slow: 0.32s;
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --ease-luxury: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Keyframes are injected per-theme by ThemeProvider (slide-up, fade-in, rise-in,
+   plus maximalist stamp/pop). These fallbacks avoid a flash before injection. */
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes riseIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color var(--motion-base) var(--ease-smooth),
+    color var(--motion-base) var(--ease-smooth);
+}
+
+/* Display font (money, headings) — driven by the active theme. */
+.serif-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Hairline divider between sections — uses the theme rule color. */
+.rule {
+  background-image: linear-gradient(to right, transparent, var(--rule) 8%, var(--rule) 92%, transparent);
+  height: 1px;
+}
+
+/* Staggered reveal for screen contents — motion duration/easing per theme. */
+.rise > * {
+  animation: riseIn var(--motion-slow) var(--ease-smooth) both;
+}
+.rise > *:nth-child(1) { animation-delay: 0.02s; }
+.rise > *:nth-child(2) { animation-delay: 0.06s; }
+.rise > *:nth-child(3) { animation-delay: 0.10s; }
+.rise > *:nth-child(4) { animation-delay: 0.14s; }
+.rise > *:nth-child(5) { animation-delay: 0.18s; }
+.rise > *:nth-child(6) { animation-delay: 0.22s; }
+
+/* iOS: keep inputs >=16px to avoid zoom-on-focus (text-base in primitives). */
