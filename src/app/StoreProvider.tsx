@@ -24,6 +24,7 @@ import {
   subscribeCloudState,
   saveEntity,
   deleteEntity,
+  seedCloudIfEmpty,
 } from "./firebase/firestoreData";
 import { isFirebaseConfigured } from "./firebase/config";
 
@@ -110,8 +111,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let unsub: (() => void) | undefined;
     if (cloud && user) {
-      // First load, then subscribe for live updates.
-      loadCloudState(user)
+      // Seed demo stores on a brand-new (empty) cloud account, then load + subscribe.
+      seedCloudIfEmpty(user)
+        .then(() => loadCloudState(user))
         .then((s) => {
           fromCloud.current = true;
           dispatch({ type: "REPLACE_STATE", state: s });

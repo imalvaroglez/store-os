@@ -11,7 +11,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "emulators": "firebase emulators:start --only auth,firestore",
+    "e2e:firebase": "firebase emulators:exec --only auth,firestore 'playwright test --config=playwright.firebase.config.ts'"
   },
   "dependencies": {
     "firebase": "^12.15.0",

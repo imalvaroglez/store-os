@@ -12,6 +12,7 @@ import {
 import { getFirebase } from "./config";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order } from "../../types";
+import { buildSeedState } from "../../lib/seed";
 
 // Cloud data adapter. The cloud analog of lib/storage.ts: the StoreProvider talks
 // to this when signed in. Reads are scoped to the user (super_admin sees all
@@ -36,20 +37,23 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     stores = snap.docs.map((d) => ({ ...(d.data() as Store), id: d.id }));
   }
 
-  const storeIds = new Set(stores.map((s) => s.id));
-  const inStores = <T extends { storeId: string }>(rows: T[]): T[] =>
-    rows.filter((r) => storeIds.has(r.storeId));
+  const storeIds = stores.map((s) => s.id);
 
-  const [productsSnap, customersSnap, ordersSnap] = await Promise.all([
-    getDocs(collection(db, "products")),
-    getDocs(collection(db, "customers")),
-    getDocs(collection(db, "orders")),
+  // Fetch each entity collection scoped to the accessible stores. For super_admin
+  // that's effectively all; for members it stays within their stores (and avoids
+  // permission-denied on other stores' docs).
+  async function forStores<T extends { storeId: string }>(name: "products" | "customers" | "orders"): Promise<T[]> {
+    if (storeIds.length === 0) return [];
+    const q = query(collection(db, name), where("storeId", "in", storeIds));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
+  }
+
+  const [products, customers, orders] = await Promise.all([
+    forStores<Product>("products"),
+    forStores<Customer>("customers"),
+    forStores<Order>("orders"),
   ]);
-  // super_admin can read all (rules allow); members' rules restrict to their
-  // stores, but we also filter client-side for safety.
-  const products = inStores(productsSnap.docs.map((d) => ({ ...(d.data() as Product), id: d.id })));
-  const customers = inStores(customersSnap.docs.map((d) => ({ ...(d.data() as Customer), id: d.id })));
-  const orders = inStores(ordersSnap.docs.map((d) => ({ ...(d.data() as Order), id: d.id })));
 
   return {
     stores,
@@ -100,4 +104,25 @@ export async function deleteEntity(
 ): Promise<void> {
   const { db } = getFirebase();
   await deleteDoc(doc(db, name, id));
+}
+
+/**
+ * Seed the demo stores (Santi + Joyería) into Firestore for the super-admin on a
+ * brand-new (empty) cloud account. Members are NOT seeded — they see only stores
+ * an admin has invited them to (empty until then). Idempotent.
+ */
+export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
+  if (user.role !== "super_admin") return; // members never auto-seed
+  const existing = await loadCloudState(user);
+  if (existing.stores.length > 0) return;
+
+  const seed = buildSeedState();
+  const writes: Promise<unknown>[] = [];
+  for (const s of seed.stores) {
+    writes.push(saveEntity(user, "stores", { ...s, ownerUid: user.uid, memberUids: [user.uid] }));
+  }
+  for (const p of seed.products) writes.push(saveEntity(user, "products", p));
+  for (const c of seed.customers) writes.push(saveEntity(user, "customers", c));
+  for (const o of seed.orders) writes.push(saveEntity(user, "orders", o));
+  await Promise.all(writes);
 }
