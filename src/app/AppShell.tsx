@@ -28,7 +28,7 @@ const TAB_FOR_PATH: Record<string, Tab> = {
 };
 
 export function AppShell() {
-  const { activeStore, resetDemo, cloud } = useStore();
+  const { activeStore, resetDemo, cloud, setActiveStore } = useStore();
   const { user, enabled: authEnabled, signOut } = useAuth();
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -64,6 +64,7 @@ export function AppShell() {
         active={tab}
         storeType={activeStore.type}
         onOpenSettings={() => setSettingsOpen(true)}
+        onChangeStore={user ? () => setActiveStore(null) : undefined}
       />
 
       {/* Main column (mobile: header + scroll + bottom nav; desktop: scroll only) */}

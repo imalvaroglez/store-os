@@ -5,6 +5,9 @@ import {
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
+  sendSignInLinkToEmail,
+  isSignInWithEmailLink,
+  signInWithEmailLink,
   type User as FbUser,
 } from "firebase/auth";
 import {
@@ -96,4 +99,34 @@ export async function findUidByEmail(email: string): Promise<string | null> {
   const q = query(collection(db, "users"), where("email", "==", email.toLowerCase().trim()));
   const snap = await getDocs(q);
   return snap.empty ? null : snap.docs[0].id;
+}
+
+/** Email-link auth (for inviting members who don't have an account yet). */
+const INVITE_ACTION_CODE_SETTINGS = {
+  url: typeof window !== "undefined" ? `${window.location.origin}/entrar` : "https://example.com/entrar",
+  handleCodeInApp: true,
+};
+
+/** Send a sign-in link so an invited email can create their account. */
+export async function sendInviteLink(email: string, store?: { name?: string }): Promise<void> {
+  const { auth } = getFirebase();
+  await sendSignInLinkToEmail(
+    auth,
+    email.toLowerCase().trim(),
+    INVITE_ACTION_CODE_SETTINGS
+  );
+  void store; // store name could be templated into the email in a real backend.
+}
+
+/** Is the current URL a sign-in-with-email-link result? */
+export function isInviteSignInLink(): boolean {
+  const { auth } = getFirebase();
+  return isSignInWithEmailLink(auth, typeof window !== "undefined" ? window.location.href : "");
+}
+
+/** Complete a sign-in from an invite email link. */
+export async function completeInviteSignIn(email: string): Promise<AppUser> {
+  const { auth } = getFirebase();
+  const cred = await signInWithEmailLink(auth, email, window.location.href);
+  return ensureUserDoc(cred.user);
 }

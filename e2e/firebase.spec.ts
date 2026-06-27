@@ -109,6 +109,64 @@ test("sign out returns to the local demo", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Entrar \/ Crear cuenta/ })).toBeVisible();
 });
 
+test("picker: switch store + manage (rename / type change)", async ({ page }) => {
+  await gotoClean(page);
+  await ensureSignedOut(page);
+
+  // Sign up admin (seeded with Santi + Joyería) and land in a store.
+  await signUp(page, unique("pickeradmin"), "password123");
+  await gotoClean(page);
+
+  // This test only applies if the user is in a store (admin). If a prior test in
+  // the run already created an admin, this signup is a member with no stores ->
+  // skip gracefully.
+  const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
+  test.skip(!(await cambiar.count().catch(() => 0)), "not in a store (member w/ no stores)");
+
+  // "Cambiar tienda" returns to the picker.
+  await cambiar.click();
+  await page.waitForTimeout(800);
+  await expect(page.getByText("¿Quién opera hoy?")).toBeVisible();
+  await expect(page.getByText("Santi")).toBeVisible();
+  await expect(page.getByText("Joyería")).toBeVisible();
+
+  // Pick Santi -> enters it.
+  await page.getByText("Santi", { exact: false }).first().click();
+  await page.waitForTimeout(800);
+  await expect(page.getByText(/¿Qué necesitas hacer hoy en Santi\?/)).toBeVisible({
+    timeout: 15000,
+  });
+});
+
+test("picker: create a new store from the picker", async ({ page }) => {
+  await gotoClean(page);
+  await ensureSignedOut(page);
+  await signUp(page, unique("createadmin"), "password123");
+  await gotoClean(page);
+
+  // Reach the store-creation form. If we're in a store (admin), use "Cambiar
+  // tienda" -> "Nueva tienda". If we're on the empty state (no stores), use its
+  // "Crear tienda" button directly.
+  const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
+  if (await cambiar.count().catch(() => 0)) {
+    await cambiar.click();
+    await page.waitForTimeout(800);
+    await page.getByRole("button", { name: /Nueva tienda/ }).click();
+  } else {
+    await page.getByRole("button", { name: /Crear tienda/ }).click();
+  }
+  await page.waitForTimeout(400);
+  await page.getByLabel("Nombre de la tienda").fill("Tienda Nueva");
+  // The form's submit is the full-width "Crear tienda" button (distinct from the
+  // empty-state opener, which is gone once the sheet is open).
+  await page.getByRole("button", { name: "Crear tienda" }).last().click();
+  await page.waitForTimeout(2000);
+  // addStore makes the new store active -> we enter it.
+  await expect(page.getByText(/¿Qué necesitas hacer hoy en Tienda Nueva\?/)).toBeVisible({
+    timeout: 20000,
+  });
+});
+
 test("an invited-less member sees no stores", async ({ page }) => {
   await gotoClean(page);
   await ensureSignedOut(page);

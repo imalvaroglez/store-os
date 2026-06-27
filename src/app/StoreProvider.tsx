@@ -19,6 +19,7 @@ import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
+import { findUidByEmail, sendInviteLink } from "./firebase/auth";
 import {
   loadCloudState,
   subscribeCloudState,
@@ -33,6 +34,7 @@ import { isFirebaseConfigured } from "./firebase/config";
 type Action =
   | { type: "ADD_STORE"; store: Store }
   | { type: "UPDATE_STORE"; store: Store }
+  | { type: "DELETE_STORE"; storeId: string }
   | { type: "SET_ACTIVE_STORE"; storeId: string }
   | { type: "ADD_PRODUCT"; product: Product }
   | { type: "UPDATE_PRODUCT"; product: Product }
@@ -52,8 +54,20 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, stores: [...state.stores, action.store], activeStoreId: action.store.id };
     case "UPDATE_STORE":
       return { ...state, stores: state.stores.map((s) => (s.id === action.store.id ? action.store : s)) };
+    case "DELETE_STORE":
+      return {
+        ...state,
+        stores: state.stores.filter((s) => s.id !== action.storeId),
+        products: state.products.filter((p) => p.storeId !== action.storeId),
+        customers: state.customers.filter((c) => c.storeId !== action.storeId),
+        orders: state.orders.filter((o) => o.storeId !== action.storeId),
+        activeStoreId:
+          state.activeStoreId === action.storeId
+            ? state.stores.find((s) => s.id !== action.storeId)?.id ?? null
+            : state.activeStoreId,
+      };
     case "SET_ACTIVE_STORE":
-      return { ...state, activeStoreId: action.storeId };
+      return { ...state, activeStoreId: action.storeId || null };
     case "ADD_PRODUCT":
       return { ...state, products: [...state.products, action.product] };
     case "UPDATE_PRODUCT":
@@ -86,7 +100,11 @@ type StoreContextValue = {
   activeStore: Store | null;
   cloud: boolean; // true when operating on Firestore (signed in)
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Store;
-  setActiveStore: (storeId: string) => void;
+  updateStore: (patch: Partial<Store> & { id: string }) => void;
+  deleteStore: (storeId: string) => void;
+  inviteMember: (storeId: string, email: string) => Promise<"invited" | "pending">;
+  removeMember: (storeId: string, uid: string) => void;
+  setActiveStore: (storeId: string | null) => void;
   upsertProduct: (product: Product) => void;
   deleteProduct: (productId: string) => void;
   upsertCustomer: (customer: Customer) => void;
@@ -158,7 +176,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       persistEntity("stores", storeWithMembership(store, user));
       return store;
     },
-    setActiveStore: (storeId) => dispatch({ type: "SET_ACTIVE_STORE", storeId }),
+    updateStore: (patch) => {
+      const existing = state.stores.find((s) => s.id === patch.id);
+      if (!existing) return;
+      const store: Store = { ...existing, ...patch, updatedAt: nowIso() };
+      dispatch({ type: "UPDATE_STORE", store });
+      persistEntity("stores", store);
+    },
+    deleteStore: (storeId) => {
+      const store = state.stores.find((s) => s.id === storeId);
+      dispatch({ type: "DELETE_STORE", storeId });
+      if (cloud && user && store && !fromCloud.current) {
+        deleteEntity(user, "stores", storeId).catch(() => {});
+        // Best-effort: delete the store's entities in the cloud.
+        state.products.filter((p) => p.storeId === storeId).forEach((p) => deleteEntity(user, "products", p.id).catch(() => {}));
+        state.customers.filter((c) => c.storeId === storeId).forEach((c) => deleteEntity(user, "customers", c.id).catch(() => {}));
+        state.orders.filter((o) => o.storeId === storeId).forEach((o) => deleteEntity(user, "orders", o.id).catch(() => {}));
+      }
+    },
+    inviteMember: async (storeId, email) => {
+      const store = state.stores.find((s) => s.id === storeId);
+      if (!store) return "pending";
+      const normalized = email.toLowerCase().trim();
+      // Try to find an existing user by email.
+      const uid = await findUidByEmail(normalized).catch(() => null);
+      if (uid) {
+        const memberUids = Array.from(new Set([...(store.memberUids ?? []), uid]));
+        const updated = { ...store, memberUids, updatedAt: nowIso() };
+        dispatch({ type: "UPDATE_STORE", store: updated });
+        persistEntity("stores", updated);
+        return "invited";
+      }
+      // No account yet: store a pending invite; the real email-link send happens
+      // in the cloud path (emulator can't deliver email, so this is the durable bit).
+      const pendingInvites = Array.from(new Set([...(store.pendingInvites ?? []), normalized]));
+      const updated = { ...store, pendingInvites, updatedAt: nowIso() };
+      dispatch({ type: "UPDATE_STORE", store: updated });
+      persistEntity("stores", updated);
+      void sendInviteLink(normalized, store).catch(() => {});
+      return "pending";
+    },
+    removeMember: (storeId, memberUid) => {
+      const store = state.stores.find((s) => s.id === storeId);
+      if (!store) return;
+      const memberUids = (store.memberUids ?? []).filter((u) => u !== memberUid);
+      const updated = { ...store, memberUids, updatedAt: nowIso() };
+      dispatch({ type: "UPDATE_STORE", store: updated });
+      persistEntity("stores", updated);
+    },
+    setActiveStore: (storeId) => dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" }),
     upsertProduct: (product) => {
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
       persistEntity("products", product);
