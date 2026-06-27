@@ -8,10 +8,12 @@ export function Sidebar({
   active,
   storeType,
   onOpenSettings,
+  onChangeStore,
 }: {
   active: Tab;
   storeType: StoreType;
   onOpenSettings: () => void;
+  onChangeStore?: () => void;
 }) {
   const tabs = visibleNavItems(storeType);
   return (
@@ -25,8 +27,16 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="px-3 pb-2">
+      <div className="px-3 pb-2 space-y-1">
         <StoreSwitcher />
+        {onChangeStore && (
+          <button
+            onClick={onChangeStore}
+            className="w-full text-left px-3 py-2 rounded-md text-xs font-semibold text-ink-soft hover:bg-surface-2 hover:text-on-surface transition-colors"
+          >
+            ← Cambiar tienda
+          </button>
+        )}
       </div>
 
       <nav className="flex-1 px-3 space-y-1">

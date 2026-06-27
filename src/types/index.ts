@@ -11,6 +11,10 @@ export type Store = {
   whatsappPhone?: string;
   createdAt: string;
   updatedAt: string;
+  // Cloud-only membership fields (absent in local demo mode):
+  ownerUid?: string;
+  memberUids?: string[];
+  pendingInvites?: string[]; // emails invited but not yet signed up
 };
 
 export type ProductCategory = "perfume" | "sneakers" | "cap" | "jewelry" | "other";
