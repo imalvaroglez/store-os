@@ -29,12 +29,15 @@ export function Sheet({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end md:justify-center md:items-center p-0 md:p-4">
-      <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-[2px] animate-[fadeIn_.15s_ease-out]" onClick={onClose} aria-hidden />
+      <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-[2px] animate-[fadeIn_var(--motion-fast)_var(--ease-smooth)]" onClick={onClose} aria-hidden />
       {/* grab handle — mobile only */}
       <div className="md:hidden relative mx-auto mb-[-8px] h-1.5 w-10 rounded-full bg-stone-300/80 z-10" />
       <div
-        className="relative bg-paper rounded-t-sheet md:rounded-sheet w-full md:max-w-lg max-h-[92vh] overflow-y-auto animate-[slideUp_.24s_cubic-bezier(0.22,1,0.36,1)] shadow-lift"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        className="relative bg-paper rounded-t-sheet md:rounded-sheet w-full md:max-w-lg max-h-[92vh] overflow-y-auto shadow-lift"
+        style={{
+          paddingBottom: "env(safe-area-inset-bottom)",
+          animation: `slideUp var(--motion-base) var(--ease-smooth)`,
+        }}
       >
         <div className="sticky top-0 bg-paper/95 backdrop-blur px-5 pt-4 pb-3 flex items-center justify-between border-b border-rule/70">
           <h2 className="serif-display text-xl font-semibold text-ink">{title}</h2>

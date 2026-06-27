@@ -8,6 +8,7 @@ export default defineConfig({
     environmentMatchGlobs: [
       ["src/app/App.test.tsx", "jsdom"],
       ["src/design-system/primitives.test.tsx", "jsdom"],
+      ["src/design-system/theme/theme.test.tsx", "jsdom"],
     ],
     setupFiles: ["src/test-setup.ts"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],

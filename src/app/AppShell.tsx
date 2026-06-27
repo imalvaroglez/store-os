@@ -8,6 +8,7 @@ import {
   Sheet,
   Button,
   IconButton,
+  ThemePicker,
   type Tab,
 } from "../design-system";
 import { HomeScreen } from "../features/home/HomeScreen";
@@ -86,22 +87,29 @@ export function AppShell() {
       </div>
 
       <Sheet open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Opciones">
-        <div className="space-y-3">
-          <p className="text-sm text-ink-soft">
-            Store OS guarda todo en este dispositivo. No se sincroniza con la nube (todavía).
-          </p>
-          <Button
-            variant="danger"
-            full
-            onClick={() => {
-              if (confirm("Esto borra todo y recarga los datos de ejemplo. ¿Continuar?")) {
-                resetDemo();
-                setSettingsOpen(false);
-              }
-            }}
-          >
-            Reiniciar con datos de ejemplo
-          </Button>
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Tema</h3>
+            <ThemePicker />
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Datos</h3>
+            <p className="text-sm text-ink-soft">
+              Store OS guarda todo en este dispositivo. No se sincroniza con la nube (todavía).
+            </p>
+            <Button
+              variant="danger"
+              full
+              onClick={() => {
+                if (confirm("Esto borra todo y recarga los datos de ejemplo. ¿Continuar?")) {
+                  resetDemo();
+                  setSettingsOpen(false);
+                }
+              }}
+            >
+              Reiniciar con datos de ejemplo
+            </Button>
+          </div>
         </div>
       </Sheet>
     </div>
