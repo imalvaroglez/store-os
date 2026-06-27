@@ -24,9 +24,13 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
 };
 
-const projectId =
-  firebaseConfig.projectId ||
-  (import.meta.env.VITE_FIREBASE_EMULATOR ? "store-os-demo" : undefined);
+const EMULATOR = !!import.meta.env.VITE_FIREBASE_EMULATOR;
+
+const projectId = firebaseConfig.projectId || (EMULATOR ? "store-os-demo" : undefined);
+
+// Firebase Auth requires a non-empty apiKey even in emulator mode (it's ignored
+// by the emulator but validated on init). Provide a placeholder in pure-emulator mode.
+const apiKey = firebaseConfig.apiKey || (EMULATOR ? "fake-api-key-for-emulator" : undefined);
 
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
@@ -35,10 +39,7 @@ let emulatorsConnected = false;
 
 /** True when Firebase is configured enough to initialize (real OR emulator). */
 export function isFirebaseConfigured(): boolean {
-  return Boolean(
-    projectId &&
-      (import.meta.env.VITE_FIREBASE_EMULATOR || firebaseConfig.apiKey)
-  );
+  return Boolean(projectId && (EMULATOR || firebaseConfig.apiKey));
 }
 
 export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
@@ -48,14 +49,17 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
     );
   }
   if (!app) {
-    const initialized = initializeApp({ ...firebaseConfig, projectId: projectId! }, "store-os");
+    const initialized = initializeApp(
+      { ...firebaseConfig, apiKey: apiKey!, projectId: projectId! },
+      "store-os"
+    );
     app = initialized;
     auth = getAuth(initialized);
     db = getFirestore(initialized);
   }
   const a = auth!;
   const database = db!;
-  if (import.meta.env.VITE_FIREBASE_EMULATOR && !emulatorsConnected) {
+  if (EMULATOR && !emulatorsConnected) {
     const authHost = import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST || "127.0.0.1:9099";
     const fsHost = import.meta.env.VITE_FIREBASE_FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080";
     connectAuthEmulator(a, `http://${authHost}`);
