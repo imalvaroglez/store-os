@@ -1,16 +1,21 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StoreProvider } from "./StoreProvider";
+import { AuthProvider } from "./firebase/AuthProvider";
 import { PublicCatalogScreen } from "../features/catalog/PublicCatalogScreen";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { buildSeedState } from "../lib/seed";
 import { saveState } from "../lib/storage";
 
 // Runtime mount smoke: catches render-time crashes curl/static checks can't.
+// AuthProvider is in pure-local mode here (no VITE_FIREBASE_* in the test env),
+// so StoreProvider stays on the localStorage path these tests expect.
 function withState(state: ReturnType<typeof buildSeedState>) {
   saveState(state); // so the provider loads this exact state, not a fresh seed
   return ({ children }: { children: React.ReactNode }) => (
-    <StoreProvider>{children}</StoreProvider>
+    <AuthProvider>
+      <StoreProvider>{children}</StoreProvider>
+    </AuthProvider>
   );
 }
 

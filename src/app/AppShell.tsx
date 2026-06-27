@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useStore } from "./StoreProvider";
+import { useAuth } from "./firebase/AuthProvider";
+import { AuthScreen } from "./firebase/AuthScreen";
 import { useRoute } from "./router";
 import {
   StoreSwitcher,
@@ -26,9 +28,11 @@ const TAB_FOR_PATH: Record<string, Tab> = {
 };
 
 export function AppShell() {
-  const { activeStore, resetDemo } = useStore();
+  const { activeStore, resetDemo, cloud } = useStore();
+  const { user, enabled: authEnabled, signOut } = useAuth();
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
 
   const seg = route.name === "admin" ? route.params.tab ?? "" : "";
   const tab: Tab = seg === "catalogo-admin" ? "catalogo" : TAB_FOR_PATH[seg] ?? "inicio";
@@ -92,25 +96,76 @@ export function AppShell() {
             <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Tema</h3>
             <ThemePicker />
           </div>
+
+          {authEnabled && (
+            <div className="space-y-3">
+              <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Cuenta</h3>
+              {user ? (
+                <>
+                  <p className="text-sm text-ink-soft">
+                    Conectado como <span className="font-semibold text-ink">{user.email}</span>
+                    {user.role === "super_admin" && " · administrador"}
+                  </p>
+                  <p className="text-xs text-ink-soft">Tus tiendas se sincronizan en la nube.</p>
+                  <Button
+                    variant="secondary"
+                    full
+                    onClick={() => {
+                      signOut();
+                      setSettingsOpen(false);
+                    }}
+                  >
+                    Cerrar sesión
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-ink-soft">
+                    Estás en modo demostración (local). Entra para sincronizar tus tiendas en la nube.
+                  </p>
+                  <Button
+                    full
+                    onClick={() => {
+                      setSettingsOpen(false);
+                      setAuthOpen(true);
+                    }}
+                  >
+                    Entrar / Crear cuenta
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="space-y-3">
             <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Datos</h3>
-            <p className="text-sm text-ink-soft">
-              Store OS guarda todo en este dispositivo. No se sincroniza con la nube (todavía).
-            </p>
-            <Button
-              variant="danger"
-              full
-              onClick={() => {
-                if (confirm("Esto borra todo y recarga los datos de ejemplo. ¿Continuar?")) {
-                  resetDemo();
-                  setSettingsOpen(false);
-                }
-              }}
-            >
-              Reiniciar con datos de ejemplo
-            </Button>
+            {cloud ? (
+              <p className="text-sm text-ink-soft">Tus datos viven en la nube y se sincronizan entre dispositivos.</p>
+            ) : (
+              <>
+                <p className="text-sm text-ink-soft">
+                  Store OS guarda todo en este dispositivo. {authEnabled ? "Entra para usar la nube." : "No se sincroniza con la nube."}
+                </p>
+                <Button
+                  variant="danger"
+                  full
+                  onClick={() => {
+                    if (confirm("Esto borra todo y recarga los datos de ejemplo. ¿Continuar?")) {
+                      resetDemo();
+                      setSettingsOpen(false);
+                    }
+                  }}
+                >
+                  Reiniciar con datos de ejemplo
+                </Button>
+              </>
+            )}
           </div>
         </div>
+      </Sheet>
+
+      <Sheet open={authOpen} onClose={() => setAuthOpen(false)} title="Cuenta">
+        <AuthScreen onDone={() => setAuthOpen(false)} />
       </Sheet>
     </div>
   );
