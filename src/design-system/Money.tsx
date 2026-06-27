@@ -13,7 +13,7 @@ export function Money({
   muted?: boolean;
 }) {
   return (
-    <span className={`serif-display tnum ${muted ? "text-ink-soft" : ""} ${className}`}>
+    <span className={`serif-display tnum ${muted ? "text-on-surface-soft" : ""} ${className}`}>
       {formatMoney(amount)}
     </span>
   );
@@ -31,13 +31,13 @@ export function StatRow({
 }) {
   const valueColor =
     tone === "danger"
-      ? "font-bold text-rose-600"
+      ? "font-bold text-danger"
       : tone === "success"
-      ? "font-semibold text-forest"
-      : "font-bold text-ink";
+      ? "font-semibold text-success"
+      : "font-bold text-on-surface";
   return (
     <div>
-      <span className="text-ink-soft/70 text-[11px] uppercase tracking-wide block">
+      <span className="text-on-surface-soft text-[11px] uppercase tracking-wide block">
         {label}
       </span>
       <span className={`serif-display tnum ${valueColor}`}>{children}</span>

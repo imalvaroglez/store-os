@@ -52,7 +52,7 @@ function ProductCard({
                 Menudeo <b>{formatMoney(product.prices?.retail)}</b>
               </span>
               {typeof product.quantityOnHand === "number" && (
-                <span className={low ? "text-rose-600 font-semibold" : "text-ink-soft"}>
+                <span className={low ? "text-danger font-semibold" : "text-on-surface-soft"}>
                   Existencia: {product.quantityOnHand}
                 </span>
               )}
@@ -63,7 +63,7 @@ function ProductCard({
                 Precio <b>{formatMoney(product.price)}</b>
               </span>
               {est != null && (
-                <span className="text-forest">Ganancia {formatMoney(est)}</span>
+                <span className="text-success">Ganancia {formatMoney(est)}</span>
               )}
             </div>
           )}

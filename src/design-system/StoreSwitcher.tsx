@@ -12,7 +12,7 @@ export function StoreSwitcher() {
     <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 bg-white/70 ring-1 ring-rule rounded-xl pl-3 pr-2 py-1.5 shadow-card"
+        className="flex items-center gap-2 bg-surface ring-1 ring-edge rounded-xl pl-3 pr-2 py-1.5 shadow-card"
       >
         <span className="h-7 w-7 rounded-lg bg-ink text-paper flex items-center justify-center serif-display text-sm font-semibold shrink-0">
           {activeStore.name.slice(0, 1).toUpperCase()}
@@ -33,7 +33,7 @@ export function StoreSwitcher() {
       {open && (
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute z-30 mt-2 w-60 bg-white rounded-2xl ring-1 ring-rule shadow-lift overflow-hidden p-1.5">
+          <div className="absolute z-30 mt-2 w-60 bg-surface text-on-surface rounded-2xl ring-1 ring-edge shadow-lift overflow-hidden p-1.5">
             {state.stores.map((s) => (
               <button
                 key={s.id}

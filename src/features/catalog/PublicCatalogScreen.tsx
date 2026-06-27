@@ -41,7 +41,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
           <h1 className="serif-display text-3xl md:text-4xl font-semibold mt-1 leading-tight">
             {store.name}
           </h1>
-          <p className="text-stone-300 text-sm mt-1">
+          <p className="text-paper/70 text-sm mt-1">
             {isTiered ? "Catálogo de productos" : "Catálogo bajo pedido"}
           </p>
           <a
