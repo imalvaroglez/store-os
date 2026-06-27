@@ -48,16 +48,19 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
     );
   }
   if (!app) {
-    app = initializeApp({ ...firebaseConfig, projectId: projectId! }, "store-os");
-    auth = getAuth(app);
-    db = getFirestore(app);
+    const initialized = initializeApp({ ...firebaseConfig, projectId: projectId! }, "store-os");
+    app = initialized;
+    auth = getAuth(initialized);
+    db = getFirestore(initialized);
   }
+  const a = auth!;
+  const database = db!;
   if (import.meta.env.VITE_FIREBASE_EMULATOR && !emulatorsConnected) {
     const authHost = import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST || "127.0.0.1:9099";
     const fsHost = import.meta.env.VITE_FIREBASE_FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080";
-    connectAuthEmulator(auth, `http://${authHost}`);
-    connectFirestoreEmulator(db, fsHost.split(":")[0], Number(fsHost.split(":")[1]));
+    connectAuthEmulator(a, `http://${authHost}`);
+    connectFirestoreEmulator(database, fsHost.split(":")[0], Number(fsHost.split(":")[1]));
     emulatorsConnected = true;
   }
-  return { app, auth, db };
+  return { app: app!, auth: a, db: database };
 }
