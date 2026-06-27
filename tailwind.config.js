@@ -34,7 +34,16 @@ export default {
         surface: {
           DEFAULT: "var(--surface)",
           muted: "var(--surface-muted)",
+          2: "var(--surface-2)",
         },
+        "on-surface": {
+          DEFAULT: "var(--on-surface)",
+          soft: "var(--on-surface-soft)",
+        },
+        edge: "var(--border)",
+        danger: "var(--danger)",
+        success: "var(--success)",
+        "on-accent": "var(--on-accent)",
         // Semantic aliases also follow the theme.
         brand: { 50: "var(--paper)", 100: "var(--paper-2)", 900: "var(--ink)", 950: "var(--ink)" },
         success: { 50: "var(--forest-soft)", 100: "var(--forest-soft)", 600: "var(--forest)", 700: "var(--forest)" },

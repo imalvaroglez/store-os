@@ -7,7 +7,7 @@ import type {
 
 // Unified field styling. Every input/select/textarea in the app uses this base.
 export const fieldBase =
-  "w-full rounded-xl border border-rule bg-white/80 px-3 py-2.5 text-base text-ink outline-none focus:border-ink focus:ring-2 focus:ring-ink/10 placeholder:text-ink-soft/50 transition-colors";
+  "w-full rounded-md border border-edge bg-surface px-3 py-2.5 text-base text-on-surface outline-none focus:border-terracotta focus:ring-2 focus:ring-terracotta/20 placeholder:text-on-surface-soft/60 transition-colors";
 
 export function FormField({
   label,
@@ -20,11 +20,11 @@ export function FormField({
 }) {
   return (
     <label className="block">
-      <span className="block text-xs font-semibold text-ink-soft uppercase tracking-wide mb-1.5">
+      <span className="block text-xs font-semibold text-on-surface-soft uppercase tracking-wide mb-1.5">
         {label}
       </span>
       {children}
-      {hint && <span className="block text-xs text-ink-soft/70 mt-1">{hint}</span>}
+      {hint && <span className="block text-xs text-on-surface-soft/70 mt-1">{hint}</span>}
     </label>
   );
 }

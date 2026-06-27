@@ -15,7 +15,7 @@ export function Card({
   return (
     <div
       onClick={onClick}
-      className={`bg-white/80 backdrop-blur-sm rounded-card ring-1 ring-rule/80 shadow-card p-4 ${
+      className={`bg-surface text-on-surface rounded-card ring-1 ring-edge shadow-card p-4 ${
         interactive || onClick ? "cursor-pointer active:scale-[0.99] hover:shadow-lift transition-all" : "transition-shadow"
       } ${className}`}
     >
