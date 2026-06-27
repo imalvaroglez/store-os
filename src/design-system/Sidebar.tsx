@@ -36,25 +36,22 @@ export function Sidebar({
             <button
               key={t.id}
               onClick={() => navigate(t.path)}
-              className={`relative w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+              className={`w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold transition-colors ${
                 isActive
-                  ? "bg-white text-ink shadow-card"
-                  : "text-ink-soft/70 hover:bg-white/60 hover:text-ink"
+                  ? "bg-terracotta text-on-accent"
+                  : "text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
               }`}
             >
-              {isActive && (
-                <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r-full bg-terracotta" />
-              )}
               {t.label}
             </button>
           );
         })}
       </nav>
 
-      <div className="p-3 border-t border-rule/60">
+      <div className="p-3 border-t border-edge/60">
         <button
           onClick={onOpenSettings}
-          className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold text-ink-soft/70 hover:bg-white/60 hover:text-ink transition-colors"
+          className="w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold text-on-surface-soft hover:bg-surface-2 hover:text-on-surface transition-colors"
         >
           ⚙️ Opciones
         </button>
