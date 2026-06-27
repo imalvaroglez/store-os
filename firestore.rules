@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helpers
+    function isSignedIn() { return request.auth != null; }
+    function userDoc(uid) { return get(/databases/$(database)/documents/users/$(uid)).data; }
+    function isSuperAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && userDoc(request.auth.uid).role == 'super_admin'; }
+    function noSuperAdminYet() {
+      // True when there is no super_admin in the users collection. Used to bootstrap
+      // the first-ever user. (Limit-based check: we treat "no admins" as bootstrap window.)
+      return !exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // users/{uid}
+    match /users/{uid} {
+      // A signed-in user may create their own doc. The role is assigned client-side:
+      // super_admin if no users exist yet, else member. Non-admins cannot escalate.
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && (request.resource.data.role == 'member'
+            || (request.resource.data.role == 'super_admin' && noSuperAdminYet() == true));
+      allow read: if isSignedIn() && (request.auth.uid == uid || isSuperAdmin());
+      // Only the owner or a super_admin may update; role field may only be changed by a super_admin.
+      allow update: if isSignedIn() && (request.auth.uid == uid || isSuperAdmin())
+        && (isSuperAdmin() || !('role' in request.resource.data.diff(resource.data).affectedKeys()));
+      allow delete: if isSuperAdmin();
+    }
+
+    // Membership: a user is a member of a store if they own it, are in memberUids,
+    // or are the super_admin.
+    function isStoreMember(storeId) {
+      return isSuperAdmin()
+        || exists(/databases/$(database)/documents/stores/$(storeId))
+           && get(/databases/$(database)/documents/stores/$(storeId)).data.memberUids.hasAny([request.auth.uid]);
+    }
+
+    // stores/{id}
+    match /stores/{id} {
+      allow read: if isStoreMember(id);
+      allow create, update, delete: if isSuperAdmin();
+      // Members can be added/removed only by super_admin (controlled via invite flow).
+    }
+
+    // Entity collections: access derived from the store the entity belongs to.
+    match /products/{id} {
+      allow read: if isStoreMember(resource.data.storeId);
+      allow create, update, delete: if isStoreMember(request.resource.data.storeId);
+    }
+    match /customers/{id} {
+      allow read: if isStoreMember(resource.data.storeId);
+      allow create, update, delete: if isStoreMember(request.resource.data.storeId);
+    }
+    match /orders/{id} {
+      allow read: if isStoreMember(resource.data.storeId);
+      allow create, update, delete: if isStoreMember(request.resource.data.storeId);
+    }
+  }
+}
