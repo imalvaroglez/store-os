@@ -16,7 +16,7 @@ export function StoreSettingsScreen({
   storeId: string;
   onDone: () => void;
 }) {
-  const { state, updateStore, deleteStore, inviteMember, removeMember } = useStore();
+  const { state, updateStore, deleteStore, inviteMember, removeMember, republishCatalog } = useStore();
   const { user } = useAuth();
   const store = state.stores.find((s) => s.id === storeId);
 
@@ -36,6 +36,21 @@ export function StoreSettingsScreen({
   const isOwnerOrAdmin = user?.role === "super_admin" || store.ownerUid === user?.uid;
 
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
+  const [catalogBusy, setCatalogBusy] = useState(false);
+
+  async function republish() {
+    setCatalogBusy(true);
+    setCatalogMsg(null);
+    try {
+      await republishCatalog(store!.id);
+      setCatalogMsg("Catálogo publicado. Visible en /catalogo/" + store!.slug);
+    } catch {
+      setCatalogMsg("No se pudo publicar. Intenta de nuevo.");
+    } finally {
+      setCatalogBusy(false);
+    }
+  }
 
   async function saveBasic() {
     setSaveError(null);
@@ -144,7 +159,11 @@ export function StoreSettingsScreen({
       </div>
 
       {isOwnerOrAdmin && (
-        <div className="pt-2 border-t border-edge">
+        <div className="pt-2 border-t border-edge space-y-2">
+          <Button full variant="secondary" onClick={republish} disabled={catalogBusy}>
+            Republicar catálogo
+          </Button>
+          {catalogMsg && <p className="text-xs text-ink-soft">{catalogMsg}</p>}
           <Button
             full
             variant="danger"

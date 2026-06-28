@@ -110,6 +110,8 @@ type StoreContextValue = {
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"invited" | "pending">;
   removeMember: (storeId: string, uid: string) => void;
+  /** Republish a store's public catalog projection (backfill / repair). */
+  republishCatalog: (storeId: string) => Promise<void>;
   setActiveStore: (storeId: string | null) => void;
   upsertProduct: (product: Product) => void;
   deleteProduct: (productId: string) => void;
@@ -248,6 +250,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updated = { ...store, memberUids, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
       persistEntity("stores", updated);
+    },
+    republishCatalog: async (storeId) => {
+      const store = state.stores.find((s) => s.id === storeId);
+      if (!store || !cloud) return;
+      await claimSlug(store.slug, store.id).catch(() => {});
+      await projectPublicForStore(store, state.products.filter((p) => p.storeId === storeId));
     },
     setActiveStore: (storeId) => dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" }),
     upsertProduct: (product) => {
