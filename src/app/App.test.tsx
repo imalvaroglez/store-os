@@ -3,7 +3,6 @@ import { render, screen } from "@testing-library/react";
 import { StoreProvider } from "./StoreProvider";
 import { App } from "./App";
 import { AuthProvider } from "./firebase/AuthProvider";
-import { PublicCatalogScreen } from "../features/catalog/PublicCatalogScreen";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { buildSeedState } from "../lib/seed";
 import { saveState } from "../lib/storage";
@@ -20,42 +19,9 @@ function withState(state: ReturnType<typeof buildSeedState>) {
   );
 }
 
-describe("PublicCatalogScreen render", () => {
-  it("renders only public products and hides private fields", () => {
-    const Wrapper = withState(buildSeedState());
-    render(
-      <Wrapper>
-        <PublicCatalogScreen slug="joyeria" />
-      </Wrapper>
-    );
-
-    // Store header
-    expect(screen.getByText("Joyería")).toBeTruthy();
-
-    // Public product present
-    expect(screen.getByText("Cadena de plata 925")).toBeTruthy();
-
-    // Private product must NOT appear
-    expect(screen.queryByText("Anillo grabado (privado)")).toBeNull();
-
-    // Private/cost fields must never render
-    expect(screen.queryByText(/Ganancia/)).toBeNull();
-    expect(screen.queryByText(/Costo/)).toBeNull();
-
-    // WhatsApp CTA present
-    expect(screen.getAllByText("Pedir por WhatsApp").length).toBeGreaterThan(0);
-  });
-
-  it("shows not-found for an unknown slug", () => {
-    const Wrapper = withState(buildSeedState());
-    render(
-      <Wrapper>
-        <PublicCatalogScreen slug="no-existe" />
-      </Wrapper>
-    );
-    expect(screen.getByText("Tienda no encontrada")).toBeTruthy();
-  });
-});
+// PublicCatalogScreen is now Firestore-backed (anonymous public projection),
+// so its render behavior is covered by the emulator e2e suite
+// (e2e/public-catalog.spec.ts), not this pure-local unit test.
 
 describe("HomeScreen store isolation render", () => {
   it("renders the active store's data and primary action", () => {
