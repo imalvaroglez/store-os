@@ -7,6 +7,7 @@ import {
   onSnapshot,
   query,
   where,
+  runTransaction,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
@@ -106,6 +107,132 @@ export async function deleteEntity(
   await deleteDoc(doc(db, name, id));
 }
 
+// --- Public catalog projection ---
+//
+// Anonymous visitors read `publicStores/{slug}` and `publicProducts/{id}`. These
+// docs carry ONLY public-safe fields — private data (cost, profit, notes,
+// inventory, membership) is never written here, so the security model is
+// "leak-proof by construction", not by field-level rules.
+
+/** Thrown when a slug is already claimed by another store. */
+export class SlugTakenError extends Error {
+  constructor(public slug: string) {
+    super(`El identificador "${slug}" ya está en uso.`);
+    this.name = "SlugTakenError";
+  }
+}
+
+/**
+ * Atomically claim a slug for a store. Uses create-only semantics inside a
+ * transaction: if `slugs/{slug}` already exists for a DIFFERENT store, the
+ * claim fails with SlugTakenError. Same store re-claiming its own slug is a
+ * no-op (idempotent).
+ */
+export async function claimSlug(slug: string, storeId: string): Promise<void> {
+  const { db } = getFirebase();
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, "slugs", slug);
+    const existing = await tx.get(ref);
+    if (existing.exists()) {
+      const owner = existing.data()?.storeId as string | undefined;
+      if (owner && owner !== storeId) throw new SlugTakenError(slug);
+      return; // same store already owns it
+    }
+    tx.set(ref, { storeId, claimedAt: Date.now() });
+  });
+}
+
+/** Release a slug reservation (on rename/delete). */
+export async function releaseSlug(slug: string): Promise<void> {
+  const { db } = getFirebase();
+  await deleteDoc(doc(db, "slugs", slug)).catch(() => {});
+}
+
+/** Public storefront projection: only the fields a catalog visitor may see. */
+export function projectPublicStore(store: Store) {
+  return {
+    name: store.name,
+    slug: store.slug,
+    type: store.type,
+    whatsappPhone: store.whatsappPhone ?? null,
+  };
+}
+
+/**
+ * Public product projection. Mirrors `publicPrice` (src/lib/money.ts): on-demand
+ * stores expose `price`; inventory stores expose only `prices.retail`. Cost,
+ * wholesale/reseller prices, notes, and inventory are omitted entirely.
+ */
+export function projectPublicProduct(product: Product, storeSlug: string) {
+  const base: Record<string, unknown> = {
+    storeSlug,
+    name: product.name,
+    publicDescription: product.publicDescription ?? null,
+    imageUrl: product.imageUrl ?? null,
+  };
+  if (typeof product.price === "number") base.price = product.price;
+  if (product.prices && typeof product.prices.retail === "number") {
+    base.prices = { retail: product.prices.retail };
+  }
+  return base;
+}
+
+/**
+ * Rebuild the public projection for one store: upsert the public storefront and
+ * every public product, and remove public-product docs for products that are no
+ * longer public (or belong to deleted products). Idempotent.
+ */
+export async function projectPublicForStore(store: Store, products: Product[]): Promise<void> {
+  const { db } = getFirebase();
+  const writes: Promise<unknown>[] = [];
+
+  // Storefront.
+  writes.push(setDoc(doc(db, "publicStores", store.slug), projectPublicStore(store), { merge: true }));
+
+  // Public products for this store.
+  const publicProducts = products.filter((p) => p.storeId === store.id && p.isPublic);
+  for (const p of publicProducts) {
+    writes.push(setDoc(doc(db, "publicProducts", p.id), projectPublicProduct(p, store.slug), { merge: true }));
+  }
+
+  // Prune: any existing publicProducts with storeSlug === this slug whose id is
+  // no longer in the public set. (Cheap at this scale.)
+  const keepIds = new Set(publicProducts.map((p) => p.id));
+  const snap = await getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug)));
+  for (const d of snap.docs) {
+    if (!keepIds.has(d.id)) writes.push(deleteDoc(d.ref));
+  }
+
+  await Promise.all(writes);
+}
+
+/** Remove a store's entire public projection (storefront + products + slug). */
+export async function unprojectPublicForStore(store: Store): Promise<void> {
+  const { db } = getFirebase();
+  const writes: Promise<unknown>[] = [];
+  writes.push(deleteDoc(doc(db, "publicStores", store.slug)));
+  writes.push(releaseSlug(store.slug));
+  const snap = await getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug)));
+  for (const d of snap.docs) writes.push(deleteDoc(d.ref));
+  await Promise.all(writes);
+}
+
+/** Upsert one product's public projection (only if public). */
+export async function upsertPublicProduct(product: Product, storeSlug: string): Promise<void> {
+  const { db } = getFirebase();
+  if (!product.isPublic) {
+    await deleteDoc(doc(db, "publicProducts", product.id)).catch(() => {});
+    return;
+  }
+  await setDoc(doc(db, "publicProducts", product.id), projectPublicProduct(product, storeSlug), { merge: true });
+}
+
+/** Remove one product's public projection. */
+export async function removePublicProduct(productId: string): Promise<void> {
+  const { db } = getFirebase();
+  await deleteDoc(doc(db, "publicProducts", productId)).catch(() => {});
+}
+
 /**
  * Seed the demo stores (Santi + Joyería) into Firestore for the super-admin on a
  * brand-new (empty) cloud account. Members are NOT seeded — they see only stores
@@ -125,4 +252,11 @@ export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
   for (const c of seed.customers) writes.push(saveEntity(user, "customers", c));
   for (const o of seed.orders) writes.push(saveEntity(user, "orders", o));
   await Promise.all(writes);
+
+  // Publish the public catalog projection for each seeded store so
+  // /catalogo/santi and /catalogo/joyeria work immediately.
+  for (const s of seed.stores) {
+    await claimSlug(s.slug, s.id).catch(() => {});
+    await projectPublicForStore(s, seed.products).catch(() => {});
+  }
 }

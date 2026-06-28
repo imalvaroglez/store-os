@@ -1,16 +1,9 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { Button, FormField, TextField, Card } from "../../design-system";
+import { SlugTakenError } from "../../app/firebase/firestoreData";
+import { slugify } from "./slugify";
 import type { StoreType } from "../../types";
-
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
 
 const TYPES: { value: StoreType; label: string; desc: string }[] = [
   { value: "on_demand", label: "Bajo pedido", desc: "No guardas inventario. Perfumes, tenis, gorras." },
@@ -18,25 +11,31 @@ const TYPES: { value: StoreType; label: string; desc: string }[] = [
 ];
 
 export function StoreForm({ onDone }: { onDone: () => void }) {
-  const { addStore, state } = useStore();
+  const { addStore } = useStore();
   const [name, setName] = useState("");
   const [type, setType] = useState<StoreType>("on_demand");
   const [whatsapp, setWhatsapp] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  function submit() {
+  async function submit() {
     if (!name.trim()) return;
-    const base = slugify(name) || "tienda";
-    // ponytail: simple uniqueness by suffix; collisions are rare in local-first.
-    let slug = base;
-    let i = 2;
-    while (state.stores.some((s) => s.slug === slug)) slug = `${base}-${i++}`;
-    addStore({
-      name: name.trim(),
-      slug,
-      type,
-      whatsappPhone: whatsapp.trim() || undefined,
-    });
-    onDone();
+    setError(null);
+    setBusy(true);
+    const slug = slugify(name) || "tienda";
+    try {
+      await addStore({
+        name: name.trim(),
+        slug,
+        type,
+        whatsappPhone: whatsapp.trim() || undefined,
+      });
+      onDone();
+    } catch (err) {
+      setError(err instanceof SlugTakenError ? err.message : "No se pudo crear la tienda. Intenta de nuevo.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -75,7 +74,8 @@ export function StoreForm({ onDone }: { onDone: () => void }) {
         value={whatsapp}
         onChange={(e) => setWhatsapp(e.target.value)}
       />
-      <Button full size="lg" onClick={submit} disabled={!name.trim()}>
+      {error && <p className="text-sm text-danger">{error}</p>}
+      <Button full size="lg" onClick={submit} disabled={!name.trim() || busy}>
         Crear tienda
       </Button>
     </div>
