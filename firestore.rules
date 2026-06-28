@@ -64,14 +64,14 @@ service cloud.firestore {
     // Private fields are NEVER written here, so anonymous reads physically cannot
     // see cost, profit, privateNotes, inventory, or membership data.
 
-    // slugs/{slug} — global slug reservation. Doc existence IS the lock; it's never
-    // listed. create-only gives atomic, concurrency-safe uniqueness: a second create
-    // on an existing slug fails.
+    // slugs/{slug} — global slug reservation. Doc existence IS the lock. `get` is
+    // allowed for signed-in clients (the claim transaction reads-then-creates to
+    // enforce atomic uniqueness); `list` is always denied (no enumeration).
     match /slugs/{slug} {
-      allow read: if false;
+      allow get: if isSignedIn();
+      allow list: if false;
       allow create: if isSignedIn();
       allow delete: if isSignedIn();
-      allow update: if false;
     }
 
     // publicStores/{slug} — minimal public storefront. Anonymous read; writes by
