@@ -6,6 +6,7 @@ export { Badge } from "./Badge";
 export { Money, StatRow } from "./Money";
 export { ScreenHeader } from "./ScreenHeader";
 export { EmptyState } from "./EmptyState";
+export { Spinner } from "./Spinner";
 export { Sheet, useEntitySheet } from "./Sheet";
 export { ProductImage } from "./ProductImage";
 export { BottomNav } from "./BottomNav";
