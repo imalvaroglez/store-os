@@ -27,7 +27,6 @@ import {
   deleteEntity,
   seedCloudIfEmpty,
   claimSlug,
-  releaseSlug,
   projectPublicForStore,
   unprojectPublicForStore,
   upsertPublicProduct,
@@ -196,16 +195,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const store: Store = { ...existing, ...patch, updatedAt: nowIso() };
       const slugChanged = patch.slug !== undefined && patch.slug !== existing.slug;
       if (cloud && slugChanged) {
-        // Rename: claim the new slug (may throw SlugTakenError), then update the
-        // store, re-parent its public products to the new slug, and release the
-        // old slug reservation. The local dispatch only runs if the claim succeeds.
+        // Rename: claim the new slug first (may throw SlugTakenError). The local
+        // dispatch only runs if the claim succeeds, so a collision leaves nothing
+        // half-renamed.
         await claimSlug(store.slug, store.id);
       }
       dispatch({ type: "UPDATE_STORE", store });
       persistEntity("stores", store);
       if (cloud) {
+        if (slugChanged) {
+          // Remove the OLD public projection (storefront + products carrying the
+          // old storeSlug) and release the old slug, so /catalogo/{oldSlug}
+          // stops serving after the rename. unproject also releases the slug,
+          // so no separate releaseSlug call is needed.
+          await unprojectPublicForStore(existing).catch(() => {});
+        }
         await projectPublicForStore(store, state.products).catch(() => {});
-        if (slugChanged) await releaseSlug(existing.slug);
       }
     },
     deleteStore: (storeId) => {
