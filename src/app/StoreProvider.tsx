@@ -26,6 +26,12 @@ import {
   saveEntity,
   deleteEntity,
   seedCloudIfEmpty,
+  claimSlug,
+  releaseSlug,
+  projectPublicForStore,
+  unprojectPublicForStore,
+  upsertPublicProduct,
+  removePublicProduct,
 } from "./firebase/firestoreData";
 import { isFirebaseConfigured } from "./firebase/config";
 
@@ -99,8 +105,8 @@ type StoreContextValue = {
   state: AppState;
   activeStore: Store | null;
   cloud: boolean; // true when operating on Firestore (signed in)
-  addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Store;
-  updateStore: (patch: Partial<Store> & { id: string }) => void;
+  addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
+  updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"invited" | "pending">;
   removeMember: (storeId: string, uid: string) => void;
@@ -170,18 +176,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state,
     activeStore: state.stores.find((s) => s.id === state.activeStoreId) ?? null,
     cloud,
-    addStore: (input) => {
+    addStore: async (input) => {
       const store: Store = { ...input, id: uid("store"), createdAt: nowIso(), updatedAt: nowIso() };
+      // Claim the slug first (throws SlugTakenError on global collision) so we
+      // don't create a store whose catalog can't be published.
+      if (cloud) await claimSlug(store.slug, store.id);
       dispatch({ type: "ADD_STORE", store });
       persistEntity("stores", storeWithMembership(store, user));
+      if (cloud) {
+        await projectPublicForStore(store, state.products).catch(() => {});
+      }
       return store;
     },
-    updateStore: (patch) => {
+    updateStore: async (patch) => {
       const existing = state.stores.find((s) => s.id === patch.id);
       if (!existing) return;
       const store: Store = { ...existing, ...patch, updatedAt: nowIso() };
+      const slugChanged = patch.slug !== undefined && patch.slug !== existing.slug;
+      if (cloud && slugChanged) {
+        // Rename: claim the new slug (may throw SlugTakenError), then update the
+        // store, re-parent its public products to the new slug, and release the
+        // old slug reservation. The local dispatch only runs if the claim succeeds.
+        await claimSlug(store.slug, store.id);
+      }
       dispatch({ type: "UPDATE_STORE", store });
       persistEntity("stores", store);
+      if (cloud) {
+        await projectPublicForStore(store, state.products).catch(() => {});
+        if (slugChanged) await releaseSlug(existing.slug);
+      }
     },
     deleteStore: (storeId) => {
       const store = state.stores.find((s) => s.id === storeId);
@@ -192,6 +215,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         state.products.filter((p) => p.storeId === storeId).forEach((p) => deleteEntity(user, "products", p.id).catch(() => {}));
         state.customers.filter((c) => c.storeId === storeId).forEach((c) => deleteEntity(user, "customers", c.id).catch(() => {}));
         state.orders.filter((o) => o.storeId === storeId).forEach((o) => deleteEntity(user, "orders", o.id).catch(() => {}));
+        // Remove the public catalog projection + release the slug.
+        unprojectPublicForStore(store).catch(() => {});
       }
     },
     inviteMember: async (storeId, email) => {
@@ -228,10 +253,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     upsertProduct: (product) => {
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
       persistEntity("products", product);
+      if (cloud && !fromCloud.current) {
+        const store = state.stores.find((s) => s.id === product.storeId);
+        if (store) upsertPublicProduct(product, store.slug).catch(() => {});
+      }
     },
     deleteProduct: (productId) => {
       dispatch({ type: "DELETE_PRODUCT", productId });
-      if (cloud && user && !fromCloud.current) deleteEntity(user, "products", productId).catch(() => {});
+      if (cloud && user && !fromCloud.current) {
+        deleteEntity(user, "products", productId).catch(() => {});
+        removePublicProduct(productId).catch(() => {});
+      }
     },
     upsertCustomer: (customer) => {
       dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });

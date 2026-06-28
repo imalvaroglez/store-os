@@ -59,5 +59,32 @@ service cloud.firestore {
       allow list: if isSignedIn();
       allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
     }
+
+    // --- Public catalog (anonymous-readable projections) ---
+    // Private fields are NEVER written here, so anonymous reads physically cannot
+    // see cost, profit, privateNotes, inventory, or membership data.
+
+    // slugs/{slug} — global slug reservation. Doc existence IS the lock; it's never
+    // listed. create-only gives atomic, concurrency-safe uniqueness: a second create
+    // on an existing slug fails.
+    match /slugs/{slug} {
+      allow read: if false;
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn();
+      allow update: if false;
+    }
+
+    // publicStores/{slug} — minimal public storefront. Anonymous read; writes by
+    // any signed-in client (the projection carries nothing sensitive).
+    match /publicStores/{slug} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // publicProducts/{id} — public-only product projection. Anonymous read.
+    match /publicProducts/{id} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
   }
 }

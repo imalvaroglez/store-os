@@ -3,6 +3,8 @@ import { useStore } from "../../app/StoreProvider";
 import { useAuth } from "../../app/firebase/AuthProvider";
 import { Button, TextField, SelectField } from "../../design-system";
 import { STORE_TYPE_LABELS } from "../../lib/labels";
+import { SlugTakenError } from "../../app/firebase/firestoreData";
+import { slugify } from "./slugify";
 import type { StoreType } from "../../types";
 
 // Full management for a single store: rename, change type, WhatsApp, members
@@ -33,13 +35,29 @@ export function StoreSettingsScreen({
   const pending = store.pendingInvites ?? [];
   const isOwnerOrAdmin = user?.role === "super_admin" || store.ownerUid === user?.uid;
 
-  function saveBasic() {
-    updateStore({ id: store!.id, name: name.trim() || store!.name, whatsappPhone: whatsapp.trim() || undefined });
-    onDone();
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  async function saveBasic() {
+    setSaveError(null);
+    const newName = name.trim() || store!.name;
+    // If the name changed, the slug changes too — recompute it so updateStore
+    // re-claims/re-publishes the catalog under the new slug.
+    const patch: Parameters<typeof updateStore>[0] = {
+      id: store!.id,
+      name: newName,
+      whatsappPhone: whatsapp.trim() || undefined,
+    };
+    if (slugify(newName) !== store!.slug) patch.slug = slugify(newName);
+    try {
+      await updateStore(patch);
+      onDone();
+    } catch (err) {
+      setSaveError(err instanceof SlugTakenError ? err.message : "No se pudo guardar. Intenta de nuevo.");
+    }
   }
 
   function changeType(type: StoreType) {
-    updateStore({ id: store!.id, type });
+    void updateStore({ id: store!.id, type });
   }
 
   async function doInvite() {
@@ -82,6 +100,7 @@ export function StoreSettingsScreen({
           value={whatsapp}
           onChange={(e) => setWhatsapp(e.target.value)}
         />
+        {saveError && <p className="text-sm text-danger">{saveError}</p>}
         <Button full onClick={saveBasic} disabled={!name.trim()}>
           Guardar
         </Button>
