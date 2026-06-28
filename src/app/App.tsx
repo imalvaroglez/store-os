@@ -2,6 +2,7 @@ import { StoreProvider, useStore } from "./StoreProvider";
 import { useAuth } from "./firebase/AuthProvider";
 import { useRoute } from "./router";
 import { AppShell } from "./AppShell";
+import { AuthScreen } from "./firebase/AuthScreen";
 import { PublicCatalogScreen } from "../features/catalog/PublicCatalogScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
@@ -25,8 +26,19 @@ function Root() {
     );
   }
 
-  // Signed out (local demo) with no active store -> local create-first screen.
+  // Signed out with no active store. In a built deployment (DEV=false) a visitor
+  // must authenticate before anything else — no demo on the public app. In dev and
+  // tests (DEV=true) keep the local create-first demo screen.
   if (!activeStore) {
+    if (!import.meta.env.DEV) {
+      return (
+        <div className="min-h-full flex items-center justify-center p-4">
+          <div className="w-full max-w-sm">
+            <AuthScreen />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-full">
         <StoresScreen />
