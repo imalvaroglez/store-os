@@ -6,7 +6,7 @@ import { defineConfig } from "@playwright/test";
 // (which wraps playwright in firebase emulators:exec to auto-start/teardown).
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /firebase\.spec\.ts/,
+  testMatch: /(firebase|public-catalog)\.spec\.ts/,
   globalSetup: "./e2e/firebase-global-setup.ts",
   timeout: 40_000,
   fullyParallel: false,

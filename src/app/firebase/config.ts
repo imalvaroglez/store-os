@@ -26,7 +26,11 @@ const firebaseConfig = {
 
 const EMULATOR = !!import.meta.env.VITE_FIREBASE_EMULATOR;
 
-const projectId = firebaseConfig.projectId || (EMULATOR ? "store-os-demo" : undefined);
+// In emulator mode we ALWAYS target the local "store-os-demo" namespace,
+// regardless of any VITE_FIREBASE_PROJECT_ID that may be set in .env (the real
+// project id). This keeps the emulator tests deterministic and isolated from
+// the production project.
+const projectId = EMULATOR ? "store-os-demo" : firebaseConfig.projectId;
 
 // Firebase Auth requires a non-empty apiKey even in emulator mode (it's ignored
 // by the emulator but validated on init). Provide a placeholder in pure-emulator mode.
