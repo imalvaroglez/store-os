@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StoreProvider } from "./StoreProvider";
+import { App } from "./App";
 import { AuthProvider } from "./firebase/AuthProvider";
 import { PublicCatalogScreen } from "../features/catalog/PublicCatalogScreen";
 import { HomeScreen } from "../features/home/HomeScreen";
@@ -89,5 +90,31 @@ describe("HomeScreen store isolation render", () => {
     // The key assertion: Santi's on-demand product must not appear on Joyería home.
     expect(screen.queryByText("Perfume Baccarat Rouge 540")).toBeNull();
     expect(container.textContent).toContain("Joyería");
+  });
+});
+
+describe("Root signed-out routing (production)", () => {
+  it("shows AuthScreen, not the demo, when DEV is false and there is no session", () => {
+    const original = import.meta.env.DEV;
+    (import.meta.env as { DEV: boolean }).DEV = false;
+    localStorage.clear(); // cold visitor: no demo seed in a built deployment
+    try {
+      // No session, no active store -> in a built deployment this must be AuthScreen.
+      // AuthProvider is in pure-local mode (no VITE_FIREBASE_* here), so user stays null.
+      render(
+        <AuthProvider>
+          <StoreProvider>
+            <App />
+          </StoreProvider>
+        </AuthProvider>
+      );
+      // AuthScreen renders its header subtitle.
+      expect(screen.getByText("Sincroniza tus tiendas en la nube")).toBeTruthy();
+      // The demo store must NOT appear.
+      expect(screen.queryByText("Joyería")).toBeNull();
+    } finally {
+      (import.meta.env as { DEV: boolean }).DEV = original;
+      localStorage.clear();
+    }
   });
 });
