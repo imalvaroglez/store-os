@@ -7,9 +7,35 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 ## [Unreleased]
 
 ### Próximo
-- Autenticación + backend (Firebase Auth + Firestore) y modelo de roles.
-- Selector de tienda "¿Quién opera hoy?" + gestión de tiendas (crear / editar / cambiar tipo / eliminar).
-- UI por rol (dueño de tienda vs. super-admin).
+- Catálogo público para tiendas en la nube (path público en Firestore).
+- Path público del catálogo para tiendas en la nube.
+
+## [0.4.0] — 2026-06-27
+
+### Added
+- **Firebase foundation:** Auth (email/password + Google), Firestore (colecciones raíz
+  + membresía), reglas de seguridad (super-admin + miembros por tienda), primer
+  usuario → super_admin. Modo demo local (sin sesión) intacto; modo cloud al iniciar sesión.
+- **Selector de tienda "¿Quién opera hoy?"** (lista compacta) tras iniciar sesión;
+  "Cambiar tienda" regresa a él.
+- **Gestión completa de tiendas:** renombrar, cambiar tipo (Bajo pedido ↔ Inventario
+  y precios), WhatsApp, invitar miembros por correo (con link de acceso si no tienen
+  cuenta), quitar miembros, eliminar tienda (cascada).
+- **UI por rol + aislamiento de datos:** dueños ven solo sus tiendas; super-admin ve
+  todo. Lecturas acotadas por membresía en cliente y reglas.
+- **ErrorBoundary** para recuperación ante fallos en producción.
+- **Listo para Vercel:** `vercel.json` (SPA rewrite, cache de assets) + guía de
+  despliegue (`docs/DEPLOYMENT.md`).
+- Pruebas e2e contra el emulador Firebase (signup → admin + seed; sign out → demo;
+  member sin tiendas; picker + crear tienda).
+
+### Changed
+- `npm run e2e` ahora excluye las pruebas de Firebase (requieren emulador); usa
+  `npm run e2e:firebase`. Nuevos scripts `emulators` y `e2e:firebase`.
+- `StoreProvider` es auth-aware: localStorage (demo) o Firestore (cloud); escrituras
+  optimistas + sincronización por `onSnapshot`.
+
+## [0.3.0] — 2026-06-27
 
 ## [0.3.0] — 2026-06-27
 
