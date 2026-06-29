@@ -116,7 +116,7 @@ asserting `AuthScreen` content is present and demo store content ("Joyería") is
 ## Out of scope
 
 - Changing `AuthScreen`'s design/layout beyond what full-screen rendering requires.
-- Public catalog for cloud stores (still pending — separate concern).
+- Public catalog for cloud stores (tracked separately — implemented after this plan).
 - Any auth method enablement (Email/Password + Google already enabled in the console).
 
 ## Verification

@@ -6,9 +6,18 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+### Added
+- **Catálogo público en la nube:** proyecciones de solo lectura pública
+  (`publicStores/{slug}`, `publicProducts/{id}`, reserva global de slugs en
+  `slugs/{slug}`). Carga anónima (sin sesión) en `/catalogo/:slug` directo desde
+  Firestore; solo campos públicos (nunca costo, ganancia, notas, clientes, pedidos,
+  inventario). Acción "Republicar catálogo" en los ajustes de la tienda y
+  desproyección del slug viejo al renombrar.
+- **Modo emulador blindado:** nunca se activa en builds de producción, aunque la
+  bandera `VITE_FIREBASE_EMULATOR` se filtre al entorno de build.
+
 ### Próximo
-- Catálogo público para tiendas en la nube (path público en Firestore).
-- Path público del catálogo para tiendas en la nube.
+- _—_
 
 ## [0.4.0] — 2026-06-27
 
