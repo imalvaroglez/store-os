@@ -1,22 +1,74 @@
-import { useStore } from "../../app/StoreProvider";
+import { useEffect, useState } from "react";
 import {
   Button,
   Card,
   EmptyState,
   ProductImage,
+  Spinner,
 } from "../../design-system";
-import { publicProductsForStore } from "../../lib/selectors";
 import { publicPrice } from "../../lib/money";
 import { formatMoney } from "../../lib/money";
 import { createWhatsAppProductUrl, createWhatsAppStoreUrl } from "../../lib/whatsapp";
+import {
+  loadPublicCatalog,
+  PublicCatalogNotFoundError,
+  type PublicStore as PublicCatalogStore,
+  type PublicProduct as PublicCatalogProduct,
+} from "../../app/firebase/publicCatalog";
 
 // Public-facing catalog at /catalogo/:slug. Shows ONLY public fields.
 // Never shows: cost, profit, private notes, customers, orders, inventory counts.
+// Loads directly from the public projection collections — works for anonymous
+// visitors (no session) and signed-in non-members alike.
 export function PublicCatalogScreen({ slug }: { slug: string }) {
-  const { state } = useStore();
-  const store = state.stores.find((s) => s.slug === slug);
+  const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
+  const [store, setStore] = useState<PublicCatalogStore | null>(null);
+  const [products, setProducts] = useState<PublicCatalogProduct[]>([]);
 
-  if (!store) {
+  useEffect(() => {
+    let cancelled = false;
+    setStatus("loading");
+    loadPublicCatalog(slug)
+      .then((data) => {
+        if (cancelled) return;
+        setStore(data.store);
+        setProducts(data.products);
+        setStatus("ready");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setStatus(err instanceof PublicCatalogNotFoundError ? "notfound" : "error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  if (status === "loading") {
+    return (
+      <div className="min-h-full flex items-center justify-center p-6">
+        <Spinner label="Cargando catálogo…" />
+      </div>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <div className="min-h-full flex items-center justify-center p-6">
+        <EmptyState
+          title="No se pudo cargar"
+          subtitle="Revisa tu conexión e intenta de nuevo."
+          action={
+            <Button onClick={() => loadRetry(slug, setStore, setProducts, setStatus)}>
+              Reintentar
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  if (status === "notfound" || !store) {
     return (
       <div className="min-h-full flex items-center justify-center p-6">
         <EmptyState
@@ -27,7 +79,6 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
     );
   }
 
-  const products = publicProductsForStore(state.products, store.id);
   const isTiered = store.type === "inventory_tiered";
 
   return (
@@ -45,7 +96,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
             {isTiered ? "Catálogo de productos" : "Catálogo bajo pedido"}
           </p>
           <a
-            href={createWhatsAppStoreUrl(store)}
+            href={createWhatsAppStoreUrl(whatsappStore(store))}
             target="_blank"
             rel="noreferrer"
             className="inline-block mt-5"
@@ -65,7 +116,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
             const price = publicPrice(p);
             return (
               <Card key={p.id} className="overflow-hidden p-0">
-                <ProductImage src={p.imageUrl} alt={p.name} size="full" />
+                <ProductImage src={p.imageUrl ?? undefined} alt={p.name} size="full" />
                 <div className="p-4">
                   <h2 className="serif-display font-semibold text-lg text-ink">{p.name}</h2>
                   {p.publicDescription && (
@@ -76,7 +127,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                       {formatMoney(price)}
                     </span>
                     <a
-                      href={createWhatsAppProductUrl(p, store)}
+                      href={createWhatsAppProductUrl(whatsappProduct(p), whatsappStore(store))}
                       target="_blank"
                       rel="noreferrer"
                       className="shrink-0"
@@ -94,4 +145,32 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
       </main>
     </div>
   );
+}
+
+// Retry handler for the error state.
+function loadRetry(
+  slug: string,
+  setStore: (s: PublicCatalogStore | null) => void,
+  setProducts: (p: PublicCatalogProduct[]) => void,
+  setStatus: (s: "loading" | "ready" | "notfound" | "error") => void
+) {
+  setStatus("loading");
+  loadPublicCatalog(slug)
+    .then((data) => {
+      setStore(data.store);
+      setProducts(data.products);
+      setStatus("ready");
+    })
+    .catch((err) => setStatus(err instanceof PublicCatalogNotFoundError ? "notfound" : "error"));
+}
+
+// The WhatsApp helpers are typed for the full Store/Product; the public
+// projection only has the fields they actually use (name + whatsappPhone).
+function whatsappStore(store: PublicCatalogStore) {
+  return { name: store.name, whatsappPhone: store.whatsappPhone ?? undefined } as Parameters<
+    typeof createWhatsAppStoreUrl
+  >[0];
+}
+function whatsappProduct(p: PublicCatalogProduct) {
+  return { name: p.name } as Parameters<typeof createWhatsAppProductUrl>[0];
 }

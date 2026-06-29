@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function isSelf(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function userRole(uid) { return get(/databases/$(database)/documents/users/$(uid)).data.role; }
+    function isSuperAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userRole(request.auth.uid) == 'super_admin';
+    }
+    function isMember(storeId) {
+      return isSuperAdmin()
+        || (exists(/databases/$(database)/documents/stores/$(storeId))
+            && get(/databases/$(database)/documents/stores/$(storeId)).data.memberUids.hasAny([request.auth.uid]));
+    }
+    function roleIs(r) { return request.resource.data.role == r; }
+
+    // users/{uid} — readable by any signed-in user (needed for the first-user
+    // bootstrap count and for looking up members by email). A user creates/edits
+    // their own doc; the client sets role (super_admin for the first user, member
+    // after). Updates by a non-admin may not touch role.
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSelf(uid) && (roleIs('member') || roleIs('super_admin'));
+      allow update: if (isSelf(uid) || isSuperAdmin())
+        && (isSuperAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
+      allow delete: if isSuperAdmin();
+    }
+
+    // stores/{id} — `get`/write gated by membership; `list` allowed for signed-in
+    // users (the client scopes with `where memberUids array-contains uid`; a
+    // non-member only receives their own stores).
+    match /stores/{id} {
+      allow get: if isMember(id);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberUids.hasAny([request.auth.uid]);
+      allow update, delete: if isMember(id);
+    }
+
+    // Entities: `get`/write gated by membership; `list` allowed for signed-in users
+    // (the client queries with `where storeId in [<accessible stores>]`, so results
+    // stay within the user's stores).
+    match /products/{id} {
+      allow get: if isSignedIn() && isMember(resource.data.storeId);
+      allow list: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
+    }
+    match /customers/{id} {
+      allow get: if isSignedIn() && isMember(resource.data.storeId);
+      allow list: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
+    }
+    match /orders/{id} {
+      allow get: if isSignedIn() && isMember(resource.data.storeId);
+      allow list: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
+    }
+
+    // --- Public catalog (anonymous-readable projections) ---
+    // Private fields are NEVER written here, so anonymous reads physically cannot
+    // see cost, profit, privateNotes, inventory, or membership data.
+
+    // slugs/{slug} — global slug reservation. Doc existence IS the lock. `get` is
+    // allowed for signed-in clients (the claim transaction reads-then-creates to
+    // enforce atomic uniqueness); `list` is always denied (no enumeration).
+    match /slugs/{slug} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    // publicStores/{slug} — minimal public storefront. Anonymous read; writes by
+    // any signed-in client (the projection carries nothing sensitive).
+    match /publicStores/{slug} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // publicProducts/{id} — public-only product projection. Anonymous read.
+    match /publicProducts/{id} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+  }
+}

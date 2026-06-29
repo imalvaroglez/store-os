@@ -68,9 +68,25 @@ public/           # manifest, service worker, icono
 - ✅ Sistema de diseño unificado con gate de cumplimiento
 - ✅ Layout responsive (móvil + escritorio)
 - ✅ Sistema de temas (Paper Ledger / Maximalista / Lujo)
-- ⏭️ Autenticación + backend (Firebase Auth + Firestore) + roles — en diseño
-- ⏭️ Selector de tienda estilo "¿quién opera hoy?" + gestión completa de tiendas
-- ⏭️ UI por rol (dueño vs. super-admin)
+- ✅ Autenticación + backend (Firebase Auth + Firestore) + roles (super-admin + miembros por tienda)
+- ✅ Selector de tienda estilo "¿quién opera hoy?" + gestión completa de tiendas (crear / editar / cambiar tipo / invitar miembros / eliminar)
+- ✅ UI por rol (dueño vs. super-admin) + aislamiento de datos
+- ✅ Listo para desplegar en Vercel — ver [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+
+## Despliegue
+
+App lista para producción (Vercel + Firebase). Ver la guía completa en
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md):
+
+1. Crear un proyecto Firebase (Auth Email/Password + Google, Firestore).
+2. Agregar las variables `VITE_FIREBASE_*` en Vercel.
+3. Desplegar `firestore.rules`.
+4. Importar el repo en Vercel (framework Vite auto-detectado). El primer usuario
+   que se registra se vuelve super-admin.
+
+Para desarrollo local sin backend: `npm run dev` (modo demostración en
+`localStorage`). Para pruebas con emulador: `npm run emulators` +
+`npm run e2e:firebase`.
 
 ## Decisiones de diseño
 

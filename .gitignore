@@ -148,3 +148,7 @@ playwright-report/
 /blob-report/
 /playwright/.cache
 .superpowers/
+.vercel
+.env
+.env.*
+!.env.example
