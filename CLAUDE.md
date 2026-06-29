@@ -11,23 +11,27 @@ Stack: **React 18 + TypeScript + Vite + Tailwind**, `localStorage` (próximament
 ## Comandos
 
 ```bash
-npm run dev        # desarrollo (5173)
-npm run build      # tsc --noEmit + vite build
-npm run typecheck  # tsc --noEmit
-npm run test       # vitest (unit + design-system gate)
-npm run e2e        # playwright (móvil + escritorio)
-npm run preview    # build de producción
+npm run dev            # desarrollo (5173) — modo demo local sin backend
+npm run build          # tsc --noEmit + vite build
+npm run typecheck      # tsc --noEmit
+npm run test           # vitest (unit + design-system gate)
+npm run e2e            # playwright frontend (smoke + responsive + theme, móvil + escritorio)
+npm run e2e:firebase   # pruebas contra el emulador Firebase (requiere `npm run emulators`)
+npm run emulators      # Firebase Auth + Firestore emuladores en localhost
+npm run preview        # build de producción
 ```
 
-Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run build` deben pasar (idealmente `npm run e2e` también).
+Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run build` deben pasar (idealmente `npm run e2e` también). Cambios en auth/cloud: `npm run e2e:firebase`.
 
 ## Arquitectura (lo esencial)
 
-- **Estado:** un solo `StoreProvider` (`src/app/StoreProvider.tsx`, `useReducer`) es el **único** que escribe `localStorage`. Ningún componente toca `localStorage` directamente. El aislamiento entre tiendas se hace **solo** vía selectores en `src/lib/selectors.ts`.
-- **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Las primitivas leen tokens (CSS vars) + Tailwind.
-- **Gate de cumplimiento:** `src/design-system/design-system-gate.test.ts` **falla** si `src/features/**` o `src/app/**` renderizan `<button>`/`<select>`/`<input>` crudos o importan UI de fuera del sistema de diseño. No lo eludas — si necesitas un control nuevo, agrégalo al sistema de diseño.
-- **Temas:** `src/design-system/theme/`. Cada tema define tokens (color, tipografía, radios, sombras, **movimiento**). `ThemeProvider` los inyecta en `<html data-theme>`. Paper Ledger reproduce el look original como default.
-- **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. Ruta pública `/catalogo/:slug`.
+- **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. Modo demo local (sin sesión) intacto.
+- **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules` (super-admin + miembros por tienda). El adaptador `firestoreData.ts` acota lecturas a las tiendas accesibles.
+- **Estado:** `StoreProvider` (`useReducer`) es el **único** escritor de `localStorage` en modo demo; en modo cloud escribe en Firestore. Aislamiento entre tiendas **solo** vía selectores en `src/lib/selectors.ts`.
+- **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
+- **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Gate de cumplimiento: falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos (excepción: `ErrorBoundary`).
+- **Temas:** `src/design-system/theme/`. Cada tema define tokens (color, tipografía, radios, sombras, **movimiento**). `ThemeProvider` los inyecta en `<html data-theme>`. Per-usuario, persiste en `localStorage` → perfil Firestore.
+- **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. Ruta pública `/catalogo/:slug` (local demo; cloud requiere path público, pendiente).
 - **Datos:** tipos en `src/types/index.ts`. Coerción numérica siempre vía `parseAmount` (`src/lib/money.ts`) — nunca escribas `NaN` al estado.
 
 ## Convenciones (importantes)
@@ -49,12 +53,16 @@ Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run bu
 
 ## Out of scope (todavía)
 
-Sin auth, sin backend/sync, sin subida real de imágenes (solo URL), sin pagos/checkout/carrito, sin facturas, sin proveedores, sin códigos de barras/SKU, sin ledger de inventario, sin analítica. El catálogo público es local (no es compartible globalmente hasta que exista backend).
+Sin subida real de imágenes (solo URL), sin pagos/checkout/carrito, sin facturas, sin proveedores, sin códigos de barras/SKU, sin ledger de inventario, sin analítica. El catálogo público para tiendas en la nube requiere un path público en Firestore (pendiente); el catálogo local-demo funciona.
 
-## Próximos sub-proyectos (en orden)
+## Estado del roadmap
 
-1. Firebase Auth + Firestore + modelo de roles (super-admin + miembros por tienda). Spec: pendiente.
-2. Selector de tienda "¿Quién opera hoy?" + gestión completa de tiendas (crear/editar/cambiar tipo/eliminar).
-3. UI por rol (dueño vs. super-admin).
+1. ✅ Firebase Auth + Firestore + modelo de roles (super-admin + miembros por tienda).
+2. ✅ Selector de tienda "¿Quién opera hoy?" + gestión completa de tiendas (crear/editar/cambiar tipo/invitar miembros/eliminar).
+3. ✅ UI por rol (dueño vs. super-admin) + aislamiento de datos + listo para Vercel.
+
+## Despliegue
+
+Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno + reglas). El primer usuario registrado se vuelve super-admin.
 
 Los diseños detallados viven en `docs/superpowers/specs/`.

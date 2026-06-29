@@ -15,8 +15,12 @@ const SCOPED_FILES = [
   ...globSync("src/app/**/*.tsx"),
 ];
 
-// Files that are part of the design system are NOT scoped (they implement primitives).
-const isExempt = (f: string) => f.includes("src/design-system/");
+// Files exempt from the gate:
+// - anything in src/design-system/ (primitives are built on raw elements)
+// - ErrorBoundary.tsx: a crash fallback that must render even when the design
+//   system itself (or its providers) is broken, so it uses a minimal raw button.
+const isExempt = (f: string) =>
+  f.includes("src/design-system/") || f.endsWith("src/app/ErrorBoundary.tsx");
 
 const RAW_ELEMENT_RE = /<(button|select|input)(\s|>|\/)/;
 

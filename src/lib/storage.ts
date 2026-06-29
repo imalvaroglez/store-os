@@ -6,19 +6,30 @@ export const STORAGE_KEY = "store_os_state_v1";
 // ponytail: whole-state load/save. Simpler than per-entity keys; local-first so size is tiny.
 // When Firebase lands later, swap this adapter; the reducer/UI shape stays.
 
+// In a built deployment we never auto-seed demo data into a visitor's browser —
+// a signed-out visitor with empty storage should reach the AuthScreen, not a demo.
+// In dev/tests (import.meta.env.DEV) the seed keeps the local demo working.
+function emptyState(): AppState {
+  return { stores: [], activeStoreId: null, products: [], customers: [], orders: [] };
+}
+
+function freshState(): AppState {
+  return import.meta.env.DEV ? buildSeedState() : emptyState();
+}
+
 export function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      const seeded = buildSeedState();
+      const seeded = freshState();
       saveState(seeded);
       return seeded;
     }
     const parsed = JSON.parse(raw) as AppState;
     return normalizeState(parsed);
   } catch {
-    // Corrupt state -> reset to a clean seed. Better than a broken app.
-    const seeded = buildSeedState();
+    // Corrupt state -> reset. Demo seed in dev, empty in production.
+    const seeded = freshState();
     saveState(seeded);
     return seeded;
   }

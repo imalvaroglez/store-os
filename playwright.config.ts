@@ -4,6 +4,10 @@ import { defineConfig, devices } from "@playwright/test";
 // with clicks/keyboard at mobile AND desktop viewports. Run via `npm run e2e`.
 export default defineConfig({
   testDir: "./e2e",
+  // Default suite = the frontend (smoke + responsive + theme). Firebase tests
+  // need the emulator — run them via `npm run e2e:firebase`.
+  testMatch: /.*\.spec\.ts/,
+  testIgnore: /firebase\.spec\.ts/,
   timeout: 30_000,
   retries: 0,
   use: {
