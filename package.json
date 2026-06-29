@@ -17,6 +17,7 @@
     "deploy:rules": "firebase deploy --only firestore:rules"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
     "firebase": "^12.15.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
