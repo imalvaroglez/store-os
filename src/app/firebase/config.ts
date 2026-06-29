@@ -24,7 +24,12 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
 };
 
-const EMULATOR = !!import.meta.env.VITE_FIREBASE_EMULATOR;
+// Emulator mode is opt-in and DEV/TEST-only. It must NEVER be active in a
+// production build, even if VITE_FIREBASE_EMULATOR leaked into the build
+// environment — that would silently route Auth + Firestore to localhost and
+// (among other things) trigger Firebase's "Running in emulator mode" banner.
+const EMULATOR =
+  import.meta.env.MODE !== "production" && !!import.meta.env.VITE_FIREBASE_EMULATOR;
 
 // In emulator mode we ALWAYS target the local "store-os-demo" namespace,
 // regardless of any VITE_FIREBASE_PROJECT_ID that may be set in .env (the real
