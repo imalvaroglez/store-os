@@ -1,7 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
 // E2E against the Firebase Emulator. The app is served by `vite dev` with
-// VITE_FIREBASE_EMULATOR=true so it routes Auth + Firestore to localhost.
+// VITE_FIREBASE_EMULATOR=true so it routes Auth + Firestore + Storage to
+// localhost (Storage via connectStorageEmulator in src/app/firebase/storage.ts).
 // Start the emulator first: `npm run emulators`. Then: `npm run e2e:firebase`
 // (which wraps playwright in firebase emulators:exec to auto-start/teardown).
 export default defineConfig({
