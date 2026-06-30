@@ -9,6 +9,7 @@ export { EmptyState } from "./EmptyState";
 export { Spinner } from "./Spinner";
 export { Sheet, useEntitySheet } from "./Sheet";
 export { ProductImage } from "./ProductImage";
+export { PhotoPicker } from "./PhotoPicker";
 export { BottomNav } from "./BottomNav";
 export { Sidebar } from "./Sidebar";
 export { Screen } from "./Screen";
