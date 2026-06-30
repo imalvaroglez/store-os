@@ -1,0 +1,26 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Mirror of Firestore `isMember`: super_admin, or a member of the store.
+    // Cross-service rules only support the (default) Firestore database, which
+    // is all this app uses. Two reads per write — fine for a low-volume path.
+    function isStoreMember(storeId) {
+      return request.auth != null && (
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
+        || firestore.get(/databases/(default)/documents/stores/$(storeId)).data.memberUids.hasAny([request.auth.uid])
+      );
+    }
+
+    // Product photos. Reads are public — the anonymous catalog loads imageUrl.
+    // Writes/deletes require store membership; size + type validated on write.
+    match /products/{storeId}/{fileName} {
+      allow read: if true;
+      allow create, update: if isStoreMember(storeId)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/')
+        && fileName.matches('.*\\.jpg');
+      allow delete: if isStoreMember(storeId);
+    }
+  }
+}
