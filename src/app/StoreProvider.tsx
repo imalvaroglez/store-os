@@ -32,6 +32,7 @@ import {
   upsertPublicProduct,
   removePublicProduct,
 } from "./firebase/firestoreData";
+import { deleteProductImage } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
 
 // Actions: every mutation flows through here. storeId is carried on entity-level
@@ -272,10 +273,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     deleteProduct: (productId) => {
+      // Look up storeId before dispatch (the reducer drops the product).
+      const product = state.products.find((p) => p.id === productId);
       dispatch({ type: "DELETE_PRODUCT", productId });
       if (cloud && user && !fromCloud.current) {
         deleteEntity(user, "products", productId).catch(() => {});
         removePublicProduct(productId).catch(() => {});
+        if (product) deleteProductImage(product.storeId, productId).catch(() => {});
       }
     },
     upsertCustomer: (customer) => {
