@@ -11,7 +11,9 @@ both.
    **Google**.
 3. **Build → Firestore Database → Create database** (production mode). Pick a
    region close to your users.
-4. **Project settings → Your apps → Web (`</>`)** → register a web app → copy the
+4. **Build → Storage → Get started** (creates the default bucket). Browser photo
+   uploads need CORS configured on the bucket — see step 4.
+5. **Project settings → Your apps → Web (`</>`)** → register a web app → copy the
    `firebaseConfig` values (apiKey, authDomain, projectId, …).
 
 ## 2. Set environment variables on Vercel
@@ -34,17 +36,37 @@ Firestore to localhost (it's for local tests only).
 
 ## 3. Deploy the security rules
 
-The repo ships `firestore.rules`. Deploy them once (and on rule changes):
+The repo ships `firestore.rules` (data) and `storage.rules` (product photos).
+Deploy them once (and on rule changes):
 
 ```bash
 npm install -g firebase-tools
 firebase login
-firebase deploy --only firestore:rules
+firebase deploy --only firestore,storage
 ```
 
-(Or use the Firebase console → Firestore → Rules → paste `firestore.rules`.)
+(Or `npm run deploy:rules`, which runs the same.) The Storage rules allow public
+read (the anonymous catalog loads photos) and require store membership to
+write/delete, verified via a cross-service Firestore lookup.
 
-## 4. Deploy to Vercel
+## 4. Configure Storage CORS (required for browser uploads)
+
+Browser uploads to Firebase Storage trigger a CORS preflight. Buckets ship with
+**no CORS config by default**, so uploads from your Vercel domain fail with a
+preflight/CORS error until you set it. The repo's `cors.json` allows all origins
+(`*`) — safe, because Storage rules still enforce auth on writes; CORS only gates
+which browser origins may attempt the request.
+
+Apply it with `gsutil` (Google Cloud SDK; `gcloud auth login` first):
+
+```bash
+gsutil cors set cors.json gs://<projectId>.firebasestorage.app
+gsutil cors get gs://<projectId>.firebasestorage.app   # verify
+```
+
+Use the bucket name from `VITE_FIREBASE_STORAGE_BUCKET`.
+
+## 5. Deploy to Vercel
 
 ```bash
 npm install
@@ -59,7 +81,7 @@ Then either:
 `vercel.json` already sets the SPA rewrite (so deep links like `/catalogo/:slug`
 work on refresh) and long-cache headers for `/assets/*`.
 
-## 5. First user = super-admin
+## 6. First user = super-admin
 
 The very first account created on the deployed app becomes the **super_admin**
 (you). Sign up, then invite store owners by email from each store's settings.

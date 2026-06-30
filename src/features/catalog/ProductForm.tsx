@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
+import { resizeImageFile, uploadProductImage } from "../../app/firebase/storage";
 import {
   Button,
   TextField,
   TextArea,
   CheckboxField,
   SelectField,
+  PhotoPicker,
 } from "../../design-system";
 import { CATEGORY_LABELS, CATEGORY_OPTIONS } from "../../lib/labels";
 import { parseAmount } from "../../lib/money";
@@ -18,11 +20,27 @@ export function ProductForm({
   product: Product;
   onDone: () => void;
 }) {
-  const { upsertProduct, activeStore } = useStore();
+  const { upsertProduct, activeStore, cloud } = useStore();
   // Form shape follows the STORE type, not the product's fields — a fresh
   // newProduct has neither price nor prices, so inferring from it would mis-classify.
   const isTiered = activeStore?.type === "inventory_tiered";
   const [draft, setDraft] = useState<Product>(product);
+
+  // Staged photo (cloud only): a resized Blob chosen by the user but not yet
+  // uploaded. Upload happens on submit so cancelling the form leaves no orphan.
+  // `stagedPreview` is a local object-URL shown in the tile until save.
+  const [stagedBlob, setStagedBlob] = useState<Blob | null>(null);
+  const [stagedPreview, setStagedPreview] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Revoke any staged object-URL on unmount / re-stage so we don't leak it.
+  useEffect(() => {
+    return () => {
+      if (stagedPreview) URL.revokeObjectURL(stagedPreview);
+    };
+  }, [stagedPreview]);
 
   // Numeric inputs kept as strings in the form, coerced on submit (no NaN into state).
   const [cost, setCost] = useState(product.cost?.toString() ?? "");
@@ -33,10 +51,55 @@ export function ProductForm({
   const [qty, setQty] = useState(product.quantityOnHand?.toString() ?? "");
   const [lowAt, setLowAt] = useState(product.lowStockAt?.toString() ?? "");
 
-  function submit() {
-    if (!draft.name.trim()) return;
+  async function handleSelectPhoto(file: File) {
+    setPhotoError(null);
+    setPhotoBusy(true);
+    try {
+      const blob = await resizeImageFile(file);
+      setStagedBlob(blob);
+      setStagedPreview((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(blob);
+      });
+    } catch {
+      setPhotoError("No pudimos leer esa imagen, intenta con otra.");
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  function handleRemovePhoto() {
+    if (stagedPreview) URL.revokeObjectURL(stagedPreview);
+    setStagedBlob(null);
+    setStagedPreview(null);
+    setDraft({ ...draft, imageUrl: undefined });
+    setPhotoError(null);
+  }
+
+  async function submit() {
+    if (!draft.name.trim() || saving) return;
+
+    // Cloud + a staged photo: upload before persisting. On failure, block the
+    // save so we never store a half-uploaded state — keep the form open.
+    let imageUrl = draft.imageUrl;
+    if (cloud && activeStore && stagedBlob) {
+      setSaving(true);
+      setPhotoBusy(true);
+      try {
+        imageUrl = await uploadProductImage(activeStore.id, product.id, stagedBlob);
+        setPhotoError(null);
+      } catch {
+        setPhotoError("No se pudo subir la foto. Revisa tu conexión e intenta de nuevo.");
+        setPhotoBusy(false);
+        setSaving(false);
+        return; // block save
+      }
+      setPhotoBusy(false);
+    }
+
     const next: Product = {
       ...draft,
+      imageUrl,
       name: draft.name.trim(),
       category: draft.category,
       cost: parseAmount(cost),
@@ -75,13 +138,23 @@ export function ProductForm({
         onChange={(next) => setDraft({ ...draft, category: next })}
         options={CATEGORY_OPTIONS.map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))}
       />
-      <TextField
-        label="Imagen (URL)"
-        hint="Pega un enlace. Sin subida de archivos por ahora."
-        placeholder="https://..."
-        value={draft.imageUrl ?? ""}
-        onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value || undefined })}
-      />
+      {cloud ? (
+        <PhotoPicker
+          previewUrl={stagedPreview ?? draft.imageUrl}
+          busy={photoBusy}
+          error={photoError ?? undefined}
+          onSelect={handleSelectPhoto}
+          onRemove={handleRemovePhoto}
+        />
+      ) : (
+        <TextField
+          label="Imagen (URL)"
+          hint="Pega un enlace. La subida de fotos está disponible al iniciar sesión."
+          placeholder="https://..."
+          value={draft.imageUrl ?? ""}
+          onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value || undefined })}
+        />
+      )}
       <TextField
         label="Costo"
         inputMode="decimal"
@@ -137,8 +210,8 @@ export function ProductForm({
         caption={draft.isPublic ? "Público" : "Privado"}
       />
 
-      <Button full size="lg" onClick={submit} disabled={!draft.name.trim()}>
-        Guardar producto
+      <Button full size="lg" onClick={submit} disabled={!draft.name.trim() || saving}>
+        {saving ? "Guardando…" : "Guardar producto"}
       </Button>
     </div>
   );
