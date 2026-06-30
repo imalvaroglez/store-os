@@ -42,7 +42,7 @@ Deploy them once (and on rule changes):
 ```bash
 npm install -g firebase-tools
 firebase login
-firebase deploy --only firestore:rules,storage:rules
+firebase deploy --only firestore,storage
 ```
 
 (Or `npm run deploy:rules`, which runs the same.) The Storage rules allow public

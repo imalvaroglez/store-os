@@ -14,7 +14,7 @@
     "e2e": "playwright test",
     "emulators": "firebase emulators:start --only auth,firestore,storage",
     "e2e:firebase": "bash scripts/e2e-firebase.sh",
-    "deploy:rules": "firebase deploy --only firestore:rules,storage:rules"
+    "deploy:rules": "firebase deploy --only firestore,storage"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
