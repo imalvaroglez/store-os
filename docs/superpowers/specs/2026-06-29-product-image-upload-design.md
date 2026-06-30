@@ -30,10 +30,11 @@ anonymous catalog to load them.
 | Picker UX | Preview tile + native `<input type="file" accept="image/*">` + "Quitar foto" |
 | URL field in cloud | Replaced by the picker (one obvious way) |
 | Upload timing | **On submit**, not on pick — avoids orphan-on-cancel |
-| New-product upload | Product id pre-generated in the form so the path exists before first save |
+| New-product upload | Reuse the **already** pre-generated `product.id` (`newProduct` mints `uid("prod")` at `StoreProvider.tsx:320`, passed in by `CatalogScreen`); never mint an id in the form |
 | Storage read rule | Public (`allow read: if true`) — required by the anonymous catalog |
-| Storage write rule | Auth-only + size (<5 MB) + `image/*` + fixed path shape |
-| Write authority | Client writes (Approach A); Firestore `isMember` on the product doc remains the real authority |
+| Storage write/delete rule | `super_admin` OR store membership, verified in the rule via `firestore.get()`; size/type on `create, update`; separate `delete` |
+| Filename rule | `match /products/{storeId}/{fileName}` with `fileName.matches('.*\\.jpg')` (don't bet on `{productId}.jpg` partial capture) |
+| Emulator bucket | Explicit `store-os-demo.appspot.com` + `connectStorageEmulator(host, 9199)` — not an empty `.env` |
 | Demo access | Already strict (commit `bf5c10d` forces AuthScreen for signed-out visitors) |
 
 ## Strictness note (why public read is correct)
@@ -45,22 +46,43 @@ customer opens `/catalogo/:slug` with no account, and the product `<img>` fetche
 its Storage URL. That fetch *is* an anonymous Storage read. Making Storage reads
 auth-only would 403 every catalog image for the very customers the catalog
 serves. So: app access is strict (shipped), Storage **writes** are strict
-(auth-only), Storage **reads** stay public because the catalog is public.
+(membership-checked), Storage **reads** stay public because the catalog is public.
 
-## Security caveat (Approach A)
+## Security model
 
-Storage Security Rules cannot cheaply mirror Firestore `isMember` on the write
-path. What we enforce: signed-in only, size/type limits, fixed path. What we
-cannot enforce in rules alone: that the writer is a member of `storeId`.
-Acceptable because a non-member can upload a stray image but **cannot** create the
-`products/{id}` doc or the `publicProducts` projection that would ever display it
-— both gated by `isMember` in `firestore.rules`. A stray upload is dead bytes,
-never shown. The deterministic path also means writing another store's path only
-overwrites an image the writer cannot reference.
+Storage Security Rules **can** read Firestore via `firestore.get()` /
+`firestore.exists()` (cross-service rules), so writes/deletes mirror the same
+`super_admin`-or-member authority as Firestore `isMember` — closing the
+cross-store overwrite hole. Reads stay public (the anonymous catalog needs them).
 
-`// ponytail: client writes can't enforce Firestore membership in rules; upgrade
-// to a Callable Cloud Function that checks isMember(storeId) before accepting the
-// upload if Storage abuse/quota ever becomes a real problem.`
+```
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isStoreMember(storeId) {
+      return request.auth != null && (
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
+        || firestore.get(/databases/(default)/documents/stores/$(storeId)).data.memberUids.hasAny([request.auth.uid])
+      );
+    }
+    match /products/{storeId}/{fileName} {
+      allow read: if true;
+      allow create, update: if isStoreMember(storeId)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/')
+        && fileName.matches('.*\\.jpg');
+      allow delete: if isStoreMember(storeId);
+    }
+  }
+}
+```
+
+`isStoreMember` does two Firestore reads per write — acceptable for a low-volume
+write path. Caveat: Storage cross-service rules support only the **`(default)`**
+Firestore database; the app uses the default DB, so fine. Size/type validation
+lives on `create, update` only (not `delete`). The client writes the deterministic
+path `products/{storeId}/{productId}.jpg`; the `{fileName}` wildcard keeps the
+rule robust regardless of capture syntax.
 
 ## Architecture & file layout
 
@@ -73,7 +95,7 @@ form (orchestration) split.
 | `src/design-system/PhotoPicker.tsx` (new) | Preview tile + hidden file input + "Quitar foto". Callbacks hand `File \| undefined` up. | No (DS stays dep-free) |
 | `src/features/catalog/ProductForm.tsx` (changed) | Cloud: render `PhotoPicker` instead of URL field; resize on pick, upload on submit. Demo: unchanged URL field. | Yes |
 | `firestore.rules` | Unchanged | — |
-| `storage.rules` (new) + `firebase.json` (+storage) | Public read, auth+size+type write at `products/{storeId}/{productId}.jpg` | — |
+| `storage.rules` (new) + `firebase.json` (+storage, +:9199) | Public read; Firestore-backed membership write/delete; size/type on create/update | — |
 
 `Product.imageUrl` type is unchanged (`string | undefined`); the download URL is
 stored there exactly as a pasted URL is today. The public projection needs no
@@ -85,9 +107,9 @@ change — it already carries `imageUrl` through.
 form calls `resizeImageFile` (local, cheap) → sets a local object-URL preview on
 the tile (not yet uploaded).
 
-**Submit (cloud):** form mints `crypto.randomUUID()` for new products (existing
-reducer keys off `product.id`, so a pre-generated id works with `ADD_PRODUCT`);
-if a file is staged, `uploadProductImage(storeId, productId, blob)` →
+**Submit (cloud):** the form already has `product.id` (pre-generated by
+`newProduct`, passed in by `CatalogScreen`) — **reuse it, never mint**. If a file
+is staged, `await uploadProductImage(storeId, productId, blob)` →
 `getDownloadURL` → set `draft.imageUrl`; then the existing `submit()` persists
 normally (Firestore + public projection, unchanged).
 
@@ -95,9 +117,12 @@ normally (Firestore + public projection, unchanged).
 The bucket object is only deleted when the **product** is deleted (deterministic
 path means a re-add overwrites).
 
-**Delete product:** provider's `deleteProduct` (cloud) additionally calls
-`deleteProductImage(storeId, productId)`, best-effort (`.catch(() => {})`), same
-pattern as existing projection/entity deletes.
+**Delete product:** `deleteProduct(productId)` looks the product up in
+`state.products` for `storeId` **before** dispatch, then (cloud, best-effort
+`.catch(() => {})`) calls `deleteProductImage(storeId, productId)` alongside the
+existing `deleteEntity`/`removePublicProduct`. Note: there is **no product-delete
+UI today** (`deleteProduct` is API-only), so this is a provider hook verified by
+code review, not by e2e.
 
 **Demo mode:** zero Storage code runs; URL `TextField` unchanged. The form reads
 `useStore().cloud` to decide which control to render.
@@ -106,8 +131,11 @@ pattern as existing projection/entity deletes.
 
 - **Resize fails** (corrupt/non-image): inline error under the tile, `imageUrl`
   unchanged, product never half-saved.
-- **Upload fails** (network/quota/rules): same inline error, `imageUrl` unchanged;
-  save still works (image optional); retry by re-picking.
+- **Upload fails** (network/quota/rules) **while a file is staged:** block the
+  save — show the inline error, keep the form open, re-enable the button. The
+  user must either retry the upload or remove the staged file; they cannot save a
+  half-uploaded state. **Saving with no staged file** still works (image is
+  optional); the existing `imageUrl` (e.g. from an earlier upload) is preserved.
 - **Delete-image fails:** swallowed (best-effort); dead object is harmless.
 - **Remove photo + save:** `imageUrl` cleared → projection writes `null` → public
   catalog shows the 🛍️ fallback. Stale bucket object remains until product delete.
@@ -125,18 +153,59 @@ and the hidden input is internal to it (the gate scans feature/app code, not the
 DS itself) — so no new exemption is needed. The plan confirms this against the
 actual gate regex.
 
-## Testing (one check per non-trivial unit)
+## Testing
 
-- `storage.test.ts`: `resizeImageFile` — feed a fake image File, assert output is
-  JPEG and long edge ≤ 1024. (Upload/delete are thin SDK wrappers; covered by e2e.)
-- `PhotoPicker`: presentational; no unit test. Verified by the gate.
-- Emulator e2e (`e2e/firebase.spec.ts`): signed in → create product with a photo →
-  assert `imageUrl` is a Storage emulator URL and the `<img>` renders → delete the
-  product → assert the bucket object is gone. Exercises resize→upload→project→
-  public-load→delete against `:9199`.
+Vitest is node-default here (the gate uses `node:fs`), so there's no DOM/canvas in
+unit tests. Resize is DOM-only, so it's verified in Playwright, not Vitest.
+
+- `resizeImageFile`: **no Vitest unit test.** Verified end-to-end by e2e.
+- `PhotoPicker`: presentational; no unit test. Verified by the design-system gate.
+- Emulator e2e (`e2e/firebase.spec.ts`): signed in → (create a store if landed as
+  a member) → open catalog → attach a **>1024px image** generated at runtime via
+  canvas and fed through `setInputFiles` on the hidden input → save → assert the
+  `<img>` src is a Storage-emulator URL. A >1024px image actually exercises the
+  downscale; a 1×1 would only prove upload/render.
+- **No "delete product → object gone" e2e step** — there is no product-delete UI,
+  so it's infeasible against current UI. Image cleanup on delete is covered by the
+  provider hook (code-reviewed), and the deterministic path means replaces never
+  orphan.
+
+## Emulator wiring
+
+Auth + Firestore are wired today; Storage joins them:
+- `firebase.json`: `"storage": { "rules": "storage.rules" }` + under `emulators`
+  `"storage": { "port": 9199 }`.
+- `package.json` `emulators` / `deploy:rules` scripts include storage;
+  `e2e:firebase` runs via `scripts/e2e-firebase.sh` (see below).
+- `playwright.firebase.config.ts`: comment only — the app already routes via
+  `VITE_FIREBASE_EMULATOR=true`; Storage uses `connectStorageEmulator`
+  (Web-SDK-side), **not** `FIREBASE_STORAGE_EMULATOR_HOST` (Admin-SDK-side).
+- `e2e/firebase-global-setup.ts`: Storage is intentionally **not** wiped — the
+  emulator has no bulk-reset endpoint, and `emulators:exec` starts a fresh
+  instance each run, so Storage starts empty deterministically.
+- Emulator bucket is **explicit** (`store-os-demo.appspot.com`), not derived from
+  an empty `.env`, mirroring how `config.ts` forces the `store-os-demo` namespace.
+
+### Emulator rules limitation + swap script (verified during implementation)
+
+The Storage emulator **cannot evaluate the production rules**:
+1. Cross-service `firestore.get()` is unsupported → the membership check 403s
+   every write.
+2. `request.resource.contentType.matches('image/')` is also unreliable in the
+   emulator (always denies). `request.resource.size` and `request.auth` do work.
+
+Production `storage.rules` keeps **all** guards (membership + size + contentType +
+fileName) — production evaluates them correctly. For the e2e only, a separate
+`storage.rules.emulator` (auth + size cap) lets the flow run. `scripts/e2e-firebase.sh`
+swaps it in, runs the suite, and **always restores** the strict `storage.rules`
+via a trap — so the repo never ships weak rules. Membership + contentType
+enforcement is verified by review of `storage.rules`, not by the emulator.
+
+Note: `firebase --config <alt>.json emulators:exec` does **not** reliably override
+the storage rules path — hence the file-swap approach instead of an alternate
+config.
 
 ## Out of scope
 
 Customer/store-logo upload, backend thumbnails (Cloud Function), multi-size
-images, Function-gated membership-checked writes (documented upgrade path),
-image cropping/rotation UI.
+images, a product-delete UI, named-DB cross-service rules, image cropping/rotation.
