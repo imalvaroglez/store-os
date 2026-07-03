@@ -28,8 +28,11 @@ const firebaseConfig = {
 // production build, even if VITE_FIREBASE_EMULATOR leaked into the build
 // environment — that would silently route Auth + Firestore to localhost and
 // (among other things) trigger Firebase's "Running in emulator mode" banner.
+// Compare against the literal "true": Vite injects .env values as strings, so
+// `!!import.meta.env.X` would treat "false" as truthy and wrongly enable it.
 const EMULATOR =
-  import.meta.env.MODE !== "production" && !!import.meta.env.VITE_FIREBASE_EMULATOR;
+  import.meta.env.MODE !== "production" &&
+  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
 
 // In emulator mode we ALWAYS target the local "store-os-demo" namespace,
 // regardless of any VITE_FIREBASE_PROJECT_ID that may be set in .env (the real

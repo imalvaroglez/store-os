@@ -16,8 +16,10 @@ import { getFirebase } from "./config";
 // same object and a product delete removes it — no orphans from replaces.
 
 // Emulator mode mirrors config.ts: same opt-in, DEV/TEST-only, never in prod.
+// String compare (Vite injects .env as strings — `!!` would treat "false" as on).
 const EMULATOR =
-  import.meta.env.MODE !== "production" && !!import.meta.env.VITE_FIREBASE_EMULATOR;
+  import.meta.env.MODE !== "production" &&
+  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
 // Explicit emulator bucket — the Web SDK needs a real bucket name, and config.ts
 // forces the "store-os-demo" namespace, so we do the same for Storage.
 const EMULATOR_BUCKET = "store-os-demo.appspot.com";
@@ -72,7 +74,9 @@ export async function resizeImageFile(file: File): Promise<Blob> {
 async function loadImageBitmap(file: File): Promise<ImageBitmap | HTMLImageElement> {
   if (typeof createImageBitmap === "function") {
     try {
-      return await createImageBitmap(file);
+      // imageOrientation: 'from-image' honors the EXIF Orientation tag so a
+      // portrait phone photo doesn't render sideways after the canvas re-encode.
+      return await createImageBitmap(file, { imageOrientation: "from-image" });
     } catch {
       // fall through to <img>
     }
