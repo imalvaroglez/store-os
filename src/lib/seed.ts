@@ -1,5 +1,4 @@
 import type { AppState, Store, Product, Customer, Order } from "../types";
-import { uid } from "./ids";
 
 // Demo data: two stores so every store type is explorable on first run.
 // Santi = on-demand (perfumes/sneakers). Joyería = inventory-tiered.
@@ -7,7 +6,10 @@ import { uid } from "./ids";
 
 export function buildSeedState(): AppState {
   const now = new Date().toISOString();
-  // ponytail: fixed-ish ids via uid() at module build; collisions irrelevant for seed.
+  // Deterministic ids: the cloud seed (seedCloudIfEmpty) can race on a double
+  // mount (StrictMode / auth-state flicker) where two runs both see an empty
+  // project and both write. Random uid() ids would then duplicate every entity.
+  // Fixed ids make the second run overwrite the same docs — idempotent, no dupes.
   const santiId = "store_santi";
   const joyeriaId = "store_joyeria";
 
@@ -35,7 +37,7 @@ export function buildSeedState(): AppState {
   const products: Product[] = [
     // Santi — on-demand (single price)
     {
-      id: uid("prod"),
+      id: "prod_santi_1",
       storeId: santiId,
       name: "Perfume Baccarat Rouge 540",
       category: "perfume",
@@ -47,7 +49,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("prod"),
+      id: "prod_santi_2",
       storeId: santiId,
       name: "Tenis Jordan 1 Retro",
       category: "sneakers",
@@ -59,7 +61,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("prod"),
+      id: "prod_santi_3",
       storeId: santiId,
       name: "Gorra New Era (pedido especial)",
       category: "cap",
@@ -72,7 +74,7 @@ export function buildSeedState(): AppState {
     },
     // Joyería — inventory-tiered
     {
-      id: uid("prod"),
+      id: "prod_joyeria_1",
       storeId: joyeriaId,
       name: "Cadena de plata 925",
       category: "jewelry",
@@ -86,7 +88,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("prod"),
+      id: "prod_joyeria_2",
       storeId: joyeriaId,
       name: "Aretes de plata",
       category: "jewelry",
@@ -100,7 +102,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("prod"),
+      id: "prod_joyeria_3",
       storeId: joyeriaId,
       name: "Anillo grabado (privado)",
       category: "jewelry",
@@ -117,7 +119,7 @@ export function buildSeedState(): AppState {
 
   const customers: Customer[] = [
     {
-      id: uid("cust"),
+      id: "cust_santi_1",
       storeId: santiId,
       name: "María López",
       phone: "5511112222",
@@ -125,7 +127,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("cust"),
+      id: "cust_santi_2",
       storeId: santiId,
       name: "Carlos Ruiz",
       phone: "5533334444",
@@ -133,7 +135,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("cust"),
+      id: "cust_joyeria_1",
       storeId: joyeriaId,
       name: "Ana Torres",
       phone: "5555556666",
@@ -141,7 +143,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("cust"),
+      id: "cust_joyeria_2",
       storeId: joyeriaId,
       name: "Emprendedora Lucero",
       phone: "5577778888",
@@ -152,7 +154,7 @@ export function buildSeedState(): AppState {
 
   const orders: Order[] = [
     {
-      id: uid("order"),
+      id: "order_santi_1",
       storeId: santiId,
       customerId: customers[0].id,
       productName: "Perfume Baccarat Rouge 540",
@@ -167,7 +169,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("order"),
+      id: "order_santi_2",
       storeId: santiId,
       customerId: customers[1].id,
       productName: "Tenis Jordan 1 Retro",
@@ -181,7 +183,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("order"),
+      id: "order_joyeria_1",
       storeId: joyeriaId,
       customerId: customers[2].id,
       productName: "Cadena de plata 925",
@@ -196,7 +198,7 @@ export function buildSeedState(): AppState {
       updatedAt: now,
     },
     {
-      id: uid("order"),
+      id: "order_joyeria_2",
       storeId: joyeriaId,
       customerId: customers[3].id,
       productName: "Aretes de plata",
