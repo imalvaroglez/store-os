@@ -36,6 +36,14 @@ Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run bu
 
 ## Convenciones (importantes)
 
+- **🔴 CERO COSTOS — restricción dura.** El proyecto está en el plan Blaze **solo** porque Cloud Storage lo exige; **no se usa NADA que genere cobro**. Quédate siempre dentro del free tier. Límites no-cost que nos gobiernan:
+  - **Firestore:** 1 GiB almacenado, 50K lecturas/día, 20K escrituras/día, 20K borrados/día, 10 GiB egress/mes.
+  - **Storage:** 5 GB almacenados, 100 GB descargados/mes, 5K uploads/mes, 50K downloads/mes — **solo válido en regiones `us-central1`/`us-west1`/`us-east1`** (el bucket ya está en `us-east1`; no lo muevas).
+  - **Auth:** email/password y Google son gratis. **Nunca auth telefónica** (cobra por SMS).
+  - **Hosting:** 10 GB almacenado, 360 MB egress/día.
+  - **Cloud Functions:** 2M invocaciones/mes gratis, pero evita Functions a menos que sea estrictamente necesario (cada una es una superficie de costo/latencia).
+  - Prohibido: SQL Connect (trial de pago), App Hosting, cualquier servicio de Google Cloud que no sea Firestore/Storage/Functions- dentro-de-cuota.
+  - Al diseñar una feature, estima su consumo (ej. `firestore.get()` en reglas = 2 reads por upload) y confirma que cabe en el free tier antes de implementar. Ante la duda, pregunta.
 - **UI en español (México); código, tipos, identificadores y comentarios en inglés.**
 - **Lenguaje simple, no empresarial.** Evita CRM, SKU, pipeline, fulfillment, gross margin, etc.
 - **Mobile-first.** Tap targets ≥ ~40px, inputs a ≥16px (sin zoom en iOS).
