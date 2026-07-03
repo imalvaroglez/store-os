@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { resizeImageFile, uploadProductImage } from "../../app/firebase/storage";
+import { resizeImageFile, uploadProductImage, deleteProductImage } from "../../app/firebase/storage";
 import {
   Button,
   TextField,
@@ -105,6 +105,12 @@ export function ProductForm({
       cost: parseAmount(cost),
       updatedAt: new Date().toISOString(),
     };
+
+    // Cloud: if a previously-saved photo was removed (imageUrl went from a Storage
+    // URL to undefined), delete the object so it doesn't orphan. Best-effort.
+    if (cloud && activeStore && !imageUrl && product.imageUrl) {
+      deleteProductImage(activeStore.id, product.id).catch(() => {});
+    }
     if (isTiered) {
       next.prices = {
         retail: parseAmount(retail),

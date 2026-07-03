@@ -219,8 +219,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "DELETE_STORE", storeId });
       if (cloud && user && store && !fromCloud.current) {
         deleteEntity(user, "stores", storeId).catch(() => {});
-        // Best-effort: delete the store's entities in the cloud.
-        state.products.filter((p) => p.storeId === storeId).forEach((p) => deleteEntity(user, "products", p.id).catch(() => {}));
+        // Best-effort: delete the store's entities + product photos in the cloud.
+        state.products.filter((p) => p.storeId === storeId).forEach((p) => {
+          deleteEntity(user, "products", p.id).catch(() => {});
+          deleteProductImage(storeId, p.id).catch(() => {});
+        });
         state.customers.filter((c) => c.storeId === storeId).forEach((c) => deleteEntity(user, "customers", c.id).catch(() => {}));
         state.orders.filter((o) => o.storeId === storeId).forEach((o) => deleteEntity(user, "orders", o.id).catch(() => {}));
         // Remove the public catalog projection + release the slug.
