@@ -94,7 +94,12 @@ export async function saveEntity(
 ): Promise<void> {
   const { db } = getFirebase();
   const { id, ...data } = entity;
-  await setDoc(doc(db, name, id), data, { merge: true });
+  // Firestore rejects `undefined` field values ("Unsupported field value").
+  // Tiered stores carry `price: undefined` (and flat stores `prices: undefined`),
+  // so strip undefined keys before writing — one guard for every entity/call site.
+  const clean: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) if (v !== undefined) clean[k] = v;
+  await setDoc(doc(db, name, id), clean, { merge: true });
 }
 
 /** Delete a single entity doc. */
@@ -237,6 +242,12 @@ export async function removePublicProduct(productId: string): Promise<void> {
  * Seed the demo stores (Santi + Joyería) into Firestore for the super-admin on a
  * brand-new (empty) cloud account. Members are NOT seeded — they see only stores
  * an admin has invited them to (empty until then). Idempotent.
+ *
+ * Race note: this runs inside a StoreProvider effect that can double-fire
+ * (StrictMode / auth-state flicker). Two concurrent runs can BOTH see an empty
+ * project before either has written. The `existing.stores.length > 0` guard
+ * alone can't prevent that — so buildSeedState() uses DETERMINISTIC ids. A
+ * second run overwrites the same doc ids instead of creating duplicates.
  */
 export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
   if (user.role !== "super_admin") return; // members never auto-seed
