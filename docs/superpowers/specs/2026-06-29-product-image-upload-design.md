@@ -1,7 +1,7 @@
 # Product image upload — design (Store OS)
 
 Date: 2026-06-29
-Status: Approved (brainstorm)
+Status: Approved (brainstorm) — **shipped & verified against real Firebase 2026-07-03** (see "Production verification" addendum at the end).
 Sub-project: first item off the out-of-scope list. Adds real photo upload to
 products via Firebase Storage, replacing the paste-a-URL field.
 
@@ -209,3 +209,44 @@ config.
 
 Customer/store-logo upload, backend thumbnails (Cloud Function), multi-size
 images, a product-delete UI, named-DB cross-service rules, image cropping/rotation.
+
+---
+
+## Production verification addendum (2026-07-03)
+
+Verified against the **real** `store-os-f7cf8` backend (dev → Firebase prod,
+no emulator). Four issues surfaced that the emulator e2e could not catch, all
+fixed:
+
+1. **Cross-service `firestore.get()` needs an IAM grant.** `storage.rules`
+   verifies membership via `firestore.get(/databases/(default)/documents/...)`.
+   In a fresh Blaze project this fails with `storage/unauthorized` (403) for
+   EVERY upload, even the super-admin owner, because the Cloud Storage service
+   agent can't read Firestore. Fix: one-time
+   `roles/datastore.user` grant to `service-<projectNumber>@gcp-sa-firebasestorage.iam.gserviceaccount.com`
+   (documented in `docs/DEPLOYMENT.md` §4b). No cost — it's a permission; the
+   reads count against the normal Firestore free quota (2/upload). The emulator
+   never reproduced this because it can't evaluate `firestore.get()`.
+
+2. **`VITE_FIREBASE_EMULATOR` truthy bug.** `!!import.meta.env.VITE_FIREBASE_EMULATOR`
+   treated the string `"false"` as truthy, so dev silently ran against the
+   emulator even with `.env` saying `false`. Fixed by string-comparing to
+   `"true"` in `config.ts` and `storage.ts`. (Production builds were saved by
+   the `MODE !== "production"` guard, but the boolean bug was a latent footgun.)
+
+3. **`setDoc` rejected `undefined` fields.** Tiered stores carry `price: undefined`
+   (flat stores `prices: undefined`). Firestore rejects `undefined` field values,
+   so `saveEntity` threw and **no fields persisted** — not just `imageUrl`, the
+   entire product write. This is why a photo appeared in-session (local state)
+   but vanished on reload (never reached Firestore). Fixed by stripping `undefined`
+   keys in `saveEntity` (one guard for every entity/call site).
+
+4. **Seed race produced duplicate entities.** `seedCloudIfEmpty` can double-fire
+   (StrictMode / auth flicker); two runs both saw an empty project and both
+   wrote, and random `uid()` ids duplicated every product/customer/order.
+   Fixed by making `buildSeedState()` ids **deterministic** (`prod_joyeria_1`,
+   etc.) so a second run overwrites the same docs instead of duplicating.
+
+Also shipped the review fixes: EXIF orientation (`createImageBitmap({ imageOrientation: 'from-image' })`),
+exact contentType allowlist in `storage.rules` (was a broad `image/` prefix that
+admitted `image/svg+xml`), and orphan cleanup on remove-photo + delete-store.

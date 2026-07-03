@@ -66,6 +66,35 @@ gsutil cors get gs://<projectId>.firebasestorage.app   # verify
 
 Use the bucket name from `VITE_FIREBASE_STORAGE_BUCKET`.
 
+## 4b. Grant Storage access to Firestore (required for cross-service rules)
+
+`storage.rules` uses `firestore.get()` to verify store membership on every
+photo write (a **cross-service** Storage→Firestore read). For this to work, the
+project's **Cloud Storage service agent must be allowed to read Firestore**.
+Without it, every upload returns `storage/unauthorized` (HTTP 403) — even for
+the super-admin owner — because the membership lookup silently fails.
+
+This is a one-time IAM grant (no cost; it's a permission, not a billable
+operation). The `firestore.get()` calls count as normal Firestore reads against
+your daily quota (2 per photo upload — negligible under the free tier).
+
+```bash
+# projectNumber is on the Firebase console "Project settings" overview, or:
+gcloud projects describe <projectId> --format="value(projectNumber)"
+
+gcloud projects add-iam-policy-binding <projectId> \
+  --member="serviceAccount:service-<projectNumber>@gcp-sa-firebasestorage.iam.gserviceaccount.com" \
+  --role="roles/datastore.user" \
+  --condition=None
+```
+
+**How to tell it's missing:** uploads fail with `storage/unauthorized` but a
+temporary rule of `allow create: if request.auth != null` works. That pinpoints
+the cross-service `firestore.get()` as the failing guard. The Storage emulator
+does **not** reproduce this — it can't evaluate `firestore.get()` at all (see
+`storage.rules.emulator` + `scripts/e2e-firebase.sh`), so membership is only
+verified against the real backend.
+
 ## 5. Deploy to Vercel
 
 ```bash
