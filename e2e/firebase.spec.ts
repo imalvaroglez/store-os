@@ -186,3 +186,77 @@ test("an invited-less member sees no stores", async ({ page }) => {
   await gotoClean(page);
   await expect(page.getByText("Crea tu primera tienda")).toBeVisible({ timeout: 15000 });
 });
+
+test("product photo uploads, resizes, and renders", async ({ page }) => {
+  await gotoClean(page);
+  await ensureSignedOut(page);
+  await signUp(page, unique("photoadmin"), "password123");
+  await gotoClean(page);
+
+  // Ensure we're operating inside a store. If a prior test already created the
+  // admin (making this signup a member with no stores), create one from the empty
+  // state — otherwise an existing store is already active. Either way, wait until
+  // the home screen confirms a store is active before navigating, so the cloud
+  // write has propagated (mirrors the picker "create a store" test).
+  const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
+  if (!(await cambiar.count().catch(() => 0))) {
+    await page.getByRole("button", { name: /Crear tienda/ }).click();
+    await page.waitForTimeout(400);
+    await page.getByLabel("Nombre de la tienda").fill("Tienda Foto");
+    await page.getByRole("button", { name: "Crear tienda" }).last().click();
+  }
+  await expect(page.getByText(/¿Qué necesitas hacer hoy en/)).toBeVisible({ timeout: 20000 });
+
+  // Open the catalog via the in-app nav (keeps the in-memory active store; a cold
+  // route change would leave activeStore null and CatalogScreen renders nothing).
+  await page.getByRole("button", { name: "Catálogo" }).click();
+  await expect(page.getByRole("heading", { name: "Catálogo" })).toBeVisible();
+  await page.getByRole("button", { name: "+ Agregar" }).click();
+  await expect(page.getByRole("heading", { name: "Agregar producto" })).toBeVisible();
+  await page.getByLabel("Nombre").fill("Producto con foto");
+
+  // Generate a >1024px PNG at runtime (so resize actually downscales) and feed
+  // it to the hidden file input. The buffer is produced in-browser via canvas.
+  const file = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200;
+    canvas.height = 1200;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#ff6600";
+    ctx.fillRect(0, 0, 1200, 1200);
+    const blob: Blob = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b!), "image/png")
+    );
+    // base64-encode in-browser (no Buffer in page context).
+    const b64: string = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.slice(result.indexOf(",") + 1));
+      };
+      reader.readAsDataURL(blob);
+    });
+    return { name: "big.png", mimeType: "image/png", buffer: b64 };
+  });
+  await page.locator('input[type="file"]').setInputFiles({
+    name: file.name,
+    mimeType: file.mimeType,
+    buffer: Buffer.from(file.buffer, "base64"),
+  });
+
+  // Save: upload-on-submit, then the form closes.
+  await page.getByRole("button", { name: "Guardar producto" }).click();
+  await expect(page.getByRole("heading", { name: "Agregar producto" })).toHaveCount(0, {
+    timeout: 20000,
+  });
+
+  // The product row renders its photo <img> from the uploaded (resized) URL.
+  const img = page.locator("img").first();
+  await expect(img).toBeVisible({ timeout: 10000 });
+  const src = await img.getAttribute("src");
+  expect(src).toBeTruthy();
+  // A Storage-emulator download URL references the object path (URL-encoded)
+  // and the emulator host. This proves the upload produced a real Storage URL.
+  expect(src).toMatch(/products%2F.+\.jpg/);
+  expect(src).toContain("9199");
+});

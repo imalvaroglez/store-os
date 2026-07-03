@@ -1,0 +1,19 @@
+// TEST-ONLY Storage rules for the emulator. The Storage emulator cannot evaluate
+// cross-service firestore.get() (so the membership check 403s every write) and
+// does not reliably populate request.resource.contentType (so contentType.matches
+// also 403s). This permissive copy keeps the size cap + auth gate so the e2e can
+// exercise the full app flow (resize -> upload -> render) under the closest
+// practical constraints. Production membership + contentType + fileName guards
+// live in storage.rules and are verified by review, not by the emulator.
+// Never deploy this.
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /products/{storeId}/{fileName} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024;
+      allow delete: if request.auth != null;
+    }
+  }
+}

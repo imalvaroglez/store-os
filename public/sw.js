@@ -31,6 +31,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(
-    caches.match(req).then((cached) => cached || fetch(req).catch(() => cached))
+    caches.match(req).then(
+      (cached) =>
+        cached ||
+        fetch(req).catch(() => new Response("", { status: 504, statusText: "Offline" }))
+    )
   );
 });

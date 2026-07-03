@@ -12,9 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "emulators": "firebase emulators:start --only auth,firestore",
-    "e2e:firebase": "firebase emulators:exec --only auth,firestore 'playwright test --config=playwright.firebase.config.ts'",
-    "deploy:rules": "firebase deploy --only firestore:rules"
+    "emulators": "firebase emulators:start --only auth,firestore,storage",
+    "e2e:firebase": "bash scripts/e2e-firebase.sh",
+    "deploy:rules": "firebase deploy --only firestore,storage"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
@@ -23,6 +23,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

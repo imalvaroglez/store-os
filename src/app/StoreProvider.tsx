@@ -32,6 +32,7 @@ import {
   upsertPublicProduct,
   removePublicProduct,
 } from "./firebase/firestoreData";
+import { deleteProductImage } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
 
 // Actions: every mutation flows through here. storeId is carried on entity-level
@@ -218,8 +219,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "DELETE_STORE", storeId });
       if (cloud && user && store && !fromCloud.current) {
         deleteEntity(user, "stores", storeId).catch(() => {});
-        // Best-effort: delete the store's entities in the cloud.
-        state.products.filter((p) => p.storeId === storeId).forEach((p) => deleteEntity(user, "products", p.id).catch(() => {}));
+        // Best-effort: delete the store's entities + product photos in the cloud.
+        state.products.filter((p) => p.storeId === storeId).forEach((p) => {
+          deleteEntity(user, "products", p.id).catch(() => {});
+          deleteProductImage(storeId, p.id).catch(() => {});
+        });
         state.customers.filter((c) => c.storeId === storeId).forEach((c) => deleteEntity(user, "customers", c.id).catch(() => {}));
         state.orders.filter((o) => o.storeId === storeId).forEach((o) => deleteEntity(user, "orders", o.id).catch(() => {}));
         // Remove the public catalog projection + release the slug.
@@ -272,10 +276,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     deleteProduct: (productId) => {
+      // Look up storeId before dispatch (the reducer drops the product).
+      const product = state.products.find((p) => p.id === productId);
       dispatch({ type: "DELETE_PRODUCT", productId });
       if (cloud && user && !fromCloud.current) {
         deleteEntity(user, "products", productId).catch(() => {});
         removePublicProduct(productId).catch(() => {});
+        if (product) deleteProductImage(product.storeId, productId).catch(() => {});
       }
     },
     upsertCustomer: (customer) => {
