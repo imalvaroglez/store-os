@@ -7,6 +7,7 @@ export { Money, StatRow } from "./Money";
 export { AnimatedNumber } from "./AnimatedNumber";
 export { Reveal, RevealList } from "./Reveal";
 export { Lightbox } from "./Lightbox";
+export { Dialog } from "./Dialog";
 export { ScreenHeader } from "./ScreenHeader";
 export { EmptyState } from "./EmptyState";
 export { Spinner } from "./Spinner";

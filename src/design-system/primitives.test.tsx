@@ -4,6 +4,7 @@ import {
   AnimatedNumber,
   Badge,
   Button,
+  Dialog,
   Lightbox,
   ProductImage,
   Reveal,
@@ -158,5 +159,17 @@ describe("Lightbox", () => {
       <Lightbox open images={[{ src: "/a.png", alt: "Vasija" }]} index={0} onClose={() => {}} />
     );
     expect(screen.getByAltText("Vasija")).toBeTruthy();
+  });
+});
+
+describe("Dialog", () => {
+  it("renders nothing when closed", () => {
+    const { container } = render(<Dialog open={false} title="T" onClose={() => {}}><p>x</p></Dialog>);
+    expect(container.textContent).toBe("");
+  });
+  it("renders title and children when open", () => {
+    render(<Dialog open title="Borrar" onClose={() => {}}><p>¿Seguro?</p></Dialog>);
+    expect(screen.getByText("Borrar")).toBeTruthy();
+    expect(screen.getByText("¿Seguro?")).toBeTruthy();
   });
 });
