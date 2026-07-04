@@ -8,10 +8,12 @@ export function AnimatedNumber({
   value,
   format,
   duration = 1200,
+  className = "",
 }: {
   value: number;
   format?: "currency";
   duration?: number;
+  className?: string;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [display, setDisplay] = useState(0);
@@ -63,7 +65,7 @@ export function AnimatedNumber({
   }, [value, duration]);
 
   return (
-    <span ref={ref} className="serif-display tnum">
+    <span ref={ref} className={`serif-display tnum ${className}`}>
       {fmt(display)}
     </span>
   );

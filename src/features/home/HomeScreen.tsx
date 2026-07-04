@@ -56,16 +56,12 @@ export function HomeScreen() {
         <div className="grid grid-cols-2 gap-3 mb-4">
           <Card>
             <StatRow label="Falta cobrar" tone="danger">
-              <span className="text-[1.6rem] leading-tight">
-                <AnimatedNumber value={toPay} format="currency" />
-              </span>
+              <AnimatedNumber value={toPay} format="currency" className="text-[1.6rem] leading-tight" />
             </StatRow>
           </Card>
           <Card>
             <StatRow label="Ganancia esperada" tone="success">
-              <span className="text-[1.6rem] leading-tight">
-                <AnimatedNumber value={expectedProfit} format="currency" />
-              </span>
+              <AnimatedNumber value={expectedProfit} format="currency" className="text-[1.6rem] leading-tight" />
             </StatRow>
           </Card>
         </div>
