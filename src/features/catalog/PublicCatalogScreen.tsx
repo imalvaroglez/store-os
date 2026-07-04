@@ -4,7 +4,7 @@ import {
   Card,
   EmptyState,
   ProductImage,
-  Spinner,
+  SkeletonCard,
 } from "../../design-system";
 import { publicPrice } from "../../lib/money";
 import { formatMoney } from "../../lib/money";
@@ -46,8 +46,12 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
 
   if (status === "loading") {
     return (
-      <div className="min-h-full flex items-center justify-center p-6">
-        <Spinner label="Cargando catálogo…" />
+      <div className="min-h-full bg-paper p-4 md:p-8" role="status" aria-label="Cargando catálogo…">
+        <div className="mx-auto max-w-6xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
       </div>
     );
   }
