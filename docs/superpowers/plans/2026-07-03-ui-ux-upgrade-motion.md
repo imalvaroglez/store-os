@@ -344,10 +344,18 @@ git commit -m "feat(design-system): add skeleton loading placeholders"
 
 ---
 
-### Task 4: Wire SkeletonCard into CatalogScreen loading
+### Task 4: Wire SkeletonCard into catalog loading
+
+> **Deviation (resolved at execution):** `CatalogScreen.tsx` has no loading
+> state — it renders synchronously from already-subscribed `StoreProvider`
+> state, so adding a loading flag there is YAGNI. The only real cloud-loading
+> spinner is `Spinner label="Cargando catálogo…"` in `PublicCatalogScreen.tsx`.
+> **This task was retargeted to `PublicCatalogScreen.tsx`.** Added a
+> `role="status" aria-label="Cargando catálogo…"` on the loading container to
+> preserve the screen-reader announcement the spinner carried.
 
 **Files:**
-- Modify: `src/features/catalog/CatalogScreen.tsx` (replace Spinner with skeleton grid while cloud-loading)
+- Modify: `src/features/catalog/PublicCatalogScreen.tsx` (replace Spinner with skeleton grid while cloud-loading)
 
 - [ ] **Step 1: Find the loading branch**
 
