@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import {
   Badge,
   Button,
   ProductImage,
   SelectField,
   Sheet,
+  ToastProvider,
+  useToast,
 } from "./index";
 import { TONE_BADGE, ORDER_STATUS_TONE } from "./tokens";
 
@@ -85,5 +87,22 @@ describe("tokens", () => {
   it("every order status maps to a known tone", () => {
     const tones = Object.values(ORDER_STATUS_TONE);
     expect(tones.every((t) => t in TONE_BADGE)).toBe(true);
+  });
+});
+
+describe("Toast", () => {
+  it("renders a toast when success() is called", () => {
+    function Trigger() {
+      const toast = useToast();
+      return <button onClick={() => toast.success("Guardado")}>go</button>;
+    }
+    render(
+      <ToastProvider>
+        <Trigger />
+      </ToastProvider>
+    );
+    expect(screen.queryByText("Guardado")).toBeNull();
+    fireEvent.click(screen.getByText("go"));
+    expect(screen.getByText("Guardado")).toBeTruthy();
   });
 });
