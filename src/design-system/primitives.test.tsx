@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   ProductImage,
+  Reveal,
   SelectField,
   Sheet,
   Skeleton,
@@ -132,5 +133,14 @@ describe("AnimatedNumber", () => {
   it("renders plain integer when no format", () => {
     const { container } = render(<AnimatedNumber value={1234} />);
     expect(container.textContent).toContain("1,234");
+  });
+});
+
+describe("Reveal", () => {
+  it("renders children (jsdom has no IO; falls back to visible)", () => {
+    const { container } = render(
+      <Reveal><span>hi</span></Reveal>
+    );
+    expect(container.textContent).toContain("hi");
   });
 });
