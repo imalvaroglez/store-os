@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   EmptyState,
+  Lightbox,
   ProductImage,
   SkeletonCard,
 } from "../../design-system";
@@ -24,6 +25,8 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
   const [store, setStore] = useState<PublicCatalogStore | null>(null);
   const [products, setProducts] = useState<PublicCatalogProduct[]>([]);
+  // Index into lightboxImages of the opened photo, or null when closed.
+  const [lb, setLb] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +88,16 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
 
   const isTiered = store.type === "inventory_tiered";
 
+  // Products with a photo, in display order. The lightbox index points here.
+  // `photoIdxByProduct[i]` = that product's index in `lightboxImages`, or null.
+  const lightboxImages: { src: string; alt: string }[] = [];
+  const photoIdxByProduct: (number | null)[] = products.map((p) => {
+    if (!p.imageUrl) return null;
+    const imgIdx = lightboxImages.length;
+    lightboxImages.push({ src: p.imageUrl, alt: p.name });
+    return imgIdx;
+  });
+
   return (
     <div className="min-h-full bg-paper">
       <header className="bg-ink text-paper px-5 md:px-8 pt-8 pb-7 relative overflow-hidden">
@@ -116,11 +129,31 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
           <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {products.map((p) => {
+          {products.map((p, idx) => {
             const price = publicPrice(p);
+            const photoIdx = photoIdxByProduct[idx];
+            const openPhoto = photoIdx !== null ? () => setLb(photoIdx) : undefined;
             return (
               <Card key={p.id} className="overflow-hidden p-0">
-                <ProductImage src={p.imageUrl ?? undefined} alt={p.name} size="full" />
+                <div
+                  {...(openPhoto
+                    ? {
+                        role: "button",
+                        tabIndex: 0,
+                        "aria-label": `Ampliar foto de ${p.name}`,
+                        onClick: openPhoto,
+                        onKeyDown: (e: React.KeyboardEvent) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openPhoto();
+                          }
+                        },
+                      }
+                    : {})}
+                  className={openPhoto ? "cursor-zoom-in focus:outline-none" : undefined}
+                >
+                  <ProductImage src={p.imageUrl ?? undefined} alt={p.name} size="full" />
+                </div>
                 <div className="p-4">
                   <h2 className="serif-display font-semibold text-lg text-ink">{p.name}</h2>
                   {p.publicDescription && (
@@ -147,6 +180,13 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         )}
         </div>
       </main>
+
+      <Lightbox
+        open={lb !== null}
+        images={lightboxImages}
+        index={lb ?? 0}
+        onClose={() => setLb(null)}
+      />
     </div>
   );
 }
