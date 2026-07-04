@@ -6,6 +6,7 @@ import { AuthScreen } from "./firebase/AuthScreen";
 import { PublicCatalogScreen } from "../features/catalog/PublicCatalogScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
+import { ToastProvider } from "../design-system";
 
 function Root() {
   const route = useRoute();
@@ -53,7 +54,9 @@ export function App() {
   // The shell owns width/responsiveness now (sidebar on desktop, column on mobile).
   return (
     <StoreProvider>
-      <Root />
+      <ToastProvider>
+        <Root />
+      </ToastProvider>
     </StoreProvider>
   );
 }
