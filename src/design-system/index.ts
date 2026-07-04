@@ -4,6 +4,7 @@ export { Button, IconButton } from "./Button";
 export { Card } from "./Card";
 export { Badge } from "./Badge";
 export { Money, StatRow } from "./Money";
+export { AnimatedNumber } from "./AnimatedNumber";
 export { ScreenHeader } from "./ScreenHeader";
 export { EmptyState } from "./EmptyState";
 export { Spinner } from "./Spinner";

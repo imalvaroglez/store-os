@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import {
+  AnimatedNumber,
   Badge,
   Button,
   ProductImage,
@@ -118,5 +119,18 @@ describe("Skeleton", () => {
   it("SkeletonCard renders image + text placeholders", () => {
     const { container } = render(<SkeletonCard />);
     expect(container.querySelectorAll("[aria-busy='true']").length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("AnimatedNumber", () => {
+  it("renders the final value formatted as currency", () => {
+    // jsdom has no IntersectionObserver; the component falls back to showing
+    // the target value immediately when IO is unavailable.
+    const { container } = render(<AnimatedNumber value={18420} format="currency" />);
+    expect(container.textContent).toContain("$18,420");
+  });
+  it("renders plain integer when no format", () => {
+    const { container } = render(<AnimatedNumber value={1234} />);
+    expect(container.textContent).toContain("1,234");
   });
 });
