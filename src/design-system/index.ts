@@ -7,6 +7,7 @@ export { Money, StatRow } from "./Money";
 export { ScreenHeader } from "./ScreenHeader";
 export { EmptyState } from "./EmptyState";
 export { Spinner } from "./Spinner";
+export { Skeleton, SkeletonText, SkeletonCard } from "./Skeleton";
 export { Sheet, useEntitySheet } from "./Sheet";
 export { ToastProvider, useToast } from "./Toast";
 export { ProductImage } from "./ProductImage";

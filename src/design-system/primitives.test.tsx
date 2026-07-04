@@ -6,6 +6,8 @@ import {
   ProductImage,
   SelectField,
   Sheet,
+  Skeleton,
+  SkeletonCard,
   ToastProvider,
   useToast,
 } from "./index";
@@ -104,5 +106,17 @@ describe("Toast", () => {
     expect(screen.queryByText("Guardado")).toBeNull();
     fireEvent.click(screen.getByText("go"));
     expect(screen.getByText("Guardado")).toBeTruthy();
+  });
+});
+
+describe("Skeleton", () => {
+  it("Skeleton renders an element with aria-busy", () => {
+    const { container } = render(<Skeleton />);
+    expect(container.firstChild).toBeTruthy();
+    expect((container.firstChild as HTMLElement).getAttribute("aria-busy")).toBe("true");
+  });
+  it("SkeletonCard renders image + text placeholders", () => {
+    const { container } = render(<SkeletonCard />);
+    expect(container.querySelectorAll("[aria-busy='true']").length).toBeGreaterThanOrEqual(3);
   });
 });
