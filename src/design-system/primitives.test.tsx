@@ -4,6 +4,7 @@ import {
   AnimatedNumber,
   Badge,
   Button,
+  Lightbox,
   ProductImage,
   Reveal,
   SelectField,
@@ -142,5 +143,20 @@ describe("Reveal", () => {
       <Reveal><span>hi</span></Reveal>
     );
     expect(container.textContent).toContain("hi");
+  });
+});
+
+describe("Lightbox", () => {
+  it("renders nothing when closed", () => {
+    const { container } = render(
+      <Lightbox open={false} images={[]} index={0} onClose={() => {}} />
+    );
+    expect(container.textContent).toBe("");
+  });
+  it("renders the image alt when open", () => {
+    render(
+      <Lightbox open images={[{ src: "/a.png", alt: "Vasija" }]} index={0} onClose={() => {}} />
+    );
+    expect(screen.getByAltText("Vasija")).toBeTruthy();
   });
 });
