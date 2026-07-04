@@ -99,3 +99,5 @@ body {
 .rise > *:nth-child(6) { animation-delay: 0.22s; }
 
 /* iOS: keep inputs >=16px to avoid zoom-on-focus (text-base in primitives). */
+
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
