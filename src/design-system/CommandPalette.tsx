@@ -11,9 +11,9 @@ export interface CommandGroup {
 }
 
 // Cmd/Ctrl+K command palette. Case-insensitive substring filter. Arrow-key
-// navigation, Enter runs, Esc closes. Focus-trap reuses the Dialog pattern
-// (Tab contained, focus restore on close). Uses raw <input>/<button> (allowed
-// in design-system).
+// navigation, Enter runs, Esc closes. Tab is trapped between the input and the
+// last result (aria-modal alone does not contain focus). Uses raw
+// <input>/<button> (allowed in design-system).
 export function CommandPalette({
   open,
   onClose,
@@ -26,6 +26,7 @@ export function CommandPalette({
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const lastFocused = useRef<HTMLElement | null>(null);
 
   const flat = useMemo(() => commands.flatMap((g) => g.items), [commands]);
@@ -64,6 +65,20 @@ export function CommandPalette({
         e.preventDefault();
         filtered[active]?.onSelect?.();
         onClose();
+      } else if (e.key === "Tab") {
+        // Focus trap: cycle between the input (first) and the last result button
+        // so Tab never leaks focus past the aria-modal dialog.
+        const items = panelRef.current?.querySelectorAll<HTMLElement>("input, button") ?? [];
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -79,6 +94,7 @@ export function CommandPalette({
     >
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]" onClick={onClose} aria-hidden />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Buscar"

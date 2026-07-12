@@ -20,11 +20,18 @@ export function StoreSettingsScreen({
   const { user } = useAuth();
   const store = state.stores.find((s) => s.id === storeId);
 
+  // ALL hooks must run before any early return, or React throws
+  // "rendered fewer hooks than expected" if `store` becomes undefined mid-mount
+  // (e.g. the store is deleted via cloud sync while this sheet is open).
   const [name, setName] = useState(store?.name ?? "");
   const [whatsapp, setWhatsapp] = useState(store?.whatsappPhone ?? "");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteMsg, setInviteMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!store) {
     return <p className="text-sm text-ink-soft">Tienda no encontrada.</p>;
@@ -34,11 +41,6 @@ export function StoreSettingsScreen({
   const memberUids = store.memberUids ?? [];
   const pending = store.pendingInvites ?? [];
   const isOwnerOrAdmin = user?.role === "super_admin" || store.ownerUid === user?.uid;
-
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
-  const [catalogBusy, setCatalogBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function republish() {
     setCatalogBusy(true);
