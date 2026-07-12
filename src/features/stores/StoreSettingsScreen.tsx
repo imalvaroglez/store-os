@@ -73,7 +73,7 @@ export function StoreSettingsScreen({
   }
 
   function shareOnWhatsApp() {
-    window.open(createWhatsAppShareCatalogUrl(store!, catalogUrl), "_blank", "noopener");
+    window.open(createWhatsAppShareCatalogUrl(store!, catalogUrl), "_blank", "noopener,noreferrer");
   }
 
   async function saveBasic() {
