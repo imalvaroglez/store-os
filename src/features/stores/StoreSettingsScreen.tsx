@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { useAuth } from "../../app/firebase/AuthProvider";
-import { Button, TextField, SelectField } from "../../design-system";
+import { Button, TextField, SelectField, Dialog } from "../../design-system";
 import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { SlugTakenError } from "../../app/firebase/firestoreData";
 import { slugify } from "./slugify";
@@ -38,6 +38,7 @@ export function StoreSettingsScreen({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
   const [catalogBusy, setCatalogBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function republish() {
     setCatalogBusy(true);
@@ -167,17 +168,27 @@ export function StoreSettingsScreen({
           <Button
             full
             variant="danger"
-            onClick={() => {
-              if (confirm(`¿Eliminar "${store!.name}" y todos sus datos? Esto no se puede deshacer.`)) {
-                deleteStore(store!.id);
-                onDone();
-              }
-            }}
+            onClick={() => setConfirmDelete(true)}
           >
             Eliminar tienda
           </Button>
         </div>
       )}
+
+      <Dialog
+        open={confirmDelete}
+        title="Eliminar tienda"
+        tone="danger"
+        onClose={() => setConfirmDelete(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmDelete(false)}>Cancelar</Button>
+            <Button variant="danger" onClick={() => { deleteStore(store!.id); onDone(); }}>Eliminar</Button>
+          </>
+        }
+      >
+        ¿Eliminar <span className="font-semibold text-ink">{store!.name}</span> y todos sus datos? Esta acción no se puede deshacer.
+      </Dialog>
     </div>
   );
 }
