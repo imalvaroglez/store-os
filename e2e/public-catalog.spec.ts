@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { gotoClean } from "./helpers";
 
 // End-to-end for the PUBLIC CLOUD CATALOG (/catalogo/:slug) against the
 // Firebase Emulator. An anonymous visitor (no session) reads the public
@@ -85,11 +86,6 @@ function encode(v: unknown): unknown {
     return { mapValue: { fields: toFields(v as Record<string, unknown>) } };
   }
   return { nullValue: null };
-}
-
-async function gotoClean(page: Page, path = "/") {
-  await page.goto(path, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(900);
 }
 
 async function openCatalogAnonymous(page: Page, slug: string) {
