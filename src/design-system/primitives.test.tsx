@@ -5,6 +5,8 @@ import {
   Badge,
   Button,
   Dialog,
+  Dropdown,
+  DropdownItem,
   Lightbox,
   ProductImage,
   Reveal,
@@ -171,5 +173,24 @@ describe("Dialog", () => {
     render(<Dialog open title="Borrar" onClose={() => {}}><p>¿Seguro?</p></Dialog>);
     expect(screen.getByText("Borrar")).toBeTruthy();
     expect(screen.getByText("¿Seguro?")).toBeTruthy();
+  });
+});
+
+describe("Dropdown", () => {
+  it("does not render menu when closed", () => {
+    render(
+      <Dropdown trigger={<span>t</span>} open={false} onClose={() => {}}>
+        <DropdownItem onClick={() => {}}>Editar</DropdownItem>
+      </Dropdown>
+    );
+    expect(screen.queryByText("Editar")).toBeNull();
+  });
+  it("renders items when open", () => {
+    render(
+      <Dropdown trigger={<span>t</span>} open onClose={() => {}}>
+        <DropdownItem onClick={() => {}}>Editar</DropdownItem>
+      </Dropdown>
+    );
+    expect(screen.getByText("Editar")).toBeTruthy();
   });
 });
