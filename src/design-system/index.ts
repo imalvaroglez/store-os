@@ -9,6 +9,7 @@ export { Reveal, RevealList } from "./Reveal";
 export { Lightbox } from "./Lightbox";
 export { Dialog } from "./Dialog";
 export { Dropdown, DropdownItem, DropdownSeparator } from "./Dropdown";
+export { CommandPalette, type CommandGroup, type CommandItem } from "./CommandPalette";
 export { ScreenHeader } from "./ScreenHeader";
 export { EmptyState } from "./EmptyState";
 export { Spinner } from "./Spinner";
