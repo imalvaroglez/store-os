@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "./StoreProvider";
 import { useAuth } from "./firebase/AuthProvider";
 import { AuthScreen } from "./firebase/AuthScreen";
@@ -11,8 +11,11 @@ import {
   Button,
   IconButton,
   ThemePicker,
+  CommandPalette,
+  type CommandGroup,
   type Tab,
 } from "../design-system";
+import { visibleNavItems, navigate } from "../design-system/navItems";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { CatalogScreen } from "../features/catalog/CatalogScreen";
 import { OrdersScreen } from "../features/orders/OrdersScreen";
@@ -33,11 +36,35 @@ export function AppShell() {
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
 
   const seg = route.name === "admin" ? route.params.tab ?? "" : "";
   const tab: Tab = seg === "catalogo-admin" ? "catalogo" : TAB_FOR_PATH[seg] ?? "inicio";
 
+  // Cmd/Ctrl+K opens the command palette. Global while the shell is mounted.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   if (!activeStore) return null;
+
+  const commands: CommandGroup[] = [
+    {
+      group: "Ir a",
+      items: visibleNavItems(activeStore.type).map((t) => ({
+        id: t.id,
+        label: t.label,
+        onSelect: () => navigate(t.path),
+      })),
+    },
+  ];
 
   let screen;
   switch (tab) {
@@ -168,6 +195,8 @@ export function AppShell() {
       <Sheet open={authOpen} onClose={() => setAuthOpen(false)} title="Cuenta">
         <AuthScreen onDone={() => setAuthOpen(false)} />
       </Sheet>
+
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} />
     </div>
   );
 }
