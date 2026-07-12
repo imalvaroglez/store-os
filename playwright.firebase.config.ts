@@ -17,7 +17,9 @@ import { defineConfig } from "@playwright/test";
 // mobile + desktop projects so responsive assertions run at both viewports.
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /(firebase|public-catalog|smoke|responsive|theme)\.spec\.ts/,
+  // Anchored names so build-smoke.spec.ts (default-config-only) is NOT matched
+  // by the "smoke" alternative — it must not run under the emulator config.
+  testMatch: /(^|\/)(firebase|public-catalog|smoke|responsive|theme)\.spec\.ts$/,
   globalSetup: "./e2e/firebase-global-setup.ts",
   timeout: 40_000,
   fullyParallel: false,
@@ -40,13 +42,13 @@ export default defineConfig({
     // fresh emulator (seedCloudIfEmpty flakes after several cycles).
     {
       name: "mobile",
-      testMatch: /(smoke|responsive|theme)\.spec\.ts/,
+      testMatch: /(^|\/)(smoke|responsive|theme)\.spec\.ts$/,
       use: { viewport: { width: 390, height: 844 } },
     },
     // Desktop: the same viewport-sensitive specs at desktop size.
     {
       name: "desktop",
-      testMatch: /(smoke|responsive|theme)\.spec\.ts/,
+      testMatch: /(^|\/)(smoke|responsive|theme)\.spec\.ts$/,
       use: { viewport: { width: 1280, height: 800 } },
     },
     // firebase.spec + public-catalog.spec: auth/bootstrap + anonymous catalog.
@@ -54,7 +56,7 @@ export default defineConfig({
     // public-catalog REST-seeds its own projection).
     {
       name: "foundation",
-      testMatch: /(firebase|public-catalog)\.spec\.ts/,
+      testMatch: /(^|\/)(firebase|public-catalog)\.spec\.ts$/,
     },
   ],
 });
