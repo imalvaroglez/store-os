@@ -17,6 +17,31 @@ const PROJECT = "store-os-demo";
 const FS = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
 const AUTH = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key-for-emulator";
 
+// Wipe the public projection collections so the REST seed below is the ONLY
+// source of public docs. firebase.spec (which runs before this file in the
+// foundation project) seeds via the app and writes publicProducts/publicStores
+// too — without this purge the anonymous catalog would show duplicate products
+// and the strict-mode assertions below would fail.
+async function wipePublicProjection() {
+  const token = await mintToken();
+  const auth = { Authorization: `Bearer ${token}` };
+  for (const col of ["publicProducts", "publicStores"]) {
+    try {
+      // List via the authenticated REST endpoint (read rules require auth).
+      const res = await fetch(`${FS}/${col}`, { headers: auth });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { documents?: { name: string }[] };
+      for (const doc of data.documents ?? []) {
+        // doc.name is the full resource path; DELETE via the REST base URL.
+        const docPath = doc.name.replace(/^projects\/[^/]+\/databases\/[^/]+\/documents\//, "");
+        await fetch(`${FS}/${docPath}`, { method: "DELETE", headers: auth });
+      }
+    } catch {
+      // Collection may not exist yet — nothing to wipe.
+    }
+  }
+}
+
 // Mint a Firebase ID token via the Auth emulator so we can seed the public
 // projection with an authenticated REST call (the write rules require a
 // signed-in user). Anonymous READS are then unauthenticated, mirroring a real
@@ -99,6 +124,7 @@ async function openCatalogAnonymous(page: Page, slug: string) {
 }
 
 test.beforeAll(async () => {
+  await wipePublicProjection();
   await seedPublicProjection();
 });
 
