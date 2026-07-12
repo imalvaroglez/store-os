@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useStore, newProduct } from "../../app/StoreProvider";
 import {
   Button,
@@ -33,6 +33,9 @@ function ProductCard({
   onDelete: () => void;
 }) {
   const [menu, setMenu] = useState(false);
+  // Stable callback so the Dropdown effect (which depends on `onClose`) does not
+  // tear down and re-add its listeners on every parent render while open.
+  const closeMenu = useCallback(() => setMenu(false), []);
   const p = publicPrice(product);
   const est = p != null ? profit(p, product.cost) : undefined;
   const low =
@@ -58,11 +61,13 @@ function ProductCard({
             <div onClick={(e) => e.stopPropagation()}>
               <Dropdown
                 open={menu}
-                onClose={() => setMenu(false)}
+                onClose={closeMenu}
                 trigger={
                   <IconButton
                     variant="ghost"
                     aria-label="Acciones"
+                    aria-haspopup="menu"
+                    aria-expanded={menu}
                     onClick={() => setMenu((v) => !v)}
                     className="text-xl -mr-1"
                   >
@@ -70,9 +75,9 @@ function ProductCard({
                   </IconButton>
                 }
               >
-                <DropdownItem onClick={() => { setMenu(false); onEdit(); }}>Editar</DropdownItem>
+                <DropdownItem onClick={() => { closeMenu(); onEdit(); }}>Editar</DropdownItem>
                 <DropdownSeparator />
-                <DropdownItem tone="danger" onClick={() => { setMenu(false); onDelete(); }}>Eliminar</DropdownItem>
+                <DropdownItem tone="danger" onClick={() => { closeMenu(); onDelete(); }}>Eliminar</DropdownItem>
               </Dropdown>
             </div>
           </div>
