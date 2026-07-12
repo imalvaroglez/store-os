@@ -7,6 +7,7 @@ import {
   Dialog,
   Dropdown,
   DropdownItem,
+  CommandPalette,
   Lightbox,
   ProductImage,
   Reveal,
@@ -192,5 +193,28 @@ describe("Dropdown", () => {
       </Dropdown>
     );
     expect(screen.getByText("Editar")).toBeTruthy();
+  });
+});
+
+describe("CommandPalette", () => {
+  it("renders nothing when closed", () => {
+    const { container } = render(
+      <CommandPalette open={false} onClose={() => {}} commands={[]} />
+    );
+    expect(container.textContent).toBe("");
+  });
+  it("lists commands when open and filters by query", () => {
+    render(
+      <CommandPalette open onClose={() => {}} commands={[
+        { group: "Ir", items: [ { id: "a", label: "Catálogo" }, { id: "b", label: "Pedidos" } ] },
+      ]} />
+    );
+    expect(screen.getByText("Catálogo")).toBeTruthy();
+    expect(screen.getByText("Pedidos")).toBeTruthy();
+    // type to filter
+    const input = screen.getByPlaceholderText("Buscar…") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "ped" } });
+    expect(screen.queryByText("Catálogo")).toBeNull();
+    expect(screen.getByText("Pedidos")).toBeTruthy();
   });
 });
