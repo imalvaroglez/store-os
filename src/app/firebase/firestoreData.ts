@@ -77,9 +77,17 @@ export function subscribeCloudState(
       : query(collection(db, "stores"), where("memberUids", "array-contains", user.uid));
 
   // Re-load everything on any entity change. Watch all four collections so edits
-  // made on another device propagate live (not just stores). loadCloudState already
-  // filters products/customers/orders by accessible store ids, so bare collection
-  // listeners are correct here; only the stores query differs by role.
+  // made on another device propagate live (not just stores).
+  //
+  // Scoping: firestore.rules allows `list: if isSignedIn()` on
+  // products/customers/orders — the CLIENT must scope with
+  // `where("storeId", "in", [...])`, matching loadCloudState. A super_admin sees
+  // every store, so bare collection listeners are correct for them. A member must
+  // NEVER receive other stores' entities over the wire: we read their member
+  // stores once at subscribe time and filter entity listeners to those store ids.
+  // If the member is added to a NEW store mid-session, the scoped storesQ
+  // listener fires → triggerReload → loadCloudState re-reads everything (now
+  // including the new store), so the data still arrives via the full reload path.
   let timer: ReturnType<typeof setTimeout> | null = null;
   // ponytail: trailing debounce is enough — we don't need leading-edge delivery.
   // 150ms coalesces the near-simultaneous fires from a multi-collection write
@@ -97,14 +105,46 @@ export function subscribeCloudState(
     }, DEBOUNCE_MS);
   };
 
-  const unsubscribers: Unsubscribe[] = [
-    onSnapshot(storesQ, triggerReload),
-    onSnapshot(collection(db, "products"), triggerReload),
-    onSnapshot(collection(db, "customers"), triggerReload),
-    onSnapshot(collection(db, "orders"), triggerReload),
-  ];
+  const unsubscribers: Unsubscribe[] = [];
+  // If teardown runs before the member's one-shot store read resolves, stop
+  // registering listeners (and avoid leaking after teardown).
+  let tornDown = false;
+
+  // Stores listener is always live — storesQ is already role-scoped above.
+  unsubscribers.push(onSnapshot(storesQ, triggerReload));
+
+  // Entity listeners: super_admin gets bare collections (god-view, matches
+  // loadCloudState reading all stores). A member gets storeId-filtered queries
+  // computed from a one-shot read of their member stores — WITHOUT this filter,
+  // every store's private docs stream to their browser (the rules allow list for
+  // any signed-in user and rely on the client to scope). A member with no stores
+  // subscribes to no entity listeners (there is nothing to watch).
+  function registerEntityListeners(storeIds: string[]) {
+    if (tornDown) return;
+    for (const name of ["products", "customers", "orders"] as const) {
+      const entityQ =
+        user.role === "super_admin"
+          ? collection(db, name)
+          : storeIds.length === 0
+            ? null
+            : query(collection(db, name), where("storeId", "in", storeIds));
+      if (entityQ) unsubscribers.push(onSnapshot(entityQ, triggerReload));
+    }
+  }
+
+  if (user.role === "super_admin") {
+    registerEntityListeners([]);
+  } else {
+    // Member: read accessible stores once, then register scoped listeners.
+    getDocs(storesQ)
+      .then((snap) => registerEntityListeners(snap.docs.map((d) => d.id)))
+      .catch(() => {
+        /* ignore — storesQ listener still drives reloads */
+      });
+  }
 
   return () => {
+    tornDown = true;
     if (timer) {
       clearTimeout(timer);
       timer = null;
