@@ -9,6 +9,11 @@ import {
   Screen,
   Sheet,
   ProductImage,
+  Dropdown,
+  DropdownItem,
+  DropdownSeparator,
+  IconButton,
+  Dialog,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
 import { CATEGORY_LABELS } from "../../lib/labels";
@@ -20,11 +25,14 @@ function ProductCard({
   product,
   isTiered,
   onEdit,
+  onDelete,
 }: {
   product: Product;
   isTiered: boolean;
   onEdit: () => void;
+  onDelete: () => void;
 }) {
+  const [menu, setMenu] = useState(false);
   const p = publicPrice(product);
   const est = p != null ? profit(p, product.cost) : undefined;
   const low =
@@ -39,10 +47,34 @@ function ProductCard({
         <ProductImage src={product.imageUrl} alt={product.name} size="thumb" />
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <h3 className="font-semibold text-ink truncate">{product.name}</h3>
-            <Badge tone={product.isPublic ? "success" : "neutral"}>
-              {product.isPublic ? "Público" : "Privado"}
-            </Badge>
+            <div className="flex flex-col gap-1 min-w-0">
+              <h3 className="font-semibold text-ink truncate">{product.name}</h3>
+              <Badge tone={product.isPublic ? "success" : "neutral"}>
+                {product.isPublic ? "Público" : "Privado"}
+              </Badge>
+            </div>
+            {/* Stop propagation so opening the menu / picking an item does not
+                also trigger the card's onClick (edit). */}
+            <div onClick={(e) => e.stopPropagation()}>
+              <Dropdown
+                open={menu}
+                onClose={() => setMenu(false)}
+                trigger={
+                  <IconButton
+                    variant="ghost"
+                    aria-label="Acciones"
+                    onClick={() => setMenu((v) => !v)}
+                    className="text-xl -mr-1"
+                  >
+                    ⋯
+                  </IconButton>
+                }
+              >
+                <DropdownItem onClick={() => { setMenu(false); onEdit(); }}>Editar</DropdownItem>
+                <DropdownSeparator />
+                <DropdownItem tone="danger" onClick={() => { setMenu(false); onDelete(); }}>Eliminar</DropdownItem>
+              </Dropdown>
+            </div>
           </div>
           <p className="text-xs text-ink-soft">{CATEGORY_LABELS[product.category]}</p>
 
@@ -74,9 +106,10 @@ function ProductCard({
 }
 
 export function CatalogScreen() {
-  const { state, activeStore } = useStore();
+  const { state, activeStore, deleteProduct } = useStore();
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<Product | null>(null);
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
@@ -106,6 +139,7 @@ export function CatalogScreen() {
               product={p}
               isTiered={isTiered}
               onEdit={() => setEditing(p)}
+              onDelete={() => setDeleting(p)}
             />
           ))}
         </div>
@@ -127,6 +161,21 @@ export function CatalogScreen() {
           <ProductForm product={editing} onDone={() => setEditing(null)} />
         </Sheet>
       )}
+
+      <Dialog
+        open={deleting !== null}
+        title="Eliminar producto"
+        tone="danger"
+        onClose={() => setDeleting(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDeleting(null)}>Cancelar</Button>
+            <Button variant="danger" onClick={() => { if (deleting) deleteProduct(deleting.id); setDeleting(null); }}>Eliminar</Button>
+          </>
+        }
+      >
+        ¿Eliminar <span className="font-semibold text-ink">{deleting?.name}</span>? Esta acción no se puede deshacer.
+      </Dialog>
     </Screen>
   );
 }
