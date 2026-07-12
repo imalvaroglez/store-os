@@ -1,23 +1,33 @@
-import { test, expect } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
+import { loginAsFirstAdmin, gotoSantiHome, openSettings } from "./helpers";
 
-// Theme switching via the Settings picker. Runs at both mobile + desktop projects.
+// Theme switching via the Settings picker, at both mobile + desktop viewports.
+// One browser context per project (beforeAll), reused across tests so Firebase
+// Auth's indexedDB session persists.
 
-async function openSettings(page: import("@playwright/test").Page) {
-  await page.goto("/");
-  await page.evaluate(() => window.localStorage.clear());
-  await page.goto("/");
-  await page.waitForLoadState("networkidle");
-  // Settings lives in the sidebar (desktop) or the ⚙️ header button (mobile).
-  // Both expose an accessible name "Opciones".
-  await page.getByRole("button", { name: "Opciones" }).first().click();
-  await expect(page.getByRole("heading", { name: "Opciones" })).toBeVisible();
-}
+let sharedPage: Page | null = null;
+const test = base.extend<{ sharedPage: Page }>({
+  sharedPage: async ({}, use) => {
+    if (!sharedPage) throw new Error("sharedPage not initialized in beforeAll");
+    await use(sharedPage);
+  },
+});
 
-test("switching theme updates data-theme and a CSS var", async ({ page }) => {
+test.beforeAll(async ({ browser }) => {
+  const ctx = await browser.newContext();
+  sharedPage = await ctx.newPage();
+  await loginAsFirstAdmin(sharedPage, "theme");
+});
+
+test.afterAll(async () => {
+  await sharedPage?.context().close();
+  sharedPage = null;
+});
+
+test("switching theme updates data-theme and a CSS var", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
   await openSettings(page);
-  // Sanity: default is paper.
   await expect(page.locator("html")).toHaveAttribute("data-theme", "paper");
-
   for (const [name, expectedPaper] of [
     ["Maximalista", "#fef200"],
     ["Lujo", "#0b0b0d"],
@@ -32,7 +42,8 @@ test("switching theme updates data-theme and a CSS var", async ({ page }) => {
   }
 });
 
-test("theme choice persists across reload", async ({ page }) => {
+test("theme choice persists across reload", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
   await openSettings(page);
   await page.locator("button", { hasText: "Lujo" }).first().click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "luxury");
