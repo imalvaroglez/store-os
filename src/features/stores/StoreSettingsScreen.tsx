@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { useAuth } from "../../app/firebase/AuthProvider";
-import { Button, TextField, SelectField, Dialog } from "../../design-system";
+import { Button, TextField, SelectField, Dialog, useToast } from "../../design-system";
 import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { SlugTakenError } from "../../app/firebase/firestoreData";
+import { createWhatsAppShareCatalogUrl } from "../../lib/whatsapp";
 import { slugify } from "./slugify";
 import type { StoreType } from "../../types";
 
@@ -18,6 +19,7 @@ export function StoreSettingsScreen({
 }) {
   const { state, updateStore, deleteStore, inviteMember, removeMember, republishCatalog } = useStore();
   const { user } = useAuth();
+  const toast = useToast();
   const store = state.stores.find((s) => s.id === storeId);
 
   // ALL hooks must run before any early return, or React throws
@@ -53,6 +55,25 @@ export function StoreSettingsScreen({
     } finally {
       setCatalogBusy(false);
     }
+  }
+
+  // The public catalog URL = origin + /catalogo/:slug. Built on the client so
+  // it reflects the real deployment domain (Vercel in prod, localhost in dev).
+  const catalogUrl = `${window.location.origin}/catalogo/${store!.slug}`;
+
+  async function copyCatalogUrl() {
+    try {
+      await navigator.clipboard.writeText(catalogUrl);
+      toast.success("Enlace copiado");
+    } catch {
+      // Clipboard API can be unavailable (insecure context). Fall back to a
+      // toast with the URL so the user can still copy it manually.
+      toast.info("Copia el enlace: " + catalogUrl);
+    }
+  }
+
+  function shareOnWhatsApp() {
+    window.open(createWhatsAppShareCatalogUrl(store!, catalogUrl), "_blank", "noopener");
   }
 
   async function saveBasic() {
@@ -162,11 +183,20 @@ export function StoreSettingsScreen({
       </div>
 
       {isOwnerOrAdmin && (
-        <div className="pt-2 border-t border-edge space-y-2">
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Catálogo público</h3>
+          <p className="text-sm text-ink-soft break-all">{catalogUrl}</p>
+          <Button full onClick={copyCatalogUrl}>Copiar enlace</Button>
+          <Button full variant="success" onClick={shareOnWhatsApp}>Compartir por WhatsApp</Button>
           <Button full variant="secondary" onClick={republish} disabled={catalogBusy}>
             Republicar catálogo
           </Button>
           {catalogMsg && <p className="text-xs text-ink-soft">{catalogMsg}</p>}
+        </div>
+      )}
+
+      {isOwnerOrAdmin && (
+        <div className="pt-2 border-t border-edge space-y-2">
           <Button
             full
             variant="danger"

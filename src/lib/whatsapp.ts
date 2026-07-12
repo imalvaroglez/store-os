@@ -17,3 +17,12 @@ export function createWhatsAppStoreUrl(store: Store): string {
     ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
     : `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
+
+// Owner-facing "share my catalog" link. Opens WhatsApp with a message that
+// embeds the public catalog URL so the owner can send it to a customer. The
+// owner's own phone is intentionally NOT used as the destination — she sends
+// to many customers, so wa.me opens in contact-picker mode.
+export function createWhatsAppShareCatalogUrl(store: Store, catalogUrl: string): string {
+  const text = `Mira mi catálogo de ${store.name}: ${catalogUrl}`;
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
+}
