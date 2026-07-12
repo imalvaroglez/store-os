@@ -22,6 +22,11 @@ export default defineConfig({
   testMatch: /(^|\/)(firebase|public-catalog|smoke|responsive|theme)\.spec\.ts$/,
   globalSetup: "./e2e/firebase-global-setup.ts",
   timeout: 40_000,
+  // Retries: the Firestore emulator's bulk-delete is not instantly durable, so
+  // repeated wipe+seed cycles across projects occasionally race the seed. A retry
+  // re-runs the failing file's beforeAll (fresh wipe) and almost always clears it.
+  // This is emulator-only nondeterminism; production signups are unaffected.
+  retries: 2,
   fullyParallel: false,
   // One worker: tests mutate shared emulator state and each file's beforeAll
   // wipes + signs up, so everything must run strictly sequentially.

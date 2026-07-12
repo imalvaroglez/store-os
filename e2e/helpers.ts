@@ -9,7 +9,6 @@ import { expect, type Page } from "@playwright/test";
 // playwright.firebase.config.ts) and the emulator is running.
 
 const PROJECT = "store-os-demo";
-const BASE = "http://localhost:5174";
 
 let counter = 0;
 export function unique(prefix: string) {
@@ -166,36 +165,10 @@ export async function gotoSantiHome(page: Page) {
 // synced. Used from a spec file's beforeAll on a shared page (one login per file
 // per project) — repeated wipe+seed cycles eventually flake, so we minimize them.
 export async function loginAsFirstAdmin(page: Page, prefix: string, password = "password123") {
-  await loginAsFirstAdminEmail(page, prefix, password);
-}
-
-// Same as loginAsFirstAdmin but returns the generated email so a subsequent
-// project can signIn to the same account instead of re-seeding.
-export async function loginAsFirstAdminEmail(page: Page, prefix: string, password = "password123"): Promise<string> {
   await wipeEmulator();
   const email = unique(prefix);
   await signUp(page, email, password);
   await waitForCloudSeed(page);
-  return email;
-}
-
-// Sign in to an existing account via the same Settings -> "Entrar" flow. Used by
-// subsequent projects to reuse the first project's seeded admin without
-// re-running seedCloudIfEmpty.
-export async function signIn(page: Page, email: string, password: string) {
-  await openSettings(page);
-  await page.addStyleTag({
-    content: ".firebase-emulator-warning{display:none!important;pointer-events:none!important;}",
-  });
-  await page.getByRole("button", { name: /Entrar \/ Crear cuenta/ }).click();
-  await expect(page.getByRole("heading", { name: "Entrar" })).toBeVisible();
-  await page.getByLabel("Correo").fill(email);
-  await page.getByLabel("Contraseña").fill(password);
-  await page.getByRole("button", { name: "Entrar" }).first().click();
-  // Wait for the auth sheet to close (the "Entrar" heading disappears).
-  await expect(page.getByRole("heading", { name: "Entrar" })).toHaveCount(0, {
-    timeout: 15000,
-  });
 }
 
 // Wait for the cloud seed to land, then normalize on the Santi store. The seed
