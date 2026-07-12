@@ -125,9 +125,12 @@ The very first account created on the deployed app becomes the **super_admin**
 
 ## Notes
 
-- **Public catalog for cloud stores:** Firestore rules hide products from
-  non-members, so `/catalogo/:slug` works for local demo stores but cloud stores
-  need a public-read path (deferred). Tell users to share the catalog only for
-  local/demo stores for now.
+- **Public catalog for cloud stores:** implemented. The app writes a public
+  projection (`publicStores`/`publicProducts`) on store create/rename and on
+  every product save, and `firestore.rules` allows anonymous read on those
+  collections — so `/catalogo/:slug` works for both local demo and cloud
+  stores. Owners get the public URL + "Copiar enlace" / "Compartir por
+  WhatsApp" buttons in store settings, and "Republicar catálogo" to rebuild
+  the projection on demand.
 - **Member invites:** invitees who don't have an account yet receive a Firebase
   email sign-in link; once they sign up they're added to the store.

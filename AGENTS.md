@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Guía para trabajar en Store OS. Lee esto antes de empezar.
 
@@ -41,9 +41,9 @@ Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run bu
   - **Storage:** 5 GB almacenados, 100 GB descargados/mes, 5K uploads/mes, 50K downloads/mes — **solo válido en regiones `us-central1`/`us-west1`/`us-east1`** (el bucket ya está en `us-east1`; no lo muevas).
   - **Auth:** email/password y Google son gratis. **Nunca auth telefónica** (cobra por SMS).
   - **Hosting:** 10 GB almacenado, 360 MB egress/día.
-  - **Cloud Functions:** 2M invocaciones/mes gratis, pero evita Functions a menos que sea estrictamente necesario (cada una es una superficie de costo/latencia).
-  - Prohibido: SQL Connect (trial de pago), App Hosting, cualquier servicio de Google Cloud que no sea Firestore/Storage/Functions- dentro-de-cuota.
-  - Al diseñar una feature, estima su consumo (ej. `firestore.get()` en reglas = 2 reads por upload) y confirma que cabe en el free tier antes de implementar. Ante la duda, pregunta.
+  - **Cloud Functions:** 2M invocaciones/mes gratis, pero evita Functions a menos que sea estrictamente necesario.
+  - Prohibido: SQL Connect, App Hosting, cualquier servicio de Google Cloud que no sea Firestore/Storage/Functions-dentro-de-cuota.
+  - Al diseñar una feature, estima su consumo (ej. `firestore.get()` en reglas = 2 reads por upload) y confirma que cabe en el free tier antes de implementar.
 - **UI en español (México); código, tipos, identificadores y comentarios en inglés.**
 - **Lenguaje simple, no empresarial.** Evita CRM, SKU, pipeline, fulfillment, gross margin, etc.
 - **Mobile-first.** Tap targets ≥ ~40px, inputs a ≥16px (sin zoom en iOS).
@@ -57,7 +57,7 @@ Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run bu
 - Trabaja en una **branch** (no directamente en `main`) y abre PR.
 - Mensajes tipo Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
 - Haz commit/push solo cuando se te pida (o al cerrar un paso lógico).
-- Termina los mensajes de commit con `Co-Authored-By: Claude <noreply@anthropic.com>`.
+- Termina los mensajes de commit con `Co-Authored-By: Codex <noreply@anthropic.com>`.
 
 ## Out of scope (todavía)
 
