@@ -31,7 +31,7 @@ Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run bu
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
 - **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Gate de cumplimiento: falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos (excepción: `ErrorBoundary`).
 - **Temas:** `src/design-system/theme/`. Cada tema define tokens (color, tipografía, radios, sombras, **movimiento**). `ThemeProvider` los inyecta en `<html data-theme>`. Per-usuario, persiste en `localStorage` → perfil Firestore.
-- **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. Ruta pública `/catalogo/:slug` (local demo; cloud requiere path público, pendiente).
+- **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. Ruta pública `/catalogo/:slug` (funciona en local demo y en cloud: la proyección `publicStores`/`publicProducts` se escribe al crear/renombrar tienda y al guardar productos, con lectura anónima).
 - **Datos:** tipos en `src/types/index.ts`. Coerción numérica siempre vía `parseAmount` (`src/lib/money.ts`) — nunca escribas `NaN` al estado.
 
 ## Convenciones (importantes)
@@ -61,7 +61,7 @@ Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run bu
 
 ## Out of scope (todavía)
 
-Sin subida real de imágenes (solo URL), sin pagos/checkout/carrito, sin facturas, sin proveedores, sin códigos de barras/SKU, sin ledger de inventario, sin analítica. El catálogo público para tiendas en la nube requiere un path público en Firestore (pendiente); el catálogo local-demo funciona.
+Sin pagos/checkout/carrito, sin facturas, sin proveedores, sin códigos de barras/SKU, sin ledger de inventario, sin analítica. El catálogo público cloud **ya está implementado** (`publicStores`/`publicProducts` en `firestore.rules`, lectura anónima; la proyección se mantiene al crear/editar tienda y productos, y con el botón "Republicar catálogo"). La subida de imágenes funciona pero requiere el grant IAM `roles/datastore.user` al Storage service agent (ver `docs/DEPLOYMENT.md` §4b) o las fotos fallan con 403.
 
 ## Estado del roadmap
 
