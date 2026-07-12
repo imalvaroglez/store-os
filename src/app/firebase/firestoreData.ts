@@ -76,14 +76,41 @@ export function subscribeCloudState(
       ? collection(db, "stores")
       : query(collection(db, "stores"), where("memberUids", "array-contains", user.uid));
 
-  // Re-load everything on any stores change (simplest correct approach; data is small).
-  return onSnapshot(storesQ, async () => {
-    try {
-      onChange(await loadCloudState(user));
-    } catch {
-      /* ignore transient errors */
+  // Re-load everything on any entity change. Watch all four collections so edits
+  // made on another device propagate live (not just stores). loadCloudState already
+  // filters products/customers/orders by accessible store ids, so bare collection
+  // listeners are correct here; only the stores query differs by role.
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  // ponytail: trailing debounce is enough — we don't need leading-edge delivery.
+  // 150ms coalesces the near-simultaneous fires from a multi-collection write
+  // (e.g. seedCloudIfEmpty) into one loadCloudState call.
+  const DEBOUNCE_MS = 150;
+  const triggerReload = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(async () => {
+      timer = null;
+      try {
+        onChange(await loadCloudState(user));
+      } catch {
+        /* ignore transient errors */
+      }
+    }, DEBOUNCE_MS);
+  };
+
+  const unsubscribers: Unsubscribe[] = [
+    onSnapshot(storesQ, triggerReload),
+    onSnapshot(collection(db, "products"), triggerReload),
+    onSnapshot(collection(db, "customers"), triggerReload),
+    onSnapshot(collection(db, "orders"), triggerReload),
+  ];
+
+  return () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
     }
-  });
+    for (const fn of unsubscribers) fn();
+  };
 }
 
 /** Upsert a single entity doc. */
