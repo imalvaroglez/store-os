@@ -14,6 +14,7 @@ import {
   DropdownSeparator,
   IconButton,
   Dialog,
+  useToast,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
 import { CATEGORY_LABELS } from "../../lib/labels";
@@ -112,6 +113,7 @@ function ProductCard({
 
 export function CatalogScreen() {
   const { state, activeStore, deleteProduct } = useStore();
+  const toast = useToast();
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
@@ -175,7 +177,7 @@ export function CatalogScreen() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setDeleting(null)}>Cancelar</Button>
-            <Button variant="danger" onClick={() => { if (deleting) deleteProduct(deleting.id); setDeleting(null); }}>Eliminar</Button>
+            <Button variant="danger" onClick={() => { if (deleting) { deleteProduct(deleting.id); toast.success(`«${deleting.name}» eliminado`); } setDeleting(null); }}>Eliminar</Button>
           </>
         }
       >
