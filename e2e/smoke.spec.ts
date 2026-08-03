@@ -66,6 +66,9 @@ test("create a product and it appears in the catalog", async ({ sharedPage: page
   await page.getByRole("button", { name: "+ Agregar" }).click();
   await page.getByLabel("Nombre").fill(name);
   await page.getByLabel("Precio de venta").fill("999");
+  // Publish validation requires a primary category. Santi has seeded categories
+  // (Perfumes/Tenis/Gorras) after migration; pick one to satisfy it.
+  await page.getByLabel(/Perfumes|Tenis|Gorras/).first().check();
   await page.getByRole("button", { name: "Guardar producto" }).click();
   await expect(page.getByText(name)).toBeVisible();
 });
@@ -101,6 +104,7 @@ test("data persists across a full reload", async ({ sharedPage: page }) => {
   await page.getByRole("button", { name: "+ Agregar" }).click();
   await page.getByLabel("Nombre").fill(name);
   await page.getByLabel("Precio de venta").fill("100");
+  await page.getByLabel(/Perfumes|Tenis|Gorras/).first().check();
   await page.getByRole("button", { name: "Guardar producto" }).click();
   await expect(page.getByText(name)).toBeVisible();
   // Give the cloud write (saveEntity -> Firestore) a moment to become durable.

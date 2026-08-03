@@ -151,7 +151,7 @@ export function StorefrontEditor({
       <Section title="Mensajes de WhatsApp">
         <TextField
           label="Mensaje al comprar (introducción)"
-          hint="Se completa solo con nombre, SKU y enlace. No lo borres."
+          hint="Se completa solo con nombre, clave y enlace. No lo borres."
           value={sf.whatsappBuyIntro ?? ""}
           onChange={(e) => patch({ whatsappBuyIntro: e.target.value || undefined })}
         />

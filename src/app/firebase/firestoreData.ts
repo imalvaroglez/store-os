@@ -499,10 +499,14 @@ export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
   if (existing.stores.length > 0) return;
 
   const seed = migrateCatalog(buildSeedState());
-  const writes: Promise<unknown>[] = [];
+  // Write stores FIRST and await them: products/categories/orders rules call
+  // isMember(storeId), which reads the store doc — if stores write in parallel
+  // with their entities, the entity rule check can race ahead of the store write
+  // and deny the write (store not yet visible), aborting the whole seed.
   for (const s of seed.stores) {
-    writes.push(saveEntity(user, "stores", { ...s, ownerUid: user.uid, memberUids: [user.uid] }));
+    await saveEntity(user, "stores", { ...s, ownerUid: user.uid, memberUids: [user.uid] });
   }
+  const writes: Promise<unknown>[] = [];
   for (const p of seed.products) writes.push(saveEntity(user, "products", p));
   for (const c of seed.categories) writes.push(saveEntity(user, "categories", c));
   for (const c of seed.customers) writes.push(saveEntity(user, "customers", c));

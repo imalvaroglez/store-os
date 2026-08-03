@@ -127,6 +127,7 @@ test("product photo uploads, resizes, and renders", async ({ sharedPage: page })
   await page.getByRole("button", { name: "+ Agregar" }).click();
   await expect(page.getByRole("heading", { name: "Agregar producto" })).toBeVisible();
   await page.getByLabel("Nombre").fill("Producto con foto");
+  await page.getByLabel("Precio de venta").fill("500");
 
   const file = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
