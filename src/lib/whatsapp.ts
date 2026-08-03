@@ -53,8 +53,12 @@ function storefrontBase(phone?: string | null): string {
 }
 
 function productUrl(storeSlug: string, productSlug?: string): string {
-  if (!productSlug) return `${window.location.origin}/catalogo/${storeSlug}`;
-  return `${window.location.origin}/catalogo/${storeSlug}/producto/${productSlug}`;
+  const origin =
+    typeof window !== "undefined" && window.location
+      ? window.location.origin
+      : "";
+  if (!productSlug) return `${origin}/catalogo/${storeSlug}`;
+  return `${origin}/catalogo/${storeSlug}/producto/${productSlug}`;
 }
 
 /** Buy/inquire about a specific product. Intro (editable) + name + SKU + URL. */
