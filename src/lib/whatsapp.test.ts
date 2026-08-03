@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createWhatsAppShareCatalogUrl } from "./whatsapp";
+import {
+  createWhatsAppShareCatalogUrl,
+  createStorefrontBuyUrl,
+  createStorefrontContactUrl,
+  createStorefrontResaleUrl,
+  type StorefrontWhatsAppTarget,
+  type StorefrontProductRef,
+} from "./whatsapp";
 import type { Store } from "../types";
 
 const baseStore: Store = {
@@ -36,5 +43,78 @@ describe("createWhatsAppShareCatalogUrl", () => {
     // Always contact-picker mode — no phone baked into the URL.
     expect(url).toMatch(/^https:\/\/wa\.me\/\?text=/);
     expect(url).not.toContain("5215512345678");
+  });
+});
+
+// Storefront messages: immutable context (name, SKU, URL, intent) is always
+// appended so Fer's editable intro can't strip identifying info.
+
+const sfStore: StorefrontWhatsAppTarget = {
+  whatsappPhone: "5215512345678",
+  storefront: {
+    whatsappBuyIntro: "Hola, me interesa esta pieza:",
+    whatsappResaleIntro: "Hola, quiero info de reventa.",
+  },
+};
+const sfProduct: StorefrontProductRef = {
+  name: "Anillo de plata",
+  sku: "OLI-001",
+  productSlug: "anillo-de-plata",
+};
+
+describe("createStorefrontBuyUrl", () => {
+  it("includes the editable intro, name, SKU, and product URL", () => {
+    const url = createStorefrontBuyUrl(sfStore, "olivia", sfProduct);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Hola, me interesa esta pieza:");
+    expect(text).toContain("Anillo de plata");
+    expect(text).toContain("SKU OLI-001");
+    expect(text).toContain(`/catalogo/olivia/producto/anillo-de-plata`);
+    expect(url).toContain("wa.me/5215512345678");
+  });
+
+  it("falls back to a default intro when Fer left it empty", () => {
+    const url = createStorefrontBuyUrl(
+      { whatsappPhone: "5215512345678", storefront: { whatsappBuyIntro: "" } },
+      "olivia",
+      sfProduct
+    );
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text.startsWith("Hola, me interesa esta pieza:")).toBe(true);
+  });
+
+  it("still includes name + URL even without a SKU", () => {
+    const url = createStorefrontBuyUrl(sfStore, "olivia", { name: "Collar", productSlug: "collar" });
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Collar");
+    expect(text).toContain("/catalogo/olivia/producto/collar");
+    expect(text).not.toContain("SKU");
+  });
+});
+
+describe("createStorefrontContactUrl", () => {
+  it("targets the store home URL with a contact intent", () => {
+    const url = createStorefrontContactUrl(sfStore, "olivia");
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("/catalogo/olivia");
+    expect(url).toContain("wa.me/5215512345678");
+  });
+});
+
+describe("createStorefrontResaleUrl", () => {
+  it("uses the editable resale intro and the store URL", () => {
+    const url = createStorefrontResaleUrl(sfStore, "olivia");
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Hola, quiero info de reventa.");
+    expect(text).toContain("/catalogo/olivia");
+  });
+
+  it("falls back to a default resale intro when empty", () => {
+    const url = createStorefrontResaleUrl(
+      { whatsappPhone: "5215512345678", storefront: { whatsappResaleIntro: "" } },
+      "olivia"
+    );
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text.toLowerCase()).toContain("reventa");
   });
 });
