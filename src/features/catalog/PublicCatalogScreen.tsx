@@ -3,7 +3,6 @@ import {
   Button,
   Card,
   EmptyState,
-  Lightbox,
   ProductImage,
   SkeletonCard,
 } from "../../design-system";
@@ -14,19 +13,20 @@ import {
   loadPublicCatalog,
   PublicCatalogNotFoundError,
   type PublicStore as PublicCatalogStore,
-  type PublicProduct as PublicCatalogProduct,
+  type PublicProductSummary as PublicCatalogProduct,
 } from "../../app/firebase/publicCatalog";
 
 // Public-facing catalog at /catalogo/:slug. Shows ONLY public fields.
 // Never shows: cost, profit, private notes, customers, orders, inventory counts.
-// Loads directly from the public projection collections — works for anonymous
-// visitors (no session) and signed-in non-members alike.
+// Loads from the public projection collections — anonymous (no session).
+//
+// ponytail: this is the Phase-2 minimal grid on the new 3-doc projection. The
+// full Olivia storefront (hero, categories, story, FAQ, product detail route)
+// lands in Phase 4 on top of this same data.
 export function PublicCatalogScreen({ slug }: { slug: string }) {
   const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
   const [store, setStore] = useState<PublicCatalogStore | null>(null);
   const [products, setProducts] = useState<PublicCatalogProduct[]>([]);
-  // Index into lightboxImages of the opened photo, or null when closed.
-  const [lb, setLb] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +35,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
       .then((data) => {
         if (cancelled) return;
         setStore(data.store);
-        setProducts(data.products);
+        setProducts(data.catalog.products);
         setStatus("ready");
       })
       .catch((err) => {
@@ -88,16 +88,6 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
 
   const isTiered = store.type === "inventory_tiered";
 
-  // Products with a photo, in display order. The lightbox index points here.
-  // `photoIdxByProduct[i]` = that product's index in `lightboxImages`, or null.
-  const lightboxImages: { src: string; alt: string }[] = [];
-  const photoIdxByProduct: (number | null)[] = products.map((p) => {
-    if (!p.imageUrl) return null;
-    const imgIdx = lightboxImages.length;
-    lightboxImages.push({ src: p.imageUrl, alt: p.name });
-    return imgIdx;
-  });
-
   return (
     <div className="min-h-full bg-paper">
       <header className="bg-ink text-paper px-5 md:px-8 pt-8 pb-7 relative overflow-hidden">
@@ -129,36 +119,13 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
           <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {products.map((p, idx) => {
+          {products.map((p) => {
             const price = publicPrice(p);
-            const photoIdx = photoIdxByProduct[idx];
-            const openPhoto = photoIdx !== null ? () => setLb(photoIdx) : undefined;
             return (
-              <Card key={p.id} className="overflow-hidden p-0">
-                <div
-                  {...(openPhoto
-                    ? {
-                        role: "button",
-                        tabIndex: 0,
-                        "aria-label": `Ampliar foto de ${p.name}`,
-                        onClick: openPhoto,
-                        onKeyDown: (e: React.KeyboardEvent) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            openPhoto();
-                          }
-                        },
-                      }
-                    : {})}
-                  className={openPhoto ? "cursor-zoom-in focus:outline-none" : undefined}
-                >
-                  <ProductImage src={p.imageUrl ?? undefined} alt={p.name} size="full" />
-                </div>
+              <Card key={p.productSlug} className="overflow-hidden p-0">
+                <ProductImage src={p.imageUrl ?? undefined} alt={p.name} size="full" />
                 <div className="p-4">
                   <h2 className="serif-display font-semibold text-lg text-ink">{p.name}</h2>
-                  {p.publicDescription && (
-                    <p className="text-sm text-ink-soft mt-1">{p.publicDescription}</p>
-                  )}
                   <div className="flex items-center justify-between gap-3 mt-4">
                     <span className="serif-display tnum text-2xl font-semibold text-ink">
                       {formatMoney(price)}
@@ -180,13 +147,6 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         )}
         </div>
       </main>
-
-      <Lightbox
-        open={lb !== null}
-        images={lightboxImages}
-        index={lb ?? 0}
-        onClose={() => setLb(null)}
-      />
     </div>
   );
 }
@@ -202,7 +162,7 @@ function loadRetry(
   loadPublicCatalog(slug)
     .then((data) => {
       setStore(data.store);
-      setProducts(data.products);
+      setProducts(data.catalog.products);
       setStatus("ready");
     })
     .catch((err) => setStatus(err instanceof PublicCatalogNotFoundError ? "notfound" : "error"));
