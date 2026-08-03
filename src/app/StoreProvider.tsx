@@ -12,9 +12,11 @@ import type {
   Product,
   Customer,
   Order,
+  Category,
 } from "../types";
 import { loadState, saveState } from "../lib/storage";
 import { buildSeedState } from "../lib/seed";
+import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { useAuth } from "./firebase/AuthProvider";
@@ -45,6 +47,9 @@ type Action =
   | { type: "ADD_PRODUCT"; product: Product }
   | { type: "UPDATE_PRODUCT"; product: Product }
   | { type: "DELETE_PRODUCT"; productId: string }
+  | { type: "ADD_CATEGORY"; category: Category }
+  | { type: "UPDATE_CATEGORY"; category: Category }
+  | { type: "DELETE_CATEGORY"; categoryId: string }
   | { type: "ADD_CUSTOMER"; customer: Customer }
   | { type: "UPDATE_CUSTOMER"; customer: Customer }
   | { type: "DELETE_CUSTOMER"; customerId: string }
@@ -65,6 +70,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         stores: state.stores.filter((s) => s.id !== action.storeId),
         products: state.products.filter((p) => p.storeId !== action.storeId),
+        categories: state.categories.filter((c) => c.storeId !== action.storeId),
         customers: state.customers.filter((c) => c.storeId !== action.storeId),
         orders: state.orders.filter((o) => o.storeId !== action.storeId),
         activeStoreId:
@@ -80,6 +86,12 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, products: state.products.map((p) => (p.id === action.product.id ? action.product : p)) };
     case "DELETE_PRODUCT":
       return { ...state, products: state.products.filter((p) => p.id !== action.productId) };
+    case "ADD_CATEGORY":
+      return { ...state, categories: [...state.categories, action.category] };
+    case "UPDATE_CATEGORY":
+      return { ...state, categories: state.categories.map((c) => (c.id === action.category.id ? action.category : c)) };
+    case "DELETE_CATEGORY":
+      return { ...state, categories: state.categories.filter((c) => c.id !== action.categoryId) };
     case "ADD_CUSTOMER":
       return { ...state, customers: [...state.customers, action.customer] };
     case "UPDATE_CUSTOMER":
@@ -115,6 +127,8 @@ type StoreContextValue = {
   setActiveStore: (storeId: string | null) => void;
   upsertProduct: (product: Product) => void;
   deleteProduct: (productId: string) => void;
+  upsertCategory: (category: Category) => void;
+  deleteCategory: (categoryId: string) => void;
   upsertCustomer: (customer: Customer) => void;
   deleteCustomer: (customerId: string) => void;
   upsertOrder: (order: Order) => void;
@@ -142,13 +156,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .then(() => loadCloudState(user))
         .then((s) => {
           fromCloud.current = true;
-          dispatch({ type: "REPLACE_STATE", state: s });
+          dispatch({ type: "REPLACE_STATE", state: migrateCatalog(s) });
           fromCloud.current = false;
         })
         .catch(() => {});
       unsub = subscribeCloudState(user, (s) => {
         fromCloud.current = true;
-        dispatch({ type: "REPLACE_STATE", state: s });
+        dispatch({ type: "REPLACE_STATE", state: migrateCatalog(s) });
         fromCloud.current = false;
       });
     } else if (!cloud) {
@@ -169,7 +183,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveState(state);
   }, [state, cloud]);
 
-  function persistEntity(name: "stores" | "products" | "customers" | "orders", entity: { id: string } & Record<string, unknown>) {
+  function persistEntity(name: "stores" | "products" | "categories" | "customers" | "orders", entity: { id: string } & Record<string, unknown>) {
     if (!cloud || !user || fromCloud.current) return;
     saveEntity(user, name, entity).catch(() => {});
   }
@@ -285,6 +299,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (product) deleteProductImage(product.storeId, productId).catch(() => {});
       }
     },
+    upsertCategory: (category) => {
+      dispatch({ type: state.categories.some((c) => c.id === category.id) ? "UPDATE_CATEGORY" : "ADD_CATEGORY", category });
+      persistEntity("categories", category);
+    },
+    deleteCategory: (categoryId) => {
+      dispatch({ type: "DELETE_CATEGORY", categoryId });
+      if (cloud && user && !fromCloud.current) deleteEntity(user, "categories", categoryId).catch(() => {});
+    },
     upsertCustomer: (customer) => {
       dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
       persistEntity("customers", customer);
@@ -327,6 +349,19 @@ export function useStore(): StoreContextValue {
 export function newProduct(storeId: string): Product {
   const now = nowIso();
   return { id: uid("prod"), storeId, name: "", category: "other", isPublic: true, createdAt: now, updatedAt: now };
+}
+export function newCategory(storeId: string, slug: string): Category {
+  const now = nowIso();
+  return {
+    id: `${storeId}__${slug}`,
+    storeId,
+    name: "",
+    slug,
+    sortOrder: 0,
+    active: true,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 export function newCustomer(storeId: string): Customer {
   const now = nowIso();

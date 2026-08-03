@@ -1,5 +1,6 @@
 import type { AppState } from "../types";
 import { buildSeedState } from "./seed";
+import { migrateCatalog } from "./catalog";
 
 export const STORAGE_KEY = "store_os_state_v1";
 
@@ -10,7 +11,7 @@ export const STORAGE_KEY = "store_os_state_v1";
 // a signed-out visitor with empty storage should reach the AuthScreen, not a demo.
 // In dev/tests (import.meta.env.DEV) the seed keeps the local demo working.
 function emptyState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], customers: [], orders: [] };
+  return { stores: [], activeStoreId: null, products: [], categories: [], customers: [], orders: [] };
 }
 
 function freshState(): AppState {
@@ -26,7 +27,7 @@ export function loadState(): AppState {
       return seeded;
     }
     const parsed = JSON.parse(raw) as AppState;
-    return normalizeState(parsed);
+    return migrateCatalog(normalizeState(parsed));
   } catch {
     // Corrupt state -> reset. Demo seed in dev, empty in production.
     const seeded = freshState();
@@ -57,6 +58,7 @@ function normalizeState(s: Partial<AppState> | null | undefined): AppState {
     stores: s?.stores ?? [],
     activeStoreId: s?.activeStoreId ?? s?.stores?.[0]?.id ?? null,
     products: s?.products ?? [],
+    categories: s?.categories ?? [],
     customers: s?.customers ?? [],
     orders: s?.orders ?? [],
   };

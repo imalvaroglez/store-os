@@ -49,6 +49,14 @@ service cloud.firestore {
       allow list: if isSignedIn();
       allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
     }
+    // categories/{id} — per-store category entity. id is `${storeId}__${slug}`,
+    // and storeId is also carried on the doc so membership scoping is consistent
+    // with products/customers/orders.
+    match /categories/{id} {
+      allow get: if isSignedIn() && isMember(resource.data.storeId);
+      allow list: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
+    }
     match /customers/{id} {
       allow get: if isSignedIn() && isMember(resource.data.storeId);
       allow list: if isSignedIn();
