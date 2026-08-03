@@ -13,6 +13,29 @@
     <meta name="apple-mobile-web-app-title" content="Store OS" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Store OS</title>
+
+    <!-- Olivia storefront fonts (loaded site-wide; only the storefront uses them). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!--
+      Default share card. The SPA fallback (vercel.json) serves this index.html
+      for every /catalogo/* path, so WhatsApp/Facebook/Telegram — which don't run
+      JS — read these static tags for the general storefront card. useSeo()
+      updates them live for JS-capable crawlers; per-product preview cards would
+      need SSR and are out of scope. Replace copy/URL with Olivia's real assets.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Olivia" />
+    <meta property="og:title" content="Olivia — Joyería hecha a mano" />
+    <meta property="og:description" content="Joyería hecha a mano, piezas únicas para cada ocasión." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Olivia — Joyería hecha a mano" />
+    <meta name="twitter:description" content="Joyería hecha a mano, piezas únicas para cada ocasión." />
   </head>
   <body>
     <div id="root"></div>

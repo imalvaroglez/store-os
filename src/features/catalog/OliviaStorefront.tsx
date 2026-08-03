@@ -18,6 +18,7 @@ import {
   createStorefrontResaleUrl,
 } from "../../lib/whatsapp";
 import { OLIVIA_BRAND } from "./oliviaBrand";
+import { useSeo } from "./useSeo";
 import type { Storefront } from "../../types";
 
 // Olivia's public storefront. Handles all three public sub-routes (store home,
@@ -97,6 +98,33 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
       cancelled = true;
     };
   }, [slug]);
+
+  // SEO must be an unconditional hook call (before early returns). Derive from
+  // possibly-null store/catalog; no-op metadata when not ready.
+  const sfForSeo = (store?.storefront ?? {}) as Storefront;
+  const activeCategoryForSeo = focusCategory
+    ? catalog?.categories.find((c) => c.slug === focusCategory)
+    : undefined;
+  useSeo({
+    title: activeCategoryForSeo
+      ? `${activeCategoryForSeo.name} · ${store?.name ?? ""}`
+      : sfForSeo.seo?.title ?? store?.name ?? "Store OS",
+    description: sfForSeo.seo?.description ?? sfForSeo.hero?.body,
+    canonicalPath: activeCategoryForSeo
+      ? `/catalogo/${slug}/categoria/${activeCategoryForSeo.slug}`
+      : `/catalogo/${slug}`,
+    ogImageUrl: sfForSeo.seo?.ogImageUrl ?? sfForSeo.hero?.imageUrl,
+    jsonLd: store
+      ? {
+          "@context": "https://schema.org",
+          "@type": "Store",
+          name: store.name,
+          description: sfForSeo.seo?.description ?? sfForSeo.hero?.body,
+          image: sfForSeo.seo?.ogImageUrl ?? sfForSeo.hero?.imageUrl,
+          url: `${window.location.origin}/catalogo/${slug}`,
+        }
+      : undefined,
+  });
 
   if (status === "loading") {
     return (
@@ -411,6 +439,39 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
       productSlug: data.product.productSlug,
     });
   }, [data, slug]);
+
+  // SEO: unconditional, derived from possibly-null data.
+  const seoProduct = data?.product;
+  const seoImages = seoProduct?.images ?? [];
+  useSeo({
+    title: seoProduct ? `${seoProduct.name} · ${data!.store.name}` : "Store OS",
+    description: seoProduct?.publicDescription ?? undefined,
+    canonicalPath: `/catalogo/${slug}/producto/${productSlug}`,
+    ogImageUrl: seoImages[0]?.url ?? undefined,
+    jsonLd: seoProduct
+      ? {
+          "@context": "https://schema.org",
+          "@type": "Product",
+          name: seoProduct.name,
+          description: seoProduct.publicDescription ?? undefined,
+          image: seoImages.map((i) => i.url),
+          url: `${window.location.origin}/catalogo/${slug}/producto/${productSlug}`,
+          ...(typeof publicPrice(seoProduct) === "number"
+            ? {
+                offers: {
+                  "@type": "Offer",
+                  price: String(publicPrice(seoProduct)),
+                  priceCurrency: "MXN",
+                  availability:
+                    seoProduct.availability === "sold_out"
+                      ? "https://schema.org/OutOfStock"
+                      : "https://schema.org/InStock",
+                },
+              }
+            : {}),
+        }
+      : undefined,
+  });
 
   if (status === "loading") {
     return (
