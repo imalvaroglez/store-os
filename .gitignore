@@ -156,3 +156,6 @@ playwright-report/
 # Playwright test output
 test-results/
 playwright-report/
+
+# e2e-firebase.sh runtime artifact (permissive-rules backup); never commit
+storage.rules.strict.bak
