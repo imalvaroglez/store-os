@@ -189,22 +189,20 @@ export function ProductForm({
     // Merge saved + uploaded into the final gallery; ensure exactly one primary.
     const merged = reorderGallery([...savedImages, ...uploaded]);
 
-    // PUBLISH VALIDATION: a published product needs a primary photo, a price,
-    // and a primary category. Drafts can be saved without these.
+    // PUBLISH VALIDATION: a published product needs a price and (when the store
+    // has categories) a primary category. Drafts bypass validation. A photo is
+    // encouraged but not hard-required — a product without one renders a
+    // placeholder, and blocking save entirely fights the natural "add now,
+    // photograph later" flow.
     const willPublish = (draft.status ?? "published") === "published";
     if (willPublish) {
-      if (merged.length === 0) {
-        setValidationError("Para publicar, agrega al menos una foto.");
-        setSaving(false);
-        return;
-      }
       const hasPrice = isTiered ? !!parseAmount(retail) : !!parseAmount(price);
       if (!hasPrice) {
         setValidationError("Para publicar, define un precio.");
         setSaving(false);
         return;
       }
-      if ((draft.categoryIds ?? []).length === 0) {
+      if ((draft.categoryIds ?? []).length === 0 && categories.length > 0) {
         setValidationError("Para publicar, elige al menos una categoría.");
         setSaving(false);
         return;
