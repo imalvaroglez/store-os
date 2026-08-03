@@ -3,7 +3,7 @@ import { useAuth } from "./firebase/AuthProvider";
 import { useRoute } from "./router";
 import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
-import { PublicCatalogScreen } from "../features/catalog/PublicCatalogScreen";
+import { OliviaStorefront } from "../features/catalog/OliviaStorefront";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
 import { ToastProvider } from "../design-system";
@@ -13,9 +13,14 @@ function Root() {
   const { activeStore, state } = useStore();
   const { user } = useAuth();
 
-  // Public catalog takes over the whole viewport, no shell, no private data.
-  if (route.name === "public_catalog") {
-    return <PublicCatalogScreen slug={route.params.slug} />;
+  // Public storefront routes take over the whole viewport: no shell, no private
+  // data. Anonymous-readable. A single component handles all three sub-routes.
+  if (
+    route.name === "public_store" ||
+    route.name === "public_category" ||
+    route.name === "public_product"
+  ) {
+    return <OliviaStorefront route={route} />;
   }
 
   // Signed in but no active store yet -> the picker (or create-first if empty).

@@ -26,3 +26,65 @@ export function createWhatsAppShareCatalogUrl(store: Store, catalogUrl: string):
   const text = `Mira mi catálogo de ${store.name}: ${catalogUrl}`;
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
+
+// --- Olivia storefront messages ---
+//
+// Every storefront WhatsApp message appends immutable context (name, SKU, URL,
+// intent) so Fer's editable "intro" can never accidentally strip the info needed
+// to identify the piece. The intro is a prefix only.
+
+export type StorefrontWhatsAppTarget = {
+  whatsappPhone?: string | null;
+  storefront?: {
+    whatsappBuyIntro?: string;
+    whatsappResaleIntro?: string;
+  } | null;
+};
+
+export type StorefrontProductRef = {
+  name: string;
+  sku?: string;
+  productSlug?: string;
+};
+
+function storefrontBase(phone?: string | null): string {
+  const digits = (phone || "").replace(/[^0-9]/g, "");
+  return digits ? `https://wa.me/${digits}` : `https://wa.me/`;
+}
+
+function productUrl(storeSlug: string, productSlug?: string): string {
+  if (!productSlug) return `${window.location.origin}/catalogo/${storeSlug}`;
+  return `${window.location.origin}/catalogo/${storeSlug}/producto/${productSlug}`;
+}
+
+/** Buy/inquire about a specific product. Intro (editable) + name + SKU + URL. */
+export function createStorefrontBuyUrl(
+  store: StorefrontWhatsAppTarget,
+  storeSlug: string,
+  product: StorefrontProductRef
+): string {
+  const intro = store.storefront?.whatsappBuyIntro?.trim() || "Hola, me interesa esta pieza:";
+  const sku = product.sku ? ` (SKU ${product.sku})` : "";
+  const text = `${intro}\n${product.name}${sku}\n${productUrl(storeSlug, product.productSlug)}`;
+  return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
+}
+
+/** General "ask about the store" contact. */
+export function createStorefrontContactUrl(
+  store: StorefrontWhatsAppTarget,
+  storeSlug: string
+): string {
+  const text = `Hola, me interesa tu catálogo.\n${productUrl(storeSlug)}`;
+  return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
+}
+
+/** Resale program CTA. Intro (editable) + intent. */
+export function createStorefrontResaleUrl(
+  store: StorefrontWhatsAppTarget,
+  storeSlug: string
+): string {
+  const intro = store.storefront?.whatsappResaleIntro?.trim() || "Hola, quiero información sobre el programa de reventa.";
+  const text = `${intro}\n${productUrl(storeSlug)}`;
+  return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
+}
+
