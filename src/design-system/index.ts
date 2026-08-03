@@ -18,6 +18,7 @@ export { Sheet, useEntitySheet } from "./Sheet";
 export { ToastProvider, useToast } from "./Toast";
 export { ProductImage } from "./ProductImage";
 export { PhotoPicker } from "./PhotoPicker";
+export { MultiPhotoPicker, type GalleryTile } from "./MultiPhotoPicker";
 export { BottomNav } from "./BottomNav";
 export { Sidebar } from "./Sidebar";
 export { Screen } from "./Screen";
