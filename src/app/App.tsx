@@ -1,4 +1,4 @@
-import { StoreProvider, useStore } from "./StoreProvider";
+import { useStore } from "./StoreProvider";
 import { useAuth } from "./firebase/AuthProvider";
 import { useRoute } from "./router";
 import { AppShell } from "./AppShell";
@@ -51,12 +51,12 @@ function Root() {
 }
 
 export function App() {
-  // The shell owns width/responsiveness now (sidebar on desktop, column on mobile).
+  // StoreProvider lives at the root (main.tsx) alongside Auth/Theme so the whole
+  // tree shares one store instance. App owns the toast layer, which scopes it to
+  // authenticated shell + catalog screens (not the bare error boundary).
   return (
-    <StoreProvider>
-      <ToastProvider>
-        <Root />
-      </ToastProvider>
-    </StoreProvider>
+    <ToastProvider>
+      <Root />
+    </ToastProvider>
   );
 }
