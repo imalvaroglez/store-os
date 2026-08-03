@@ -17,7 +17,7 @@ import {
 } from "../design-system";
 import { visibleNavItems, navigate } from "../design-system/navItems";
 import { HomeScreen } from "../features/home/HomeScreen";
-import { CatalogScreen } from "../features/catalog/CatalogScreen";
+import { CatalogTab } from "../features/catalog/CatalogTab";
 import { OrdersScreen } from "../features/orders/OrdersScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
 import { InventoryScreen } from "../features/inventory/InventoryScreen";
@@ -69,7 +69,7 @@ export function AppShell() {
   let screen;
   switch (tab) {
     case "catalogo":
-      screen = <CatalogScreen />;
+      screen = <CatalogTab />;
       break;
     case "pedidos":
       screen = <OrdersScreen />;

@@ -226,6 +226,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // so no separate releaseSlug call is needed.
           await unprojectPublicForStore(existing).catch(() => {});
         }
+        // Always re-project: storefront content (hero, FAQ, contact, SEO) lives
+        // in publicStores, so an edit with no slug change must still republish.
         await projectPublicForStore(store, state.products, state.categories).catch(() => {});
       }
     },

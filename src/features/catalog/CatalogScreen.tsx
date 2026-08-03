@@ -21,6 +21,28 @@ import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore } from "../../lib/selectors";
 import { publicPrice, profit, formatMoney } from "../../lib/money";
 import type { Product } from "../../types";
+import type { StatusTone } from "../../design-system";
+
+// Primary gallery image for the thumb (first isPrimary, else first image, else
+// legacy imageUrl). Never leaks private fields — imageUrl is public by design.
+function primaryThumb(p: Product): string | undefined {
+  const imgs = p.images;
+  if (imgs && imgs.length > 0) {
+    return (imgs.find((i) => i.isPrimary) ?? imgs[0]).url;
+  }
+  return p.imageUrl;
+}
+
+function statusLabel(p: Product): string {
+  if (p.status === "draft") return "Borrador";
+  if (p.status === "archived") return "Archivado";
+  return p.isPublic ? "Público" : "Privado";
+}
+function statusTone(p: Product): StatusTone {
+  if (p.status === "draft") return "neutral";
+  if (p.status === "archived") return "neutral";
+  return p.isPublic ? "success" : "neutral";
+}
 
 function ProductCard({
   product,
@@ -48,14 +70,16 @@ function ProductCard({
   return (
     <Card onClick={onEdit}>
       <div className="flex gap-3">
-        <ProductImage src={product.imageUrl} alt={product.name} size="thumb" />
+        <ProductImage src={primaryThumb(product)} alt={product.name} size="thumb" />
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div className="flex flex-col gap-1 min-w-0">
               <h3 className="font-semibold text-ink truncate">{product.name}</h3>
-              <Badge tone={product.isPublic ? "success" : "neutral"}>
-                {product.isPublic ? "Público" : "Privado"}
-              </Badge>
+              <div className="flex gap-1 flex-wrap">
+                <Badge tone={statusTone(product)}>{statusLabel(product)}</Badge>
+                {product.isFeatured && <Badge tone="accent">★</Badge>}
+                {product.isNew && <Badge tone="info">Nuevo</Badge>}
+              </div>
             </div>
             {/* Stop propagation so opening the menu / picking an item does not
                 also trigger the card's onClick (edit). */}

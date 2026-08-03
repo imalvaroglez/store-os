@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { useAuth } from "../../app/firebase/AuthProvider";
-import { Button, TextField, SelectField, Dialog, useToast } from "../../design-system";
+import { Button, TextField, SelectField, Dialog, Sheet, useToast } from "../../design-system";
 import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { SlugTakenError } from "../../app/firebase/firestoreData";
 import { createWhatsAppShareCatalogUrl } from "../../lib/whatsapp";
 import { slugify } from "./slugify";
+import { StorefrontEditor } from "../catalog/StorefrontEditor";
 import type { StoreType } from "../../types";
 
 // Full management for a single store: rename, change type, WhatsApp, members
@@ -34,6 +35,7 @@ export function StoreSettingsScreen({
   const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editSite, setEditSite] = useState(false);
 
   if (!store) {
     return <p className="text-sm text-ink-soft">Tienda no encontrada.</p>;
@@ -188,11 +190,20 @@ export function StoreSettingsScreen({
           <p className="text-sm text-ink-soft break-all">{catalogUrl}</p>
           <Button full onClick={copyCatalogUrl}>Copiar enlace</Button>
           <Button full variant="success" onClick={shareOnWhatsApp}>Compartir por WhatsApp</Button>
+          <Button full variant="secondary" onClick={() => setEditSite(true)}>
+            Editar sitio público
+          </Button>
           <Button full variant="secondary" onClick={republish} disabled={catalogBusy}>
             Republicar catálogo
           </Button>
           {catalogMsg && <p className="text-xs text-ink-soft">{catalogMsg}</p>}
         </div>
+      )}
+
+      {editSite && store && (
+        <Sheet open onClose={() => setEditSite(false)} title="Sitio público">
+          <StorefrontEditor store={store} onDone={() => setEditSite(false)} />
+        </Sheet>
       )}
 
       {isOwnerOrAdmin && (

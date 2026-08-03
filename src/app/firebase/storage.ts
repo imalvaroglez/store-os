@@ -42,7 +42,7 @@ function getStorageInstance(): FirebaseStorage {
   return storage;
 }
 
-const MAX_EDGE = 1024; // longest edge after resize, in px
+const MAX_EDGE = 1600; // longest edge after resize, in px (storefront detail)
 
 /**
  * Downscale an image File to a JPEG Blob, longest edge ≤ MAX_EDGE.
@@ -107,6 +107,25 @@ export async function uploadProductImage(
   return getDownloadURL(r);
 }
 
+/**
+ * Upload one gallery image to products/{storeId}/{productId}/{imgId}.jpg and
+ * return its public URL + storage path. Accepts up to 10 MB at the edge (the
+ * caller should resize first); stored optimized JPEG only.
+ */
+export async function uploadGalleryImage(
+  storeId: string,
+  productId: string,
+  imgId: string,
+  blob: Blob
+): Promise<{ url: string; storagePath: string }> {
+  const s = getStorageInstance();
+  const storagePath = `products/${storeId}/${productId}/${imgId}.jpg`;
+  const r = ref(s, storagePath);
+  await uploadBytes(r, blob, { contentType: "image/jpeg" });
+  const url = await getDownloadURL(r);
+  return { url, storagePath };
+}
+
 /** Remove the product's photo object. Swallows not-found (already gone). */
 export async function deleteProductImage(
   storeId: string,
@@ -116,8 +135,17 @@ export async function deleteProductImage(
   try {
     await deleteObject(ref(s, `products/${storeId}/${productId}.jpg`));
   } catch (err) {
-    // StorageErrorCode.OBJECT_NOT_FOUND is expected on double-delete; anything
-    // else is best-effort (caller swallows) so a failed cleanup never blocks.
+    const code = (err as { code?: string }).code ?? "";
+    if (!code.includes("object-not-found")) throw err;
+  }
+}
+
+/** Remove one gallery image by its storage path. Swallows not-found. */
+export async function deleteGalleryImage(storagePath: string): Promise<void> {
+  const s = getStorageInstance();
+  try {
+    await deleteObject(ref(s, storagePath));
+  } catch (err) {
     const code = (err as { code?: string }).code ?? "";
     if (!code.includes("object-not-found")) throw err;
   }

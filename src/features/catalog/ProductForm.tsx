@@ -1,17 +1,33 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { resizeImageFile, uploadProductImage, deleteProductImage } from "../../app/firebase/storage";
+import {
+  resizeImageFile,
+  uploadGalleryImage,
+  deleteGalleryImage,
+} from "../../app/firebase/storage";
 import {
   Button,
   TextField,
   TextArea,
   CheckboxField,
   SelectField,
-  PhotoPicker,
+  MultiPhotoPicker,
+  type GalleryTile,
 } from "../../design-system";
-import { CATEGORY_LABELS, CATEGORY_OPTIONS } from "../../lib/labels";
 import { parseAmount } from "../../lib/money";
-import type { Product, ProductCategory } from "../../types";
+import { slugify, uniqueProductSlug } from "../../lib/catalog";
+import { uid } from "../../lib/ids";
+import { activeCategoriesForStore } from "../../lib/selectors";
+import {
+  MAX_PRODUCT_CATEGORIES,
+  MAX_PRODUCT_IMAGES,
+  type Product,
+  type ProductImage as ProductImageType,
+} from "../../types";
+
+// Staged gallery image: a resized Blob chosen but not yet uploaded. Upload
+// happens on submit so cancelling leaves no orphan in Storage.
+type StagedImage = { id: string; blob: Blob; previewUrl: string };
 
 export function ProductForm({
   product,
@@ -20,29 +36,25 @@ export function ProductForm({
   product: Product;
   onDone: () => void;
 }) {
-  const { upsertProduct, activeStore, cloud } = useStore();
-  // Form shape follows the STORE type, not the product's fields — a fresh
-  // newProduct has neither price nor prices, so inferring from it would mis-classify.
+  const { state, upsertProduct, activeStore, cloud } = useStore();
   const isTiered = activeStore?.type === "inventory_tiered";
   const [draft, setDraft] = useState<Product>(product);
 
-  // Staged photo (cloud only): a resized Blob chosen by the user but not yet
-  // uploaded. Upload happens on submit so cancelling the form leaves no orphan.
-  // `stagedPreview` is a local object-URL shown in the tile until save.
-  const [stagedBlob, setStagedBlob] = useState<Blob | null>(null);
-  const [stagedPreview, setStagedPreview] = useState<string | null>(null);
-  const [photoBusy, setPhotoBusy] = useState(false);
+  const [staged, setStaged] = useState<StagedImage[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Revoke any staged object-URL on unmount / re-stage so we don't leak it.
+  // Revoke staged object-URLs on unmount.
   useEffect(() => {
     return () => {
-      if (stagedPreview) URL.revokeObjectURL(stagedPreview);
+      for (const s of staged) URL.revokeObjectURL(s.previewUrl);
     };
-  }, [stagedPreview]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Numeric inputs kept as strings in the form, coerced on submit (no NaN into state).
+  // Numeric inputs as strings, coerced on submit (no NaN into state).
   const [cost, setCost] = useState(product.cost?.toString() ?? "");
   const [price, setPrice] = useState(product.price?.toString() ?? "");
   const [retail, setRetail] = useState(product.prices?.retail?.toString() ?? "");
@@ -51,66 +63,169 @@ export function ProductForm({
   const [qty, setQty] = useState(product.quantityOnHand?.toString() ?? "");
   const [lowAt, setLowAt] = useState(product.lowStockAt?.toString() ?? "");
 
-  async function handleSelectPhoto(file: File) {
+  if (!activeStore) return null;
+  // Capture the non-null store so async closures (submit/handleAdd) stay narrowed.
+  const store = activeStore;
+  const categories = activeCategoriesForStore(state.categories, store.id);
+
+  // Build the tile list shown in the picker: saved images + staged ones.
+  const savedImages: ProductImageType[] = draft.images ?? [];
+  const tiles: GalleryTile[] = [
+    ...savedImages.map((img) => ({
+      id: img.id,
+      url: img.url,
+      isPrimary: img.isPrimary,
+    })),
+    ...staged.map((s) => ({
+      id: s.id,
+      url: s.previewUrl,
+      isPrimary: savedImages.length === 0 && staged[0]?.id === s.id && !savedImages.some((i) => i.isPrimary),
+    })),
+  ];
+
+  async function handleAdd(file: File) {
+    const total = savedImages.length + staged.length;
+    if (total >= MAX_PRODUCT_IMAGES) {
+      setPhotoError(`Máximo ${MAX_PRODUCT_IMAGES} fotos.`);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setPhotoError("Cada foto debe pesar menos de 10 MB.");
+      return;
+    }
     setPhotoError(null);
-    setPhotoBusy(true);
+    setBusyId("resize");
     try {
       const blob = await resizeImageFile(file);
-      setStagedBlob(blob);
-      setStagedPreview((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return URL.createObjectURL(blob);
-      });
+      const id = uid("img");
+      setStaged((prev) => [...prev, { id, blob, previewUrl: URL.createObjectURL(blob) }]);
     } catch {
       setPhotoError("No pudimos leer esa imagen, intenta con otra.");
     } finally {
-      setPhotoBusy(false);
+      setBusyId(null);
     }
   }
 
-  function handleRemovePhoto() {
-    if (stagedPreview) URL.revokeObjectURL(stagedPreview);
-    setStagedBlob(null);
-    setStagedPreview(null);
-    setDraft({ ...draft, imageUrl: undefined });
-    setPhotoError(null);
+  function handleRemove(id: string) {
+    // Staged: revoke + drop. Saved: drop from draft (object deleted on submit).
+    const s = staged.find((x) => x.id === id);
+    if (s) {
+      URL.revokeObjectURL(s.previewUrl);
+      setStaged((prev) => prev.filter((x) => x.id !== id));
+      return;
+    }
+    setDraft((d) => {
+      const next = (d.images ?? []).filter((i) => i.id !== id);
+      // Reassign primary if we removed the primary.
+      if (!next.some((i) => i.isPrimary) && next.length > 0) next[0].isPrimary = true;
+      return { ...d, images: next };
+    });
+  }
+
+  function handleMakePrimary(id: string) {
+    setDraft((d) => ({
+      ...d,
+      images: (d.images ?? []).map((i) => ({ ...i, isPrimary: i.id === id })),
+    }));
+    setStaged((prev) => prev); // no-op; primary for staged is positional
+  }
+
+  function handleMove(id: string, dir: -1 | 1) {
+    setDraft((d) => {
+      const imgs = [...(d.images ?? [])];
+      const i = imgs.findIndex((x) => x.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= imgs.length) return d;
+      [imgs[i], imgs[j]] = [imgs[j], imgs[i]];
+      // Re-index order + keep exactly one primary (preserve the primary flag).
+      return { ...d, images: imgs.map((img, idx) => ({ ...img, order: idx })) };
+    });
+  }
+
+  function toggleCategory(catId: string) {
+    setDraft((d) => {
+      const current = d.categoryIds ?? [];
+      if (current.includes(catId)) {
+        return { ...d, categoryIds: current.filter((c) => c !== catId) };
+      }
+      if (current.length >= MAX_PRODUCT_CATEGORIES) return d; // cap enforced silently
+      return { ...d, categoryIds: [...current, catId] };
+    });
   }
 
   async function submit() {
+    setValidationError(null);
     if (!draft.name.trim() || saving) return;
 
-    // Cloud + a staged photo: upload before persisting. On failure, block the
-    // save so we never store a half-uploaded state — keep the form open.
-    let imageUrl = draft.imageUrl;
-    if (cloud && activeStore && stagedBlob) {
+    // Upload staged images first; block save on failure (no half-uploaded state).
+    let uploaded: ProductImageType[] = [];
+    if (cloud && staged.length > 0) {
       setSaving(true);
-      setPhotoBusy(true);
       try {
-        imageUrl = await uploadProductImage(activeStore.id, product.id, stagedBlob);
-        setPhotoError(null);
+        uploaded = await Promise.all(
+          staged.map(async (s, idx) => {
+            const { url, storagePath } = await uploadGalleryImage(
+              store.id,
+              product.id,
+              s.id,
+              s.blob
+            );
+            return {
+              id: s.id,
+              url,
+              storagePath,
+              order: savedImages.length + idx,
+              isPrimary: false,
+            };
+          })
+        );
       } catch {
-        setPhotoError("No se pudo subir la foto. Revisa tu conexión e intenta de nuevo.");
-        setPhotoBusy(false);
+        setPhotoError("No se pudieron subir las fotos. Revisa tu conexión.");
         setSaving(false);
-        return; // block save
+        return;
       }
-      setPhotoBusy(false);
     }
+
+    // Merge saved + uploaded into the final gallery; ensure exactly one primary.
+    const merged = reorderGallery([...savedImages, ...uploaded]);
+
+    // PUBLISH VALIDATION: a published product needs a primary photo, a price,
+    // and a primary category. Drafts can be saved without these.
+    const willPublish = (draft.status ?? "published") === "published";
+    if (willPublish) {
+      if (merged.length === 0) {
+        setValidationError("Para publicar, agrega al menos una foto.");
+        setSaving(false);
+        return;
+      }
+      const hasPrice = isTiered ? !!parseAmount(retail) : !!parseAmount(price);
+      if (!hasPrice) {
+        setValidationError("Para publicar, define un precio.");
+        setSaving(false);
+        return;
+      }
+      if ((draft.categoryIds ?? []).length === 0) {
+        setValidationError("Para publicar, elige al menos una categoría.");
+        setSaving(false);
+        return;
+      }
+    }
+
+    // Assign a stable slug if missing (survives renames thereafter).
+    const slug = draft.slug
+      ? draft.slug
+      : uniqueProductSlug(state.products, store.id, product.id, slugify(draft.name));
 
     const next: Product = {
       ...draft,
-      imageUrl,
       name: draft.name.trim(),
-      category: draft.category,
+      slug,
+      images: merged,
+      imageUrl: merged.find((i) => i.isPrimary)?.url ?? merged[0]?.url,
       cost: parseAmount(cost),
       updatedAt: new Date().toISOString(),
     };
 
-    // Cloud: if a previously-saved photo was removed (imageUrl went from a Storage
-    // URL to undefined), delete the object so it doesn't orphan. Best-effort.
-    if (cloud && activeStore && !imageUrl && product.imageUrl) {
-      deleteProductImage(activeStore.id, product.id).catch(() => {});
-    }
     if (isTiered) {
       next.prices = {
         retail: parseAmount(retail),
@@ -133,24 +248,22 @@ export function ProductForm({
     <div className="space-y-4">
       <TextField
         label="Nombre"
-        placeholder="Ej. Perfume Baccarat Rouge 540"
+        placeholder="Ej. Anillo de plata 925"
         value={draft.name}
         onChange={(e) => setDraft({ ...draft, name: e.target.value })}
         autoFocus
       />
-      <SelectField<ProductCategory>
-        label="Categoría"
-        value={draft.category}
-        onChange={(next) => setDraft({ ...draft, category: next })}
-        options={CATEGORY_OPTIONS.map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))}
-      />
+
       {cloud ? (
-        <PhotoPicker
-          previewUrl={stagedPreview ?? draft.imageUrl}
-          busy={photoBusy}
+        <MultiPhotoPicker
+          tiles={tiles}
+          max={MAX_PRODUCT_IMAGES}
+          busy={busyId === "resize"}
           error={photoError ?? undefined}
-          onSelect={handleSelectPhoto}
-          onRemove={handleRemovePhoto}
+          onAdd={handleAdd}
+          onRemove={handleRemove}
+          onMakePrimary={handleMakePrimary}
+          onMove={handleMove}
         />
       ) : (
         <TextField
@@ -161,6 +274,66 @@ export function ProductForm({
           onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value || undefined })}
         />
       )}
+
+      {/* Categories: primary (first selected) + up to 2 secondary. */}
+      <div>
+        <span className="block text-xs font-semibold text-on-surface-soft uppercase tracking-wide mb-1.5">
+          Categorías (máximo {MAX_PRODUCT_CATEGORIES})
+        </span>
+        {categories.length === 0 ? (
+          <p className="text-xs text-on-surface-soft/70">
+            Aún no hay categorías. Crea algunas en la pestaña Categorías.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {categories.map((c) => {
+              const selected = (draft.categoryIds ?? []).includes(c.id);
+              const isPrimary = (draft.categoryIds ?? [])[0] === c.id;
+              return (
+                <CheckboxField
+                  key={c.id}
+                  label={(isPrimary ? "★ " : "") + c.name}
+                  checked={selected}
+                  onChange={() => toggleCategory(c.id)}
+                />
+              );
+            })}
+          </div>
+        )}
+        <span className="block text-xs text-on-surface-soft/70 mt-1">
+          La primera que elijas es la categoría principal.
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <TextField
+          label="Material"
+          placeholder="Plata 925"
+          value={draft.material ?? ""}
+          onChange={(e) => setDraft({ ...draft, material: e.target.value || undefined })}
+        />
+        <TextField
+          label="Color / acabado"
+          placeholder="Dorado"
+          value={draft.finish ?? ""}
+          onChange={(e) => setDraft({ ...draft, finish: e.target.value || undefined })}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <TextField
+          label="Medidas"
+          placeholder="50 cm"
+          value={draft.dimensions ?? ""}
+          onChange={(e) => setDraft({ ...draft, dimensions: e.target.value || undefined })}
+        />
+        <TextField
+          label="Cuidados"
+          placeholder="Evita el agua"
+          value={draft.care ?? ""}
+          onChange={(e) => setDraft({ ...draft, care: e.target.value || undefined })}
+        />
+      </div>
+
       <TextField
         label="Costo"
         inputMode="decimal"
@@ -194,31 +367,90 @@ export function ProductForm({
       <TextArea
         label="Descripción pública"
         hint="Se muestra en tu catálogo compartido."
-        placeholder="Lo que verá tu cliente..."
+        placeholder="Lo que verá tu clienta…"
         value={draft.publicDescription ?? ""}
-        onChange={(e) =>
-          setDraft({ ...draft, publicDescription: e.target.value || undefined })
-        }
+        onChange={(e) => setDraft({ ...draft, publicDescription: e.target.value || undefined })}
       />
       <TextArea
         label="Notas privadas"
         hint="Solo tú ves esto."
         value={draft.privateNotes ?? ""}
-        onChange={(e) =>
-          setDraft({ ...draft, privateNotes: e.target.value || undefined })
-        }
+        onChange={(e) => setDraft({ ...draft, privateNotes: e.target.value || undefined })}
       />
 
-      <CheckboxField
-        label="¿Mostrar en catálogo público?"
-        checked={draft.isPublic}
-        onChange={(next) => setDraft({ ...draft, isPublic: next })}
-        caption={draft.isPublic ? "Público" : "Privado"}
+      <SelectField
+        label="Estado de publicación"
+        value={draft.status ?? "published"}
+        onChange={(v) => setDraft({ ...draft, status: v as Product["status"] })}
+        options={[
+          { value: "published", label: "Publicado (visible en el catálogo)" },
+          { value: "draft", label: "Borrador (no visible)" },
+          { value: "archived", label: "Archivado (no visible)" },
+        ]}
       />
+      <SelectField
+        label="Disponibilidad"
+        value={draft.availability ?? "available"}
+        onChange={(v) => setDraft({ ...draft, availability: v as Product["availability"] })}
+        options={[
+          { value: "available", label: "Disponible" },
+          { value: "low_stock", label: "Pocas piezas" },
+          { value: "sold_out", label: "Agotado" },
+        ]}
+      />
+
+      <div className="grid grid-cols-3 gap-2">
+        <CheckboxField
+          label="Novedad"
+          checked={draft.isNew ?? false}
+          onChange={(v) => setDraft({ ...draft, isNew: v })}
+        />
+        <CheckboxField
+          label="Destacado"
+          checked={draft.isFeatured ?? false}
+          onChange={(v) => setDraft({ ...draft, isFeatured: v })}
+        />
+        <CheckboxField
+          label="Permite pedir info"
+          checked={draft.canInquire ?? false}
+          onChange={(v) => setDraft({ ...draft, canInquire: v })}
+        />
+      </div>
+
+      {validationError && (
+        <p className="text-sm text-danger font-semibold" role="alert">{validationError}</p>
+      )}
 
       <Button full size="lg" onClick={submit} disabled={!draft.name.trim() || saving}>
         {saving ? "Guardando…" : "Guardar producto"}
       </Button>
     </div>
   );
+}
+
+// Ensure exactly one primary image (the first if none is marked) and index order.
+function reorderGallery(images: ProductImageType[]): ProductImageType[] {
+  if (images.length === 0) return images;
+  const hasPrimary = images.some((i) => i.isPrimary);
+  return images.map((img, idx) => ({
+    ...img,
+    order: idx,
+    isPrimary: hasPrimary ? img.isPrimary : idx === 0,
+  }));
+}
+
+// Best-effort cleanup of gallery objects removed from a saved product. Called by
+// the host screen after a successful save if needed (kept here for locality).
+export async function pruneRemovedImages(
+  storeId: string,
+  before: ProductImageType[],
+  after: ProductImageType[]
+): Promise<void> {
+  const keep = new Set(after.map((i) => i.storagePath));
+  for (const img of before) {
+    if (!keep.has(img.storagePath)) {
+      await deleteGalleryImage(img.storagePath).catch(() => {});
+    }
+  }
+  void storeId;
 }
