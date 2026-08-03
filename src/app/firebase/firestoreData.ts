@@ -12,15 +12,16 @@ import {
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Product, Customer, Order } from "../../types";
+import type { AppState, Store, Product, Customer, Order, Category } from "../../types";
 import { buildSeedState } from "../../lib/seed";
+import { migrateCatalog } from "../../lib/catalog";
 
 // Cloud data adapter. The cloud analog of lib/storage.ts: the StoreProvider talks
 // to this when signed in. Reads are scoped to the user (super_admin sees all
 // stores; a member sees only stores whose memberUids include them). Writes go to
 // the entity's own doc; security rules enforce membership server-side.
 
-export const COLLECTIONS = ["stores", "products", "customers", "orders"] as const;
+export const COLLECTIONS = ["stores", "products", "categories", "customers", "orders"] as const;
 type CollectionName = (typeof COLLECTIONS)[number];
 
 /** Load all cloud data visible to the user. */
@@ -43,15 +44,16 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For super_admin
   // that's effectively all; for members it stays within their stores (and avoids
   // permission-denied on other stores' docs).
-  async function forStores<T extends { storeId: string }>(name: "products" | "customers" | "orders"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "customers" | "orders"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = query(collection(db, name), where("storeId", "in", storeIds));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, customers, orders] = await Promise.all([
+  const [products, categories, customers, orders] = await Promise.all([
     forStores<Product>("products"),
+    forStores<Category>("categories"),
     forStores<Customer>("customers"),
     forStores<Order>("orders"),
   ]);
@@ -60,6 +62,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     stores,
     activeStoreId: stores[0]?.id ?? null,
     products,
+    categories,
     customers,
     orders,
   };
@@ -121,7 +124,7 @@ export function subscribeCloudState(
   // subscribes to no entity listeners (there is nothing to watch).
   function registerEntityListeners(storeIds: string[]) {
     if (tornDown) return;
-    for (const name of ["products", "customers", "orders"] as const) {
+    for (const name of ["products", "categories", "customers", "orders"] as const) {
       const entityQ =
         user.role === "super_admin"
           ? collection(db, name)
@@ -321,12 +324,13 @@ export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
   const existing = await loadCloudState(user);
   if (existing.stores.length > 0) return;
 
-  const seed = buildSeedState();
+  const seed = migrateCatalog(buildSeedState());
   const writes: Promise<unknown>[] = [];
   for (const s of seed.stores) {
     writes.push(saveEntity(user, "stores", { ...s, ownerUid: user.uid, memberUids: [user.uid] }));
   }
   for (const p of seed.products) writes.push(saveEntity(user, "products", p));
+  for (const c of seed.categories) writes.push(saveEntity(user, "categories", c));
   for (const c of seed.customers) writes.push(saveEntity(user, "customers", c));
   for (const o of seed.orders) writes.push(saveEntity(user, "orders", o));
   await Promise.all(writes);

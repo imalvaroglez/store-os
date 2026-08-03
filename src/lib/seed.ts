@@ -218,6 +218,7 @@ export function buildSeedState(): AppState {
     stores,
     activeStoreId: santiId,
     products,
+    categories: [], // synthesized deterministically by migrateCatalog on load
     customers,
     orders,
   };
