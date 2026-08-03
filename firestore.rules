@@ -82,14 +82,24 @@ service cloud.firestore {
       allow delete: if isSignedIn();
     }
 
-    // publicStores/{slug} — minimal public storefront. Anonymous read; writes by
-    // any signed-in client (the projection carries nothing sensitive).
+    // publicStores/{slug} — public storefront: identity + content + contact.
+    // Anonymous read; writes by any signed-in client (projection carries nothing
+    // sensitive — cost/notes/inventory are never written here).
     match /publicStores/{slug} {
       allow read: if true;
       allow write: if isSignedIn();
     }
 
-    // publicProducts/{id} — public-only product projection. Anonymous read.
+    // publicCatalogs/{slug} — active categories + lightweight product summaries
+    // for the grid, plus storeId (used to resolve publicProducts doc ids
+    // anonymously). Anonymous read; signed-in write.
+    match /publicCatalogs/{slug} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // publicProducts/{id} — public-only product detail (id = storeId__slug).
+    // Anonymous read.
     match /publicProducts/{id} {
       allow read: if true;
       allow write: if isSignedIn();

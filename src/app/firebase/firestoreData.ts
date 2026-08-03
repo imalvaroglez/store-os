@@ -182,12 +182,21 @@ export async function deleteEntity(
   await deleteDoc(doc(db, name, id));
 }
 
-// --- Public catalog projection ---
+// --- Public catalog projection (3-doc model) ---
 //
-// Anonymous visitors read `publicStores/{slug}` and `publicProducts/{id}`. These
-// docs carry ONLY public-safe fields — private data (cost, profit, notes,
-// inventory, membership) is never written here, so the security model is
-// "leak-proof by construction", not by field-level rules.
+// Anonymous visitors read THREE projection collections, each carrying ONLY
+// public-safe fields (private data — cost, profit, notes, inventory, membership
+// — is never written here, so the model is leak-proof by construction):
+//
+//   publicStores/{slug}    identity + storefront content + contact (1 read)
+//   publicCatalogs/{slug}  active categories + lightweight product summaries
+//                          powering the grid (1 read) — the storefront visit is
+//                          these two reads total.
+//   publicProducts/{storeId}__{productSlug}  full single-product detail (+1 read
+//                          when a visitor opens a piece).
+//
+// Product doc ids encode store+slug so the public product route can resolve a
+// piece without a scan, and so a rename never strands a public doc.
 
 /** Thrown when a slug is already claimed by another store. */
 export class SlugTakenError extends Error {
@@ -223,57 +232,168 @@ export async function releaseSlug(slug: string): Promise<void> {
   await deleteDoc(doc(db, "slugs", slug)).catch(() => {});
 }
 
-/** Public storefront projection: only the fields a catalog visitor may see. */
+/** Public product doc id: storeId + product slug (stable across renames). */
+export function publicProductId(storeId: string, productSlug: string): string {
+  return `${storeId}__${productSlug}`;
+}
+
+/** Primary gallery image URL (first isPrimary, else first image), for the grid. */
+function primaryImage(product: Product): string | null {
+  const imgs = product.images;
+  if (imgs && imgs.length > 0) {
+    const primary = imgs.find((i) => i.isPrimary) ?? imgs[0];
+    return primary.url ?? null;
+  }
+  return product.imageUrl ?? null;
+}
+
+/** Public storefront projection: identity + storefront content + contact. */
 export function projectPublicStore(store: Store) {
+  const sf = store.storefront;
   return {
     name: store.name,
     slug: store.slug,
     type: store.type,
     whatsappPhone: store.whatsappPhone ?? null,
+    storefront: sf ?? null,
   };
 }
 
 /**
- * Public product projection. Mirrors `publicPrice` (src/lib/money.ts): on-demand
- * stores expose `price`; inventory stores expose only `prices.retail`. Cost,
- * wholesale/reseller prices, notes, and inventory are omitted entirely.
+ * Lightweight product summary for the grid (lives inside publicCatalogs). No
+ * private fields. Mirrors publicPrice: on-demand exposes `price`, inventory
+ * exposes only `prices.retail`.
  */
-export function projectPublicProduct(product: Product, storeSlug: string) {
-  const base: Record<string, unknown> = {
+export function projectPublicProductSummary(product: Product, storeSlug: string) {
+  const summary: Record<string, unknown> = {
     storeSlug,
+    productSlug: product.slug ?? null,
+    name: product.name,
+    imageUrl: primaryImage(product),
+    availability: product.availability ?? "available",
+    isFeatured: product.isFeatured ?? false,
+    isNew: product.isNew ?? false,
+    canInquire: product.canInquire ?? false,
+    primaryCategoryId: product.categoryIds?.[0] ?? null,
+    sortOrder: product.sortOrder ?? 0,
+  };
+  if (typeof product.price === "number") summary.price = product.price;
+  if (product.prices && typeof product.prices.retail === "number") {
+    summary.prices = { retail: product.prices.retail };
+  }
+  return summary;
+}
+
+/**
+ * Full public product detail (publicProducts/{storeId}__{slug}). Includes the
+ * gallery, material/finish/dimensions/care, categories, and price — never cost,
+ * wholesale/reseller, notes, or inventory counts.
+ */
+export function projectPublicProductDetail(
+  product: Product,
+  storeSlug: string,
+  categories: Category[]
+) {
+  const named = (product.categoryIds ?? [])
+    .map((id) => categories.find((c) => c.id === id))
+    .filter((c): c is Category => !!c)
+    .map((c) => ({ id: c.id, name: c.name, slug: c.slug }));
+
+  const detail: Record<string, unknown> = {
+    storeSlug,
+    productSlug: product.slug ?? null,
     name: product.name,
     publicDescription: product.publicDescription ?? null,
-    imageUrl: product.imageUrl ?? null,
+    images: (product.images ?? []).map((i) => ({
+      url: i.url,
+      alt: i.alt ?? null,
+      width: i.width ?? null,
+      height: i.height ?? null,
+      isPrimary: i.isPrimary,
+    })),
+    material: product.material ?? null,
+    finish: product.finish ?? null,
+    dimensions: product.dimensions ?? null,
+    care: product.care ?? null,
+    availability: product.availability ?? "available",
+    canInquire: product.canInquire ?? false,
+    isFeatured: product.isFeatured ?? false,
+    isNew: product.isNew ?? false,
+    categories: named,
   };
-  if (typeof product.price === "number") base.price = product.price;
+  if (typeof product.price === "number") detail.price = product.price;
   if (product.prices && typeof product.prices.retail === "number") {
-    base.prices = { retail: product.prices.retail };
+    detail.prices = { retail: product.prices.retail };
   }
-  return base;
+  return detail;
+}
+
+function isPublished(p: Product): boolean {
+  return p.status ? p.status === "published" : p.isPublic;
 }
 
 /**
- * Rebuild the public projection for one store: upsert the public storefront and
- * every public product, and remove public-product docs for products that are no
- * longer public (or belong to deleted products). Idempotent.
+ * Rebuild the full public projection for one store: publicStores, publicCatalogs
+ * (active categories + published product summaries), and a publicProducts detail
+ * doc per published product. Prunes stale publicProducts no longer published.
+ * Idempotent.
  */
-export async function projectPublicForStore(store: Store, products: Product[]): Promise<void> {
+export async function projectPublicForStore(
+  store: Store,
+  products: Product[],
+  categories: Category[]
+): Promise<void> {
   const { db } = getFirebase();
   const writes: Promise<unknown>[] = [];
 
-  // Storefront.
+  // 1. Storefront (identity + content + contact).
   writes.push(setDoc(doc(db, "publicStores", store.slug), projectPublicStore(store), { merge: true }));
 
-  // Public products for this store.
-  const publicProducts = products.filter((p) => p.storeId === store.id && p.isPublic);
-  for (const p of publicProducts) {
-    writes.push(setDoc(doc(db, "publicProducts", p.id), projectPublicProduct(p, store.slug), { merge: true }));
+  // 2. Catalog: active categories + published product summaries.
+  const published = products.filter((p) => p.storeId === store.id && isPublished(p));
+  const activeCats = categories
+    .filter((c) => c.storeId === store.id && c.active)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      description: c.description ?? null,
+      imageUrl: c.imageUrl ?? null,
+      sortOrder: c.sortOrder,
+    }));
+  writes.push(
+    setDoc(
+      doc(db, "publicCatalogs", store.slug),
+      {
+        storeSlug: store.slug,
+        storeId: store.id, // anonymous product route resolves the detail doc id from here
+        categories: activeCats,
+        products: published
+          .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+          .map((p) => projectPublicProductSummary(p, store.slug)),
+      },
+      { merge: true }
+    )
+  );
+
+  // 3. Per-product detail docs for published products.
+  const keepIds = new Set<string>();
+  for (const p of published) {
+    if (!p.slug) continue; // ponytail: a migrated product always has a slug; skip if not
+    const id = publicProductId(store.id, p.slug);
+    keepIds.add(id);
+    writes.push(
+      setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories), {
+        merge: true,
+      })
+    );
   }
 
-  // Prune: any existing publicProducts with storeSlug === this slug whose id is
-  // no longer in the public set. (Cheap at this scale.)
-  const keepIds = new Set(publicProducts.map((p) => p.id));
-  const snap = await getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug)));
+  // Prune stale detail docs: any publicProducts/{storeId}__* not in keepIds.
+  const snap = await getDocs(
+    query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug))
+  );
   for (const d of snap.docs) {
     if (!keepIds.has(d.id)) writes.push(deleteDoc(d.ref));
   }
@@ -281,31 +401,85 @@ export async function projectPublicForStore(store: Store, products: Product[]): 
   await Promise.all(writes);
 }
 
-/** Remove a store's entire public projection (storefront + products + slug). */
+/** Remove a store's entire public projection (storefront + catalog + products + slug). */
 export async function unprojectPublicForStore(store: Store): Promise<void> {
   const { db } = getFirebase();
   const writes: Promise<unknown>[] = [];
   writes.push(deleteDoc(doc(db, "publicStores", store.slug)));
+  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)));
   writes.push(releaseSlug(store.slug));
   const snap = await getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug)));
   for (const d of snap.docs) writes.push(deleteDoc(d.ref));
   await Promise.all(writes);
 }
 
-/** Upsert one product's public projection (only if public). */
-export async function upsertPublicProduct(product: Product, storeSlug: string): Promise<void> {
+/**
+ * Upsert one product's public projection (detail doc + catalog summary). If the
+ * product is not published, remove its detail doc and rebuild the catalog summary
+ * so the grid drops it. Rebuilds the whole publicCatalogs doc because summaries
+ * are a single array field — cheaper than arrayUnion/arrayRemove gymnastics at
+ * this scale, and only runs on product save.
+ */
+export async function upsertPublicProduct(
+  product: Product,
+  storeSlug: string,
+  allStoreProducts: Product[],
+  categories: Category[]
+): Promise<void> {
   const { db } = getFirebase();
-  if (!product.isPublic) {
-    await deleteDoc(doc(db, "publicProducts", product.id)).catch(() => {});
-    return;
+  const id = product.slug ? publicProductId(product.storeId, product.slug) : null;
+
+  if (!isPublished(product)) {
+    if (id) await deleteDoc(doc(db, "publicProducts", id)).catch(() => {});
+  } else if (id) {
+    await setDoc(
+      doc(db, "publicProducts", id),
+      projectPublicProductDetail(product, storeSlug, categories),
+      { merge: true }
+    );
   }
-  await setDoc(doc(db, "publicProducts", product.id), projectPublicProduct(product, storeSlug), { merge: true });
+
+  // Refresh the catalog summaries for this store.
+  const published = allStoreProducts.filter((p) => p.storeId === product.storeId && isPublished(p));
+  await setDoc(
+    doc(db, "publicCatalogs", storeSlug),
+    {
+      storeSlug,
+      products: published
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+        .map((p) => projectPublicProductSummary(p, storeSlug)),
+    },
+    { merge: true }
+  );
 }
 
-/** Remove one product's public projection. */
-export async function removePublicProduct(productId: string): Promise<void> {
+/** Remove one product's public detail doc by store + slug. Best-effort. */
+export async function removePublicProductDoc(storeId: string, productSlug: string): Promise<void> {
   const { db } = getFirebase();
-  await deleteDoc(doc(db, "publicProducts", productId)).catch(() => {});
+  await deleteDoc(doc(db, "publicProducts", publicProductId(storeId, productSlug))).catch(() => {});
+}
+
+/**
+ * Rebuild ONLY the catalog summaries (no per-product detail writes), used after a
+ * delete so the grid drops the removed piece without re-writing its detail doc.
+ */
+export async function rebuildPublicCatalog(
+  storeSlug: string,
+  storeId: string,
+  products: Product[]
+): Promise<void> {
+  const { db } = getFirebase();
+  const published = products.filter((p) => p.storeId === storeId && isPublished(p));
+  await setDoc(
+    doc(db, "publicCatalogs", storeSlug),
+    {
+      storeSlug,
+      products: published
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+        .map((p) => projectPublicProductSummary(p, storeSlug)),
+    },
+    { merge: true }
+  );
 }
 
 /**
@@ -339,6 +513,6 @@ export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
   // /catalogo/santi and /catalogo/joyeria work immediately.
   for (const s of seed.stores) {
     await claimSlug(s.slug, s.id).catch(() => {});
-    await projectPublicForStore(s, seed.products).catch(() => {});
+    await projectPublicForStore(s, seed.products, seed.categories).catch(() => {});
   }
 }
