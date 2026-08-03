@@ -1,12 +1,23 @@
+import { lazy, Suspense } from "react";
 import { useStore } from "./StoreProvider";
 import { useAuth } from "./firebase/AuthProvider";
 import { useRoute } from "./router";
 import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
-import { OliviaStorefront } from "../features/catalog/OliviaStorefront";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
 import { ToastProvider } from "../design-system";
+
+// Lazy-load the public storefront so the storefront code (sections, gallery,
+// SEO) lives in its own chunk, separate from admin forms.
+// ponytail: the entry chunk still bundles Firebase because StoreProvider/
+// AuthProvider mount unconditionally at the root (main.tsx). Fully excluding
+// Firebase from the public path would mean route-detecting before the provider
+// tree mounts — a bigger refactor deferred until the public bundle size
+// measurably hurts the anonymous visitor.
+const OliviaStorefront = lazy(() =>
+  import("../features/catalog/OliviaStorefront").then((m) => ({ default: m.OliviaStorefront }))
+);
 
 function Root() {
   const route = useRoute();
@@ -20,7 +31,11 @@ function Root() {
     route.name === "public_category" ||
     route.name === "public_product"
   ) {
-    return <OliviaStorefront route={route} />;
+    return (
+      <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}>
+        <OliviaStorefront route={route} />
+      </Suspense>
+    );
   }
 
   // Signed in but no active store yet -> the picker (or create-first if empty).

@@ -115,6 +115,74 @@ work on refresh) and long-cache headers for `/assets/*`.
 The very first account created on the deployed app becomes the **super_admin**
 (you). Sign up, then invite store owners by email from each store's settings.
 
+## 7. Olivia storefront setup
+
+Olivia is a regular Store OS store (slug `olivia`) with a richer public
+storefront at `/catalogo/olivia`. There is no separate project or repo.
+
+**Initial configuration:**
+
+1. As super-admin, create a store named "Olivia" (the slug `olivia` is reserved
+   globally; rename it later only via store settings, which re-publishes).
+2. Transfer ownership to Fer: invite her by email from the store's settings.
+   Once she accepts, she is a `member` with full catalog + storefront-content
+   access. (Super-admin retains god-view.) To make her the explicit `ownerUid`,
+   an admin updates the store doc's `ownerUid` field in the Firebase console —
+   owner vs. member only gates the settings/delete UI today.
+3. Fer fills the storefront content in **Store settings → Editar sitio público**
+   (hero, story, resale, FAQ, contact, SEO). Saving republishes `publicStores`.
+4. Fer creates categories (Categorías tab) and products (Productos tab) with
+   1–5 photos each. Published products appear at `/catalogo/olivia`.
+
+**Migration (existing products):** automatic and idempotent. On load, the app
+runs `migrateCatalog` — legacy `category` → a `Category`, legacy `imageUrl` → a
+primary gallery image, `isPublic` → `status` — and marks `schemaVersion=1` so it
+never re-runs. No data is duplicated. If a product predates this schema, simply
+opening the app migrates it; cloud stores migrate on the next cloud sync.
+
+**Security rules:** `firestore.rules` adds `categories/{id}` (membership-gated
+like products) and `publicCatalogs/{slug}` (anonymous read, signed-in write).
+Deploy with `npm run deploy:rules` (or `firebase deploy --only firestore,storage`).
+
+**Storage:** gallery images live at `products/{storeId}/{productId}/{imgId}.jpg`,
+optimized JPEG ≤1600px q80. The bucket stays in `us-east1` (free-tier region).
+Confirm the §4b IAM grant is in place or photo writes fail with 403.
+
+**Republish:** "Republicar catálogo" in store settings rebuilds all three public
+projection collections (`publicStores`, `publicCatalogs`, `publicProducts`) and
+prunes stale product docs. Use it after bulk edits or if the catalog looks stale.
+
+**Rollback:** the storefront is pure projection of the private data; rolling
+back means editing/archiving the products or unpublishing (set status to
+`draft`). The public collections are rebuilt from private state, so they can
+always be regenerated with "Republicar catálogo."
+
+**Deep-link verification:** after deploying, open `/catalogo/olivia`,
+`/catalogo/olivia/categoria/<slug>`, and `/catalogo/olivia/producto/<slug>`,
+then **reload each** — the SPA rewrite in `vercel.json` (`/(.*)` → `/index.html`)
+must serve the app on refresh, not a 404.
+
+**Firestore consumption (free-tier budget):**
+
+- A storefront visit = 2 reads (`publicStores` + `publicCatalogs`). Opening a
+  product = +2 (`publicCatalogs` for storeId, `publicProducts` detail, plus
+  `publicStores` for the header) — the catalog is cached in-app so navigation
+  between products reuses it.
+- Saving a product ≈ 3 writes (private product + catalog summary rebuild +
+  detail doc); each photo = 1 Storage upload + 2 rule reads (`firestore.get()`
+  in `storage.rules`).
+- Free tier: 50K reads/day, 20K writes/day, 20K deletes/day, 1 GiB stored,
+  10 GiB egress/month. Blaze charges overages — set budget alerts in the
+  Firebase console. The public flow has **no persistent forms** (no writes from
+  visitors), so anonymous traffic only consumes reads.
+- Protected contact form / App Check / reCAPTCHA is **deferred** — they have
+  limited free quota and can incur cost when exceeded, so they don't block this
+  launch. Visitors contact via WhatsApp only.
+
+**Out of scope for this MVP:** custom domains (Olivia lives at
+`/catalogo/olivia`), per-product WhatsApp preview cards (need SSR), payments,
+cart, customer accounts.
+
 ## Local development / testing
 
 - **Demo mode (no backend):** `npm run dev` — runs fully on `localStorage` with
