@@ -11,7 +11,7 @@ export function ProductImage({
   size?: "thumb" | "full";
   className?: string;
 }) {
-  const dims = size === "full" ? "w-full h-48" : "h-16 w-16";
+  const dims = size === "full" ? "w-full aspect-square" : "h-16 w-16";
   if (src) {
     return (
       <img

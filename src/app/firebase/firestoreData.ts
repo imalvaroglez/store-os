@@ -222,7 +222,9 @@ export async function claimSlug(slug: string, storeId: string): Promise<void> {
       if (owner && owner !== storeId) throw new SlugTakenError(slug);
       return; // same store already owns it
     }
-    tx.set(ref, { storeId, claimedAt: Date.now() });
+    const uid = getFirebase().auth.currentUser?.uid;
+    if (!uid) throw new Error("Debes iniciar sesión para reservar un identificador.");
+    tx.set(ref, { storeId, ownerUid: uid, claimedAt: Date.now() });
   });
 }
 
@@ -251,6 +253,7 @@ function primaryImage(product: Product): string | null {
 export function projectPublicStore(store: Store) {
   const sf = store.storefront;
   return {
+    storeId: store.id,
     name: store.name,
     slug: store.slug,
     type: store.type,
@@ -267,14 +270,16 @@ export function projectPublicStore(store: Store) {
 export function projectPublicProductSummary(product: Product, storeSlug: string) {
   const summary: Record<string, unknown> = {
     storeSlug,
+    storeId: product.storeId,
     productSlug: product.slug ?? null,
     name: product.name,
+    publicDescription: product.publicDescription ?? null,
     imageUrl: primaryImage(product),
     availability: product.availability ?? "available",
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
     canInquire: product.canInquire ?? false,
-    primaryCategoryId: product.categoryIds?.[0] ?? null,
+    categoryIds: product.categoryIds ?? [],
     sortOrder: product.sortOrder ?? 0,
   };
   if (typeof product.price === "number") summary.price = product.price;
@@ -300,9 +305,11 @@ export function projectPublicProductDetail(
     .map((c) => ({ id: c.id, name: c.name, slug: c.slug }));
 
   const detail: Record<string, unknown> = {
+    storeId: product.storeId,
     storeSlug,
     productSlug: product.slug ?? null,
     name: product.name,
+    sku: product.sku ?? product.id,
     publicDescription: product.publicDescription ?? null,
     images: (product.images ?? []).map((i) => ({
       url: i.url,
@@ -347,7 +354,7 @@ export async function projectPublicForStore(
   const writes: Promise<unknown>[] = [];
 
   // 1. Storefront (identity + content + contact).
-  writes.push(setDoc(doc(db, "publicStores", store.slug), projectPublicStore(store), { merge: true }));
+  writes.push(setDoc(doc(db, "publicStores", store.slug), projectPublicStore(store)));
 
   // 2. Catalog: active categories + published product summaries.
   const published = products.filter((p) => p.storeId === store.id && isPublished(p));
@@ -373,7 +380,7 @@ export async function projectPublicForStore(
           .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
           .map((p) => projectPublicProductSummary(p, store.slug)),
       },
-      { merge: true }
+      {}
     )
   );
 
@@ -384,9 +391,7 @@ export async function projectPublicForStore(
     const id = publicProductId(store.id, p.slug);
     keepIds.add(id);
     writes.push(
-      setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories), {
-        merge: true,
-      })
+      setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories))
     );
   }
 
@@ -432,11 +437,7 @@ export async function upsertPublicProduct(
   if (!isPublished(product)) {
     if (id) await deleteDoc(doc(db, "publicProducts", id)).catch(() => {});
   } else if (id) {
-    await setDoc(
-      doc(db, "publicProducts", id),
-      projectPublicProductDetail(product, storeSlug, categories),
-      { merge: true }
-    );
+    await setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(product, storeSlug, categories));
   }
 
   // Refresh the catalog summaries for this store.
@@ -496,7 +497,10 @@ export async function rebuildPublicCatalog(
 export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
   if (user.role !== "super_admin") return; // members never auto-seed
   const existing = await loadCloudState(user);
-  if (existing.stores.length > 0) return;
+  // A bulk emulator wipe can briefly leave stores visible while their products
+  // are gone. Treat that partial state as unseeded; deterministic ids make the
+  // repair safe and production never creates duplicate seed rows.
+  if (existing.stores.length > 0 && existing.products.length > 0) return;
 
   const seed = migrateCatalog(buildSeedState());
   // Write stores FIRST and await them: products/categories/orders rules call

@@ -68,7 +68,7 @@ describe("createStorefrontBuyUrl", () => {
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Hola, me interesa esta pieza:");
     expect(text).toContain("Anillo de plata");
-    expect(text).toContain("SKU OLI-001");
+    expect(text).toContain("Clave: OLI-001");
     expect(text).toContain(`/catalogo/olivia/producto/anillo-de-plata`);
     expect(url).toContain("wa.me/5215512345678");
   });
@@ -84,7 +84,7 @@ describe("createStorefrontBuyUrl", () => {
   });
 
   it("still includes name + URL even without a SKU", () => {
-    const url = createStorefrontBuyUrl(sfStore, "olivia", { name: "Collar", productSlug: "collar" });
+    const url = createStorefrontBuyUrl(sfStore, "olivia", { name: "Collar", sku: "OLV-001", productSlug: "collar" });
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Collar");
     expect(text).toContain("/catalogo/olivia/producto/collar");

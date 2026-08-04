@@ -123,10 +123,11 @@ type StoreContextValue = {
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"invited" | "pending">;
   removeMember: (storeId: string, uid: string) => void;
+  transferStoreOwnership: (storeId: string, email: string) => Promise<void>;
   /** Republish a store's public catalog projection (backfill / repair). */
   republishCatalog: (storeId: string) => Promise<void>;
   setActiveStore: (storeId: string | null) => void;
-  upsertProduct: (product: Product) => void;
+  upsertProduct: (product: Product) => Promise<void>;
   deleteProduct: (productId: string) => void;
   upsertCategory: (category: Category) => void;
   deleteCategory: (categoryId: string) => void;
@@ -155,9 +156,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Seed demo stores on a brand-new (empty) cloud account, then load + subscribe.
       seedCloudIfEmpty(user)
         .then(() => loadCloudState(user))
-        .then((s) => {
+        .then(async (s) => {
+          const migrated = migrateCatalog(s);
+          const writes: Promise<void>[] = [];
+          for (const product of migrated.products) {
+            const before = s.products.find((p) => p.id === product.id);
+            if (before !== product) writes.push(saveEntity(user, "products", product));
+          }
+          for (const category of migrated.categories) {
+            if (!s.categories.some((c) => c.id === category.id)) {
+              writes.push(saveEntity(user, "categories", category));
+            }
+          }
+          await Promise.all(writes);
           fromCloud.current = true;
-          dispatch({ type: "REPLACE_STATE", state: migrateCatalog(s) });
+          dispatch({ type: "REPLACE_STATE", state: migrated });
           fromCloud.current = false;
         })
         .catch(() => {});
@@ -184,9 +197,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveState(state);
   }, [state, cloud]);
 
-  function persistEntity(name: "stores" | "products" | "categories" | "customers" | "orders", entity: { id: string } & Record<string, unknown>) {
-    if (!cloud || !user || fromCloud.current) return;
-    saveEntity(user, name, entity).catch(() => {});
+  function persistEntity(name: "stores" | "products" | "categories" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
+    if (!cloud || !user || fromCloud.current) return Promise.resolve();
+    return saveEntity(user, name, entity);
   }
 
   const value: StoreContextValue = {
@@ -199,7 +212,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // don't create a store whose catalog can't be published.
       if (cloud) await claimSlug(store.slug, store.id);
       dispatch({ type: "ADD_STORE", store });
-      persistEntity("stores", storeWithMembership(store, user));
+      await persistEntity("stores", storeWithMembership(store, user));
       if (cloud) {
         await projectPublicForStore(store, state.products, state.categories).catch(() => {});
       }
@@ -217,7 +230,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await claimSlug(store.slug, store.id);
       }
       dispatch({ type: "UPDATE_STORE", store });
-      persistEntity("stores", store);
+      await persistEntity("stores", store);
       if (cloud) {
         if (slugChanged) {
           // Remove the OLD public projection (storefront + products carrying the
@@ -275,7 +288,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const memberUids = (store.memberUids ?? []).filter((u) => u !== memberUid);
       const updated = { ...store, memberUids, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      persistEntity("stores", updated);
+      void persistEntity("stores", updated).catch(() => {});
+    },
+    transferStoreOwnership: async (storeId, email) => {
+      const store = state.stores.find((s) => s.id === storeId);
+      if (!store) throw new Error("Tienda no encontrada.");
+      const nextOwnerUid = await findUidByEmail(email.toLowerCase().trim());
+      if (!nextOwnerUid || !(store.memberUids ?? []).includes(nextOwnerUid)) {
+        throw new Error("Esa persona debe ser miembro de la tienda antes de recibirla.");
+      }
+      if (nextOwnerUid === store.ownerUid) return;
+      const updated = { ...store, ownerUid: nextOwnerUid, updatedAt: nowIso() };
+      dispatch({ type: "UPDATE_STORE", store: updated });
+      await persistEntity("stores", updated);
     },
     republishCatalog: async (storeId) => {
       const store = state.stores.find((s) => s.id === storeId);
@@ -288,9 +313,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       );
     },
     setActiveStore: (storeId) => dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" }),
-    upsertProduct: (product) => {
+    upsertProduct: async (product) => {
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
-      persistEntity("products", product);
+      await persistEntity("products", product);
       if (cloud && !fromCloud.current) {
         const store = state.stores.find((s) => s.id === product.storeId);
         if (store) {
@@ -300,7 +325,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const next = state.products.some((p) => p.id === product.id)
             ? state.products.map((p) => (p.id === product.id ? product : p))
             : [...state.products, product];
-          upsertPublicProduct(product, store.slug, next, state.categories).catch(() => {});
+          await upsertPublicProduct(product, store.slug, next, state.categories);
         }
       }
     },
@@ -402,7 +427,7 @@ export function useStore(): StoreContextValue {
 // New-entity factories with ids/timestamps prefilled, for forms.
 export function newProduct(storeId: string): Product {
   const now = nowIso();
-  return { id: uid("prod"), storeId, name: "", category: "other", isPublic: true, createdAt: now, updatedAt: now };
+  return { id: uid("prod"), storeId, name: "", sku: "", category: "other", isPublic: false, status: "draft", createdAt: now, updatedAt: now };
 }
 export function newCategory(storeId: string, slug: string): Category {
   const now = nowIso();

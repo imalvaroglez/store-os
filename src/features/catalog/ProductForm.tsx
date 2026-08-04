@@ -196,14 +196,25 @@ export function ProductForm({
     // photograph later" flow.
     const willPublish = (draft.status ?? "published") === "published";
     if (willPublish) {
+      if (!draft.sku?.trim()) {
+        setValidationError("Para publicar, agrega una clave.");
+        setSaving(false);
+        return;
+      }
       const hasPrice = isTiered ? !!parseAmount(retail) : !!parseAmount(price);
       if (!hasPrice) {
         setValidationError("Para publicar, define un precio.");
         setSaving(false);
         return;
       }
-      if ((draft.categoryIds ?? []).length === 0 && categories.length > 0) {
+      if ((draft.categoryIds ?? []).length === 0) {
         setValidationError("Para publicar, elige al menos una categoría.");
+        setSaving(false);
+        return;
+      }
+      const hasPhoto = cloud ? merged.length > 0 && merged.some((image) => image.isPrimary) : !!draft.imageUrl;
+      if (!hasPhoto) {
+        setValidationError("Para publicar, agrega una foto de portada.");
         setSaving(false);
         return;
       }
@@ -217,6 +228,7 @@ export function ProductForm({
     const next: Product = {
       ...draft,
       name: draft.name.trim(),
+      sku: draft.sku?.trim() ?? "",
       slug,
       images: merged,
       imageUrl: merged.find((i) => i.isPrimary)?.url ?? merged[0]?.url,
@@ -238,8 +250,13 @@ export function ProductForm({
       next.prices = undefined;
       next.quantityOnHand = undefined;
     }
-    upsertProduct(next);
-    onDone();
+    try {
+      await upsertProduct(next);
+      onDone();
+    } catch {
+      setValidationError("No se pudo guardar. Intenta de nuevo.");
+      setSaving(false);
+    }
   }
 
   return (
@@ -250,6 +267,12 @@ export function ProductForm({
         value={draft.name}
         onChange={(e) => setDraft({ ...draft, name: e.target.value })}
         autoFocus
+      />
+      <TextField
+        label="Clave"
+        placeholder="Ej. OLV-001"
+        value={draft.sku ?? ""}
+        onChange={(e) => setDraft({ ...draft, sku: e.target.value })}
       />
 
       {cloud ? (

@@ -6,7 +6,7 @@ import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
-import { ToastProvider } from "../design-system";
+import { ToastProvider, OLIVIA_SLUG } from "../design-system";
 
 // Lazy-load the public storefront so the storefront code (sections, gallery,
 // SEO) lives in its own chunk, separate from admin forms.
@@ -17,6 +17,9 @@ import { ToastProvider } from "../design-system";
 // measurably hurts the anonymous visitor.
 const OliviaStorefront = lazy(() =>
   import("../features/catalog/OliviaStorefront").then((m) => ({ default: m.OliviaStorefront }))
+);
+const PublicCatalogScreen = lazy(() =>
+  import("../features/catalog/PublicCatalogScreen").then((m) => ({ default: m.PublicCatalogScreen }))
 );
 
 function Root() {
@@ -31,9 +34,10 @@ function Root() {
     route.name === "public_category" ||
     route.name === "public_product"
   ) {
+    const slug = route.params.slug;
     return (
       <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}>
-        <OliviaStorefront route={route} />
+        {slug === OLIVIA_SLUG ? <OliviaStorefront route={route} /> : <PublicCatalogScreen slug={slug} />}
       </Suspense>
     );
   }

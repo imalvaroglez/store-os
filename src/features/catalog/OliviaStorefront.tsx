@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, EmptyState, SkeletonCard, ProductImage } from "../../design-system";
+import { Button, EmptyState, SkeletonCard, ProductImage, OLIVIA_BRAND } from "../../design-system";
 import {
   loadPublicCatalog,
   loadPublicProduct,
@@ -17,7 +17,6 @@ import {
   createStorefrontContactUrl,
   createStorefrontResaleUrl,
 } from "../../lib/whatsapp";
-import { OLIVIA_BRAND } from "./oliviaBrand";
 import { useSeo } from "./useSeo";
 import type { Storefront } from "../../types";
 
@@ -168,7 +167,7 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
     ? catalog.categories.find((c) => c.slug === focusCategory)
     : undefined;
   const productsInScope = activeCategory
-    ? visibleProducts.filter((p) => p.primaryCategoryId === activeCategory.id)
+    ? visibleProducts.filter((p) => p.categoryIds?.includes(activeCategory.id))
     : visibleProducts;
 
   const featured = visibleProducts.filter((p) => p.isFeatured).slice(0, 6);
@@ -218,12 +217,12 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
         {/* Category nav (anchor scroll on home; route on category pages) */}
         {catalog.categories.length > 0 && (
           <nav aria-label="Categorías" className="flex flex-wrap justify-center gap-2">
-            <CatChip active={!focusCategory} onClick={() => navigate(`/catalogo/${slug}`)}>Todo</CatChip>
+            <CatChip active={!focusCategory} href={`/catalogo/${slug}`}>Todo</CatChip>
             {catalog.categories.map((c) => (
               <CatChip
                 key={c.id}
                 active={focusCategory === c.slug}
-                onClick={() => navigate(`/catalogo/${slug}/categoria/${c.slug}`)}
+                href={`/catalogo/${slug}/categoria/${c.slug}`}
               >
                 {c.name}
               </CatChip>
@@ -357,24 +356,18 @@ function Section({ title, children }: { title?: string; children: React.ReactNod
 
 function CatChip({
   active,
-  onClick,
+  href,
   children,
 }: {
   active: boolean;
-  onClick: () => void;
+  href: string;
   children: React.ReactNode;
 }) {
-  // ponytail: a styled <a>-less button kept inside this feature file would trip
-  // the design-system gate, so render as a link-styled <a> via onClick+navigate.
   return (
     <a
-      href="#"
-      onClick={(e) => {
-        e.preventDefault();
-        onClick();
-      }}
+      href={href}
       className={
-        "rounded-full px-4 py-1.5 text-sm font-semibold transition-colors " +
+        "rounded-full px-4 py-2.5 text-sm font-semibold transition-colors min-h-10 inline-flex items-center " +
         (active
           ? "bg-[var(--olv-accent)] text-white"
           : "bg-white/60 text-[var(--olv-ink)] hover:bg-white")
@@ -386,23 +379,14 @@ function CatChip({
 }
 
 function FaqItem({ q, a }: { q: string; a: string }) {
-  const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-lg bg-white/50 ring-1 ring-[var(--olv-rule)]">
-      <a
-        href="#"
-        onClick={(e) => {
-          e.preventDefault();
-          setOpen((v) => !v);
-        }}
-        aria-expanded={open}
-        className="flex items-center justify-between w-full px-4 py-3 text-left"
-      >
+    <details className="rounded-lg bg-white/50 ring-1 ring-[var(--olv-rule)]">
+      <summary className="flex items-center justify-between w-full px-4 py-3 text-left cursor-pointer">
         <span className="font-semibold text-[var(--olv-ink)]">{q}</span>
-        <span className="olv-ink-soft">{open ? "−" : "+"}</span>
-      </a>
-      {open && <p className="olv-ink-soft px-4 pb-3 text-sm whitespace-pre-line">{a}</p>}
-    </div>
+        <span className="olv-ink-soft">+</span>
+      </summary>
+      <p className="olv-ink-soft px-4 pb-3 text-sm whitespace-pre-line">{a}</p>
+    </details>
   );
 }
 
@@ -436,7 +420,9 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
     if (!data) return "#";
     return createStorefrontBuyUrl(data.store, slug, {
       name: data.product.name,
+      sku: data.product.sku,
       productSlug: data.product.productSlug,
+      intent: data.product.availability === "sold_out" ? "inquire" : "buy",
     });
   }, [data, slug]);
 
@@ -504,16 +490,9 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
   return (
     <StoreChrome store={store}>
       <div className="mx-auto max-w-4xl px-4 py-6">
-        <a
-          href={`/catalogo/${slug}`}
-          onClick={(e) => {
-            e.preventDefault();
-            navigate(`/catalogo/${slug}`);
-          }}
-          className="olv-ink-soft text-sm"
-        >
+        <Button variant="ghost" onClick={() => navigate(`/catalogo/${slug}`)} className="olv-ink-soft text-sm p-0 min-h-10">
           ← Volver al catálogo
-        </a>
+        </Button>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
           {/* Gallery */}
@@ -524,20 +503,18 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
             {images.length > 1 && (
               <div className="flex gap-2 mt-2">
                 {images.map((img, i) => (
-                  <a
+                  <Button
                     key={i}
-                    href="#"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setActiveImg(i);
-                    }}
+                    onClick={() => setActiveImg(i)}
+                    aria-label={`Ver foto ${i + 1}`}
+                    variant="ghost"
                     className={
-                      "w-16 h-16 rounded-lg overflow-hidden ring-2 " +
+                      "w-16 h-16 p-0 rounded-lg overflow-hidden ring-2 " +
                       (i === activeImg ? "ring-[var(--olv-accent)]" : "ring-transparent")
                     }
                   >
                     <ProductImage src={img.url} alt={img.alt || ""} size="thumb" />
-                  </a>
+                  </Button>
                 ))}
               </div>
             )}

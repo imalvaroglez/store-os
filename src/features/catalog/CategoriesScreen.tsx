@@ -200,11 +200,12 @@ function CategoryForm({ category, onDone }: { category: Category; onDone: () => 
         autoFocus
       />
       <TextField
-        label="Identificador (slug)"
-        hint="Se usa en el enlace público. Se genera solo si lo dejas vacío."
+        label="Enlace público"
+        hint={category.slug ? "Se conserva para no romper enlaces compartidos." : "Se genera automáticamente al guardar."}
         placeholder="anillos"
         value={draft.slug}
         onChange={(e) => setDraft({ ...draft, slug: slugify(e.target.value) })}
+        disabled={!!category.slug}
       />
       <TextArea
         label="Descripción"

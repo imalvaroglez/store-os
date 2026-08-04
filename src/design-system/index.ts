@@ -30,3 +30,4 @@ export { TONE_BADGE, ORDER_STATUS_TONE, type StatusTone } from "./tokens";
 // Theme system.
 export { ThemeProvider, useTheme, THEMES, ThemePicker } from "./theme";
 export type { Theme, ThemeId } from "./theme";
+export { OLIVIA_BRAND, OLIVIA_DEFAULT_STOREFRONT, OLIVIA_SLUG } from "./olivia";

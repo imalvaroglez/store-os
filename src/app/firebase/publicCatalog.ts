@@ -19,9 +19,11 @@ export type PublicCategory = {
 };
 
 export type PublicProductSummary = {
+  storeId: string;
   productSlug: string;
   storeSlug: string;
   name: string;
+  publicDescription?: string | null;
   imageUrl?: string | null;
   price?: number;
   prices?: { retail?: number };
@@ -29,7 +31,7 @@ export type PublicProductSummary = {
   isFeatured?: boolean;
   isNew?: boolean;
   canInquire?: boolean;
-  primaryCategoryId?: string | null;
+  categoryIds?: string[];
   sortOrder?: number;
 };
 
@@ -42,6 +44,7 @@ export type PublicProductImage = {
 };
 
 export type PublicStore = {
+  storeId: string;
   slug: string;
   name: string;
   type: StoreType;
@@ -55,9 +58,11 @@ export type PublicCatalog = {
 };
 
 export type PublicProductDetail = {
+  storeId: string;
   storeSlug: string;
   productSlug: string;
   name: string;
+  sku: string;
   publicDescription?: string | null;
   images: PublicProductImage[];
   material?: string | null;
@@ -142,23 +147,19 @@ export async function loadPublicCatalog(slug: string): Promise<{
  */
 export async function loadPublicProduct(
   storeSlug: string,
-  productSlug: string
+  productSlug: string,
+  knownStore?: PublicStore
 ): Promise<{ product: PublicProductDetail; store: PublicStore }> {
   const { db } = getFirebase();
 
-  // storeId lives on publicCatalogs/{slug} (anonymous-readable).
-  const catalogSnap = await getDoc(doc(db, "publicCatalogs", storeSlug));
-  if (!catalogSnap.exists()) throw new PublicCatalogNotFoundError(storeSlug);
-  const storeId = catalogSnap.data()?.storeId as string | undefined;
-  if (!storeId) throw new PublicCatalogNotFoundError(storeSlug);
-
-  const [productSnap, storeSnap] = await Promise.all([
-    getDoc(doc(db, "publicProducts", `${storeId}__${productSlug}`)),
-    getDoc(doc(db, "publicStores", storeSlug)),
-  ]);
-
-  if (!storeSnap.exists()) throw new PublicCatalogNotFoundError(storeSlug);
-  const store: PublicStore = { slug: storeSlug, ...(storeSnap.data() as Omit<PublicStore, "slug">) };
+  let store = knownStore;
+  if (!store) {
+    const storeSnap = await getDoc(doc(db, "publicStores", storeSlug));
+    if (!storeSnap.exists()) throw new PublicCatalogNotFoundError(storeSlug);
+    store = { slug: storeSlug, ...(storeSnap.data() as Omit<PublicStore, "slug">) };
+  }
+  if (!store.storeId) throw new PublicCatalogNotFoundError(storeSlug);
+  const productSnap = await getDoc(doc(db, "publicProducts", `${store.storeId}__${productSlug}`));
 
   if (!productSnap.exists()) throw new PublicProductNotFoundError(productSlug);
   const product = productSnap.data() as PublicProductDetail;
