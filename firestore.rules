@@ -15,6 +15,12 @@ service cloud.firestore {
         || (exists(/databases/$(database)/documents/stores/$(storeId))
             && get(/databases/$(database)/documents/stores/$(storeId)).data.memberUids.hasAny([request.auth.uid]));
     }
+    function isOwner(storeId) {
+      return isSuperAdmin()
+        || (isSignedIn()
+            && exists(/databases/$(database)/documents/stores/$(storeId))
+            && get(/databases/$(database)/documents/stores/$(storeId)).data.ownerUid == request.auth.uid);
+    }
     function roleIs(r) { return request.resource.data.role == r; }
 
     // users/{uid} — readable by any signed-in user (needed for the first-user
@@ -29,35 +35,57 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
-    // stores/{id} — `get`/write gated by membership; `list` allowed for signed-in
-    // users (the client scopes with `where memberUids array-contains uid`; a
-    // non-member only receives their own stores).
     match /stores/{id} {
       allow get: if isMember(id);
-      allow list: if isSignedIn();
+      allow list: if isSuperAdmin()
+        || (isSignedIn() && resource.data.memberUids.hasAny([request.auth.uid]));
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
-      allow update, delete: if isMember(id);
+      // Owners can manage members and transfer ownership, but the new owner
+      // must already be a member. Ordinary members cannot alter store settings.
+      allow update: if isOwner(id)
+        && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]);
+      allow delete: if isOwner(id);
     }
 
     // Entities: `get`/write gated by membership; `list` allowed for signed-in users
     // (the client queries with `where storeId in [<accessible stores>]`, so results
     // stay within the user's stores).
     match /products/{id} {
-      allow get: if isSignedIn() && isMember(resource.data.storeId);
-      allow list: if isSignedIn();
-      allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
+      allow read: if isMember(resource.data.storeId);
+      allow create: if isMember(request.resource.data.storeId);
+      allow update: if isMember(resource.data.storeId)
+        && isMember(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isMember(resource.data.storeId);
+    }
+    // categories/{id} — per-store category entity. id is `${storeId}__${slug}`,
+    // and storeId is also carried on the doc so membership scoping is consistent
+    // with products/customers/orders.
+    match /categories/{id} {
+      allow read: if isMember(resource.data.storeId);
+      allow create: if isMember(request.resource.data.storeId);
+      allow update: if isMember(resource.data.storeId)
+        && isMember(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isMember(resource.data.storeId);
     }
     match /customers/{id} {
-      allow get: if isSignedIn() && isMember(resource.data.storeId);
-      allow list: if isSignedIn();
-      allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
+      allow read: if isMember(resource.data.storeId);
+      allow create: if isMember(request.resource.data.storeId);
+      allow update: if isMember(resource.data.storeId)
+        && isMember(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isMember(resource.data.storeId);
     }
     match /orders/{id} {
-      allow get: if isSignedIn() && isMember(resource.data.storeId);
-      allow list: if isSignedIn();
-      allow create, update, delete: if isSignedIn() && isMember(request.resource.data.storeId);
+      allow read: if isMember(resource.data.storeId);
+      allow create: if isMember(request.resource.data.storeId);
+      allow update: if isMember(resource.data.storeId)
+        && isMember(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isMember(resource.data.storeId);
     }
 
     // --- Public catalog (anonymous-readable projections) ---
@@ -70,21 +98,39 @@ service cloud.firestore {
     match /slugs/{slug} {
       allow get: if isSignedIn();
       allow list: if false;
-      allow create: if isSignedIn();
-      allow delete: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if isOwner(resource.data.storeId)
+        || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
     }
 
-    // publicStores/{slug} — minimal public storefront. Anonymous read; writes by
-    // any signed-in client (the projection carries nothing sensitive).
     match /publicStores/{slug} {
       allow read: if true;
-      allow write: if isSignedIn();
+      allow create: if isOwner(request.resource.data.storeId);
+      allow update: if isOwner(resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isOwner(resource.data.storeId);
     }
 
-    // publicProducts/{id} — public-only product projection. Anonymous read.
+    // publicCatalogs/{slug} — active categories + lightweight product summaries
+    // for the grid, plus storeId (used to resolve publicProducts doc ids
+    // anonymously). Anonymous read; signed-in write.
+    match /publicCatalogs/{slug} {
+      allow read: if true;
+      allow create: if isMember(request.resource.data.storeId);
+      allow update: if isMember(resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isMember(resource.data.storeId);
+    }
+
+    // publicProducts/{id} — public-only product detail (id = storeId__slug).
+    // Anonymous read.
     match /publicProducts/{id} {
       allow read: if true;
-      allow write: if isSignedIn();
+      allow create: if isMember(request.resource.data.storeId);
+      allow update: if isMember(resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isMember(resource.data.storeId);
     }
   }
 }

@@ -1,11 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import {
+  AnimatedNumber,
   Badge,
   Button,
+  Dialog,
+  Dropdown,
+  DropdownItem,
+  CommandPalette,
+  Lightbox,
   ProductImage,
+  Reveal,
   SelectField,
   Sheet,
+  Skeleton,
+  SkeletonCard,
+  ToastProvider,
+  useToast,
 } from "./index";
 import { TONE_BADGE, ORDER_STATUS_TONE } from "./tokens";
 
@@ -85,5 +96,125 @@ describe("tokens", () => {
   it("every order status maps to a known tone", () => {
     const tones = Object.values(ORDER_STATUS_TONE);
     expect(tones.every((t) => t in TONE_BADGE)).toBe(true);
+  });
+});
+
+describe("Toast", () => {
+  it("renders a toast when success() is called", () => {
+    function Trigger() {
+      const toast = useToast();
+      return <button onClick={() => toast.success("Guardado")}>go</button>;
+    }
+    render(
+      <ToastProvider>
+        <Trigger />
+      </ToastProvider>
+    );
+    expect(screen.queryByText("Guardado")).toBeNull();
+    fireEvent.click(screen.getByText("go"));
+    expect(screen.getByText("Guardado")).toBeTruthy();
+  });
+});
+
+describe("Skeleton", () => {
+  it("Skeleton renders an element with aria-busy", () => {
+    const { container } = render(<Skeleton />);
+    expect(container.firstChild).toBeTruthy();
+    expect((container.firstChild as HTMLElement).getAttribute("aria-busy")).toBe("true");
+  });
+  it("SkeletonCard renders image + text placeholders", () => {
+    const { container } = render(<SkeletonCard />);
+    expect(container.querySelectorAll("[aria-busy='true']").length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("AnimatedNumber", () => {
+  it("renders the final value formatted as currency", () => {
+    // jsdom has no IntersectionObserver; the component falls back to showing
+    // the target value immediately when IO is unavailable.
+    const { container } = render(<AnimatedNumber value={18420} format="currency" />);
+    expect(container.textContent).toContain("$18,420");
+  });
+  it("renders plain integer when no format", () => {
+    const { container } = render(<AnimatedNumber value={1234} />);
+    expect(container.textContent).toContain("1,234");
+  });
+});
+
+describe("Reveal", () => {
+  it("renders children (jsdom has no IO; falls back to visible)", () => {
+    const { container } = render(
+      <Reveal><span>hi</span></Reveal>
+    );
+    expect(container.textContent).toContain("hi");
+  });
+});
+
+describe("Lightbox", () => {
+  it("renders nothing when closed", () => {
+    const { container } = render(
+      <Lightbox open={false} images={[]} index={0} onClose={() => {}} />
+    );
+    expect(container.textContent).toBe("");
+  });
+  it("renders the image alt when open", () => {
+    render(
+      <Lightbox open images={[{ src: "/a.png", alt: "Vasija" }]} index={0} onClose={() => {}} />
+    );
+    expect(screen.getByAltText("Vasija")).toBeTruthy();
+  });
+});
+
+describe("Dialog", () => {
+  it("renders nothing when closed", () => {
+    const { container } = render(<Dialog open={false} title="T" onClose={() => {}}><p>x</p></Dialog>);
+    expect(container.textContent).toBe("");
+  });
+  it("renders title and children when open", () => {
+    render(<Dialog open title="Borrar" onClose={() => {}}><p>¿Seguro?</p></Dialog>);
+    expect(screen.getByText("Borrar")).toBeTruthy();
+    expect(screen.getByText("¿Seguro?")).toBeTruthy();
+  });
+});
+
+describe("Dropdown", () => {
+  it("does not render menu when closed", () => {
+    render(
+      <Dropdown trigger={<span>t</span>} open={false} onClose={() => {}}>
+        <DropdownItem onClick={() => {}}>Editar</DropdownItem>
+      </Dropdown>
+    );
+    expect(screen.queryByText("Editar")).toBeNull();
+  });
+  it("renders items when open", () => {
+    render(
+      <Dropdown trigger={<span>t</span>} open onClose={() => {}}>
+        <DropdownItem onClick={() => {}}>Editar</DropdownItem>
+      </Dropdown>
+    );
+    expect(screen.getByText("Editar")).toBeTruthy();
+  });
+});
+
+describe("CommandPalette", () => {
+  it("renders nothing when closed", () => {
+    const { container } = render(
+      <CommandPalette open={false} onClose={() => {}} commands={[]} />
+    );
+    expect(container.textContent).toBe("");
+  });
+  it("lists commands when open and filters by query", () => {
+    render(
+      <CommandPalette open onClose={() => {}} commands={[
+        { group: "Ir", items: [ { id: "a", label: "Catálogo" }, { id: "b", label: "Pedidos" } ] },
+      ]} />
+    );
+    expect(screen.getByText("Catálogo")).toBeTruthy();
+    expect(screen.getByText("Pedidos")).toBeTruthy();
+    // type to filter
+    const input = screen.getByPlaceholderText("Buscar…") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "ped" } });
+    expect(screen.queryByText("Catálogo")).toBeNull();
+    expect(screen.getByText("Pedidos")).toBeTruthy();
   });
 });

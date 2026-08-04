@@ -152,3 +152,7 @@ playwright-report/
 .env
 .env.*
 !.env.example
+
+# Playwright test output
+test-results/
+playwright-report/

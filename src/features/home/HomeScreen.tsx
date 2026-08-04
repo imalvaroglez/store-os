@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useStore, newOrder } from "../../app/StoreProvider";
 import {
+  AnimatedNumber,
   Badge,
   Button,
   Card,
-  Money,
+  Reveal,
   ScreenHeader,
   Screen,
   Sheet,
@@ -51,18 +52,20 @@ export function HomeScreen() {
         + Nuevo pedido
       </Button>
 
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <Card>
-          <StatRow label="Falta cobrar" tone="danger">
-            <Money amount={toPay} className="text-[1.6rem] leading-tight" />
-          </StatRow>
-        </Card>
-        <Card>
-          <StatRow label="Ganancia esperada" tone="success">
-            <Money amount={expectedProfit} className="text-[1.6rem] leading-tight" />
-          </StatRow>
-        </Card>
-      </div>
+      <Reveal>
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <Card>
+            <StatRow label="Falta cobrar" tone="danger">
+              <AnimatedNumber value={toPay} format="currency" className="text-[1.6rem] leading-tight" />
+            </StatRow>
+          </Card>
+          <Card>
+            <StatRow label="Ganancia esperada" tone="success">
+              <AnimatedNumber value={expectedProfit} format="currency" className="text-[1.6rem] leading-tight" />
+            </StatRow>
+          </Card>
+        </div>
+      </Reveal>
 
       {lowStock.length > 0 && (
         <Card className="mb-4 !bg-terracotta-soft/60 ring-terracotta/20">

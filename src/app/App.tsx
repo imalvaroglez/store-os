@@ -1,20 +1,45 @@
-import { StoreProvider, useStore } from "./StoreProvider";
+import { lazy, Suspense } from "react";
+import { useStore } from "./StoreProvider";
 import { useAuth } from "./firebase/AuthProvider";
 import { useRoute } from "./router";
 import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
-import { PublicCatalogScreen } from "../features/catalog/PublicCatalogScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
+import { ToastProvider, OLIVIA_SLUG } from "../design-system";
+
+// Lazy-load the public storefront so the storefront code (sections, gallery,
+// SEO) lives in its own chunk, separate from admin forms.
+// ponytail: the entry chunk still bundles Firebase because StoreProvider/
+// AuthProvider mount unconditionally at the root (main.tsx). Fully excluding
+// Firebase from the public path would mean route-detecting before the provider
+// tree mounts — a bigger refactor deferred until the public bundle size
+// measurably hurts the anonymous visitor.
+const OliviaStorefront = lazy(() =>
+  import("../features/catalog/OliviaStorefront").then((m) => ({ default: m.OliviaStorefront }))
+);
+const PublicCatalogScreen = lazy(() =>
+  import("../features/catalog/PublicCatalogScreen").then((m) => ({ default: m.PublicCatalogScreen }))
+);
 
 function Root() {
   const route = useRoute();
   const { activeStore, state } = useStore();
   const { user } = useAuth();
 
-  // Public catalog takes over the whole viewport, no shell, no private data.
-  if (route.name === "public_catalog") {
-    return <PublicCatalogScreen slug={route.params.slug} />;
+  // Public storefront routes take over the whole viewport: no shell, no private
+  // data. Anonymous-readable. A single component handles all three sub-routes.
+  if (
+    route.name === "public_store" ||
+    route.name === "public_category" ||
+    route.name === "public_product"
+  ) {
+    const slug = route.params.slug;
+    return (
+      <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}>
+        {slug === OLIVIA_SLUG ? <OliviaStorefront route={route} /> : <PublicCatalogScreen slug={slug} />}
+      </Suspense>
+    );
   }
 
   // Signed in but no active store yet -> the picker (or create-first if empty).
@@ -50,10 +75,12 @@ function Root() {
 }
 
 export function App() {
-  // The shell owns width/responsiveness now (sidebar on desktop, column on mobile).
+  // StoreProvider lives at the root (main.tsx) alongside Auth/Theme so the whole
+  // tree shares one store instance. App owns the toast layer, which scopes it to
+  // authenticated shell + catalog screens (not the bare error boundary).
   return (
-    <StoreProvider>
+    <ToastProvider>
       <Root />
-    </StoreProvider>
+    </ToastProvider>
   );
 }
