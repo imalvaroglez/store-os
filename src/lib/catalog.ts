@@ -100,16 +100,25 @@ export function migrateCatalog(state: AppState): AppState {
   // Seed from existing categories so we don't drop admin-created ones.
   for (const c of state.categories ?? []) categoriesById.set(c.id, c);
 
+  const slugsByStore = new Map<string, Set<string>>();
+  for (const p of products) {
+    if (!p.slug) continue;
+    const taken = slugsByStore.get(p.storeId) ?? new Set<string>();
+    taken.add(p.slug);
+    slugsByStore.set(p.storeId, taken);
+  }
+
   const migratedProducts = products.map((p) => {
     if (p.schemaVersion === CURRENT_PRODUCT_SCHEMA_VERSION) return p;
 
-    // Ensure the legacy category has a Category row.
-    const cat = categoryFromLegacy(p.storeId, p.category, now);
-    if (!categoriesById.has(cat.id)) categoriesById.set(cat.id, cat);
+    // Only synthesize a legacy category when the product has none of its own.
+    // A product that already carries categoryIds (e.g. Olivia's seeded pieces)
+    // keeps those and does not spawn a generic "Joyería" category.
+    const hasOwnCategories = p.categoryIds && p.categoryIds.length > 0;
+    const cat = !hasOwnCategories ? categoryFromLegacy(p.storeId, p.category, now) : null;
+    if (cat && !categoriesById.has(cat.id)) categoriesById.set(cat.id, cat);
 
-    const categoryIds = p.categoryIds && p.categoryIds.length > 0
-      ? p.categoryIds
-      : [cat.id];
+    const categoryIds = hasOwnCategories ? p.categoryIds! : cat ? [cat.id] : [];
 
     // Mirror a legacy single image into a one-item primary gallery.
     const images = p.images
@@ -118,7 +127,7 @@ export function migrateCatalog(state: AppState): AppState {
         ? [{
             id: "img_legacy",
             url: p.imageUrl,
-            storagePath: `products/${p.storeId}/${p.id}/img_legacy.jpg`,
+            storagePath: `products/${p.storeId}/${p.id}.jpg`,
             order: 0,
             isPrimary: true,
           }]
@@ -126,19 +135,22 @@ export function migrateCatalog(state: AppState): AppState {
 
     const status = p.status ?? (p.isPublic ? "published" : "draft");
 
-    const slug = uniqueProductSlug(
-      products,
-      p.storeId,
-      p.id,
-      slugify(p.name),
-      p.slug
-    );
+    const taken = slugsByStore.get(p.storeId) ?? new Set<string>();
+    let slug = p.slug ?? (slugify(p.name) || "pieza");
+    if (!p.slug) {
+      let suffix = 2;
+      const root = slug;
+      while (taken.has(slug)) slug = `${root}-${suffix++}`;
+      taken.add(slug);
+      slugsByStore.set(p.storeId, taken);
+    }
 
     return {
       ...p,
       categoryIds,
       images,
       slug,
+      sku: p.sku?.trim() || p.id,
       status,
       availability: p.availability ?? "available",
       schemaVersion: CURRENT_PRODUCT_SCHEMA_VERSION,

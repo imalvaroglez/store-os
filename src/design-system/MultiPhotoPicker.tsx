@@ -74,7 +74,7 @@ export function MultiPhotoPicker({
                 aria-label="Mover izquierda"
                 disabled={i === 0 || tile.busy}
                 onClick={() => onMove(tile.id, -1)}
-                className="h-8 w-8 bg-paper/80"
+                className="bg-paper/80"
               >
                 ←
               </IconButton>
@@ -83,7 +83,7 @@ export function MultiPhotoPicker({
                 aria-label="Mover derecha"
                 disabled={i === tiles.length - 1 || tile.busy}
                 onClick={() => onMove(tile.id, 1)}
-                className="h-8 w-8 bg-paper/80"
+                className="bg-paper/80"
               >
                 →
               </IconButton>
@@ -95,7 +95,7 @@ export function MultiPhotoPicker({
                   aria-label="Marcar como portada"
                   disabled={tile.busy}
                   onClick={() => onMakePrimary(tile.id)}
-                  className="h-8 w-8 bg-paper/80"
+                  className="bg-paper/80"
                 >
                   ★
                 </IconButton>
@@ -105,7 +105,7 @@ export function MultiPhotoPicker({
                 aria-label="Quitar foto"
                 disabled={tile.busy}
                 onClick={() => onRemove(tile.id)}
-                className="h-8 w-8 bg-paper/80 text-danger"
+                className="bg-paper/80 text-danger"
               >
                 ✕
               </IconButton>

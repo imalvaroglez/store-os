@@ -18,7 +18,7 @@ export function StoreSettingsScreen({
   storeId: string;
   onDone: () => void;
 }) {
-  const { state, updateStore, deleteStore, inviteMember, removeMember, republishCatalog } = useStore();
+  const { state, updateStore, deleteStore, inviteMember, removeMember, transferStoreOwnership, republishCatalog } = useStore();
   const { user } = useAuth();
   const toast = useToast();
   const store = state.stores.find((s) => s.id === storeId);
@@ -35,6 +35,9 @@ export function StoreSettingsScreen({
   const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [transferEmail, setTransferEmail] = useState("");
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [confirmTransfer, setConfirmTransfer] = useState(false);
   const [editSite, setEditSite] = useState(false);
 
   if (!store) {
@@ -120,9 +123,20 @@ export function StoreSettingsScreen({
     }
   }
 
+  async function transferOwnership() {
+    setTransferError(null);
+    try {
+      await transferStoreOwnership(store!.id, transferEmail);
+      toast.success("Propiedad transferida");
+      setTransferEmail("");
+    } catch (error) {
+      setTransferError(error instanceof Error ? error.message : "No se pudo transferir la propiedad.");
+    }
+  }
+
   return (
     <div className="space-y-5">
-      <div className="space-y-3">
+      {isOwnerOrAdmin && <div className="space-y-3">
         <TextField label="Nombre" value={name} onChange={(e) => setName(e.target.value)} />
         <SelectField
           label="Tipo de tienda"
@@ -145,7 +159,7 @@ export function StoreSettingsScreen({
         <Button full onClick={saveBasic} disabled={!name.trim()}>
           Guardar
         </Button>
-      </div>
+      </div>}
 
       <div className="space-y-2">
         <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Miembros</h3>
@@ -180,6 +194,13 @@ export function StoreSettingsScreen({
               Enviar invitación
             </Button>
           </>
+        )}
+        {isOwnerOrAdmin && (
+          <div className="pt-2">
+            <TextField label="Transferir propiedad a" placeholder="correo@ejemplo.com" type="email" value={transferEmail} onChange={(e) => setTransferEmail(e.target.value)} />
+            <Button full variant="secondary" onClick={() => setConfirmTransfer(true)} disabled={!transferEmail.trim()}>Transferir propiedad</Button>
+            {transferError && <p className="text-xs text-danger">{transferError}</p>}
+          </div>
         )}
         {inviteMsg && <p className="text-xs text-ink-soft">{inviteMsg}</p>}
       </div>
@@ -231,6 +252,15 @@ export function StoreSettingsScreen({
         }
       >
         ¿Eliminar <span className="font-semibold text-ink">{store!.name}</span> y todos sus datos? Esta acción no se puede deshacer.
+      </Dialog>
+      <Dialog
+        open={confirmTransfer}
+        title="Transferir propiedad"
+        tone="danger"
+        onClose={() => setConfirmTransfer(false)}
+        footer={<><Button variant="ghost" onClick={() => setConfirmTransfer(false)}>Cancelar</Button><Button variant="danger" onClick={() => { void transferOwnership(); setConfirmTransfer(false); }}>Transferir</Button></>}
+      >
+        Dejarás de ser la persona dueña de esta tienda. Seguirás como miembro.
       </Dialog>
     </div>
   );

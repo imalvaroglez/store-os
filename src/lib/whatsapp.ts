@@ -43,8 +43,9 @@ export type StorefrontWhatsAppTarget = {
 
 export type StorefrontProductRef = {
   name: string;
-  sku?: string;
+  sku: string;
   productSlug?: string;
+  intent?: "buy" | "inquire";
 };
 
 function storefrontBase(phone?: string | null): string {
@@ -68,8 +69,8 @@ export function createStorefrontBuyUrl(
   product: StorefrontProductRef
 ): string {
   const intro = store.storefront?.whatsappBuyIntro?.trim() || "Hola, me interesa esta pieza:";
-  const sku = product.sku ? ` (SKU ${product.sku})` : "";
-  const text = `${intro}\n${product.name}${sku}\n${productUrl(storeSlug, product.productSlug)}`;
+  const intent = product.intent === "inquire" ? "Quiero preguntar por esta pieza." : "Quiero comprar esta pieza.";
+  const text = `${intro}\n${intent}\nProducto: ${product.name}\nClave: ${product.sku}\n${productUrl(storeSlug, product.productSlug)}`;
   return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }
 
@@ -91,4 +92,3 @@ export function createStorefrontResaleUrl(
   const text = `${intro}\n${productUrl(storeSlug)}`;
   return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }
-

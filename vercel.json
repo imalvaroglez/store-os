@@ -5,6 +5,8 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "rewrites": [
+    { "source": "/catalogo/olivia", "destination": "/olivia.html" },
+    { "source": "/catalogo/olivia/(.*)", "destination": "/olivia.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [

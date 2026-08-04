@@ -31,6 +31,7 @@ export type StorefrontSection = {
 export type FAQItem = { q: string; a: string };
 
 export type Storefront = {
+  logoUrl?: string;
   hero?: StorefrontSection;
   benefits?: string[]; // short bullet lines under the hero
   story?: StorefrontSection; // "Nuestra historia"
@@ -99,6 +100,8 @@ export type Product = {
   id: string;
   storeId: string;
   name: string;
+  // Kept optional only for legacy documents; migration fills it before publish.
+  sku?: string;
 
   // Legacy single category (kept for migration + back-compat; superseded by
   // categoryIds below once migrated). Old code reads this; new code writes both.

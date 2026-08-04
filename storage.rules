@@ -11,20 +11,38 @@ service firebase.storage {
         || firestore.get(/databases/(default)/documents/stores/$(storeId)).data.memberUids.hasAny([request.auth.uid])
       );
     }
+    function isStoreOwner(storeId) {
+      return request.auth != null && (
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
+        || firestore.get(/databases/(default)/documents/stores/$(storeId)).data.ownerUid == request.auth.uid
+      );
+    }
 
-    // Product photos. Reads are public — the anonymous catalog loads imageUrl.
-    // Writes/deletes require store membership; size + type validated on write.
-    match /products/{storeId}/{fileName} {
-      allow read: if true;
-      allow create, update: if isStoreMember(storeId)
-        && request.resource.size < 5 * 1024 * 1024
-        // Exact allowlist — a broad `image/` prefix would admit image/svg+xml
-        // (an XSS/SSRF vector) on a world-readable object. Client uploads JPEG.
+    function validImage() {
+      return request.resource.size < 5 * 1024 * 1024
         && (request.resource.contentType == 'image/jpeg'
             || request.resource.contentType == 'image/png'
             || request.resource.contentType == 'image/webp')
-        && fileName.matches('.*\\.jpg');
+        && request.resource.name.matches('.*\\.jpg');
+    }
+
+    // The recursive path covers both legacy product photos and gallery photos.
+    match /products/{storeId}/{path=**} {
+      allow read: if true;
+      allow create, update: if isStoreMember(storeId) && validImage();
       allow delete: if isStoreMember(storeId);
+    }
+
+    match /categories/{storeId}/{fileName} {
+      allow read: if true;
+      allow create, update: if isStoreMember(storeId) && validImage();
+      allow delete: if isStoreMember(storeId);
+    }
+
+    match /storefront/{storeId}/{fileName} {
+      allow read: if true;
+      allow create, update: if isStoreOwner(storeId) && validImage();
+      allow delete: if isStoreOwner(storeId);
     }
   }
 }
