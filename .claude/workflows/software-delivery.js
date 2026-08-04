@@ -44,29 +44,34 @@ let head = "HEAD";
 let current = "INTAKE";
 let eventSeq = 0; // monotonic counter — Date.now()/new Date()/Math.random() are forbidden in workflow scripts
 
-// Extract a JSON object from an agent response that may contain prose before/after it.
-// GLM agents typically emit reasoning prose then the JSON. Find the LAST {...} block.
+// Extract the agent-result JSON from a response that may contain prose + embedded
+// small JSON objects (findings, risks). Find the FIRST balanced {...} that has
+// the required agent-result keys (status + summary + agent).
 function extractJson(text) {
   if (typeof text === "object") return text;
   if (typeof text !== "string") return null;
   // Try direct parse first.
   try { return JSON.parse(text); } catch {}
-  // Find the last {...} object in the string (greedy, handles nested braces).
-  let depth = 0, start = -1;
-  for (let i = text.length - 1; i >= 0; i--) {
-    if (text[i] === "}") depth++;
-    if (text[i] === "{") {
-      depth--;
-      if (depth === 0) { start = i; break; }
+  // Scan for all top-level balanced {...} blocks; return the first that has status+summary.
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "{") { i++; continue; }
+    // Found a potential start — find its matching close.
+    let depth = 0, end = -1;
+    for (let j = i; j < text.length; j++) {
+      if (text[j] === "{") depth++;
+      if (text[j] === "}") { depth--; if (depth === 0) { end = j; break; } }
     }
-  }
-  if (start >= 0) {
-    // Walk forward to find the matching close.
-    let d = 0;
-    for (let end = start; end < text.length; end++) {
-      if (text[end] === "{") d++;
-      if (text[end] === "}") { d--; if (d === 0) { try { return JSON.parse(text.slice(start, end + 1)); } catch {} } }
-    }
+    if (end < 0) break;
+    const candidate = text.slice(i, end + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      // Must look like an agent-result (has status + summary at minimum).
+      if (parsed && typeof parsed.status === "string" && typeof parsed.summary === "string") {
+        return parsed;
+      }
+    } catch {}
+    i = end + 1; // skip to after this block and keep searching
   }
   return null;
 }
