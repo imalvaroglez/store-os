@@ -6,6 +6,7 @@ import {
   Money,
   StatRow,
   ORDER_STATUS_TONE,
+  useToast,
 } from "../../design-system";
 import { ORDER_STATUS_LABELS, nextActionVerb, nextStatus } from "./orderStatus";
 import { pending, profit } from "../../lib/money";
@@ -14,6 +15,7 @@ import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
   const { upsertOrder, state } = useStore();
+  const toast = useToast();
   const customer = state.customers.find((c) => c.id === order.customerId);
   const total = order.price * order.quantity;
   const due = pending(total, order.deposit);
@@ -25,6 +27,8 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     const next = nextStatus(order.status);
     if (!next) return;
     upsertOrder({ ...order, status: next, updatedAt: new Date().toISOString() });
+    // verb is the next status label (e.g. "Confirmar", "Cobrar") — confirm the move.
+    toast.success(`Pedido avanzado a «${verb}»`);
   }
 
   return (

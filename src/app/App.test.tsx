@@ -35,11 +35,11 @@ describe("HomeScreen store isolation render", () => {
     // Primary action present
     expect(screen.getByText("+ Nuevo pedido")).toBeTruthy();
 
-    // Santi is the active store in seed; its product appears in active orders list
-    expect(screen.getByText("Perfume Baccarat Rouge 540")).toBeTruthy();
+    // Olivia is the active store in seed; her product appears in active orders.
+    expect(screen.getByText("Anillo de plata 925")).toBeTruthy();
 
-    // A Joyería-only product must not leak onto the Santi home screen
-    expect(screen.queryByText("Cadena de plata 925")).toBeNull();
+    // A Santi-only product must not leak onto the Olivia home screen.
+    expect(screen.queryByText("Perfume Baccarat Rouge 540")).toBeNull();
   });
 
   it("isolates when switching active store via the provider", () => {

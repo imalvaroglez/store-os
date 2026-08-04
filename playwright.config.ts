@@ -1,13 +1,14 @@
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig } from "@playwright/test";
 
-// Real end-to-end: boots the production preview server and drives the actual app
-// with clicks/keyboard at mobile AND desktop viewports. Run via `npm run e2e`.
+// Fast build smoke: boots the production preview build (DEV=false) and verifies
+// the app boots to the AuthScreen when signed out. The full frontend suite
+// (smoke + responsive + theme) now runs against the Firebase emulator via
+// `npm run e2e:firebase` (see playwright.firebase.config.ts).
 export default defineConfig({
   testDir: "./e2e",
-  // Default suite = the frontend (smoke + responsive + theme). Firebase tests
-  // need the emulator — run them via `npm run e2e:firebase`.
-  testMatch: /.*\.spec\.ts/,
-  testIgnore: /firebase\.spec\.ts/,
+  testMatch: /build-smoke\.spec\.ts/,
+  // The emulator-only specs are excluded; they run via playwright.firebase.config.ts.
+  testIgnore: /(^|\/)(firebase|public-catalog|smoke|responsive|theme)\.spec\.ts$/,
   timeout: 30_000,
   retries: 0,
   use: {
@@ -21,8 +22,4 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
-  projects: [
-    { name: "mobile", use: { viewport: { width: 390, height: 844 } } },
-    { name: "desktop", use: { viewport: { width: 1280, height: 800 } } },
-  ],
 });

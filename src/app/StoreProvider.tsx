@@ -12,9 +12,11 @@ import type {
   Product,
   Customer,
   Order,
+  Category,
 } from "../types";
 import { loadState, saveState } from "../lib/storage";
 import { buildSeedState } from "../lib/seed";
+import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { useAuth } from "./firebase/AuthProvider";
@@ -30,7 +32,8 @@ import {
   projectPublicForStore,
   unprojectPublicForStore,
   upsertPublicProduct,
-  removePublicProduct,
+  removePublicProductDoc,
+  rebuildPublicCatalog,
 } from "./firebase/firestoreData";
 import { deleteProductImage } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
@@ -45,6 +48,9 @@ type Action =
   | { type: "ADD_PRODUCT"; product: Product }
   | { type: "UPDATE_PRODUCT"; product: Product }
   | { type: "DELETE_PRODUCT"; productId: string }
+  | { type: "ADD_CATEGORY"; category: Category }
+  | { type: "UPDATE_CATEGORY"; category: Category }
+  | { type: "DELETE_CATEGORY"; categoryId: string }
   | { type: "ADD_CUSTOMER"; customer: Customer }
   | { type: "UPDATE_CUSTOMER"; customer: Customer }
   | { type: "DELETE_CUSTOMER"; customerId: string }
@@ -65,6 +71,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         stores: state.stores.filter((s) => s.id !== action.storeId),
         products: state.products.filter((p) => p.storeId !== action.storeId),
+        categories: state.categories.filter((c) => c.storeId !== action.storeId),
         customers: state.customers.filter((c) => c.storeId !== action.storeId),
         orders: state.orders.filter((o) => o.storeId !== action.storeId),
         activeStoreId:
@@ -80,6 +87,12 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, products: state.products.map((p) => (p.id === action.product.id ? action.product : p)) };
     case "DELETE_PRODUCT":
       return { ...state, products: state.products.filter((p) => p.id !== action.productId) };
+    case "ADD_CATEGORY":
+      return { ...state, categories: [...state.categories, action.category] };
+    case "UPDATE_CATEGORY":
+      return { ...state, categories: state.categories.map((c) => (c.id === action.category.id ? action.category : c)) };
+    case "DELETE_CATEGORY":
+      return { ...state, categories: state.categories.filter((c) => c.id !== action.categoryId) };
     case "ADD_CUSTOMER":
       return { ...state, customers: [...state.customers, action.customer] };
     case "UPDATE_CUSTOMER":
@@ -110,11 +123,14 @@ type StoreContextValue = {
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"invited" | "pending">;
   removeMember: (storeId: string, uid: string) => void;
+  transferStoreOwnership: (storeId: string, email: string) => Promise<void>;
   /** Republish a store's public catalog projection (backfill / repair). */
   republishCatalog: (storeId: string) => Promise<void>;
   setActiveStore: (storeId: string | null) => void;
-  upsertProduct: (product: Product) => void;
+  upsertProduct: (product: Product) => Promise<void>;
   deleteProduct: (productId: string) => void;
+  upsertCategory: (category: Category) => void;
+  deleteCategory: (categoryId: string) => void;
   upsertCustomer: (customer: Customer) => void;
   deleteCustomer: (customerId: string) => void;
   upsertOrder: (order: Order) => void;
@@ -140,15 +156,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Seed demo stores on a brand-new (empty) cloud account, then load + subscribe.
       seedCloudIfEmpty(user)
         .then(() => loadCloudState(user))
-        .then((s) => {
+        .then(async (s) => {
+          const migrated = migrateCatalog(s);
+          const writes: Promise<void>[] = [];
+          for (const product of migrated.products) {
+            const before = s.products.find((p) => p.id === product.id);
+            if (before !== product) writes.push(saveEntity(user, "products", product));
+          }
+          for (const category of migrated.categories) {
+            if (!s.categories.some((c) => c.id === category.id)) {
+              writes.push(saveEntity(user, "categories", category));
+            }
+          }
+          await Promise.all(writes);
           fromCloud.current = true;
-          dispatch({ type: "REPLACE_STATE", state: s });
+          dispatch({ type: "REPLACE_STATE", state: migrated });
           fromCloud.current = false;
         })
         .catch(() => {});
       unsub = subscribeCloudState(user, (s) => {
         fromCloud.current = true;
-        dispatch({ type: "REPLACE_STATE", state: s });
+        dispatch({ type: "REPLACE_STATE", state: migrateCatalog(s) });
         fromCloud.current = false;
       });
     } else if (!cloud) {
@@ -169,9 +197,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveState(state);
   }, [state, cloud]);
 
-  function persistEntity(name: "stores" | "products" | "customers" | "orders", entity: { id: string } & Record<string, unknown>) {
-    if (!cloud || !user || fromCloud.current) return;
-    saveEntity(user, name, entity).catch(() => {});
+  function persistEntity(name: "stores" | "products" | "categories" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
+    if (!cloud || !user || fromCloud.current) return Promise.resolve();
+    return saveEntity(user, name, entity);
   }
 
   const value: StoreContextValue = {
@@ -184,9 +212,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // don't create a store whose catalog can't be published.
       if (cloud) await claimSlug(store.slug, store.id);
       dispatch({ type: "ADD_STORE", store });
-      persistEntity("stores", storeWithMembership(store, user));
+      await persistEntity("stores", storeWithMembership(store, user));
       if (cloud) {
-        await projectPublicForStore(store, state.products).catch(() => {});
+        await projectPublicForStore(store, state.products, state.categories).catch(() => {});
       }
       return store;
     },
@@ -202,7 +230,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await claimSlug(store.slug, store.id);
       }
       dispatch({ type: "UPDATE_STORE", store });
-      persistEntity("stores", store);
+      await persistEntity("stores", store);
       if (cloud) {
         if (slugChanged) {
           // Remove the OLD public projection (storefront + products carrying the
@@ -211,7 +239,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // so no separate releaseSlug call is needed.
           await unprojectPublicForStore(existing).catch(() => {});
         }
-        await projectPublicForStore(store, state.products).catch(() => {});
+        // Always re-project: storefront content (hero, FAQ, contact, SEO) lives
+        // in publicStores, so an edit with no slug change must still republish.
+        await projectPublicForStore(store, state.products, state.categories).catch(() => {});
       }
     },
     deleteStore: (storeId) => {
@@ -258,31 +288,102 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const memberUids = (store.memberUids ?? []).filter((u) => u !== memberUid);
       const updated = { ...store, memberUids, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      persistEntity("stores", updated);
+      void persistEntity("stores", updated).catch(() => {});
+    },
+    transferStoreOwnership: async (storeId, email) => {
+      const store = state.stores.find((s) => s.id === storeId);
+      if (!store) throw new Error("Tienda no encontrada.");
+      const nextOwnerUid = await findUidByEmail(email.toLowerCase().trim());
+      if (!nextOwnerUid || !(store.memberUids ?? []).includes(nextOwnerUid)) {
+        throw new Error("Esa persona debe ser miembro de la tienda antes de recibirla.");
+      }
+      if (nextOwnerUid === store.ownerUid) return;
+      const updated = { ...store, ownerUid: nextOwnerUid, updatedAt: nowIso() };
+      dispatch({ type: "UPDATE_STORE", store: updated });
+      await persistEntity("stores", updated);
     },
     republishCatalog: async (storeId) => {
       const store = state.stores.find((s) => s.id === storeId);
       if (!store || !cloud) return;
       await claimSlug(store.slug, store.id).catch(() => {});
-      await projectPublicForStore(store, state.products.filter((p) => p.storeId === storeId));
+      await projectPublicForStore(
+        store,
+        state.products.filter((p) => p.storeId === storeId),
+        state.categories.filter((c) => c.storeId === storeId)
+      );
     },
     setActiveStore: (storeId) => dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" }),
-    upsertProduct: (product) => {
+    upsertProduct: async (product) => {
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
-      persistEntity("products", product);
+      await persistEntity("products", product);
       if (cloud && !fromCloud.current) {
         const store = state.stores.find((s) => s.id === product.storeId);
-        if (store) upsertPublicProduct(product, store.slug).catch(() => {});
+        if (store) {
+          // Rebuild against the post-dispatch product set so the catalog summary
+          // reflects this save. state.products is pre-dispatch, so splice the
+          // saved product in for the projection.
+          const next = state.products.some((p) => p.id === product.id)
+            ? state.products.map((p) => (p.id === product.id ? product : p))
+            : [...state.products, product];
+          await upsertPublicProduct(product, store.slug, next, state.categories);
+        }
       }
     },
     deleteProduct: (productId) => {
       // Look up storeId before dispatch (the reducer drops the product).
       const product = state.products.find((p) => p.id === productId);
+      const storeId = product?.storeId;
+      const slug = product?.slug;
       dispatch({ type: "DELETE_PRODUCT", productId });
       if (cloud && user && !fromCloud.current) {
         deleteEntity(user, "products", productId).catch(() => {});
-        removePublicProduct(productId).catch(() => {});
+        // Drop the detail doc + rebuild the catalog summary without this product.
+        if (storeId && slug) {
+          removePublicProductDoc(storeId, slug).catch(() => {});
+          const store = state.stores.find((s) => s.id === storeId);
+          if (store) {
+            const remaining = state.products.filter((p) => p.id !== productId);
+            rebuildPublicCatalog(store.slug, storeId, remaining).catch(() => {});
+          }
+        }
         if (product) deleteProductImage(product.storeId, productId).catch(() => {});
+      }
+    },
+    upsertCategory: (category) => {
+      const next = state.categories.some((c) => c.id === category.id)
+        ? state.categories.map((c) => (c.id === category.id ? category : c))
+        : [...state.categories, category];
+      dispatch({ type: state.categories.some((c) => c.id === category.id) ? "UPDATE_CATEGORY" : "ADD_CATEGORY", category });
+      persistEntity("categories", category);
+      // Category edits reshape the storefront's category list — rebuild the
+      // public catalog projection so /catalogo/:slug reflects it.
+      if (cloud && !fromCloud.current) {
+        const store = state.stores.find((s) => s.id === category.storeId);
+        if (store) {
+          projectPublicForStore(
+            store,
+            state.products.filter((p) => p.storeId === category.storeId),
+            next.filter((c) => c.storeId === category.storeId)
+          ).catch(() => {});
+        }
+      }
+    },
+    deleteCategory: (categoryId) => {
+      const cat = state.categories.find((c) => c.id === categoryId);
+      dispatch({ type: "DELETE_CATEGORY", categoryId });
+      if (cloud && user && !fromCloud.current) {
+        deleteEntity(user, "categories", categoryId).catch(() => {});
+        if (cat) {
+          const store = state.stores.find((s) => s.id === cat.storeId);
+          if (store) {
+            const remainingCats = state.categories.filter((c) => c.id !== categoryId);
+            projectPublicForStore(
+              store,
+              state.products.filter((p) => p.storeId === cat.storeId),
+              remainingCats
+            ).catch(() => {});
+          }
+        }
       }
     },
     upsertCustomer: (customer) => {
@@ -326,7 +427,20 @@ export function useStore(): StoreContextValue {
 // New-entity factories with ids/timestamps prefilled, for forms.
 export function newProduct(storeId: string): Product {
   const now = nowIso();
-  return { id: uid("prod"), storeId, name: "", category: "other", isPublic: true, createdAt: now, updatedAt: now };
+  return { id: uid("prod"), storeId, name: "", sku: "", category: "other", isPublic: false, status: "draft", createdAt: now, updatedAt: now };
+}
+export function newCategory(storeId: string, slug: string): Category {
+  const now = nowIso();
+  return {
+    id: `${storeId}__${slug}`,
+    storeId,
+    name: "",
+    slug,
+    sortOrder: 0,
+    active: true,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 export function newCustomer(storeId: string): Customer {
   const now = nowIso();

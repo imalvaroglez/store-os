@@ -55,6 +55,7 @@
 @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes riseIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes toastIn { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
 html, body, #root {
   height: 100%;
@@ -98,3 +99,12 @@ body {
 .rise > *:nth-child(6) { animation-delay: 0.22s; }
 
 /* iOS: keep inputs >=16px to avoid zoom-on-focus (text-base in primitives). */
+
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@keyframes revealUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes lightboxIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lightboxPop { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
+@keyframes dialogIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dialogPop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+@keyframes dropdownIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes cmdIn { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
