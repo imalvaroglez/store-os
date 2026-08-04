@@ -1021,7 +1021,7 @@ export function InventoryScreen() {
                 </div>
                 <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
                   <StatRow label="Disponible">{available}</StatRow>
-                  <StatRow label="Comprometido" tone={committed > 0 ? "warning" : "neutral"}>{committed}</StatRow>
+                  <StatRow label="Comprometido" tone={committed > 0 ? "danger" : "default"}>{committed}</StatRow>
                   <StatRow label="Físico">{physical}</StatRow>
                 </div>
               </Card>
@@ -1076,13 +1076,13 @@ import { SuppliersScreen } from "../inventory/SuppliersScreen";
 <Button full variant="secondary" onClick={() => setShowSuppliers(true)}>Proveedores</Button>
 // ... at the bottom with the other sheets:
 {showSuppliers && (
-  <Sheet open onClose={() => setShowSuppliers(false)} title="Proveedores" size="lg">
+  <Sheet open onClose={() => setShowSuppliers(false)} title="Proveedores">
     <SuppliersScreen onDone={() => setShowSuppliers(false)} />
   </Sheet>
 )}
 ```
 
-Note: confirm whether `Sheet` accepts a `size` prop — if not, omit it.
+
 
 - [ ] **Step 2: Run typecheck**
 

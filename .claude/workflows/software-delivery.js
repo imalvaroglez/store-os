@@ -44,6 +44,33 @@ let head = "HEAD";
 let current = "INTAKE";
 let eventSeq = 0; // monotonic counter — Date.now()/new Date()/Math.random() are forbidden in workflow scripts
 
+// Extract a JSON object from an agent response that may contain prose before/after it.
+// GLM agents typically emit reasoning prose then the JSON. Find the LAST {...} block.
+function extractJson(text) {
+  if (typeof text === "object") return text;
+  if (typeof text !== "string") return null;
+  // Try direct parse first.
+  try { return JSON.parse(text); } catch {}
+  // Find the last {...} object in the string (greedy, handles nested braces).
+  let depth = 0, start = -1;
+  for (let i = text.length - 1; i >= 0; i--) {
+    if (text[i] === "}") depth++;
+    if (text[i] === "{") {
+      depth--;
+      if (depth === 0) { start = i; break; }
+    }
+  }
+  if (start >= 0) {
+    // Walk forward to find the matching close.
+    let d = 0;
+    for (let end = start; end < text.length; end++) {
+      if (text[end] === "{") d++;
+      if (text[end] === "}") { d--; if (d === 0) { try { return JSON.parse(text.slice(start, end + 1)); } catch {} } }
+    }
+  }
+  return null;
+}
+
 function isTerminal(id) { return TERMINAL.includes(id); }
 
 function normalize(res, state) {
@@ -93,7 +120,7 @@ for (const target of ORDER) {
     let res;
     try {
       const out = await agent(prompt, { label: target, phase: PHASE_MAP[target] || "Plan" });
-      res = typeof out === "string" ? JSON.parse(out) : out;
+      res = extractJson(out);
     } catch (e) {
       res = null;
     }
