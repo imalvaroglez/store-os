@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://store-os/schemas/run-event.schema.json",
+  "title": "Run journal event (JSON Lines)",
+  "description": "Append-only event written to .claude/runs/<run-id>/journal.jsonl. No chain-of-thought — decisions, evidence, commands, assumptions only.",
+  "type": "object",
+  "required": ["ts", "runId", "type", "state"],
+  "additionalProperties": true,
+  "properties": {
+    "ts": { "type": "string" },
+    "runId": { "type": "string" },
+    "type": {
+      "enum": [
+        "run_started", "run_ended", "state_entered", "state_passed",
+        "state_failed", "state_retried", "state_escalated", "state_blocked",
+        "worker_started", "worker_completed", "worker_timeout", "worker_malformed",
+        "command_executed", "review_decision", "transition_rejected",
+        "gate_satisfied", "gate_failed", "human_approval_requested",
+        "resume", "evidence_persisted"
+      ]
+    },
+    "state": { "type": "string" },
+    "revision": { "type": "string" },
+    "agent": { "type": "string" },
+    "retry": { "type": "integer" },
+    "reason": { "type": "string" },
+    "findingIds": { "type": "array", "items": { "type": "string" } },
+    "command": { "type": "string" },
+    "exitCode": { "type": "integer" },
+    "durationMs": { "type": "integer" },
+    "seed": { "type": "integer" }
+  }
+}
