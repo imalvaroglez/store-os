@@ -32,14 +32,17 @@ const PHASE_MAP = {
   RELEASE_READINESS:"Release", COMPLETE:"Release",
 };
 
-const runId = "run_" + Math.floor(Math.random()*1e9).toString(36);
+// Deterministic runId: the workflow runtime forbids Date.now() AND Math.random()
+// (breaks resume). Use a fixed counter-based id; uniqueness within a session is
+// fine since the runtime tracks its own run id separately.
+const runId = "run_delivery";
 const events = [];
 const passed = [];
 const revisions = {};
 const history = {};
 let head = "HEAD";
 let current = "INTAKE";
-let eventSeq = 0; // monotonic counter — Date.now()/new Date() are forbidden in workflow scripts
+let eventSeq = 0; // monotonic counter — Date.now()/new Date()/Math.random() are forbidden in workflow scripts
 
 function isTerminal(id) { return TERMINAL.includes(id); }
 
