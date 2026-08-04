@@ -32,15 +32,15 @@ const PHASE_MAP = {
   RELEASE_READINESS:"Release", COMPLETE:"Release",
 };
 
-const runId = "run_" + Date.now().toString(36) + "_" + Math.floor(Math.random()*1e6).toString(36);
+const runId = "run_" + Math.floor(Math.random()*1e9).toString(36);
 const events = [];
 const passed = [];
 const revisions = {};
 const history = {};
 let head = "HEAD";
 let current = "INTAKE";
+let eventSeq = 0; // monotonic counter — Date.now()/new Date() are forbidden in workflow scripts
 
-function iso() { return new Date().toISOString(); }
 function isTerminal(id) { return TERMINAL.includes(id); }
 
 function normalize(res, state) {
@@ -59,12 +59,12 @@ function noProgress(hist) {
   return sig(hist[hist.length-1]) === sig(hist[hist.length-2]);
 }
 
-events.push({ ts: iso(), runId, type: "run_started", state: "INTAKE", objective });
+events.push({ ts: ++eventSeq, runId, type: "run_started", state: "INTAKE", objective });
 
 for (const target of ORDER) {
   if (isTerminal(current) && current !== "INTAKE") break;
   phase(PHASE_MAP[target] || "Plan");
-  events.push({ ts: iso(), runId, type: "state_entered", state: target });
+  events.push({ ts: ++eventSeq, runId, type: "state_entered", state: target });
 
   let attempt = 0;
   const maxRetry = 2;
@@ -72,7 +72,7 @@ for (const target of ORDER) {
 
   while (attempt <= maxRetry) {
     attempt++;
-    events.push({ ts: iso(), runId, type: "worker_started", state: target, retry: attempt });
+    events.push({ ts: ++eventSeq, runId, type: "worker_started", state: target, retry: attempt });
 
     const prompt = [
       `You are the agent for the ${target} state of the Store OS delivery harness.`,
@@ -99,34 +99,34 @@ for (const target of ORDER) {
     history[target] = (history[target] || []).concat(normalized);
 
     if (normalized._malformed) {
-      events.push({ ts: iso(), runId, type: "worker_malformed", state: target, retry: attempt });
+      events.push({ ts: ++eventSeq, runId, type: "worker_malformed", state: target, retry: attempt });
     } else {
-      events.push({ ts: iso(), runId, type: "worker_completed", state: target, status: normalized.status, retry: attempt });
+      events.push({ ts: ++eventSeq, runId, type: "worker_completed", state: target, status: normalized.status, retry: attempt });
     }
 
     if (normalized.status === "PASS" && !(normalized.findings||[]).some((f)=>f.blocking)) {
       passed.push(target);
       revisions[target] = head;
-      events.push({ ts: iso(), runId, type: "state_passed", state: target });
+      events.push({ ts: ++eventSeq, runId, type: "state_passed", state: target });
       didPass = true;
       current = target;
       break;
     }
 
     if (normalized.status === "BLOCKED") {
-      events.push({ ts: iso(), runId, type: "state_blocked", state: target });
+      events.push({ ts: ++eventSeq, runId, type: "state_blocked", state: target });
       return { runId, ok: false, status: "BLOCKED", reason: normalized.summary, events };
     }
 
     if (noProgress(history[target])) {
-      events.push({ ts: iso(), runId, type: "state_escalated", state: target, reason: "no progress" });
+      events.push({ ts: ++eventSeq, runId, type: "state_escalated", state: target, reason: "no progress" });
       return { runId, ok: false, status: "ESCALATED", reason: `no-progress at ${target}`, events };
     }
     if (attempt > maxRetry) break;
   }
 
   if (!didPass) {
-    events.push({ ts: iso(), runId, type: "state_failed", state: target });
+    events.push({ ts: ++eventSeq, runId, type: "state_failed", state: target });
     return { runId, ok: false, status: "ESCALATED", reason: `failed at ${target} after ${attempt} attempts`, events };
   }
 
@@ -139,7 +139,7 @@ for (const target of ORDER) {
 }
 
 const missing = MANDATORY.filter((m) => !passed.includes(m));
-events.push({ ts: iso(), runId, type: "run_ended", state: current });
+events.push({ ts: ++eventSeq, runId, type: "run_ended", state: current });
 return {
   runId, ok: current === "COMPLETE" && missing.length === 0, status: current,
   events, passed,
