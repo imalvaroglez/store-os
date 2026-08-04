@@ -1,21 +1,3 @@
-// Software-delivery workflow — executes the canonical FSM.
-//
-// Invoke via the Workflow tool:
-//   Workflow({ scriptPath: ".claude/workflows/software-delivery.js", args: { objective: "..." } })
-//
-// This workflow is the EXECUTOR of .claude/loops/software-delivery.fsm.yaml. The
-// YAML is canonical; this JS never invents transitions. Every state change is
-// validated by src/loops/engine.js (validateFsm / isAllowedTransition /
-// evaluateGate / normalizeResult). null/malformed agent results are failures,
-// never empty-pass. The GLM gateway makes subagent output occasionally
-// unreliable, so every agent() result is schema-validated before use.
-
-const ENGINE = require("../../src/loops/engine");
-const {
-  validateFsm, isAllowedTransition, isTerminal, isMandatory,
-  normalizeResult, evaluateGate, releaseReady, detectNoProgress,
-} = ENGINE;
-
 export const meta = {
   name: "software-delivery",
   description:
@@ -28,6 +10,24 @@ export const meta = {
     { title: "Release", detail: "release readiness + delivery report" },
   ],
 };
+
+// Software-delivery workflow — executes the canonical FSM.
+//
+// Invoke via the Workflow tool:
+//   Workflow({ scriptPath: ".claude/workflows/software-delivery.js", args: { objective: "..." } })
+//
+// This workflow is the EXECUTOR of .claude/loops/software-delivery.fsm.yaml. The
+// YAML is canonical; this JS never invents transitions. Every state change is
+// validated by src/loops/engine.cjs (validateFsm / isAllowedTransition /
+// evaluateGate / normalizeResult). null/malformed agent results are failures,
+// never empty-pass. The GLM gateway makes subagent output occasionally
+// unreliable, so every agent() result is schema-validated before use.
+
+const ENGINE = require("../../src/loops/engine.cjs");
+const {
+  validateFsm, isAllowedTransition, isTerminal, isMandatory,
+  normalizeResult, evaluateGate, releaseReady, detectNoProgress,
+} = ENGINE;
 
 const AGENT_RESULT_SCHEMA = "You MUST return ONLY a JSON object matching .claude/schemas/agent-result.schema.json: {agent,state,status(PASS|FAIL|BLOCKED|NEEDS_REVIEW),summary,inputsReviewed[],artifactsProduced[],commandsExecuted[{command,exitCode}],findings[{id,severity,blocking,confidence,claim,evidence[],recommendation}],risks[],assumptions[],unresolvedQuestions[],recommendedTransition}. No prose outside the JSON. A prose-only result cannot authorize a transition.";
 
