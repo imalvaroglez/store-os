@@ -535,7 +535,9 @@ In `upsertOrder`, after dispatching, if `cloud`/non-cloud and the product has st
       if (product && typeof product.quantityOnHand === "number") {
         const delta = reservationDelta(prev?.quantity, order.quantity);
         if (delta !== 0) {
-          upsertProduct({ ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: new Date().toISOString() });
+          // Dispatch directly — NOT upsertProduct (which triggers catalog re-projection).
+          dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: new Date().toISOString() } });
+          persistEntity("products", { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: new Date().toISOString() });
         }
       }
       dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order });
@@ -552,7 +554,9 @@ In `deleteOrder`, release the reserved stock before removing:
       const existing = state.orders.find((o) => o.id === orderId);
       const product = existing?.productId ? state.products.find((p) => p.id === existing.productId) : undefined;
       if (existing && product && typeof product.quantityOnHand === "number") {
-        upsertProduct({ ...product, quantityOnHand: product.quantityOnHand + existing.quantity, updatedAt: new Date().toISOString() });
+        // Dispatch directly — NOT upsertProduct (avoids catalog re-projection).
+        dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: product.quantityOnHand + existing.quantity, updatedAt: new Date().toISOString() } });
+        persistEntity("products", { ...product, quantityOnHand: product.quantityOnHand + existing.quantity, updatedAt: new Date().toISOString() });
       }
       dispatch({ type: "DELETE_ORDER", orderId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "orders", orderId).catch(() => {});
@@ -651,7 +655,7 @@ export function SuppliersScreen({ onDone }: { onDone: () => void }) {
   const suppliers = suppliersForStore(state.suppliers, activeStore.id);
 
   return (
-    <Screen wide>
+    <div className="space-y-4">
       <ScreenHeader
         title="Proveedores"
         subtitle={`${suppliers.length} ${suppliers.length === 1 ? "proveedor" : "proveedores"}`}
@@ -693,7 +697,7 @@ export function SuppliersScreen({ onDone }: { onDone: () => void }) {
         </>}>
         ¿Eliminar <span className="font-semibold text-ink">{deleting?.name}</span>?
       </Dialog>
-    </Screen>
+    </div>
   );
 }
 
@@ -788,7 +792,17 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     // Apply stock + cost updates to each product.
     for (const [productId, update] of computed) {
       const p = state.products.find((x) => x.id === productId);
-      if (p) upsertProduct({ ...p, quantityOnHand: update.quantityOnHand, cost: update.cost, updatedAt: new Date().toISOString() });
+      if (p) {
+        // Dispatch directly + persist — NOT upsertProduct (avoids N catalog re-projections).
+        const updated = { ...p, quantityOnHand: update.quantityOnHand, cost: update.cost, updatedAt: new Date().toISOString() };
+        dispatch({ type: "UPDATE_PRODUCT", product: updated });
+        persistEntity("products", updated);
+      }
+    }
+    // After all lines are applied, rebuild the public projection once (not N times).
+    if (cloud && !fromCloud.current) {
+      const store = state.stores.find((s) => s.id === draft.storeId);
+      if (store) projectPublicForStore(store, updatedProducts, state.categories).catch(() => {});
     }
     upsertPurchase({ ...draft, subtotal, updatedAt: new Date().toISOString() });
     toast.success(`Compra registrada: ${formatMoney(draft.totalConfirmed || subtotal)}`);
@@ -884,7 +898,7 @@ export function PurchaseList({ onBack }: { onBack: () => void }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-sm text-ink-soft">← Inventario</button>
+        <Button variant="ghost" size="sm" onClick={onBack}>← Inventario</Button>
       </div>
       {purchases.length === 0 ? (
         <EmptyState title="Sin compras registradas" subtitle="Registra tu primera compra con «+ Compra»." />
