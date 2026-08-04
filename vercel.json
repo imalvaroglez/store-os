@@ -7,7 +7,7 @@
   "rewrites": [
     { "source": "/catalogo/olivia", "destination": "/olivia.html" },
     { "source": "/catalogo/olivia/(.*)", "destination": "/olivia.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!assets/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
