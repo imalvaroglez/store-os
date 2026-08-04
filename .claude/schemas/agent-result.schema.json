@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://store-os/schemas/agent-result.schema.json",
+  "title": "Worker (agent) result",
+  "description": "Structured contract every worker MUST return. A prose-only result MUST NOT authorize a state transition. null/malformed/timed-out results are treated as failures, never as empty-pass.",
+  "type": "object",
+  "required": ["agent", "state", "status", "summary", "inputsReviewed", "artifactsProduced", "commandsExecuted", "findings", "recommendedTransition"],
+  "additionalProperties": false,
+  "properties": {
+    "agent": { "type": "string" },
+    "state": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+    "status": { "enum": ["PASS", "FAIL", "BLOCKED", "NEEDS_REVIEW"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "inputsReviewed": { "type": "array", "items": { "type": "string" } },
+    "artifactsProduced": { "type": "array", "items": { "type": "string" } },
+    "commandsExecuted": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "exitCode"],
+        "additionalProperties": false,
+        "properties": {
+          "command": { "type": "string" },
+          "exitCode": { "type": "integer" },
+          "evidencePath": { "type": "string" },
+          "durationMs": { "type": "integer" },
+          "revision": { "type": "string" }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "blocking", "confidence", "claim", "evidence", "recommendation"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "enum": ["critical", "high", "medium", "low", "info"] },
+          "blocking": { "type": "boolean" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "claim": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "recommendation": { "type": "string" }
+        }
+      }
+    },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "unresolvedQuestions": { "type": "array", "items": { "type": "string" } },
+    "recommendedTransition": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }
+  }
+}

@@ -2,6 +2,8 @@
 
 Guía para trabajar en Store OS. Lee esto antes de empezar.
 
+@LOOPS.md
+
 ## Qué es Store OS
 
 PWA **local-first**, **mobile-first** y **100% en español (México)** para administrar tiendas pequeñas. Multitienda, dos tipos de tienda (Bajo pedido / Inventario y precios). Ver [`README.md`](README.md) y [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
