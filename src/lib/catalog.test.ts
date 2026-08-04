@@ -5,6 +5,10 @@ import {
   uniqueProductSlug,
   categoryFromLegacy,
   migrateCatalog,
+  suggestSkuBase,
+  uniqueProductSku,
+  normalizeSkuPrefixToken,
+  defaultSkuPrefix,
 } from "./catalog";
 import type { AppState, Product } from "../types";
 import { CURRENT_PRODUCT_SCHEMA_VERSION, MAX_PRODUCT_IMAGES, MAX_PRODUCT_CATEGORIES } from "../types";
@@ -126,5 +130,95 @@ describe("catalog constants", () => {
   it("enforces the documented ceilings", () => {
     expect(MAX_PRODUCT_IMAGES).toBe(5);
     expect(MAX_PRODUCT_CATEGORIES).toBe(3);
+  });
+});
+
+// --- SKU suggestion ---
+
+describe("suggestSkuBase", () => {
+  it("joins uppercase prefix + slugified name (spec example 1)", () => {
+    expect(suggestSkuBase("Anillo de plata 925", "OLIV")).toBe("OLIV-ANILLO-DE-PLATA-925");
+  });
+  it("strips accents and uppercases (spec example 2)", () => {
+    expect(suggestSkuBase("Aretes corazón dorados", "OLIV")).toBe("OLIV-ARETES-CORAZON-DORADOS");
+  });
+  it("returns just the prefix when the name is empty", () => {
+    expect(suggestSkuBase("", "OLIV")).toBe("OLIV");
+  });
+  it("returns just the name when the prefix is empty/invalid", () => {
+    expect(suggestSkuBase("Collar Luna", "")).toBe("COLLAR-LUNA");
+    expect(suggestSkuBase("Collar Luna", undefined)).toBe("COLLAR-LUNA");
+  });
+  it("returns empty when both name and prefix are empty", () => {
+    expect(suggestSkuBase("", "")).toBe("");
+  });
+  it("collapses repeated separators and trims hyphens", () => {
+    expect(suggestSkuBase("  Pulsera///de  -- plata  ", "OLIV")).toBe("OLIV-PULSERA-DE-PLATA");
+  });
+});
+
+describe("uniqueProductSku", () => {
+  const other = (sku: string): Product =>
+    ({ id: "other", storeId: "s1", sku } as Product);
+
+  it("returns the base when free", () => {
+    expect(uniqueProductSku([], "s1", "p1", "OLIV-ANILLO-DE-PLATA-925")).toBe("OLIV-ANILLO-DE-PLATA-925");
+  });
+
+  it("appends two-digit suffixes -02, -03 on collision (vs slug's -2/-3)", () => {
+    const taken = [other("OLIV-ANILLO-DE-PLATA-925"), other("OLIV-ANILLO-DE-PLATA-925-02")];
+    expect(uniqueProductSku(taken, "s1", "p1", "OLIV-ANILLO-DE-PLATA-925")).toBe("OLIV-ANILLO-DE-PLATA-925-03");
+  });
+
+  it("is store-scoped: another store's SKU doesn't count as a collision", () => {
+    const taken = [{ id: "x", storeId: "s2", sku: "OLIV-ANILLO" } as Product];
+    expect(uniqueProductSku(taken, "s1", "p1", "OLIV-ANILLO")).toBe("OLIV-ANILLO");
+  });
+
+  it("excludes the current product's own SKU from the collision set", () => {
+    const me = ({ id: "me", storeId: "s1", sku: "OLIV-ANILLO" } as Product);
+    expect(uniqueProductSku([me], "s1", "me", "OLIV-ANILLO")).toBe("OLIV-ANILLO");
+  });
+
+  it("keeps a free currentSku verbatim (stability across name edits)", () => {
+    expect(uniqueProductSku([], "s1", "p1", "ignored-base", "OLIV-OLD-NAME")).toBe("OLIV-OLD-NAME");
+  });
+
+  it("truncates to 40 chars without leaving a trailing hyphen", () => {
+    const long = "OLIV-PULSERA-ACERO-INOLVIDABLE-CORAZON-PERLA-FINA";
+    const out = uniqueProductSku([], "s1", "p1", long);
+    expect(out.length).toBeLessThanOrEqual(40);
+    expect(out).not.toMatch(/-$/);
+  });
+
+  it("fits a two-digit suffix within 40 chars when the base collides", () => {
+    const long = "OLIV-PULSERA-ACERO-INOLVIDABLE-CORAZON-PERLA";
+    const taken = [other(long.slice(0, 40))];
+    const out = uniqueProductSku(taken, "s1", "p1", long);
+    expect(out.length).toBeLessThanOrEqual(40);
+    expect(out).toMatch(/-02$/);
+    expect(out).not.toMatch(/-$/);
+  });
+});
+
+describe("normalizeSkuPrefixToken", () => {
+  it("uppercases, strips accents, alphanumerics only, cap 8", () => {
+    expect(normalizeSkuPrefixToken("oliv")).toBe("OLIV");
+    expect(normalizeSkuPrefixToken("La Tiéndita 9!")).toBe("LATIENDITA".slice(0, 8));
+    expect(normalizeSkuPrefixToken("  ol-iv ")).toBe("OLIV");
+  });
+  it("empty/undefined → empty string", () => {
+    expect(normalizeSkuPrefixToken("")).toBe("");
+    expect(normalizeSkuPrefixToken(undefined)).toBe("");
+  });
+});
+
+describe("defaultSkuPrefix", () => {
+  it("derives from slug, uppercased, clean alphanumerics, capped at 4", () => {
+    expect(defaultSkuPrefix("olivia")).toBe("OLIV");
+    expect(defaultSkuPrefix("la-tiendita-de-fer")).toBe("LATI");
+  });
+  it("empty slug → empty", () => {
+    expect(defaultSkuPrefix("")).toBe("");
   });
 });
