@@ -14,12 +14,10 @@ export const meta = {
 // Software-delivery workflow — executes the canonical FSM.
 // Convention: `export const meta` first, then a top-level await body (the
 // runtime wraps the body in an async function). NO `export default`.
-// args.objective drives the run.
+// NOTE: this runtime does NOT expose `args` as a global (verified by probe).
+// The objective is inlined below. To re-target, edit this constant.
 
-const objective = args && args.objective;
-if (!objective || !objective.trim()) {
-  return { ok: false, error: "args.objective (non-empty string) is required" };
-}
+const objective = "Implement inventory purchase transactions per docs/superpowers/specs/2026-08-04-inventory-purchase-transactions-design.md and the 12-task plan at docs/superpowers/plans/2026-08-04-inventory-purchase-transactions.md. Build: Supplier + Purchase entities, weighted-average cost math, committed-stock, stock reservation on order creation, suppliers CRUD, purchase form, purchase list, inventory screen redesign. The spec and plan are already approved — execute the plan's TDD tasks.";
 
 // Canonical FSM order (mirrors .claude/loops/software-delivery.fsm.yaml).
 const ORDER = ["INTAKE","DISCOVERY","REQUIREMENTS_SPEC","STORY_DEFINITION","STORY_REVIEW","TEST_DESIGN","ARCHITECTURE_PRECHECK","IMPLEMENTATION_PLAN","IMPLEMENTATION","UNIT_VERIFICATION","ACCEPTANCE_VERIFICATION","CLEANUP","INDEPENDENT_CODE_REVIEW","SECURITY_HARDENING","QA_EXECUTION","ARCHITECTURE_FINAL_REVIEW","RELEASE_READINESS","COMPLETE"];
