@@ -17,7 +17,8 @@ import {
 } from "../design-system";
 import { visibleNavItems, navigate } from "../design-system/navItems";
 import { HomeScreen } from "../features/home/HomeScreen";
-import { CatalogTab } from "../features/catalog/CatalogTab";
+import { CatalogScreen } from "../features/catalog/CatalogScreen";
+import { CategoriesScreen } from "../features/catalog/CategoriesScreen";
 import { OrdersScreen } from "../features/orders/OrdersScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
 import { InventoryScreen } from "../features/inventory/InventoryScreen";
@@ -39,7 +40,15 @@ export function AppShell() {
   const [cmdOpen, setCmdOpen] = useState(false);
 
   const seg = route.name === "admin" ? route.params.tab ?? "" : "";
-  const tab: Tab = seg === "catalogo-admin" ? "catalogo" : TAB_FOR_PATH[seg] ?? "inicio";
+  const sub = route.name === "admin" ? route.params.sub ?? "" : "";
+  // Catalog parent resolves to a child tab when a sub-route is present
+  // (/catalogo-admin/productos → catalogo_productos). Other tabs stay flat.
+  let tab: Tab;
+  if (seg === "catalogo-admin") {
+    tab = sub === "categorias" ? "catalogo_categorias" : "catalogo_productos";
+  } else {
+    tab = TAB_FOR_PATH[seg] ?? "inicio";
+  }
 
   // Cmd/Ctrl+K opens the command palette. Global while the shell is mounted.
   useEffect(() => {
@@ -68,8 +77,11 @@ export function AppShell() {
 
   let screen;
   switch (tab) {
-    case "catalogo":
-      screen = <CatalogTab />;
+    case "catalogo_productos":
+      screen = <CatalogScreen />;
+      break;
+    case "catalogo_categorias":
+      screen = <CategoriesScreen />;
       break;
     case "pedidos":
       screen = <OrdersScreen />;

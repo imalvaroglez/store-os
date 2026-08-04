@@ -7,7 +7,7 @@ export type RouteMatch =
   | { name: "public_store"; params: { slug: string } }
   | { name: "public_category"; params: { slug: string; categorySlug: string } }
   | { name: "public_product"; params: { slug: string; productSlug: string } }
-  | { name: "admin"; params: { tab?: string } };
+  | { name: "admin"; params: { tab?: string; sub?: string } };
 
 // Match a pathname against the public storefront routes, then the admin shell.
 export function matchRoute(pathname: string): RouteMatch {
@@ -29,9 +29,11 @@ export function matchRoute(pathname: string): RouteMatch {
   if (storeMatch) {
     return { name: "public_store", params: { slug: decodeURIComponent(storeMatch[1]) } };
   }
-  // Allow hyphens so /catalogo-admin resolves (distinct from /catalogo/:slug).
-  const tabMatch = pathname.match(/^\/?([a-z-]+)\/?$/);
-  return { name: "admin", params: { tab: tabMatch?.[1] || "" } };
+  // Admin shell. Capture an optional second segment so /catalogo-admin/productos
+  // resolves (the catalog parent expands into Productos / Categorías sub-routes).
+  // Fallback after the public /catalogo/:slug family above.
+  const adminMatch = pathname.match(/^\/?([a-z-]+)(?:\/([a-z-]+))?\/?$/);
+  return { name: "admin", params: { tab: adminMatch?.[1] || "", sub: adminMatch?.[2] || "" } };
 }
 
 export function navigate(path: string): void {
