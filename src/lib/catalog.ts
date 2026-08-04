@@ -48,6 +48,81 @@ export function uniqueProductSlug(
   return `${root}-${n}`;
 }
 
+/**
+ * Live SKU base (every keystroke, no collision work). Joins an uppercase prefix
+ * with the slugified+uppercased name. Empty name → just the prefix. Empty/invalid
+ * prefix → the name alone (so unconfigured stores still get a suggestion).
+ */
+export function suggestSkuBase(name: string, prefix?: string): string {
+  const cleanPrefix = normalizeSkuPrefixToken(prefix);
+  const namePart = slugify(name).toUpperCase();
+  if (!cleanPrefix && !namePart) return "";
+  if (!cleanPrefix) return namePart;
+  if (!namePart) return cleanPrefix;
+  return `${cleanPrefix}-${namePart}`;
+}
+
+/**
+ * Resolve a unique SKU within a store. Mirrors uniqueProductSlug's stability
+ * (currentSku returned as-is if still free) but uses TWO-DIGIT suffixes (-02,
+ * -03, …) per the spec and a 40-char total cap that reserves room for the suffix.
+ */
+export function uniqueProductSku(
+  products: Product[],
+  storeId: string,
+  productId: string,
+  base: string,
+  currentSku?: string
+): string {
+  const taken = new Set(
+    products
+      .filter((p) => p.storeId === storeId && p.id !== productId)
+      .map((p) => (p.sku ?? "").toUpperCase())
+      .filter(Boolean)
+  );
+  const free = (s: string) => s && !taken.has(s.toUpperCase());
+
+  // Stability: an existing SKU that's still free is kept verbatim.
+  if (currentSku && free(currentSku)) return currentSku;
+
+  const root = base || "PIEZA";
+  // Cap the base so the whole string (with a future suffix) stays ≤ 40 chars.
+  const cap = (s: string) => trimTrailingHyphen(s.slice(0, 40));
+  let candidate = cap(root);
+  if (free(candidate)) return candidate;
+  // Collisions: -02, -03, ... (two digits). Truncate the pre-suffix so it fits.
+  let n = 2;
+  let suffixed = "";
+  do {
+    const suffix = `-${String(n).padStart(2, "0")}`;
+    suffixed = trimTrailingHyphen(root.slice(0, 40 - suffix.length)) + suffix;
+    n++;
+  } while (!free(suffixed) && n < 100);
+  return suffixed;
+}
+
+/** Uppercase, no accents, alphanumerics only — for the store's skuPrefix field. */
+export function normalizeSkuPrefixToken(raw?: string): string {
+  if (!raw) return "";
+  return raw
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 8);
+}
+
+/** Default skuPrefix from a store slug: "olivia" → "OLIV" (clean alphanumerics). */
+export function defaultSkuPrefix(slug?: string): string {
+  // Clean first, then cap — so hyphens in a multi-word slug don't eat the budget.
+  return normalizeSkuPrefixToken(slugify(slug ?? "").toUpperCase()).slice(0, 4);
+}
+
+// ponytail: trim a trailing hyphen left by truncation; inline one-liner.
+function trimTrailingHyphen(s: string): string {
+  return s.replace(/-+$/g, "");
+}
+
 /** Build a deterministic Category from a legacy ProductCategory enum value. */
 export function categoryFromLegacy(
   storeId: string,
@@ -100,6 +175,12 @@ export function migrateCatalog(state: AppState): AppState {
   // Seed from existing categories so we don't drop admin-created ones.
   for (const c of state.categories ?? []) categoriesById.set(c.id, c);
 
+  // Map storeId → skuPrefix so migrated products backfill real SKUs when possible.
+  const prefixByStore = new Map<string, string>();
+  for (const s of state.stores ?? []) {
+    if (s.skuPrefix) prefixByStore.set(s.id, normalizeSkuPrefixToken(s.skuPrefix));
+  }
+
   const slugsByStore = new Map<string, Set<string>>();
   for (const p of products) {
     if (!p.slug) continue;
@@ -150,7 +231,7 @@ export function migrateCatalog(state: AppState): AppState {
       categoryIds,
       images,
       slug,
-      sku: p.sku?.trim() || p.id,
+      sku: p.sku?.trim() || suggestSkuBase(p.name, prefixByStore.get(p.storeId)) || p.id,
       status,
       availability: p.availability ?? "available",
       schemaVersion: CURRENT_PRODUCT_SCHEMA_VERSION,

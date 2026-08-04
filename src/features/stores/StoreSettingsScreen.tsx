@@ -7,6 +7,8 @@ import { SlugTakenError } from "../../app/firebase/firestoreData";
 import { createWhatsAppShareCatalogUrl } from "../../lib/whatsapp";
 import { slugify } from "./slugify";
 import { StorefrontEditor } from "../catalog/StorefrontEditor";
+import { normalizeSkuPrefixToken } from "../../lib/catalog";
+import { productsForStore } from "../../lib/selectors";
 import type { StoreType } from "../../types";
 
 // Full management for a single store: rename, change type, WhatsApp, members
@@ -39,6 +41,8 @@ export function StoreSettingsScreen({
   const [transferError, setTransferError] = useState<string | null>(null);
   const [confirmTransfer, setConfirmTransfer] = useState(false);
   const [editSite, setEditSite] = useState(false);
+  const [skuPrefix, setSkuPrefix] = useState(store?.skuPrefix ?? "");
+  const [confirmSkuPrefix, setConfirmSkuPrefix] = useState(false);
 
   if (!store) {
     return <p className="text-sm text-ink-soft">Tienda no encontrada.</p>;
@@ -102,6 +106,19 @@ export function StoreSettingsScreen({
 
   function changeType(type: StoreType) {
     void updateStore({ id: store!.id, type });
+  }
+
+  // Save the SKU prefix. If the store already has products, changing the prefix
+  // only affects NEW suggestions — existing SKUs never change — so confirm first.
+  async function saveSkuPrefix() {
+    const hasProducts = productsForStore(state.products, store!.id).length > 0;
+    if (hasProducts && !confirmSkuPrefix) {
+      setConfirmSkuPrefix(true); // ask for confirmation; user re-clicks to confirm
+      return;
+    }
+    setConfirmSkuPrefix(false);
+    await updateStore({ id: store!.id, skuPrefix: skuPrefix.trim() || undefined });
+    toast.success("Prefijo de SKU guardado");
   }
 
   async function doInvite() {
@@ -221,6 +238,22 @@ export function StoreSettingsScreen({
         </div>
       )}
 
+      {isOwnerOrAdmin && (
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Catálogo</h3>
+          <TextField
+            label="Prefijo de SKU"
+            hint="Se usa al generar las claves de productos nuevos. Ej. OLIV-ANILLO-DORADO."
+            placeholder="OLIV"
+            value={skuPrefix}
+            onChange={(e) => setSkuPrefix(normalizeSkuPrefixToken(e.target.value))}
+          />
+          <Button full onClick={saveSkuPrefix} disabled={skuPrefix === (store!.skuPrefix ?? "")}>
+            Guardar prefijo
+          </Button>
+        </div>
+      )}
+
       {editSite && store && (
         <Sheet open onClose={() => setEditSite(false)} title="Sitio público">
           <StorefrontEditor store={store} onDone={() => setEditSite(false)} />
@@ -238,6 +271,20 @@ export function StoreSettingsScreen({
           </Button>
         </div>
       )}
+
+      <Dialog
+        open={confirmSkuPrefix}
+        title="Cambiar prefijo de SKU"
+        onClose={() => setConfirmSkuPrefix(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmSkuPrefix(false)}>Cancelar</Button>
+            <Button onClick={() => void saveSkuPrefix()}>Confirmar cambio</Button>
+          </>
+        }
+      >
+        Este cambio solo aplicará a las claves generadas para <span className="font-semibold text-ink">productos nuevos</span>. Las claves existentes no se modificarán.
+      </Dialog>
 
       <Dialog
         open={confirmDelete}

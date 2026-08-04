@@ -9,6 +9,10 @@ export type Store = {
   slug: string;
   type: StoreType;
   whatsappPhone?: string;
+  // Operational: the prefix used when auto-suggesting product SKUs (Clave).
+  // Per-store so the capability is reusable; absent until set. When missing,
+  // SKU suggestion derives from the store slug.
+  skuPrefix?: string;
   createdAt: string;
   updatedAt: string;
   // Cloud-only membership fields (absent in local demo mode):

@@ -15,7 +15,7 @@ import {
   type GalleryTile,
 } from "../../design-system";
 import { parseAmount } from "../../lib/money";
-import { slugify, uniqueProductSlug } from "../../lib/catalog";
+import { slugify, uniqueProductSlug, suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
 import { uid } from "../../lib/ids";
 import { activeCategoriesForStore } from "../../lib/selectors";
 import {
@@ -45,6 +45,10 @@ export function ProductForm({
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  // SKU auto-suggest: once Fer edits the SKU by hand, stop regenerating from the
+  // name. Starts true for an existing product (sku already set) → name edits
+  // never touch its SKU (it may be on physical labels / history).
+  const [skuManuallyEdited, setSkuManuallyEdited] = useState<boolean>(!!product.sku);
 
   // Revoke staged object-URLs on unmount.
   useEffect(() => {
@@ -225,10 +229,28 @@ export function ProductForm({
       ? draft.slug
       : uniqueProductSlug(state.products, store.id, product.id, slugify(draft.name));
 
+    // SKU: source-of-truth at save. Auto mode → re-resolve against the final set
+    // (the only authoritative uniqueness check in this local-first model; there's
+    // no backend sku transaction). Manual mode → respect Fer's value but reject a
+    // collision with another product in this store.
+    let sku = draft.sku?.trim() ?? "";
+    if (!skuManuallyEdited && draft.name.trim()) {
+      sku = uniqueProductSku(state.products, store.id, product.id, sku, sku);
+    } else if (sku) {
+      const clashes = state.products.some(
+        (p) => p.id !== product.id && p.storeId === store.id && (p.sku ?? "").toUpperCase() === sku.toUpperCase()
+      );
+      if (clashes) {
+        setValidationError("Esa clave ya la usa otro producto. Elige otra.");
+        setSaving(false);
+        return;
+      }
+    }
+
     const next: Product = {
       ...draft,
       name: draft.name.trim(),
-      sku: draft.sku?.trim() ?? "",
+      sku,
       slug,
       images: merged,
       imageUrl: merged.find((i) => i.isPrimary)?.url ?? merged[0]?.url,
@@ -265,15 +287,53 @@ export function ProductForm({
         label="Nombre"
         placeholder="Ej. Anillo de plata 925"
         value={draft.name}
-        onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+        onChange={(e) => {
+          const name = e.target.value;
+          // Auto-suggest the SKU live (base only; collisions resolve on blur/save).
+          // Empty name does NOT clear the SKU so Fer can replace it calmly.
+          if (!skuManuallyEdited && name.trim()) {
+            setDraft({ ...draft, name, sku: suggestSkuBase(name, store.skuPrefix) });
+          } else {
+            setDraft({ ...draft, name });
+          }
+        }}
+        onBlur={() => {
+          if (!skuManuallyEdited && draft.name.trim()) {
+            const resolved = uniqueProductSku(
+              state.products, store.id, product.id,
+              draft.sku ?? "", draft.sku
+            );
+            setDraft({ ...draft, sku: resolved });
+          }
+        }}
         autoFocus
       />
       <TextField
-        label="Clave"
-        placeholder="Ej. OLV-001"
+        label="Clave / SKU"
+        hint="La generamos a partir del nombre. Puedes cambiarla si lo necesitas."
+        placeholder="Ej. OLIV-ANILLO-DE-PLATA-925"
         value={draft.sku ?? ""}
-        onChange={(e) => setDraft({ ...draft, sku: e.target.value })}
+        onChange={(e) => {
+          setDraft({ ...draft, sku: e.target.value });
+          setSkuManuallyEdited(true);
+        }}
       />
+      {skuManuallyEdited && draft.name.trim() && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const resolved = uniqueProductSku(
+              state.products, store.id, product.id,
+              suggestSkuBase(draft.name, store.skuPrefix), undefined
+            );
+            setDraft({ ...draft, sku: resolved });
+            setSkuManuallyEdited(false);
+          }}
+        >
+          ↻ Generar desde el nombre
+        </Button>
+      )}
 
       {cloud ? (
         <MultiPhotoPicker
