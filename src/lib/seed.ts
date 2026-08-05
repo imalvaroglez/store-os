@@ -377,6 +377,8 @@ export function buildSeedState(): AppState {
     activeStoreId: oliviaId,
     products,
     categories: oliviaCategories, // Santi/Joyería categories synthesized by migrateCatalog
+    suppliers: [],
+    purchases: [],
     customers,
     orders,
   };

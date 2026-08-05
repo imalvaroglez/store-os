@@ -22,6 +22,13 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const est = profit(total, order.cost != null ? order.cost * order.quantity : undefined);
   const verb = nextActionVerb(order.status);
 
+  // Runtime shortage: compare the ordered quantity against the linked product's
+  // current stock. Derived (not stored) so it clears automatically when Fer
+  // replenishes. Only meaningful when the order references a catalog product.
+  const product = order.productId ? state.products.find((p) => p.id === order.productId) : undefined;
+  const stock = typeof product?.quantityOnHand === "number" ? product.quantityOnHand : undefined;
+  const shortfall = typeof stock === "number" ? Math.max(0, order.quantity - stock) : 0;
+
   function advance() {
     if (!verb) return;
     const next = nextStatus(order.status);
@@ -42,9 +49,16 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
             {order.quantity > 1 && ` · ${order.quantity} pzs`}
           </p>
         </div>
-        <Badge tone={ORDER_STATUS_TONE[order.status]} className="shrink-0">
-          {ORDER_STATUS_LABELS[order.status]}
-        </Badge>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <Badge tone={ORDER_STATUS_TONE[order.status]}>
+            {ORDER_STATUS_LABELS[order.status]}
+          </Badge>
+          {shortfall > 0 && (
+            <Badge tone="warning">
+              Faltan {shortfall} {shortfall === 1 ? "pieza" : "piezas"}
+            </Badge>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-3 mt-3 text-sm">

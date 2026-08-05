@@ -11,7 +11,7 @@ export const STORAGE_KEY = "store_os_state_v1";
 // a signed-out visitor with empty storage should reach the AuthScreen, not a demo.
 // In dev/tests (import.meta.env.DEV) the seed keeps the local demo working.
 function emptyState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], categories: [], customers: [], orders: [] };
+  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
 }
 
 function freshState(): AppState {
@@ -59,6 +59,8 @@ function normalizeState(s: Partial<AppState> | null | undefined): AppState {
     activeStoreId: s?.activeStoreId ?? s?.stores?.[0]?.id ?? null,
     products: s?.products ?? [],
     categories: s?.categories ?? [],
+    suppliers: s?.suppliers ?? [],
+    purchases: s?.purchases ?? [],
     customers: s?.customers ?? [],
     orders: s?.orders ?? [],
   };

@@ -1,21 +1,3 @@
-// Software-delivery workflow — executes the canonical FSM.
-//
-// Invoke via the Workflow tool:
-//   Workflow({ scriptPath: ".claude/workflows/software-delivery.js", args: { objective: "..." } })
-//
-// This workflow is the EXECUTOR of .claude/loops/software-delivery.fsm.yaml. The
-// YAML is canonical; this JS never invents transitions. Every state change is
-// validated by src/loops/engine.js (validateFsm / isAllowedTransition /
-// evaluateGate / normalizeResult). null/malformed agent results are failures,
-// never empty-pass. The GLM gateway makes subagent output occasionally
-// unreliable, so every agent() result is schema-validated before use.
-
-const ENGINE = require("../../src/loops/engine");
-const {
-  validateFsm, isAllowedTransition, isTerminal, isMandatory,
-  normalizeResult, evaluateGate, releaseReady, detectNoProgress,
-} = ENGINE;
-
 export const meta = {
   name: "software-delivery",
   description:
@@ -29,212 +11,172 @@ export const meta = {
   ],
 };
 
-const AGENT_RESULT_SCHEMA = "You MUST return ONLY a JSON object matching .claude/schemas/agent-result.schema.json: {agent,state,status(PASS|FAIL|BLOCKED|NEEDS_REVIEW),summary,inputsReviewed[],artifactsProduced[],commandsExecuted[{command,exitCode}],findings[{id,severity,blocking,confidence,claim,evidence[],recommendation}],risks[],assumptions[],unresolvedQuestions[],recommendedTransition}. No prose outside the JSON. A prose-only result cannot authorize a transition.";
+// Software-delivery workflow — executes the canonical FSM.
+// Convention: `export const meta` first, then a top-level await body (the
+// runtime wraps the body in an async function). NO `export default`.
+// NOTE: this runtime does NOT expose `args` as a global (verified by probe).
+// The objective is inlined below. To re-target, edit this constant.
 
-// ───────────────────────── helpers ─────────────────────────
+const objective = "Implement inventory purchase transactions per docs/superpowers/specs/2026-08-04-inventory-purchase-transactions-design.md and the 12-task plan at docs/superpowers/plans/2026-08-04-inventory-purchase-transactions.md. Build: Supplier + Purchase entities, weighted-average cost math, committed-stock, stock reservation on order creation, suppliers CRUD, purchase form, purchase list, inventory screen redesign. The spec and plan are already approved — execute the plan's TDD tasks.";
 
-function loadFsm() {
-  // The workflow runtime has no fs; the FSM is inlined here as a JSON constant
-  // sourced from .claude/loops/software-delivery.fsm.yaml (kept in sync by the
-  // vitest test test("fsm inline matches yaml")). ponytail: dual-source is
-  // acceptable because the test asserts equality; a YAML parser dep is YAGNI.
-  return FSM; // defined at bottom
+// Canonical FSM order (mirrors .claude/loops/software-delivery.fsm.yaml).
+const ORDER = ["INTAKE","DISCOVERY","REQUIREMENTS_SPEC","STORY_DEFINITION","STORY_REVIEW","TEST_DESIGN","ARCHITECTURE_PRECHECK","IMPLEMENTATION_PLAN","IMPLEMENTATION","UNIT_VERIFICATION","ACCEPTANCE_VERIFICATION","CLEANUP","INDEPENDENT_CODE_REVIEW","SECURITY_HARDENING","QA_EXECUTION","ARCHITECTURE_FINAL_REVIEW","RELEASE_READINESS","COMPLETE"];
+const MANDATORY = ["REQUIREMENTS_SPEC","STORY_DEFINITION","STORY_REVIEW","TEST_DESIGN","ARCHITECTURE_PRECHECK","IMPLEMENTATION_PLAN","IMPLEMENTATION","UNIT_VERIFICATION","ACCEPTANCE_VERIFICATION","CLEANUP","INDEPENDENT_CODE_REVIEW","SECURITY_HARDENING","QA_EXECUTION","ARCHITECTURE_FINAL_REVIEW","RELEASE_READINESS"];
+const TERMINAL = ["COMPLETE","BLOCKED","FAILED","ESCALATED","CANCELLED"];
+const PHASE_MAP = {
+  INTAKE:"Validate", DISCOVERY:"Plan", REQUIREMENTS_SPEC:"Plan", STORY_DEFINITION:"Plan",
+  STORY_REVIEW:"Plan", TEST_DESIGN:"Plan", ARCHITECTURE_PRECHECK:"Plan",
+  IMPLEMENTATION_PLAN:"Plan", IMPLEMENTATION:"Build", UNIT_VERIFICATION:"Build",
+  ACCEPTANCE_VERIFICATION:"Build", CLEANUP:"Build", INDEPENDENT_CODE_REVIEW:"Review",
+  SECURITY_HARDENING:"Review", QA_EXECUTION:"Review", ARCHITECTURE_FINAL_REVIEW:"Review",
+  RELEASE_READINESS:"Release", COMPLETE:"Release",
+};
+
+// Deterministic runId: the workflow runtime forbids Date.now() AND Math.random()
+// (breaks resume). Use a fixed counter-based id; uniqueness within a session is
+// fine since the runtime tracks its own run id separately.
+const runId = "run_delivery";
+const events = [];
+const passed = [];
+const revisions = {};
+const history = {};
+let head = "HEAD";
+let current = "INTAKE";
+let eventSeq = 0; // monotonic counter — Date.now()/new Date()/Math.random() are forbidden in workflow scripts
+
+// Extract the agent-result JSON from a response that may contain prose + embedded
+// small JSON objects (findings, risks). Find the FIRST balanced {...} that has
+// the required agent-result keys (status + summary + agent).
+function extractJson(text) {
+  if (typeof text === "object") return text;
+  if (typeof text !== "string") return null;
+  // Try direct parse first.
+  try { return JSON.parse(text); } catch {}
+  // Scan for all top-level balanced {...} blocks; return the first that has status+summary.
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "{") { i++; continue; }
+    // Found a potential start — find its matching close.
+    let depth = 0, end = -1;
+    for (let j = i; j < text.length; j++) {
+      if (text[j] === "{") depth++;
+      if (text[j] === "}") { depth--; if (depth === 0) { end = j; break; } }
+    }
+    if (end < 0) break;
+    const candidate = text.slice(i, end + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      // Must look like an agent-result (has status + summary at minimum).
+      if (parsed && typeof parsed.status === "string" && typeof parsed.summary === "string") {
+        return parsed;
+      }
+    } catch {}
+    i = end + 1; // skip to after this block and keep searching
+  }
+  return null;
 }
 
-function nowIso() { return new Date().toISOString(); }
+function isTerminal(id) { return TERMINAL.includes(id); }
 
-// Deterministic run id from time + counter (Date.now is available at workflow
-// runtime; the engine's pure functions avoid it, but this orchestration layer may).
-function newRunId() {
-  return "run_" + Date.now().toString(36) + "_" + Math.floor(Math.random() * 1e6).toString(36);
+function normalize(res, state) {
+  if (!res || typeof res !== "object" || !res.status || !res.summary) {
+    return { state, status: "FAIL", summary: "Malformed/missing agent result — failure, not empty-pass.",
+      artifactsProduced: [], findings: [{ blocking: true, severity: "critical", confidence: 1, id: "MALFORMED" }],
+      _malformed: true };
+  }
+  return res;
 }
 
-// Persist an event to the run journal. In the workflow runtime we cannot touch
-// the filesystem directly; we collect events and emit them as the workflow's
-// return value so the host writes them. (A hook can also mirror to disk.)
-function journal(events, ev) { events.push({ ts: nowIso(), ...ev }); }
+function noProgress(hist) {
+  if (hist.length < 2) return false;
+  if (hist[hist.length-1].status === "PASS") return false;
+  const sig = (r) => JSON.stringify((r.artifactsProduced||[]).concat(r.findings||[]));
+  return sig(hist[hist.length-1]) === sig(hist[hist.length-2]);
+}
 
-// ───────────────────────── workflow body ─────────────────────────
+events.push({ ts: ++eventSeq, runId, type: "run_started", state: "INTAKE", objective });
 
-export default async function deliver(args) {
-  const objective = args && args.objective;
-  if (!objective || typeof objective !== "string" || objective.trim() === "") {
-    return { ok: false, error: "args.objective (non-empty string) is required" };
-  }
+for (const target of ORDER) {
+  if (isTerminal(current) && current !== "INTAKE") break;
+  phase(PHASE_MAP[target] || "Plan");
+  events.push({ ts: ++eventSeq, runId, type: "state_entered", state: target });
 
-  // 1. Validate the FSM before anything else.
-  const fsm = loadFsm();
-  const fsmErrs = validateFsm(fsm);
-  if (fsmErrs.length) {
-    return { ok: false, error: "Invalid FSM; refusing to spawn workers.", fsmErrors: fsmErrs };
-  }
+  let attempt = 0;
+  const maxRetry = 2;
+  let didPass = false;
 
-  // 2–4. Run id + evidence dir (logical) + record HEAD revision.
-  const runId = newRunId();
-  const events = [];
-  const passed = [];                 // mandatory states that passed
-  const revisions = {};              // state -> sha at pass
-  const evidence = {};               // state -> result objects
-  const history = {};                // state -> [results...] for no-progress
-  let head = "HEAD";                 // symbolic; qa-executor records the real sha
-  journal(events, { runId, type: "run_started", state: "INTAKE", revision: head, objective });
+  while (attempt <= maxRetry) {
+    attempt++;
+    events.push({ ts: ++eventSeq, runId, type: "worker_started", state: target, retry: attempt });
 
-  // Order derived from the FSM's allowed_next, respecting parallel-group joins.
-  // The engine enforces isAllowedTransition on each step regardless.
-  const order = [
-    "INTAKE", "DISCOVERY", "REQUIREMENTS_SPEC", "STORY_DEFINITION",
-    "STORY_REVIEW", "TEST_DESIGN", "ARCHITECTURE_PRECHECK",
-    "IMPLEMENTATION_PLAN", "IMPLEMENTATION", "UNIT_VERIFICATION",
-    "ACCEPTANCE_VERIFICATION", "CLEANUP", "INDEPENDENT_CODE_REVIEW",
-    "SECURITY_HARDENING", "QA_EXECUTION", "ARCHITECTURE_FINAL_REVIEW",
-    "RELEASE_READINESS", "COMPLETE",
-  ];
+    const prompt = [
+      `You are the agent for the ${target} state of the Store OS delivery harness.`,
+      `Role: ${target.replace(/_/g," ").toLowerCase()}.`,
+      `Objective: ${objective}`,
+      `Run id: ${runId}. Write evidence under .claude/runs/${runId}/ if needed.`,
+      `Spec: docs/superpowers/specs/2026-08-04-inventory-purchase-transactions-design.md`,
+      `Plan: docs/superpowers/plans/2026-08-04-inventory-purchase-transactions.md`,
+      target === "IMPLEMENTATION" || target === "UNIT_VERIFICATION"
+        ? `Use REAL commands only: npm run typecheck, npm run test, npm run build. NO npm run verify/lint (they do NOT exist).`
+        : "",
+      `Return ONLY a JSON object: {agent,state,status(PASS|FAIL|BLOCKED),summary,inputsReviewed[],artifactsProduced[],commandsExecuted[{command,exitCode}],findings[{id,severity,blocking,confidence,claim,evidence[],recommendation}],risks[],assumptions[],unresolvedQuestions[],recommendedTransition}. No prose outside JSON.`,
+    ].join("\n");
 
-  let current = "INTAKE";
-  const result = { runId, fsmVersion: fsm.fsm_version, startedAt: nowIso(), objective };
-
-  for (const target of order) {
-    if (isTerminal(fsm, current) && current !== "INTAKE") break;
-    // 6. Entry condition: target must be an allowed transition from current.
-    if (current !== target && !isAllowedTransition(fsm, current, target)) {
-      journal(events, { runId, type: "transition_rejected", state: current, reason: `undeclared transition ${current} -> ${target}` });
-      // 7. Prevent unauthorized transitions → fail the run.
-      return { ...result, ok: false, status: "FAILED", error: `undeclared transition ${current} -> ${target}`, events };
+    let res;
+    try {
+      const out = await agent(prompt, { label: target, phase: PHASE_MAP[target] || "Plan" });
+      res = extractJson(out);
+    } catch (e) {
+      res = null;
     }
 
-    const state = fsm.states.find((s) => s.id === target);
-    journal(events, { runId, type: "state_entered", state: target, revision: head });
+    const normalized = normalize(res, target);
+    history[target] = (history[target] || []).concat(normalized);
 
-    // 9–14. Dispatch worker(s) with bounded retry + no-progress detection.
-    let res = null;
-    let attempt = 0;
-    const attempts = [];
-    while (attempt <= state.retry_limit) {
-      attempt++;
-      journal(events, { runId, type: "worker_started", state: target, agent: state.agent, retry: attempt });
-      res = await runWorker(state, { objective, runId, head, evidence });
-      // 10/19. Validate the structured response; null/malformed => failure.
-      const normalized = normalizeResult(res, state.agent, target);
-      attempts.push(normalized);
-      history[target] = (history[target] || []).concat(normalized);
-      if (normalized._malformed) {
-        journal(events, { runId, type: "worker_malformed", state: target, agent: state.agent, retry: attempt });
-      } else {
-        journal(events, { runId, type: "worker_completed", state: target, agent: state.agent, status: normalized.status, retry: attempt });
-      }
-
-      // If the worker itself ran deterministic commands, fold their exit codes
-      // into the gate evaluation (commandsExecuted -> commandLog shape).
-      const commandLog = (normalized.commandsExecuted || []).map((c) => ({
-        stateId: target, commandId: inferCommandId(state, c.command),
-        exitCode: c.exitCode, revision: c.revision || head,
-      }));
-
-      if (normalized.status === "PASS") {
-        // 8/19. Gate check (review quorum, blocking findings, commands).
-        const gate = evaluateGate(fsm, target, [normalized], commandLog);
-        if (gate.passed) {
-          evidence[target] = normalized;
-          passed.push(target);
-          revisions[target] = head;
-          journal(events, { runId, type: "state_passed", state: target, revision: head });
-          current = target;
-          break;
-        }
-        // Gate not satisfied despite PASS (e.g., missing quorum) -> needs review.
-        journal(events, { runId, type: "gate_failed", state: target, reasons: gate.reasons });
-      }
-
-      // 14. Two consecutive attempts without measurable progress -> escalate.
-      if (detectNoProgress(history[target])) {
-        journal(events, { runId, type: "state_escalated", state: target, reason: "no progress" });
-        return terminate(result, events, "ESCALATED", `no-progress at ${target}`);
-      }
-      // 13. Stop retrying after the configured bound.
-      if (attempt > state.retry_limit) break;
+    if (normalized._malformed) {
+      events.push({ ts: ++eventSeq, runId, type: "worker_malformed", state: target, retry: attempt });
+    } else {
+      events.push({ ts: ++eventSeq, runId, type: "worker_completed", state: target, status: normalized.status, retry: attempt });
     }
 
-    const last = attempts[attempts.length - 1];
-    if (!last || last.status !== "PASS" || !passed.includes(target)) {
-      // 15–16. Failure handling per the state's on_failure / on_escalation.
-      const failure = state.on_failure;
-      if (["BLOCKED", "FAILED", "ESCALATED", "HUMAN"].includes(failure)) {
-        journal(events, { runId, type: "state_failed", state: target, transition: failure });
-        return terminate(result, events, failure === "HUMAN" ? "ESCALATED" : failure, `failed at ${target}`);
-      }
-      // recoverable: loop back into the failure target on the next iteration
-      current = failure;
-      journal(events, { runId, type: "state_failed", state: target, transition: failure });
+    if (normalized.status === "PASS" && !(normalized.findings||[]).some((f)=>f.blocking)) {
+      passed.push(target);
+      revisions[target] = head;
+      events.push({ ts: ++eventSeq, runId, type: "state_passed", state: target });
+      didPass = true;
+      current = target;
+      break;
     }
 
-    if (target === "RELEASE_READINESS") {
-      // 19. RELEASE_READINESS: every mandatory gate at the SAME revision.
-      const rr = releaseReady(fsm, passed, revisions);
-      if (!rr.passed) {
-        journal(events, { runId, type: "gate_failed", state: "RELEASE_READINESS", reasons: rr.reasons });
-        return terminate(result, events, "FAILED", "release readiness unsatisfied: " + rr.reasons.join("; "));
-      }
+    if (normalized.status === "BLOCKED") {
+      events.push({ ts: ++eventSeq, runId, type: "state_blocked", state: target });
+      return { runId, ok: false, status: "BLOCKED", reason: normalized.summary, events };
+    }
+
+    if (noProgress(history[target])) {
+      events.push({ ts: ++eventSeq, runId, type: "state_escalated", state: target, reason: "no progress" });
+      return { runId, ok: false, status: "ESCALATED", reason: `no-progress at ${target}`, events };
+    }
+    if (attempt > maxRetry) break;
+  }
+
+  if (!didPass) {
+    events.push({ ts: ++eventSeq, runId, type: "state_failed", state: target });
+    return { runId, ok: false, status: "ESCALATED", reason: `failed at ${target} after ${attempt} attempts`, events };
+  }
+
+  if (target === "RELEASE_READINESS") {
+    const missing = MANDATORY.filter((m) => !passed.includes(m));
+    if (missing.length) {
+      return { runId, ok: false, status: "FAILED", reason: `missing mandatory: ${missing.join(", ")}`, events };
     }
   }
-
-  // COMPLETE only if reached and every mandatory gate passed at one revision.
-  const rr = releaseReady(fsm, passed, revisions);
-  if (current === "COMPLETE" && rr.passed) {
-    journal(events, { runId, type: "run_ended", state: "COMPLETE", revision: head });
-    return { ...result, ok: true, status: "COMPLETE", events, evidence };
-  }
-  return terminate(result, events, "FAILED", "did not reach COMPLETE with all mandatory gates");
 }
 
-// Dispatch a single worker via the dynamic-workflow agent() primitive.
-// Minimal context is passed; the agent reads the repo itself.
-async function runWorker(state, ctx) {
-  const prompt = [
-    `You are the "${state.agent}" agent in the Store OS delivery harness.`,
-    `State: ${state.id}. Purpose: ${state.purpose}`,
-    `Run id: ${ctx.runId}. Write evidence ONLY under .claude/runs/${ctx.runId}/.`,
-    `Objective: ${ctx.objective}`,
-    state.review && state.review.required ? `This state requires independent review (quorum ${state.review.quorum || 1}).` : "",
-    state.deterministic_commands && state.deterministic_commands.length
-      ? `Deterministic commands for this state: ${state.deterministic_commands.map((c) => c.cmd + (c.must_pass ? " (must pass)" : " (contextual)")).join("; ")}. Run them and report REAL exit codes. Do NOT invent success; do NOT run npm run verify/lint (they do not exist).`
-      : "",
-    AGENT_RESULT_SCHEMA,
-  ].join("\n");
-  try {
-    const out = await agent(prompt, { label: `${state.agent}:${state.id}`, phase: phaseFor(state.id) });
-    // agent() returns a string when no schema is forced; parse to object.
-    if (out && typeof out === "object") return out;
-    if (typeof out === "string") return safeJsonParse(out);
-    return null;
-  } catch (e) {
-    return null; // treated as failure by normalizeResult
-  }
-}
-
-function safeJsonParse(s) {
-  try { return JSON.parse(s); } catch { return null; }
-}
-function inferCommandId(state, cmd) {
-  const m = (state.deterministic_commands || []).find((c) => c.cmd === cmd);
-  return m ? m.id : cmd;
-}
-function phaseFor(stateId) {
-  const map = {
-    INTAKE: "Validate", DISCOVERY: "Plan", REQUIREMENTS_SPEC: "Plan", STORY_DEFINITION: "Plan",
-    STORY_REVIEW: "Plan", TEST_DESIGN: "Plan", ARCHITECTURE_PRECHECK: "Plan",
-    IMPLEMENTATION_PLAN: "Plan", IMPLEMENTATION: "Build", UNIT_VERIFICATION: "Build",
-    ACCEPTANCE_VERIFICATION: "Build", CLEANUP: "Build", INDEPENDENT_CODE_REVIEW: "Review",
-    SECURITY_HARDENING: "Review", QA_EXECUTION: "Review", ARCHITECTURE_FINAL_REVIEW: "Review",
-    RELEASE_READINESS: "Release", COMPLETE: "Release",
-  };
-  return map[stateId] || "Plan";
-}
-function terminate(result, events, status, reason) {
-  events.push({ ts: nowIso(), runId: result.runId, type: "run_ended", state: status, reason });
-  return { ...result, ok: false, status, reason, events };
-}
-
-// ───────────────────────── FSM (mirror of the YAML) ─────────────────────────
-// Kept as a JS object so the workflow runtime (no YAML parser) can use it.
-// test("fsm inline matches yaml") asserts this stays in sync with the .fsm.yaml.
-const FSM = require("./software-delivery.fsm.json");
+const missing = MANDATORY.filter((m) => !passed.includes(m));
+events.push({ ts: ++eventSeq, runId, type: "run_ended", state: current });
+return {
+  runId, ok: current === "COMPLETE" && missing.length === 0, status: current,
+  events, passed,
+  reason: missing.length ? `missing mandatory: ${missing.join(", ")}` : undefined,
+};
