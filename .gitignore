@@ -153,6 +153,9 @@ playwright-report/
 .env.*
 !.env.example
 
+# Delivery-harness run evidence (persists locally per LOOPS.md §15; not app code)
+.claude/runs/
+
 # Playwright test output
 test-results/
 playwright-report/
