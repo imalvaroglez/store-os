@@ -69,7 +69,9 @@ type Action =
   | { type: "RESET_DEMO" }
   | { type: "REPLACE_STATE"; state: AppState }; // cloud sync pushes a whole state
 
-function reducer(state: AppState, action: Action): AppState {
+// Exported for direct unit testing of state transitions (stock reservation,
+// cascade deletes, entity CRUD) without spinning up a React tree.
+export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "ADD_STORE":
       return { ...state, stores: [...state.stores, action.store], activeStoreId: action.store.id };
