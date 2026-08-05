@@ -15,9 +15,14 @@ export const meta = {
 // Convention: `export const meta` first, then a top-level await body (the
 // runtime wraps the body in an async function). NO `export default`.
 // NOTE: this runtime does NOT expose `args` as a global (verified by probe).
-// The objective is inlined below. To re-target, edit this constant.
+// The objective is inlined below. To re-target, edit these three constants.
+// (ponytail: a future refactor should read args.objective/specPath/planPath
+//  dynamically so re-targeting needs no file edit — tracked as harness debt.)
 
-const objective = "Implement inventory purchase transactions per docs/superpowers/specs/2026-08-04-inventory-purchase-transactions-design.md and the 12-task plan at docs/superpowers/plans/2026-08-04-inventory-purchase-transactions.md. Build: Supplier + Purchase entities, weighted-average cost math, committed-stock, stock reservation on order creation, suppliers CRUD, purchase form, purchase list, inventory screen redesign. The spec and plan are already approved — execute the plan's TDD tasks.";
+const objective = "Separate dev and production environments so development/testing cannot touch production data, per docs/superpowers/specs/2026-08-05-environment-separation-dev-prod-design.md. Repo scope: (1) .firebaserc 'dev' alias for store-os-dev; (2) scripts/check-env.cjs build-time guard that aborts a Vercel build when VITE_VERCEL_ENV and VITE_FIREBASE_PROJECT_ID are inconsistent (preview+prod or production+non-prod), self-tested via --test, hooked into the build npm script; (3) firestore.rules email allowlist so super_admin bootstrap can't escalate an arbitrary signup if users/ is emptied; (4) docs/DEPLOYMENT.md 'Ambientes (dev vs prod)' section + runbook. The ~80% console portion (creating store-os-dev, scoped Vercel env vars, seeding Olivia, restricting+rotating the prod key) is a human runbook documented in the spec, NOT executed by agents. Drafts of items 1-2 already exist on the branch and must be audited/replaced by the FSM reviewers.";
+
+const specPath = "docs/superpowers/specs/2026-08-05-environment-separation-dev-prod-design.md";
+const planPath = ""; // no separate plan doc for this objective; the spec's scope split is the plan
 
 // Canonical FSM order (mirrors .claude/loops/software-delivery.fsm.yaml).
 const ORDER = ["INTAKE","DISCOVERY","REQUIREMENTS_SPEC","STORY_DEFINITION","STORY_REVIEW","TEST_DESIGN","ARCHITECTURE_PRECHECK","IMPLEMENTATION_PLAN","IMPLEMENTATION","UNIT_VERIFICATION","ACCEPTANCE_VERIFICATION","CLEANUP","INDEPENDENT_CODE_REVIEW","SECURITY_HARDENING","QA_EXECUTION","ARCHITECTURE_FINAL_REVIEW","RELEASE_READINESS","COMPLETE"];
@@ -52,26 +57,61 @@ function extractJson(text) {
   if (typeof text !== "string") return null;
   // Try direct parse first.
   try { return JSON.parse(text); } catch {}
-  // Scan for all top-level balanced {...} blocks; return the first that has status+summary.
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] !== "{") { i++; continue; }
-    // Found a potential start — find its matching close.
-    let depth = 0, end = -1;
-    for (let j = i; j < text.length; j++) {
-      if (text[j] === "{") depth++;
-      if (text[j] === "}") { depth--; if (depth === 0) { end = j; break; } }
-    }
-    if (end < 0) break;
-    const candidate = text.slice(i, end + 1);
-    try {
-      const parsed = JSON.parse(candidate);
-      // Must look like an agent-result (has status + summary at minimum).
-      if (parsed && typeof parsed.status === "string" && typeof parsed.summary === "string") {
-        return parsed;
+  // Scan for all top-level balanced {...} blocks; return the first that has
+  // status+summary. CRITICAL: the brace counter must IGNORE braces inside JSON
+  // strings (e.g. "claim":"...{storeId}...") — a naive counter desyncs on those
+  // and fails to find the real object close, yielding a false "malformed".
+  const scan = (input) => {
+    let i = 0;
+    while (i < input.length) {
+      if (input[i] !== "{") { i++; continue; }
+      // Found a potential start — find its matching close, string-aware.
+      let depth = 0, end = -1, inStr = false, escape = false;
+      for (let j = i; j < input.length; j++) {
+        const c = input[j];
+        if (escape) { escape = false; continue; }
+        if (c === "\\") { escape = true; continue; }
+        if (c === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c === "{") depth++;
+        if (c === "}") { depth--; if (depth === 0) { end = j; break; } }
       }
-    } catch {}
-    i = end + 1; // skip to after this block and keep searching
+      if (end < 0) break;
+      const candidate = input.slice(i, end + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        // Must look like an agent-result (has status + summary at minimum).
+        if (parsed && typeof parsed.status === "string" && typeof parsed.summary === "string") {
+          return parsed;
+        }
+      } catch {}
+      i = end + 1; // skip to after this block and keep searching
+    }
+    return null;
+  };
+
+  let result = scan(text);
+  if (result) return result;
+
+  // Fallback: the GLM gateway sometimes emits enum-like string values WITHOUT
+  // quotes (e.g. "confidence":high, "severity":medium, "status":PASS). Quote
+  // those specific keys' bareword values and retry once. Conservative — only
+  // matches the known keys followed by a bareword token.
+  // ponytail: targeted regex fixup, not a general JSON repair. If the gateway
+  // invents new malformations, this won't catch them — but it clears the known
+  // recurring one without a real parser dependency.
+  const BAREWORD_KEYS = ["confidence", "severity", "status", "blocking"];
+  let repaired = text;
+  for (const key of BAREWORD_KEYS) {
+    // "key":<bareword>  →  "key":"<bareword>"
+    repaired = repaired.replace(
+      new RegExp(`"(${key})"\\s*:\\s*([A-Za-z_][A-Za-z0-9_]*)`, "g"),
+      `"$1":"$2"`
+    );
+  }
+  if (repaired !== text) {
+    result = scan(repaired);
+    if (result) return result;
   }
   return null;
 }
@@ -114,17 +154,21 @@ for (const target of ORDER) {
       `Role: ${target.replace(/_/g," ").toLowerCase()}.`,
       `Objective: ${objective}`,
       `Run id: ${runId}. Write evidence under .claude/runs/${runId}/ if needed.`,
-      `Spec: docs/superpowers/specs/2026-08-04-inventory-purchase-transactions-design.md`,
-      `Plan: docs/superpowers/plans/2026-08-04-inventory-purchase-transactions.md`,
+      specPath ? `Spec: ${specPath}` : "",
+      planPath ? `Plan: ${planPath}` : "",
       target === "IMPLEMENTATION" || target === "UNIT_VERIFICATION"
         ? `Use REAL commands only: npm run typecheck, npm run test, npm run build. NO npm run verify/lint (they do NOT exist).`
         : "",
-      `Return ONLY a JSON object: {agent,state,status(PASS|FAIL|BLOCKED),summary,inputsReviewed[],artifactsProduced[],commandsExecuted[{command,exitCode}],findings[{id,severity,blocking,confidence,claim,evidence[],recommendation}],risks[],assumptions[],unresolvedQuestions[],recommendedTransition}. No prose outside JSON.`,
+      `Re-read the ACTUAL current repo state (the working tree may have changed since prior attempts of this state — do not trust cached assumptions; verify against the files as they are now).`,
+      `CRITICAL CONSISTENCY RULE (the FSM rejects self-contradictory results): status MUST be FAIL if ANY finding has blocking=true. Equivalently: NEVER set status:"PASS" while also emitting a finding with blocking:true. If the work is incomplete or has an unresolved blocker, status is FAIL or BLOCKED, never PASS. A PASS with zero blocking findings is the only PASS.`,
+      `Return ONLY a valid JSON object. ALL string values MUST be double-quoted — including enum-like fields. Example findings entry (note the quotes around severity/confidence/status values): {"id":"F1","severity":"high","blocking":true,"confidence":"high","claim":"...","evidence":["..."],"recommendation":"..."}. Common malformations that break parsing: unquoted values like "confidence":high (must be "high"), trailing commas, or single quotes. Emit NONE of those.`,
+      `Schema: {agent,state,status(PASS|FAIL|BLOCKED),summary,inputsReviewed[],artifactsProduced[],commandsExecuted[{command,exitCode}],findings[{id,severity,blocking,confidence,claim,evidence[],recommendation}],risks[],assumptions[],unresolvedQuestions[],recommendedTransition}. No prose outside the JSON.`,
+      `[attempt ${attempt}]`,
     ].join("\n");
 
     let res;
     try {
-      const out = await agent(prompt, { label: target, phase: PHASE_MAP[target] || "Plan" });
+      const out = await agent(prompt, { label: target, phase: PHASE_MAP[target] || "Plan", effort: "xhigh" });
       res = extractJson(out);
     } catch (e) {
       res = null;

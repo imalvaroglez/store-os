@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "store-os-f7cf8"
+    "default": "store-os-f7cf8",
+    "dev": "store-os-dev"
   }
 }

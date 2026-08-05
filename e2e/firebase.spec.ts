@@ -8,6 +8,7 @@ import {
   signUp,
   waitForCloudSeed,
   wipeEmulator,
+  ADMIN_EMAIL,
 } from "./helpers";
 
 // End-to-end against the Firebase Emulator (Auth + Firestore). Covers the
@@ -30,7 +31,7 @@ test.beforeAll(async ({ browser }) => {
   await wipeEmulator();
   const ctx = await browser.newContext();
   sharedPage = await ctx.newPage();
-  await signUp(sharedPage, unique("firebase-admin"), "password123");
+  await signUp(sharedPage, ADMIN_EMAIL, "password123");
   await waitForCloudSeed(sharedPage);
 });
 
@@ -64,7 +65,7 @@ test("sign out returns to the local demo", async ({ sharedPage: page }) => {
 
 test("picker: switch store + manage (rename / type change)", async ({ sharedPage: page }) => {
   await ensureSignedOut(page);
-  await signUp(page, unique("pickeradmin"), "password123");
+  await signUp(page, ADMIN_EMAIL, "password123");
   await gotoClean(page);
 
   const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
@@ -81,7 +82,7 @@ test("picker: switch store + manage (rename / type change)", async ({ sharedPage
 
 test("picker: create a new store from the picker", async ({ sharedPage: page }) => {
   await ensureSignedOut(page);
-  await signUp(page, unique("createadmin"), "password123");
+  await signUp(page, ADMIN_EMAIL, "password123");
   await gotoClean(page);
 
   const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
@@ -106,11 +107,16 @@ test("an invited-less member sees no stores", async ({ sharedPage: page }) => {
   await signUp(page, unique("member"), "password123");
   await gotoClean(page);
   await expect(page.getByText("Crea tu primera tienda")).toBeVisible({ timeout: 15000 });
+  // Defense-in-depth (firestore.rules isAllowlistedSuperAdmin): a non-allowlisted
+  // email is a member, never super_admin — confirmed by the absence of the admin
+  // badge in settings. Only admin@store.os may hold the super_admin role.
+  await openSettings(page);
+  await expect(page.getByText(/administrador/)).toHaveCount(0);
 });
 
 test("product photo uploads, resizes, and renders", async ({ sharedPage: page }) => {
   await ensureSignedOut(page);
-  await signUp(page, unique("photoadmin"), "password123");
+  await signUp(page, ADMIN_EMAIL, "password123");
   await gotoClean(page);
 
   const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
