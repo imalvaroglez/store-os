@@ -183,6 +183,89 @@ must serve the app on refresh, not a 404.
 `/catalogo/olivia`), per-product WhatsApp preview cards (need SSR), payments,
 cart, customer accounts.
 
+## Ambientes (dev vs prod)
+
+Store OS runs on **two Firebase projects** so development/testing cannot touch
+production data. The boundary between them is the Firebase project itself —
+Auth UIDs, Firestore, and Storage are all per-project, and Security Rules have
+no notion of "environment". Pointing each Vercel target at the right project is
+what isolates Olivia's real data.
+
+| Project | Firebase project id | Purpose | Who writes |
+|---|---|---|---|
+| Production | `store-os-f7cf8` | Olivia's real business | Only the platform super-admin (`admin@store.os`) and the tenant owners she invites |
+| Development | `store-os-dev` | Dev/testing against realistic-but-fake data | Development only |
+
+The local emulator (`store-os-demo` namespace, volatile) is a third target that
+never touches either real project — see "Local development / testing" below.
+
+### Vercel environment variables (per target)
+
+Each Vercel target gets the **same six** `VITE_FIREBASE_*` variables, but with
+the values of the matching project. **No variable may use the "All Environments"
+scope** — that is the dominant risk: a Preview deploy inheriting prod's values
+would write to Olivia's real data.
+
+| Vercel target | Firebase project | `VITE_FIREBASE_PROJECT_ID` | `VITE_FIREBASE_EMULATOR` |
+|---|---|---|---|
+| **Production** | `store-os-f7cf8` | `store-os-f7cf8` | (unset) |
+| **Preview** | `store-os-dev` | `store-os-dev` | (unset) |
+| **Development** (local/`vercel dev`) | `store-os-dev` | `store-os-dev` | (unset) |
+
+The remaining four (`API_KEY`, `AUTH_DOMAIN`, `STORAGE_BUCKET`, `SENDER_ID`,
+`APP_ID`) take that project's Web App config values. Set each group scoped to
+its target only.
+
+### Build-time guard (`scripts/check-env.cjs`)
+
+A build-time tripwire (defense-in-depth, **not** primary security) runs before
+`tsc`/`vite` on every `npm run build`. It reads `VITE_VERCEL_ENV` (auto-injected
+by Vercel) and `VITE_FIREBASE_PROJECT_ID`, and **aborts the build** (exit 1) on:
+
+- `preview` + `store-os-f7cf8` (a Preview deploy pointing at prod), or
+- `preview` + empty/missing project id (a mis-scoped variable), or
+- `production` + anything other than `store-os-f7cf8`.
+
+This catches the "All Environments" accident at build time. It is not primary
+isolation — a determined actor with prod's public config can still instantiate
+the SDK — that's by Firebase design (access is enforced by Security Rules).
+
+### Create the `store-os-dev` project (one-time, console)
+
+1. Firebase Console → Add project → `store-os-dev` → **do not** enable Google Analytics.
+2. Firestore → Create database → **production mode** → a **US** region (e.g. `nam5`, same as prod). Immutable after creation.
+3. Storage → Get started → bucket in **`us-east1`** (mandatory for the free tier; outside the three US regions Storage bills from the first byte).
+4. Authentication → enable **Email/Password** and **Google**. **Never enable Phone** (SMS is the only Firebase service that charges from the first use — it breaks the zero-cost rule).
+5. Project settings → Your apps → add a Web App → copy the six config values into the Vercel **Preview** + **Development** groups.
+6. Set a **$0.01 budget alert** in Google Cloud Console → Billing → Budgets (notification only; it does not stop charges).
+7. Apply the **IAM grant** `roles/datastore.user` to the Storage service agent of `store-os-dev` (same as §4b for prod), or product-photo uploads fail with 403.
+8. Deploy the rules to dev: `firebase deploy --only firestore,storage --project dev` (the `dev` alias is in `.firebaserc`; rules are identical to prod — do not loosen them, or dev stops reflecting prod).
+
+### Lock production (one-time, console)
+
+1. Confirm `admin@store.os` is the **only** super-admin in prod (Firestore `users/` where `role == super_admin`). `firestore.rules` gates `super_admin` creation on the verified email `admin@store.os`, so no other signup can escalate even if `users/` were emptied.
+2. Olivia is a **tenant owner** (a `member`/`owner` of her store), not a super-admin — she does not need to be in the allowlist.
+3. **Restrict the prod API key** by HTTP referrer in Google Cloud Console → APIs & Services → Credentials → the prod API key → Application restrictions → HTTP referrers → add the Vercel prod domains (`*.vercel.app` of this project + any custom domain).
+4. **Rotate** the prod key (it was briefly exposed early in the project): delete + recreate the prod Web App for a fresh `apiKey`/`appId`, update the Vercel **Production** env group, and re-auth.
+5. Never delete the prod `users/` collection — if it empties, the bootstrap would otherwise re-run (mitigated by the allowlist, but the invariant is load-bearing).
+
+### Isolation checklist (run after the first Preview + Production deploys)
+
+- [ ] Register on the **Preview** URL → the user appears in `store-os-dev` Authentication, **not** in `store-os-f7cf8`.
+- [ ] Create a store on Preview → it appears in `store-os-dev` Firestore, not prod.
+- [ ] Upload a product photo on Preview → it lands in `store-os-dev` Storage, not prod.
+- [ ] Preview build logs show `project: store-os-dev`; Production logs show `project: store-os-f7cf8`.
+- [ ] No `VITE_FIREBASE_*` variable in Vercel has the "All Environments" scope.
+- [ ] **Phone** sign-in is OFF in both projects; both Storage buckets are in `us-east1`; both have the IAM grant applied.
+
+### If env vars got crossed (runbook)
+
+If a Preview deploy ever wrote to prod (a mis-scoped variable): in the affected
+project, delete the leaked data, then in **Google Cloud Console → Credentials**
+revoke/restrict the prod API key, delete + recreate the prod Web App (new
+`apiKey`/`appId`), update the correctly-scoped Vercel env group, and redeploy.
+The build guard exists precisely so this is caught at build time, not after.
+
 ## Local development / testing
 
 - **Demo mode (no backend):** `npm run dev` — runs fully on `localStorage` with
