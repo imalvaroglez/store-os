@@ -45,27 +45,32 @@ Reuse `src/lib/seed.ts`'s `buildSeedState()` — it already constructs a complet
 realistic Olivia jewelry store (storefront, categories, products with tiers and
 stock, etc.) with deterministic fixed ids (idempotent on re-run). The script:
 
-1. Initializes Firebase **against the dev project** using the dev config
-   (hardcoded from the values registered this session — they are public config,
-   safe to commit; access is enforced by Security Rules). It MUST assert the
-   projectId is `store-os-dev` and abort otherwise (a guard, like check-env.cjs
-   — defense-in-depth so it can never write prod).
-2. Signs in / authenticates as `admin@store.os` (the dev super-admin). This needs
-   credentials — the script reads them from a **gitignored local env file**
-   (`.env.seed-dev`), never committed. If absent, the script prints clear
-   instructions and exits.
-3. Writes the seed state to dev Firestore using the same write paths the app uses
-   (`saveEntity` / direct `setDoc` against collections `stores`, `categories`,
-   `products`, `customers`, `orders`), including the membership fields
-   (`ownerUid`, `memberUids`) set to the admin uid so the data is readable under
-   the deployed rules.
+1. **Authenticates via `firebase-admin` using Application Default Credentials
+   (ADC)** — NOT a password, NOT a client-SDK login. ADC is established once by
+   the developer with `gcloud auth application-default login` (a one-time browser
+   login; no committed secret, no password file). The Admin SDK reads ADC
+   automatically. If ADC is absent, the script prints the exact `gcloud` command
+   to run and exits.
+2. Initializes the Admin SDK **against `store-os-dev` only** by hardcoding the
+   dev projectId. It MUST assert the projectId is `store-os-dev` and abort
+   otherwise (a guard, like check-env.cjs). This guard is **load-bearing**:
+   the Admin SDK bypasses Security Rules, so if the script ever targeted prod it
+   would write unimpeded — the guard is the only thing preventing that.
+3. Writes the seed state to dev Firestore via the Admin SDK (`admin.firestore()`
+   `setDoc` against collections `stores`, `categories`, `products`, `customers`,
+   `orders`), including the membership fields (`ownerUid`, `memberUids`) set to
+   the admin uid so the data is readable under the deployed rules when Fer/admin
+   signs in normally.
 4. Claims the slug `olivia` in `slugs/` and writes the public projections
    (`publicStores`, `publicCatalogs`, `publicProducts`) so `/catalogo/olivia`
    works on the Preview deploy too.
 5. Uploads 1–2 generated sample images (a solid-color JPEG built in-code, no
    binary asset needed) to `products/{storeId}/{productId}/*.jpg` in the dev
-   Storage bucket, and links them on one product's `images` gallery — validating
-   the dev Storage + IAM grant end-to-end.
+   Storage bucket via the Admin SDK, and links them on one product's `images`
+   gallery — validating the dev Storage + IAM grant end-to-end.
+
+`firebase-admin` is added as a **devDependency** (never in the client bundle;
+the script runs in Node only).
 
 ## Data model
 
@@ -75,14 +80,19 @@ matches the current `Store`/`Product`/`Category`/`Customer`/`Order` shapes
 
 ## Security model
 
-- **Dev-only guard:** the script aborts unless the resolved projectId is exactly
-  `store-os-dev`. No code path writes to `store-os-f7cf8`.
-- **Credentials:** `admin@store.os` password lives in a gitignored
-  `.env.seed-dev` (gitignore must cover it). Never committed.
-- The public Firebase config of dev is safe to hardcode in the script (same as
-  prod's is safe in the client bundle — Security Rules enforce access).
-- The seed sets `ownerUid`/`memberUids` to the admin's uid so the data is
-  visible under the deployed `firestore.rules` (membership-gated).
+- **Dev-only guard (load-bearing):** the script aborts unless the projectId is
+  exactly `store-os-dev`. Because the Admin SDK ignores Security Rules, this
+  guard is the SOLE protection against writing prod — it must be a hard,
+  tested assertion that runs before any write.
+- **Credentials:** ADC (Application Default Credentials), established once via
+  `gcloud auth application-default login`. No password, no service-account JSON
+  committed, no `.env.seed-dev`. ADC lives in the user's gcloud config, never in
+  the repo.
+- **Public config:** the dev projectId is safe to hardcode (project id is not a
+  secret; access is enforced by rules, and the Admin SDK here is deliberately
+  scoped to dev by the guard).
+- The seed sets `ownerUid`/`memberUids` so the data is visible under the deployed
+  `firestore.rules` when a normal client (admin/Olivia) signs in.
 
 ## Risks
 
