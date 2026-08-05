@@ -124,12 +124,15 @@ for (const target of ORDER) {
       target === "IMPLEMENTATION" || target === "UNIT_VERIFICATION"
         ? `Use REAL commands only: npm run typecheck, npm run test, npm run build. NO npm run verify/lint (they do NOT exist).`
         : "",
+      `Re-read the ACTUAL current repo state (the working tree may have changed since prior attempts of this state — do not trust cached assumptions; verify against the files as they are now).`,
+      `CRITICAL CONSISTENCY RULE (the FSM rejects self-contradictory results): status MUST be FAIL if ANY finding has blocking=true. Equivalently: NEVER set status:"PASS" while also emitting a finding with blocking:true. If the work is incomplete or has an unresolved blocker, status is FAIL or BLOCKED, never PASS. A PASS with zero blocking findings is the only PASS.`,
       `Return ONLY a JSON object: {agent,state,status(PASS|FAIL|BLOCKED),summary,inputsReviewed[],artifactsProduced[],commandsExecuted[{command,exitCode}],findings[{id,severity,blocking,confidence,claim,evidence[],recommendation}],risks[],assumptions[],unresolvedQuestions[],recommendedTransition}. No prose outside JSON.`,
+      `[attempt ${attempt}]`,
     ].join("\n");
 
     let res;
     try {
-      const out = await agent(prompt, { label: target, phase: PHASE_MAP[target] || "Plan" });
+      const out = await agent(prompt, { label: target, phase: PHASE_MAP[target] || "Plan", effort: "xhigh" });
       res = extractJson(out);
     } catch (e) {
       res = null;
