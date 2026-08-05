@@ -41,54 +41,81 @@ it again is idempotent (overwrites the same fixed ids, no duplicates). It can
 
 ## Approach
 
-Reuse `src/lib/seed.ts`'s `buildSeedState()` — it already constructs a complete,
-realistic Olivia jewelry store (storefront, categories, products with tiers and
-stock, etc.) with deterministic fixed ids (idempotent on re-run). The script:
+The script seeds **only the Olivia store** (slug `olivia`, same as prod — safe
+because `store-os-dev` and `store-os-f7cf8` are separate projects). It reuses
+the Olivia data from `src/lib/seed.ts`'s `buildSeedState()` as the starting
+point, but the script **cannot import the TypeScript directly** (the repo is
+`type:module`; `scripts/` runs as plain Node CommonJS; `tsconfig` is `noEmit`).
+Instead the script uses a small build step: it imports the seed via a transpiled
+JS shim produced at dev-time, OR (simpler, ponytail) re-declares the Olivia data
+inline in the script as a self-contained object. The implementer picks the
+bridge; the contract is "the same Olivia entities buildSeedState() produces,
+deterministic fixed ids for idempotent re-run". The script then:
 
 1. **Authenticates via `firebase-admin` using Application Default Credentials
    (ADC)** — NOT a password, NOT a client-SDK login. ADC is established once by
    the developer with `gcloud auth application-default login` (a one-time browser
-   login; no committed secret, no password file). The Admin SDK reads ADC
-   automatically. If ADC is absent, the script prints the exact `gcloud` command
-   to run and exits.
+   login; no committed secret, no password file, **no `.env.seed-dev`**). The
+   Admin SDK reads ADC automatically. If ADC is absent, the script prints the
+   exact `gcloud` command to run and exits. (All references to `.env.seed-dev`
+   were removed — auth is ADC-only.)
 2. Initializes the Admin SDK **against `store-os-dev` only** by hardcoding the
    dev projectId. It MUST assert the projectId is `store-os-dev` and abort
    otherwise (a guard, like check-env.cjs). This guard is **load-bearing**:
-   the Admin SDK bypasses Security Rules, so if the script ever targeted prod it
-   would write unimpeded — the guard is the only thing preventing that.
-3. Writes the seed state to dev Firestore via the Admin SDK (`admin.firestore()`
-   `setDoc` against collections `stores`, `categories`, `products`, `customers`,
-   `orders`), including the membership fields (`ownerUid`, `memberUids`) set to
-   the admin uid so the data is readable under the deployed rules when Fer/admin
-   signs in normally.
-4. Claims the slug `olivia` in `slugs/` and writes the public projections
+   the Admin SDK bypasses Security Rules entirely, so if the script ever
+   targeted prod it would write unimpeded — the guard is the only thing
+   preventing that, and it must run BEFORE any Firestore or Storage call.
+3. **Resolves the admin uid at runtime.** ADC authenticates the Admin SDK as the
+   project's service agent, not as a user, so there is no user uid by default.
+   The script looks up the `admin@store.os` user in Auth
+   (`admin.auth().getUserByEmail('admin@store.os')`) to get its uid, and sets
+   `ownerUid`/`memberUids` on the Olivia store to that uid. (`buildSeedState()`
+   does NOT set these fields; the seed must add them or the deployed rules would
+   block a normal client from reading the store.) If the admin user doesn't
+   exist in dev yet, the script aborts with a clear message (the human creates
+   it by signing up once on the Preview, as already done this session).
+4. Writes the Olivia store + its categories + products + customers + orders to
+   dev Firestore via the Admin SDK (`setDoc`), scoped to `storeId === store_olivia`.
+5. **Enriches the Olivia products** before writing, because `buildSeedState()`
+   products lack two fields the public projection requires: `slug` (generate from
+   the product name, deterministic) and `images` (populated in step 7 after the
+   upload). Without `slug`, `projectPublicForStore()` skips the product
+   (`if (!p.slug) continue`), so `/catalogo/olivia` would have no product detail
+   pages. The seed assigns a `slug` to each Olivia product.
+6. Claims the slug `olivia` in `slugs/` and writes the public projections
    (`publicStores`, `publicCatalogs`, `publicProducts`) so `/catalogo/olivia`
-   works on the Preview deploy too.
-5. Uploads 1–2 generated sample images (a solid-color JPEG built in-code, no
-   binary asset needed) to `products/{storeId}/{productId}/*.jpg` in the dev
-   Storage bucket via the Admin SDK, and links them on one product's `images`
-   gallery — validating the dev Storage + IAM grant end-to-end.
+   works on the Preview deploy. (The Admin SDK bypasses the membership guards on
+   these collections; the seed writes them directly, mirroring what
+   `projectPublicForStore` does for a normal client.)
+7. **Uploads 1–2 generated sample JPEGs** (a solid-color JPEG built in-code, no
+   binary asset) to `products/{storeId}/{productId}/*.jpg` in the dev Storage
+   bucket via the Admin SDK. The object name MUST end in `.jpg` and the
+   `contentType` MUST be `image/jpeg`, size < 5 MB — to satisfy `storage.rules`
+   `validImage()` (even though Admin bypasses rules, matching the contract keeps
+   the generated data consistent with what a real client upload produces). The
+   uploaded URLs are then linked into one Olivia product's `images` gallery
+   (`isPrimary: true` on the first), and the product doc is updated + re-projected
+   — validating the dev Storage + IAM grant end-to-end.
 
 `firebase-admin` is added as a **devDependency** (never in the client bundle;
-the script runs in Node only).
+the script runs in Node only, and the plan must confirm Vite does not bundle it).
 
 ## Data model
 
-No type changes. Reuses `buildSeedState()` output verbatim. The seed already
-matches the current `Store`/`Product`/`Category`/`Customer`/`Order` shapes
-(it's the same seed the local demo and initial cloud seed use).
+No type changes. The seed data mirrors the current `Store`/`Product`/`Category`/
+`Customer`/`Order` shapes, sourced from `buildSeedState()` (Olivia subset) and
+enriched with the missing fields (`slug`, `images`, `ownerUid`/`memberUids`)
+required for the data to be readable and projectable under the deployed rules.
 
 ## Security model
 
 - **Dev-only guard (load-bearing):** the script aborts unless the projectId is
-  exactly `store-os-dev`. Because the Admin SDK ignores Security Rules, this
-  guard is the SOLE protection against writing prod — it must be a hard,
-  tested assertion that runs before any write.
-- **Credentials:** ADC (Application Default Credentials), established once via
-  `gcloud auth application-default login`. No password, no service-account JSON
-  committed, no `.env.seed-dev`. ADC lives in the user's gcloud config, never in
-  the repo.
-- **Public config:** the dev projectId is safe to hardcode (project id is not a
+  exactly `store-os-dev`. Because the Admin SDK ignores BOTH Firestore and
+  Storage Security Rules, this guard is the SOLE protection against writing prod
+  — it must be a hard, tested assertion that runs before any write.
+- **Credentials:** ADC only (`gcloud auth application-default login`). No
+  password, no service-account JSON committed, **no `.env.seed-dev`**. ADC lives
+  in the user's gcloud config, never in the repo.
   secret; access is enforced by rules, and the Admin SDK here is deliberately
   scoped to dev by the guard).
 - The seed sets `ownerUid`/`memberUids` so the data is visible under the deployed
@@ -98,9 +125,15 @@ matches the current `Store`/`Product`/`Category`/`Customer`/`Order` shapes
 
 - **Wrong project write** (script writes prod). Mitigated by the dev-only guard
   + the fixed dev config (the script does not read arbitrary env, it's hardcoded
-  to dev).
-- **Credential leakage** (admin password committed). Mitigated by gitignored
-  `.env.seed-dev`; the script refuses to run without it.
+  to dev). This is the load-bearing risk because Admin bypasses rules.
+- **No credentials to leak:** auth is ADC (in the user's gcloud config), not a
+  committed password or key. No `.env.seed-dev`, no secret in the repo.
+- **Admin user missing in dev:** the script looks up `admin@store.os` in Auth to
+  set `ownerUid`/`memberUids`; if absent it aborts with a clear message (the
+  human signs up once on the Preview — already done this session).
+- **Incomplete seed data:** `buildSeedState()` products lack `slug`/`images`;
+  the seed enriches them (slug from name; images after upload) so the public
+  projection works and `/catalogo/olivia` shows product detail pages.
 - **Free-tier consumption:** a seed is a handful of writes (≈ a dozen docs + 2
   uploads); negligible against the 20K writes/day, 5K uploads/month dev quota.
   Idempotent re-runs overwrite, they don't accumulate.
@@ -117,9 +150,12 @@ Repo portion (FSM-verifiable):
 - `scripts/seed-dev.cjs` exists, is runnable with `node scripts/seed-dev.cjs`,
   and aborts with a clear Spanish message if run when the projectId is not
   `store-os-dev` (a self-test or simulateable assertion).
-- The script aborts cleanly if `.env.seed-dev` is absent, printing instructions.
-- `.env.seed-dev` is gitignored.
-- A `README` line / DEPLOYMENT.md note documents how to run the seed.
+- The script aborts cleanly if ADC is absent, printing the exact
+  `gcloud auth application-default login` command.
+- `firebase-admin` is in `devDependencies` (not `dependencies`), and the client
+  build (`npm run build`) does not pull it into the bundle.
+- A `README` line / DEPLOYMENT.md note documents how to run the seed
+  (one-time `gcloud auth application-default login`, then `node scripts/seed-dev.cjs`).
 
 End-to-end (human-verified via the Preview, reported but not FSM-automated):
 - After `node scripts/seed-dev.cjs`, the `store-os-dev` Firestore has the Olivia
