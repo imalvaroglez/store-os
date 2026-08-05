@@ -71,6 +71,27 @@ service cloud.firestore {
         && resource.data.storeId == request.resource.data.storeId;
       allow delete: if isMember(resource.data.storeId);
     }
+    // suppliers/{id} — per-store supplier entity (private, membership-gated).
+    // Mirrors categories: id carries storeId, and the doc also carries storeId
+    // so membership scoping stays consistent with products/customers/orders.
+    match /suppliers/{id} {
+      allow read: if isMember(resource.data.storeId);
+      allow create: if isMember(request.resource.data.storeId);
+      allow update: if isMember(resource.data.storeId)
+        && isMember(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isMember(resource.data.storeId);
+    }
+    // purchases/{id} — per-store supplier purchase transaction (private). Cost
+    // history lives here; never written to the anonymous-readable projections.
+    match /purchases/{id} {
+      allow read: if isMember(resource.data.storeId);
+      allow create: if isMember(request.resource.data.storeId);
+      allow update: if isMember(resource.data.storeId)
+        && isMember(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if isMember(resource.data.storeId);
+    }
     match /customers/{id} {
       allow read: if isMember(resource.data.storeId);
       allow create: if isMember(request.resource.data.storeId);
