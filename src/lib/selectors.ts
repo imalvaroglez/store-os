@@ -1,4 +1,5 @@
-import type { Product, Order, Customer, Category } from "../types";
+import type { Product, Order, Customer, Category, Supplier, Purchase } from "../types";
+import { committedForProduct as committedForProductImpl } from "./inventory";
 
 // Store-isolation selectors. Everything read from state is filtered by storeId here.
 // Centralizing it guarantees no screen can leak another store's data.
@@ -9,6 +10,14 @@ export function productsForStore(products: Product[], storeId: string): Product[
 
 export function categoriesForStore(categories: Category[], storeId: string): Category[] {
   return categories.filter((c) => c.storeId === storeId);
+}
+
+export function suppliersForStore(suppliers: Supplier[], storeId: string): Supplier[] {
+  return suppliers.filter((s) => s.storeId === storeId);
+}
+
+export function purchasesForStore(purchases: Purchase[], storeId: string): Purchase[] {
+  return purchases.filter((p) => p.storeId === storeId);
 }
 
 /** Active categories only, in admin order. */
@@ -55,4 +64,9 @@ export function lowStockProducts(products: Product[], storeId: string): Product[
 /** Look up a category by id within a store (store-scoped, never leaks). */
 export function categoryById(categories: Category[], storeId: string, id: string): Category | undefined {
   return categories.find((c) => c.id === id && c.storeId === storeId);
+}
+
+/** Re-export the committed-stock helper from inventory.ts for UI convenience. */
+export function committedForProduct(orders: Order[], storeId: string, productId: string): number {
+  return committedForProductImpl(orders, storeId, productId);
 }
