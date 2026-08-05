@@ -22,6 +22,20 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/stores/$(storeId)).data.ownerUid == request.auth.uid);
     }
     function roleIs(r) { return request.resource.data.role == r; }
+    // Verified email from the Firebase Auth JWT. The doc-body email field is
+    // client-supplied and trivially spoofable, so super_admin escalation MUST be
+    // gated on this verified token value, not request.resource.data.email.
+    function verifiedEmail() { return request.auth.token.email; }
+    // Defense-in-depth: even if the prod users/ collection is emptied by accident,
+    // only these verified email(s) may create a super_admin doc. The next arbitrary
+    // signup cannot escalate. Keep member self-signup open. The platform
+    // super-admin (admin@store.os) operates in both dev and prod by design; tenant
+    // owners like Olivia are members/owners and do NOT need to be listed here.
+    function isAllowlistedSuperAdmin() {
+      return verifiedEmail() in [
+        'admin@store.os'
+      ];
+    }
 
     // users/{uid} — readable by any signed-in user (needed for the first-user
     // bootstrap count and for looking up members by email). A user creates/edits
@@ -29,7 +43,9 @@ service cloud.firestore {
     // after). Updates by a non-admin may not touch role.
     match /users/{uid} {
       allow read: if isSignedIn();
-      allow create: if isSelf(uid) && (roleIs('member') || roleIs('super_admin'));
+      allow create: if isSelf(uid)
+        && (roleIs('member')
+            || (roleIs('super_admin') && isAllowlistedSuperAdmin()));
       allow update: if (isSelf(uid) || isSuperAdmin())
         && (isSuperAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
       allow delete: if isSuperAdmin();
