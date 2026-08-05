@@ -189,12 +189,47 @@ export type Order = {
   updatedAt: string;
 };
 
+/** A supplier Fer buys stock from. Per-store, like Category. */
+export type Supplier = {
+  id: string;
+  storeId: string;
+  name: string;
+  contact?: string; // phone / where to find them
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** One line of a purchase ticket: a product bought, how many, at what unit cost. */
+export type PurchaseLine = {
+  productId: string;
+  name: string; // snapshot at purchase time
+  quantity: number;
+  unitCost: number;
+};
+
+/** A supplier purchase (a "ticket"): one or more lines, a confirmed total. */
+export type Purchase = {
+  id: string;
+  storeId: string;
+  supplierId?: string;
+  date: string; // purchase date (default today)
+  notes?: string;
+  lines: PurchaseLine[];
+  subtotal: number; // Σ quantity × unitCost (computed)
+  totalConfirmed: number; // the total Fer confirms (may differ from subtotal)
+  createdAt: string;
+  updatedAt: string;
+};
+
 // Whole app state persisted to localStorage.
 export type AppState = {
   stores: Store[];
   activeStoreId: string | null;
   products: Product[];
   categories: Category[];
+  suppliers: Supplier[];
+  purchases: Purchase[];
   customers: Customer[];
   orders: Order[];
 };
