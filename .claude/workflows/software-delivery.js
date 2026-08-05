@@ -57,26 +57,61 @@ function extractJson(text) {
   if (typeof text !== "string") return null;
   // Try direct parse first.
   try { return JSON.parse(text); } catch {}
-  // Scan for all top-level balanced {...} blocks; return the first that has status+summary.
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] !== "{") { i++; continue; }
-    // Found a potential start — find its matching close.
-    let depth = 0, end = -1;
-    for (let j = i; j < text.length; j++) {
-      if (text[j] === "{") depth++;
-      if (text[j] === "}") { depth--; if (depth === 0) { end = j; break; } }
-    }
-    if (end < 0) break;
-    const candidate = text.slice(i, end + 1);
-    try {
-      const parsed = JSON.parse(candidate);
-      // Must look like an agent-result (has status + summary at minimum).
-      if (parsed && typeof parsed.status === "string" && typeof parsed.summary === "string") {
-        return parsed;
+  // Scan for all top-level balanced {...} blocks; return the first that has
+  // status+summary. CRITICAL: the brace counter must IGNORE braces inside JSON
+  // strings (e.g. "claim":"...{storeId}...") — a naive counter desyncs on those
+  // and fails to find the real object close, yielding a false "malformed".
+  const scan = (input) => {
+    let i = 0;
+    while (i < input.length) {
+      if (input[i] !== "{") { i++; continue; }
+      // Found a potential start — find its matching close, string-aware.
+      let depth = 0, end = -1, inStr = false, escape = false;
+      for (let j = i; j < input.length; j++) {
+        const c = input[j];
+        if (escape) { escape = false; continue; }
+        if (c === "\\") { escape = true; continue; }
+        if (c === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c === "{") depth++;
+        if (c === "}") { depth--; if (depth === 0) { end = j; break; } }
       }
-    } catch {}
-    i = end + 1; // skip to after this block and keep searching
+      if (end < 0) break;
+      const candidate = input.slice(i, end + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        // Must look like an agent-result (has status + summary at minimum).
+        if (parsed && typeof parsed.status === "string" && typeof parsed.summary === "string") {
+          return parsed;
+        }
+      } catch {}
+      i = end + 1; // skip to after this block and keep searching
+    }
+    return null;
+  };
+
+  let result = scan(text);
+  if (result) return result;
+
+  // Fallback: the GLM gateway sometimes emits enum-like string values WITHOUT
+  // quotes (e.g. "confidence":high, "severity":medium, "status":PASS). Quote
+  // those specific keys' bareword values and retry once. Conservative — only
+  // matches the known keys followed by a bareword token.
+  // ponytail: targeted regex fixup, not a general JSON repair. If the gateway
+  // invents new malformations, this won't catch them — but it clears the known
+  // recurring one without a real parser dependency.
+  const BAREWORD_KEYS = ["confidence", "severity", "status", "blocking"];
+  let repaired = text;
+  for (const key of BAREWORD_KEYS) {
+    // "key":<bareword>  →  "key":"<bareword>"
+    repaired = repaired.replace(
+      new RegExp(`"(${key})"\\s*:\\s*([A-Za-z_][A-Za-z0-9_]*)`, "g"),
+      `"$1":"$2"`
+    );
+  }
+  if (repaired !== text) {
+    result = scan(repaired);
+    if (result) return result;
   }
   return null;
 }
@@ -126,7 +161,8 @@ for (const target of ORDER) {
         : "",
       `Re-read the ACTUAL current repo state (the working tree may have changed since prior attempts of this state — do not trust cached assumptions; verify against the files as they are now).`,
       `CRITICAL CONSISTENCY RULE (the FSM rejects self-contradictory results): status MUST be FAIL if ANY finding has blocking=true. Equivalently: NEVER set status:"PASS" while also emitting a finding with blocking:true. If the work is incomplete or has an unresolved blocker, status is FAIL or BLOCKED, never PASS. A PASS with zero blocking findings is the only PASS.`,
-      `Return ONLY a JSON object: {agent,state,status(PASS|FAIL|BLOCKED),summary,inputsReviewed[],artifactsProduced[],commandsExecuted[{command,exitCode}],findings[{id,severity,blocking,confidence,claim,evidence[],recommendation}],risks[],assumptions[],unresolvedQuestions[],recommendedTransition}. No prose outside JSON.`,
+      `Return ONLY a valid JSON object. ALL string values MUST be double-quoted — including enum-like fields. Example findings entry (note the quotes around severity/confidence/status values): {"id":"F1","severity":"high","blocking":true,"confidence":"high","claim":"...","evidence":["..."],"recommendation":"..."}. Common malformations that break parsing: unquoted values like "confidence":high (must be "high"), trailing commas, or single quotes. Emit NONE of those.`,
+      `Schema: {agent,state,status(PASS|FAIL|BLOCKED),summary,inputsReviewed[],artifactsProduced[],commandsExecuted[{command,exitCode}],findings[{id,severity,blocking,confidence,claim,evidence[],recommendation}],risks[],assumptions[],unresolvedQuestions[],recommendedTransition}. No prose outside the JSON.`,
       `[attempt ${attempt}]`,
     ].join("\n");
 
