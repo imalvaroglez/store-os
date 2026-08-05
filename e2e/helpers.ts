@@ -10,6 +10,13 @@ import { expect, type Page } from "@playwright/test";
 
 const PROJECT = "store-os-demo";
 
+// The platform super-admin email. firestore.rules gates super_admin creation on
+// this verified email (isAllowlistedSuperAdmin), so any test that needs an admin
+// (first signup → super_admin) MUST register with it. Each such test wipes the
+// emulator first (wipeEmulator empties Auth), so the fixed email re-registers
+// without conflict. Tests that only need a member still use unique(...).
+export const ADMIN_EMAIL = "admin@store.os";
+
 let counter = 0;
 export function unique(prefix: string) {
   counter += 1;
