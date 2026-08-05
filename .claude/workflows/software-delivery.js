@@ -38,9 +38,21 @@ const PHASE_MAP = {
 };
 
 // Deterministic runId: the workflow runtime forbids Date.now() AND Math.random()
-// (breaks resume). Use a fixed counter-based id; uniqueness within a session is
-// fine since the runtime tracks its own run id separately.
-const runId = "run_delivery";
+// (breaks resume). Derive a STABLE runId from the objective so each delivery
+// gets its OWN evidence directory (.claude/runs/<runId>/) — otherwise successive
+// deliveries share "run_delivery/" and reviewers see stale artifacts from the
+// prior objective (which blocked a real delivery: STORY_REVIEW found env-separation
+// stories while reviewing the dev-seed objective). A 32-bit FNV-1a hash of the
+// objective gives a short, stable, per-objective id.
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+const runId = "run_" + fnv1a(objective);
 const events = [];
 const passed = [];
 const revisions = {};
