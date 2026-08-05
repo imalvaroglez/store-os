@@ -258,6 +258,32 @@ the SDK — that's by Firebase design (access is enforced by Security Rules).
 - [ ] No `VITE_FIREBASE_*` variable in Vercel has the "All Environments" scope.
 - [ ] **Phone** sign-in is OFF in both projects; both Storage buckets are in `us-east1`; both have the IAM grant applied.
 
+### Seed the dev project with test data (one-time + re-runnable)
+
+`store-os-dev` starts empty. `scripts/seed-dev.cjs` populates it with a realistic
+Olivia jewelry store (slug `olivia`) plus its categories, products, customers,
+orders, and 1–2 sample product photos — so you can work against a populated dev
+environment without touching Olivia's real production data. Idempotent (fixed ids
+overwrite cleanly on re-run). **Dev-only by a load-bearing guard**: it aborts
+unless the projectId is exactly `store-os-dev` (the Admin SDK bypasses Security
+Rules, so this guard is the sole protection against a prod write).
+
+1. Register `admin@store.os` **once** on the Preview URL (creates the user in
+   `store-os-dev` Authentication). The seed looks up its uid to set
+   `ownerUid`/`memberUids` on the store; if absent it aborts with a clear message.
+2. Establish Application Default Credentials once (browser login, no password,
+   no committed secret):
+   ```
+   gcloud auth application-default login
+   ```
+3. Run the seed:
+   ```
+   node scripts/seed-dev.cjs
+   ```
+4. Verify on the Preview: open `/catalogo/olivia` — the seeded public catalog
+   should appear, and a product should show its uploaded sample image (confirming
+   the dev Storage + IAM grant). `store-os-f7cf8` (prod) is untouched.
+
 ### If env vars got crossed (runbook)
 
 If a Preview deploy ever wrote to prod (a mis-scoped variable): in the affected
