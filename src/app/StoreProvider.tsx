@@ -13,12 +13,15 @@ import type {
   Customer,
   Order,
   Category,
+  Supplier,
+  Purchase,
 } from "../types";
 import { loadState, saveState } from "../lib/storage";
 import { buildSeedState } from "../lib/seed";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
+import { reservationDelta } from "../lib/inventory";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
 import { findUidByEmail, sendInviteLink } from "./firebase/auth";
@@ -51,6 +54,12 @@ type Action =
   | { type: "ADD_CATEGORY"; category: Category }
   | { type: "UPDATE_CATEGORY"; category: Category }
   | { type: "DELETE_CATEGORY"; categoryId: string }
+  | { type: "ADD_SUPPLIER"; supplier: Supplier }
+  | { type: "UPDATE_SUPPLIER"; supplier: Supplier }
+  | { type: "DELETE_SUPPLIER"; supplierId: string }
+  | { type: "ADD_PURCHASE"; purchase: Purchase }
+  | { type: "UPDATE_PURCHASE"; purchase: Purchase }
+  | { type: "DELETE_PURCHASE"; purchaseId: string }
   | { type: "ADD_CUSTOMER"; customer: Customer }
   | { type: "UPDATE_CUSTOMER"; customer: Customer }
   | { type: "DELETE_CUSTOMER"; customerId: string }
@@ -60,7 +69,9 @@ type Action =
   | { type: "RESET_DEMO" }
   | { type: "REPLACE_STATE"; state: AppState }; // cloud sync pushes a whole state
 
-function reducer(state: AppState, action: Action): AppState {
+// Exported for direct unit testing of state transitions (stock reservation,
+// cascade deletes, entity CRUD) without spinning up a React tree.
+export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "ADD_STORE":
       return { ...state, stores: [...state.stores, action.store], activeStoreId: action.store.id };
@@ -72,6 +83,8 @@ function reducer(state: AppState, action: Action): AppState {
         stores: state.stores.filter((s) => s.id !== action.storeId),
         products: state.products.filter((p) => p.storeId !== action.storeId),
         categories: state.categories.filter((c) => c.storeId !== action.storeId),
+        suppliers: state.suppliers.filter((s) => s.storeId !== action.storeId),
+        purchases: state.purchases.filter((p) => p.storeId !== action.storeId),
         customers: state.customers.filter((c) => c.storeId !== action.storeId),
         orders: state.orders.filter((o) => o.storeId !== action.storeId),
         activeStoreId:
@@ -93,6 +106,18 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, categories: state.categories.map((c) => (c.id === action.category.id ? action.category : c)) };
     case "DELETE_CATEGORY":
       return { ...state, categories: state.categories.filter((c) => c.id !== action.categoryId) };
+    case "ADD_SUPPLIER":
+      return { ...state, suppliers: [...state.suppliers, action.supplier] };
+    case "UPDATE_SUPPLIER":
+      return { ...state, suppliers: state.suppliers.map((s) => (s.id === action.supplier.id ? action.supplier : s)) };
+    case "DELETE_SUPPLIER":
+      return { ...state, suppliers: state.suppliers.filter((s) => s.id !== action.supplierId) };
+    case "ADD_PURCHASE":
+      return { ...state, purchases: [...state.purchases, action.purchase] };
+    case "UPDATE_PURCHASE":
+      return { ...state, purchases: state.purchases.map((p) => (p.id === action.purchase.id ? action.purchase : p)) };
+    case "DELETE_PURCHASE":
+      return { ...state, purchases: state.purchases.filter((p) => p.id !== action.purchaseId) };
     case "ADD_CUSTOMER":
       return { ...state, customers: [...state.customers, action.customer] };
     case "UPDATE_CUSTOMER":
@@ -131,6 +156,10 @@ type StoreContextValue = {
   deleteProduct: (productId: string) => void;
   upsertCategory: (category: Category) => void;
   deleteCategory: (categoryId: string) => void;
+  upsertSupplier: (supplier: Supplier) => void;
+  deleteSupplier: (supplierId: string) => void;
+  upsertPurchase: (purchase: Purchase) => void;
+  deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => void;
   deleteCustomer: (customerId: string) => void;
   upsertOrder: (order: Order) => void;
@@ -197,7 +226,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveState(state);
   }, [state, cloud]);
 
-  function persistEntity(name: "stores" | "products" | "categories" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
+  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
     if (!cloud || !user || fromCloud.current) return Promise.resolve();
     return saveEntity(user, name, entity);
   }
@@ -256,6 +285,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
         state.customers.filter((c) => c.storeId === storeId).forEach((c) => deleteEntity(user, "customers", c.id).catch(() => {}));
         state.orders.filter((o) => o.storeId === storeId).forEach((o) => deleteEntity(user, "orders", o.id).catch(() => {}));
+        state.suppliers.filter((s) => s.storeId === storeId).forEach((s) => deleteEntity(user, "suppliers", s.id).catch(() => {}));
+        state.purchases.filter((p) => p.storeId === storeId).forEach((p) => deleteEntity(user, "purchases", p.id).catch(() => {}));
         // Remove the public catalog projection + release the slug.
         unprojectPublicForStore(store).catch(() => {});
       }
@@ -386,6 +417,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
     },
+    upsertSupplier: (supplier) => {
+      dispatch({ type: state.suppliers.some((s) => s.id === supplier.id) ? "UPDATE_SUPPLIER" : "ADD_SUPPLIER", supplier });
+      persistEntity("suppliers", supplier);
+    },
+    deleteSupplier: (supplierId) => {
+      dispatch({ type: "DELETE_SUPPLIER", supplierId });
+      if (cloud && user && !fromCloud.current) deleteEntity(user, "suppliers", supplierId).catch(() => {});
+    },
+    upsertPurchase: (purchase) => {
+      dispatch({ type: state.purchases.some((p) => p.id === purchase.id) ? "UPDATE_PURCHASE" : "ADD_PURCHASE", purchase });
+      persistEntity("purchases", purchase);
+    },
+    deletePurchase: (purchaseId) => {
+      dispatch({ type: "DELETE_PURCHASE", purchaseId });
+      if (cloud && user && !fromCloud.current) deleteEntity(user, "purchases", purchaseId).catch(() => {});
+    },
     upsertCustomer: (customer) => {
       dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
       persistEntity("customers", customer);
@@ -395,10 +442,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (cloud && user && !fromCloud.current) deleteEntity(user, "customers", customerId).catch(() => {});
     },
     upsertOrder: (order) => {
+      // Reserve/release stock: compare the existing order's quantity to the new
+      // one. Negative stock is allowed (back-orders). On-demand stores carry no
+      // quantityOnHand, so reservation is naturally skipped. Dispatch + persist
+      // the product directly rather than via upsertProduct — reservation is a
+      // stock-only change and stock is never in the public projection, so there
+      // is no catalog re-projection to run.
+      const prev = state.orders.find((o) => o.id === order.id);
+      const product = order.productId ? state.products.find((p) => p.id === order.productId) : undefined;
+      if (product && typeof product.quantityOnHand === "number") {
+        const delta = reservationDelta(prev?.quantity, order.quantity);
+        if (delta !== 0) {
+          const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
+          dispatch({ type: "UPDATE_PRODUCT", product: updated });
+          void persistEntity("products", updated).catch(() => {});
+        }
+      }
       dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order });
       persistEntity("orders", order);
     },
     deleteOrder: (orderId) => {
+      // Release the reserved stock before removing the order.
+      const existing = state.orders.find((o) => o.id === orderId);
+      const product = existing?.productId ? state.products.find((p) => p.id === existing.productId) : undefined;
+      if (existing && product && typeof product.quantityOnHand === "number") {
+        const updated = { ...product, quantityOnHand: product.quantityOnHand + existing.quantity, updatedAt: nowIso() };
+        dispatch({ type: "UPDATE_PRODUCT", product: updated });
+        void persistEntity("products", updated).catch(() => {});
+      }
       dispatch({ type: "DELETE_ORDER", orderId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "orders", orderId).catch(() => {});
     },
@@ -449,4 +520,12 @@ export function newCustomer(storeId: string): Customer {
 export function newOrder(storeId: string): Order {
   const now = nowIso();
   return { id: uid("order"), storeId, customerId: "", productName: "", quantity: 1, price: 0, deposit: 0, status: "asked", createdAt: now, updatedAt: now };
+}
+export function newSupplier(storeId: string): Supplier {
+  const now = nowIso();
+  return { id: uid("supplier"), storeId, name: "", createdAt: now, updatedAt: now };
+}
+export function newPurchase(storeId: string): Purchase {
+  const now = nowIso();
+  return { id: uid("purchase"), storeId, date: now.slice(0, 10), lines: [], subtotal: 0, totalConfirmed: 0, createdAt: now, updatedAt: now };
 }

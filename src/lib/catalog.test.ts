@@ -32,6 +32,8 @@ function emptyState(products: Product[]): AppState {
     activeStoreId: "s1",
     products,
     categories: [],
+    suppliers: [],
+    purchases: [],
     customers: [],
     orders: [],
   };

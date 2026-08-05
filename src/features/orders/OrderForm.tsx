@@ -5,6 +5,7 @@ import {
   SelectField,
   TextArea,
   TextField,
+  useToast,
 } from "../../design-system";
 import { customersForStore } from "../../lib/selectors";
 import { TIER_LABELS } from "../../lib/labels";
@@ -25,6 +26,7 @@ export function OrderForm({ order, onDone }: { order: Order; onDone: () => void 
   const { state, activeStore, upsertOrder } = useStore();
   const isTiered = activeStore?.type === "inventory_tiered";
   const customers = activeStore ? customersForStore(state.customers, activeStore.id) : [];
+  const toast = useToast();
 
   const [draft, setDraft] = useState<Order>(order);
   const [cost, setCost] = useState(order.cost?.toString() ?? "");
@@ -64,10 +66,11 @@ export function OrderForm({ order, onDone }: { order: Order; onDone: () => void 
 
   function submit() {
     if (!draft.customerId || !draft.productName.trim()) return;
+    const qtyNum = parseAmount(qty) ?? 1;
     const next: Order = {
       ...draft,
       productName: draft.productName.trim(),
-      quantity: parseAmount(qty) ?? 1,
+      quantity: qtyNum,
       price: parseAmount(price) ?? 0,
       deposit: parseAmount(deposit) ?? 0,
       cost: parseAmount(cost),
@@ -76,6 +79,25 @@ export function OrderForm({ order, onDone }: { order: Order; onDone: () => void 
     };
     if (!isTiered) next.priceTier = undefined;
     upsertOrder(next);
+
+    // Inventory check (tiered stores only): the order is created regardless,
+    // but warn Fer when the quantity exceeds stock so they know to reorder.
+    if (isTiered && draft.productId) {
+      const product = state.products.find((p) => p.id === draft.productId);
+      const stock = typeof product?.quantityOnHand === "number" ? product.quantityOnHand : undefined;
+      if (typeof stock === "number" && qtyNum > stock) {
+        const shortfall = qtyNum - stock;
+        toast.error(
+          stock > 0
+            ? `Pedido creado. Faltan ${shortfall} ${shortfall === 1 ? "pieza" : "piezas"} para surtirlo (hay ${stock}).`
+            : `Pedido creado. No hay existencias — faltan las ${qtyNum} ${qtyNum === 1 ? "pieza" : "piezas"}.`
+        );
+      } else {
+        toast.success("Pedido guardado");
+      }
+    } else {
+      toast.success("Pedido guardado");
+    }
     onDone();
   }
 
@@ -101,12 +123,21 @@ export function OrderForm({ order, onDone }: { order: Order; onDone: () => void 
         placeholder="Elegir del catálogo…"
       />
 
-      <TextField
-        label="Nombre del producto"
-        hint="O escribe uno que no esté en el catálogo."
-        value={draft.productName}
-        onChange={(e) => setDraft({ ...draft, productName: e.target.value, productId: undefined })}
-      />
+      {/* When a catalog product is picked, name + price are inherited — don't ask
+          again. The free-text field only shows when there's no product selected,
+          for items not in the catalog. */}
+      {draft.productId ? (
+        <p className="text-xs text-ink-soft">
+          Nombre heredado del catálogo: <span className="font-semibold text-ink">{draft.productName}</span>
+        </p>
+      ) : (
+        <TextField
+          label="Nombre del producto"
+          hint="O escribe uno que no esté en el catálogo."
+          value={draft.productName}
+          onChange={(e) => setDraft({ ...draft, productName: e.target.value, productId: undefined })}
+        />
+      )}
 
       {isTiered ? (
         <>

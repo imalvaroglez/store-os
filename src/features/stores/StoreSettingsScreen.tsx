@@ -9,6 +9,7 @@ import { slugify } from "./slugify";
 import { StorefrontEditor } from "../catalog/StorefrontEditor";
 import { normalizeSkuPrefixToken } from "../../lib/catalog";
 import { productsForStore } from "../../lib/selectors";
+import { SuppliersScreen } from "../inventory/SuppliersScreen";
 import type { StoreType } from "../../types";
 
 // Full management for a single store: rename, change type, WhatsApp, members
@@ -43,6 +44,7 @@ export function StoreSettingsScreen({
   const [editSite, setEditSite] = useState(false);
   const [skuPrefix, setSkuPrefix] = useState(store?.skuPrefix ?? "");
   const [confirmSkuPrefix, setConfirmSkuPrefix] = useState(false);
+  const [showSuppliers, setShowSuppliers] = useState(false);
 
   if (!store) {
     return <p className="text-sm text-ink-soft">Tienda no encontrada.</p>;
@@ -254,9 +256,24 @@ export function StoreSettingsScreen({
         </div>
       )}
 
+      {isOwnerOrAdmin && (
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Compras</h3>
+          <Button full variant="secondary" onClick={() => setShowSuppliers(true)}>
+            Proveedores
+          </Button>
+        </div>
+      )}
+
       {editSite && store && (
         <Sheet open onClose={() => setEditSite(false)} title="Sitio público">
           <StorefrontEditor store={store} onDone={() => setEditSite(false)} />
+        </Sheet>
+      )}
+
+      {showSuppliers && (
+        <Sheet open onClose={() => setShowSuppliers(false)} title="Proveedores">
+          <SuppliersScreen />
         </Sheet>
       )}
 
