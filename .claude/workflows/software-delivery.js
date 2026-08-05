@@ -15,9 +15,14 @@ export const meta = {
 // Convention: `export const meta` first, then a top-level await body (the
 // runtime wraps the body in an async function). NO `export default`.
 // NOTE: this runtime does NOT expose `args` as a global (verified by probe).
-// The objective is inlined below. To re-target, edit this constant.
+// The objective is inlined below. To re-target, edit these three constants.
+// (ponytail: a future refactor should read args.objective/specPath/planPath
+//  dynamically so re-targeting needs no file edit — tracked as harness debt.)
 
-const objective = "Implement inventory purchase transactions per docs/superpowers/specs/2026-08-04-inventory-purchase-transactions-design.md and the 12-task plan at docs/superpowers/plans/2026-08-04-inventory-purchase-transactions.md. Build: Supplier + Purchase entities, weighted-average cost math, committed-stock, stock reservation on order creation, suppliers CRUD, purchase form, purchase list, inventory screen redesign. The spec and plan are already approved — execute the plan's TDD tasks.";
+const objective = "Separate dev and production environments so development/testing cannot touch production data, per docs/superpowers/specs/2026-08-05-environment-separation-dev-prod-design.md. Repo scope: (1) .firebaserc 'dev' alias for store-os-dev; (2) scripts/check-env.cjs build-time guard that aborts a Vercel build when VITE_VERCEL_ENV and VITE_FIREBASE_PROJECT_ID are inconsistent (preview+prod or production+non-prod), self-tested via --test, hooked into the build npm script; (3) firestore.rules email allowlist so super_admin bootstrap can't escalate an arbitrary signup if users/ is emptied; (4) docs/DEPLOYMENT.md 'Ambientes (dev vs prod)' section + runbook. The ~80% console portion (creating store-os-dev, scoped Vercel env vars, seeding Olivia, restricting+rotating the prod key) is a human runbook documented in the spec, NOT executed by agents. Drafts of items 1-2 already exist on the branch and must be audited/replaced by the FSM reviewers.";
+
+const specPath = "docs/superpowers/specs/2026-08-05-environment-separation-dev-prod-design.md";
+const planPath = ""; // no separate plan doc for this objective; the spec's scope split is the plan
 
 // Canonical FSM order (mirrors .claude/loops/software-delivery.fsm.yaml).
 const ORDER = ["INTAKE","DISCOVERY","REQUIREMENTS_SPEC","STORY_DEFINITION","STORY_REVIEW","TEST_DESIGN","ARCHITECTURE_PRECHECK","IMPLEMENTATION_PLAN","IMPLEMENTATION","UNIT_VERIFICATION","ACCEPTANCE_VERIFICATION","CLEANUP","INDEPENDENT_CODE_REVIEW","SECURITY_HARDENING","QA_EXECUTION","ARCHITECTURE_FINAL_REVIEW","RELEASE_READINESS","COMPLETE"];
@@ -114,8 +119,8 @@ for (const target of ORDER) {
       `Role: ${target.replace(/_/g," ").toLowerCase()}.`,
       `Objective: ${objective}`,
       `Run id: ${runId}. Write evidence under .claude/runs/${runId}/ if needed.`,
-      `Spec: docs/superpowers/specs/2026-08-04-inventory-purchase-transactions-design.md`,
-      `Plan: docs/superpowers/plans/2026-08-04-inventory-purchase-transactions.md`,
+      specPath ? `Spec: ${specPath}` : "",
+      planPath ? `Plan: ${planPath}` : "",
       target === "IMPLEMENTATION" || target === "UNIT_VERIFICATION"
         ? `Use REAL commands only: npm run typecheck, npm run test, npm run build. NO npm run verify/lint (they do NOT exist).`
         : "",
