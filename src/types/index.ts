@@ -24,6 +24,23 @@ export type Store = {
   storefront?: Storefront;
 };
 
+// Control-plane projection of a store (G-P02). Canonical document read by
+// super_admin for platform administration. Carries ONLY control metadata;
+// never business content (whatsappPhone/skuPrefix/storefront) or client PII.
+// See src/app/firebase/rules-allowlist.ts ADMIN_STORE_FIELDS.
+export type AdminStore = {
+  storeId: string;
+  name: string;
+  slug: string;
+  type: StoreType;
+  ownerUid: string;
+  memberUids: string[];
+  pendingInvites?: string[];
+  createdAt: string;
+  updatedAt: string;
+  retainedPrivacyRequestCount?: number; // counter of ARCO requests still in retention (Espec 2 §9.3)
+};
+
 // Structured, editable storefront content shown on /catalogo/:slug. No free-form
 // page builder: each field maps to a fixed section. Fer edits these without code.
 export type StorefrontSection = {
