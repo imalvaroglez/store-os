@@ -19,10 +19,10 @@ export const meta = {
 // (ponytail: a future refactor should read args.objective/specPath/planPath
 //  dynamically so re-targeting needs no file edit — tracked as harness debt.)
 
-const objective = "Separate dev and production environments so development/testing cannot touch production data, per docs/superpowers/specs/2026-08-05-environment-separation-dev-prod-design.md. Repo scope: (1) .firebaserc 'dev' alias for store-os-dev; (2) scripts/check-env.cjs build-time guard that aborts a Vercel build when VITE_VERCEL_ENV and VITE_FIREBASE_PROJECT_ID are inconsistent (preview+prod or production+non-prod), self-tested via --test, hooked into the build npm script; (3) firestore.rules email allowlist so super_admin bootstrap can't escalate an arbitrary signup if users/ is emptied; (4) docs/DEPLOYMENT.md 'Ambientes (dev vs prod)' section + runbook. The ~80% console portion (creating store-os-dev, scoped Vercel env vars, seeding Olivia, restricting+rotating the prod key) is a human runbook documented in the spec, NOT executed by agents. Drafts of items 1-2 already exist on the branch and must be audited/replaced by the FSM reviewers.";
+const objective = "Build a one-command dev seed script (scripts/seed-dev.cjs) that populates the isolated store-os-dev Firebase project with realistic test data so the developer can work against a populated dev environment without touching production, per docs/superpowers/specs/2026-08-05-dev-seed-script-design.md. Reuse src/lib/seed.ts buildSeedState() to construct the Olivia jewelry store (slug 'olivia', same as prod — safe because projects are separate) with its categories, ~5 products, customers, and orders, writing to dev Firestore via the firebase-admin SDK with membership fields (ownerUid/memberUids) set to the admin uid. Claim the slug and write public projections so /catalogo/olivia works on the Preview. Upload 1-2 generated sample JPEGs to dev Storage and link them on a product (validates the dev Storage + IAM grant). Authentication is via firebase-admin with Application Default Credentials (ADC) — established once by the human with 'gcloud auth application-default login'; NO password, NO committed secret. If ADC is absent the script prints the gcloud command and exits. The script MUST be dev-only: it hardcodes the dev projectId and aborts unless projectId === 'store-os-dev' — this guard is LOAD-BEARING because the Admin SDK bypasses Security Rules, so nothing else would stop a prod write. firebase-admin is a devDependency (Node-only, never in the client bundle). Idempotent (fixed ids from buildSeedState overwrite cleanly on re-run).";
 
-const specPath = "docs/superpowers/specs/2026-08-05-environment-separation-dev-prod-design.md";
-const planPath = ""; // no separate plan doc for this objective; the spec's scope split is the plan
+const specPath = "docs/superpowers/specs/2026-08-05-dev-seed-script-design.md";
+const planPath = "";
 
 // Canonical FSM order (mirrors .claude/loops/software-delivery.fsm.yaml).
 const ORDER = ["INTAKE","DISCOVERY","REQUIREMENTS_SPEC","STORY_DEFINITION","STORY_REVIEW","TEST_DESIGN","ARCHITECTURE_PRECHECK","IMPLEMENTATION_PLAN","IMPLEMENTATION","UNIT_VERIFICATION","ACCEPTANCE_VERIFICATION","CLEANUP","INDEPENDENT_CODE_REVIEW","SECURITY_HARDENING","QA_EXECUTION","ARCHITECTURE_FINAL_REVIEW","RELEASE_READINESS","COMPLETE"];
@@ -38,9 +38,21 @@ const PHASE_MAP = {
 };
 
 // Deterministic runId: the workflow runtime forbids Date.now() AND Math.random()
-// (breaks resume). Use a fixed counter-based id; uniqueness within a session is
-// fine since the runtime tracks its own run id separately.
-const runId = "run_delivery";
+// (breaks resume). Derive a STABLE runId from the objective so each delivery
+// gets its OWN evidence directory (.claude/runs/<runId>/) — otherwise successive
+// deliveries share "run_delivery/" and reviewers see stale artifacts from the
+// prior objective (which blocked a real delivery: STORY_REVIEW found env-separation
+// stories while reviewing the dev-seed objective). A 32-bit FNV-1a hash of the
+// objective gives a short, stable, per-objective id.
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+const runId = "run_" + fnv1a(objective);
 const events = [];
 const passed = [];
 const revisions = {};
