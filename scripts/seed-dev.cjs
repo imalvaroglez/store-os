@@ -389,7 +389,14 @@ async function run() {
 
   let admin;
   try {
-    admin = require("firebase-admin");
+    // firebase-admin v10+ uses modular subpath imports: the bare
+    // `require("firebase-admin")` only exposes initializeApp/getApp, NOT
+    // firestore/storage/auth. Pull each service from its subpath.
+    const { initializeApp, getApps } = require("firebase-admin/app");
+    const { getFirestore } = require("firebase-admin/firestore");
+    const { getAuth } = require("firebase-admin/auth");
+    const { getStorage } = require("firebase-admin/storage");
+    admin = { initializeApp, getApps, getFirestore, getAuth, getStorage };
   } catch (e) {
     fail(
       "No se encontró 'firebase-admin'. Es una devDependency — ejecuta `npm install` y vuelve a intentar."
@@ -413,10 +420,19 @@ async function run() {
   }
 
   // Initialize Admin SDK against DEV only. Hardcoded projectId — never reads env.
-  const app = admin.initializeApp({ projectId: DEV_PROJECT_ID }, "seed-dev");
-  const db = admin.firestore(app);
-  const bucket = admin.storage(app).bucket();
-  const auth = admin.auth(app);
+  // storageBucket is the dev bucket (required by getStorage). The guard on
+  // DEV_PROJECT_ID is load-bearing: Admin bypasses Security Rules.
+  if (DEV_PROJECT_ID !== "store-os-dev") {
+    fail(`projectId interno inesperado: '${DEV_PROJECT_ID}'`);
+  }
+  const existing = admin.getApps().find((a) => a.name === "seed-dev");
+  const app = existing || admin.initializeApp(
+    { projectId: DEV_PROJECT_ID, storageBucket: "store-os-dev.firebasestorage.app" },
+    "seed-dev"
+  );
+  const db = admin.getFirestore(app);
+  const bucket = admin.getStorage(app).bucket();
+  const auth = admin.getAuth(app);
 
   console.log(`\x1b[36m[seed-dev]\x1b[0m Proyecto destino: \x1b[1m${DEV_PROJECT_ID}\x1b[0m (dev aislado)`);
 
