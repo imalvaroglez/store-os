@@ -6,7 +6,7 @@ import {
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import { readFileSync } from "node:fs";
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, writeBatch } from "firebase/firestore";
 
 let env: RulesTestEnvironment;
 
@@ -87,5 +87,56 @@ describe("G-P02 super_admin cannot read data PII by role", () => {
     });
     const db = await asUser("admin");
     await assertSucceeds(getDoc(doc(db, "adminStores/s1")));
+  });
+});
+
+// Regression guard for the batched-create path introduced in Task 8: the client
+// writes `stores/{id}` and `adminStores/{id}` together in one writeBatch. Within
+// a batched write, sibling writes are NOT visible to each other's rule
+// evaluation (exists()/get() see the PRE-batch state), so both create rules must
+// be self-sufficient on the owner-creator identity rather than consulting the
+// not-yet-visible adminStores document. If either rule started calling
+// isMember()/isOwner() again, this test would fail.
+describe("G-P02 batched create — stores + adminStores in one batch", () => {
+  it("owner can create stores/{id} and adminStores/{id} together", async () => {
+    const db = await asUser("u1");
+    const batch = writeBatch(db);
+    batch.set(doc(db, "stores/s_new"), {
+      ownerUid: "u1",
+      memberUids: ["u1"],
+      name: "New",
+      slug: "new",
+      type: "on_demand",
+    });
+    batch.set(doc(db, "adminStores/s_new"), {
+      storeId: "s_new",
+      ownerUid: "u1",
+      memberUids: ["u1"],
+      name: "New",
+      slug: "new",
+      type: "on_demand",
+    });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("non-owner cannot create a store as someone else's in a batch", async () => {
+    const db = await asUser("attacker");
+    const batch = writeBatch(db);
+    batch.set(doc(db, "stores/s_evil"), {
+      ownerUid: "victim",
+      memberUids: ["victim"],
+      name: "Evil",
+      slug: "evil",
+      type: "on_demand",
+    });
+    batch.set(doc(db, "adminStores/s_evil"), {
+      storeId: "s_evil",
+      ownerUid: "victim",
+      memberUids: ["victim"],
+      name: "Evil",
+      slug: "evil",
+      type: "on_demand",
+    });
+    await assertFails(batch.commit());
   });
 });
