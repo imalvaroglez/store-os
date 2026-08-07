@@ -223,5 +223,8 @@ jobs:
             exit 0
           fi
           BODY=$(printf '🚀 **Preview deploy** (CI verde): %s\nApunta al backend de **dev** (store-os-dev). Generado por GitHub Actions tras pasar build-test + rules-and-e2e.' "$URL")
-          gh pr comment "$PR_NUMBER" --body "$BODY" || echo "comment failed (non-fatal)"
+          # -R is required because this job has no checkout (no .git for gh to
+          # infer the repo from); without it gh pr comment fails with
+          # "fatal: not a git repository".
+          gh pr comment "$PR_NUMBER" -R "${{ github.repository }}" --body "$BODY" || echo "comment failed (non-fatal)"
           exit 0
