@@ -239,7 +239,7 @@ describe("public projection allow-list (G-P03)", () => {
     } as unknown as Store;
     // An unknown/private field on the source MUST be ignored — a safe projection
     // never spreads the source. This assertion fails the moment a projector does.
-    expect(projectPublicStore({ ...base, secretNewField: "leak" })).toEqual(
+    expect(projectPublicStore({ ...base, secretNewField: "leak" } as unknown as Store)).toEqual(
       projectPublicStore(base)
     );
   });
