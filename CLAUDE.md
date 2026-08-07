@@ -17,6 +17,7 @@ npm run dev            # desarrollo (5173) — modo demo local sin backend
 npm run build          # tsc --noEmit + vite build
 npm run typecheck      # tsc --noEmit
 npm run test           # vitest (unit + design-system gate)
+npm run test:rules     # pruebas de firestore.rules contra el emulador (G-P01/G-P02/G-P05/G-P06)
 npm run e2e            # playwright frontend (smoke + responsive + theme, móvil + escritorio)
 npm run e2e:firebase   # pruebas contra el emulador Firebase (requiere `npm run emulators`)
 npm run emulators      # Firebase Auth + Firestore emuladores en localhost
@@ -52,6 +53,7 @@ Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run bu
 - **Comportamiento sin sorpresas:** las decisiones visuales van por tokens del sistema de diseño, no por clases hardcodeadas. Si un color no se adapta al tema, lo estás haciendo mal — usa tokens (`bg-surface`, `text-on-surface`, `text-danger`, etc.).
 - **YAGNI / ponytail:** la solución más simple que funcione. Marca atajos deliberados con un comentario `ponytail:`. No agregues abstracciones no solicitadas.
 - **Comprobación mínima:** toda lógica no trivial deja un test pequeño atrás (las trivialidades no necesitan test).
+- **Garantías de seguridad G-P01–G-P08 (Espec 1):** aislamiento entre tiendas, `super_admin` sin PII de clientas por rol (plano de control `adminStores` separado del plano de datos), proyecciones públicas con allow-list, sin telemetría en el cliente. Ver `docs/superpowers/specs/2026-08-06-security-compliance-harness-design.md`. Las compuertas estáticas corren en `npm run test`; las de reglas en `npm run test:rules`; el egress runtime en `npm run e2e`. Ninguna es renunciable.
 
 ## Git / commits (preferencia del usuario)
 
