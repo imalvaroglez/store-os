@@ -13,7 +13,8 @@ on:
     branches: [main]
 
 jobs:
-  # Resolves once per run: "production" when the merge lands on main, else "preview".
+  # Resolves once per run: "Production" when the merge lands on main, else "Preview".
+  # Names match the GitHub environments created in repo Settings (capitalized).
   env-select:
     runs-on: ubuntu-latest
     outputs:
@@ -22,9 +23,9 @@ jobs:
       - id: set
         run: |
           if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "main" ]; then
-            echo "env-name=production" >> "$GITHUB_OUTPUT"
+            echo "env-name=Production" >> "$GITHUB_OUTPUT"
           else
-            echo "env-name=preview" >> "$GITHUB_OUTPUT"
+            echo "env-name=Preview" >> "$GITHUB_OUTPUT"
           fi
 
   build-test:
