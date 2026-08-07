@@ -193,6 +193,12 @@ jobs:
     needs: [env-select, deploy]
     if: needs.env-select.outputs.env-name != 'Production' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    # gh pr list / gh pr comment need PR read+write on the auto GITHUB_TOKEN.
+    # Without this, the job's gh calls silently return empty ("No open PR")
+    # under the repo's default (restrictive) token permissions.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Find and comment on the PR for this branch
         env:
