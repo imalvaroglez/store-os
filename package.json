@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "description": "A lightweight operating system for small stores. Local-first PWA.",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "node scripts/check-env.cjs && tsc --noEmit && vite build",
