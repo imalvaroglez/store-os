@@ -1,10 +1,13 @@
 name: CI
 
-# CI/CD pipeline. Vercel's Git auto-deploy is OFF ("Ignored Build Step:
-# Don't build anything"); the ONLY path to a Vercel deployment is the `deploy`
-# job below, which runs exclusively after build-test AND rules-and-e2e pass.
+# CI/CD pipeline. The Vercel project's "Ignored Build Step" is set to `exit 0`
+# (configured in the Vercel dashboard, not in this repo), so Vercel NEVER builds
+# on Git push. The ONLY path to a Vercel deployment is the `deploy` job below,
+# which runs exclusively after build-test AND rules-and-e2e pass.
 #   - Push to a non-main branch → Preview deploy (points at the dev Firebase).
 #   - Push to main (merge)        → Production deploy (points at prod Firebase).
+# If Vercel ever starts auto-deploying again (new deployments you didn't trigger
+# from this workflow), the Ignored Build Step regressed — re-set it to `exit 0`.
 # The job-level `environment:` selects which set of VITE_FIREBASE_* secrets
 # GitHub injects (Preview environment → dev, Production environment → prod).
 on:
@@ -165,10 +168,23 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
       - name: Deploy
         id: deploy
+        # `vercel deploy` writes the deployment URL to stdout and trailing
+        # hints ("To deploy to production…") to stderr, so we must NOT merge
+        # them (the old `2>&1 | tail -n 1` captured the hint, not the URL).
+        # Per the CLI docs: stdout is always the Deployment URL. Redirect
+        # stdout to a file, stderr to the log; the file holds the URL alone.
         run: |
-          URL=$(vercel deploy --prebuilt ${{ steps.target.outputs.prod_flag }} --token=${{ secrets.VERCEL_TOKEN }} 2>&1 | tail -n 1)
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          set +e
+          vercel deploy --prebuilt ${{ steps.target.outputs.prod_flag }} --token=${{ secrets.VERCEL_TOKEN }} > deploy-url.txt 2> deploy-err.txt
+          code=$?
+          if [ $code -ne 0 ]; then
+            echo "vercel deploy failed (exit $code):"
+            cat deploy-err.txt
+            exit $code
+          fi
+          URL="$(cat deploy-url.txt | tr -d '[:space:]')"
           echo "Deployed to: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
   # Post the preview URL as a comment on the PR (preview only). CLI deploys
   # don't generate branch-alias URLs like the Git integration does, so we
