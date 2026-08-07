@@ -111,6 +111,12 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
+    # The Vercel CLI reads ORG/PROJECT id from .vercel/project.json OR these env
+    # vars. The file is gitignored, so we expose both env vars job-wide here
+    # AND recreate the file in the first step for maximum robustness.
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     outputs:
       deployment-url: ${{ steps.deploy.outputs.url }}
     steps:
@@ -121,6 +127,12 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      - name: Recreate .vercel/project.json (gitignored, not in checkout)
+        run: |
+          mkdir -p .vercel
+          printf '{"projectId":"%s","orgId":"%s","projectName":"store-os"}' \
+            "${{ secrets.VERCEL_PROJECT_ID }}" "${{ secrets.VERCEL_ORG_ID }}" > .vercel/project.json
+          cat .vercel/project.json
       - run: npm ci
       - name: Install Vercel CLI
         run: npm i -g vercel@latest
@@ -138,14 +150,9 @@ jobs:
           fi
       - name: Pull Vercel project config
         run: vercel pull --yes --environment=${{ steps.target.outputs.env }} --token=${{ secrets.VERCEL_TOKEN }}
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       - name: Build (Vercel, with Firebase env for check-env.cjs)
         run: vercel build ${{ steps.target.outputs.prod_flag }} --token=${{ secrets.VERCEL_TOKEN }}
         env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           # check-env.cjs validates the (VITE_VERCEL_ENV, projectId) pair.
           # VITE_VERCEL_ENV is NOT auto-injected when building outside Vercel,
           # so we set it explicitly so the cross-env guard runs correctly.
@@ -162,9 +169,6 @@ jobs:
           URL=$(vercel deploy --prebuilt ${{ steps.target.outputs.prod_flag }} --token=${{ secrets.VERCEL_TOKEN }} 2>&1 | tail -n 1)
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Deployed to: $URL"
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
   # Post the preview URL as a comment on the PR (preview only). CLI deploys
   # don't generate branch-alias URLs like the Git integration does, so we
