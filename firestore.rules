@@ -10,16 +10,23 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && userRole(request.auth.uid) == 'super_admin';
     }
+    // Canonical control-plane document. adminStores/{storeId} is the ONLY source
+    // of authority for membership/ownership. `stores/{id}` copies are derived.
+    // isSuperAdmin() is intentionally NOT consulted here: a platform super_admin
+    // who is not a member of a store MUST NOT read that store's business content
+    // (G-P02). Super_admin reach is via adminStores (control plane), not stores.
+    function adminStore(storeId) {
+      return get(/databases/$(database)/documents/adminStores/$(storeId)).data;
+    }
     function isMember(storeId) {
-      return isSuperAdmin()
-        || (exists(/databases/$(database)/documents/stores/$(storeId))
-            && get(/databases/$(database)/documents/stores/$(storeId)).data.memberUids.hasAny([request.auth.uid]));
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/adminStores/$(storeId))
+        && adminStore(storeId).memberUids.hasAny([request.auth.uid]);
     }
     function isOwner(storeId) {
-      return isSuperAdmin()
-        || (isSignedIn()
-            && exists(/databases/$(database)/documents/stores/$(storeId))
-            && get(/databases/$(database)/documents/stores/$(storeId)).data.ownerUid == request.auth.uid);
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/adminStores/$(storeId))
+        && adminStore(storeId).ownerUid == request.auth.uid;
     }
     function roleIs(r) { return request.resource.data.role == r; }
     // Verified email from the Firebase Auth JWT. The doc-body email field is
@@ -51,10 +58,27 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
+    // adminStores/{storeId} — canonical control plane. Carries ONLY control
+    // metadata (storeId, name, ownerUid, memberUids) and never business content,
+    // so super_admin reads of this collection cannot leak tenant PII (G-P02).
+    // super_admin reads all (platform administration); members read their own;
+    // only the owner may write. retainedPrivacyRequestCount is a control counter
+    // (Espec 2) carried here because it is control data, not catalog content.
+    match /adminStores/{storeId} {
+      allow get: if isSuperAdmin() || isMember(storeId);
+      allow list: if isSuperAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberUids.hasAny([request.auth.uid]);
+      allow update: if isOwner(storeId)
+        && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]);
+      allow delete: if false;
+    }
+
     match /stores/{id} {
       allow get: if isMember(id);
-      allow list: if isSuperAdmin()
-        || (isSignedIn() && resource.data.memberUids.hasAny([request.auth.uid]));
+      allow list: if isSignedIn()
+        && resource.data.memberUids.hasAny([request.auth.uid]);
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
