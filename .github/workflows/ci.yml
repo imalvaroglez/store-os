@@ -53,6 +53,18 @@ jobs:
           key: firestore-emulator-${{ runner.os }}
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+      - name: Build (production preview for e2e)
+        run: npm run build
+        env:
+          # The default e2e suite serves `npm run preview` (production build,
+          # DEV=false) and asserts the AuthScreen renders. That requires the
+          # public Firebase config baked into the bundle at build time.
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_SENDER_ID: ${{ secrets.VITE_FIREBASE_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
       - name: Firestore rules tests (emulator)
         run: npm run test:rules
       - name: E2E (Playwright)
