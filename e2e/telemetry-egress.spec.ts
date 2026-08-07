@@ -54,8 +54,14 @@ test("catalog route makes no request to forbidden telemetry routes or hosts", as
     }
   });
 
-  await page.goto("/catalogo/olivia");
-  await page.waitForLoadState("networkidle");
+  // domcontentloaded (not networkidle): a pending Firestore socket to the dev
+  // backend in CI never lets the network go idle, which would time out
+  // waitForLoadState("networkidle"). Telemetry SDKs fire their beacons during
+  // the initial bundle load — well before DOMContentLoaded — so this is enough
+  // to catch them.
+  await page.goto("/catalogo/olivia", { waitUntil: "domcontentloaded" });
+  // Give any lazy beacon a beat to fire, then assert.
+  await page.waitForTimeout(1000);
 
   expect(violations, `forbidden egress:\n${violations.join("\n")}`).toEqual([]);
 });
