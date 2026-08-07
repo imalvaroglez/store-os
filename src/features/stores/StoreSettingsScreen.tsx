@@ -53,7 +53,14 @@ export function StoreSettingsScreen({
   // Resolve member uids -> emails (best-effort via the users we can see).
   const memberUids = store.memberUids ?? [];
   const pending = store.pendingInvites ?? [];
-  const isOwnerOrAdmin = user?.role === "super_admin" || store.ownerUid === user?.uid;
+  // G-P02: business-content editing (whatsapp, storefront, members, transfer,
+  // catalog, sku prefix, delete) requires being the store's OWNER — not merely
+  // holding the super_admin role. super_admin is a control-plane role; if the
+  // platform operator needs to operate a store's business content, they must be
+  // added as owner/member of that store. The Firestore rules already deny
+  // non-owner writes to adminStores; this hides the controls so a non-owner
+  // super_admin doesn't see a confusing "No se pudo guardar" on a doomed write.
+  const isOwnerOrAdmin = store.ownerUid === user?.uid;
 
   async function republish() {
     setCatalogBusy(true);

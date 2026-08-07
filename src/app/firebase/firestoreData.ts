@@ -8,6 +8,7 @@ import {
   query,
   where,
   runTransaction,
+  writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
@@ -28,11 +29,15 @@ type CollectionName = (typeof COLLECTIONS)[number];
 export async function loadCloudState(user: AppUser): Promise<AppState> {
   const { db } = getFirebase();
 
-  // Stores: super_admin gets all; member gets only their member stores.
+  // Stores: super_admin reads the CONTROL plane (adminStores) — never the
+  // business docs, so platform administration cannot leak tenant PII (G-P02).
+  // adminStores carries only control metadata, so the Store objects built here
+  // are control-shaped (no whatsappPhone/storefront/skuPrefix); that is the
+  // intended super_admin view. Members read their full `stores` business docs.
   let stores: Store[] = [];
   if (user.role === "super_admin") {
-    const snap = await getDocs(collection(db, "stores"));
-    stores = snap.docs.map((d) => ({ ...(d.data() as Store), id: d.id }));
+    const snap = await getDocs(collection(db, "adminStores"));
+    stores = snap.docs.map((d) => adminStoreToStore(d.data(), d.id));
   } else {
     const q = query(collection(db, "stores"), where("memberUids", "array-contains", user.uid));
     const snap = await getDocs(q);
@@ -78,9 +83,11 @@ export function subscribeCloudState(
   onChange: (state: AppState) => void
 ): Unsubscribe {
   const { db } = getFirebase();
+  // Super_admin subscribes to the control plane (adminStores); members to their
+  // member `stores` business docs. Matches loadCloudState (G-P02).
   const storesQ =
     user.role === "super_admin"
-      ? collection(db, "stores")
+      ? collection(db, "adminStores")
       : query(collection(db, "stores"), where("memberUids", "array-contains", user.uid));
 
   // Re-load everything on any entity change. Watch all four collections so edits
@@ -160,6 +167,47 @@ export function subscribeCloudState(
   };
 }
 
+/**
+ * Control-plane projection of a store: adminStores/{id} carries ONLY allow-listed
+ * control metadata (never business content like whatsappPhone/storefront), so a
+ * super_admin `list` of adminStores cannot leak tenant PII (G-P02). This is the
+ * only shape the rules read for membership/ownership (isMember/isOwner).
+ */
+export function projectAdminStore(store: { id: string } & Record<string, unknown>) {
+  return {
+    storeId: store.id,
+    name: store.name,
+    slug: store.slug,
+    type: store.type,
+    ownerUid: store.ownerUid,
+    memberUids: store.memberUids,
+    pendingInvites: store.pendingInvites ?? [],
+    createdAt: store.createdAt,
+    updatedAt: store.updatedAt,
+    retainedPrivacyRequestCount: store.retainedPrivacyRequestCount ?? 0,
+  };
+}
+
+/**
+ * Build a control-shaped Store from an adminStores doc (for loadCloudState's
+ * super_admin path). Business fields (whatsappPhone, storefront, skuPrefix) are
+ * absent by design — super_admin sees the control plane only (G-P02).
+ */
+function adminStoreToStore(data: unknown, id: string): Store {
+  const d = data as Record<string, unknown>;
+  return {
+    id,
+    name: (d.name as string) ?? "",
+    slug: (d.slug as string) ?? "",
+    type: (d.type as Store["type"]) ?? "on_demand",
+    createdAt: (d.createdAt as string) ?? "",
+    updatedAt: (d.updatedAt as string) ?? "",
+    ownerUid: d.ownerUid as string | undefined,
+    memberUids: d.memberUids as string[] | undefined,
+    pendingInvites: d.pendingInvites as string[] | undefined,
+  };
+}
+
 /** Upsert a single entity doc. */
 export async function saveEntity(
   _user: AppUser,
@@ -173,6 +221,20 @@ export async function saveEntity(
   // so strip undefined keys before writing — one guard for every entity/call site.
   const clean: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) if (v !== undefined) clean[k] = v;
+
+  // G-P02: a store write MUST also write its adminStores control doc in the SAME
+  // batched write — the rules resolve membership/ownership exclusively from
+  // adminStores, so a stores doc without a sibling adminStores doc has no members.
+  // This single chokepoint covers every store write (create, update, invite,
+  // remove, transfer) since they all flow through saveEntity("stores", ...).
+  if (name === "stores") {
+    const batch = writeBatch(db);
+    batch.set(doc(db, "stores", id), clean, { merge: true });
+    batch.set(doc(db, "adminStores", id), projectAdminStore({ ...clean, id }), { merge: true });
+    await batch.commit();
+    return;
+  }
+
   await setDoc(doc(db, name, id), clean, { merge: true });
 }
 

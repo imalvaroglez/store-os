@@ -4,21 +4,23 @@
   "version": "0.1.0",
   "type": "module",
   "description": "A lightweight operating system for small stores. Local-first PWA.",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "node scripts/check-env.cjs && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --exclude src/app/firebase/firestore.rules.test.ts",
     "test:watch": "vitest",
+    "test:rules": "bash scripts/test-rules.sh",
     "e2e": "playwright test",
     "emulators": "firebase emulators:start --only auth,firestore,storage",
     "e2e:firebase": "bash scripts/e2e-firebase.sh",
     "deploy:rules": "firebase deploy --only firestore,storage"
   },
   "dependencies": {
-    "@vercel/analytics": "^2.0.1",
-    "@vercel/speed-insights": "^2.0.0",
     "firebase": "^12.15.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
