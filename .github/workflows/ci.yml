@@ -1,0 +1,54 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Lint (typecheck)
+        run: npm run typecheck
+      - name: Unit + static gates
+        run: npm run test
+      - name: Build
+        run: npm run build
+        env:
+          # check-env.cjs requires the public Firebase config present at build time.
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_SENDER_ID: ${{ secrets.VITE_FIREBASE_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+
+  rules-and-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Firebase CLI
+        run: npm i -g firebase-tools
+      - name: Cache Firestore emulator
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/firebase/emulators
+          key: firestore-emulator-${{ runner.os }}
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Firestore rules tests (emulator)
+        run: npm run test:rules
+      - name: E2E (Playwright)
+        run: npm run e2e
