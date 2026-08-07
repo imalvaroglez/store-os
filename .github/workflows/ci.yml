@@ -1,12 +1,36 @@
 name: CI
+
+# Two environments mirror Vercel's model:
+#   - PRs (and any push not to main) build against the PREVIEW backend (dev).
+#   - A merge that lands on `main` builds against PRODUCTION.
+# The job-level `environment:` selects which set of VITE_FIREBASE_* secrets
+# GitHub injects: the `preview` environment's secrets point at the dev Firebase
+# project; the `production` environment's secrets point at the prod project.
+# Configure both under repo Settings → Environments.
 on:
   pull_request:
   push:
     branches: [main]
 
 jobs:
-  build-test:
+  # Resolves once per run: "production" when the merge lands on main, else "preview".
+  env-select:
     runs-on: ubuntu-latest
+    outputs:
+      env-name: ${{ steps.set.outputs.env-name }}
+    steps:
+      - id: set
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "main" ]; then
+            echo "env-name=production" >> "$GITHUB_OUTPUT"
+          else
+            echo "env-name=preview" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-test:
+    needs: env-select
+    runs-on: ubuntu-latest
+    environment: ${{ needs.env-select.outputs.env-name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,10 +42,11 @@ jobs:
         run: npm run typecheck
       - name: Unit + static gates
         run: npm run test
-      - name: Build
+      - name: Build (${{ needs.env-select.outputs.env-name }})
         run: npm run build
         env:
           # check-env.cjs requires the public Firebase config present at build time.
+          # Resolved from the active GitHub environment (preview → dev, production → prod).
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
@@ -30,7 +55,9 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
 
   rules-and-e2e:
+    needs: env-select
     runs-on: ubuntu-latest
+    environment: ${{ needs.env-select.outputs.env-name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,12 +80,12 @@ jobs:
           key: firestore-emulator-${{ runner.os }}
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
-      - name: Build (production preview for e2e)
+      - name: Build (${{ needs.env-select.outputs.env-name }} preview for e2e)
         run: npm run build
         env:
           # The default e2e suite serves `npm run preview` (production build,
-          # DEV=false) and asserts the AuthScreen renders. That requires the
-          # public Firebase config baked into the bundle at build time.
+          # DEV=false) and asserts the AuthScreen renders. Needs the public
+          # Firebase config baked in at build time, from the active environment.
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
