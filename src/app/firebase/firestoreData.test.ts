@@ -6,6 +6,10 @@ import {
   publicProductId,
   SlugTakenError,
 } from "./firestoreData";
+import {
+  PUBLIC_STORE_FIELDS,
+  PUBLIC_PRODUCT_FIELDS,
+} from "./rules-allowlist";
 import type { Product, Store, Category } from "../../types";
 
 // Unit tests for the public-projection builders. These guarantee that the docs
@@ -145,5 +149,98 @@ describe("SlugTakenError", () => {
     const err = new SlugTakenError("santi");
     expect(err.slug).toBe("santi");
     expect(err.message).toContain("santi");
+  });
+});
+
+// G-P03 inverse test: a safe projection enumerates fields and MUST ignore unknown
+// source keys. Adding a private field to the source cannot change the output. This
+// would fail if a projector ever did `{ ...source }` or copied a forbidden field.
+describe("public projection allow-list (G-P03)", () => {
+  const STORE_ALLOWED = PUBLIC_STORE_FIELDS as readonly string[];
+  const PRODUCT_ALLOWED = PUBLIC_PRODUCT_FIELDS as readonly string[];
+
+  it("projectPublicStore emits only allow-listed keys", () => {
+    // Source carries private/control fields a projection must never copy.
+    const source = {
+      id: "s1",
+      name: "Olivia",
+      slug: "olivia",
+      type: "inventory_tiered",
+      whatsappPhone: "+52",
+      storefront: null,
+      ownerUid: "u1",
+      memberUids: ["u1"],
+      pendingInvites: ["x@y.z"],
+      skuPrefix: "OL",
+      createdAt: "t0",
+      updatedAt: "t1",
+    } as unknown as Store;
+    const out = projectPublicStore(source) as Record<string, unknown>;
+    const keys = Object.keys(out);
+    // (a) No forbidden key leaks.
+    for (const f of ["ownerUid", "memberUids", "pendingInvites", "skuPrefix"] as const) {
+      expect(keys, `leaked ${f}`).not.toContain(f);
+    }
+    // (b) Every emitted key is allow-listed.
+    for (const k of keys) expect(STORE_ALLOWED, `unexpected key ${k}`).toContain(k);
+  });
+
+  it("projectPublicProductDetail strips cost/inventory/notes and wholesale/reseller prices", () => {
+    const source = {
+      id: "p1",
+      storeId: "s1",
+      name: "Collar",
+      slug: "collar",
+      sku: "COL-1",
+      publicDescription: "descripcion",
+      material: "plata",
+      finish: "pulido",
+      dimensions: "40cm",
+      care: "evita agua",
+      images: [],
+      categoryIds: [],
+      availability: "available",
+      canInquire: false,
+      isFeatured: false,
+      isNew: false,
+      // Private fields that must never appear in a public doc.
+      cost: 800,
+      privateNotes: "secreto",
+      quantityOnHand: 12,
+      lowStockAt: 3,
+      // Full tiered pricing — only retail may survive.
+      prices: { retail: 2000, wholesale: 1500, reseller: 1700 },
+    } as unknown as Product;
+    const out = projectPublicProductDetail(source, "olivia", []) as Record<string, unknown>;
+    const keys = Object.keys(out);
+    // (a) No private key leaks.
+    for (const f of ["cost", "privateNotes", "quantityOnHand", "lowStockAt"] as const) {
+      expect(keys, `leaked ${f}`).not.toContain(f);
+    }
+    // (b) prices, when present, is { retail } only.
+    if (keys.includes("prices")) {
+      const prices = out.prices as Record<string, unknown>;
+      expect(prices).toEqual({ retail: 2000 });
+      expect("wholesale" in prices).toBe(false);
+      expect("reseller" in prices).toBe(false);
+    }
+    // (c) Every emitted key is allow-listed.
+    for (const k of keys) expect(PRODUCT_ALLOWED, `unexpected key ${k}`).toContain(k);
+  });
+
+  it("adding a private field to the source does not change the public output", () => {
+    const base = {
+      id: "s1",
+      name: "Olivia",
+      slug: "olivia",
+      type: "inventory_tiered",
+      whatsappPhone: null,
+      storefront: null,
+    } as unknown as Store;
+    // An unknown/private field on the source MUST be ignored — a safe projection
+    // never spreads the source. This assertion fails the moment a projector does.
+    expect(projectPublicStore({ ...base, secretNewField: "leak" })).toEqual(
+      projectPublicStore(base)
+    );
   });
 });
