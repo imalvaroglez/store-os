@@ -140,3 +140,54 @@ describe("G-P02 batched create — stores + adminStores in one batch", () => {
     await assertFails(batch.commit());
   });
 });
+
+// Regression for the Olivia-disappears incident + the seed-dev defect: a store
+// doc in `stores/{id}` with ownerUid/memberUids set is STILL unreadable if its
+// canonical control-plane doc `adminStores/{id}` is missing, because
+// isMember() requires exists(adminStores/{id}). This is exactly what happened
+// when Espec 1 rules shipped and pre-existing stores had no adminStores, and
+// again when seed-dev.cjs wrote stores/ but not adminStores/. This test pins
+// the contract so a future seed/migration cannot recreate the half-visible
+// store. The companion fix lives in scripts/seed-dev.cjs (writes both docs in
+// one batch, mirroring the client's saveEntity writeBatch).
+describe("G-P02 store without adminStores control-plane doc is unreadable", () => {
+  it("member cannot read stores/{id} when adminStores/{id} is missing (the bug)", async () => {
+    // Seed ONLY the data-plane doc (the buggy half-visible state). Use a
+    // unique storeId so it isn't polluted by adminStores/s1 from other tests
+    // (the emulator shares state across tests in this file). Use the
+    // rules-disabled context for setup so seeding itself isn't blocked.
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "stores/s_half_visible"), {
+        ownerUid: "u_hv",
+        memberUids: ["u_hv"],
+        name: "Olivia",
+        slug: "olivia",
+        type: "inventory_tiered",
+      });
+    });
+    // Deliberately do NOT write adminStores/s_half_visible.
+    const db = await asUser("u_hv");
+    await assertFails(getDoc(doc(db, "stores/s_half_visible")));
+  });
+
+  it("member can read stores/{id} once adminStores/{id} exists (the fix)", async () => {
+    // Seed BOTH the control-plane and data-plane docs.
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s_both"), {
+        storeId: "s_both",
+        ownerUid: "u_both",
+        memberUids: ["u_both"],
+        name: "Olivia",
+      });
+      await setDoc(doc(c.firestore(), "stores/s_both"), {
+        ownerUid: "u_both",
+        memberUids: ["u_both"],
+        name: "Olivia",
+        slug: "olivia",
+        type: "inventory_tiered",
+      });
+    });
+    const db = await asUser("u_both");
+    await assertSucceeds(getDoc(doc(db, "stores/s_both")));
+  });
+});
