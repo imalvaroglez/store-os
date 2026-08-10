@@ -14,8 +14,6 @@ import {
 import { getFirebase } from "./config";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
-import { buildSeedState } from "../../lib/seed";
-import { migrateCatalog } from "../../lib/catalog";
 
 // Cloud data adapter. The cloud analog of lib/storage.ts: the StoreProvider talks
 // to this when signed in. Reads are scoped to the user (super_admin sees all
@@ -550,45 +548,13 @@ export async function rebuildPublicCatalog(
 }
 
 /**
- * Seed the demo stores (Santi + Joyería) into Firestore for the super-admin on a
- * brand-new (empty) cloud account. Members are NOT seeded — they see only stores
- * an admin has invited them to (empty until then). Idempotent.
- *
- * Race note: this runs inside a StoreProvider effect that can double-fire
- * (StrictMode / auth-state flicker). Two concurrent runs can BOTH see an empty
- * project before either has written. The `existing.stores.length > 0` guard
- * alone can't prevent that — so buildSeedState() uses DETERMINISTIC ids. A
- * second run overwrites the same doc ids instead of creating duplicates.
+ * No-op. This used to auto-seed demo stores (Santi + Joyería) into Firestore for
+ * a brand-new super_admin account. Removed: this is a real product — a new
+ * account starts EMPTY and the operator creates their own store. Auto-seeding
+ * demo data polluted dev/preview/prod backends with phantom stores. Kept as a
+ * no-op (not deleted) because StoreProvider calls it on every cloud login; the
+ * signature stays so the call site is unchanged.
  */
-export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
-  if (user.role !== "super_admin") return; // members never auto-seed
-  const existing = await loadCloudState(user);
-  // A bulk emulator wipe can briefly leave stores visible while their products
-  // are gone. Treat that partial state as unseeded; deterministic ids make the
-  // repair safe and production never creates duplicate seed rows.
-  if (existing.stores.length > 0 && existing.products.length > 0) return;
-
-  const seed = migrateCatalog(buildSeedState());
-  // Write stores FIRST and await them: products/categories/orders rules call
-  // isMember(storeId), which reads the store doc — if stores write in parallel
-  // with their entities, the entity rule check can race ahead of the store write
-  // and deny the write (store not yet visible), aborting the whole seed.
-  for (const s of seed.stores) {
-    await saveEntity(user, "stores", { ...s, ownerUid: user.uid, memberUids: [user.uid] });
-  }
-  const writes: Promise<unknown>[] = [];
-  for (const p of seed.products) writes.push(saveEntity(user, "products", p));
-  for (const c of seed.categories) writes.push(saveEntity(user, "categories", c));
-  for (const s of seed.suppliers) writes.push(saveEntity(user, "suppliers", s));
-  for (const p of seed.purchases) writes.push(saveEntity(user, "purchases", p));
-  for (const c of seed.customers) writes.push(saveEntity(user, "customers", c));
-  for (const o of seed.orders) writes.push(saveEntity(user, "orders", o));
-  await Promise.all(writes);
-
-  // Publish the public catalog projection for each seeded store so
-  // /catalogo/santi and /catalogo/joyeria work immediately.
-  for (const s of seed.stores) {
-    await claimSlug(s.slug, s.id).catch(() => {});
-    await projectPublicForStore(s, seed.products, seed.categories).catch(() => {});
-  }
+export async function seedCloudIfEmpty(_user: AppUser): Promise<void> {
+  return;
 }
