@@ -81,8 +81,11 @@ export function subscribeCloudState(
   onChange: (state: AppState) => void
 ): Unsubscribe {
   const { db } = getFirebase();
-  // Super_admin subscribes to the control plane (adminStores); members to their
-  // member `stores` business docs. Matches loadCloudState (G-P02).
+  // Both roles subscribe to the stores they can see, then scope entity listeners
+  // by those store ids (see below). super_admin reads the adminStores control
+  // plane (G-P02); members read their member `stores` business docs. The store
+  // ids from either feed the `where("storeId","in",[...])` filter every entity
+  // listener needs (rules are not filters).
   const storesQ =
     user.role === "super_admin"
       ? collection(db, "adminStores")
@@ -125,35 +128,36 @@ export function subscribeCloudState(
   // Stores listener is always live — storesQ is already role-scoped above.
   unsubscribers.push(onSnapshot(storesQ, triggerReload));
 
-  // Entity listeners: super_admin gets bare collections (god-view, matches
-  // loadCloudState reading all stores). A member gets storeId-filtered queries
-  // computed from a one-shot read of their member stores — WITHOUT this filter,
-  // every store's private docs stream to their browser (the rules allow list for
-  // any signed-in user and rely on the client to scope). A member with no stores
-  // subscribes to no entity listeners (there is nothing to watch).
+  // Entity listeners: BOTH roles read their accessible stores once, then
+  // register storeId-filtered listeners. A bare collection(products) listener is
+  // NOT possible: firestore.rules gate each entity on
+  // isMember(resource.data.storeId), a resource.data-dependent rule, and Firestore
+  // rejects any query whose `where()` can't validate that rule ("rules are not
+  // filters"). So every entity listener MUST carry `where("storeId", "in", [...])`
+  // — for super_admin that's the stores they own/are members of (read from the
+  // adminStores control plane), for a member their member stores. A user with no
+  // stores subscribes to no entity listeners (nothing to watch). If they are
+  // added to a new store mid-session, the storesQ listener fires → triggerReload
+  // → loadCloudState re-reads everything including the new store.
   function registerEntityListeners(storeIds: string[]) {
     if (tornDown) return;
+    if (storeIds.length === 0) return;
     for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders"] as const) {
-      const entityQ =
-        user.role === "super_admin"
-          ? collection(db, name)
-          : storeIds.length === 0
-            ? null
-            : query(collection(db, name), where("storeId", "in", storeIds));
-      if (entityQ) unsubscribers.push(onSnapshot(entityQ, triggerReload));
+      const entityQ = query(collection(db, name), where("storeId", "in", storeIds));
+      unsubscribers.push(onSnapshot(entityQ, triggerReload));
     }
   }
 
-  if (user.role === "super_admin") {
-    registerEntityListeners([]);
-  } else {
-    // Member: read accessible stores once, then register scoped listeners.
-    getDocs(storesQ)
-      .then((snap) => registerEntityListeners(snap.docs.map((d) => d.id)))
-      .catch(() => {
-        /* ignore — storesQ listener still drives reloads */
-      });
-  }
+  // Read accessible stores once, then register scoped listeners.
+  getDocs(storesQ)
+    .then((snap) => {
+      // For super_admin, storesQ is the adminStores control plane (docs keyed by
+      // storeId); for members it's their member `stores` docs. Both yield store ids.
+      registerEntityListeners(snap.docs.map((d) => d.id));
+    })
+    .catch(() => {
+      /* ignore — storesQ listener still drives reloads on subsequent changes */
+    });
 
   return () => {
     tornDown = true;
