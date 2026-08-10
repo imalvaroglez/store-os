@@ -64,6 +64,32 @@ A build is deployable only when **all** hold:
 
 If any one fails, the verdict is **NOT READY FOR VERCEL**. State which item failed.
 
+### Environment synchronization (STRICT, non-negotiable)
+
+Store OS runs three environments. Their synchronization rule is invariant and
+governs every change:
+
+- **Development (local) and Preview share one backend (`store-os-dev`)**. Data
+  persists across both — what the developer validates locally is what UAT/Preview
+  shows. **Production (`store-os-f7cf8`) is fully isolated**; its data never
+  crosses into dev/preview and vice versa.
+- **Structure flows to all three environments, always in sync.** "Structure"
+  means Firestore schema (collections, fields), Security Rules, Storage rules,
+  IAM/permissions, and any code that defines how data is shaped or accessed.
+  When a change alters structure, that same structure is deployed to dev,
+  preview, **and** prod — no environment drifts structurally.
+- **The promotion order is fixed and linear:** **local (code written and tested)
+  → Preview (validated by Fer as a real user) → Production (only with Fer's
+  explicit approval).** Nothing skips a stage. The developer (agent) never
+  self-promotes to Production; human approval (Fer/PO) is the sole gate to prod.
+- **Data is never promoted.** Only structure and code flow across environments.
+  Seeding test data belongs only in dev/preview (`scripts/seed-dev.cjs`, which
+  hard-aborts unless `projectId === 'store-os-dev'`). Production is never seeded.
+
+A change that would cause structural drift between environments (e.g. a new
+collection read in code but no rule for it, or a rule deployed to dev but not
+prod) is a release blocker — fix it before deploy.
+
 ## 5. Release blockers
 
 Any of these blocks release — fix before deploy, no exceptions:
@@ -127,6 +153,7 @@ Agents must **not**:
 - Redesign casually — visual decisions go through design-system tokens.
 - Refactor for taste.
 - Change infra casually (Firebase rules, deployment config, env).
+- **Cause structural drift between environments** — see §4 "Environment synchronization": schema/rules/permissions/structure must flow to dev, preview, AND prod in sync; data stays isolated in dev↔preview; promotion is local→preview→prod with human approval. Structural drift is a release blocker.
 - Weaken or delete tests to make them pass.
 - Disable TypeScript checks (`any` everywhere, `// @ts-ignore` to silence).
 - Make private data public.
