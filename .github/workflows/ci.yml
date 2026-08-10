@@ -154,6 +154,11 @@ jobs:
       - name: Pull Vercel project config
         run: vercel pull --yes --environment=${{ steps.target.outputs.env }} --token=${{ secrets.VERCEL_TOKEN }}
       - name: Build (Vercel, with Firebase env for check-env.cjs)
+        # IMPORTANT: the VITE_FIREBASE_* vars are passed HERE from GitHub
+        # environment secrets (Preview=store-os-dev, Production=store-os-f7cf8).
+        # Vercel itself holds ZERO VITE_FIREBASE_* env vars — GitHub is the single
+        # source of truth, so there is no second source that could override the
+        # backend per environment. `vercel build` reads these from the process env.
         run: vercel build ${{ steps.target.outputs.prod_flag }} --token=${{ secrets.VERCEL_TOKEN }}
         env:
           # check-env.cjs validates the (VITE_VERCEL_ENV, projectId) pair.
