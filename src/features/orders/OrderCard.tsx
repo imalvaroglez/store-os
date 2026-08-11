@@ -34,8 +34,8 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     const next = nextStatus(order.status);
     if (!next) return;
     upsertOrder({ ...order, status: next, updatedAt: new Date().toISOString() });
-    // verb is the next status label (e.g. "Confirmar", "Cobrar") — confirm the move.
-    toast.success(`Pedido avanzado a «${verb}»`);
+    // Show the state reached (participle label), not the action verb.
+    toast.success(`Pedido avanzado a «${ORDER_STATUS_LABELS[next]}»`);
   }
 
   return (
