@@ -1,18 +1,20 @@
 import { useState } from "react";
-import { useStore } from "../../app/StoreProvider";
+import { useStore, newSupplier } from "../../app/StoreProvider";
 import {
   Button,
   SelectField,
   TextField,
   TextArea,
   IconButton,
+  Sheet,
   useToast,
 } from "../../design-system";
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
 import { applyPurchaseLines } from "../../lib/inventory";
 import { todayIso, nowIso } from "../../lib/dates";
 import { formatMoney } from "../../lib/money";
-import type { Purchase, PurchaseLine } from "../../types";
+import type { Purchase, PurchaseLine, Supplier } from "../../types";
+import { SupplierForm } from "./SupplierForm";
 
 // Multi-line supplier purchase ticket. Each line replenishes a product's stock
 // and recomputes its weighted-average cost. The first repeating line-item form
@@ -21,6 +23,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const { state, activeStore, upsertPurchase, upsertProduct } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<Purchase>(purchase);
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
+  // Draft supplier for the inline-create Sheet. Its id is known up-front so we
+  // can auto-select it on the purchase once saved.
+  const [supplierDraft, setSupplierDraft] = useState<Supplier | null>(null);
 
   if (!activeStore) return null;
   const suppliers = suppliersForStore(state.suppliers, activeStore.id);
@@ -82,13 +88,27 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
 
   return (
     <div className="space-y-4">
-      <SelectField
-        label="Proveedor"
-        value={draft.supplierId ?? ""}
-        onChange={(v) => setDraft({ ...draft, supplierId: v || undefined })}
-        options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
-        placeholder="Elegir proveedor…"
-      />
+      <div>
+        <SelectField
+          label="Proveedor"
+          value={draft.supplierId ?? ""}
+          onChange={(v) => setDraft({ ...draft, supplierId: v || undefined })}
+          options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
+          placeholder="Elegir proveedor…"
+        />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="mt-1 -ml-2"
+          onClick={() => {
+            if (!activeStore) return;
+            setSupplierDraft(newSupplier(activeStore.id));
+            setCreatingSupplier(true);
+          }}
+        >
+          + Nuevo proveedor
+        </Button>
+      </div>
       <TextField
         label="Fecha"
         type="date"
@@ -174,6 +194,25 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       <Button full size="lg" onClick={() => void submit()} disabled={draft.lines.length === 0}>
         Guardar compra
       </Button>
+
+      {creatingSupplier && supplierDraft && (
+        <Sheet
+          open
+          onClose={() => setCreatingSupplier(false)}
+          title="Nuevo proveedor"
+        >
+          <SupplierForm
+            supplier={supplierDraft}
+            onDone={() => {
+              // Auto-select the just-created supplier on the purchase. The
+              // SupplierForm upserts before onDone, so it's in state.suppliers.
+              setDraft({ ...draft, supplierId: supplierDraft.id });
+              setCreatingSupplier(false);
+              setSupplierDraft(null);
+            }}
+          />
+        </Sheet>
+      )}
     </div>
   );
 }

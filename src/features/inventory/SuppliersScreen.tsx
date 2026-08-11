@@ -6,15 +6,13 @@ import {
   EmptyState,
   ScreenHeader,
   Sheet,
-  TextField,
-  TextArea,
   IconButton,
   Dialog,
   useToast,
 } from "../../design-system";
 import { suppliersForStore } from "../../lib/selectors";
-import { nowIso } from "../../lib/dates";
 import type { Supplier } from "../../types";
+import { SupplierForm } from "./SupplierForm";
 
 // Proveedores admin: light CRUD mirroring CategoriesScreen. Suppliers are
 // per-store and used as the "who" on purchase tickets. Reachable from Ajustes
@@ -107,46 +105,6 @@ export function SuppliersScreen({ storeId }: { storeId: string }) {
       >
         ¿Eliminar <span className="font-semibold text-ink">{deleting?.name}</span>? Esta acción no se puede deshacer.
       </Dialog>
-    </div>
-  );
-}
-
-function SupplierForm({ supplier, onDone }: { supplier: Supplier; onDone: () => void }) {
-  const { upsertSupplier } = useStore();
-  const [draft, setDraft] = useState<Supplier>(supplier);
-
-  return (
-    <div className="space-y-4">
-      <TextField
-        label="Nombre"
-        placeholder="Ej. Platería GDL"
-        value={draft.name}
-        onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-        autoFocus
-      />
-      <TextField
-        label="Contacto"
-        placeholder="Teléfono / dónde encontrarlo"
-        value={draft.contact ?? ""}
-        onChange={(e) => setDraft({ ...draft, contact: e.target.value || undefined })}
-      />
-      <TextArea
-        label="Notas"
-        value={draft.notes ?? ""}
-        onChange={(e) => setDraft({ ...draft, notes: e.target.value || undefined })}
-      />
-      <Button
-        full
-        size="lg"
-        onClick={() => {
-          if (!draft.name.trim()) return;
-          upsertSupplier({ ...draft, name: draft.name.trim(), updatedAt: nowIso() });
-          onDone();
-        }}
-        disabled={!draft.name.trim()}
-      >
-        Guardar proveedor
-      </Button>
     </div>
   );
 }
