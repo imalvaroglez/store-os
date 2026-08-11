@@ -12,7 +12,43 @@ deploy. Nada aquí está comprometido hasta que hay spec firmado.
 Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` · `✅ done` ·
 `❄️ frozen`
 
+## Índice (por prioridad)
+
+### Próximo ciclo (decidido)
+- **Compliance / Privacidad (Espec 2)** — 📋 specced. `/privacidad/:slug` + ARCO.
+  Olivia necesita aviso de privacidad antes de ventas reales.
+
+### Features candidatas (ideas, requieren spec)
+- **Unificar Catálogo e Inventario en "Productos"** — 💡. Una sola pestaña/ficha
+  por producto (nombre, foto, precio, costo, stock). Elimina la fricción que
+  generó los fixes F1–F3 del flujo de compra.
+- **Editar el catálogo público in-place (WYSIWYG)** — 💡. Editar el storefront
+  sobre la vista pública (no en formulario aparte). Probablemente se hace junto
+  con la unificación anterior.
+- **Precios escalables (nombres mutables + extensibles) + precio sugerido** — 💡.
+  `prices: {[tierId]:n}` + tiers por tienda; fórmula costo→precio sugerido.
+- **Recibos / comprobantes de venta imprimibles y PDF** — 💡. Recibo por pedido,
+  `window.print()`, fiscal-ready (no timbrado aún).
+
+### Deuda técnica (de sesiones, sin feature)
+- **`pnpm-lock.yaml` commiteado junto a `package-lock.json`** — Vercel buildea con
+  pnpm (detecta el lockfile), puede producir builds distintos a npm/local. Borrar
+  y gitignorar.
+- **`persistEntity` fire-and-forget sin `.catch`** — un rechazo de Firestore
+  queda como `pageerror` no manejado y el toast de éxito miente (ej: la regresión
+  de persistencia de compras F3). Endurecer con `.catch` + toast de error.
+- **Token Full Access de Vercel** — el `vcp_` project-scoped no cubre
+  `vercel pull` (bug de Vercel); usamos Full Access. Pendiente re-bajar el scope
+  cuando Vercel lo arregle.
+- **Migración `adminStores` idempotente** — el hotfix del incidente
+  Olivia-desaparece-de-prod fue manual; falta script `scripts/migrate-adminstores.cjs`
+  + test de "store sin adminStores" (este último sí existe; falta el script).
+- **Cascade al borrar cliente** — `deleteCustomer` no borra sus pedidos (quedan
+  huérfanos mostrando "Sin cliente"). Hoy se advierte en el diálogo; decidir si
+  cascade o bloqueo.
+
 ---
+
 
 ## 💡 Recibos / comprobantes de venta imprimibles y PDF
 
@@ -266,30 +302,6 @@ precios existentes (porque `adminStores` no llevaba `type`) **ya está arreglado
 
 ---
 
-<!--
-Plantilla para nuevas entradas:
-
-## 💡 [Título]
-
-**Estado:** 💡 idea
-**Solicitó:** [quién, cuándo]
-
-### Problema
-[Qué necesita la usuaria, en sus términos]
-
-### Alcance propuesto (MVP)
-[La versión más simple que resuelva el problema]
-
-### Datos disponibles vs faltantes
-[Qué hay en los tipos hoy, qué falta]
-
-### Decisiones pendientes
-[Preguntas que cerrar antes de spec]
-
-### Out-of-scope explícito
-[Lo que NO se hace esta iteración]
--->
-
 ---
 
 ## 💡 Editar el catálogo público in-place (WYSIWYG)
@@ -358,3 +370,28 @@ Probablemente conviene hacerlo **junto con** la unificación Catálogo/Inventari
 
 **Nota:** Espec 1 (security harness, G-P01–G-P08) **ya está implementada y
 mergeada** (PR #11). Este backlog entry cubre solo Espec 2.
+
+---
+
+<!-- Plantilla para nuevas entradas:
+
+## 💡 [Título]
+
+**Estado:** 💡 idea
+**Solicitó:** [quién, cuándo]
+
+### Problema
+[Qué necesita la usuaria, en sus términos]
+
+### Alcance propuesto (MVP)
+[La versión más simple que resuelva el problema]
+
+### Datos disponibles vs faltantes
+[Qué hay en los tipos hoy, qué falta]
+
+### Decisiones pendientes
+[Preguntas que cerrar antes de spec]
+
+### Out-of-scope explícito
+[Lo que NO se hace esta iteración]
+-->
