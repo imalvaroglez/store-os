@@ -53,14 +53,22 @@ export function MultiPhotoPicker({
           >
             {tile.busy ? (
               <div
-                className="h-full w-full flex items-center justify-center"
+                className="absolute inset-0 flex items-center justify-center"
                 role="status"
                 aria-label="Subiendo foto"
               >
                 <span className="h-5 w-5 rounded-full border-2 border-edge border-t-on-surface animate-spin" />
               </div>
             ) : (
-              <ProductImage src={tile.url} alt="" size="full" />
+              // Fill the tile (absolute inset-0) so a rectangular preview photo
+              // can never overflow or push the tile's aspect-square: the <li>
+              // owns the box, the image fills it via object-cover. (Previously
+              // ProductImage carried its own aspect-square, which competed with
+              // the <li>'s aspect-square and let the image break out on some
+              // browsers/viewports.)
+              <div className="absolute inset-0">
+                <ProductImage src={tile.url} alt="" size="full" />
+              </div>
             )}
             {tile.isPrimary && (
               <span className="absolute top-1 left-1 rounded bg-ink/80 text-paper text-[10px] font-semibold px-1.5 py-0.5">
