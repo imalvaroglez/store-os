@@ -175,6 +175,27 @@ export function subscribeCloudState(
  * super_admin `list` of adminStores cannot leak tenant PII (G-P02). This is the
  * only shape the rules read for membership/ownership (isMember/isOwner).
  */
+/**
+ * Deep-clone with all `undefined` values removed (recursively), including those
+ * nested inside plain objects and arrays. Firestore rejects `undefined` at any
+ * depth ("Unsupported field value"). Arrays keep their order; objects with all
+ * values undefined become empty objects (kept, not dropped — Firestore accepts
+ * {} and null fine; we strip only the offending undefined values, not the keys
+ * that hold them, to avoid silently reshaping nested docs).
+ */
+export function stripUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripUndefined);
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v === undefined) continue;
+      out[k] = stripUndefined(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 export function projectAdminStore(store: { id: string } & Record<string, unknown>) {
   return {
     storeId: store.id,
@@ -218,11 +239,12 @@ export async function saveEntity(
 ): Promise<void> {
   const { db } = getFirebase();
   const { id, ...data } = entity;
-  // Firestore rejects `undefined` field values ("Unsupported field value").
-  // Tiered stores carry `price: undefined` (and flat stores `prices: undefined`),
-  // so strip undefined keys before writing — one guard for every entity/call site.
-  const clean: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(data)) if (v !== undefined) clean[k] = v;
+  // Firestore rejects `undefined` field values ("Unsupported field value") —
+  // including those nested in objects/arrays, e.g. a purchase line carrying
+  // `price: undefined` (inventory_tiered) or `prices: undefined` (on_demand)
+  // from the F3 price-edit fields. Strip undefined RECURSIVELY so any depth is
+  // safe. One guard for every entity/call site (products, purchases, etc.).
+  const clean = stripUndefined(data) as Record<string, unknown>;
 
   // G-P02: a store write MUST also write its adminStores control doc in the SAME
   // batched write — the rules resolve membership/ownership exclusively from

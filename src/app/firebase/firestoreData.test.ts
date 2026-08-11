@@ -6,6 +6,7 @@ import {
   projectAdminStore,
   publicProductId,
   SlugTakenError,
+  stripUndefined,
 } from "./firestoreData";
 import {
   PUBLIC_STORE_FIELDS,
@@ -314,5 +315,30 @@ describe("projectAdminStore control-plane projection (G-P02)", () => {
     } as unknown as { id: string } & Record<string, unknown>;
     // A safe projection never spreads the source — unknown keys cannot land here.
     expect(projectAdminStore({ ...base, secretNewField: "leak" })).toEqual(projectAdminStore(base));
+  });
+});
+
+// Regression for the F3 purchase-persist bug: a purchase line carrying
+// `price: undefined` (inventory_tiered) nested inside `lines[]` reached
+// Firestore as a literal undefined and was rejected ("Unsupported field value").
+// saveEntity must strip undefined RECURSIVELY (not just top-level).
+describe("saveEntity stripUndefined (recursive)", () => {
+  it("removes undefined at the top level", () => {
+    const out = stripUndefined({ a: 1, b: undefined, c: "x" }) as Record<string, unknown>;
+    expect(out).toEqual({ a: 1, c: "x" });
+  });
+  it("removes undefined nested inside objects (e.g. a purchase line)", () => {
+    const line = { productId: "p1", name: "Ring", quantity: 2, unitCost: 100, price: undefined, prices: { retail: 800 } };
+    const out = stripUndefined({ lines: [line] }) as { lines: Array<Record<string, unknown>> };
+    expect(out.lines[0]).not.toHaveProperty("price");
+    expect(out.lines[0].prices).toEqual({ retail: 800 });
+  });
+  it("removes undefined nested in arrays", () => {
+    const out = stripUndefined([{ a: 1, b: undefined }, { c: undefined, d: 2 }]) as Array<Record<string, unknown>>;
+    expect(out).toEqual([{ a: 1 }, { d: 2 }]);
+  });
+  it("leaves non-undefined nested objects intact (deep)", () => {
+    const out = stripUndefined({ a: { b: { c: 1 } } }) as Record<string, unknown>;
+    expect(out).toEqual({ a: { b: { c: 1 } } });
   });
 });
