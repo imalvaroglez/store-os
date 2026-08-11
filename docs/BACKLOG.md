@@ -329,3 +329,32 @@ Probablemente conviene hacerlo **junto con** la unificación Catálogo/Inventari
 
 - Editor visual de layout/colores (esos van por tokens de tema, ya existente).
 - Multi-idioma (YAGNI).
+
+---
+
+## 📋 Compliance / Privacidad (Espec 2) — PRÓXIMO CICLO
+
+**Estado:** 📋 specced (diseño aprobado, sin implementar)
+**Prioridad:** alta — próxima a implementar tras el ciclo del flujo de compra.
+**Spec:** `docs/superpowers/specs/2026-08-06-privacidad-arco-v1-design.md`
+
+### Qué está aprobado (diseño)
+
+- **`/privacidad/:slug`** — aviso de privacidad público de la tienda (Olivia),
+  informativo y de contacto (WhatsApp/correo), **sin formulario ni escrituras
+  anónimas a Firestore**. Contenido editable por la dueña en
+  StoreSettingsScreen, basado en plantilla con requisitos LFPDPPP arts. 15-16:
+  identidad del sujeto jurídico, datos tratados, derechos ARCO, canales,
+  encargados (Store OS, Google/Firebase, Vercel). Sujeto a validación jurídica.
+- **ARCO V1 asistido por la responsable** (Fer gestiona las solicitudes; la
+  página pública solo informa y da canales, no crea documentos).
+- Separación de planos: super_admin = plano de CONTROL, sin PII rutinaria de
+  clientas. (Espec 1 ya implementada y mergeada en PR #11.)
+
+### Lo que falta
+
+- Plan de implementación (writing-plans) → código → QA → release.
+- Cero código de Espec 2 existe hoy (solo la spec).
+
+**Nota:** Espec 1 (security harness, G-P01–G-P08) **ya está implementada y
+mergeada** (PR #11). Este backlog entry cubre solo Espec 2.
