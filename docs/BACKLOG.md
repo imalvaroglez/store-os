@@ -140,6 +140,61 @@ Ya en la tienda: nombre, WhatsApp (`Store`).
 
 ---
 
+## 💡 Unificar Catálogo e Inventario en una sola pestaña "Productos"
+
+**Estado:** 💡 idea
+**Solicitó:** Álvaro (PO), 2026-08-11 — conversación de diseño
+
+### Problema
+
+Hoy el admin tiene dos pestañas separadas: **Catálogo** (`/catalogo-admin`, con
+Productos y Categorías) e **Inventario** (`/inventario`, con stock, costo y
+compras). Para una joyería pequeña como Olivia (una sola operadora, Fer), esa
+separación es artificial: Fer no piensa "voy al catálogo a poner el precio y
+luego al inventario a poner la existencia". Ella piensa "agrego un Anillo" con
+todo junto (nombre, foto, precio, costo, cuántos tiene). Es **un solo objeto
+mental**, hoy partido en dos pantallas.
+
+La fricción ya se manifestó en esta sesión: el flujo de compra tuvo que añadir
+"crear producto al vuelo" (F2) y "editar precio desde la compra" (F3)
+**justamente porque stock y catálogo estaban desconectados**. Mover entre
+"Catálogo → editar precio" e "Inventario → ver stock" del mismo producto es ir
+y venir.
+
+### Alcance propuesto (idea — requiere spec)
+
+Fusionar en **una sola pestaña "Productos"** que muestre cada producto completo:
+foto, nombre, precios, existencia y badge de publicado/borrador, todo junto.
+Editar abre la ficha con todo (datos de catálogo + precios + stock + costo).
+"Compras a proveedores" queda como sub-flujo (botón dentro de Productos o en
+Ajustes). Las categorías pueden vivir dentro de la misma pestaña o en Ajustes.
+
+- Una sola lista por producto con todos sus datos visibles.
+- Una sola ficha de edición (la actual `ProductForm` ya casi lo es; habría que
+  asegurar que existencia/costo sean editables ahí también, no solo vía compra).
+- "Compras" y "Categorías" se reubican como sub-flujos.
+
+### Datos disponibles vs faltantes
+
+Ya existe casi todo: `Product` lleva `quantityOnHand`, `cost`, `prices`, fotos,
+`status`. `ProductForm` ya edita catálogo+precios; solo le falta edición directa
+de stock/costo (hoy solo vía compra). `InventoryScreen` y `CatalogScreen`
+mergean en una.
+
+### Decisiones pendientes (cerrar antes de spec)
+
+1. ¿Edición directa de stock/costo en la ficha del producto, o solo vía
+   "registrar compra"? (Hoy la compra hace el promedio ponderado; editar stock
+   a mano rompería esa trazabilidad.)
+2. ¿Dónde viven las Categorías y las Compras en el nuevo modelo?
+3. ¿"Productos" como única pestaña de catálogo, o conservar "Categorías" aparte?
+
+### Out-of-scope explícito
+
+- Conteo de inventario avanzado / ajustes con motivo / auditoría (YAGNI).
+
+---
+
 ## 💡 Precios escalables (nombres mutables + extensibles) y precio sugerido
 
 **Estado:** 💡 idea
