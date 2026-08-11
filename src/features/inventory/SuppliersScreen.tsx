@@ -19,15 +19,19 @@ import type { Supplier } from "../../types";
 // Proveedores admin: light CRUD mirroring CategoriesScreen. Suppliers are
 // per-store and used as the "who" on purchase tickets. Reachable from Ajustes
 // de tienda and from the purchase form.
-export function SuppliersScreen() {
-  const { state, activeStore, deleteSupplier } = useStore();
+//
+// Receives `storeId` by prop (not from the global activeStore) so it works in
+// contexts where activeStore is null — e.g. StoreSettingsScreen opened from the
+// StorePicker, where the store being administered isn't the active one. Matches
+// the StoreSettingsScreen pattern.
+export function SuppliersScreen({ storeId }: { storeId: string }) {
+  const { state, deleteSupplier } = useStore();
   const toast = useToast();
   const [editing, setEditing] = useState<Supplier | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Supplier | null>(null);
 
-  if (!activeStore) return null;
-  const suppliers = suppliersForStore(state.suppliers, activeStore.id);
+  const suppliers = suppliersForStore(state.suppliers, storeId);
 
   return (
     <div className="space-y-4">
@@ -69,7 +73,7 @@ export function SuppliersScreen() {
       )}
 
       <Sheet open={creating} onClose={() => setCreating(false)} title="Agregar proveedor">
-        <SupplierForm supplier={newSupplier(activeStore.id)} onDone={() => setCreating(false)} />
+        <SupplierForm supplier={newSupplier(storeId)} onDone={() => setCreating(false)} />
       </Sheet>
 
       {editing && (
