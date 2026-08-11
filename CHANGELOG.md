@@ -6,18 +6,72 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
-### Added
-- **Catálogo público en la nube:** proyecciones de solo lectura pública
-  (`publicStores/{slug}`, `publicProducts/{id}`, reserva global de slugs en
-  `slugs/{slug}`). Carga anónima (sin sesión) en `/catalogo/:slug` directo desde
-  Firestore; solo campos públicos (nunca costo, ganancia, notas, clientes, pedidos,
-  inventario). Acción "Republicar catálogo" en los ajustes de la tienda y
-  desproyección del slug viejo al renombrar.
-- **Modo emulador blindado:** nunca se activa en builds de producción, aunque la
-  bandera `VITE_FIREBASE_EMULATOR` se filtre al entorno de build.
+### Added — CI/CD y cableado de ambientes
+- **Deploy desde GitHub Actions:** el deploy a Vercel lo dispara Actions
+  **solo si** `build-test` + `rules-and-e2e` pasan. Vercel auto-deploy OFF
+  (Ignored Build Step `exit 0`). Captura correcta de la URL de preview y
+  comment automático en el PR.
+- **Cableado de 3 ambientes:** **Local + Preview** = `store-os-dev` (mismo
+  backend); **Producción** = `store-os-f7cf8` (aislado). GitHub es la fuente
+  única de `VITE_FIREBASE_*` (las vars de Vercel se eliminaron para evitar drift).
+- **Policy estricta de sincronización** (`docs/LOOPS.md` §4): datos aislados
+  dev↔preview; estructura (reglas, schema, IAM) fluye a los 3 ambientes;
+  promoción local→preview→prod solo con aprobación humana.
+
+### Added — Flujo de compra rediseñado
+- **Crear proveedor al vuelo** (F1) desde el formulario de compra (`+ Nuevo
+  proveedor`), auto-seleccionado al guardar.
+- **Crear producto al vuelo** (F2) desde una línea de compra (`+ Nuevo
+  producto`); nace privado por defecto, con toggle para publicar.
+- **Editar precio de venta** (F3) desde la línea de compra (Menudeo/Mayoreo/
+  Emprendedora para inventory_tiered; Precio de venta para on_demand).
+- **Eliminar clientes** (B2) desde la UI (menú ⋯ por tarjeta + diálogo de
+  confirmación con conteo de pedidos asociados).
+- **Botón "Ver público"** en el catálogo admin: abre el storefront público en
+  pestaña nueva.
+
+### Changed
+- **Acceso del super_admin a entidades** arreglado: los listeners ahora filtran
+  con `where(storeId in [...])` (antes bare collection → `permission-denied`
+  porque las reglas dependen de `resource.data` y Firestore aplica "rules are
+  not filters").
+- **Producto nuevo nace privado** por defecto (`status: "draft"`); Fer publica
+  explícitamente cuando quiere.
+- **Badge de estado** en admin gobernado solo por `status` (consistente con la
+  visibilidad pública real; eliminado el ambiguo "Privado").
+- **Botones de avance de pedido** en imperativo ("Confirmar", no "Confirmado");
+  badge de estado se mantiene en participio.
+- **`SuppliersScreen`** recibe `storeId` por prop (no lee `activeStore` global):
+  arregla la hoja de Proveedores que se abría vacía desde Ajustes de tienda (B1).
+- **`seed-dev.cjs`** escribe `adminStores` (plano de control) + `type`/`slug`;
+  Olivia visible para el super_admin.
+
+### Fixed
+- **Regresión de persistencia de compras:** `stripUndefined` recursivo en
+  `saveEntity` — `undefined` anidado en `lines[]` (de los campos de precio F3)
+  llegaba a Firestore y rechazaba el ticket completo ("Unsupported field value").
+- **Preview de foto en el modal de producto** no se sale del tile (wrapper
+  `absolute inset-0`).
+
+### Removed
+- **Modo demo eliminado:** nada visible sin login. La app ya no auto-carga tiendas
+  demo (Olivia/Santi/Joyería) en el navegador ni siembra demos en cuentas cloud
+  nuevas (`seedCloudIfEmpty` es no-op). Un visitante sin sesión ve solo la
+  pantalla de login.
+
+### Docs
+- `docs/LOOPS.md` §4 + §8: policy de sincronización de ambientes.
+- `docs/BACKLOG.md` reorganizado: índice por prioridad (Compliance = próximo
+  ciclo) + features (unificar catálogo/inventario, WYSIWYG, precios escalables,
+  recibos) + sección de deuda técnica.
+- Spec del rediseño del flujo de compra (`docs/superpowers/specs/`).
 
 ### Próximo
-- _—_
+- **Compliance / Privacidad (Espec 2):** `/privacidad/:slug` + ARCO V1 (diseño
+  aprobado, sin implementar). Olivia necesita aviso de privacidad antes de ventas
+  reales.
+
+## [0.4.0] — 2026-06-27
 
 ## [0.4.0] — 2026-06-27
 
