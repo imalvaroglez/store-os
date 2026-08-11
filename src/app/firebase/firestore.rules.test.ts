@@ -6,7 +6,7 @@ import {
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import { readFileSync } from "node:fs";
-import { doc, setDoc, getDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, writeBatch, getDocs, query, where, collection } from "firebase/firestore";
 
 let env: RulesTestEnvironment;
 
@@ -138,5 +138,108 @@ describe("G-P02 batched create — stores + adminStores in one batch", () => {
       type: "on_demand",
     });
     await assertFails(batch.commit());
+  });
+});
+
+// Regression for the Olivia-disappears incident + the seed-dev defect: a store
+// doc in `stores/{id}` with ownerUid/memberUids set is STILL unreadable if its
+// canonical control-plane doc `adminStores/{id}` is missing, because
+// isMember() requires exists(adminStores/{id}). This is exactly what happened
+// when Espec 1 rules shipped and pre-existing stores had no adminStores, and
+// again when seed-dev.cjs wrote stores/ but not adminStores/. This test pins
+// the contract so a future seed/migration cannot recreate the half-visible
+// store. The companion fix lives in scripts/seed-dev.cjs (writes both docs in
+// one batch, mirroring the client's saveEntity writeBatch).
+describe("G-P02 store without adminStores control-plane doc is unreadable", () => {
+  it("member cannot read stores/{id} when adminStores/{id} is missing (the bug)", async () => {
+    // Seed ONLY the data-plane doc (the buggy half-visible state). Use a
+    // unique storeId so it isn't polluted by adminStores/s1 from other tests
+    // (the emulator shares state across tests in this file). Use the
+    // rules-disabled context for setup so seeding itself isn't blocked.
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "stores/s_half_visible"), {
+        ownerUid: "u_hv",
+        memberUids: ["u_hv"],
+        name: "Olivia",
+        slug: "olivia",
+        type: "inventory_tiered",
+      });
+    });
+    // Deliberately do NOT write adminStores/s_half_visible.
+    const db = await asUser("u_hv");
+    await assertFails(getDoc(doc(db, "stores/s_half_visible")));
+  });
+
+  it("member can read stores/{id} once adminStores/{id} exists (the fix)", async () => {
+    // Seed BOTH the control-plane and data-plane docs.
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s_both"), {
+        storeId: "s_both",
+        ownerUid: "u_both",
+        memberUids: ["u_both"],
+        name: "Olivia",
+      });
+      await setDoc(doc(c.firestore(), "stores/s_both"), {
+        ownerUid: "u_both",
+        memberUids: ["u_both"],
+        name: "Olivia",
+        slug: "olivia",
+        type: "inventory_tiered",
+      });
+    });
+    const db = await asUser("u_both");
+    await assertSucceeds(getDoc(doc(db, "stores/s_both")));
+  });
+});
+
+// Reproduce the super_admin "permission-denied" bug: the client subscribes to a
+// BARE products collection (no where()) for super_admin, but the products rule
+// is `read: if isMember(resource.data.storeId)` — a resource.data-dependent rule.
+// Firestore ("rules are not filters") cannot validate a bare query against such
+// a rule and rejects the whole query. This pins the bug before the fix.
+describe("G-P02 super_admin bare-collection query on resource.data rule (bug repro)", () => {
+  it("super_admin who IS a member: bare collection(products) query is DENIED (the bug)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s_x"), {
+        storeId: "s_x",
+        ownerUid: "u_admin",
+        memberUids: ["u_admin"],
+        name: "X",
+      });
+      await setDoc(doc(c.firestore(), "users/u_admin"), { email: "a@x", role: "super_admin" });
+      await setDoc(doc(c.firestore(), "products/p1"), { storeId: "s_x", name: "Ring" });
+    });
+    const db = await asUser("u_admin");
+    // Bare query (no where) — this is what subscribeCloudState does for super_admin.
+    await assertFails(getDocs(collection(db, "products")));
+  });
+
+  it("same super_admin: query WITH where(storeId in [...]) on a member store is ALLOWED", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s_y"), {
+        storeId: "s_y",
+        ownerUid: "u_admin2",
+        memberUids: ["u_admin2"],
+        name: "Y",
+      });
+      await setDoc(doc(c.firestore(), "users/u_admin2"), { email: "a@y", role: "super_admin" });
+      await setDoc(doc(c.firestore(), "products/p2"), { storeId: "s_y", name: "Necklace" });
+    });
+    const db = await asUser("u_admin2");
+    await assertSucceeds(getDocs(query(collection(db, "products"), where("storeId", "in", ["s_y"]))));
+  });
+});
+
+
+// Does super_admin bare-collection adminStores query work? (isSuperAdmin is not
+// resource.data-dependent, so it SHOULD pass — unlike the products bare query.)
+describe("G-P02 super_admin bare adminStores query", () => {
+  it("super_admin can list adminStores (bare collection)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_sa"), { email: "sa@x", role: "super_admin" });
+      await setDoc(doc(c.firestore(), "adminStores/s_sa"), { storeId: "s_sa", ownerUid: "u_sa", memberUids: ["u_sa"], name: "SA" });
+    });
+    const db = await asUser("u_sa");
+    await assertSucceeds(getDocs(collection(db, "adminStores")));
   });
 });

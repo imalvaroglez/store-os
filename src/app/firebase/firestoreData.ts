@@ -14,8 +14,6 @@ import {
 import { getFirebase } from "./config";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
-import { buildSeedState } from "../../lib/seed";
-import { migrateCatalog } from "../../lib/catalog";
 
 // Cloud data adapter. The cloud analog of lib/storage.ts: the StoreProvider talks
 // to this when signed in. Reads are scoped to the user (super_admin sees all
@@ -83,8 +81,11 @@ export function subscribeCloudState(
   onChange: (state: AppState) => void
 ): Unsubscribe {
   const { db } = getFirebase();
-  // Super_admin subscribes to the control plane (adminStores); members to their
-  // member `stores` business docs. Matches loadCloudState (G-P02).
+  // Both roles subscribe to the stores they can see, then scope entity listeners
+  // by those store ids (see below). super_admin reads the adminStores control
+  // plane (G-P02); members read their member `stores` business docs. The store
+  // ids from either feed the `where("storeId","in",[...])` filter every entity
+  // listener needs (rules are not filters).
   const storesQ =
     user.role === "super_admin"
       ? collection(db, "adminStores")
@@ -127,35 +128,36 @@ export function subscribeCloudState(
   // Stores listener is always live — storesQ is already role-scoped above.
   unsubscribers.push(onSnapshot(storesQ, triggerReload));
 
-  // Entity listeners: super_admin gets bare collections (god-view, matches
-  // loadCloudState reading all stores). A member gets storeId-filtered queries
-  // computed from a one-shot read of their member stores — WITHOUT this filter,
-  // every store's private docs stream to their browser (the rules allow list for
-  // any signed-in user and rely on the client to scope). A member with no stores
-  // subscribes to no entity listeners (there is nothing to watch).
+  // Entity listeners: BOTH roles read their accessible stores once, then
+  // register storeId-filtered listeners. A bare collection(products) listener is
+  // NOT possible: firestore.rules gate each entity on
+  // isMember(resource.data.storeId), a resource.data-dependent rule, and Firestore
+  // rejects any query whose `where()` can't validate that rule ("rules are not
+  // filters"). So every entity listener MUST carry `where("storeId", "in", [...])`
+  // — for super_admin that's the stores they own/are members of (read from the
+  // adminStores control plane), for a member their member stores. A user with no
+  // stores subscribes to no entity listeners (nothing to watch). If they are
+  // added to a new store mid-session, the storesQ listener fires → triggerReload
+  // → loadCloudState re-reads everything including the new store.
   function registerEntityListeners(storeIds: string[]) {
     if (tornDown) return;
+    if (storeIds.length === 0) return;
     for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders"] as const) {
-      const entityQ =
-        user.role === "super_admin"
-          ? collection(db, name)
-          : storeIds.length === 0
-            ? null
-            : query(collection(db, name), where("storeId", "in", storeIds));
-      if (entityQ) unsubscribers.push(onSnapshot(entityQ, triggerReload));
+      const entityQ = query(collection(db, name), where("storeId", "in", storeIds));
+      unsubscribers.push(onSnapshot(entityQ, triggerReload));
     }
   }
 
-  if (user.role === "super_admin") {
-    registerEntityListeners([]);
-  } else {
-    // Member: read accessible stores once, then register scoped listeners.
-    getDocs(storesQ)
-      .then((snap) => registerEntityListeners(snap.docs.map((d) => d.id)))
-      .catch(() => {
-        /* ignore — storesQ listener still drives reloads */
-      });
-  }
+  // Read accessible stores once, then register scoped listeners.
+  getDocs(storesQ)
+    .then((snap) => {
+      // For super_admin, storesQ is the adminStores control plane (docs keyed by
+      // storeId); for members it's their member `stores` docs. Both yield store ids.
+      registerEntityListeners(snap.docs.map((d) => d.id));
+    })
+    .catch(() => {
+      /* ignore — storesQ listener still drives reloads on subsequent changes */
+    });
 
   return () => {
     tornDown = true;
@@ -173,6 +175,27 @@ export function subscribeCloudState(
  * super_admin `list` of adminStores cannot leak tenant PII (G-P02). This is the
  * only shape the rules read for membership/ownership (isMember/isOwner).
  */
+/**
+ * Deep-clone with all `undefined` values removed (recursively), including those
+ * nested inside plain objects and arrays. Firestore rejects `undefined` at any
+ * depth ("Unsupported field value"). Arrays keep their order; objects with all
+ * values undefined become empty objects (kept, not dropped — Firestore accepts
+ * {} and null fine; we strip only the offending undefined values, not the keys
+ * that hold them, to avoid silently reshaping nested docs).
+ */
+export function stripUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripUndefined);
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v === undefined) continue;
+      out[k] = stripUndefined(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 export function projectAdminStore(store: { id: string } & Record<string, unknown>) {
   return {
     storeId: store.id,
@@ -216,11 +239,12 @@ export async function saveEntity(
 ): Promise<void> {
   const { db } = getFirebase();
   const { id, ...data } = entity;
-  // Firestore rejects `undefined` field values ("Unsupported field value").
-  // Tiered stores carry `price: undefined` (and flat stores `prices: undefined`),
-  // so strip undefined keys before writing — one guard for every entity/call site.
-  const clean: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(data)) if (v !== undefined) clean[k] = v;
+  // Firestore rejects `undefined` field values ("Unsupported field value") —
+  // including those nested in objects/arrays, e.g. a purchase line carrying
+  // `price: undefined` (inventory_tiered) or `prices: undefined` (on_demand)
+  // from the F3 price-edit fields. Strip undefined RECURSIVELY so any depth is
+  // safe. One guard for every entity/call site (products, purchases, etc.).
+  const clean = stripUndefined(data) as Record<string, unknown>;
 
   // G-P02: a store write MUST also write its adminStores control doc in the SAME
   // batched write — the rules resolve membership/ownership exclusively from
@@ -550,45 +574,13 @@ export async function rebuildPublicCatalog(
 }
 
 /**
- * Seed the demo stores (Santi + Joyería) into Firestore for the super-admin on a
- * brand-new (empty) cloud account. Members are NOT seeded — they see only stores
- * an admin has invited them to (empty until then). Idempotent.
- *
- * Race note: this runs inside a StoreProvider effect that can double-fire
- * (StrictMode / auth-state flicker). Two concurrent runs can BOTH see an empty
- * project before either has written. The `existing.stores.length > 0` guard
- * alone can't prevent that — so buildSeedState() uses DETERMINISTIC ids. A
- * second run overwrites the same doc ids instead of creating duplicates.
+ * No-op. This used to auto-seed demo stores (Santi + Joyería) into Firestore for
+ * a brand-new super_admin account. Removed: this is a real product — a new
+ * account starts EMPTY and the operator creates their own store. Auto-seeding
+ * demo data polluted dev/preview/prod backends with phantom stores. Kept as a
+ * no-op (not deleted) because StoreProvider calls it on every cloud login; the
+ * signature stays so the call site is unchanged.
  */
-export async function seedCloudIfEmpty(user: AppUser): Promise<void> {
-  if (user.role !== "super_admin") return; // members never auto-seed
-  const existing = await loadCloudState(user);
-  // A bulk emulator wipe can briefly leave stores visible while their products
-  // are gone. Treat that partial state as unseeded; deterministic ids make the
-  // repair safe and production never creates duplicate seed rows.
-  if (existing.stores.length > 0 && existing.products.length > 0) return;
-
-  const seed = migrateCatalog(buildSeedState());
-  // Write stores FIRST and await them: products/categories/orders rules call
-  // isMember(storeId), which reads the store doc — if stores write in parallel
-  // with their entities, the entity rule check can race ahead of the store write
-  // and deny the write (store not yet visible), aborting the whole seed.
-  for (const s of seed.stores) {
-    await saveEntity(user, "stores", { ...s, ownerUid: user.uid, memberUids: [user.uid] });
-  }
-  const writes: Promise<unknown>[] = [];
-  for (const p of seed.products) writes.push(saveEntity(user, "products", p));
-  for (const c of seed.categories) writes.push(saveEntity(user, "categories", c));
-  for (const s of seed.suppliers) writes.push(saveEntity(user, "suppliers", s));
-  for (const p of seed.purchases) writes.push(saveEntity(user, "purchases", p));
-  for (const c of seed.customers) writes.push(saveEntity(user, "customers", c));
-  for (const o of seed.orders) writes.push(saveEntity(user, "orders", o));
-  await Promise.all(writes);
-
-  // Publish the public catalog projection for each seeded store so
-  // /catalogo/santi and /catalogo/joyeria work immediately.
-  for (const s of seed.stores) {
-    await claimSlug(s.slug, s.id).catch(() => {});
-    await projectPublicForStore(s, seed.products, seed.categories).catch(() => {});
-  }
+export async function seedCloudIfEmpty(_user: AppUser): Promise<void> {
+  return;
 }

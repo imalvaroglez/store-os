@@ -29,6 +29,7 @@ function Root() {
 
   // Public storefront routes take over the whole viewport: no shell, no private
   // data. Anonymous-readable. A single component handles all three sub-routes.
+  // These are the ONLY routes visible without authentication.
   if (
     route.name === "public_store" ||
     route.name === "public_category" ||
@@ -42,29 +43,26 @@ function Root() {
     );
   }
 
-  // Signed in but no active store yet -> the picker (or create-first if empty).
-  if (user && !activeStore) {
-    return state.stores.length > 0 ? <StorePickerScreen /> : (
-      <div className="min-h-full">
-        <StoresScreen />
+  // SECURITY GATE: every non-public route requires an authenticated user. There
+  // is NO local demo and NO anonymous access to the admin panel — a visitor who
+  // lands on the root URL (or any private route) without a session sees ONLY the
+  // authentication screen. This also closes the hole where a stale demo
+  // activeStore in localStorage could render AppShell without a login.
+  if (!user) {
+    return (
+      <div className="min-h-full flex items-center justify-center p-4">
+        <div className="w-full max-w-sm">
+          <AuthScreen />
+        </div>
       </div>
     );
   }
 
-  // Signed out with no active store. In a built deployment (DEV=false) a visitor
-  // must authenticate before anything else — no demo on the public app. In dev and
-  // tests (DEV=true) keep the local create-first demo screen.
+  // Authenticated but no active store yet → the picker (or create-first if the
+  // account is genuinely empty). super_admin sees every store here; a member
+  // sees only the stores they belong to (scoped by loadCloudState + Firestore rules).
   if (!activeStore) {
-    if (!import.meta.env.DEV) {
-      return (
-        <div className="min-h-full flex items-center justify-center p-4">
-          <div className="w-full max-w-sm">
-            <AuthScreen />
-          </div>
-        </div>
-      );
-    }
-    return (
+    return state.stores.length > 0 ? <StorePickerScreen /> : (
       <div className="min-h-full">
         <StoresScreen />
       </div>

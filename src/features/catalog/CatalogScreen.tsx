@@ -33,15 +33,20 @@ function primaryThumb(p: Product): string | undefined {
   return p.imageUrl;
 }
 
+// Governed by `status` only — matches selectors.publicProductsForStore (the
+// source of truth for the public catalog). isPublic is legacy and ignored here
+// to avoid the "Privado" ambiguity (a published product with isPublic=false was
+// shown in the catalog but badged "Privado" in admin). draft = Borrador (not
+// visible), published = Publicado (visible), archived = Archivado.
 function statusLabel(p: Product): string {
   if (p.status === "draft") return "Borrador";
   if (p.status === "archived") return "Archivado";
-  return p.isPublic ? "Público" : "Privado";
+  return "Publicado";
 }
 function statusTone(p: Product): StatusTone {
   if (p.status === "draft") return "neutral";
   if (p.status === "archived") return "neutral";
-  return p.isPublic ? "success" : "neutral";
+  return "success";
 }
 
 function ProductCard({
@@ -152,7 +157,17 @@ export function CatalogScreen() {
         title="Catálogo"
         subtitle={`${products.length} ${products.length === 1 ? "producto" : "productos"}`}
         action={
-          <Button onClick={() => setCreating(true)}>+ Agregar</Button>
+          <div className="flex items-center gap-2">
+            {/* Preview what clients see — opens the public storefront in a new tab. */}
+            <a
+              href={`/catalogo/${activeStore.slug}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Button variant="secondary" size="sm">Ver público</Button>
+            </a>
+            <Button onClick={() => setCreating(true)}>+ Agregar</Button>
+          </div>
         }
       />
 

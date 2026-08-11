@@ -77,4 +77,16 @@ Sin pagos/checkout/carrito, sin facturas, sin proveedores, sin códigos de barra
 
 Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno + reglas). El primer usuario registrado se vuelve super-admin.
 
+### Ambientes y backends (cableado)
+
+Tres ambientes, dos backends Firebase. **Local y Preview comparten backend**; **Producción** está aislado:
+
+| Ambiente | Backend Firebase | Cómo se cablea |
+|---|---|---|
+| Local (desarrollo) | `store-os-dev` | `.env` local con las vars de dev (`VITE_FIREBASE_*`). Aquí validan los agentes ANTES de pushear. |
+| Preview (Vercel, UAT/QA) | `store-os-dev` | GitHub environment `Preview` → 6 `VITE_FIREBASE_*` secrets de dev. |
+| Producción (Vercel) | `store-os-f7cf8` | GitHub environment `Production` → 6 secrets de prod. Aislado: ventas reales. |
+
+`scripts/check-env.cjs` hace cumplir el contrato en CI: un deploy de **Preview** que apunte a prod (o sin projectId) **falla el build**; un deploy de **Production** que no apunte a prod **falla el build**. Los datos de prueba viven en `store-os-dev` y se siembran con `node scripts/seed-dev.cjs` (Olivia + admin@store.os); **nunca** se siembra ni toca prod.
+
 Los diseños detallados viven en `docs/superpowers/specs/`.
