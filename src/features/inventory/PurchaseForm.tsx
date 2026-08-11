@@ -12,7 +12,7 @@ import {
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
 import { applyPurchaseLines } from "../../lib/inventory";
 import { todayIso, nowIso } from "../../lib/dates";
-import { formatMoney } from "../../lib/money";
+import { formatMoney, parseAmount } from "../../lib/money";
 import type { Purchase, PurchaseLine, Supplier } from "../../types";
 import { SupplierForm } from "./SupplierForm";
 
@@ -29,6 +29,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const [supplierDraft, setSupplierDraft] = useState<Supplier | null>(null);
 
   if (!activeStore) return null;
+  const isTiered = activeStore.type === "inventory_tiered";
   const suppliers = suppliersForStore(state.suppliers, activeStore.id);
   const products = productsForStore(state.products, activeStore.id);
 
@@ -50,9 +51,18 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   function pickProduct(idx: number, productId: string) {
     const product = products.find((p) => p.id === productId);
     if (product) {
-      updateLine(idx, { productId, name: product.name, unitCost: product.cost ?? 0 });
+      // Carry the product's current sale prices onto the line so the user can
+      // see and edit them from the purchase (F3). inventory_tiered → prices,
+      // on_demand → price.
+      updateLine(idx, {
+        productId,
+        name: product.name,
+        unitCost: product.cost ?? 0,
+        prices: isTiered ? product.prices : undefined,
+        price: isTiered ? undefined : product.price,
+      });
     } else {
-      updateLine(idx, { productId: "", name: "", unitCost: 0 });
+      updateLine(idx, { productId: "", name: "", unitCost: 0, prices: undefined, price: undefined });
     }
   }
 
@@ -65,18 +75,25 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       toast.error("Cada línea necesita un producto.");
       return;
     }
-    // Apply stock + weighted-average cost to each product. upsertProduct also
-    // re-projects the public catalog, but only the private stock/cost moved
-    // (cost is never projected), so the projection is a no-op rewrite. At a
-    // few lines per purchase this stays well within the free tier.
+    // Apply stock + weighted-average cost to each product. Also merge any
+    // sale-price edits from the line (F3). upsertProduct re-projects the public
+    // catalog — stock/cost are private (no-op projection), but a price change
+    // DOES republish (intended: adjusting price while buying updates the
+    // catalog). If several lines touch the same product, the last line's price
+    // wins (applyPurchaseLines already folds qty/cost the same way).
     const computed = applyPurchaseLines(products, draft.lines);
     for (const [productId, update] of computed) {
       const p = state.products.find((x) => x.id === productId);
       if (p) {
+        const line = draft.lines.find((l) => l.productId === productId);
         await upsertProduct({
           ...p,
           quantityOnHand: update.quantityOnHand,
           cost: update.cost,
+          // Merge price edits only if the line carries them (undefined → keep
+          // the product's existing price).
+          prices: line?.prices ?? p.prices,
+          price: line?.price ?? p.price,
           updatedAt: nowIso(),
         });
       }
@@ -149,6 +166,35 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   onChange={(e) => updateLine(idx, { unitCost: parseFloat(e.target.value) || 0 })}
                 />
               </div>
+              {/* Sale-price edit (F3): shows the product's current prices so the
+                  user can adjust them while buying. Persisted onto the product
+                  on save. Only after a product is picked. */}
+              {line.productId && (
+                isTiered ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["retail", "wholesale", "reseller"] as const).map((tier) => (
+                      <TextField
+                        key={tier}
+                        label={tier === "retail" ? "Menudeo" : tier === "wholesale" ? "Mayoreo" : "Emprendedora"}
+                        inputMode="decimal"
+                        value={(line.prices?.[tier] ?? 0).toString()}
+                        onChange={(e) =>
+                          updateLine(idx, {
+                            prices: { ...(line.prices ?? { retail: 0, wholesale: 0, reseller: 0 }), [tier]: parseAmount(e.target.value) },
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <TextField
+                    label="Precio de venta"
+                    inputMode="decimal"
+                    value={(line.price ?? 0).toString()}
+                    onChange={(e) => updateLine(idx, { price: parseAmount(e.target.value) })}
+                  />
+                )
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-sm text-ink-soft">
                   Subtotal: {formatMoney(line.quantity * line.unitCost)}
