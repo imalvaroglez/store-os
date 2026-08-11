@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useStore, newSupplier } from "../../app/StoreProvider";
+import { useStore, newSupplier, newProduct } from "../../app/StoreProvider";
 import {
   Button,
+  CheckboxField,
   SelectField,
   TextField,
   TextArea,
@@ -13,7 +14,7 @@ import { suppliersForStore, productsForStore } from "../../lib/selectors";
 import { applyPurchaseLines } from "../../lib/inventory";
 import { todayIso, nowIso } from "../../lib/dates";
 import { formatMoney, parseAmount } from "../../lib/money";
-import type { Purchase, PurchaseLine, Supplier } from "../../types";
+import type { Purchase, PurchaseLine, Supplier, Product } from "../../types";
 import { SupplierForm } from "./SupplierForm";
 
 // Multi-line supplier purchase ticket. Each line replenishes a product's stock
@@ -27,6 +28,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   // Draft supplier for the inline-create Sheet. Its id is known up-front so we
   // can auto-select it on the purchase once saved.
   const [supplierDraft, setSupplierDraft] = useState<Supplier | null>(null);
+  // Inline product create (F2): the index of the line that triggered it, and a
+  // draft product. Mini-form fields tracked alongside.
+  const [productLineIdx, setProductLineIdx] = useState<number | null>(null);
+  const [productDraft, setProductDraft] = useState<Product | null>(null);
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
@@ -140,16 +145,30 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         <div className="space-y-2">
           {draft.lines.map((line, idx) => (
             <div key={idx} className="space-y-2 p-3 rounded-lg bg-surface-soft">
-              <SelectField
-                label="Producto"
-                value={line.productId}
-                onChange={(v) => pickProduct(idx, v)}
-                options={products.map((p) => ({
-                  value: p.id,
-                  label: `${p.name} (existencia: ${p.quantityOnHand ?? 0})`,
-                }))}
-                placeholder="Elegir producto…"
-              />
+              <div>
+                <SelectField
+                  label="Producto"
+                  value={line.productId}
+                  onChange={(v) => pickProduct(idx, v)}
+                  options={products.map((p) => ({
+                    value: p.id,
+                    label: `${p.name} (existencia: ${p.quantityOnHand ?? 0})`,
+                  }))}
+                  placeholder="Elegir producto…"
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="mt-1 -ml-2"
+                  onClick={() => {
+                    if (!activeStore) return;
+                    setProductDraft(newProduct(activeStore.id));
+                    setProductLineIdx(idx);
+                  }}
+                >
+                  + Nuevo producto
+                </Button>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <TextField
                   label="Cantidad"
@@ -259,6 +278,119 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           />
         </Sheet>
       )}
+
+      {productLineIdx !== null && productDraft && activeStore && (
+        <Sheet
+          open
+          onClose={() => { setProductLineIdx(null); setProductDraft(null); }}
+          title="Nuevo producto"
+        >
+          <ProductMiniForm
+            draft={productDraft}
+            isTiered={isTiered}
+            onDone={async (saved) => {
+              // Upsert (private by default; published if the user toggled it),
+              // then set it directly on the line. We bypass pickProduct because
+              // it reads the `products` array from this render's scope, which is
+              // stale right after the awaited upsert — but we already hold the
+              // full saved product, so set the line fields directly.
+              await upsertProduct(saved);
+              updateLine(productLineIdx, {
+                productId: saved.id,
+                name: saved.name,
+                unitCost: saved.cost ?? 0,
+                prices: isTiered ? saved.prices : undefined,
+                price: isTiered ? undefined : saved.price,
+              });
+              setProductLineIdx(null);
+              setProductDraft(null);
+            }}
+            onDraftChange={setProductDraft}
+          />
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+// Minimal product creator for the purchase flow (F2). Creates a product with
+// name + cost + sale price (private by default; toggle to publish). The full
+// ProductForm (photo, categories, SEO) is filled later from the catalog. Caller
+// owns the draft via onDraftChange so it can upsert+pick on save.
+function ProductMiniForm({
+  draft,
+  isTiered,
+  onDone,
+  onDraftChange,
+}: {
+  draft: Product;
+  isTiered: boolean;
+  onDone: (saved: Product) => void;
+  onDraftChange: (p: Product) => void;
+}) {
+  const [publish, setPublish] = useState(false);
+  const [retail, setRetail] = useState(draft.prices?.retail?.toString() ?? "0");
+  const [wholesale, setWholesale] = useState(draft.prices?.wholesale?.toString() ?? "0");
+  const [reseller, setReseller] = useState(draft.prices?.reseller?.toString() ?? "0");
+  const [price, setPrice] = useState(draft.price?.toString() ?? "0");
+  const [cost, setCost] = useState(draft.cost?.toString() ?? "0");
+  const toast = useToast();
+
+  function save() {
+    if (!draft.name.trim()) {
+      toast.error("Pon un nombre al producto.");
+      return;
+    }
+    const saved: Product = {
+      ...draft,
+      name: draft.name.trim(),
+      cost: parseAmount(cost) || undefined,
+      // Prices only when the store uses them.
+      prices: isTiered
+        ? { retail: parseAmount(retail), wholesale: parseAmount(wholesale), reseller: parseAmount(reseller) }
+        : draft.prices,
+      price: isTiered ? draft.price : parseAmount(price),
+      status: publish ? "published" : "draft",
+      isPublic: publish,
+      updatedAt: nowIso(),
+    };
+    onDone(saved);
+  }
+
+  return (
+    <div className="space-y-4">
+      <TextField
+        label="Nombre"
+        placeholder="Ej. Anillo de plata 925"
+        value={draft.name}
+        onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
+        autoFocus
+      />
+      <TextField
+        label="Costo"
+        inputMode="decimal"
+        placeholder="0"
+        value={cost}
+        onChange={(e) => setCost(e.target.value)}
+      />
+      {isTiered ? (
+        <div className="grid grid-cols-3 gap-2">
+          <TextField label="Menudeo" inputMode="decimal" placeholder="0" value={retail} onChange={(e) => setRetail(e.target.value)} />
+          <TextField label="Mayoreo" inputMode="decimal" placeholder="0" value={wholesale} onChange={(e) => setWholesale(e.target.value)} />
+          <TextField label="Emprendedora" inputMode="decimal" placeholder="0" value={reseller} onChange={(e) => setReseller(e.target.value)} />
+        </div>
+      ) : (
+        <TextField label="Precio de venta" inputMode="decimal" placeholder="0" value={price} onChange={(e) => setPrice(e.target.value)} />
+      )}
+      <CheckboxField
+        label="Publicar en el catálogo"
+        checked={publish}
+        onChange={setPublish}
+        hint="Si no, queda como borrador privado. Completa la ficha después."
+      />
+      <Button full size="lg" onClick={save} disabled={!draft.name.trim()}>
+        Crear producto
+      </Button>
     </div>
   );
 }
