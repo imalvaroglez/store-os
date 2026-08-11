@@ -468,6 +468,12 @@ async function run() {
   const adminStore = {
     storeId: STORE_ID,
     name: store.name,
+    // type is control data: it determines how the store is administered (which
+    // price model the product form shows, etc.). The super_admin reads the
+    // store list from adminStores, so type MUST live here or the control view
+    // can't render the right UI. Matches projectAdminStore() in firestoreData.ts.
+    type: store.type,
+    slug: store.slug,
     ownerUid: adminUid,
     memberUids: [adminUid],
   };
