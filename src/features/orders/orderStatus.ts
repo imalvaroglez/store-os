@@ -23,6 +23,20 @@ const ORDER_FLOW: OrderStatus[] = [
   "paid",
 ];
 
+// Imperative verbs for the next-action BUTTON (the action to take), keyed by the
+// status the action advances TO. Distinct from ORDER_STATUS_LABELS (participles
+// for the status badge). M3: the button said "Confirmado" (state) instead of
+// "Confirmar" (action).
+const ORDER_ACTION_VERBS: Record<OrderStatus, string> = {
+  asked: "Confirmar",
+  confirmed: "Confirmar",
+  to_buy: "Comprar",
+  bought: "Marcar comprado",
+  arrived: "Marcar llegada",
+  delivered: "Entregar",
+  paid: "Cobrar",
+};
+
 export function nextStatus(status: OrderStatus): OrderStatus | null {
   const i = ORDER_FLOW.indexOf(status);
   if (i < 0 || i >= ORDER_FLOW.length - 1) return null;
@@ -33,5 +47,5 @@ export function nextStatus(status: OrderStatus): OrderStatus | null {
 export function nextActionVerb(status: OrderStatus): string | null {
   const next = nextStatus(status);
   if (!next) return null;
-  return ORDER_STATUS_LABELS[next];
+  return ORDER_ACTION_VERBS[next];
 }
