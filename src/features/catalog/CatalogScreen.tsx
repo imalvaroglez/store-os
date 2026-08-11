@@ -157,7 +157,17 @@ export function CatalogScreen() {
         title="Catálogo"
         subtitle={`${products.length} ${products.length === 1 ? "producto" : "productos"}`}
         action={
-          <Button onClick={() => setCreating(true)}>+ Agregar</Button>
+          <div className="flex items-center gap-2">
+            {/* Preview what clients see — opens the public storefront in a new tab. */}
+            <a
+              href={`/catalogo/${activeStore.slug}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Button variant="secondary" size="sm">Ver público</Button>
+            </a>
+            <Button onClick={() => setCreating(true)}>+ Agregar</Button>
+          </div>
         }
       />
 

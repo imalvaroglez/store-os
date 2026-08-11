@@ -289,3 +289,43 @@ Plantilla para nuevas entradas:
 ### Out-of-scope explícito
 [Lo que NO se hace esta iteración]
 -->
+
+---
+
+## 💡 Editar el catálogo público in-place (WYSIWYG)
+
+**Estado:** 💡 idea
+**Solicitó:** Álvaro (PO), 2026-08-11
+
+### Problema
+
+Hoy la tienda pública se edita desde **Ajustes de tienda → StorefrontEditor**
+(hero, historia, FAQ, etc.) — un formulario aparte, desconectado de lo que la
+clienta ve. Fer quiere editar el contenido público **directamente sobre la vista
+pública** (click en el texto → edita), viendo el resultado en contexto, no en
+un formulario separado.
+
+### Alcance propuesto (idea — requiere spec)
+
+Edición WYSIWYG del storefront: un modo "editar" (solo para el dueño/admin
+logueado) sobre `/catalogo/:slug` donde los textos editables (hero, cuerpo,
+historia, FAQ, envíos, etc.) se hacen clickeables; al click, un input/textarea
+inline reemplaza el texto; al guardar, persiste a `publicStores/{slug}.storefront`
++ `stores/{id}.storefront`. La clienta anónima sigue viendo la versión de solo
+lectura.
+
+Probablemente conviene hacerlo **junto con** la unificación Catálogo/Inventario
+(entrada anterior): si "Productos" es la única pestaña admin, la vista pública
++WYSIWYG encaja como la otra cara de esa misma moneda.
+
+### Decisiones pendientes (cerrar antes de spec)
+
+1. ¿Qué campos son editables in-place? (¿todos los del `storefront`, o un subset?)
+2. ¿El WYSIWYG edita solo storefront, o también reordenar/ocultar productos?
+3. ¿Cómo se persiste (por campo on-blur, o un modo "edición" con guardado global)?
+4. ¿Permisos: solo owner, o miembros también?
+
+### Out-of-scope explícito
+
+- Editor visual de layout/colores (esos van por tokens de tema, ya existente).
+- Multi-idioma (YAGNI).
