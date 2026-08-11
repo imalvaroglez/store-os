@@ -280,7 +280,7 @@ export function StoreSettingsScreen({
 
       {showSuppliers && (
         <Sheet open onClose={() => setShowSuppliers(false)} title="Proveedores">
-          <SuppliersScreen />
+          <SuppliersScreen storeId={store.id} />
         </Sheet>
       )}
 
