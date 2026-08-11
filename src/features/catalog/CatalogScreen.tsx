@@ -33,15 +33,20 @@ function primaryThumb(p: Product): string | undefined {
   return p.imageUrl;
 }
 
+// Governed by `status` only — matches selectors.publicProductsForStore (the
+// source of truth for the public catalog). isPublic is legacy and ignored here
+// to avoid the "Privado" ambiguity (a published product with isPublic=false was
+// shown in the catalog but badged "Privado" in admin). draft = Borrador (not
+// visible), published = Publicado (visible), archived = Archivado.
 function statusLabel(p: Product): string {
   if (p.status === "draft") return "Borrador";
   if (p.status === "archived") return "Archivado";
-  return p.isPublic ? "Público" : "Privado";
+  return "Publicado";
 }
 function statusTone(p: Product): StatusTone {
   if (p.status === "draft") return "neutral";
   if (p.status === "archived") return "neutral";
-  return p.isPublic ? "success" : "neutral";
+  return "success";
 }
 
 function ProductCard({
