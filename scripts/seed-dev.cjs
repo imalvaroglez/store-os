@@ -459,11 +459,34 @@ async function run() {
     memberUids: [adminUid],
   };
 
+  // Control-plane doc (Espec 1, G-P02): adminStores/{storeId} is the CANONICAL
+  // source of membership/ownership. stores/{id}.get requires isMember(), which
+  // requires exists(adminStores/{id}). Without this doc the seeded store is on
+  // disk but unreadable (same defect as the Olivia-disappears-from-prod
+  // incident). Carries ONLY control metadata — never business content — so a
+  // super_admin read of this collection cannot leak tenant PII.
+  const adminStore = {
+    storeId: STORE_ID,
+    name: store.name,
+    // type is control data: it determines how the store is administered (which
+    // price model the product form shows, etc.). The super_admin reads the
+    // store list from adminStores, so type MUST live here or the control view
+    // can't render the right UI. Matches projectAdminStore() in firestoreData.ts.
+    type: store.type,
+    slug: store.slug,
+    ownerUid: adminUid,
+    memberUids: [adminUid],
+  };
+
   const products = enrichProducts(baseProducts);
 
-  // 1. Write Olivia store + categories + products + customers + orders.
-  console.log("[seed-dev] Escribiendo tienda, categorías, productos, clientes, órdenes...");
+  // 1. Write Olivia store (data plane) + adminStores (control plane) + categories
+  //    + products + customers + orders. adminStores and stores are written in the
+  //    SAME atomic batch, mirroring the client's saveEntity("stores") writeBatch,
+  //    so the store is never half-visible.
+  console.log("[seed-dev] Escribiendo tienda, adminStores, categorías, productos, clientes, órdenes...");
   const batch = db.batch();
+  batch.set(db.collection("adminStores").doc(STORE_ID), adminStore);
   batch.set(db.collection("stores").doc(STORE_ID), storeWithMembership);
   for (const c of categories) batch.set(db.collection("categories").doc(c.id), c);
   for (const p of products) batch.set(db.collection("products").doc(p.id), p);

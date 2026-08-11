@@ -1,5 +1,4 @@
 import type { AppState } from "../types";
-import { buildSeedState } from "./seed";
 import { migrateCatalog } from "./catalog";
 
 export const STORAGE_KEY = "store_os_state_v1";
@@ -7,15 +6,18 @@ export const STORAGE_KEY = "store_os_state_v1";
 // ponytail: whole-state load/save. Simpler than per-entity keys; local-first so size is tiny.
 // When Firebase lands later, swap this adapter; the reducer/UI shape stays.
 
-// In a built deployment we never auto-seed demo data into a visitor's browser —
-// a signed-out visitor with empty storage should reach the AuthScreen, not a demo.
-// In dev/tests (import.meta.env.DEV) the seed keeps the local demo working.
+// A signed-out visitor (or a developer who hasn't logged in) with empty storage
+// reaches the AuthScreen — we NEVER auto-seed demo stores (Olivia/Santi/Joyería)
+// into the browser. Seeing phantom demo stores was confusing operators. Demo
+// data is still available for tests via buildSeedState(); it just isn't loaded
+// automatically into localStorage anymore. The resetDemo() action can still
+// pull it in on demand from the UI.
 function emptyState(): AppState {
   return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
 }
 
 function freshState(): AppState {
-  return import.meta.env.DEV ? buildSeedState() : emptyState();
+  return emptyState();
 }
 
 export function loadState(): AppState {

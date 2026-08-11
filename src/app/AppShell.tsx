@@ -32,7 +32,7 @@ const TAB_FOR_PATH: Record<string, Tab> = {
 };
 
 export function AppShell() {
-  const { activeStore, resetDemo, cloud, setActiveStore } = useStore();
+  const { activeStore, setActiveStore } = useStore();
   const { user, enabled: authEnabled, signOut } = useAuth();
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -137,69 +137,30 @@ export function AppShell() {
             <ThemePicker />
           </div>
 
-          {authEnabled && (
+          {authEnabled && user && (
             <div className="space-y-3">
               <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Cuenta</h3>
-              {user ? (
-                <>
-                  <p className="text-sm text-ink-soft">
-                    Conectado como <span className="font-semibold text-ink">{user.email}</span>
-                    {user.role === "super_admin" && " · administrador"}
-                  </p>
-                  <p className="text-xs text-ink-soft">Tus tiendas se sincronizan en la nube.</p>
-                  <Button
-                    variant="secondary"
-                    full
-                    onClick={() => {
-                      signOut();
-                      setSettingsOpen(false);
-                    }}
-                  >
-                    Cerrar sesión
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm text-ink-soft">
-                    Estás en modo demostración (local). Entra para sincronizar tus tiendas en la nube.
-                  </p>
-                  <Button
-                    full
-                    onClick={() => {
-                      setSettingsOpen(false);
-                      setAuthOpen(true);
-                    }}
-                  >
-                    Entrar / Crear cuenta
-                  </Button>
-                </>
-              )}
+              <p className="text-sm text-ink-soft">
+                Conectado como <span className="font-semibold text-ink">{user.email}</span>
+                {user.role === "super_admin" && " · administrador"}
+              </p>
+              <p className="text-xs text-ink-soft">Tus tiendas se sincronizan en la nube.</p>
+              <Button
+                variant="secondary"
+                full
+                onClick={() => {
+                  signOut();
+                  setSettingsOpen(false);
+                }}
+              >
+                Cerrar sesión
+              </Button>
             </div>
           )}
 
           <div className="space-y-3">
             <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Datos</h3>
-            {cloud ? (
-              <p className="text-sm text-ink-soft">Tus datos viven en la nube y se sincronizan entre dispositivos.</p>
-            ) : (
-              <>
-                <p className="text-sm text-ink-soft">
-                  Store OS guarda todo en este dispositivo. {authEnabled ? "Entra para usar la nube." : "No se sincroniza con la nube."}
-                </p>
-                <Button
-                  variant="danger"
-                  full
-                  onClick={() => {
-                    if (confirm("Esto borra todo y recarga los datos de ejemplo. ¿Continuar?")) {
-                      resetDemo();
-                      setSettingsOpen(false);
-                    }
-                  }}
-                >
-                  Reiniciar con datos de ejemplo
-                </Button>
-              </>
-            )}
+            <p className="text-sm text-ink-soft">Tus datos viven en la nube y se sincronizan entre dispositivos.</p>
           </div>
         </div>
       </Sheet>

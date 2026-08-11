@@ -223,6 +223,12 @@ export type PurchaseLine = {
   name: string; // snapshot at purchase time
   quantity: number;
   unitCost: number;
+  // Sale-price edits made from the purchase line (F3). Optional so existing
+  // purchases (and applyPurchaseLines) are unaffected. Persisted onto the
+  // product when the purchase is saved. inventory_tiered uses `prices`;
+  // on_demand uses `price`.
+  price?: number;
+  prices?: ProductPrices;
 };
 
 /** A supplier purchase (a "ticket"): one or more lines, a confirmed total. */

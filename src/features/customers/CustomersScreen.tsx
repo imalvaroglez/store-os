@@ -1,14 +1,21 @@
+import { useState } from "react";
 import { useStore, newCustomer } from "../../app/StoreProvider";
 import {
   Button,
   Card,
+  Dialog,
+  Dropdown,
+  DropdownItem,
+  DropdownSeparator,
   EmptyState,
+  IconButton,
   Money,
   ScreenHeader,
   Screen,
   Sheet,
   StatRow,
   useEntitySheet,
+  useToast,
 } from "../../design-system";
 import { CustomerForm } from "./CustomerForm";
 import { customersForStore, ordersForStore } from "../../lib/selectors";
@@ -16,8 +23,11 @@ import { pending } from "../../lib/money";
 import type { Customer } from "../../types";
 
 export function CustomersScreen() {
-  const { state, activeStore } = useStore();
+  const { state, activeStore, deleteCustomer } = useStore();
   const sheet = useEntitySheet<Customer>();
+  const toast = useToast();
+  const [deleting, setDeleting] = useState<Customer | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   if (!activeStore) return null;
   const customers = customersForStore(state.customers, activeStore.id);
@@ -60,15 +70,41 @@ export function CustomersScreen() {
                       {c.phone ?? "Sin teléfono"} · {cOrders.length} pedidos
                     </p>
                   </div>
-                  <div className="text-right shrink-0 space-y-1">
-                    <StatRow label="Vendido" tone="default">
-                      <Money amount={totalSold} />
-                    </StatRow>
-                    {due > 0 && (
-                      <StatRow label="Falta cobrar" tone="danger">
-                        <Money amount={due} />
+                  <div className="flex items-center gap-1 shrink-0">
+                    <div className="text-right space-y-1">
+                      <StatRow label="Vendido" tone="default">
+                        <Money amount={totalSold} />
                       </StatRow>
-                    )}
+                      {due > 0 && (
+                        <StatRow label="Falta cobrar" tone="danger">
+                          <Money amount={due} />
+                        </StatRow>
+                      )}
+                    </div>
+                    {/* Stop propagation so opening the menu / picking an item does
+                        not also trigger the card's onClick (edit). */}
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <Dropdown
+                        open={menuOpenId === c.id}
+                        onClose={() => setMenuOpenId(null)}
+                        trigger={
+                          <IconButton
+                            variant="ghost"
+                            aria-label="Acciones"
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpenId === c.id}
+                            onClick={() => setMenuOpenId(menuOpenId === c.id ? null : c.id)}
+                            className="text-xl -mr-1"
+                          >
+                            ⋯
+                          </IconButton>
+                        }
+                      >
+                        <DropdownItem onClick={() => { setMenuOpenId(null); sheet.openEdit(c); }}>Editar</DropdownItem>
+                        <DropdownSeparator />
+                        <DropdownItem tone="danger" onClick={() => { setMenuOpenId(null); setDeleting(c); }}>Eliminar</DropdownItem>
+                      </Dropdown>
+                    </div>
                   </div>
                 </div>
               </Card>
@@ -86,6 +122,42 @@ export function CustomersScreen() {
           <CustomerForm customer={sheet.entity} onDone={sheet.close} />
         )}
       </Sheet>
+
+      <Dialog
+        open={deleting !== null}
+        title="Eliminar cliente"
+        tone="danger"
+        onClose={() => setDeleting(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDeleting(null)}>Cancelar</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (deleting) {
+                  deleteCustomer(deleting.id);
+                  toast.success(`«${deleting.name}» eliminado`);
+                }
+                setDeleting(null);
+              }}
+            >
+              Eliminar
+            </Button>
+          </>
+        }
+      >
+        {deleting && (() => {
+          const n = orders.filter((o) => o.customerId === deleting.id).length;
+          return (
+            <p className="text-sm text-on-surface-soft">
+              ¿Eliminar a <span className="font-semibold text-on-surface">{deleting.name}</span>? Esta acción no se puede deshacer.
+              {n > 0 && (
+                <> Tiene <span className="font-semibold">{n}</span> {n === 1 ? "pedido asociado" : "pedidos asociados"} que quedarán sin cliente (no se borran).</>
+              )}
+            </p>
+          );
+        })()}
+      </Dialog>
     </Screen>
   );
 }

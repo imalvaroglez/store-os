@@ -1,16 +1,21 @@
 name: CI
 
-# Two environments mirror Vercel's model:
-#   - PRs (and any push not to main) build against the PREVIEW backend (dev).
-#   - A merge that lands on `main` builds against PRODUCTION.
+# CI/CD pipeline. The Vercel project's "Ignored Build Step" is set to `exit 0`
+# (configured in the Vercel dashboard, not in this repo), so Vercel NEVER builds
+# on Git push. The ONLY path to a Vercel deployment is the `deploy` job below,
+# which runs exclusively after build-test AND rules-and-e2e pass.
+#   - Push to a non-main branch → Preview deploy (points at the dev Firebase).
+#   - Push to main (merge)        → Production deploy (points at prod Firebase).
+# If Vercel ever starts auto-deploying again (new deployments you didn't trigger
+# from this workflow), the Ignored Build Step regressed — re-set it to `exit 0`.
 # The job-level `environment:` selects which set of VITE_FIREBASE_* secrets
-# GitHub injects: the `preview` environment's secrets point at the dev Firebase
-# project; the `production` environment's secrets point at the prod project.
-# Configure both under repo Settings → Environments.
+# GitHub injects (Preview environment → dev, Production environment → prod).
 on:
   pull_request:
   push:
-    branches: [main]
+    # Any branch: feature-branch pushes produce a Preview deploy (after CI);
+    # a push to main produces a Production deploy.
+    branches: ['**']
 
 jobs:
   # Resolves once per run: "Production" when the merge lands on main, else "Preview".
@@ -67,7 +72,7 @@ jobs:
           cache: "npm"
       - run: npm ci
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -97,3 +102,134 @@ jobs:
         run: npm run test:rules
       - name: E2E (Playwright)
         run: npm run e2e
+
+  # ───────────────────────────── deploy ──────────────────────────────
+  # The ONLY path to a Vercel deployment. Runs only if BOTH gates passed.
+  # Vercel's Git auto-deploy is OFF, so without this job nothing publishes.
+  deploy:
+    needs: [env-select, build-test, rules-and-e2e]
+    # Only deploy on push events (a push to a branch, or a merge to main).
+    # PR-only synthetic events would double-deploy; the underlying push already
+    # triggers this.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.env-select.outputs.env-name }}
+    # The Vercel CLI reads ORG/PROJECT id from .vercel/project.json OR these env
+    # vars. The file is gitignored, so we expose both env vars job-wide here
+    # AND recreate the file in the first step for maximum robustness.
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    outputs:
+      deployment-url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Recreate .vercel/project.json (gitignored, not in checkout)
+        run: |
+          mkdir -p .vercel
+          printf '{"projectId":"%s","orgId":"%s","projectName":"store-os"}' \
+            "${{ secrets.VERCEL_PROJECT_ID }}" "${{ secrets.VERCEL_ORG_ID }}" > .vercel/project.json
+          cat .vercel/project.json
+      - run: npm ci
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+      - name: Resolve Vercel target
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "main" ]; then
+            echo "env=production" >> "$GITHUB_OUTPUT"
+            echo "vercel_env=production" >> "$GITHUB_OUTPUT"
+            echo "prod_flag=--prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=preview" >> "$GITHUB_OUTPUT"
+            echo "vercel_env=preview" >> "$GITHUB_OUTPUT"
+            echo "prod_flag=" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Pull Vercel project config
+        run: vercel pull --yes --environment=${{ steps.target.outputs.env }} --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Build (Vercel, with Firebase env for check-env.cjs)
+        # IMPORTANT: the VITE_FIREBASE_* vars are passed HERE from GitHub
+        # environment secrets (Preview=store-os-dev, Production=store-os-f7cf8).
+        # Vercel itself holds ZERO VITE_FIREBASE_* env vars — GitHub is the single
+        # source of truth, so there is no second source that could override the
+        # backend per environment. `vercel build` reads these from the process env.
+        run: vercel build ${{ steps.target.outputs.prod_flag }} --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          # check-env.cjs validates the (VITE_VERCEL_ENV, projectId) pair.
+          # VITE_VERCEL_ENV is NOT auto-injected when building outside Vercel,
+          # so we set it explicitly so the cross-env guard runs correctly.
+          VITE_VERCEL_ENV: ${{ steps.target.outputs.vercel_env }}
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_SENDER_ID: ${{ secrets.VITE_FIREBASE_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+      - name: Deploy
+        id: deploy
+        # `vercel deploy` writes the deployment URL to stdout and trailing
+        # hints ("To deploy to production…") to stderr, so we must NOT merge
+        # them (the old `2>&1 | tail -n 1` captured the hint, not the URL).
+        # Per the CLI docs: stdout is always the Deployment URL. Redirect
+        # stdout to a file, stderr to the log; the file holds the URL alone.
+        run: |
+          set +e
+          vercel deploy --prebuilt ${{ steps.target.outputs.prod_flag }} --token=${{ secrets.VERCEL_TOKEN }} > deploy-url.txt 2> deploy-err.txt
+          code=$?
+          if [ $code -ne 0 ]; then
+            echo "vercel deploy failed (exit $code):"
+            cat deploy-err.txt
+            exit $code
+          fi
+          URL="$(cat deploy-url.txt | tr -d '[:space:]')"
+          echo "Deployed to: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+  # Post the preview URL as a comment on the PR (preview only). CLI deploys
+  # don't generate branch-alias URLs like the Git integration does, so we
+  # surface the deployment URL manually.
+  comment-preview-url:
+    needs: [env-select, deploy]
+    if: needs.env-select.outputs.env-name != 'Production' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # The repo's workflow-permission default is "read and write" (set in
+    # repo Settings → Actions → General → Workflow permissions). We still scope
+    # this job to the minimum it needs, so the token can't do more than read
+    # code + write PR comments even though the repo default is broader.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Find and comment on the PR for this branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          URL: ${{ needs.deploy.outputs.deployment-url }}
+        run: |
+          set +e
+          # gh pr list --head is unreliable in Actions with the auto GITHUB_TOKEN
+          # (cli/cli#1314, #4902): it often returns empty even for an open PR.
+          # Use the search API, which respects pull-requests:read consistently.
+          PR_NUMBER=$(gh api graphql -f query='
+            query($headRefName: String!) {
+              repository(owner: "${{ github.repository_owner }}", name: "${{ github.event.repository.name }}") {
+                pullRequests(headRefName: $headRefName, states: OPEN, first: 1) {
+                  nodes { number }
+                }
+              }
+            }' -F headRefName='${{ github.ref_name }}' -q '.data.repository.pullRequests.nodes[0].number')
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No open PR for branch ${{ github.ref_name }}; skipping comment."
+            exit 0
+          fi
+          BODY=$(printf '🚀 **Preview deploy** (CI verde): %s\nApunta al backend de **dev** (store-os-dev). Generado por GitHub Actions tras pasar build-test + rules-and-e2e.' "$URL")
+          # -R is required because this job has no checkout (no .git for gh to
+          # infer the repo from); without it gh pr comment fails with
+          # "fatal: not a git repository".
+          gh pr comment "$PR_NUMBER" -R "${{ github.repository }}" --body "$BODY" || echo "comment failed (non-fatal)"
+          exit 0
