@@ -12,17 +12,19 @@ export const meta = {
 };
 
 // Software-delivery workflow — executes the canonical FSM.
-// Convention: `export const meta` first, then a top-level await body (the
-// runtime wraps the body in an async function). NO `export default`.
-// NOTE: this runtime does NOT expose `args` as a global (verified by probe).
-// The objective is inlined below. To re-target, edit these three constants.
-// (ponytail: a future refactor should read args.objective/specPath/planPath
-//  dynamically so re-targeting needs no file edit — tracked as harness debt.)
-
-const objective = "Build a one-command dev seed script (scripts/seed-dev.cjs) that populates the isolated store-os-dev Firebase project with realistic test data so the developer can work against a populated dev environment without touching production, per docs/superpowers/specs/2026-08-05-dev-seed-script-design.md. Reuse src/lib/seed.ts buildSeedState() to construct the Olivia jewelry store (slug 'olivia', same as prod — safe because projects are separate) with its categories, ~5 products, customers, and orders, writing to dev Firestore via the firebase-admin SDK with membership fields (ownerUid/memberUids) set to the admin uid. Claim the slug and write public projections so /catalogo/olivia works on the Preview. Upload 1-2 generated sample JPEGs to dev Storage and link them on a product (validates the dev Storage + IAM grant). Authentication is via firebase-admin with Application Default Credentials (ADC) — established once by the human with 'gcloud auth application-default login'; NO password, NO committed secret. If ADC is absent the script prints the gcloud command and exits. The script MUST be dev-only: it hardcodes the dev projectId and aborts unless projectId === 'store-os-dev' — this guard is LOAD-BEARING because the Admin SDK bypasses Security Rules, so nothing else would stop a prod write. firebase-admin is a devDependency (Node-only, never in the client bundle). Idempotent (fixed ids from buildSeedState overwrite cleanly on re-run).";
-
-const specPath = "docs/superpowers/specs/2026-08-05-dev-seed-script-design.md";
-const planPath = "";
+// Convention: `export const meta` first, then a top-level await body. This
+// runtime (a Bun-based sandbox, NOT Node/ESM) does NOT support `export default`,
+// `require`, or `fs`. It exposes globals: agent/parallel/pipeline/log/phase/args/
+// budget/workflow. The `args` passed via Workflow({args: {...}}) arrives as a
+// STRING of JSON (verified by probe) — JSON.parse it to recover the object.
+//
+// Re-targeting is done by passing args.objective (REQUIRED) at invocation time:
+//   Workflow({ scriptPath: ".../software-delivery.js",
+//              args: { objective: "<bounded objective>", specPath?: "...", planPath?: "..." } })
+// There is NO hardcoded default objective — if args.objective is missing the
+// workflow hard-fails with a clear error. (Previously the objective was inlined
+// as a constant, which silently ignored the passed args and caused every
+// invocation to re-run the same delivery, producing false COMPLETE reports.)
 
 // Canonical FSM order (mirrors .claude/loops/software-delivery.fsm.yaml).
 const ORDER = ["INTAKE","DISCOVERY","REQUIREMENTS_SPEC","STORY_DEFINITION","STORY_REVIEW","TEST_DESIGN","ARCHITECTURE_PRECHECK","IMPLEMENTATION_PLAN","IMPLEMENTATION","UNIT_VERIFICATION","ACCEPTANCE_VERIFICATION","CLEANUP","INDEPENDENT_CODE_REVIEW","SECURITY_HARDENING","QA_EXECUTION","ARCHITECTURE_FINAL_REVIEW","RELEASE_READINESS","COMPLETE"];
@@ -41,9 +43,8 @@ const PHASE_MAP = {
 // (breaks resume). Derive a STABLE runId from the objective so each delivery
 // gets its OWN evidence directory (.claude/runs/<runId>/) — otherwise successive
 // deliveries share "run_delivery/" and reviewers see stale artifacts from the
-// prior objective (which blocked a real delivery: STORY_REVIEW found env-separation
-// stories while reviewing the dev-seed objective). A 32-bit FNV-1a hash of the
-// objective gives a short, stable, per-objective id.
+// prior objective. A 32-bit FNV-1a hash of the objective gives a short, stable,
+// per-objective id.
 function fnv1a(str) {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
@@ -52,6 +53,32 @@ function fnv1a(str) {
   }
   return (h >>> 0).toString(36);
 }
+
+// Recover args from the runtime's JSON-string global. Hard-fail (return early)
+// if objective is missing — NO silent default. This guard is load-bearing: a
+// silent fallback previously made every invocation re-run a stale delivery.
+let _args = {};
+if (typeof args !== "undefined" && args) {
+  try {
+    const parsed = typeof args === "string" ? JSON.parse(args) : args;
+    // JSON.parse("null") -> null, JSON.parse("42") -> 42, etc. Normalize any
+    // non-object to {} so _args.objective is always a safe property access
+    // (otherwise a "null" args string throws TypeError and bypasses the
+    // controlled FAILED return — verified reproducible).
+    _args = parsed && typeof parsed === "object" ? parsed : {};
+  } catch (e) { _args = {}; }
+}
+const objective = _args.objective;
+const specPath = _args.specPath || "";
+const planPath = _args.planPath || "";
+if (!objective || typeof objective !== "string" || !objective.trim()) {
+  return {
+    ok: false,
+    status: "FAILED",
+    reason: "Missing required args.objective. Invoke with Workflow({scriptPath, args:{objective:\"<bounded objective>\"}}). The workflow has NO default objective (a hardcoded default previously caused false COMPLETE by re-running a stale delivery).",
+  };
+}
+
 const runId = "run_" + fnv1a(objective);
 const events = [];
 const passed = [];
