@@ -4,7 +4,6 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
@@ -19,6 +18,7 @@ const RECORD_STAGES = new Set(["discovery", "test-design", "plan", ...REVIEW_STA
 const TERMINAL_STATES = new Set(["WAITING_SPEC_APPROVAL", "BLOCKED_HUMAN", "REMOTE_GREEN"]);
 const ROOT = path.resolve(path.join(__dirname, ".."));
 const CANONICAL_ORIGIN = "https://github.com/imalvaroglez/store-os.git";
+const CANONICAL_REPOSITORY = "github.com/imalvaroglez/store-os";
 const BOOTSTRAP = Object.freeze({
   id: "delivery-harness-bootstrap",
   branch: "codex/autonomous-delivery-harness",
@@ -145,7 +145,7 @@ function npmInvocation(args) {
 
 function ghInvocation(root, args) {
   const realRoot = fs.realpathSync(root);
-  const fixtureRoot = realRoot.startsWith(`${fs.realpathSync(os.tmpdir())}${path.sep}`);
+  const fixtureRoot = /^store-os-(?:bootstrap|delivery)-[A-Za-z0-9]+$/.test(path.basename(realRoot));
   const fixtureGh = fixtureRoot && process.env.TEST_GH_BIN && fs.existsSync(process.env.TEST_GH_BIN) &&
     fs.realpathSync(process.env.TEST_GH_BIN).startsWith(`${realRoot}${path.sep}`) ? process.env.TEST_GH_BIN : "";
   const candidates = [
@@ -154,7 +154,7 @@ function ghInvocation(root, args) {
   ];
   const executable = candidates.find((candidate) => fs.existsSync(candidate));
   if (!executable) fail("No se encontró gh en una ruta global confiable");
-  return { command: executable, args };
+  return { command: executable, args: ["--repo", CANONICAL_REPOSITORY, ...args] };
 }
 
 function verificationPath() {

@@ -133,7 +133,8 @@ function installFakeGh(root: string, open: unknown[], view: unknown, closed: unk
   writeFileSync(executable, `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
-const file = args[0] === "pr" && args[1] === "view"
+const pr = args.indexOf("pr");
+const file = pr >= 0 && args[pr + 1] === "view"
   ? process.env.TEST_GH_VIEW_FILE
   : args.includes("closed") ? process.env.TEST_GH_CLOSED_FILE : process.env.TEST_GH_OPEN_FILE;
 process.stdout.write(fs.readFileSync(file, "utf8"));

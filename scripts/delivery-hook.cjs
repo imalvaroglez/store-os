@@ -93,6 +93,7 @@ function persistReceipt(root, input, value) {
 function forbiddenCommand(command, root) {
   const value = command.replaceAll("\\\n", " ");
   const gh = normalizeGhCommand(value);
+  if (/(?:^|\s)GH_(?:REPO|HOST)=/i.test(value)) return "GH_REPO y GH_HOST no pueden redirigir el repositorio canónico.";
   if (/[<>]/.test(value) || /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|dd|install|mkdir|touch|tee|truncate|printf|echo)\b/i.test(value) ||
       /\b(?:node|python\d*|ruby|perl|bash|zsh|sh)\s+(?:-[ec]|-)\b/i.test(value)) {
     return "Bash no puede escribir archivos ni ejecutar código dinámico; usa apply_patch o el CLI canónico.";
@@ -141,7 +142,7 @@ function forbiddenCommand(command, root) {
 
 function needsPublishGate(input, command) {
   const normalized = normalizeGhCommand(command);
-  if (gitCommand(command, "push") || /\bgh\s+pr\s+create\b/i.test(normalized)) return true;
+  if (gitCommand(command, "push") || /\bgh\s+pr\s+(?:create|new)\b/i.test(normalized)) return true;
   const name = String(input.tool_name || "").toLowerCase();
   return /(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create|github_update_ref/.test(name);
 }
@@ -237,7 +238,7 @@ function handle(input) {
   if (toolName.includes("pull") && (input.tool_input?.draft === false || input.tool_input?.isDraft === false || input.tool_input?.is_draft === false)) {
     return "Los agentes no pueden marcar un PR como ready.";
   }
-  if (/\bgh\s+pr\s+create\b/i.test(normalizedCommand) && !/(?:^|\s)--draft(?:\s|$)/i.test(command)) {
+  if (/\bgh\s+pr\s+(?:create|new)\b/i.test(normalizedCommand) && !/(?:^|\s)--draft(?:\s|$)/i.test(command)) {
     return "Los PR creados por agentes deben usar --draft.";
   }
   if (/(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create/.test(toolName) &&
@@ -258,7 +259,7 @@ function handle(input) {
         return "La actualización de ref debe coincidir exactamente con rama y SHA del gate publish.";
       }
     }
-    const createsPr = /\bgh\s+pr\s+create\b/i.test(normalizedCommand) ||
+    const createsPr = /\bgh\s+pr\s+(?:create|new)\b/i.test(normalizedCommand) ||
       /(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create/.test(toolName);
     if (createsPr) {
       const repository = option(command, "repo") || command.match(/(?:^|\s)-R(?:=|\s+)?(\S+)/)?.[1] ||
