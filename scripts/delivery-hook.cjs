@@ -42,8 +42,55 @@ function normalizeGhCommand(command) {
   return command.replace(/(?:^|\s)(?:--repo(?:=\S+|\s+\S+)|-R(?:=?\S+|\s+\S+))(?=\s|$)/gi, " ");
 }
 
+function shellCommands(command) {
+  const commands = [[]];
+  let token = "";
+  let quote = "";
+  let escaped = false;
+  const pushToken = () => {
+    if (token) commands.at(-1).push(token);
+    token = "";
+  };
+  for (const character of command) {
+    if (escaped) {
+      token += character;
+      escaped = false;
+    } else if (character === "\\" && quote !== "'") {
+      escaped = true;
+    } else if ((character === "'" || character === '"') && (!quote || quote === character)) {
+      quote = quote ? "" : character;
+    } else if (!quote && /[;&|]/.test(character)) {
+      pushToken();
+      if (commands.at(-1).length) commands.push([]);
+    } else if (!quote && /\s/.test(character)) {
+      pushToken();
+    } else {
+      token += character;
+    }
+  }
+  pushToken();
+  return commands.filter((words) => words.length);
+}
+
 function invokes(command, executable) {
-  return new RegExp(`(?:^|[;&|]\\s*)(?:\\/[^\\s;&|]+\\/)?${executable}\\b`, "i").test(command);
+  return shellCommands(command).some((words) => {
+    let index = 0;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) index += 1;
+    if (words[index] === "env") {
+      index += 1;
+      while (/^-/.test(words[index] || "") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) {
+        if (["-u", "--unset"].includes(words[index])) index += 1;
+        index += 1;
+      }
+    }
+    if (["command", "sudo"].includes(words[index])) index += 1;
+    if (words[index] === "npx") index += 1;
+    else if (["npm", "pnpm", "yarn"].includes(words[index]) && words[index + 1] === "exec") {
+      index += 2;
+      if (words[index] === "--") index += 1;
+    }
+    return path.basename(words[index] || "") === executable;
+  });
 }
 
 function parseContract(message, requireReviewer = false) {

@@ -64,6 +64,10 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("node scripts/backfill.cjs --apply", root)).toMatch(/producción/);
     expect(hook.forbiddenCommand("sed -n '1,220p' e2e/firebase.spec.ts", root)).toBe("");
     expect(hook.forbiddenCommand("rg -n \"gh api\" src/delivery/delivery-hook.test.ts", root)).toBe("");
+    expect(hook.forbiddenCommand("rg -n \"audit|emulator|Firebase Emulator|preview\" scripts/delivery-harness.cjs", root)).toBe("");
+    expect(hook.forbiddenCommand("env firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
+    expect(hook.forbiddenCommand("npx firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
+    expect(hook.forbiddenCommand("env gh api repos/owner/repo", root)).toMatch(/gh api/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_update_ref",
       tool_input: { branch_name: "main", sha: "abc" } })).toMatch(/main/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_add_review_to_pr",
