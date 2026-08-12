@@ -143,7 +143,7 @@ function npmInvocation(args) {
 }
 
 function verificationPath() {
-  return [...new Set([path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])].join(path.delimiter);
+  return [...new Set([path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/homebrew/bin", "/usr/local/bin"])].join(path.delimiter);
 }
 
 function git(root, args, allowFailure = false) {
