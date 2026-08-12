@@ -84,6 +84,17 @@ describe("delivery lifecycle hook", () => {
       tool_input: { run_id: 1 } })).toMatch(/GitHub Actions/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "apply_patch",
       tool_input: { command: "*** Update File: .delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
+    // Regression: a Write/apply_patch whose *destination* is outside the run dir must NOT be blocked
+    // even if its *content* legitimately cites run artifacts as evidence (e.g. CLI review input).
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Write",
+      tool_input: { file_path: "/tmp/store-os-review-standards.json",
+        content: '{"evidence":[".delivery/runs/bootstrap/verification.json:5-6"]}' } })).toBe("");
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "apply_patch",
+      tool_input: { file_path: "/tmp/store-os-review-security.json",
+        content: '{"evidence":[".delivery/runs/bootstrap/commands/final-test.log:47"]}' } })).toBe("");
+    // But writing directly into the run dir is still blocked.
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Write",
+      tool_input: { file_path: ".delivery/runs/bootstrap/history.json", content: "{}" } })).toMatch(/sólo puede escribirla/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
       tool_input: { command: "rm .delivery/runs/bootstrap/history.json" } })).toMatch(/escribir/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",

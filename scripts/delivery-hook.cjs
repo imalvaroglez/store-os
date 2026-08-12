@@ -282,7 +282,16 @@ function handle(input) {
   const mutatesEvidence = editsFiles || /(?:^|[;&|]\s*|\s)(?:node|python\d*|ruby|perl|bash|zsh|sh|chmod|chown)\b/i.test(command) ||
     /\bgit\b[^\n;&|]*\badd\b/i.test(command) || /(?:^|\s)-delete(?:\s|$)/i.test(command);
   const executesHook = /(?:^|[;&|]\s*)(?:(?:\/[^\s;&|]+\/)?node\s+)?(?:\.\/)?scripts\/delivery-hook\.cjs(?:\s|$)/i.test(command);
-  if ((evidencePath.test(serializedInput) && mutatesEvidence) || executesHook) {
+  // ponytail: scope the guard to the file-mutation destination, not the whole serialized input,
+  // so CLI input files (e.g. review JSON) whose *content* cites run artifacts are not mistaken
+  // for an evidence write. Shell tools have no single destination field, so they keep the full command.
+  // apply_patch may encode its target either in its command text (Update File marker) or in file_path.
+  const fileDestination = String(input.tool_input?.file_path || input.tool_input?.path || input.tool_input?.notebook_path || "");
+  const applyPatchPath = toolName.includes("apply_patch") && input.tool_input?.command
+    ? String(input.tool_input.command.match(/\*\*\*\s*(?:Update|Add|Create|Delete)\s+File:?\s*(.+)/i)?.[1] || "")
+    : "";
+  const evidenceTarget = editsFiles ? `${fileDestination} ${applyPatchPath}`.trim() : serializedInput;
+  if ((evidencePath.test(evidenceTarget) && mutatesEvidence) || executesHook) {
     return "La evidencia de .delivery/runs sólo puede escribirla el hook o el CLI canónico.";
   }
   const directGithubMutation = toolName.includes("github") && (
