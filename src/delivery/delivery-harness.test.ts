@@ -197,7 +197,7 @@ function initBootstrapRepo() {
     writeFileSync(join(root, file), "candidate\n");
   }
   const harnessSource = readFileSync(join(PROJECT_ROOT, "scripts", "delivery-harness.cjs"), "utf8")
-    .replaceAll(harness.BOOTSTRAP.baseSha, baseSha);
+    .split(harness.BOOTSTRAP.baseSha).join(baseSha);
   writeFileSync(join(root, "scripts", "delivery-harness.cjs"), harnessSource);
   copyFileSync(join(PROJECT_ROOT, "scripts", "delivery-hook.cjs"), join(root, "scripts", "delivery-hook.cjs"));
   writeJson(join(root, "package.json"), {
