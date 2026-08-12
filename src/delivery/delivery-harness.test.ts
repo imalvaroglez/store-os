@@ -833,4 +833,11 @@ exports.chromium = { launch: async () => {
     expect(readFileSync(join(process.cwd(), ".agents", "skills", "store-os-delivery", "SKILL.md"), "utf8"))
       .toBe(readFileSync(join(process.cwd(), ".claude", "skills", "store-os-delivery", "SKILL.md"), "utf8"));
   });
+
+  it("rechaza claves de hooks que Codex no puede cargar", () => {
+    const { root } = initBootstrapRepo();
+    const config = JSON.parse(readFileSync(join(root, ".codex", "hooks.json"), "utf8"));
+    writeJson(join(root, ".codex", "hooks.json"), { description: "no soportado", ...config });
+    expect(() => harness.checkConfig(root)).toThrow(/configuración del delivery harness inválida/i);
+  });
 });

@@ -1466,8 +1466,11 @@ function checkConfig(root = ROOT) {
     ".codex/hooks.json", ".claude/settings.json", "scripts/delivery-hook.cjs",
   ]) if (!fs.existsSync(path.join(root, file))) errors.push(`Falta configuración: ${file}`);
   try {
-    const codexHooks = readJson(path.join(root, ".codex", "hooks.json")).hooks;
-    const claudeHooks = readJson(path.join(root, ".claude", "settings.json")).hooks;
+    const codexConfig = readJson(path.join(root, ".codex", "hooks.json"));
+    const claudeConfig = readJson(path.join(root, ".claude", "settings.json"));
+    if (JSON.stringify(Object.keys(codexConfig)) !== JSON.stringify(["hooks"])) errors.push(".codex/hooks.json sólo admite la clave hooks");
+    const codexHooks = codexConfig.hooks;
+    const claudeHooks = claudeConfig.hooks;
     if (JSON.stringify(codexHooks) !== JSON.stringify(claudeHooks)) errors.push("Codex y Claude no usan hooks equivalentes");
     for (const event of ["Stop", "SubagentStop", "PreToolUse"]) {
       if (!Array.isArray(codexHooks?.[event]) || codexHooks[event].length === 0) errors.push(`Hook faltante: ${event}`);

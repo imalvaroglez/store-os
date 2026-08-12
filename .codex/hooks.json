@@ -1,5 +1,4 @@
 {
-  "description": "Store OS delivery gates shared with Claude Code.",
   "hooks": {
     "PreToolUse": [
       {
