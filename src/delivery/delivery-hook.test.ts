@@ -65,6 +65,8 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("sed -n '1,220p' e2e/firebase.spec.ts", root)).toBe("");
     expect(hook.forbiddenCommand("rg -n \"gh api\" src/delivery/delivery-hook.test.ts", root)).toBe("");
     expect(hook.forbiddenCommand("rg -n \"audit|emulator|Firebase Emulator|preview\" scripts/delivery-harness.cjs", root)).toBe("");
+    expect(hook.forbiddenCommand("rg -n \"vercel deploy|gh pr create|git push|--env prod\" scripts/delivery-hook.cjs", root)).toBe("");
+    expect(hook.needsPublishGate({ tool_name: "Bash" }, "rg -n \"gh pr create|git push\" scripts/delivery-hook.cjs")).toBe(false);
     expect(hook.forbiddenCommand("env firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
     expect(hook.forbiddenCommand("npx firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
     expect(hook.forbiddenCommand("env gh api repos/owner/repo", root)).toMatch(/gh api/);

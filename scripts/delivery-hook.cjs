@@ -32,6 +32,7 @@ function runGate(root, kind) {
 }
 
 function gitCommand(command, subcommand) {
+  if (!invokes(command, "git")) return false;
   const git = String.raw`(?:^|[;&|]\s*|\s)(?:\/[^\s;&|]+\/)?git\b[^\n;&|]*`;
   const literal = new RegExp(`${git}(?:^|\\s)${subcommand}(?:\\s|$)`, "i");
   const alias = new RegExp(`${git}alias\\.[^=\\s]+=${subcommand}\\b`, "i");
@@ -144,6 +145,7 @@ function persistReceipt(root, input, value) {
 function forbiddenCommand(command, root) {
   const value = command.replaceAll("\\\n", " ");
   const gh = normalizeGhCommand(value);
+  const invokesGh = invokes(gh, "gh");
   if (/GH_(?:REPO|HOST)\s*=/i.test(value)) return "GH_REPO y GH_HOST no pueden redirigir el repositorio canónico.";
   if (/[<>]/.test(value) || /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|dd|install|mkdir|touch|tee|truncate|printf|echo)\b/i.test(value) ||
       /\b(?:node|python\d*|ruby|perl|bash|zsh|sh)\s+(?:-[ec]|-)\b/i.test(value)) {
@@ -154,19 +156,19 @@ function forbiddenCommand(command, root) {
       /\bgit(?:\s+(?:-C|-c|--git-dir|--work-tree)\s+\S+|\s+--[^\s]+)*\s+(?:["']?\$|`)/i.test(value)) {
     return "Los comandos Git dinámicos o send-pack eluden los gates y están bloqueados.";
   }
-  if (invokes(gh, "gh") && /\bgh\s+api\b/i.test(gh)) return "gh api está bloqueado; usa los comandos PR cubiertos por el harness.";
-  if (/\bgh\b[^\n;&|]*\brun\b[^\n;&|]*\b(?:rerun|cancel|delete)\b/i.test(gh) ||
-      /\bgh\b[^\n;&|]*\bworkflow\b[^\n;&|]*\b(?:run|enable|disable)\b/i.test(gh)) {
+  if (invokesGh && /\bgh\s+api\b/i.test(gh)) return "gh api está bloqueado; usa los comandos PR cubiertos por el harness.";
+  if (invokesGh && (/\bgh\b[^\n;&|]*\brun\b[^\n;&|]*\b(?:rerun|cancel|delete)\b/i.test(gh) ||
+      /\bgh\b[^\n;&|]*\bworkflow\b[^\n;&|]*\b(?:run|enable|disable)\b/i.test(gh))) {
     return "Los agentes no pueden iniciar, relanzar, cancelar ni borrar ejecuciones de GitHub Actions.";
   }
-  if (/\bgh\s+repo\s+sync\b/i.test(gh)) return "gh repo sync puede mover refs sin gate y está bloqueado.";
-  if (/\bgh\s+pr\s+edit\b/i.test(gh)) return "El manifiesto de un PR de entrega no puede editarse después de crearlo.";
-  if (/\bgh\s+pr\s+review\b/i.test(gh)) return "Los agentes no pueden aprobar ni revisar PRs como autoridad humana.";
+  if (invokesGh && /\bgh\s+repo\s+sync\b/i.test(gh)) return "gh repo sync puede mover refs sin gate y está bloqueado.";
+  if (invokesGh && /\bgh\s+pr\s+edit\b/i.test(gh)) return "El manifiesto de un PR de entrega no puede editarse después de crearlo.";
+  if (invokesGh && /\bgh\s+pr\s+review\b/i.test(gh)) return "Los agentes no pueden aprobar ni revisar PRs como autoridad humana.";
   if (/\bgit\b[^\n;&|]*\bremote\s+(?:add|remove|rename|set-head|set-branches|set-url|update|prune)\b/i.test(value) ||
       /\bgit\b[^\n;&|]*\bconfig\b[^\n;&|]*(?:remote\.|url\.)/i.test(value)) {
     return "La identidad de origin no puede modificarse durante una entrega.";
   }
-  if (gitCommand(value, "merge") || /\bgh\s+pr\s+(merge|ready)\b/i.test(gh)) {
+  if (gitCommand(value, "merge") || (invokesGh && /\bgh\s+pr\s+(merge|ready)\b/i.test(gh))) {
     return "Merge y marcar el PR ready requieren acción humana.";
   }
   const pushes = gitCommand(value, "push");
@@ -175,25 +177,27 @@ function forbiddenCommand(command, root) {
       (pushes && gitBranch(root) === "main")) {
     return "Nunca se permite push directo a main.";
   }
-  if (/\bvercel\b/i.test(value) ||
-      /\bfirebase\s+[^\n;&|]*\bdeploy\b/i.test(value) ||
-      /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:deploy|release)(?::production)?\b/i.test(value)) {
+  if (invokes(value, "vercel") ||
+      (invokes(value, "firebase") && /\bfirebase\s+[^\n;&|]*\bdeploy\b/i.test(value)) ||
+      (["npm", "pnpm", "yarn"].some((name) => invokes(value, name)) &&
+        /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:deploy|release)(?::production)?\b/i.test(value))) {
     return "Los agentes no pueden ejecutar deploys; Preview pertenece a CI.";
   }
-  if (/store-os-f7cf8|store-os-alpha\.vercel\.app|--environment[=\s]+production|--env[=\s]+prod\b|--apply\b/i.test(value)) {
+  const invokesRemoteTool = ["node", "npm", "pnpm", "yarn", "firebase", "gcloud", "gsutil", "vercel"].some((name) => invokes(value, name));
+  if (invokesRemoteTool && /store-os-f7cf8|store-os-alpha\.vercel\.app|--environment[=\s]+production|--env[=\s]+prod\b|--apply\b/i.test(value)) {
     return "Operación contra producción bloqueada; requiere aprobaciones humanas separadas.";
   }
   const firebaseAllowed = /^\s*firebase\s+(?:--[^\s]+(?:=|\s+)\S+\s+)*emulators(?::|\s+)start\b[^;&|'"`]*$/i.test(value);
   if (invokes(value, "firebase") && !firebaseAllowed) {
     return "Sólo se permite iniciar Firebase Emulator directamente; usa los scripts npm verificados para emulators:exec.";
   }
-  if (/\b(?:gcloud|gsutil)\b/i.test(value)) return "Google Cloud remoto está bloqueado para agentes.";
+  if (invokes(value, "gcloud") || invokes(value, "gsutil")) return "Google Cloud remoto está bloqueado para agentes.";
   return "";
 }
 
 function needsPublishGate(input, command) {
   const normalized = normalizeGhCommand(command);
-  if (gitCommand(command, "push") || /\bgh\s+pr\s+(?:create|new)\b/i.test(normalized)) return true;
+  if (gitCommand(command, "push") || (invokes(normalized, "gh") && /\bgh\s+pr\s+(?:create|new)\b/i.test(normalized))) return true;
   const name = String(input.tool_name || "").toLowerCase();
   return /(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create|github_update_ref/.test(name);
 }
@@ -291,7 +295,7 @@ function handle(input) {
   if (toolName.includes("pull") && (input.tool_input?.draft === false || input.tool_input?.isDraft === false || input.tool_input?.is_draft === false)) {
     return "Los agentes no pueden marcar un PR como ready.";
   }
-  if (/\bgh\s+pr\s+(?:create|new)\b/i.test(normalizedCommand) && !/(?:^|\s)--draft(?:\s|$)/i.test(command)) {
+  if (invokes(normalizedCommand, "gh") && /\bgh\s+pr\s+(?:create|new)\b/i.test(normalizedCommand) && !/(?:^|\s)--draft(?:\s|$)/i.test(command)) {
     return "Los PR creados por agentes deben usar --draft.";
   }
   if (/(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create/.test(toolName) &&
@@ -312,7 +316,7 @@ function handle(input) {
         return "La actualización de ref debe coincidir exactamente con rama y SHA del gate publish.";
       }
     }
-    const createsPr = /\bgh\s+pr\s+(?:create|new)\b/i.test(normalizedCommand) ||
+    const createsPr = (invokes(normalizedCommand, "gh") && /\bgh\s+pr\s+(?:create|new)\b/i.test(normalizedCommand)) ||
       /(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create/.test(toolName);
     if (createsPr) {
       const repository = option(command, "repo") || command.match(/(?:^|\s)-R(?:=|\s+)?(\S+)/)?.[1] ||
