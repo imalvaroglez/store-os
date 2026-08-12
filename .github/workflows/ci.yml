@@ -24,7 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       env-name: ${{ steps.set.outputs.env-name }}
+      app-changed: ${{ steps.changes.outputs.app-changed }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: set
         run: |
           if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "main" ]; then
@@ -32,9 +36,47 @@ jobs:
           else
             echo "env-name=Preview" >> "$GITHUB_OUTPUT"
           fi
+      - id: changes
+        name: Detect documentary-only diff
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE_SHA="$PR_BASE_SHA"
+          elif [ "$REF_NAME" = "main" ]; then
+            BASE_SHA="$BEFORE_SHA"
+          else
+            BASE_SHA="$(git merge-base origin/main "$GITHUB_SHA")"
+          fi
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "app-changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          app_changed=false
+          while IFS= read -r file; do
+            case "$file" in
+              docs/*|*.md|.delivery/queue.json) ;;
+              *) app_changed=true; break ;;
+            esac
+          done < <(git diff --name-only "$BASE_SHA" "$GITHUB_SHA")
+          echo "app-changed=$app_changed" >> "$GITHUB_OUTPUT"
+
+  delivery-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate delivery harness configuration
+        run: npm run delivery -- check-config
 
   build-test:
     needs: env-select
+    if: needs.env-select.outputs.app-changed == 'true'
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
     steps:
@@ -62,6 +104,7 @@ jobs:
 
   rules-and-e2e:
     needs: env-select
+    if: needs.env-select.outputs.app-changed == 'true'
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
     steps:
@@ -102,16 +145,18 @@ jobs:
         run: npm run test:rules
       - name: E2E (Playwright)
         run: npm run e2e
+      - name: E2E with Firebase Emulator
+        run: npm run e2e:firebase
 
   # ───────────────────────────── deploy ──────────────────────────────
   # The ONLY path to a Vercel deployment. Runs only if BOTH gates passed.
   # Vercel's Git auto-deploy is OFF, so without this job nothing publishes.
   deploy:
-    needs: [env-select, build-test, rules-and-e2e]
+    needs: [env-select, delivery-config, build-test, rules-and-e2e]
     # Only deploy on push events (a push to a branch, or a merge to main).
     # PR-only synthetic events would double-deploy; the underlying push already
     # triggers this.
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && needs.env-select.outputs.app-changed == 'true'
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
     # The Vercel CLI reads ORG/PROJECT id from .vercel/project.json OR these env
@@ -227,7 +272,7 @@ jobs:
             echo "No open PR for branch ${{ github.ref_name }}; skipping comment."
             exit 0
           fi
-          BODY=$(printf '🚀 **Preview deploy** (CI verde): %s\nApunta al backend de **dev** (store-os-dev). Generado por GitHub Actions tras pasar build-test + rules-and-e2e.' "$URL")
+          BODY=$(printf '🚀 **Preview deploy** para `%s` (CI verde): %s\nApunta al backend de **dev** (store-os-dev). Generado por GitHub Actions tras pasar build-test + rules-and-e2e.' "${{ github.sha }}" "$URL")
           # -R is required because this job has no checkout (no .git for gh to
           # infer the repo from); without it gh pr comment fails with
           # "fatal: not a git repository".
