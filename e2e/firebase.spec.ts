@@ -159,6 +159,7 @@ test("product photo uploads, resizes, and renders", async ({ sharedPage: page })
     mimeType: file.mimeType,
     buffer: Buffer.from(file.buffer, "base64"),
   });
+  await expect(page.locator('img[src^="blob:"]')).toBeVisible({ timeout: 10000 });
 
   await page.getByRole("button", { name: "Guardar producto" }).click();
   await expect(page.getByRole("heading", { name: "Agregar producto" })).toHaveCount(0, {
