@@ -43,6 +43,8 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("gh pr -R imalvaroglez/store-os merge 1 --squash", root)).toMatch(/Merge/);
     expect(hook.forbiddenCommand("gh pr --repo imalvaroglez/store-os review 1 --approve", root)).toMatch(/aprobar/);
     expect(hook.forbiddenCommand("GH_REPO=attacker/store-os gh pr create --draft", root)).toMatch(/canónico/);
+    expect(hook.forbiddenCommand("env 'GH_REPO=attacker/store-os' gh pr new --draft", root)).toMatch(/canónico/);
+    expect(hook.forbiddenCommand('env "GH_HOST=evil.example" gh pr new --draft', root)).toMatch(/canónico/);
     expect(hook.forbiddenCommand("gh --repo imalvaroglez/store-os pr ready 1", root)).toMatch(/Merge/);
     expect(hook.forbiddenCommand("gh -R imalvaroglez/store-os pr review 1 --approve", root)).toMatch(/aprobar/);
     expect(hook.forbiddenCommand("gh --repo imalvaroglez/store-os api -X PUT repos/o/r/pulls/1/merge", root)).toMatch(/gh api/);

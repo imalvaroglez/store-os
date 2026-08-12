@@ -93,7 +93,7 @@ function persistReceipt(root, input, value) {
 function forbiddenCommand(command, root) {
   const value = command.replaceAll("\\\n", " ");
   const gh = normalizeGhCommand(value);
-  if (/(?:^|\s)GH_(?:REPO|HOST)=/i.test(value)) return "GH_REPO y GH_HOST no pueden redirigir el repositorio canónico.";
+  if (/GH_(?:REPO|HOST)\s*=/i.test(value)) return "GH_REPO y GH_HOST no pueden redirigir el repositorio canónico.";
   if (/[<>]/.test(value) || /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|dd|install|mkdir|touch|tee|truncate|printf|echo)\b/i.test(value) ||
       /\b(?:node|python\d*|ruby|perl|bash|zsh|sh)\s+(?:-[ec]|-)\b/i.test(value)) {
     return "Bash no puede escribir archivos ni ejecutar código dinámico; usa apply_patch o el CLI canónico.";
