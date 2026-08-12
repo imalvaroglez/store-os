@@ -42,6 +42,10 @@ function normalizeGhCommand(command) {
   return command.replace(/(?:^|\s)(?:--repo(?:=\S+|\s+\S+)|-R(?:=?\S+|\s+\S+))(?=\s|$)/gi, " ");
 }
 
+function invokes(command, executable) {
+  return new RegExp(`(?:^|[;&|]\\s*)(?:\\/[^\\s;&|]+\\/)?${executable}\\b`, "i").test(command);
+}
+
 function parseContract(message, requireReviewer = false) {
   if (typeof message !== "string" || !message.trim()) return null;
   let value;
@@ -103,7 +107,7 @@ function forbiddenCommand(command, root) {
       /\bgit(?:\s+(?:-C|-c|--git-dir|--work-tree)\s+\S+|\s+--[^\s]+)*\s+(?:["']?\$|`)/i.test(value)) {
     return "Los comandos Git dinámicos o send-pack eluden los gates y están bloqueados.";
   }
-  if (/\bgh\s+api\b/i.test(gh)) return "gh api está bloqueado; usa los comandos PR cubiertos por el harness.";
+  if (invokes(gh, "gh") && /\bgh\s+api\b/i.test(gh)) return "gh api está bloqueado; usa los comandos PR cubiertos por el harness.";
   if (/\bgh\b[^\n;&|]*\brun\b[^\n;&|]*\b(?:rerun|cancel|delete)\b/i.test(gh) ||
       /\bgh\b[^\n;&|]*\bworkflow\b[^\n;&|]*\b(?:run|enable|disable)\b/i.test(gh)) {
     return "Los agentes no pueden iniciar, relanzar, cancelar ni borrar ejecuciones de GitHub Actions.";
@@ -133,7 +137,7 @@ function forbiddenCommand(command, root) {
     return "Operación contra producción bloqueada; requiere aprobaciones humanas separadas.";
   }
   const firebaseAllowed = /^\s*firebase\s+(?:--[^\s]+(?:=|\s+)\S+\s+)*emulators(?::|\s+)start\b[^;&|'"`]*$/i.test(value);
-  if (/\bfirebase\b/i.test(value) && !firebaseAllowed) {
+  if (invokes(value, "firebase") && !firebaseAllowed) {
     return "Sólo se permite iniciar Firebase Emulator directamente; usa los scripts npm verificados para emulators:exec.";
   }
   if (/\b(?:gcloud|gsutil)\b/i.test(value)) return "Google Cloud remoto está bloqueado para agentes.";
@@ -212,8 +216,10 @@ function handle(input) {
   }
   const evidencePath = /\.delivery[\\/]runs(?:[\\/]|$)/i;
   const editsFiles = /apply_patch|\bedit\b|\bwrite\b|notebook/i.test(toolName);
-  if ((editsFiles && evidencePath.test(serializedInput)) || evidencePath.test(command) ||
-      (/delivery-hook\.cjs/i.test(command) && event === "PreToolUse")) {
+  const mutatesEvidence = editsFiles || /(?:^|[;&|]\s*|\s)(?:node|python\d*|ruby|perl|bash|zsh|sh|chmod|chown)\b/i.test(command) ||
+    /\bgit\b[^\n;&|]*\badd\b/i.test(command) || /(?:^|\s)-delete(?:\s|$)/i.test(command);
+  const executesHook = /(?:^|[;&|]\s*)(?:(?:\/[^\s;&|]+\/)?node\s+)?(?:\.\/)?scripts\/delivery-hook\.cjs(?:\s|$)/i.test(command);
+  if ((evidencePath.test(serializedInput) && mutatesEvidence) || executesHook) {
     return "La evidencia de .delivery/runs sólo puede escribirla el hook o el CLI canónico.";
   }
   const directGithubMutation = toolName.includes("github") && (

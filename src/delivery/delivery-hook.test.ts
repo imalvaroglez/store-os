@@ -62,6 +62,8 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("node scripts/backfill-public-product-store-ids.cjs --env prod --store one", root)).toMatch(/producción/);
     expect(hook.forbiddenCommand("firebase firestore:delete --project store-os-f7cf8", root)).toMatch(/producción/);
     expect(hook.forbiddenCommand("node scripts/backfill.cjs --apply", root)).toMatch(/producción/);
+    expect(hook.forbiddenCommand("sed -n '1,220p' e2e/firebase.spec.ts", root)).toBe("");
+    expect(hook.forbiddenCommand("rg -n \"gh api\" src/delivery/delivery-hook.test.ts", root)).toBe("");
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_update_ref",
       tool_input: { branch_name: "main", sha: "abc" } })).toMatch(/main/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_add_review_to_pr",
@@ -82,6 +84,10 @@ describe("delivery lifecycle hook", () => {
       tool_input: { command: "d=.delivery; printf x > \"$d/runs/bootstrap/history.json\"" } })).toMatch(/no puede escribir/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
       tool_input: { command: "node scripts/delivery-hook.cjs" } })).toMatch(/sólo puede escribirla/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "cat .delivery/runs/bootstrap/verification.json" } })).toBe("");
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "sed -n '1,220p' scripts/delivery-hook.cjs" } })).toBe("");
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_create_file",
       tool_input: { path: "bypass.txt", content: "x", branch: "main" } })).toMatch(/directamente/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_update_file",
