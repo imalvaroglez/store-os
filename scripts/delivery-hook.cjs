@@ -73,25 +73,34 @@ function shellCommands(command) {
   return commands.filter((words) => words.length);
 }
 
-function invokes(command, executable) {
-  return shellCommands(command).some((words) => {
-    let index = 0;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) index += 1;
-    if (words[index] === "env") {
+function executableIndex(words) {
+  let index = 0;
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) index += 1;
+  if (words[index] === "env") {
+    index += 1;
+    while (/^-/.test(words[index] || "") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) {
+      if (["-u", "--unset"].includes(words[index])) index += 1;
       index += 1;
-      while (/^-/.test(words[index] || "") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) {
-        if (["-u", "--unset"].includes(words[index])) index += 1;
-        index += 1;
-      }
     }
-    if (["command", "sudo"].includes(words[index])) index += 1;
-    if (words[index] === "npx") index += 1;
-    else if (["npm", "pnpm", "yarn"].includes(words[index]) && words[index + 1] === "exec") {
-      index += 2;
-      if (words[index] === "--") index += 1;
-    }
-    return path.basename(words[index] || "") === executable;
+  }
+  if (["command", "sudo"].includes(words[index])) index += 1;
+  if (words[index] === "npx") index += 1;
+  else if (["npm", "pnpm", "yarn"].includes(words[index]) && words[index + 1] === "exec") {
+    index += 2;
+    if (words[index] === "--") index += 1;
+  }
+  return index;
+}
+
+function invocationArguments(command, executable) {
+  return shellCommands(command).flatMap((words) => {
+    const index = executableIndex(words);
+    return path.basename(words[index] || "") === executable ? [words.slice(index + 1)] : [];
   });
+}
+
+function invokes(command, executable) {
+  return invocationArguments(command, executable).length > 0;
 }
 
 function parseContract(message, requireReviewer = false) {
@@ -146,8 +155,11 @@ function forbiddenCommand(command, root) {
   const value = command.replaceAll("\\\n", " ");
   const gh = normalizeGhCommand(value);
   const invokesGh = invokes(gh, "gh");
+  const editsInPlace = ["sed", "perl", "ruby"].some((name) => invocationArguments(value, name)
+    .some((args) => args.some((arg) => arg === "--in-place" || arg.startsWith("--in-place=") || /^-[A-Za-z]*i[A-Za-z]*$/.test(arg)))) ||
+    invocationArguments(value, "awk").some((args) => args.some((arg, index) => arg === "--in-place" || (arg === "-i" && args[index + 1] === "inplace")));
   if (/GH_(?:REPO|HOST)\s*=/i.test(value)) return "GH_REPO y GH_HOST no pueden redirigir el repositorio canónico.";
-  if (/[<>]/.test(value) || /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|dd|install|mkdir|touch|tee|truncate|printf|echo)\b/i.test(value) ||
+  if (editsInPlace || /[<>]/.test(value) || /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|dd|install|mkdir|touch|tee|truncate|printf|echo)\b/i.test(value) ||
       /\b(?:node|python\d*|ruby|perl|bash|zsh|sh)\s+(?:-[ec]|-)\b/i.test(value)) {
     return "Bash no puede escribir archivos ni ejecutar código dinámico; usa apply_patch o el CLI canónico.";
   }

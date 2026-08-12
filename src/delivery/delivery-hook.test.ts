@@ -70,6 +70,10 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("env firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
     expect(hook.forbiddenCommand("npx firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
     expect(hook.forbiddenCommand("env gh api repos/owner/repo", root)).toMatch(/gh api/);
+    expect(hook.forbiddenCommand("sed -i '' 's/x/y/' AGENTS.md", root)).toMatch(/no puede escribir/);
+    expect(hook.forbiddenCommand("perl -pi -e 's/x/y/' AGENTS.md", root)).toMatch(/no puede escribir/);
+    expect(hook.forbiddenCommand("ruby -pi -e 'gsub(/x/, %q[y])' AGENTS.md", root)).toMatch(/no puede escribir/);
+    expect(hook.forbiddenCommand("awk -i inplace '{ print }' AGENTS.md", root)).toMatch(/no puede escribir/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_update_ref",
       tool_input: { branch_name: "main", sha: "abc" } })).toMatch(/main/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_add_review_to_pr",
@@ -94,6 +98,8 @@ describe("delivery lifecycle hook", () => {
       tool_input: { command: "cat .delivery/runs/bootstrap/verification.json" } })).toBe("");
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
       tool_input: { command: "sed -n '1,220p' scripts/delivery-hook.cjs" } })).toBe("");
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "sed -i '' 's/PASS/FAIL/' .delivery/runs/bootstrap/history.json" } })).toMatch(/no puede escribir/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_create_file",
       tool_input: { path: "bypass.txt", content: "x", branch: "main" } })).toMatch(/directamente/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_update_file",
