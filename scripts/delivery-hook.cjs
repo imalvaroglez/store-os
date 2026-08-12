@@ -38,6 +38,10 @@ function gitCommand(command, subcommand) {
   return literal.test(command) || alias.test(command);
 }
 
+function normalizeGhCommand(command) {
+  return command.replace(/(?:^|\s)(?:--repo(?:=\S+|\s+\S+)|-R(?:=?\S+|\s+\S+))(?=\s|$)/gi, " ");
+}
+
 function parseContract(message, requireReviewer = false) {
   if (typeof message !== "string" || !message.trim()) return null;
   let value;
@@ -88,7 +92,7 @@ function persistReceipt(root, input, value) {
 
 function forbiddenCommand(command, root) {
   const value = command.replaceAll("\\\n", " ");
-  const gh = value.replace(/\bgh\s+(?:(?:-R|--repo)(?:=|\s+)\S+\s+)*/gi, "gh ");
+  const gh = normalizeGhCommand(value);
   if (/[<>]/.test(value) || /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|dd|install|mkdir|touch|tee|truncate|printf|echo)\b/i.test(value) ||
       /\b(?:node|python\d*|ruby|perl|bash|zsh|sh)\s+(?:-[ec]|-)\b/i.test(value)) {
     return "Bash no puede escribir archivos ni ejecutar código dinámico; usa apply_patch o el CLI canónico.";
@@ -136,7 +140,7 @@ function forbiddenCommand(command, root) {
 }
 
 function needsPublishGate(input, command) {
-  const normalized = command.replace(/\bgh\s+(?:(?:-R|--repo)(?:=|\s+)\S+\s+)*/gi, "gh ");
+  const normalized = normalizeGhCommand(command);
   if (gitCommand(command, "push") || /\bgh\s+pr\s+create\b/i.test(normalized)) return true;
   const name = String(input.tool_name || "").toLowerCase();
   return /(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create|github_update_ref/.test(name);
@@ -197,7 +201,7 @@ function handle(input) {
   if (event !== "PreToolUse") return "";
 
   const command = input.tool_input?.command || input.tool_input?.cmd || JSON.stringify(input.tool_input || {});
-  const normalizedCommand = command.replace(/\bgh\s+(?:(?:-R|--repo)(?:=|\s+)\S+\s+)*/gi, "gh ");
+  const normalizedCommand = normalizeGhCommand(command);
   const forbidden = forbiddenCommand(command, root);
   if (forbidden) return forbidden;
   const toolName = String(input.tool_name || "").toLowerCase();
@@ -257,7 +261,7 @@ function handle(input) {
     const createsPr = /\bgh\s+pr\s+create\b/i.test(normalizedCommand) ||
       /(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create/.test(toolName);
     if (createsPr) {
-      const repository = option(command, "repo") || command.match(/(?:^|\s)-R(?:=|\s+)(\S+)/)?.[1] ||
+      const repository = option(command, "repo") || command.match(/(?:^|\s)-R(?:=|\s+)?(\S+)/)?.[1] ||
         input.tool_input?.repo || input.tool_input?.repository || input.tool_input?.nameWithOwner;
       if (repository && repository !== CANONICAL_REPOSITORY) return `El PR debe crearse en ${CANONICAL_REPOSITORY}.`;
       const base = option(command, "base") || input.tool_input?.base || input.tool_input?.baseRefName || input.tool_input?.base_ref_name;

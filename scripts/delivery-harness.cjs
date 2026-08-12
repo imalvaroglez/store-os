@@ -4,6 +4,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
@@ -142,9 +143,13 @@ function npmInvocation(args) {
   return { command: process.execPath, args: [fs.realpathSync(executable), ...args] };
 }
 
-function ghInvocation(args) {
+function ghInvocation(root, args) {
+  const realRoot = fs.realpathSync(root);
+  const fixtureRoot = realRoot.startsWith(`${fs.realpathSync(os.tmpdir())}${path.sep}`);
+  const fixtureGh = fixtureRoot && process.env.TEST_GH_BIN && fs.existsSync(process.env.TEST_GH_BIN) &&
+    fs.realpathSync(process.env.TEST_GH_BIN).startsWith(`${realRoot}${path.sep}`) ? process.env.TEST_GH_BIN : "";
   const candidates = [
-    ...(process.env.NODE_ENV === "test" && process.env.TEST_GH_BIN ? [process.env.TEST_GH_BIN] : []),
+    ...(fixtureGh ? [fixtureGh] : []),
     ...(process.platform === "win32" ? [] : ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]),
   ];
   const executable = candidates.find((candidate) => fs.existsSync(candidate));
@@ -389,14 +394,14 @@ function completedIds(root = ROOT, ref = mainRef(root)) {
 }
 
 function openPullRequests(root = ROOT) {
-  const command = ghInvocation(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,body,headRefName,url,files,isDraft"]);
+  const command = ghInvocation(root, ["pr", "list", "--state", "open", "--limit", "100", "--json", "number,body,headRefName,url,files,isDraft"]);
   const result = run(command.command, command.args, { cwd: root });
   if (result.exitCode !== 0) fail("No se pudieron consultar los PR abiertos; el harness falla cerrado", [result.stderr.trim()]);
   try { return JSON.parse(result.stdout); } catch { fail("gh devolvió PRs inválidos"); }
 }
 
 function closedPullRequests(root = ROOT) {
-  const command = ghInvocation(["pr", "list", "--state", "closed", "--limit", "100", "--json", "number,body,url,mergedAt"]);
+  const command = ghInvocation(root, ["pr", "list", "--state", "closed", "--limit", "100", "--json", "number,body,url,mergedAt"]);
   const result = run(command.command, command.args, { cwd: root });
   if (result.exitCode !== 0) fail("No se pudieron consultar los PR cerrados; el harness falla cerrado", [result.stderr.trim()]);
   try { return JSON.parse(result.stdout); } catch { fail("gh devolvió PRs cerrados inválidos"); }
@@ -1300,7 +1305,7 @@ function gate(root = ROOT, kind, prs) {
 }
 
 function pullRequest(root, number) {
-  const command = ghInvocation(["pr", "view", String(number), "--json", "number,state,isDraft,body,baseRefName,headRefName,headRefOid,statusCheckRollup,comments,files,url,mergedAt"]);
+  const command = ghInvocation(root, ["pr", "view", String(number), "--json", "number,state,isDraft,body,baseRefName,headRefName,headRefOid,statusCheckRollup,comments,files,url,mergedAt"]);
   const result = run(command.command, command.args, { cwd: root });
   if (result.exitCode !== 0) fail(`No se pudo consultar el PR #${number}`, [result.stderr.trim()]);
   try { return JSON.parse(result.stdout); } catch { fail("gh devolvió un PR inválido"); }
