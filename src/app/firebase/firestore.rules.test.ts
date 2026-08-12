@@ -6,7 +6,7 @@ import {
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import { readFileSync } from "node:fs";
-import { doc, setDoc, getDoc, updateDoc, writeBatch, getDocs, query, where, collection } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
 
 let env: RulesTestEnvironment;
 
@@ -54,6 +54,34 @@ describe("G-P06 storeId invariance on update", () => {
     await assertSucceeds(updateDoc(doc(db, "products/p1"), { name: "y" }));
     // Cross-store update denied:
     await assertFails(updateDoc(doc(db, "products/p1"), { storeId: "s2" }));
+  });
+});
+
+describe("publicProducts legacy storeId catch-22", () => {
+  it("denies a legacy doc until an admin backfill adds storeId", async () => {
+    const storeId = "s_public_legacy";
+    const productPath = `publicProducts/${storeId}__collar`;
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), `adminStores/${storeId}`), {
+        storeId,
+        ownerUid: "u_public",
+        memberUids: ["u_public"],
+      });
+      await setDoc(doc(c.firestore(), productPath), {
+        name: "Collar",
+        storeSlug: "olivia",
+      });
+    });
+
+    const db = await asUser("u_public");
+    await assertFails(updateDoc(doc(db, productPath), { name: "Collar legado" }));
+    await assertFails(deleteDoc(doc(db, productPath)));
+
+    await env.withSecurityRulesDisabled(async (c) => {
+      await updateDoc(doc(c.firestore(), productPath), { storeId });
+    });
+
+    await assertSucceeds(updateDoc(doc(db, productPath), { name: "Collar reparado" }));
   });
 });
 
