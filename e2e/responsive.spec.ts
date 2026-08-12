@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { loginAsFirstAdmin, gotoSantiHome } from "./helpers";
+import { loginAsFirstAdmin, gotoSantiHome, openCatalog } from "./helpers";
 
 // Responsive-layout assertions against the Firebase Emulator, at BOTH mobile and
 // desktop viewports. One browser context per project (beforeAll), reused across
@@ -42,16 +42,14 @@ test("no horizontal scroll at any viewport", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
   const scrollX = await page.evaluate(() => window.scrollX);
   expect(Math.abs(scrollX)).toBeLessThan(2);
-  await page.getByRole("button", { name: "Catálogo" }).click();
-  await expect(page.getByRole("heading", { name: "Catálogo" })).toBeVisible();
+  await openCatalog(page);
   const scrollX2 = await page.evaluate(() => window.scrollX);
   expect(Math.abs(scrollX2)).toBeLessThan(2);
 });
 
 test("catalog uses a multi-column grid on desktop, single column on mobile", async ({ sharedPage: page }, testInfo) => {
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Catálogo" }).click();
-  await expect(page.getByRole("heading", { name: "Catálogo" })).toBeVisible();
+  await openCatalog(page);
   const cols = await page.evaluate(() => {
     const g = document.querySelector(".grid.grid-cols-1");
     if (!g) return 0;
@@ -66,8 +64,7 @@ test("catalog uses a multi-column grid on desktop, single column on mobile", asy
 
 test("form Sheet is centered modal on desktop, bottom-anchored on mobile", async ({ sharedPage: page }, testInfo) => {
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Catálogo" }).click();
-  await expect(page.getByRole("heading", { name: "Catálogo" })).toBeVisible();
+  await openCatalog(page);
   await page.getByRole("button", { name: "+ Agregar" }).click();
   await expect(page.getByRole("heading", { name: "Agregar producto" })).toBeVisible();
   const panel = page.locator(".bg-paper.shadow-lift");

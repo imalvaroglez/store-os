@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { buildSeedState } from "../src/lib/seed";
 
 // Shared helpers for the Firebase-emulator e2e specs. Every helper here is the
 // exact behavior that used to live as module-local copies in firebase.spec.ts,
@@ -23,13 +24,74 @@ export function unique(prefix: string) {
   return `${prefix}+${Date.now()}_${counter}@example.com`;
 }
 
+const FIRESTORE_REST = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
+
+function encode(value: unknown): unknown {
+  if (value === null || value === undefined) return { nullValue: null };
+  if (typeof value === "string") return { stringValue: value };
+  if (typeof value === "number") return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map(encode) } };
+  if (typeof value === "object") return { mapValue: { fields: toFields(value as Record<string, unknown>) } };
+  return { nullValue: null };
+}
+
+function toFields(value: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined).map(([key, entry]) => [key, encode(entry)]));
+}
+
+async function adminToken(email: string, password: string) {
+  const response = await fetch(
+    "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key-for-emulator",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, returnSecureToken: true }) }
+  );
+  const value = (await response.json()) as { idToken?: string; localId?: string };
+  if (!value.idToken || !value.localId) throw new Error(`Could not authenticate fixture owner: ${JSON.stringify(value)}`);
+  return { token: value.idToken, uid: value.localId };
+}
+
+// Explicit test-only fixture. Production code intentionally never auto-seeds a
+// new account; emulator suites install their own data after authentication.
+export async function seedEmulatorFixtures(email = ADMIN_EMAIL, password = "password123") {
+  const auth = await adminToken(email, password);
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` };
+  const patch = async (collection: string, id: string, data: Record<string, unknown>) => {
+    const response = await fetch(`${FIRESTORE_REST}/${collection}/${id}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ fields: toFields(data) }),
+    });
+    if (!response.ok) throw new Error(`Fixture write failed for ${collection}/${id}: ${response.status} ${await response.text()}`);
+  };
+  const state = buildSeedState();
+  for (const store of state.stores) {
+    const membership = { ownerUid: auth.uid, memberUids: [auth.uid], pendingInvites: [] };
+    await patch("adminStores", store.id, {
+      storeId: store.id,
+      name: store.name,
+      slug: store.slug,
+      type: store.type,
+      ...membership,
+      createdAt: store.createdAt,
+      updatedAt: store.updatedAt,
+      retainedPrivacyRequestCount: 0,
+    });
+    await patch("stores", store.id, { ...store, ...membership });
+  }
+  for (const [collection, values] of [
+    ["products", state.products],
+    ["categories", state.categories],
+    ["suppliers", state.suppliers],
+    ["purchases", state.purchases],
+    ["customers", state.customers],
+    ["orders", state.orders],
+  ] as const) {
+    for (const value of values) await patch(collection, value.id, value as unknown as Record<string, unknown>);
+  }
+}
+
 // Wipe Auth + Firestore in the emulator (same endpoints as firebase-global-setup).
-// The first signup in the emulator becomes super_admin and seedCloudIfEmpty
-// provisions the demo stores — but only the FIRST signup overall (role is
-// "all.empty ? super_admin : member"). globalSetup wipes once at the start of
-// the run, so without a per-test wipe every test after the first would sign up
-// as a member with no stores. Calling this before signUp makes each test
-// deterministic: the next signup is super_admin, Santi is the active store.
+// The explicit fixture login below always starts from this deterministic state.
 export async function wipeEmulator(): Promise<void> {
   try {
     await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${PROJECT}/accounts`, {
@@ -135,7 +197,7 @@ export async function ensureSignedOut(page: Page) {
 }
 
 export async function signUp(page: Page, email: string, password: string) {
-  await openSettings(page);
+  await gotoClean(page);
   // The Firebase emulator injects a fixed-position banner that, on small
   // viewports, overlays and intercepts pointer events on the auth-sheet buttons.
   // addInitScript's banner-killer races the SDK, so also hide it imperatively on
@@ -144,15 +206,34 @@ export async function signUp(page: Page, email: string, password: string) {
   await page.addStyleTag({
     content: ".firebase-emulator-warning{display:none!important;pointer-events:none!important;}",
   });
-  await page.getByRole("button", { name: /Entrar \/ Crear cuenta/ }).click();
-  await expect(page.getByRole("heading", { name: "Entrar" })).toBeVisible();
+  if ((await page.getByRole("heading", { name: "Entrar", exact: true }).count()) === 0) {
+    await openSettings(page);
+    await page.getByRole("button", { name: /Entrar \/ Crear cuenta/ }).click();
+  }
+  await expect(page.getByRole("heading", { name: "Entrar", exact: true })).toBeVisible();
   await page.getByRole("button", { name: /No tienes cuenta\? Crear una/ }).click();
   await expect(page.getByRole("heading", { name: "Crear cuenta" })).toBeVisible();
   await page.getByLabel("Correo").fill(email);
   await page.getByLabel("Contraseña").fill(password);
   await page.getByRole("button", { name: "Crear cuenta" }).click();
+  const existing = page.getByText("Ese correo ya está registrado. Intenta entrar.");
+  if (await expect(existing).toBeVisible({ timeout: 5000 }).then(() => true).catch(() => false)) {
+    await page.getByRole("button", { name: /Ya tienes cuenta\? Entrar/ }).click();
+    await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  }
   // Wait for the auth sheet to close.
   await expect(page.getByRole("heading", { name: "Crear cuenta" })).toHaveCount(0, {
+    timeout: 15000,
+  });
+}
+
+export async function signIn(page: Page, email: string, password: string) {
+  await gotoClean(page);
+  await expect(page.getByRole("heading", { name: "Entrar", exact: true })).toBeVisible();
+  await page.getByLabel("Correo").fill(email);
+  await page.getByLabel("Contraseña").fill(password);
+  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Entrar", exact: true })).toHaveCount(0, {
     timeout: 15000,
   });
 }
@@ -167,61 +248,26 @@ export async function gotoSantiHome(page: Page) {
   await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
 }
 
-// Deterministic super_admin login: wipe the emulator so this signup is the first
-// user, sign up, and wait for the seeded Santi store to be active + its products
-// synced. Used from a spec file's beforeAll on a shared page (one login per file
-// per project) — repeated wipe+seed cycles eventually flake, so we minimize them.
+export async function openCatalog(page: Page) {
+  await page.getByRole("button", { name: /^Catálogo/ }).click();
+  const products = page.getByRole("menuitem", { name: "Productos" });
+  if (await products.isVisible().catch(() => false)) await products.click();
+  else await page.getByRole("button", { name: "Productos", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Catálogo", exact: true })).toBeVisible();
+}
+
+// Deterministic super_admin login: wipe, authenticate the allow-listed test
+// admin, install explicit emulator-only fixtures, and wait for them in the UI.
 export async function loginAsFirstAdmin(page: Page, prefix: string, password = "password123") {
   await wipeEmulator();
-  const email = unique(prefix);
+  void prefix;
+  const email = ADMIN_EMAIL;
   await signUp(page, email, password);
+  await seedEmulatorFixtures(email, password);
   await waitForCloudSeed(page);
 }
 
-// Wait for the cloud seed to land, then normalize on the Santi store. The seed
-// creates Santi + Joyería, but loadCloudState() picks activeStoreId = stores[0],
-// and Firestore returns docs in ID order — "store_joyeria" < "store_santi", so
-// Joyería is active on cloud login (unlike the local demo where Santi is hard-
-// set). Most specs assume Santi (its products/orders), so switch to it if needed
-// via the in-app store switcher. Finally, confirm Santi's products have synced by
-// reading the catalog (the home order list is transient during the cloud switch;
-// the catalog grid is a stable signal that state.products has landed).
-// Check via the Firestore emulator admin REST API whether a collection has any
-// docs. Used by waitForCloudSeed to distinguish "seed didn't write products"
-// (re-trigger needed) from "seed wrote them but the app's onSnapshot hasn't
-// surfaced them" (a reload fixes it).
-const ADMIN_LIST = `http://127.0.0.1:8080/emulator/v1/projects/${PROJECT}/databases/(default)/documents`;
-async function collectionCount(name: string): Promise<number> {
-  try {
-    const res = await fetch(`${ADMIN_LIST}/${name}`);
-    if (!res.ok) return 0;
-    const data = (await res.json()) as { documents?: unknown[] };
-    return data.documents?.length ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
-// If the seed was skipped (Firestore has stores but no products — seedCloudIfEmpty
-// bailed on the "existing.stores.length > 0" guard after an incomplete wipe),
-// purge the stores collection so the next app load re-seeds from scratch.
-async function forceReSeedIfPartial() {
-  const stores = await collectionCount("stores");
-  const products = await collectionCount("products");
-  if (stores > 0 && products === 0) {
-    try {
-      const res = await fetch(`${ADMIN_LIST}/stores`);
-      if (!res.ok) return;
-      const data = (await res.json()) as { documents?: { name: string }[] };
-      for (const doc of data.documents ?? []) {
-        await fetch(doc.name, { method: "DELETE" });
-      }
-    } catch {
-      // best-effort
-    }
-  }
-}
-
+// Wait for the explicit test fixture, then normalize on Santi.
 export async function waitForCloudSeed(page: Page) {
   await gotoClean(page);
   await expect(page.getByText(/¿Qué necesitas hacer hoy en (Santi|Joyería)\?/)).toBeVisible({
@@ -235,23 +281,8 @@ export async function waitForCloudSeed(page: Page) {
     });
   }
   // Open the catalog to check whether Santi's seeded products have synced.
-  await page.getByRole("button", { name: "Catálogo" }).click();
-  await expect(page.getByRole("heading", { name: "Catálogo", exact: true })).toBeVisible();
-  const product = page.getByText("Perfume Baccarat Rouge 540");
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (await product.isVisible().catch(() => false)) break;
-    // The seed can fail two ways: (1) seedCloudIfEmpty bailed because an
-    // incomplete wipe left stale stores (stores>0, products=0) — purge stores so
-    // the next app load re-seeds; (2) the seed wrote products but the app's
-    // onSnapshot (which only watches stores) hasn't surfaced them — a reload
-    // re-runs loadCloudState and picks them up.
-    await forceReSeedIfPartial();
-    await gotoClean(page);
-    await ensureSantiActive(page);
-    await page.getByRole("button", { name: "Catálogo" }).click();
-    await expect(page.getByRole("heading", { name: "Catálogo", exact: true })).toBeVisible();
-  }
-  await expect(product).toBeVisible({ timeout: 20000 });
+  await openCatalog(page);
+  await expect(page.getByText("Perfume Baccarat Rouge 540")).toBeVisible({ timeout: 20000 });
   // Return to Inicio so tests start from the home screen.
   await page.getByRole("button", { name: "Inicio" }).click();
   await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
