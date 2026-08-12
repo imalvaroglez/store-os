@@ -43,6 +43,7 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("gh api -X PUT repos/o/r/pulls/1/merge", root)).toMatch(/gh api/);
     expect(hook.forbiddenCommand("gh run rerun 123456", root)).toMatch(/GitHub Actions/);
     expect(hook.forbiddenCommand("gh --repo owner/store-os run rerun 123456", root)).toMatch(/GitHub Actions/);
+    expect(hook.forbiddenCommand("gh run --repo owner/store-os rerun 123456", root)).toMatch(/GitHub Actions/);
     expect(hook.forbiddenCommand("gh pr review 1 --approve", root)).toMatch(/aprobar/);
     expect(hook.forbiddenCommand("vercel deploy --target=production", root)).toMatch(/deploys/);
     expect(hook.forbiddenCommand("node scripts/backfill-public-product-store-ids.cjs --env prod --store one", root)).toMatch(/producción/);
@@ -60,6 +61,10 @@ describe("delivery lifecycle hook", () => {
       tool_input: { command: "*** Update File: .delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
       tool_input: { command: "rm .delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "printf '%s' '{}' | dd of=.delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "find .delivery/runs/bootstrap -name history.json -delete" } })).toMatch(/sólo puede escribirla/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
       tool_input: { command: "node scripts/delivery-hook.cjs" } })).toMatch(/sólo puede escribirla/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_create_file",
