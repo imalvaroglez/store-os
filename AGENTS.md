@@ -57,7 +57,7 @@ Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run bu
 - Trabaja en una **branch** (no directamente en `main`) y abre PR.
 - Mensajes tipo Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
 - Haz commit/push solo cuando se te pida (o al cerrar un paso lógico).
-- Termina los mensajes de commit con `Co-Authored-By: Codex <noreply@anthropic.com>`.
+- Termina los mensajes de commit con `Co-Authored-By: Codex <noreply@anthropic.com>`. (Esta convención se mantiene idéntica en `AGENTS.md` y `CLAUDE.md` — ambos archivos deben estar a la par.)
 
 ## Out of scope (todavía)
 
