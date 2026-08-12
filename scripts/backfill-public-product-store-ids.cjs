@@ -38,6 +38,7 @@ const PROJECTS = {
   prod: "store-os-f7cf8",
 };
 const BATCH_LIMIT = 500; // Firestore writeBatch max ops.
+const STORE_ID_RE = /^store_[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
 
 // --- Pure helpers (unit-tested by --test) ---
 
@@ -72,6 +73,10 @@ function isCandidate(data) {
   return typeof s !== "string" || !s; // absent, null, empty, or non-string → needs backfill
 }
 
+function isValidStoreId(store) {
+  return typeof store === "string" && STORE_ID_RE.test(store);
+}
+
 /**
  * Pure planning function — the load-bearing safety logic of the backfill,
  * extracted so it is unit-testable without Firestore or an emulator.
@@ -82,7 +87,7 @@ function isCandidate(data) {
  *   apply: whether the caller intends to write (only affects the reported mode).
  *
  * Returns one of:
- *   { status: "noop",          total, candidates: 0 }            — nothing to migrate
+ *   { status: "noop",          total, candidates: [] }           — nothing to migrate
  *   { status: "too-many",      total, candidates, limit }        — > BATCH_LIMIT
  *   { status: "abort",         total, candidates, offenders, mismatched } — validation failed
  *   { status: "ready",         total, candidates, mismatched, writes, mode }
@@ -122,7 +127,7 @@ function planBackfill({ store, docs, apply }) {
     return { status: "abort", total, candidates, offenders, mismatched };
   }
   if (candidates.length === 0) {
-    return { status: "noop", total, candidates: 0 };
+    return { status: "noop", total, candidates };
   }
   if (candidates.length > BATCH_LIMIT) {
     return { status: "too-many", total, candidates, limit: BATCH_LIMIT };
@@ -146,8 +151,8 @@ async function run(env, store, apply) {
   if (!projectId) {
     fail(`--env inválido: '${env}'. Debe ser 'dev' o 'prod'.`);
   }
-  if (!store || typeof store !== "string" || !/^store_[a-z0-9_]+$/.test(store)) {
-    fail(`--store inválido: '${store}'. Debe ser un storeId con shape 'store_<slug>' (ej. 'store_olivia').`);
+  if (!isValidStoreId(store)) {
+    fail(`--store inválido: '${store}'. Debe ser un storeId con shape 'store_<id>' (ej. 'store_olivia' o 'store_<UUID>').`);
   }
 
   let admin;
@@ -184,10 +189,25 @@ async function run(env, store, apply) {
   const mode = apply ? "APPLY" : "DRY-RUN";
   console.log(`\x1b[36m[backfill]\x1b[0m Proyecto: \x1b[1m${projectId}\x1b[0m  Store: \x1b[1m${store}\x1b[0m  Modo: \x1b[1m${mode}\x1b[0m`);
 
-  // 1) Validate adminStores/{store} exists ONCE (control-plane source of truth).
+  try {
+    return await executeBackfill({ db, FieldPath, projectId, store, apply });
+  } finally {
+    await app.delete();
+  }
+}
+
+/** Execute the Firestore read/plan/write path. Exported for tests with a fake DB. */
+async function executeBackfill({ db, FieldPath, projectId, store, apply, log = console.log }) {
+  // 1) Validate adminStores/{store} identity ONCE (control-plane source of truth).
   const adminStoreSnap = await db.collection("adminStores").doc(store).get();
   if (!adminStoreSnap.exists) {
-    fail(`No existe adminStores/${store} en ${projectId}. Abortando antes de cualquier escritura.`);
+    throw new Error(`No existe adminStores/${store} en ${projectId}. Abortando antes de cualquier escritura.`);
+  }
+  const controlStoreId = adminStoreSnap.data()?.storeId;
+  if (controlStoreId !== store) {
+    throw new Error(
+      `adminStores/${store}.storeId es '${controlStoreId ?? "ausente"}', no '${store}'. Abortando antes de consultar publicProducts.`
+    );
   }
 
   // 2) Range query on the doc id to scope to this store's publicProducts.
@@ -203,24 +223,23 @@ async function run(env, store, apply) {
 
   // Delegate all safety decisions to the pure, unit-tested planner.
   const plan = planBackfill({ store, docs, apply });
-  console.log(`[backfill] Docs en el rango: ${total}. Candidatos sin storeId: ${plan.candidates.length}.`);
+  log(`[backfill] Docs en el rango: ${total}. Candidatos sin storeId: ${plan.candidates.length}.`);
 
   if (plan.status === "noop") {
-    console.log(`\x1b[32m[backfill] Nada que migrar.\x1b[0m Todos los docs de ${store} ya tienen storeId.`);
-    await app.delete();
-    return;
+    log(`\x1b[32m[backfill] Nada que migrar.\x1b[0m Todos los docs de ${store} ya tienen storeId.`);
+    return { ...plan, committed: false };
   }
   if (plan.status === "too-many") {
-    fail(`${plan.candidates.length} candidatos superan el límite de batch (${plan.limit}). Abortando — divide el trabajo o migra manualmente.`);
+    throw new Error(`${plan.candidates.length} candidatos superan el límite de batch (${plan.limit}). Abortando — divide el trabajo o migra manualmente.`);
   }
   if (plan.status === "abort") {
     if (plan.mismatched && plan.mismatched.length) {
-      fail(
+      throw new Error(
         `Docs en el rango con storeId != '${store}' (no se reparan, aborta). Abortando antes de escribir.\n` +
           plan.mismatched.map((m) => `  - ${m.id}  (storeId='${m.storeId}')`).join("\n")
       );
     }
-    fail(
+    throw new Error(
       `Candidatos con storeId derivado != '${store}' (o malformados). Abortando antes de escribir.\n` +
         plan.offenders.map((o) => `  - ${o}`).join("\n")
     );
@@ -228,16 +247,15 @@ async function run(env, store, apply) {
 
   // status === "ready"
   const candidateDocs = snap.docs.filter((d) => plan.candidates.includes(d.id));
-  console.log(`[backfill] Candidatos a ${apply ? "escribir" : "reportar"} (${plan.candidates.length}):`);
+  log(`[backfill] Candidatos a ${apply ? "escribir" : "reportar"} (${plan.candidates.length}):`);
   for (const id of plan.candidates) {
-    console.log(`  - ${id}  →  storeId: '${store}'`);
+    log(`  - ${id}  →  storeId: '${store}'`);
   }
 
   if (!apply) {
-    console.log(`\x1b[36m[backfill] DRY-RUN\x1b[0m — no se escribió nada. Re-ejecuta con --apply para aplicar.`);
-    console.log(`[backfill] Consumo estimado en --apply: ~${total + 1} lecturas + ${plan.candidates.length} escrituras.`);
-    await app.delete();
-    return;
+    log(`\x1b[36m[backfill] DRY-RUN\x1b[0m — no se escribió nada. Re-ejecuta con --apply para aplicar.`);
+    log(`[backfill] Consumo estimado en --apply: ~${total + 1} lecturas + ${plan.candidates.length} escrituras.`);
+    return { ...plan, committed: false };
   }
 
   // 4) One batch, partial update per candidate.
@@ -247,9 +265,9 @@ async function run(env, store, apply) {
   }
   await batch.commit();
 
-  console.log(`\x1b[32m[backfill] OK\x1b[0m ${plan.candidates.length} docs actualizados con storeId='${store}'.`);
-  console.log(`[backfill] Consumo: ${total + 1} lecturas + ${plan.candidates.length} escrituras.`);
-  await app.delete();
+  log(`\x1b[32m[backfill] OK\x1b[0m ${plan.candidates.length} docs actualizados con storeId='${store}'.`);
+  log(`[backfill] Consumo: ${total + 1} lecturas + ${plan.candidates.length} escrituras.`);
+  return { ...plan, committed: true };
 }
 
 /** True if gcloud ADC exists at the default filesystem location. */
@@ -315,7 +333,7 @@ function runSelfTest() {
       apply: false,
     });
     assert.strictEqual(plan.status, "noop");
-    assert.strictEqual(plan.candidates, 0);
+    assert.deepStrictEqual(plan.candidates, []);
   });
 
   it("planBackfill: ready with writes when a candidate lacks storeId", () => {
@@ -381,6 +399,13 @@ function runSelfTest() {
     assert.strictEqual(BATCH_LIMIT, 500);
   });
 
+  it("store ids accept app UUIDs and reject malformed separators", () => {
+    assert.strictEqual(isValidStoreId("store_olivia"), true);
+    assert.strictEqual(isValidStoreId("store_a1b2c3d4-1234-4abc-8def-1234567890ab"), true);
+    assert.strictEqual(isValidStoreId("store_-broken"), false);
+    assert.strictEqual(isValidStoreId("store_broken-"), false);
+  });
+
   if (exitCode !== 0) {
     console.error("\x1b[31mself-test FALLÓ\x1b[0m");
     process.exit(1);
@@ -393,36 +418,50 @@ function runSelfTest() {
 // `--env dev --store store_olivia` works the same as `--env=dev --store=store_olivia`).
 // Rejects unknown flags so a typo (e.g. --envy) fails loudly instead of being
 // silently ignored. --test is exclusive of --env/--store/--apply.
-const KNOWN_FLAGS = new Set(["--test", "--env", "--store", "--apply"]);
 function parseArgs(argv) {
   const raw = argv.slice(2);
   const opts = { test: false, env: undefined, store: undefined, apply: false };
+  const seen = new Set();
   for (let i = 0; i < raw.length; i++) {
     const tok = raw[i];
-    if (tok === "--test") opts.test = true;
-    else if (tok === "--apply") opts.apply = true;
-    else if (tok.startsWith("--env=")) opts.env = tok.slice("--env=".length);
-    else if (tok === "--env") opts.env = raw[++i];
-    else if (tok.startsWith("--store=")) opts.store = tok.slice("--store=".length);
-    else if (tok === "--store") opts.store = raw[++i];
-    else {
-      console.error(`\x1b[31m[backfill] Flag desconocido: '${tok}'.\x1b[0m`);
-      console.error("Flags válidos: --test | --env <dev|prod> --store <store_id> [--apply]");
-      process.exit(2);
+    if (tok === "--test") {
+      seen.add("--test");
+      opts.test = true;
+    } else if (tok === "--apply") {
+      seen.add("--apply");
+      opts.apply = true;
+    } else if (tok.startsWith("--env=")) {
+      seen.add("--env");
+      opts.env = tok.slice("--env=".length);
+    } else if (tok === "--env") {
+      seen.add("--env");
+      opts.env = raw[++i];
+    } else if (tok.startsWith("--store=")) {
+      seen.add("--store");
+      opts.store = tok.slice("--store=".length);
+    } else if (tok === "--store") {
+      seen.add("--store");
+      opts.store = raw[++i];
+    } else {
+      cliError(`Flag desconocido: '${tok}'.`);
     }
   }
 
-  if (opts.test && (opts.env || opts.store || opts.apply)) {
-    console.error("\x1b[31m[backfill] --test es exclusivo de --env/--store/--apply.\x1b[0m");
-    process.exit(2);
+  if (opts.test && ["--env", "--store", "--apply"].some((flag) => seen.has(flag))) {
+    cliError("--test es exclusivo de --env/--store/--apply.");
   }
   if (opts.test) return { mode: "test" };
   if (!opts.env || !opts.store) {
-    console.error("Uso: node scripts/backfill-public-product-store-ids.cjs --test");
-    console.error("     node scripts/backfill-public-product-store-ids.cjs --env <dev|prod> --store <store_id> [--apply]");
-    process.exit(2);
+    cliError("Faltan --env y/o --store.");
   }
   return { mode: "run", env: opts.env, store: opts.store, apply: opts.apply };
+}
+
+function cliError(message) {
+  console.error(`\x1b[31m[backfill] ${message}\x1b[0m`);
+  console.error("Uso: node scripts/backfill-public-product-store-ids.cjs --test");
+  console.error("     node scripts/backfill-public-product-store-ids.cjs --env <dev|prod> --store <store_id> [--apply]");
+  process.exit(2);
 }
 
 if (require.main === module) {
@@ -431,10 +470,19 @@ if (require.main === module) {
     runSelfTest();
   } else {
     run(opts.env, opts.store, opts.apply).catch((e) => {
-      console.error(`\x1b[31m[backfill] Error inesperado:\x1b[0m ${e && e.stack ? e.stack : e}`);
-      process.exit(1);
+      console.error(`\x1b[31m[backfill] BLOQUEADO:\x1b[0m ${e && e.message ? e.message : e}`);
+      process.exitCode = 1;
     });
   }
 }
 
-module.exports = { run, deriveStoreId, parsePublicProductId, isCandidate, planBackfill, parseArgs };
+module.exports = {
+  run,
+  executeBackfill,
+  deriveStoreId,
+  parsePublicProductId,
+  isCandidate,
+  isValidStoreId,
+  planBackfill,
+  parseArgs,
+};
