@@ -124,7 +124,7 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || ROOT,
     encoding: "utf8",
-    env: { ...process.env, ...options.env },
+    env: options.replaceEnv ? options.env : { ...process.env, ...options.env },
     maxBuffer: 20 * 1024 * 1024,
   });
   return {
@@ -142,8 +142,29 @@ function npmInvocation(args) {
   return { command: process.execPath, args: [fs.realpathSync(executable), ...args] };
 }
 
+function ghInvocation(args) {
+  const candidates = [
+    ...(process.env.NODE_ENV === "test" && process.env.TEST_GH_BIN ? [process.env.TEST_GH_BIN] : []),
+    ...(process.platform === "win32" ? [] : ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]),
+  ];
+  const executable = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!executable) fail("No se encontró gh en una ruta global confiable");
+  return { command: executable, args };
+}
+
 function verificationPath() {
   return [...new Set([path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/homebrew/bin", "/usr/local/bin"])].join(path.delimiter);
+}
+
+function verificationEnvironment() {
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
+    !/^npm_config_/i.test(name) && !new Set(["NODE_OPTIONS", "NODE_PATH", "BASH_ENV", "ENV", "SHELLOPTS"]).has(name)));
+  return {
+    ...inherited,
+    PATH: verificationPath(),
+    npm_config_script_shell: "/bin/sh",
+    npm_config_userconfig: "/dev/null",
+  };
 }
 
 function git(root, args, allowFailure = false) {
@@ -368,13 +389,15 @@ function completedIds(root = ROOT, ref = mainRef(root)) {
 }
 
 function openPullRequests(root = ROOT) {
-  const result = run("gh", ["pr", "list", "--state", "open", "--limit", "100", "--json", "number,body,headRefName,url,files,isDraft"], { cwd: root });
+  const command = ghInvocation(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,body,headRefName,url,files,isDraft"]);
+  const result = run(command.command, command.args, { cwd: root });
   if (result.exitCode !== 0) fail("No se pudieron consultar los PR abiertos; el harness falla cerrado", [result.stderr.trim()]);
   try { return JSON.parse(result.stdout); } catch { fail("gh devolvió PRs inválidos"); }
 }
 
 function closedPullRequests(root = ROOT) {
-  const result = run("gh", ["pr", "list", "--state", "closed", "--limit", "100", "--json", "number,body,url,mergedAt"], { cwd: root });
+  const command = ghInvocation(["pr", "list", "--state", "closed", "--limit", "100", "--json", "number,body,url,mergedAt"]);
+  const result = run(command.command, command.args, { cwd: root });
   if (result.exitCode !== 0) fail("No se pudieron consultar los PR cerrados; el harness falla cerrado", [result.stderr.trim()]);
   try { return JSON.parse(result.stdout); } catch { fail("gh devolvió PRs cerrados inválidos"); }
 }
@@ -634,9 +657,11 @@ function bootstrapHistoricalReviewBlockers(root, history) {
   for (const stage of REVIEW_STAGES) {
     for (const review of history.artifacts?.[stage] || []) {
       blockers.push(...receiptIntegrityBlockers(root, review, stage, review.sha, receipts));
+      const reviewerIds = REVIEW_STAGES.flatMap((reviewStage) => history.artifacts?.[reviewStage] || [])
+        .filter((entry) => entry.sha === review.sha).map((entry) => entry.reviewer?.id);
       for (const finding of review.findings || []) {
         if (!finding.blocking) continue;
-        const verifier = verifiers.find((entry) => entry.sha === review.sha && entry.reviewer?.id !== review.reviewer?.id &&
+        const verifier = verifiers.find((entry) => entry.sha === review.sha && !reviewerIds.includes(entry.reviewer?.id) &&
           entry.findings.some((verdict) => verdict.reviewId === stage && verdict.findingId === finding.id));
         if (!verifier) blockers.push(`${stage}/${finding.id} de ${review.sha} no pasó por verificador adversarial`);
       }
@@ -790,9 +815,11 @@ function historicalReviewBlockers(runState) {
   const verifiers = runState.artifactHistory?.verifier || [];
   for (const stage of REVIEW_STAGES) {
     for (const review of runState.artifactHistory?.[stage] || []) {
+      const reviewerIds = REVIEW_STAGES.flatMap((reviewStage) => runState.artifactHistory?.[reviewStage] || [])
+        .filter((entry) => entry.sha === review.sha).map((entry) => entry.reviewer?.id);
       for (const finding of review.findings || []) {
         if (!finding.blocking) continue;
-        const verifier = verifiers.find((entry) => entry.sha === review.sha && entry.reviewer?.id !== review.reviewer?.id &&
+        const verifier = verifiers.find((entry) => entry.sha === review.sha && !reviewerIds.includes(entry.reviewer?.id) &&
           entry.findings.some((verdict) => verdict.reviewId === stage && verdict.findingId === finding.id));
         if (!verifier) blockers.push(`${stage}/${finding.id} de ${review.sha} no pasó por verificador adversarial`);
       }
@@ -816,7 +843,7 @@ function verificationCommands(root, mode, files) {
   }
   const commands = required.map((name) => {
     if (!packageJson.scripts?.[name]) fail(`Comando requerido inexistente: npm run ${name}`);
-    return { name, ...npmInvocation(["run", name]) };
+    return { name, ...npmInvocation(["--script-shell=/bin/sh", "run", name]) };
   });
   if (mode === "final" && files.some((file) => file === "package.json" || /(?:^|\/)package-lock\.json$/.test(file))) {
     commands.push({ name: "audit", ...npmInvocation(["audit", "--omit=dev", "--audit-level=high"]) });
@@ -828,7 +855,7 @@ function executeCommands(root, commands, directory, prefix) {
   const evidence = [];
   for (const command of commands) {
     const started = Date.now();
-    const result = run(command.command, command.args, { cwd: root, env: { PATH: verificationPath() } });
+    const result = run(command.command, command.args, { cwd: root, env: verificationEnvironment(), replaceEnv: true });
     const logFile = path.join(directory, `${prefix}-${command.name.replaceAll(":", "-")}.log`);
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
     fs.writeFileSync(logFile, `${result.stdout}${result.stderr}`);
@@ -879,10 +906,10 @@ function executeVerification(root = ROOT, mode) {
 
 function bootstrapVerificationCommands(root = ROOT) {
   const packageJson = readJson(path.join(root, "package.json"));
-  const commands = [{ name: "delivery-config", ...npmInvocation(["run", "delivery", "--", "check-config"]) }];
+  const commands = [{ name: "delivery-config", ...npmInvocation(["--script-shell=/bin/sh", "run", "delivery", "--", "check-config"]) }];
   for (const name of ["typecheck", "test", "build", "e2e", "e2e:firebase", "test:rules"]) {
     if (!packageJson.scripts?.[name]) fail(`Comando bootstrap inexistente: npm run ${name}`);
-    commands.push({ name, ...npmInvocation(["run", name]) });
+    commands.push({ name, ...npmInvocation(["--script-shell=/bin/sh", "run", name]) });
   }
   commands.push({ name: "audit", ...npmInvocation(["audit", "--omit=dev", "--audit-level=high"]) });
   return commands;
@@ -1237,7 +1264,7 @@ function gate(root = ROOT, kind, prs) {
     const pullRequests = prs || openPullRequests(root);
     if (!branch || branch === "main") {
       const next = nextDelivery(root, pullRequests);
-      if (next.outcome === "EMPTY" || next.outcome === "WAITING_SPEC_APPROVAL") {
+      if (["EMPTY", "WAITING_SPEC_APPROVAL", "BLOCKED_DEPENDENCY"].includes(next.outcome)) {
         return { allowed: true, gate: "stop", reason: next.outcome };
       }
       if (next.outcome === "WAITING_PR" && next.item?.status === "needs-spec") {
@@ -1248,7 +1275,7 @@ function gate(root = ROOT, kind, prs) {
     const files = changedFiles(root, git(root, ["rev-parse", mainRef(root)]).stdout.trim());
     if (!files.length) {
       const next = nextDelivery(root, pullRequests);
-      if (next.outcome === "EMPTY" || next.outcome === "WAITING_SPEC_APPROVAL") {
+      if (["EMPTY", "WAITING_SPEC_APPROVAL", "BLOCKED_DEPENDENCY"].includes(next.outcome)) {
         return { allowed: true, gate: "stop", reason: next.outcome };
       }
       fail("STOP BLOQUEADO: la cola requiere una acción", [next.outcome, next.item?.id || "sin item"]);
@@ -1273,7 +1300,8 @@ function gate(root = ROOT, kind, prs) {
 }
 
 function pullRequest(root, number) {
-  const result = run("gh", ["pr", "view", String(number), "--json", "number,state,isDraft,body,baseRefName,headRefName,headRefOid,statusCheckRollup,comments,files,url,mergedAt"], { cwd: root });
+  const command = ghInvocation(["pr", "view", String(number), "--json", "number,state,isDraft,body,baseRefName,headRefName,headRefOid,statusCheckRollup,comments,files,url,mergedAt"]);
+  const result = run(command.command, command.args, { cwd: root });
   if (result.exitCode !== 0) fail(`No se pudo consultar el PR #${number}`, [result.stderr.trim()]);
   try { return JSON.parse(result.stdout); } catch { fail("gh devolvió un PR inválido"); }
 }

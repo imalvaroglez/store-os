@@ -73,6 +73,7 @@ function initRepo(items = [item("one", 10)]) {
   process.env.TEST_GH_OPEN_FILE = fake.openFile;
   process.env.TEST_GH_VIEW_FILE = fake.viewFile;
   process.env.TEST_GH_CLOSED_FILE = fake.closedFile;
+  process.env.TEST_GH_BIN = join(fake.bin, "gh");
   git(root, "switch", "-c", "delivery/one");
   return root;
 }
@@ -237,6 +238,7 @@ function initBootstrapRepo() {
   process.env.TEST_GH_OPEN_FILE = fake.openFile;
   process.env.TEST_GH_VIEW_FILE = fake.viewFile;
   process.env.TEST_GH_CLOSED_FILE = fake.closedFile;
+  process.env.TEST_GH_BIN = join(fake.bin, "gh");
   return { root, baseSha, fake };
 }
 
@@ -302,6 +304,7 @@ afterEach(() => {
   delete process.env.TEST_GH_OPEN_FILE;
   delete process.env.TEST_GH_VIEW_FILE;
   delete process.env.TEST_GH_CLOSED_FILE;
+  delete process.env.TEST_GH_BIN;
   while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
@@ -511,7 +514,12 @@ describe.sequential("delivery harness", () => {
       .toThrow(/inexistente/);
     packageJson.scripts.test = "false";
     writeJson(join(root, "package.json"), packageJson);
-    expect(() => delivery(root, "verify", "quick")).toThrow(/falló/);
+    process.env.npm_config_script_shell = "/usr/bin/true";
+    try {
+      expect(() => delivery(root, "verify", "quick")).toThrow(/falló/);
+    } finally {
+      delete process.env.npm_config_script_shell;
+    }
   });
 
   it("bloquea publish y stop cuando la entrega está incompleta", () => {
@@ -656,6 +664,7 @@ describe.sequential("delivery harness", () => {
     process.env.TEST_GH_OPEN_FILE = retryGh.openFile;
     process.env.TEST_GH_VIEW_FILE = retryGh.viewFile;
     process.env.TEST_GH_CLOSED_FILE = retryGh.closedFile;
+    process.env.TEST_GH_BIN = join(retryGh.bin, "gh");
     expect(delivery(retry, "begin", "one").branch)
       .toBe("delivery/retry");
 
@@ -683,6 +692,16 @@ describe.sequential("delivery harness", () => {
     writeJson(runFile, run);
     const open = [{ number: 1, url: "https://example.test/pr/1", body: "Delivery-ID: one", files: [] }];
     expect(harness.nextDelivery(green, open).item.id).toBe("two");
+
+    const dependent = initRepo([item("one", 10), item("two", 20, { dependsOn: ["one"] })]);
+    delivery(dependent, "begin", "one");
+    const dependentActive = JSON.parse(readFileSync(join(dependent, ".delivery", "runs", "active.json"), "utf8"));
+    const dependentRunFile = join(dependent, ".delivery", "runs", dependentActive.runId, "run.json");
+    const dependentRun = JSON.parse(readFileSync(dependentRunFile, "utf8"));
+    dependentRun.state = "REMOTE_GREEN";
+    writeJson(dependentRunFile, dependentRun);
+    git(dependent, "switch", "main");
+    expect(harness.gate(dependent, "stop", open)).toMatchObject({ reason: "BLOCKED_DEPENDENCY" });
   });
 
   it("comprueba CI y Preview antes de marcar remoto verde", async () => {
@@ -714,6 +733,7 @@ describe.sequential("delivery harness", () => {
     process.env.PATH = `${fake.bin}:${oldPath}`;
     process.env.TEST_GH_OPEN_FILE = fake.openFile;
     process.env.TEST_GH_VIEW_FILE = fake.viewFile;
+    process.env.TEST_GH_BIN = join(fake.bin, "gh");
     const fakePlaywright = join(root, "node_modules", "@playwright", "test");
     mkdirSync(fakePlaywright, { recursive: true });
     writeFileSync(join(fakePlaywright, "index.js"), `
@@ -765,6 +785,7 @@ exports.chromium = { launch: async () => {
     process.env.TEST_GH_OPEN_FILE = skippedFake.openFile;
     process.env.TEST_GH_VIEW_FILE = skippedFake.viewFile;
     process.env.TEST_GH_CLOSED_FILE = skippedFake.closedFile;
+    process.env.TEST_GH_BIN = join(skippedFake.bin, "gh");
     try {
       expect(() => delivery(skipped, "remote", "42")).toThrow(/CI remoto no está verde|deben terminar SUCCESS/);
     } finally {

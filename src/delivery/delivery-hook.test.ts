@@ -38,6 +38,10 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("git remote set-url origin /tmp/attacker", root)).toMatch(/origin/);
     expect(hook.forbiddenCommand("git config url./tmp/attacker.insteadOf https:\/\/github.com\/imalvaroglez\/store-os.git", root)).toMatch(/origin/);
     expect(hook.forbiddenCommand("gh pr edit 1 --body changed", root)).toMatch(/manifiesto/);
+    expect(hook.forbiddenCommand("gh -R imalvaroglez/store-os pr merge 1 --squash", root)).toMatch(/Merge/);
+    expect(hook.forbiddenCommand("gh --repo imalvaroglez/store-os pr ready 1", root)).toMatch(/Merge/);
+    expect(hook.forbiddenCommand("gh -R imalvaroglez/store-os pr review 1 --approve", root)).toMatch(/aprobar/);
+    expect(hook.forbiddenCommand("gh --repo imalvaroglez/store-os api -X PUT repos/o/r/pulls/1/merge", root)).toMatch(/gh api/);
     expect(hook.forbiddenCommand("vercel deploy --prod", root)).toMatch(/deploys/);
     expect(hook.forbiddenCommand("firebase --project store-os-dev deploy", root)).toMatch(/deploys/);
     expect(hook.forbiddenCommand("firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
@@ -83,6 +87,8 @@ describe("delivery lifecycle hook", () => {
   it("exige draft al crear PR", () => {
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
       tool_input: { command: "gh pr create --title change --body body" } })).toMatch(/--draft/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "gh -R imalvaroglez/store-os pr create --title change --body body" } })).toMatch(/--draft/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__github__create_pull_request",
       tool_input: { title: "change", draft: false } })).toMatch(/ready|draft/);
     const manifest = { kind: "code", id: "one", specPath: "docs/one.md", sha: "abc123", commands: ["npm run test"] };
