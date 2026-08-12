@@ -17,6 +17,7 @@ const REVIEW_LENSES = {
 const RECORD_STAGES = new Set(["discovery", "test-design", "plan", ...REVIEW_STAGES, "verifier"]);
 const TERMINAL_STATES = new Set(["WAITING_SPEC_APPROVAL", "BLOCKED_HUMAN", "REMOTE_GREEN"]);
 const ROOT = path.resolve(path.join(__dirname, ".."));
+const CANONICAL_ORIGIN = "https://github.com/imalvaroglez/store-os.git";
 const BOOTSTRAP = Object.freeze({
   id: "delivery-harness-bootstrap",
   branch: "codex/autonomous-delivery-harness",
@@ -134,10 +135,26 @@ function run(command, args, options = {}) {
   };
 }
 
+function npmInvocation(args) {
+  const executable = path.join(path.dirname(process.execPath), process.platform === "win32" ? "npm.cmd" : "npm");
+  if (!fs.existsSync(executable)) fail("No se encontró npm junto al ejecutable de Node", [executable]);
+  if (process.platform === "win32") return { command: executable, args };
+  return { command: process.execPath, args: [fs.realpathSync(executable), ...args] };
+}
+
+function verificationPath() {
+  return [...new Set([path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])].join(path.delimiter);
+}
+
 function git(root, args, allowFailure = false) {
-  const result = run("git", ["-C", root, ...args], { cwd: root });
+  const result = run("/usr/bin/git", ["-C", root, ...args], { cwd: root });
   if (!allowFailure && result.exitCode !== 0) fail(`Falló git ${args.join(" ")}`, [result.stderr.trim()]);
   return result;
+}
+
+function repositoryIdentityBlockers(root = ROOT) {
+  const configured = git(root, ["config", "--get", "remote.origin.url"], true).stdout.trim();
+  return configured === CANONICAL_ORIGIN ? [] : [`origin debe ser ${CANONICAL_ORIGIN}`];
 }
 
 function currentSha(root = ROOT) {
@@ -155,6 +172,8 @@ function mainRef(root = ROOT) {
 }
 
 function syncMain(root = ROOT) {
+  const identity = repositoryIdentityBlockers(root);
+  if (identity.length) fail("Repositorio remoto no autorizado", identity);
   const result = git(root, ["fetch", "origin", "main", "--quiet"], true);
   if (result.exitCode !== 0) fail("No se pudo actualizar origin/main; el harness falla cerrado", [result.stderr.trim()]);
   return "origin/main";
@@ -231,7 +250,7 @@ function bootstrapStateFile(root = ROOT, name = "verification") {
 }
 
 function bootstrapIdentityBlockers(root = ROOT) {
-  const blockers = [];
+  const blockers = repositoryIdentityBlockers(root);
   let manifest;
   try { manifest = loadBootstrapManifest(root); } catch (error) {
     return [error.message, ...(error.details || [])];
@@ -292,7 +311,7 @@ function validateQueue(root = ROOT) {
     if (!Array.isArray(item.previewChecks)) errors.push(`previewChecks debe ser array: ${item.id}`);
     if (item.status === "queued" && item.previewChecks?.length === 0) errors.push(`queued requiere al menos un previewCheck: ${item.id}`);
     for (const check of item.previewChecks || []) {
-      if (!check || typeof check.path !== "string" || !check.path.startsWith("/") ||
+      if (!check || typeof check.path !== "string" || !/^\/(?!\/)/.test(check.path) ||
           typeof check.selector !== "string" || !check.selector || typeof check.text !== "string") {
         errors.push(`previewCheck inválido: ${item.id}`);
       }
@@ -617,7 +636,7 @@ function bootstrapHistoricalReviewBlockers(root, history) {
       blockers.push(...receiptIntegrityBlockers(root, review, stage, review.sha, receipts));
       for (const finding of review.findings || []) {
         if (!finding.blocking) continue;
-        const verifier = verifiers.find((entry) => entry.sha === review.sha &&
+        const verifier = verifiers.find((entry) => entry.sha === review.sha && entry.reviewer?.id !== review.reviewer?.id &&
           entry.findings.some((verdict) => verdict.reviewId === stage && verdict.findingId === finding.id));
         if (!verifier) blockers.push(`${stage}/${finding.id} de ${review.sha} no pasó por verificador adversarial`);
       }
@@ -773,7 +792,7 @@ function historicalReviewBlockers(runState) {
     for (const review of runState.artifactHistory?.[stage] || []) {
       for (const finding of review.findings || []) {
         if (!finding.blocking) continue;
-        const verifier = verifiers.find((entry) => entry.sha === review.sha &&
+        const verifier = verifiers.find((entry) => entry.sha === review.sha && entry.reviewer?.id !== review.reviewer?.id &&
           entry.findings.some((verdict) => verdict.reviewId === stage && verdict.findingId === finding.id));
         if (!verifier) blockers.push(`${stage}/${finding.id} de ${review.sha} no pasó por verificador adversarial`);
       }
@@ -786,18 +805,21 @@ function verificationCommands(root, mode, files) {
   const packageJson = readJson(path.join(root, "package.json"));
   const required = mode === "quick" ? ["typecheck", "test"] : ["typecheck", "test", "build", "e2e"];
   if (mode === "final") {
-    const runtimeChanged = files.some((file) =>
+    const firebaseChanged = files.some((file) =>
+      /^(?:firebase\.json|\.firebaserc|firestore\.rules|storage\.rules|playwright\.firebase\.config\.[cm]?[jt]s|scripts\/(?!delivery-))/.test(file) ||
+      /^src\/app\/firebase\//.test(file));
+    const runtimeChanged = firebaseChanged || files.some((file) =>
       (/^src\//.test(file) && !/^src\/delivery\//.test(file) && !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)) ||
       /^(e2e\/|firestore\.rules|storage\.rules|vite\.config\.|index\.html)/.test(file));
     if (runtimeChanged) required.push("e2e:firebase");
-    if (files.some((file) => /^(firestore\.rules|storage\.rules|src\/app\/firebase\/)/.test(file))) required.push("test:rules");
+    if (files.some((file) => /^(?:firebase\.json|\.firebaserc|firestore\.rules|storage\.rules|scripts\/test-rules\.sh|src\/app\/firebase\/)/.test(file))) required.push("test:rules");
   }
   const commands = required.map((name) => {
     if (!packageJson.scripts?.[name]) fail(`Comando requerido inexistente: npm run ${name}`);
-    return { name, command: "npm", args: ["run", name] };
+    return { name, ...npmInvocation(["run", name]) };
   });
   if (mode === "final" && files.some((file) => file === "package.json" || /(?:^|\/)package-lock\.json$/.test(file))) {
-    commands.push({ name: "audit", command: "npm", args: ["audit", "--omit=dev", "--audit-level=high"] });
+    commands.push({ name: "audit", ...npmInvocation(["audit", "--omit=dev", "--audit-level=high"]) });
   }
   return commands;
 }
@@ -806,7 +828,7 @@ function executeCommands(root, commands, directory, prefix) {
   const evidence = [];
   for (const command of commands) {
     const started = Date.now();
-    const result = run(command.command, command.args, { cwd: root });
+    const result = run(command.command, command.args, { cwd: root, env: { PATH: verificationPath() } });
     const logFile = path.join(directory, `${prefix}-${command.name.replaceAll(":", "-")}.log`);
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
     fs.writeFileSync(logFile, `${result.stdout}${result.stderr}`);
@@ -857,12 +879,12 @@ function executeVerification(root = ROOT, mode) {
 
 function bootstrapVerificationCommands(root = ROOT) {
   const packageJson = readJson(path.join(root, "package.json"));
-  const commands = [{ name: "delivery-config", command: "npm", args: ["run", "delivery", "--", "check-config"] }];
+  const commands = [{ name: "delivery-config", ...npmInvocation(["run", "delivery", "--", "check-config"]) }];
   for (const name of ["typecheck", "test", "build", "e2e", "e2e:firebase", "test:rules"]) {
     if (!packageJson.scripts?.[name]) fail(`Comando bootstrap inexistente: npm run ${name}`);
-    commands.push({ name, command: "npm", args: ["run", name] });
+    commands.push({ name, ...npmInvocation(["run", name]) });
   }
-  commands.push({ name: "audit", command: "npm", args: ["audit", "--omit=dev", "--audit-level=high"] });
+  commands.push({ name: "audit", ...npmInvocation(["audit", "--omit=dev", "--audit-level=high"]) });
   return commands;
 }
 
@@ -953,7 +975,7 @@ function artifactBlockers(root, runState, sha) {
 }
 
 function publishBlockers(root = ROOT, prs = openPullRequests(root)) {
-  const blockers = [];
+  const blockers = repositoryIdentityBlockers(root);
   let runState;
   try { runState = loadActiveRun(root); } catch (error) { return [error.message]; }
   if (runState.state === "BLOCKED_HUMAN") blockers.push("La corrida está BLOCKED_HUMAN");
@@ -1101,7 +1123,7 @@ function bootstrapPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
 }
 
 function specPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
-  const blockers = [];
+  const blockers = repositoryIdentityBlockers(root);
   const ref = mainRef(root);
   const baseSha = git(root, ["rev-parse", ref]).stdout.trim();
   const branch = currentBranch(root);
@@ -1118,7 +1140,9 @@ function specPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
   try { queue = validateQueue(root); } catch (error) {
     blockers.push(error.message, ...(error.details || []));
   }
-  const baseOutcome = baseQueue ? queueOutcome(baseQueue, completedIds(root, ref), prs) : null;
+  const previous = loadActiveRun(root, false);
+  const baseOutcome = baseQueue ? queueOutcome(baseQueue, completedIds(root, ref), prs,
+    previous?.state === "REMOTE_GREEN" ? previous : null) : null;
   const candidate = baseOutcome?.outcome === "DRAFT_SPEC"
     ? queue?.items.find((item) => item.id === baseOutcome.item.id && item.status === "awaiting-approval")
     : null;
@@ -1146,13 +1170,18 @@ function specPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
 function revalidateRemote(root, remote, candidate) {
   if (!remote?.number) return ["Falta número de PR remoto"];
   const pr = pullRequest(root, remote.number);
-  return remoteSnapshotBlockers(pr, candidate, remote.sha, remote.previewUrl);
+  return remoteSnapshotBlockers(pr, { ...candidate, bodyRequirements: remote.bodyRequirements }, remote.sha, remote.previewUrl);
+}
+
+function relevantActiveRun(root = ROOT) {
+  const active = loadActiveRun(root, false);
+  return active?.state === "REMOTE_GREEN" && currentBranch(root) !== active.branch ? null : active;
 }
 
 function gate(root = ROOT, kind, prs) {
   if (kind === "publish") {
     const pullRequests = prs || openPullRequests(root);
-    const active = loadActiveRun(root, false);
+    const active = relevantActiveRun(root);
     if (!active) {
       if (bootstrapDeclared(root)) {
         const blockers = bootstrapPublishBlockers(root, pullRequests);
@@ -1191,9 +1220,11 @@ function gate(root = ROOT, kind, prs) {
     };
   }
   if (kind !== "stop") fail("gate acepta stop o publish");
-  const runState = loadActiveRun(root, false);
+  const runState = relevantActiveRun(root);
   if (!runState) {
     if (bootstrapDeclared(root)) {
+      const history = loadBootstrapHistory(root);
+      if (history.state === "BLOCKED_HUMAN") return { allowed: true, gate: "stop", reason: "BLOCKED_HUMAN" };
       const remote = fs.existsSync(bootstrapStateFile(root, "remote")) ? readJson(bootstrapStateFile(root, "remote")) : null;
       const blockers = bootstrapPublishBlockers(root, prs || openPullRequests(root));
       if (!remote || remote.state !== "REMOTE_GREEN") blockers.push("Bootstrap todavía no está REMOTE_GREEN");
@@ -1259,6 +1290,9 @@ function remoteSnapshotBlockers(pr, candidate, sha, expectedPreviewUrl = "") {
   if (pr.headRefName !== candidate.branch) blockers.push(`La rama remota cambió a ${pr.headRefName || "desconocida"}`);
   if (pr.headRefOid !== sha) blockers.push(`El SHA remoto cambió: ${pr.headRefOid || "desconocido"}`);
   if (deliveryIdFromBody(pr.body) !== candidate.id) blockers.push("El Delivery-ID remoto cambió");
+  for (const value of candidate.bodyRequirements || []) {
+    if (!String(pr.body || "").includes(value)) blockers.push(`El cuerpo remoto perdió un marcador obligatorio: ${value}`);
+  }
   const required = ["delivery-config", "build-test", "rules-and-e2e", "deploy"];
   for (const name of required) {
     if (!(pr.statusCheckRollup || []).some((check) => (check.name || check.context || "").includes(name) && checkConclusion(check) === "SUCCESS")) {
@@ -1291,10 +1325,13 @@ async function browserChecks(url, checks) {
   try {
     const page = await browser.newPage();
     const results = [];
+    const previewOrigin = new URL(url).origin;
     for (const check of checks) {
       const target = new URL(check.path, url).toString();
+      if (new URL(target).origin !== previewOrigin) fail("previewCheck intenta salir del origen del Preview", [target]);
       const response = await page.goto(target, { waitUntil: "domcontentloaded" });
       if (!response?.ok()) fail(`Preview respondió ${response?.status() || "sin respuesta"}`, [target]);
+      if (new URL(page.url()).origin !== previewOrigin) fail("El Preview redirigió fuera de su origen", [page.url()]);
       const locator = page.locator(check.selector);
       await locator.waitFor({ state: "visible" });
       const content = await locator.innerText();
@@ -1340,7 +1377,7 @@ async function recordRemote(root = ROOT, number) {
   if (!Array.isArray(previewChecks) || previewChecks.length === 0) fail("Faltan previewChecks obligatorios");
   const results = await browserChecks(url, previewChecks);
   const recordedAt = new Date().toISOString();
-  const remote = { number: Number(number), url: pr.url, previewUrl: url, sha, checks: names, recordedAt };
+  const remote = { number: Number(number), url: pr.url, previewUrl: url, sha, checks: names, bodyRequirements: requiredBodyValues, recordedAt };
   if (bootstrap) {
     const state = {
       version: 1,

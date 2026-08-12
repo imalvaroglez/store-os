@@ -6,6 +6,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const CANONICAL_REPOSITORY = "imalvaroglez/store-os";
 
 function block(reason) {
   process.stderr.write(`${reason}\n`);
@@ -87,6 +88,10 @@ function persistReceipt(root, input, value) {
 
 function forbiddenCommand(command, root) {
   const value = command.replaceAll("\\\n", " ");
+  if (/[<>]/.test(value) || /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|dd|install|mkdir|touch|tee|truncate|printf|echo)\b/i.test(value) ||
+      /\b(?:node|python\d*|ruby|perl|bash|zsh|sh)\s+(?:-[ec]|-)\b/i.test(value)) {
+    return "Bash no puede escribir archivos ni ejecutar código dinámico; usa apply_patch o el CLI canónico.";
+  }
   if (/\bgit\b[^\n;&|]*(?:-c\s+alias\.|--config-env(?:=|\s+)alias\.)/i.test(value)) return "Los aliases Git están bloqueados por política de entrega.";
   if (/\bgit\b[^\n;&|]*\bsend-pack\b/i.test(value) ||
       /\bgit(?:\s+(?:-C|-c|--git-dir|--work-tree)\s+\S+|\s+--[^\s]+)*\s+(?:["']?\$|`)/i.test(value)) {
@@ -98,7 +103,12 @@ function forbiddenCommand(command, root) {
     return "Los agentes no pueden iniciar, relanzar, cancelar ni borrar ejecuciones de GitHub Actions.";
   }
   if (/\bgh\s+repo\s+sync\b/i.test(value)) return "gh repo sync puede mover refs sin gate y está bloqueado.";
+  if (/\bgh\s+pr\s+edit\b/i.test(value)) return "El manifiesto de un PR de entrega no puede editarse después de crearlo.";
   if (/\bgh\s+pr\s+review\b/i.test(value)) return "Los agentes no pueden aprobar ni revisar PRs como autoridad humana.";
+  if (/\bgit\b[^\n;&|]*\bremote\s+(?:add|remove|rename|set-head|set-branches|set-url|update|prune)\b/i.test(value) ||
+      /\bgit\b[^\n;&|]*\bconfig\b[^\n;&|]*(?:remote\.|url\.)/i.test(value)) {
+    return "La identidad de origin no puede modificarse durante una entrega.";
+  }
   if (gitCommand(value, "merge") || /\bgh\s+pr\s+(merge|ready)\b/i.test(value)) {
     return "Merge y marcar el PR ready requieren acción humana.";
   }
@@ -157,6 +167,12 @@ function option(command, name) {
   return match ? (match[1] || match[2] || match[3]) : "";
 }
 
+function validPush(command, manifest) {
+  const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const expected = new RegExp(`^\\s*(?:/usr/bin/)?git\\s+push\\s+(?:-u\\s+|--set-upstream\\s+)?origin\\s+${escape(manifest.sha)}:refs/heads/${escape(manifest.branch)}\\s*$`);
+  return expected.test(command);
+}
+
 function handle(input) {
   const event = input.hook_event_name || input.hookEventName;
   const root = rootFrom(input);
@@ -204,6 +220,9 @@ function handle(input) {
   if (/github_.*review.*(?:pull|pr)|github_.*(?:pull|pr).*review/.test(toolName)) {
     return "Los agentes no pueden aprobar ni publicar reviews de PR como autoridad humana.";
   }
+  if (/(?:update|edit).*(?:pull_request|pr)|(?:pull_request|pr).*(?:update|edit)/.test(toolName)) {
+    return "El manifiesto de un PR de entrega no puede editarse después de crearlo.";
+  }
   if (((toolName.includes("merge") || toolName.includes("approve") || toolName.includes("ready")) && toolName.includes("pull")) ||
       ((toolName.includes("deploy") || toolName.includes("production")) && toolName.startsWith("mcp__"))) {
     return "Merge y operaciones productivas están bloqueados para agentes.";
@@ -221,11 +240,22 @@ function handle(input) {
   if (needsPublishGate(input, command)) {
     const result = runGate(root, "publish");
     if (result.status !== 0) return (result.stderr || result.stdout || "Falta gate publish.").trim();
+    let manifest;
+    try { manifest = JSON.parse(result.stdout); } catch { return "El gate publish no devolvió un manifiesto válido."; }
+    if (gitCommand(command, "push") && !validPush(command, manifest)) {
+      return `El push debe fijar exactamente ${manifest.sha}:refs/heads/${manifest.branch} hacia origin.`;
+    }
+    if (/github_update_ref/.test(toolName)) {
+      const ref = input.tool_input?.ref || input.tool_input?.branch || input.tool_input?.branch_name;
+      if (![manifest.branch, `refs/heads/${manifest.branch}`].includes(ref) || input.tool_input?.sha !== manifest.sha) {
+        return "La actualización de ref debe coincidir exactamente con rama y SHA del gate publish.";
+      }
+    }
     const createsPr = /\bgh\s+pr\s+create\b/i.test(command) ||
       /(?:create|open).*(?:pull_request|pr)|(?:pull_request|pr).*create/.test(toolName);
     if (createsPr) {
-      let manifest;
-      try { manifest = JSON.parse(result.stdout); } catch { return "El gate publish no devolvió un manifiesto válido."; }
+      const repository = option(command, "repo") || input.tool_input?.repo || input.tool_input?.repository || input.tool_input?.nameWithOwner;
+      if (repository && repository !== CANONICAL_REPOSITORY) return `El PR debe crearse en ${CANONICAL_REPOSITORY}.`;
       const base = option(command, "base") || input.tool_input?.base || input.tool_input?.baseRefName || input.tool_input?.base_ref_name;
       const head = option(command, "head") || input.tool_input?.head || input.tool_input?.headRefName || input.tool_input?.head_ref_name;
       if (base !== "main") return "Los draft PR de entrega deben declarar --base main.";
@@ -241,7 +271,7 @@ function readInput() {
   try { return JSON.parse(fs.readFileSync(0, "utf8")); } catch { return {}; }
 }
 
-module.exports = { forbiddenCommand, gitCommand, handle, missingManifest, needsPublishGate, option, parseContract, prBody };
+module.exports = { forbiddenCommand, gitCommand, handle, missingManifest, needsPublishGate, option, parseContract, prBody, validPush };
 
 if (require.main === module) {
   const reason = handle(readInput());

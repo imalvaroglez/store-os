@@ -35,6 +35,9 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("git send-pack origin HEAD:refs/heads/main", root)).toMatch(/send-pack/);
     expect(hook.forbiddenCommand('op=push; git "$op" origin HEAD:main', root)).toMatch(/dinámicos/);
     expect(hook.forbiddenCommand("gh repo sync owner/store-os --source attacker/fork --branch main --force", root)).toMatch(/repo sync/);
+    expect(hook.forbiddenCommand("git remote set-url origin /tmp/attacker", root)).toMatch(/origin/);
+    expect(hook.forbiddenCommand("git config url./tmp/attacker.insteadOf https:\/\/github.com\/imalvaroglez\/store-os.git", root)).toMatch(/origin/);
+    expect(hook.forbiddenCommand("gh pr edit 1 --body changed", root)).toMatch(/manifiesto/);
     expect(hook.forbiddenCommand("vercel deploy --prod", root)).toMatch(/deploys/);
     expect(hook.forbiddenCommand("firebase --project store-os-dev deploy", root)).toMatch(/deploys/);
     expect(hook.forbiddenCommand("firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
@@ -60,11 +63,13 @@ describe("delivery lifecycle hook", () => {
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "apply_patch",
       tool_input: { command: "*** Update File: .delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
-      tool_input: { command: "rm .delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
+      tool_input: { command: "rm .delivery/runs/bootstrap/history.json" } })).toMatch(/escribir/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
-      tool_input: { command: "printf '%s' '{}' | dd of=.delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
+      tool_input: { command: "printf '%s' '{}' | dd of=.delivery/runs/bootstrap/history.json" } })).toMatch(/escribir/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
       tool_input: { command: "find .delivery/runs/bootstrap -name history.json -delete" } })).toMatch(/sólo puede escribirla/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "d=.delivery; printf x > \"$d/runs/bootstrap/history.json\"" } })).toMatch(/no puede escribir/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
       tool_input: { command: "node scripts/delivery-hook.cjs" } })).toMatch(/sólo puede escribirla/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_create_file",
@@ -88,6 +93,9 @@ describe("delivery lifecycle hook", () => {
     expect(hook.missingManifest("Delivery-ID: one\ndocs/one.md\nabc123\nnpm run test", bootstrap)).toContain("Bootstrap-Base: base123");
     expect(hook.option("gh pr create --base release --head=attacker/work", "base")).toBe("release");
     expect(hook.option("gh pr create --base release --head=attacker/work", "head")).toBe("attacker/work");
+    expect(hook.validPush("git push -u origin abc123:refs/heads/codex/work", { sha: "abc123", branch: "codex/work" })).toBe(true);
+    expect(hook.validPush("git push origin evil:refs/heads/codex/work", { sha: "abc123", branch: "codex/work" })).toBe(false);
+    expect(hook.validPush("git push origin abc123:refs/heads/other", { sha: "abc123", branch: "codex/work" })).toBe(false);
   });
 
   it("usa exit code 2 para rechazar una acción", () => {

@@ -65,7 +65,8 @@ function initRepo(items = [item("one", 10)]) {
   git(root, "config", "user.email", "harness@example.com");
   git(root, "add", ".");
   git(root, "commit", "-m", "test: fixture");
-  git(root, "remote", "add", "origin", root);
+  git(root, "config", `url.${root}.insteadOf`, "https://github.com/imalvaroglez/store-os.git");
+  git(root, "remote", "add", "origin", "https://github.com/imalvaroglez/store-os.git");
   git(root, "fetch", "origin", "main");
   const fake = installFakeGh(root, [], {});
   process.env.PATH = `${fake.bin}:${ORIGINAL_PATH}`;
@@ -184,7 +185,8 @@ function initBootstrapRepo() {
   git(root, "add", ".");
   git(root, "commit", "-m", "test: pre-harness main");
   const baseSha = git(root, "rev-parse", "HEAD");
-  git(root, "remote", "add", "origin", root);
+  git(root, "config", `url.${root}.insteadOf`, "https://github.com/imalvaroglez/store-os.git");
+  git(root, "remote", "add", "origin", "https://github.com/imalvaroglez/store-os.git");
   git(root, "fetch", "origin", "main");
   git(root, "switch", "-c", harness.BOOTSTRAP.branch);
 
@@ -329,7 +331,7 @@ describe.sequential("delivery harness", () => {
     const fakePlaywright = join(root, "node_modules", "@playwright", "test");
     mkdirSync(fakePlaywright, { recursive: true });
     writeFileSync(join(fakePlaywright, "index.js"), `exports.chromium = { launch: async () => ({
-      newPage: async () => ({ goto: async () => ({ ok: () => true }), locator: () => ({ waitFor: async () => {}, innerText: async () => "Entrar a Store OS" }) }),
+      newPage: async () => { let current = ""; return { goto: async (url) => { current = url; return { ok: () => true }; }, url: () => current, locator: () => ({ waitFor: async () => {}, innerText: async () => "Entrar a Store OS" }) }; },
       close: async () => {},
     }) };`);
     expect(() => delivery(root, "remote", "51")).toThrow(/apuntar a main/);
@@ -342,6 +344,11 @@ describe.sequential("delivery harness", () => {
     writeJson(fake.viewFile, remotePr);
     expect(delivery(root, "remote", "51")).toMatchObject({ number: 51, sha });
     expect(delivery(root, "gate", "stop")).toMatchObject({ reason: "BOOTSTRAP_REMOTE_GREEN" });
+    remotePr.body = `Delivery-ID: ${manifest.id}`;
+    writeJson(fake.viewFile, remotePr);
+    expect(() => delivery(root, "gate", "stop")).toThrow(/marcador obligatorio/);
+    remotePr.body = [`Delivery-ID: ${manifest.id}`, `Bootstrap-Base: ${baseSha}`, manifest.specPath, sha, ...manifest.commands].join("\n");
+    writeJson(fake.viewFile, remotePr);
     remotePr.headRefOid = baseSha;
     writeJson(fake.viewFile, remotePr);
     expect(() => delivery(root, "gate", "stop")).toThrow(/SHA remoto cambió/);
@@ -372,6 +379,7 @@ describe.sequential("delivery harness", () => {
       }
     }
     expect(() => delivery(root, "gate", "publish")).toThrow(/BLOCKED_HUMAN|dos rondas/);
+    expect(delivery(root, "gate", "stop")).toMatchObject({ reason: "BLOCKED_HUMAN" });
 
     const historyFile = join(root, ".delivery", "runs", "bootstrap", "history.json");
     const history = readFileSync(historyFile, "utf8");
@@ -439,6 +447,8 @@ describe.sequential("delivery harness", () => {
   it("exige Preview real para cada entrega queued", () => {
     const root = initRepo([item("one", 10, { previewChecks: [] })]);
     expect(() => harness.validateQueue(root)).toThrow(/cola inválida/);
+    const foreign = initRepo([item("one", 10, { previewChecks: [{ path: "//example.com", selector: "main", text: "Store OS" }] })]);
+    expect(() => harness.validateQueue(foreign)).toThrow(/cola inválida/);
   });
 
   it("genera sólo la acción de spec y pausa el primer item", () => {
@@ -710,10 +720,11 @@ describe.sequential("delivery harness", () => {
 const fs = require("node:fs");
 exports.chromium = { launch: async () => {
   fs.writeFileSync(require("node:path").join(process.cwd(), ".delivery", "runs", "browser-launched"), "yes");
-  return { newPage: async () => ({
-    goto: async () => ({ ok: () => true }),
+  return { newPage: async () => { let current = ""; return {
+    goto: async (url) => { current = url; return { ok: () => true }; },
+    url: () => current,
     locator: () => ({ waitFor: async () => {}, innerText: async () => "Catálogo Store OS" }),
-  }), close: async () => {} };
+  }; }, close: async () => {} };
 } };
 `);
     try {
@@ -790,7 +801,7 @@ exports.chromium = { launch: async () => {
   });
 
   it("incluye Firebase E2E para cualquier superficie runtime", () => {
-    for (const file of ["src/main.tsx", "src/index.css", "src/security/guard.ts"]) {
+    for (const file of ["src/main.tsx", "src/index.css", "src/security/guard.ts", "scripts/migrate-adminstores.cjs", "firebase.json", ".firebaserc"]) {
       expect(harness.verificationCommands(process.cwd(), "final", [file]).map((entry: { name: string }) => entry.name))
         .toContain("e2e:firebase");
     }
