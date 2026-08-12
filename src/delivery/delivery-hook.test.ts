@@ -42,6 +42,7 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("firebase emulators:exec 'env -u FIRESTORE_EMULATOR_HOST firebase firestore:delete --all-collections --force'", root)).toMatch(/emulators:exec/);
     expect(hook.forbiddenCommand("gh api -X PUT repos/o/r/pulls/1/merge", root)).toMatch(/gh api/);
     expect(hook.forbiddenCommand("gh run rerun 123456", root)).toMatch(/GitHub Actions/);
+    expect(hook.forbiddenCommand("gh --repo owner/store-os run rerun 123456", root)).toMatch(/GitHub Actions/);
     expect(hook.forbiddenCommand("gh pr review 1 --approve", root)).toMatch(/aprobar/);
     expect(hook.forbiddenCommand("vercel deploy --target=production", root)).toMatch(/deploys/);
     expect(hook.forbiddenCommand("node scripts/backfill-public-product-store-ids.cjs --env prod --store one", root)).toMatch(/producción/);
@@ -53,6 +54,14 @@ describe("delivery lifecycle hook", () => {
       tool_input: { pr_number: 1, action: "APPROVE" } })).toMatch(/reviews|aprobar/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__github__rerun_workflow",
       tool_input: { run_id: 1 } })).toMatch(/GitHub Actions/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__actions__rerun_workflow",
+      tool_input: { run_id: 1 } })).toMatch(/GitHub Actions/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "apply_patch",
+      tool_input: { command: "*** Update File: .delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "rm .delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Bash",
+      tool_input: { command: "node scripts/delivery-hook.cjs" } })).toMatch(/sólo puede escribirla/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_create_file",
       tool_input: { path: "bypass.txt", content: "x", branch: "main" } })).toMatch(/directamente/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_update_file",

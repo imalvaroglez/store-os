@@ -598,6 +598,9 @@ function receiptIntegrityBlockers(root, artifact, stage, sha, receiptsDirectory)
 function loadBootstrapHistory(root = ROOT) {
   const file = bootstrapStateFile(root, "history");
   if (fs.existsSync(file)) return readJson(file);
+  if ([...REVIEW_STAGES, "verifier", "remote"].some((name) => fs.existsSync(bootstrapStateFile(root, name)))) {
+    fail("El historial bootstrap falta aunque existen artefactos posteriores");
+  }
   return { version: 1, state: "ACTIVE", correctionRounds: 0, correctionHeads: [], artifacts: {} };
 }
 

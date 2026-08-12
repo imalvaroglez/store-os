@@ -93,7 +93,7 @@ function forbiddenCommand(command, root) {
     return "Los comandos Git dinámicos o send-pack eluden los gates y están bloqueados.";
   }
   if (/\bgh\s+api\b/i.test(value)) return "gh api está bloqueado; usa los comandos PR cubiertos por el harness.";
-  if (/\bgh\s+(?:run\s+(?:rerun|cancel|delete)|workflow\s+(?:run|enable|disable))\b/i.test(value)) {
+  if (/\bgh\b[^\n;&|]*\b(?:run\s+(?:rerun|cancel|delete)|workflow\s+(?:run|enable|disable))\b/i.test(value)) {
     return "Los agentes no pueden iniciar, relanzar, cancelar ni borrar ejecuciones de GitHub Actions.";
   }
   if (/\bgh\s+repo\s+sync\b/i.test(value)) return "gh repo sync puede mover refs sin gate y está bloqueado.";
@@ -182,8 +182,15 @@ function handle(input) {
   if (forbidden) return forbidden;
   const toolName = String(input.tool_name || "").toLowerCase();
   const serializedInput = JSON.stringify(input.tool_input || {});
-  if (toolName.includes("github") && /(?:rerun|dispatch|cancel|delete|enable|disable).*(?:workflow|action|run)|(?:workflow|action|run).*(?:rerun|dispatch|cancel|delete|enable|disable)/.test(toolName)) {
+  if (/(?:rerun|dispatch|cancel|delete|enable|disable).*(?:workflow|action|run)|(?:workflow|action|run).*(?:rerun|dispatch|cancel|delete|enable|disable)/.test(toolName)) {
     return "Los agentes no pueden mutar ejecuciones de GitHub Actions.";
+  }
+  const evidencePath = /\.delivery[\\/]runs(?:[\\/]|$)/i;
+  const editsFiles = /apply_patch|\bedit\b|\bwrite\b|notebook/i.test(toolName);
+  const mutatesFromShell = /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|mkdir|touch|tee|truncate|install|node|python\d*|ruby|perl|sed|jq)\b|(?:^|[^<])>{1,2}(?!>)/i.test(command);
+  if ((editsFiles && evidencePath.test(serializedInput)) || (evidencePath.test(command) && mutatesFromShell) ||
+      (/delivery-hook\.cjs/i.test(command) && event === "PreToolUse")) {
+    return "La evidencia de .delivery/runs sólo puede escribirla el hook o el CLI canónico.";
   }
   const directGithubMutation = toolName.includes("github") && (
     /(?:create|update|delete)_file$/.test(toolName) || /push_files$/.test(toolName) || /(?:create|update|delete).*commit/.test(toolName)

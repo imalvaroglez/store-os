@@ -373,6 +373,12 @@ describe.sequential("delivery harness", () => {
     }
     expect(() => delivery(root, "gate", "publish")).toThrow(/BLOCKED_HUMAN|dos rondas/);
 
+    const historyFile = join(root, ".delivery", "runs", "bootstrap", "history.json");
+    const history = readFileSync(historyFile, "utf8");
+    rmSync(historyFile);
+    expect(() => delivery(root, "gate", "publish")).toThrow(/historial bootstrap falta/);
+    writeFileSync(historyFile, history);
+
     const reviewFile = join(root, ".delivery", "runs", "bootstrap", "review-qa.json");
     const review = JSON.parse(readFileSync(reviewFile, "utf8"));
     review.summary = "manipulado";

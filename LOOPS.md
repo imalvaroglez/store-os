@@ -55,7 +55,7 @@ npm run delivery -- check-config
 
 `verify quick` executes typecheck and tests. `verify final` always executes typecheck, tests, build, and Playwright E2E. It additionally executes Firebase E2E, rules tests, or dependency audit when the diff requires them.
 
-The CLI stores local evidence in ignored `.delivery/runs/<run-id>/`: spec hash, base/head SHA, transitions, command, exit code, output, reviews, and Preview results. An agent cannot record command success manually. A command with a missing script or nonzero exit code blocks.
+The CLI stores local evidence in ignored `.delivery/runs/<run-id>/`: spec hash, base/head SHA, transitions, command, exit code, output, reviews, and Preview results. An agent cannot record command success manually. A command with a missing script or nonzero exit code blocks. Agents never mutate `.delivery/runs` directly; only the lifecycle hook and delivery CLI may write evidence.
 
 ## Candidate review
 
@@ -92,7 +92,7 @@ Agents never:
 - use `--apply` without a separate second human approval;
 - weaken tests, authorization, multistore isolation, privacy, or zero-cost constraints.
 
-Project hooks enforce Stop, SubagentStop, and PreToolUse with exit code 2. Project-local Codex hooks must be reviewed and trusted once through `/hooks`.
+Project hooks enforce Stop, SubagentStop, and PreToolUse with exit code 2. They cover Bash, ordinary file edits, and MCP mutations, including direct evidence changes. Project-local Codex hooks must be reviewed and trusted once through `/hooks`. Hooks are guardrails within the client permission model, not a security boundary against an unrestricted same-user process; Codex documents that some specialized tool paths may bypass tool hooks.
 
 A run may stop only at `WAITING_SPEC_APPROVAL`, `BLOCKED_HUMAN`, an empty/not-active queue, or `REMOTE_GREEN`. The successful item result is exactly:
 

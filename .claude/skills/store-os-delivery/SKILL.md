@@ -42,7 +42,7 @@ Every result must use this common contract:
 }
 ```
 
-Explorer results add `worker: {"id":"actual-agent-id","profile":"store-os-explorer","lens":"discovery|test-design"}`. A plan also includes nonempty `ownedPaths`. Reviews add `reviewer: {"id":"actual-agent-id","profile":"store-os-reviewer","lens":"standards-spec|security-privacy|qa-evidence|adversarial"}` and use findings shaped as `{"id":"S1","blocking":true,"claim":"...","evidence":["..."]}`. The three review IDs and adversarial ID must be distinct. `SubagentStop` persists a receipt tied to the real agent ID, result hash, and SHA; `record` rejects hand-written identities. Never invent evidence or command results.
+Explorer results add `worker: {"id":"actual-agent-id","profile":"store-os-explorer","lens":"discovery|test-design"}`. A plan also includes nonempty `ownedPaths`. Reviews add `reviewer: {"id":"actual-agent-id","profile":"store-os-reviewer","lens":"standards-spec|security-privacy|qa-evidence|adversarial"}` and use findings shaped as `{"id":"S1","blocking":true,"claim":"...","evidence":["..."]}`. The three review IDs and adversarial ID must be distinct. `SubagentStop` persists a receipt tied to the real agent ID, result hash, and SHA; `record` rejects hand-written identities. Never invent evidence or command results. Never mutate `.delivery/runs` directly; only the lifecycle hook and delivery CLI may write evidence.
 
 ## Implement with one writer
 
