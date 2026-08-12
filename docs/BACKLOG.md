@@ -31,8 +31,9 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
 - **Deuda: `pnpm-lock.yaml` dual** — un commit, borrar + gitignore. Trivial.
 - **Deuda: `persistEntity` fire-and-forget sin `.catch`** — endurecer con catch
   + toast de error. Causa conocida (regresión F3). Sin decisiones abiertas.
-- **Deuda: Migración `adminStores` idempotente** — script
-  `scripts/migrate-adminstores.cjs` + test existe. Operación conocida.
+- **Deuda: Migración `adminStores` idempotente** — falta el script
+  `scripts/migrate-adminstores.cjs`; el test de la condición sí existe.
+  Operación conocida.
 - **Deuda: Vista de "usuarios de la plataforma" para el super_admin** — read-only
   lista de `users/{uid}` (email, rol, creado). **Desbloquea el selector de la
   feature de invitación** (decisión PO: invitar eligiendo de usuarios existentes,
@@ -178,7 +179,7 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
 **Solicitó:** Álvaro (PO), 2026-08-11 — incidente de acceso de Mar a Olivia
 **Readiness:** 🟢 ready. Decisiones cerradas: (1) reconciliación reusando
 `pendingInvites` + regla por-email (ponytail, sin colección nueva); (2) la UI
-invita **eligiento de la lista de usuarios existentes** (no email a ciegas) →
+invita **eligiendo de la lista de usuarios existentes** (no email a ciegas) →
 **depende de la "vista de usuarios plataforma"** (item ready). Hacer esa vista
 antes o junto.
 
@@ -203,7 +204,7 @@ La causa raíz es de diseño, no de bug aislado: **`ensureUserDoc` crea el doc
 `memberUids`**. (Ese bug está registrado en deuda; esta feature es la cara de
 producto que lo consume.)
 
-### Alcance propuesto (idea — requiere spec)
+### Alcance acordado
 
 Un flujo de invitación que funcione sin importar cómo entre el invitado:
 
@@ -239,7 +240,7 @@ Un flujo de invitación que funcione sin importar cómo entre el invitado:
   `pendingInvites`.
 - **Correo:** informativo, reusando el email-link de Firebase como botón
   "Entrar" (gratis, ya cableado, cero-costos). NO transaccional exclusivo.
-- **Email que no coincide:** la UI invita **eligendo de la lista de usuarios
+- **Email que no coincide:** la UI invita **eligiendo de la lista de usuarios
   existentes** (no email a ciegas) → **depende de la "vista de usuarios
   plataforma"** (hacer antes o junto). Evita el caso Mar.
 - **Query por-email y reglas:** se necesita una regla nueva que permita leer
@@ -247,7 +248,7 @@ Un flujo de invitación que funcione sin importar cómo entre el invitado:
   (antes de ser miembro). Es un detalle de implementación a resolver en la
   fase de arquitectura del workflow, NO una decisión de producto abierta.
 
-### Decisiones pendientes
+### Estado de decisiones
 
 **Ninguna de producto.** Las tres decisiones que abrían esta sección (correo,
 reconciliación, email-distinto) están cerradas arriba. Lo que queda son detalles
@@ -269,10 +270,8 @@ solo de la "vista de usuarios plataforma".
 - Esta feature **depende** del fix de deuda `pendingInvites` no reconcilia —
   son la misma obra desde dos ángulos (deuda = la causa técnica; feature = la
   experiencia de producto). Hacerlos juntos.
-- Lección del incidente Mar: el email que el dueño escribe puede no ser el
-  email real de la cuenta del invitado. La UI debería **confirmar con el
-  invitado su email de entrada** antes de invitar, o aceptar que el flujo
-  requiere que coincidan.
+- Lección del incidente Mar: no pedir un email libre. La UI elige una cuenta
+  existente de la plataforma, cuya dirección ya corresponde al usuario real.
 
 ---
 
@@ -518,33 +517,31 @@ La fricción ya se manifestó en esta sesión: el flujo de compra tuvo que añad
 "Catálogo → editar precio" e "Inventario → ver stock" del mismo producto es ir
 y venir.
 
-### Alcance propuesto (idea — requiere spec)
+### Alcance acordado
 
 Fusionar en **una sola pestaña "Productos"** que muestre cada producto completo:
 foto, nombre, precios, existencia y badge de publicado/borrador, todo junto.
 Editar abre la ficha con todo (datos de catálogo + precios + stock + costo).
-"Compras a proveedores" queda como sub-flujo (botón dentro de Productos o en
-Ajustes). Las categorías pueden vivir dentro de la misma pestaña o en Ajustes.
+"Compras a proveedores" y "Categorías" quedan como sub-flujos dentro de
+Productos.
 
 - Una sola lista por producto con todos sus datos visibles.
-- Una sola ficha de edición (la actual `ProductForm` ya casi lo es; habría que
-  asegurar que existencia/costo sean editables ahí también, no solo vía compra).
-- "Compras" y "Categorías" se reubican como sub-flujos.
+- Una sola ficha de edición: la actual `ProductForm` ya permite editar
+  existencia, costo y precios directamente; el flujo de compra conserva el
+  promedio ponderado como segundo camino.
+- "Compras" y "Categorías" se reubican dentro de Productos.
 
 ### Datos disponibles vs faltantes
 
 Ya existe casi todo: `Product` lleva `quantityOnHand`, `cost`, `prices`, fotos,
-`status`. `ProductForm` ya edita catálogo+precios; solo le falta edición directa
-de stock/costo (hoy solo vía compra). `InventoryScreen` y `CatalogScreen`
-mergean en una.
+`status`, y `ProductForm` ya edita esos datos. `InventoryScreen` y
+`CatalogScreen` se fusionan sin cambiar el modelo.
 
-### Decisiones pendientes (cerrar antes de spec)
+### Decisiones cerradas
 
-1. ¿Edición directa de stock/costo en la ficha del producto, o solo vía
-   "registrar compra"? (Hoy la compra hace el promedio ponderado; editar stock
-   a mano rompería esa trazabilidad.)
-2. ¿Dónde viven las Categorías y las Compras en el nuevo modelo?
-3. ¿"Productos" como única pestaña de catálogo, o conservar "Categorías" aparte?
+1. Stock y costo se editan tanto en la ficha como al registrar una compra.
+2. Categorías y Compras viven dentro de Productos.
+3. Productos sustituye las pestañas separadas de Catálogo e Inventario.
 
 ### Out-of-scope explícito
 
