@@ -57,10 +57,20 @@ function canonicalHash(value) {
 
 function persistReceipt(root, input, value) {
   const pointer = path.join(root, ".delivery", "runs", "active.json");
-  if (!fs.existsSync(pointer)) return false;
-  const { runId } = JSON.parse(fs.readFileSync(pointer, "utf8"));
+  let directory;
+  if (fs.existsSync(pointer)) {
+    const { runId } = JSON.parse(fs.readFileSync(pointer, "utf8"));
+    if (!runId) return false;
+    directory = path.join(root, ".delivery", "runs", runId, "receipts");
+  } else {
+    const manifestFile = path.join(root, ".delivery", "bootstrap.json");
+    if (!fs.existsSync(manifestFile)) return false;
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+    if (gitBranch(root) !== manifest.branch) return false;
+    directory = path.join(root, ".delivery", "runs", "bootstrap", "receipts");
+  }
   const sha = spawnSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout?.trim();
-  if (!runId || !sha) return false;
+  if (!sha) return false;
   const receipt = {
     agentId: input.agent_id,
     agentType: input.agent_type,
@@ -69,7 +79,6 @@ function persistReceipt(root, input, value) {
     transcriptPath: input.agent_transcript_path || null,
     recordedAt: new Date().toISOString(),
   };
-  const directory = path.join(root, ".delivery", "runs", runId, "receipts");
   fs.mkdirSync(directory, { recursive: true });
   const file = path.join(directory, `${receipt.resultHash}.json`);
   if (!fs.existsSync(file)) fs.writeFileSync(file, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" });

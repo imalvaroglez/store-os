@@ -263,6 +263,20 @@ function preparePublishable(root: string, standardFindings: unknown[] = []) {
   recordStage(root, "review-qa", result(root, "qa", review("reviewer-qa", "qa-evidence", "qa")), []);
 }
 
+function recordBootstrapReview(root: string, stage: string, id: string, lens: string) {
+  const value = { ...pass(stage), findings: [], reviewer: { id, profile: "store-os-reviewer", lens } };
+  const file = result(root, `bootstrap-${stage}`, value);
+  execFileSync(process.execPath, [join(root, "scripts", "delivery-hook.cjs")], {
+    cwd: root,
+    encoding: "utf8",
+    input: JSON.stringify({
+      hook_event_name: "SubagentStop", cwd: root, agent_id: id, agent_type: "store-os-reviewer",
+      agent_transcript_path: join(root, `${id}.jsonl`), last_assistant_message: JSON.stringify(value),
+    }),
+  });
+  return delivery(root, "record", stage, file);
+}
+
 afterEach(() => {
   process.env.PATH = ORIGINAL_PATH;
   delete process.env.TEST_GH_OPEN_FILE;
@@ -276,6 +290,10 @@ describe.sequential("delivery harness", () => {
     const { root, baseSha, fake } = initBootstrapRepo();
     expect(() => delivery(root, "gate", "publish")).toThrow(/verify bootstrap/);
     expect(delivery(root, "verify", "bootstrap")).toMatchObject({ state: "FINAL_VERIFIED", baseSha });
+    expect(() => delivery(root, "gate", "publish")).toThrow(/review-standards/);
+    recordBootstrapReview(root, "review-standards", "bootstrap-standards", "standards-spec");
+    recordBootstrapReview(root, "review-security", "bootstrap-security", "security-privacy");
+    recordBootstrapReview(root, "review-qa", "bootstrap-qa", "qa-evidence");
     const manifest = delivery(root, "gate", "publish");
     expect(manifest).toMatchObject({ kind: "bootstrap", id: harness.BOOTSTRAP.id, baseSha });
     expect(() => delivery(root, "gate", "stop")).toThrow(/REMOTE_GREEN/);

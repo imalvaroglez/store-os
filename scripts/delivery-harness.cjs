@@ -560,6 +560,21 @@ function requireSubagentReceipt(root, runState, stage, result, sha) {
   return { agentId: receipt.agentId, agentType: receipt.agentType, resultHash, transcriptPath: receipt.transcriptPath };
 }
 
+function requireBootstrapReceipt(root, stage, result, sha) {
+  const resultHash = hash(JSON.stringify(result));
+  const file = path.join(root, ".delivery", "runs", "bootstrap", "receipts", `${resultHash}.json`);
+  if (!fs.existsSync(file)) fail(`${stage} no tiene recibo de SubagentStop`, [resultHash]);
+  const receipt = readJson(file);
+  const identity = result.reviewer;
+  if (receipt.resultHash !== resultHash || receipt.agentId !== identity.id || receipt.agentType !== identity.profile || receipt.sha !== sha) {
+    fail(`Recibo de subagente inválido para ${stage}`);
+  }
+  if (receipt.usedBy && receipt.usedBy !== stage) fail(`El recibo ya pertenece a ${receipt.usedBy}`);
+  receipt.usedBy = stage;
+  writeJson(file, receipt);
+  return { agentId: receipt.agentId, agentType: receipt.agentType, resultHash, transcriptPath: receipt.transcriptPath };
+}
+
 function requireRecordedPass(runState, stage) {
   const artifact = runState.artifacts[stage];
   if (!artifact || artifact.status !== "PASS") fail(`Falta ${stage} PASS antes de continuar`);
@@ -625,7 +640,30 @@ function competingPullRequests(prs, runState) {
 }
 
 function recordStage(root = ROOT, stage, resultFile, prs) {
-  const runState = loadActiveRun(root);
+  const active = loadActiveRun(root, false);
+  if (!active && bootstrapDeclared(root)) {
+    if (![...REVIEW_STAGES, "verifier"].includes(stage)) fail("Bootstrap sólo permite registrar revisiones finales");
+    const blockers = bootstrapIdentityBlockers(root);
+    if (blockers.length) fail("REVISIÓN BOOTSTRAP BLOQUEADA", blockers);
+    const verification = readJson(bootstrapStateFile(root));
+    const sha = currentSha(root);
+    if (verification.state !== "FINAL_VERIFIED" || verification.sha !== sha) fail(`${stage} requiere verify bootstrap vigente para ${sha}`);
+    if (!isTreeClean(root)) fail(`${stage} requiere un árbol limpio`);
+    const result = readJson(path.resolve(resultFile));
+    validateRecord(stage, result);
+    const reviewFile = bootstrapStateFile(root, stage);
+    if (fs.existsSync(reviewFile) && readJson(reviewFile).sha === sha) fail(`${stage} ya fue registrado para este SHA`);
+    if (stage === "verifier") {
+      const reviews = REVIEW_STAGES.map((reviewStage) => fs.existsSync(bootstrapStateFile(root, reviewStage)) ? readJson(bootstrapStateFile(root, reviewStage)) : null);
+      if (reviews.some((review) => !review || review.sha !== sha)) fail("verifier requiere las tres revisiones bootstrap vigentes");
+      if (!reviews.some((review) => review.findings.some((finding) => finding.blocking))) fail("verifier sólo se registra cuando existe un hallazgo bloqueante");
+    }
+    const receipt = requireBootstrapReceipt(root, stage, result, sha);
+    const artifact = { ...result, sha, recordedAt: new Date().toISOString(), receipt };
+    writeJson(reviewFile, artifact);
+    return artifact;
+  }
+  const runState = active || loadActiveRun(root);
   if (runState.state === "BLOCKED_HUMAN") fail("La corrida requiere intervención humana");
   const result = readJson(path.resolve(resultFile));
   validateRecord(stage, result);
@@ -935,6 +973,44 @@ function bootstrapPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
         JSON.stringify(verification.commands.map((entry) => entry.command)) !== JSON.stringify(expectedCommands) ||
         verification.commands.some((entry) => entry.exitCode !== 0)) {
       blockers.push("La evidencia bootstrap no contiene todos los comandos reales exitosos");
+    }
+  }
+  const reviews = REVIEW_STAGES.map((stage) => {
+    const file = bootstrapStateFile(root, stage);
+    if (!fs.existsSync(file)) {
+      blockers.push(`Falta ${stage} bootstrap`);
+      return null;
+    }
+    const review = readJson(file);
+    if (review.sha !== sha) blockers.push(`${stage} bootstrap pertenece a otro SHA`);
+    if (review.status !== "PASS") blockers.push(`${stage} bootstrap no está PASS`);
+    if (review.reviewer?.profile !== "store-os-reviewer" || review.reviewer?.lens !== REVIEW_LENSES[stage]) {
+      blockers.push(`${stage} bootstrap no tiene reviewer/lente válido`);
+    }
+    return review;
+  });
+  const reviewerIds = reviews.filter(Boolean).map((review) => review.reviewer?.id);
+  if (reviewerIds.length === REVIEW_STAGES.length && new Set(reviewerIds).size !== REVIEW_STAGES.length) {
+    blockers.push("Las tres revisiones bootstrap deben ser independientes");
+  }
+  const blockingFindings = reviews.flatMap((review, index) => (review?.findings || [])
+    .filter((finding) => finding.blocking)
+    .map((finding) => ({ reviewId: REVIEW_STAGES[index], findingId: finding.id })));
+  if (blockingFindings.length) {
+    const file = bootstrapStateFile(root, "verifier");
+    if (!fs.existsSync(file)) blockers.push("Falta verificador adversarial bootstrap vigente");
+    else {
+      const verifier = readJson(file);
+      if (verifier.sha !== sha || verifier.status !== "PASS" || verifier.reviewer?.profile !== "store-os-reviewer" ||
+          verifier.reviewer?.lens !== "adversarial" || reviewerIds.includes(verifier.reviewer?.id)) {
+        blockers.push("El verificador adversarial bootstrap no es vigente e independiente");
+      }
+      for (const finding of blockingFindings) {
+        const verdict = verifier.findings?.find((entry) => entry.reviewId === finding.reviewId && entry.findingId === finding.findingId);
+        if (!verdict) blockers.push(`Falta veredicto para ${finding.reviewId}/${finding.findingId}`);
+        else if (verdict.verdict !== "refuted") blockers.push(`${finding.reviewId}/${finding.findingId} quedó ${verdict.verdict}`);
+        else if (!Array.isArray(verdict.evidence) || verdict.evidence.length === 0) blockers.push(`Refutación sin evidencia: ${finding.reviewId}/${finding.findingId}`);
+      }
     }
   }
   const competitors = prs.filter((pr) => deliveryIdFromBody(pr.body) === manifest.id && pr.headRefName !== manifest.branch);
