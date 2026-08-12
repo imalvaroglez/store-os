@@ -575,6 +575,57 @@ function requireBootstrapReceipt(root, stage, result, sha) {
   return { agentId: receipt.agentId, agentType: receipt.agentType, resultHash, transcriptPath: receipt.transcriptPath };
 }
 
+function receiptIntegrityBlockers(root, artifact, stage, sha, receiptsDirectory) {
+  const blockers = [];
+  if (!artifact?.receipt) return [`${stage} no contiene recibo verificable`];
+  const { sha: artifactSha, recordedAt, receipt: linkedReceipt, ...result } = artifact;
+  const resultHash = hash(JSON.stringify(result));
+  const file = path.join(receiptsDirectory, `${resultHash}.json`);
+  if (!fs.existsSync(file)) return [`Falta recibo original para ${stage}`];
+  const receipt = readJson(file);
+  const identity = result.worker || result.reviewer;
+  if (artifactSha !== sha || receipt.sha !== sha) blockers.push(`${stage} y su recibo pertenecen a otro SHA`);
+  if (linkedReceipt.resultHash !== resultHash || receipt.resultHash !== resultHash) blockers.push(`${stage} fue modificado después de SubagentStop`);
+  if (linkedReceipt.agentId !== identity?.id || receipt.agentId !== identity?.id ||
+      linkedReceipt.agentType !== identity?.profile || receipt.agentType !== identity?.profile) {
+    blockers.push(`${stage} no coincide con la identidad emitida por SubagentStop`);
+  }
+  if (receipt.usedBy !== stage) blockers.push(`El recibo de ${stage} no quedó consumido por esa etapa`);
+  if (linkedReceipt.transcriptPath !== receipt.transcriptPath) blockers.push(`El transcript de ${stage} no coincide con el recibo original`);
+  return blockers;
+}
+
+function loadBootstrapHistory(root = ROOT) {
+  const file = bootstrapStateFile(root, "history");
+  if (fs.existsSync(file)) return readJson(file);
+  return { version: 1, state: "ACTIVE", correctionRounds: 0, correctionHeads: [], artifacts: {} };
+}
+
+function saveBootstrapHistory(root, history) {
+  writeJson(bootstrapStateFile(root, "history"), history);
+}
+
+function bootstrapHistoricalReviewBlockers(root, history) {
+  const blockers = [];
+  const receipts = path.join(root, ".delivery", "runs", "bootstrap", "receipts");
+  const verifiers = history.artifacts?.verifier || [];
+  for (const stage of REVIEW_STAGES) {
+    for (const review of history.artifacts?.[stage] || []) {
+      blockers.push(...receiptIntegrityBlockers(root, review, stage, review.sha, receipts));
+      for (const finding of review.findings || []) {
+        if (!finding.blocking) continue;
+        const verifier = verifiers.find((entry) => entry.sha === review.sha &&
+          entry.findings.some((verdict) => verdict.reviewId === stage && verdict.findingId === finding.id));
+        if (!verifier) blockers.push(`${stage}/${finding.id} de ${review.sha} no pasó por verificador adversarial`);
+      }
+    }
+  }
+  for (const verifier of verifiers) {
+    blockers.push(...receiptIntegrityBlockers(root, verifier, "verifier", verifier.sha, receipts));
+  }
+  return blockers;
+}
+
 function requireRecordedPass(runState, stage) {
   const artifact = runState.artifacts[stage];
   if (!artifact || artifact.status !== "PASS") fail(`Falta ${stage} PASS antes de continuar`);
@@ -646,6 +697,8 @@ function recordStage(root = ROOT, stage, resultFile, prs) {
     const blockers = bootstrapIdentityBlockers(root);
     if (blockers.length) fail("REVISIÓN BOOTSTRAP BLOQUEADA", blockers);
     const verification = readJson(bootstrapStateFile(root));
+    const history = loadBootstrapHistory(root);
+    if (history.state === "BLOCKED_HUMAN") fail("El bootstrap está BLOCKED_HUMAN", ["Sólo una persona puede retirar la evidencia bloqueada."]);
     const sha = currentSha(root);
     if (verification.state !== "FINAL_VERIFIED" || verification.sha !== sha) fail(`${stage} requiere verify bootstrap vigente para ${sha}`);
     if (!isTreeClean(root)) fail(`${stage} requiere un árbol limpio`);
@@ -660,6 +713,17 @@ function recordStage(root = ROOT, stage, resultFile, prs) {
     }
     const receipt = requireBootstrapReceipt(root, stage, result, sha);
     const artifact = { ...result, sha, recordedAt: new Date().toISOString(), receipt };
+    history.artifacts[stage] ||= [];
+    history.artifacts[stage].push(artifact);
+    if (stage === "verifier") {
+      const unresolved = artifact.findings.some((finding) => finding.verdict !== "refuted");
+      if (unresolved && !history.correctionHeads.includes(sha)) {
+        history.correctionHeads.push(sha);
+        history.correctionRounds += 1;
+        if (history.correctionRounds > 2) history.state = "BLOCKED_HUMAN";
+      }
+    }
+    saveBootstrapHistory(root, history);
     writeJson(reviewFile, artifact);
     return artifact;
   }
@@ -801,6 +865,9 @@ function bootstrapVerificationCommands(root = ROOT) {
 
 function executeBootstrapVerification(root = ROOT) {
   const blockers = bootstrapIdentityBlockers(root);
+  const history = loadBootstrapHistory(root);
+  if (history.state === "BLOCKED_HUMAN") blockers.push("El bootstrap está BLOCKED_HUMAN");
+  blockers.push(...bootstrapHistoricalReviewBlockers(root, history));
   if (blockers.length) fail("VERIFY BOOTSTRAP BLOQUEADO", blockers);
   const manifest = loadBootstrapManifest(root);
   const sha = currentSha(root);
@@ -824,12 +891,14 @@ function executeBootstrapVerification(root = ROOT) {
   return state;
 }
 
-function artifactBlockers(runState, sha) {
+function artifactBlockers(root, runState, sha) {
   const blockers = [];
+  const receipts = path.join(runsDirectory(root), runState.runId, "receipts");
   for (const stage of ["discovery", "test-design", "plan"]) {
     const artifact = runState.artifacts[stage];
     if (!artifact) blockers.push(`Falta record ${stage}`);
     else if (artifact.status !== "PASS") blockers.push(`${stage} no está PASS`);
+    if (artifact?.receipt) blockers.push(...receiptIntegrityBlockers(root, artifact, stage, artifact.sha, receipts));
   }
 
   const blockingFindings = [];
@@ -840,6 +909,7 @@ function artifactBlockers(runState, sha) {
       blockers.push(`Falta ${stage}`);
       continue;
     }
+    blockers.push(...receiptIntegrityBlockers(root, review, stage, sha, receipts));
     if (review.sha !== sha) blockers.push(`${stage} pertenece a otro SHA`);
     if (review.status !== "PASS" && !(review.findings || []).some((finding) => finding.blocking)) {
       blockers.push(`${stage} no está PASS`);
@@ -863,6 +933,7 @@ function artifactBlockers(runState, sha) {
     if (!verifier || verifier.sha !== sha) {
       blockers.push("Falta verificador adversarial vigente");
     } else {
+      blockers.push(...receiptIntegrityBlockers(root, verifier, "verifier", sha, receipts));
       if (verifier.status !== "PASS") blockers.push("El verificador adversarial no está PASS");
       if (verifier.reviewer?.profile !== "store-os-reviewer" || verifier.reviewer?.lens !== "adversarial" || reviewerIds.includes(verifier.reviewer?.id)) {
         blockers.push("El verificador adversarial debe ser independiente de los tres reviewers");
@@ -917,7 +988,7 @@ function publishBlockers(root = ROOT, prs = openPullRequests(root)) {
     if (final.sha !== sha) blockers.push("verify final pertenece a otro SHA");
     if (!final.commands.length || final.commands.some((entry) => entry.exitCode !== 0)) blockers.push("verify final contiene comandos fallidos");
   }
-  blockers.push(...artifactBlockers(runState, sha));
+  blockers.push(...artifactBlockers(root, runState, sha));
   if (runState.correctionRounds > 2) blockers.push("Se excedieron dos rondas de corrección");
 
   const marker = path.join(root, ".delivery", "completed", `${runState.id}.json`);
@@ -953,6 +1024,10 @@ function publishBlockers(root = ROOT, prs = openPullRequests(root)) {
 
 function bootstrapPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
   const blockers = bootstrapIdentityBlockers(root);
+  const history = loadBootstrapHistory(root);
+  if (history.state === "BLOCKED_HUMAN") blockers.push("El bootstrap está BLOCKED_HUMAN");
+  if (history.correctionRounds > 2) blockers.push("El bootstrap excedió dos rondas de corrección");
+  blockers.push(...bootstrapHistoricalReviewBlockers(root, history));
   const manifest = (() => {
     try { return loadBootstrapManifest(root); } catch { return BOOTSTRAP; }
   })();
@@ -982,8 +1057,9 @@ function bootstrapPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
       return null;
     }
     const review = readJson(file);
+    blockers.push(...receiptIntegrityBlockers(root, review, stage, sha, path.join(root, ".delivery", "runs", "bootstrap", "receipts")));
     if (review.sha !== sha) blockers.push(`${stage} bootstrap pertenece a otro SHA`);
-    if (review.status !== "PASS") blockers.push(`${stage} bootstrap no está PASS`);
+    if (review.status !== "PASS" && !(review.findings || []).some((finding) => finding.blocking)) blockers.push(`${stage} bootstrap no está PASS`);
     if (review.reviewer?.profile !== "store-os-reviewer" || review.reviewer?.lens !== REVIEW_LENSES[stage]) {
       blockers.push(`${stage} bootstrap no tiene reviewer/lente válido`);
     }
@@ -1001,6 +1077,7 @@ function bootstrapPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
     if (!fs.existsSync(file)) blockers.push("Falta verificador adversarial bootstrap vigente");
     else {
       const verifier = readJson(file);
+      blockers.push(...receiptIntegrityBlockers(root, verifier, "verifier", sha, path.join(root, ".delivery", "runs", "bootstrap", "receipts")));
       if (verifier.sha !== sha || verifier.status !== "PASS" || verifier.reviewer?.profile !== "store-os-reviewer" ||
           verifier.reviewer?.lens !== "adversarial" || reviewerIds.includes(verifier.reviewer?.id)) {
         blockers.push("El verificador adversarial bootstrap no es vigente e independiente");
@@ -1063,6 +1140,12 @@ function specPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
   return { blockers, item: candidate };
 }
 
+function revalidateRemote(root, remote, candidate) {
+  if (!remote?.number) return ["Falta número de PR remoto"];
+  const pr = pullRequest(root, remote.number);
+  return remoteSnapshotBlockers(pr, candidate, remote.sha, remote.previewUrl);
+}
+
 function gate(root = ROOT, kind, prs) {
   if (kind === "publish") {
     const pullRequests = prs || openPullRequests(root);
@@ -1078,6 +1161,7 @@ function gate(root = ROOT, kind, prs) {
           gate: "publish",
           kind: "bootstrap",
           id: manifest.id,
+          branch: manifest.branch,
           specPath: manifest.specPath,
           baseSha: manifest.baseSha,
           sha: currentSha(root),
@@ -1087,7 +1171,7 @@ function gate(root = ROOT, kind, prs) {
       }
       const spec = specPublishBlockers(root, pullRequests);
       if (spec.blockers.length) fail("PUBLICACIÓN DE SPEC BLOQUEADA", spec.blockers);
-      return { allowed: true, gate: "publish", kind: "spec", id: spec.item.id, sha: currentSha(root) };
+      return { allowed: true, gate: "publish", kind: "spec", id: spec.item.id, branch: currentBranch(root), sha: currentSha(root) };
     }
     const blockers = publishBlockers(root, pullRequests);
     if (blockers.length) fail("PUBLICACIÓN BLOQUEADA", blockers);
@@ -1097,6 +1181,7 @@ function gate(root = ROOT, kind, prs) {
       gate: "publish",
       kind: "code",
       id: runState.id,
+      branch: runState.branch,
       specPath: runState.specPath,
       sha: currentSha(root),
       commands: runState.verification.final.commands.map((entry) => entry.command),
@@ -1110,6 +1195,7 @@ function gate(root = ROOT, kind, prs) {
       const blockers = bootstrapPublishBlockers(root, prs || openPullRequests(root));
       if (!remote || remote.state !== "REMOTE_GREEN") blockers.push("Bootstrap todavía no está REMOTE_GREEN");
       else if (remote.sha !== currentSha(root)) blockers.push("REMOTE_GREEN bootstrap pertenece a otro SHA");
+      else blockers.push(...revalidateRemote(root, remote.remote, { id: BOOTSTRAP.id, branch: BOOTSTRAP.branch }));
       if (blockers.length) fail("STOP BOOTSTRAP BLOQUEADO", blockers);
       return { allowed: true, gate: "stop", reason: "BOOTSTRAP_REMOTE_GREEN" };
     }
@@ -1144,6 +1230,7 @@ function gate(root = ROOT, kind, prs) {
     const blockers = [];
     if (!isTreeClean(root)) blockers.push("El árbol cambió después de REMOTE_GREEN");
     if (runState.remote?.sha !== sha) blockers.push("HEAD ya no coincide con el SHA remoto verde");
+    else blockers.push(...revalidateRemote(root, runState.remote, { id: runState.id, branch: runState.branch }));
     if (blockers.length) fail("STOP BLOQUEADO: REMOTE_GREEN quedó obsoleto", blockers);
     return { allowed: true, gate: "stop", reason: "REMOTE_GREEN" };
   }
@@ -1152,13 +1239,31 @@ function gate(root = ROOT, kind, prs) {
 }
 
 function pullRequest(root, number) {
-  const result = run("gh", ["pr", "view", String(number), "--json", "number,state,isDraft,body,headRefOid,statusCheckRollup,comments,files,url,mergedAt"], { cwd: root });
+  const result = run("gh", ["pr", "view", String(number), "--json", "number,state,isDraft,body,baseRefName,headRefName,headRefOid,statusCheckRollup,comments,files,url,mergedAt"], { cwd: root });
   if (result.exitCode !== 0) fail(`No se pudo consultar el PR #${number}`, [result.stderr.trim()]);
   try { return JSON.parse(result.stdout); } catch { fail("gh devolvió un PR inválido"); }
 }
 
 function checkConclusion(check) {
   return (check.conclusion || check.state || "").toUpperCase();
+}
+
+function remoteSnapshotBlockers(pr, candidate, sha, expectedPreviewUrl = "") {
+  const blockers = [];
+  if (pr.state !== "OPEN" || pr.mergedAt) blockers.push("El PR remoto ya no está abierto y sin merge");
+  if (!pr.isDraft) blockers.push("El PR remoto dejó de ser draft");
+  if (pr.baseRefName !== "main") blockers.push(`El PR remoto apunta a ${pr.baseRefName || "una base desconocida"}, no main`);
+  if (pr.headRefName !== candidate.branch) blockers.push(`La rama remota cambió a ${pr.headRefName || "desconocida"}`);
+  if (pr.headRefOid !== sha) blockers.push(`El SHA remoto cambió: ${pr.headRefOid || "desconocido"}`);
+  if (deliveryIdFromBody(pr.body) !== candidate.id) blockers.push("El Delivery-ID remoto cambió");
+  const required = ["delivery-config", "build-test", "rules-and-e2e", "deploy"];
+  for (const name of required) {
+    if (!(pr.statusCheckRollup || []).some((check) => (check.name || check.context || "").includes(name) && checkConclusion(check) === "SUCCESS")) {
+      blockers.push(`El check remoto ${name} ya no está SUCCESS`);
+    }
+  }
+  if (expectedPreviewUrl && previewUrl(pr, sha) !== expectedPreviewUrl) blockers.push("El Preview remoto cambió o perdió su prueba de procedencia");
+  return blockers;
 }
 
 function previewUrl(pr, sha) {
@@ -1208,6 +1313,8 @@ async function recordRemote(root = ROOT, number) {
   const sha = currentSha(root);
   if (pr.state !== "OPEN" || pr.mergedAt) fail("El PR debe estar abierto y sin merge");
   if (!pr.isDraft) fail("El PR debe permanecer draft");
+  if (pr.baseRefName !== "main") fail("El PR debe apuntar a main", [String(pr.baseRefName || "sin base")]);
+  if (pr.headRefName !== candidate.branch) fail("La rama remota del PR no coincide", [`remote=${pr.headRefName || "sin rama"}`, `local=${candidate.branch}`]);
   if (deliveryIdFromBody(pr.body) !== candidate.id) fail("Delivery-ID del PR no coincide");
   const requiredBodyValues = [candidate.specPath, sha, ...(candidate.commands || [])];
   if (bootstrap) requiredBodyValues.push(`Bootstrap-Base: ${candidate.baseSha}`);

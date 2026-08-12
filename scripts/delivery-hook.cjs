@@ -93,6 +93,9 @@ function forbiddenCommand(command, root) {
     return "Los comandos Git dinámicos o send-pack eluden los gates y están bloqueados.";
   }
   if (/\bgh\s+api\b/i.test(value)) return "gh api está bloqueado; usa los comandos PR cubiertos por el harness.";
+  if (/\bgh\s+(?:run\s+(?:rerun|cancel|delete)|workflow\s+(?:run|enable|disable))\b/i.test(value)) {
+    return "Los agentes no pueden iniciar, relanzar, cancelar ni borrar ejecuciones de GitHub Actions.";
+  }
   if (/\bgh\s+repo\s+sync\b/i.test(value)) return "gh repo sync puede mover refs sin gate y está bloqueado.";
   if (/\bgh\s+pr\s+review\b/i.test(value)) return "Los agentes no pueden aprobar ni revisar PRs como autoridad humana.";
   if (gitCommand(value, "merge") || /\bgh\s+pr\s+(merge|ready)\b/i.test(value)) {
@@ -148,6 +151,11 @@ function missingManifest(body, manifest) {
     .filter((value) => !body.includes(value));
 }
 
+function option(command, name) {
+  const match = command.match(new RegExp(`(?:^|\\s)--${name}(?:=|\\s+)(?:"([^"]+)"|'([^']+)'|([^\\s]+))`, "i"));
+  return match ? (match[1] || match[2] || match[3]) : "";
+}
+
 function handle(input) {
   const event = input.hook_event_name || input.hookEventName;
   const root = rootFrom(input);
@@ -174,6 +182,9 @@ function handle(input) {
   if (forbidden) return forbidden;
   const toolName = String(input.tool_name || "").toLowerCase();
   const serializedInput = JSON.stringify(input.tool_input || {});
+  if (toolName.includes("github") && /(?:rerun|dispatch|cancel|delete|enable|disable).*(?:workflow|action|run)|(?:workflow|action|run).*(?:rerun|dispatch|cancel|delete|enable|disable)/.test(toolName)) {
+    return "Los agentes no pueden mutar ejecuciones de GitHub Actions.";
+  }
   const directGithubMutation = toolName.includes("github") && (
     /(?:create|update|delete)_file$/.test(toolName) || /push_files$/.test(toolName) || /(?:create|update|delete).*commit/.test(toolName)
   );
@@ -208,6 +219,10 @@ function handle(input) {
     if (createsPr) {
       let manifest;
       try { manifest = JSON.parse(result.stdout); } catch { return "El gate publish no devolvió un manifiesto válido."; }
+      const base = option(command, "base") || input.tool_input?.base || input.tool_input?.baseRefName || input.tool_input?.base_ref_name;
+      const head = option(command, "head") || input.tool_input?.head || input.tool_input?.headRefName || input.tool_input?.head_ref_name;
+      if (base !== "main") return "Los draft PR de entrega deben declarar --base main.";
+      if (head !== manifest.branch) return `La rama head del PR debe ser ${manifest.branch}.`;
       const missing = missingManifest(prBody(input, command, root), manifest);
       if (missing.length) return `El cuerpo del PR debe incluir Delivery-ID, spec, SHA y comandos finales. Faltan: ${missing.join(", ")}`;
     }
@@ -219,7 +234,7 @@ function readInput() {
   try { return JSON.parse(fs.readFileSync(0, "utf8")); } catch { return {}; }
 }
 
-module.exports = { forbiddenCommand, gitCommand, handle, missingManifest, needsPublishGate, parseContract, prBody };
+module.exports = { forbiddenCommand, gitCommand, handle, missingManifest, needsPublishGate, option, parseContract, prBody };
 
 if (require.main === module) {
   const reason = handle(readInput());

@@ -263,8 +263,8 @@ function preparePublishable(root: string, standardFindings: unknown[] = []) {
   recordStage(root, "review-qa", result(root, "qa", review("reviewer-qa", "qa-evidence", "qa")), []);
 }
 
-function recordBootstrapReview(root: string, stage: string, id: string, lens: string) {
-  const value = { ...pass(stage), findings: [], reviewer: { id, profile: "store-os-reviewer", lens } };
+function recordBootstrapReview(root: string, stage: string, id: string, lens: string, findings: unknown[] = [], status = "PASS") {
+  const value = { ...pass(stage), status, findings, reviewer: { id, profile: "store-os-reviewer", lens } };
   const file = result(root, `bootstrap-${stage}`, value);
   execFileSync(process.execPath, [join(root, "scripts", "delivery-hook.cjs")], {
     cwd: root,
@@ -275,6 +275,24 @@ function recordBootstrapReview(root: string, stage: string, id: string, lens: st
     }),
   });
   return delivery(root, "record", stage, file);
+}
+
+function recordBootstrapVerifier(root: string, id: string, reviewId: string, findingId: string, verdict = "uncertain") {
+  const value = {
+    ...pass("bootstrap verifier"),
+    reviewer: { id, profile: "store-os-reviewer", lens: "adversarial" },
+    findings: [{ reviewId, findingId, verdict, evidence: ["reproducción"] }],
+  };
+  const file = result(root, `bootstrap-verifier-${id}`, value);
+  execFileSync(process.execPath, [join(root, "scripts", "delivery-hook.cjs")], {
+    cwd: root,
+    encoding: "utf8",
+    input: JSON.stringify({
+      hook_event_name: "SubagentStop", cwd: root, agent_id: id, agent_type: "store-os-reviewer",
+      agent_transcript_path: join(root, `${id}.jsonl`), last_assistant_message: JSON.stringify(value),
+    }),
+  });
+  return delivery(root, "record", "verifier", file);
 }
 
 afterEach(() => {
@@ -300,7 +318,8 @@ describe.sequential("delivery harness", () => {
 
     const sha = git(root, "rev-parse", "HEAD");
     writeJson(fake.viewFile, {
-      number: 51, state: "OPEN", isDraft: true, mergedAt: null, headRefOid: sha,
+      number: 51, state: "OPEN", isDraft: true, mergedAt: null, baseRefName: "release",
+      headRefName: harness.BOOTSTRAP.branch, headRefOid: sha,
       url: "https://example.test/pr/51", files: [],
       body: [`Delivery-ID: ${manifest.id}`, `Bootstrap-Base: ${baseSha}`, manifest.specPath, sha, ...manifest.commands].join("\n"),
       comments: [{ author: { login: "github-actions" }, body: `Preview deploy para ${sha}: https://store-os-bootstrap.vercel.app` }],
@@ -313,8 +332,21 @@ describe.sequential("delivery harness", () => {
       newPage: async () => ({ goto: async () => ({ ok: () => true }), locator: () => ({ waitFor: async () => {}, innerText: async () => "Entrar a Store OS" }) }),
       close: async () => {},
     }) };`);
+    expect(() => delivery(root, "remote", "51")).toThrow(/apuntar a main/);
+    const remotePr = JSON.parse(readFileSync(fake.viewFile, "utf8"));
+    remotePr.baseRefName = "main";
+    remotePr.headRefName = "attacker/bootstrap";
+    writeJson(fake.viewFile, remotePr);
+    expect(() => delivery(root, "remote", "51")).toThrow(/rama remota/);
+    remotePr.headRefName = harness.BOOTSTRAP.branch;
+    writeJson(fake.viewFile, remotePr);
     expect(delivery(root, "remote", "51")).toMatchObject({ number: 51, sha });
     expect(delivery(root, "gate", "stop")).toMatchObject({ reason: "BOOTSTRAP_REMOTE_GREEN" });
+    remotePr.headRefOid = baseSha;
+    writeJson(fake.viewFile, remotePr);
+    expect(() => delivery(root, "gate", "stop")).toThrow(/SHA remoto cambió/);
+    remotePr.headRefOid = sha;
+    writeJson(fake.viewFile, remotePr);
 
     git(root, "switch", "main");
     writeFileSync(join(root, "main-advanced.txt"), "advanced\n");
@@ -322,6 +354,30 @@ describe.sequential("delivery harness", () => {
     git(root, "commit", "-m", "chore: advance main");
     git(root, "switch", harness.BOOTSTRAP.branch);
     expect(() => delivery(root, "gate", "publish")).toThrow(/Bootstrap expiró/);
+  });
+
+  it("conserva blockers bootstrap, verifica receipts y bloquea tras tres correcciones", () => {
+    const { root } = initBootstrapRepo();
+    const finding = { id: "B1", blocking: true, claim: "bypass", evidence: ["reproducción"] };
+    for (let round = 1; round <= 3; round += 1) {
+      delivery(root, "verify", "bootstrap");
+      recordBootstrapReview(root, "review-standards", `standards-${round}`, "standards-spec", [finding], "FAIL");
+      recordBootstrapReview(root, "review-security", `security-${round}`, "security-privacy");
+      recordBootstrapReview(root, "review-qa", `qa-${round}`, "qa-evidence");
+      recordBootstrapVerifier(root, `verifier-${round}`, "review-standards", "B1");
+      if (round < 3) {
+        writeFileSync(join(root, "AGENTS.md"), `candidate round ${round}\n`);
+        git(root, "add", "AGENTS.md");
+        git(root, "commit", "-m", `fix: bootstrap round ${round}`);
+      }
+    }
+    expect(() => delivery(root, "gate", "publish")).toThrow(/BLOCKED_HUMAN|dos rondas/);
+
+    const reviewFile = join(root, ".delivery", "runs", "bootstrap", "review-qa.json");
+    const review = JSON.parse(readFileSync(reviewFile, "utf8"));
+    review.summary = "manipulado";
+    writeJson(reviewFile, review);
+    expect(() => delivery(root, "gate", "publish")).toThrow(/Falta recibo original|modificado después de SubagentStop/);
   });
 
   it("rechaza IDs duplicados, specs sin aprobar y saltos de stage", () => {
@@ -477,6 +533,18 @@ describe.sequential("delivery harness", () => {
     expect(blockers).toContain("review-standards pertenece a otro SHA");
   });
 
+  it("rechaza artefactos de review manipulados después de SubagentStop", () => {
+    const root = initRepo();
+    preparePublishable(root);
+    const active = harness.loadActiveRun(root);
+    const runFile = join(root, ".delivery", "runs", active.runId, "run.json");
+    const run = JSON.parse(readFileSync(runFile, "utf8"));
+    run.artifacts["review-qa"].summary = "manipulado";
+    writeJson(runFile, run);
+    expect(harness.publishBlockers(root, []).some((entry: string) =>
+      /Falta recibo original para review-qa|review-qa fue modificado después de SubagentStop/.test(entry))).toBe(true);
+  });
+
   it("un PR de código no puede cambiar cola, spec ni completar otros IDs", () => {
     const root = initRepo([item("one", 10), item("two", 20)]);
     preparePublishable(root);
@@ -613,6 +681,8 @@ describe.sequential("delivery harness", () => {
       number: 41,
       state: "OPEN",
       isDraft: true,
+      baseRefName: "main",
+      headRefName: "delivery/one",
       body: [`Delivery-ID: one`, "docs/one.md", sha, ...manifest.verification.final.commands.map((entry: { command: string }) => entry.command)].join("\n"),
       headRefOid: sha,
       mergedAt: null,

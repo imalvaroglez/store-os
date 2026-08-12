@@ -41,6 +41,7 @@ describe("delivery lifecycle hook", () => {
     expect(hook.forbiddenCommand("firebase emulators:start; firebase firestore:delete --all-collections --force", root)).toMatch(/Firebase Emulator/);
     expect(hook.forbiddenCommand("firebase emulators:exec 'env -u FIRESTORE_EMULATOR_HOST firebase firestore:delete --all-collections --force'", root)).toMatch(/emulators:exec/);
     expect(hook.forbiddenCommand("gh api -X PUT repos/o/r/pulls/1/merge", root)).toMatch(/gh api/);
+    expect(hook.forbiddenCommand("gh run rerun 123456", root)).toMatch(/GitHub Actions/);
     expect(hook.forbiddenCommand("gh pr review 1 --approve", root)).toMatch(/aprobar/);
     expect(hook.forbiddenCommand("vercel deploy --target=production", root)).toMatch(/deploys/);
     expect(hook.forbiddenCommand("node scripts/backfill-public-product-store-ids.cjs --env prod --store one", root)).toMatch(/producción/);
@@ -50,6 +51,8 @@ describe("delivery lifecycle hook", () => {
       tool_input: { branch_name: "main", sha: "abc" } })).toMatch(/main/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_add_review_to_pr",
       tool_input: { pr_number: 1, action: "APPROVE" } })).toMatch(/reviews|aprobar/);
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__github__rerun_workflow",
+      tool_input: { run_id: 1 } })).toMatch(/GitHub Actions/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_create_file",
       tool_input: { path: "bypass.txt", content: "x", branch: "main" } })).toMatch(/directamente/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "mcp__codex_apps__github_update_file",
@@ -69,6 +72,8 @@ describe("delivery lifecycle hook", () => {
     expect(hook.missingManifest("sin marcador", { kind: "spec", id: "one" })).toContain("Delivery-ID: one");
     const bootstrap = { ...manifest, kind: "bootstrap", baseSha: "base123" };
     expect(hook.missingManifest("Delivery-ID: one\ndocs/one.md\nabc123\nnpm run test", bootstrap)).toContain("Bootstrap-Base: base123");
+    expect(hook.option("gh pr create --base release --head=attacker/work", "base")).toBe("release");
+    expect(hook.option("gh pr create --base release --head=attacker/work", "head")).toBe("attacker/work");
   });
 
   it("usa exit code 2 para rechazar una acción", () => {
