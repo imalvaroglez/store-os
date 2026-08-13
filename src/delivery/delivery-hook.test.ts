@@ -84,6 +84,10 @@ describe("delivery lifecycle hook", () => {
       tool_input: { run_id: 1 } })).toMatch(/GitHub Actions/);
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "apply_patch",
       tool_input: { command: "*** Update File: .delivery/runs/bootstrap/history.json" } })).toMatch(/sólo puede escribirla/);
+    // Regression SEC-01: a multi-section apply_patch whose FIRST marker targets a safe path but a LATER
+    // marker targets the run dir must still be blocked (single-match extraction missed the second marker).
+    expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "apply_patch",
+      tool_input: { command: "*** Update File: /tmp/safe.json\n@@\ncontext\n*** Update File: .delivery/runs/bootstrap/history.json\n@@\ncontext" } })).toMatch(/sólo puede escribirla/);
     // Regression: a Write/apply_patch whose *destination* is outside the run dir must NOT be blocked
     // even if its *content* legitimately cites run artifacts as evidence (e.g. CLI review input).
     expect(hook.handle({ hook_event_name: "PreToolUse", cwd: root, tool_name: "Write",

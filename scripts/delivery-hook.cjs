@@ -285,11 +285,13 @@ function handle(input) {
   // ponytail: scope the guard to the file-mutation destination, not the whole serialized input,
   // so CLI input files (e.g. review JSON) whose *content* cites run artifacts are not mistaken
   // for an evidence write. Shell tools have no single destination field, so they keep the full command.
-  // apply_patch may encode its target either in its command text (Update File marker) or in file_path.
+  // apply_patch encodes each target via a Update/Add/Create/Delete File marker. Collect ALL of them so a
+  // multi-section patch cannot smuggle a run-dir write behind a first safe marker.
   const fileDestination = String(input.tool_input?.file_path || input.tool_input?.path || input.tool_input?.notebook_path || "");
-  const applyPatchPath = toolName.includes("apply_patch") && input.tool_input?.command
-    ? String(input.tool_input.command.match(/\*\*\*\s*(?:Update|Add|Create|Delete)\s+File:?\s*(.+)/i)?.[1] || "")
-    : "";
+  const applyPatchMarkers = toolName.includes("apply_patch") && input.tool_input?.command
+    ? [...String(input.tool_input.command).matchAll(/\*\*\*\s*(?:Update|Add|Create|Delete)\s+File:?\s*(.+)/gi)].map(function (m) { return m[1]; })
+    : [];
+  const applyPatchPath = applyPatchMarkers.join(" ");
   const evidenceTarget = editsFiles ? `${fileDestination} ${applyPatchPath}`.trim() : serializedInput;
   if ((evidencePath.test(evidenceTarget) && mutatesEvidence) || executesHook) {
     return "La evidencia de .delivery/runs sólo puede escribirla el hook o el CLI canónico.";
