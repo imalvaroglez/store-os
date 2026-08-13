@@ -24,9 +24,19 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   // Network-first for navigation so updates land; cache fallback offline.
+  // On a successful online navigation we ALSO persist the fresh /index.html
+  // into the SHELL cache — a second rotation path independent of a new SW
+  // installing (defends against "the new SW never arrived"). Belt: addAll in
+  // install. Suspenders: this cache.put on every online nav.
   if (req.mode === "navigate") {
     event.respondWith(
-      fetch(req).catch(() => caches.match("/index.html"))
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put("/index.html", copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match("/index.html"))
     );
     return;
   }
