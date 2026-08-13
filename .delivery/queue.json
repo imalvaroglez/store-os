@@ -2,6 +2,15 @@
   "version": 1,
   "items": [
     {
+      "id": "fix-hook-angle-bracket",
+      "title": "Falso positivo del hook de delivery (regex /<>/ sobreampliado)",
+      "priority": 5,
+      "status": "needs-spec",
+      "specPath": "docs/superpowers/specs/fix-hook-angle-bracket-design.md",
+      "dependsOn": [],
+      "previewChecks": []
+    },
+    {
       "id": "refresh-hard-reload",
       "title": "Refresh y hard reload confiables",
       "priority": 10,

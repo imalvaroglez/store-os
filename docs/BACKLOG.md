@@ -29,6 +29,11 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
 - **Deuda: Eliminar el seed de datos de ejemplo** — pequeño, autocontenido, sin
   decisiones abiertas. Producto real en producción; el demo ya no corresponde.
 - **Deuda: `pnpm-lock.yaml` dual** — un commit, borrar + gitignore. Trivial.
+- **Deuda: Falso positivo del hook de delivery (`/[<>]/`)** — un regex sobreampliado
+  en `scripts/delivery-hook.cjs` bloquea cualquier comando con `<` o `>` literal:
+  redirecciones de fd (`2>&1`), trailers de email de git (`<noreply@...>`), flechas
+  (`->`, `=>`). El diagnóstico y el fix exacto ya están listos. Bloquea al agente
+  operar el CLI canónico y commitear con el trailer de co-autor correcto.
 - **Deuda: `persistEntity` fire-and-forget sin `.catch`** — endurecer con catch
   + toast de error. Causa conocida (regresión F3). Sin decisiones abiertas.
 - **Deuda: Migración `adminStores` idempotente** — falta el script
@@ -73,6 +78,26 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
   Rediseño de modelo (`memberUids` → `members` con rol). **No entra al workflow.**
 
 ### Deuda técnica (de sesiones, sin feature)
+
+- **Falso positivo del hook de delivery: `/[<>]/` sobreampliado** —
+  `scripts/delivery-hook.cjs` línea ~162 tiene `|| /[<>]/.test(value) ||` dentro de
+  `forbiddenCommand`. Pretende bloquear redirects que escriben archivos
+  (`>file`, `>>file`, `<file`), pero el char class es desnudo: coincide **cualquier**
+  `<` o `>` en el comando. **Confirmado por diagnóstico (2026-08-13, con prueba
+  empírica):** `npm run typecheck` pasa; `npm run typecheck 2>&1 | tail -5` se
+  bloquea (el `>` de `2>&1` es duplicación de fd, no escritura). También bloquea
+  `git commit -m "... Co-Authored-By: Codex <noreply@anthropic.com>"` (el trailer
+  de email estándar) y cualquier texto con flechas `->` / `=>`.
+  **Fix mínimo (ya diagnosticado):** estrechar `/[<>]/.test(value)` a redirects
+  reales permitiendo duplicación de fd numérica:
+  `/(?:^|[;&|]\s*)(?:>>?\s*(?!&\d)|>&\s*[^&\d\s]|<\s*(?!&\d)|<&\s*[^&\d\s])/i.test(value)`
+  — bloquea `>file`/`>>file`/`>&file`/`<file`, permite `2>&1`/`1>&2`/`<&0`. Todos
+  los demás guardrails quedan intactos. **Restricción:** el hook bloquea su propia
+  modificación por un agente; el owner debe empujar la rama del fix desde su
+  terminal (ver memoria `harness-cannot-self-evolve`).
+  > **Delivery-ID: fix-hook-angle-bracket.** La futura spec conserva el alcance
+  > (un regex, sin debilitar guardrails); sólo cola `queued` + aprobación humana
+  > autoriza el cambio. No puede ir por el FSM del harness ni por un PR de agente.
 
 > **Release blocker del mini-ciclo:** el item "refresh = refresh" gobierna la
 > prioridad de esta sección. Hasta que un refresh duro del navegador cargue
