@@ -61,33 +61,45 @@ asumir la causa antes de reproducirla. Respeta costo cero y modo demo local.
 
 ## Alcance (in)
 
-1. **Reproducir A→B sobre una URL estable.** Desplegar un marcador visible (ej.
-   un texto/versión en `index.html` o un componente raíz) en Preview (dev
-   backend), cargar la URL estable en una pestaña limpia, promover un cambio B
-   con un marcador distinto, y confirmar si el refresh normal muestra B. Sin este
-   paso no se toca el SW ni se versiona nada.
+1. **Reproducir A→B sobre una URL estable, registrando evidencia técnica.**
+   Desplegar un marcador visible y **exclusivo por build** (ej. versión corta o
+   hash en `index.html` o un nodo raíz), cargar la URL estable en una pestaña
+   limpia, promover un cambio B con marcador distinto en el **mismo origen**, y
+   confirmar si el refresh normal muestra B. En cada paso registrar:
+   - Hash del bundle JS servido (el `<script src="/assets/index-*.js">` del HTML).
+   - Cuerpo y cabeceras de la respuesta de `index.html` (`Cache-Control`, `ETag`).
+   - Versión/SHA del SW que controla la página
+     (`navigator.serviceWorker.controller.scriptURL` + `state`).
+   El resultado decide cuál hipótesis reproduce. **Sin este paso no se toca el SW
+   ni se versiona nada.**
 
-2. **Endurecimiento HTTP mínimo (confirmado que falta).** Añadir en `vercel.json`
-   cabeceras `Cache-Control: no-cache` (o `no-store` para `/sw.js`) para
-   `index.html` y `/sw.js`, de modo que el HTML y el script del SW no sean
-   servidos por un caché HTTP intermedio (browser o CDN) tras un deploy. Esto es
-   independiente de la hipótesis SW: el navegador revalida el HTML y re-descarga
-   el SW cuando cambian sus bytes.
+2. **Endurecimiento HTTP + registro (confirmado que falta).** Dos cambios
+   complementarios e independientes de la hipótesis:
+   - `vercel.json`: cabeceras `Cache-Control` para `index.html` y `/sw.js` que
+     obliguen a revalidar (el navegador revalida el HTML y re-descarga el SW
+     cuando cambian sus bytes). `/assets/*` se mantiene `immutable` (ya está).
+   - `src/pwa.ts`: registrar el SW con `updateViaCache: "none"`, para que el
+     chequeo de actualización del SW **bypassea el caché HTTP** del script. Hoy el
+     registro no pasa opciones → default `"all"` → el browser puede servir el SW
+     cacheado. `updateViaCache` controla solo el script del SW y sus imports, no
+     los assets.
 
-3. **Actualizar el fallback HTML del SW.** El fallback offline actual
-   (`caches.match("/index.html")`) sirve la shell precacheada. Tras un deploy con
-   SW nuevo, esa entrada cacheada puede ser de la versión anterior hasta que el SW
-   termine de reinstalar el `SHELL`. Garantizar que el `install` reprecachea el
-   `SHELL` fresco y que el fallback sea consistente con la versión nueva.
+3. **Actualizar el fallback HTML tras una navegación online exitosa.** El fallback
+   offline actual (`caches.match("/index.html")` en `sw.js:29`) sirve la shell
+   precacheada. La garantía es: tras una navegación **online** que trajo el HTML
+   nuevo, el fallback cacheado debe reflejar esa versión nueva (no la shell vieja
+   que dejó un deploy anterior). El `install` reprecachea `SHELL` y el cache-first
+   de `/index.html` se refresca con la respuesta online exitosa, de modo que un
+   posterior offline sirva la versión vista por última vez en línea.
 
 4. **Versionado del caché por build — solo si la reproducción lo demuestra.** Si
-   A→B reproduce que el problema es el SW (no CDN, no listener, no Auth), y solo
-   en ese caso, cambiar `CACHE` de literal estático a un valor que varíe por
+   A→B reproduce que el problema es el ciclo del SW (no CDN, no listener, no Auth),
+   y solo en ese caso, cambiar `CACHE` de literal estático a un valor que varíe por
    deploy. Como `define` no aplica a `public/`, la opción simple es que el script
-   de build genere el `CACHE` (ej. escribir el SHA corto o un timestamp en
-   `dist/sw.js` durante `vite build`). `ponytail:` preferir la opción más simple
-   que la reproducción justifique; si el endurecimiento HTTP (#2) ya resuelve el
-   síntoma, **no** versionar (YAGNI).
+   de build genere el `CACHE` (ej. escribir el SHA corto en `dist/sw.js` durante
+   `vite build`). `ponytail:` preferir la opción más simple que la reproducción
+   justifique; si el endurecimiento (#2) ya resuelve el síntoma, **no** versionar
+   (YAGNI).
 
 ## Fuera de alcance (out)
 
@@ -104,64 +116,83 @@ asumir la causa antes de reproducirla. Respeta costo cero y modo demo local.
 ## Diseño
 
 1. **Reproducción A→B (primer entregable, bloqueante).**
-   - Añadir un marcador ligero y exclusivo por build en la UI (ej. versión corta
-     en `index.html` o un nodo en `App`), **visible solo para diagnóstico**, que
-     no afecte el flujo productivo.
-   - En Preview (`store-os-dev`), cargar la URL estable `/` en una pestaña sin
-     estado previo (o tras `bypass` de SW).
-   - Promover el build B con un marcador distinto. Refrescar **normal** (sin
-     Shift). Registrar: ¿aparece B? ¿Aparece solo con hard reload? ¿Solo tras
-     cerrar todas las pestañas?
-   - El resultado decide si se aplica #4 o si basta #2.
+   - Marcador exclusivo por build (ej. `__APP_VERSION__` corta inyectada, o un
+     texto en `index.html` reescrito en build), **visible solo para diagnóstico**.
+   - En Preview (`store-os-dev`), sobre el **mismo origen** estable, cargar A en
+     una pestaña limpia. Capturar: `<script src="/assets/index-*.js">` servido
+     (hash del bundle), cuerpo + `Cache-Control`/`ETag` de `index.html`, y
+     `navigator.serviceWorker.controller` (scriptURL + state).
+   - Deployar B (mismo origen, marcador distinto). Refrescar **normal** (sin
+     Shift). Recapturar los tres datos. Registrar: ¿aparece B? ¿Solo con hard
+     reload? ¿Solo tras cerrar todas las pestañas? ¿El `controller` cambió?
+   - La brecha entre lo servido y lo esperado señala la hipótesis: HTML cacheado
+     por CDN/browser (cabeceras), SW que no actualiza (`updateViaCache`/ciclo), o
+     bundle correcto pero dato estancado (listener/Auth → item separado).
 
 2. **Cabeceras `Cache-Control` en `vercel.json`** para `index.html` y `/sw.js`:
-   - `/sw.js` → `no-cache` (debe revalidarse siempre; el navegador lo
+   - `/sw.js` → `Cache-Control: no-cache` (revalidar siempre; el navegador lo
      re-descarga si sus bytes cambiaron — clave para que el SW nuevo se instale).
-   - `/index.html` → `no-cache` (revalidar; el HTML fresco referencia los assets
-     nuevos con hash).
+   - `/index.html` → `Cache-Control: no-cache` (revalidar; el HTML fresco
+     referencia los assets nuevos con hash).
    - `/assets/*` se mantiene `immutable` (ya está; correcto).
 
-3. **Fallback HTML consistente.** Confirmar que `install` reprecachea `SHELL`
-   tras cada deploy y que `activate` (que ya limpia) quede consistente. Si la
-   reproducción muestra que la shell cacheada estanca la UI, opcionalmente
-   descachear la shell vieja por nombre antes de reclamar clientes.
+3. **Registro con `updateViaCache: "none"`** en `src/pwa.ts`:
+   `navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })`.
+   Complementario a la cabecera: la cabecera controla el caché HTTP del script si
+   el browser lo consulta; `updateViaCache: "none"` hace que el browser no lo
+   consulte en el chequeo de actualización. Defensa en profundidad.
 
-4. **Versionado condicional (solo si A→B lo exige).** Generar `CACHE` en build
+4. **Fallback HTML consistente.** Tras una navegación online exitosa, el
+   `/index.html` que el SW cachea (vía `install` addAll y la respuesta network del
+   handler navigate) debe ser la versión nueva. Garantizar que el handler
+   network-first (`sw.js:27-31`) persista la respuesta online exitosa en el caché
+   del `SHELL`, de modo que el offline posterior sirva la última versión vista en
+   línea — no la shell vieja de un deploy anterior.
+
+5. **Versionado condicional (solo si A→B lo exige).** Generar `CACHE` en build
    reescribiendo `dist/sw.js`, o leer la URL del script del SW con hash como
    versión. Mínimo código; documentar el `ponytail:` con su techo.
 
 ## Criterios de aceptación
 
-- **Reproducción documentada.** Un registro (en la evidencia de la entrega) del
-  experimento A→B sobre la URL estable de Preview: marcadores, resultado del
-  refresh normal vs. hard reload, y conclusión sobre cuál hipótesis reproduce.
-- `index.html` y `/sw.js` se sirven con `Cache-Control` que obliga a revalidar
+- **Reproducción documentada.** Registro del experimento A→B sobre la URL estable
+  de Preview con los tres datos (bundle hash, `index.html` cuerpo+cabeceras, SW
+  `controller`) en A y en B, y conclusión sobre cuál hipótesis reproduce.
+- `index.html` y `/sw.js` se sirven con `Cache-Control: no-cache`
   (verificable con `curl -I` contra el deploy de Preview).
+- `src/pwa.ts` registra el SW con `updateViaCache: "none"`.
 - `npm run typecheck && npm run test && npm run build` pasan.
-- **Sin regresión de offline:** el modo demo local (sin backend) sigue cargando
-  offline con la shell inicial (test e2e existente o verificación manual).
-- Si se aplicó versionado (#4): un test (vitest sobre la función de versión, o
-  e2e que simule SW viejo) demuestra que el caché viejo se descarta tras
-  `activate`. **Si no se aplicó** (porque #2 bastó): no se agrega este test — no
+- **Sin regresión de offline:** tras el experimento, desconectar red y recargar;
+  la app carga con la shell (la última versión vista online, no una vieja).
+  Verificado con un test e2e o manual en el emulador/local.
+- **Marcador de B sin hard reload:** tras deployar B en el mismo origen, un
+  refresh normal sirve el marcador exclusivo de B (no A). `text: "Entrar"` no
+  cuenta — es estático; el previewCheck usa el marcador exclusivo del build.
+- Si se aplicó versionado (#5): un test demuestra que el caché viejo se descarta
+  tras `activate`. **Si no se aplicó** (porque #2+#3 bastaron): no se agrega — no
   tiene sentido testear limpieza de caché que ya existía antes de esta entrega.
-- previewCheck: el refresh normal sobre la URL estable sirve el marcador B sin
-  hard reload (verificado por el PO; el harness ejecuta el previewCheck declarado).
 
 ## previewChecks
 
 ```json
-[{ "path": "/", "selector": "body", "text": "Entrar" }]
+[{ "path": "/", "selector": "[data-build-marker]", "text": "" }]
 ```
+
+El marcador de build (`data-build-marker` con valor exclusivo por deploy) es lo
+que afirma que cargó la versión nueva. Un `text: "Entrar"` estático no demuestra
+que se sirvió el deploy B.
 
 ## Riesgos / notas
 
 - El marcador diagnóstico A→B debe ser removible o inerte en producción; no es
-  una feature de UI.
+  una feature de UI. Si se queda, es un atributo `data-*` invisible, no texto.
 - `no-cache` en `index.html` no rompe offline: el SW aún precachea `/` y lo sirve
   offline vía el fallback network-first de `sw.js:27-31`.
-- Si la reproducción A→B **no** reproduce con archivos estáticos, el síntoma es de
-  dato (hipótesis #2/#3) y esta entrega se cierra con solo el endurecimiento HTTP
-  (#2), dejando el rastreo del dato estancado para otro item.
+- `updateViaCache: "none"` no afecta los assets del app; solo el script del SW.
+- Si la reproducción A→B **no** reproduce con archivos estáticos (el bundle y el
+  HTML sí rotan pero el dato sigue estancado), el síntoma es de dato (hipótesis
+  #2/#3) y esta entrega se cierra con el endurecimiento (#2+#3), dejando el
+  rastreo del dato para otro item.
 
 ## Dependencias
 
