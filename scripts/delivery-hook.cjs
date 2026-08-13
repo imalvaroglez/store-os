@@ -268,17 +268,20 @@ function handle(input) {
   }
   if (event !== "PreToolUse") return "";
 
-  const command = input.tool_input?.command || input.tool_input?.cmd || JSON.stringify(input.tool_input || {});
+  const toolName = String(input.tool_name || "").toLowerCase();
+  const editsFiles = /apply_patch|\bedit\b|\bwrite\b|notebook/i.test(toolName);
+  // ponytail: file-mutation tools carry only file content, no command-line text. Scanning that content as a
+  // command (an email bracket in a trailer, or shell verbs cited as evidence text) is a false positive, so for
+  // these tools there is no command to validate and forbiddenCommand receives an empty string.
+  const command = editsFiles ? "" : (input.tool_input?.command || input.tool_input?.cmd || JSON.stringify(input.tool_input || {}));
   const normalizedCommand = normalizeGhCommand(command);
   const forbidden = forbiddenCommand(command, root);
   if (forbidden) return forbidden;
-  const toolName = String(input.tool_name || "").toLowerCase();
   const serializedInput = JSON.stringify(input.tool_input || {});
   if (/(?:rerun|dispatch|cancel|delete|enable|disable).*(?:workflow|action|run)|(?:workflow|action|run).*(?:rerun|dispatch|cancel|delete|enable|disable)/.test(toolName)) {
     return "Los agentes no pueden mutar ejecuciones de GitHub Actions.";
   }
   const evidencePath = /\.delivery[\\/]runs(?:[\\/]|$)/i;
-  const editsFiles = /apply_patch|\bedit\b|\bwrite\b|notebook/i.test(toolName);
   const mutatesEvidence = editsFiles || /(?:^|[;&|]\s*|\s)(?:node|python\d*|ruby|perl|bash|zsh|sh|chmod|chown)\b/i.test(command) ||
     /\bgit\b[^\n;&|]*\badd\b/i.test(command) || /(?:^|\s)-delete(?:\s|$)/i.test(command);
   const executesHook = /(?:^|[;&|]\s*)(?:(?:\/[^\s;&|]+\/)?node\s+)?(?:\.\/)?scripts\/delivery-hook\.cjs(?:\s|$)/i.test(command);

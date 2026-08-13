@@ -435,6 +435,42 @@ describe.sequential("delivery harness", () => {
     expect(delivery(root, "record", "discovery", file)).toMatchObject({ receipt: { agentId: "agent-real-1" } });
   });
 
+  it("readResultFromReceipt extrae y valida el contrato desde el transcript del subagente", () => {
+    const root = mkdtempSync(join(tmpdir(), "store-os-receipt-"));
+    roots.push(root);
+    const sha = "deadbeefcafebabe0000000000000000deadbeef";
+    const value = {
+      status: "PASS",
+      summary: "review from transcript",
+      evidence: ["src/file.ts:1"],
+      findings: [],
+      reviewer: { id: "agent-from-transcript", profile: "store-os-reviewer", lens: "security-privacy" },
+    };
+    const transcript = join(root, "agent.jsonl");
+    writeFileSync(transcript, JSON.stringify({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: JSON.stringify(value) }] },
+    }) + "\n");
+    const resultHash = createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    mkdirSync(join(root, ".delivery", "runs", "bootstrap", "receipts"), { recursive: true });
+    writeJson(join(root, ".delivery", "runs", "bootstrap", "receipts", `${resultHash}.json`), {
+      agentId: "agent-from-transcript",
+      agentType: "store-os-reviewer",
+      resultHash,
+      sha,
+      transcriptPath: transcript,
+      recordedAt: "2026-08-13T00:00:00.000Z",
+    });
+    const extracted = harness.readResultFromReceipt(root, "review-security", sha);
+    expect(extracted.result).toMatchObject({ status: "PASS", reviewer: { lens: "security-privacy" } });
+    expect(extracted.receipt.resultHash).toBe(resultHash);
+    writeFileSync(transcript, JSON.stringify({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: JSON.stringify({ ...value, summary: "tampered" }) }] },
+    }) + "\n");
+    expect(() => harness.readResultFromReceipt(root, "review-security", sha)).toThrow(/hash del contrato/);
+  });
+
   it("no permite comenzar ni proponer una spec fuera de prioridad", () => {
     const root = initRepo([item("one", 10, { status: "needs-spec" }), item("two", 20)]);
     expect(() => delivery(root, "begin", "two")).toThrow(/no es la siguiente entrega autorizada/);

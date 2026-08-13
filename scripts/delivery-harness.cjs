@@ -742,6 +742,51 @@ function competingPullRequests(prs, runState) {
   return prs.filter((pr) => deliveryIdFromBody(pr.body) === runState.id && pr.headRefName !== runState.branch);
 }
 
+// Extract a reviewer result directly from the subagent transcript that produced a receipt, so the CLI
+// never needs a hand-written input file (which the PreToolUse guard cannot always let through when the
+// review text legitimately cites shell tokens or run-dir paths as evidence). The receipt already binds
+// agentId + resultHash + sha; we re-derive the exact contract object from the transcript and re-check
+// its canonical hash against the receipt before trusting it.
+function readResultFromReceipt(root, stage, sha) {
+  if (!REVIEW_STAGES.includes(stage)) fail(`${stage} no admite lectura desde recibo`);
+  const lens = REVIEW_LENSES[stage];
+  const hookPath = path.join(__dirname, "delivery-hook.cjs");
+  if (!fs.existsSync(hookPath)) fail("readResultFromReceipt requiere scripts/delivery-hook.cjs junto al harness");
+  const hook = require(hookPath);
+  const dir = path.join(root, ".delivery", "runs", "bootstrap", "receipts");
+  if (!fs.existsSync(dir)) fail(`${stage} no tiene recibo de SubagentStop`);
+  function isNewer(a, b) { return String(a || "").localeCompare(String(b || "")) === 1; }
+  let chosen = null;
+  fs.readdirSync(dir).forEach(function (file) {
+    if (!file.endsWith(".json")) return;
+    const receipt = readJson(path.join(dir, file));
+    if (!receipt || receipt.agentType !== "store-os-reviewer" || receipt.sha !== sha) return;
+    if (receipt.usedBy && receipt.usedBy !== stage) return;
+    if (!chosen || isNewer(receipt.recordedAt, chosen.recordedAt)) chosen = receipt;
+  });
+  if (!chosen) fail(`${stage} no tiene recibo de SubagentStop para ${sha}`);
+  if (!chosen.transcriptPath || !fs.existsSync(chosen.transcriptPath)) fail(`${stage}: transcript ausente para el recibo`);
+  const lines = fs.readFileSync(chosen.transcriptPath, "utf8").split(/\r?\n/);
+  let value = null;
+  lines.forEach(function (line) {
+    if (!line.trim()) return;
+    let event;
+    try { event = JSON.parse(line); } catch (e) { return; }
+    if (event.type !== "assistant") return;
+    const message = event.message || {};
+    const segments = Array.isArray(message.content) ? message.content : [message.content];
+    segments.forEach(function (segment) {
+      const text = typeof segment === "string" ? segment : (segment && segment.text);
+      if (typeof text !== "string" || text.indexOf("{") === -1) return;
+      const candidate = hook.parseContract(text, true);
+      if (candidate && candidate.reviewer && candidate.reviewer.lens === lens) value = candidate;
+    });
+  });
+  if (!value) fail(`${stage}: no se encontro contrato ${lens} en el transcript del recibo`);
+  if (hash(JSON.stringify(value)) !== chosen.resultHash) fail(`${stage}: el hash del contrato del transcript no coincide con el recibo`);
+  return { result: value, receipt: chosen };
+}
+
 function recordStage(root = ROOT, stage, resultFile, prs) {
   const active = loadActiveRun(root, false);
   if (!active && bootstrapDeclared(root)) {
@@ -754,7 +799,7 @@ function recordStage(root = ROOT, stage, resultFile, prs) {
     const sha = currentSha(root);
     if (verification.state !== "FINAL_VERIFIED" || verification.sha !== sha) fail(`${stage} requiere verify bootstrap vigente para ${sha}`);
     if (!isTreeClean(root)) fail(`${stage} requiere un árbol limpio`);
-    const result = readJson(path.resolve(resultFile));
+    const result = resultFile === "--receipt" ? readResultFromReceipt(root, stage, sha).result : readJson(path.resolve(resultFile));
     validateRecord(stage, result);
     const reviewFile = bootstrapStateFile(root, stage);
     if (fs.existsSync(reviewFile) && readJson(reviewFile).sha === sha) fail(`${stage} ya fue registrado para este SHA`);
@@ -781,6 +826,7 @@ function recordStage(root = ROOT, stage, resultFile, prs) {
   }
   const runState = active || loadActiveRun(root);
   if (runState.state === "BLOCKED_HUMAN") fail("La corrida requiere intervención humana");
+  if (resultFile === "--receipt") fail("--receipt sólo está soportado en bootstrap; pasa un result.json");
   const result = readJson(path.resolve(resultFile));
   validateRecord(stage, result);
   const sha = currentSha(root);
@@ -1529,6 +1575,7 @@ module.exports = {
   openPullRequests,
   overlaps,
   publishBlockers,
+  readResultFromReceipt,
   specMetadata,
   specPublishBlockers,
   validateQueue,
