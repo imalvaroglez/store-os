@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { gotoClean } from "./helpers";
+import { ADMIN_EMAIL, gotoClean } from "./helpers";
 
 // End-to-end for the PUBLIC CLOUD CATALOG (/catalogo/:slug) against the
 // Firebase Emulator. An anonymous visitor (no session) reads the public
@@ -49,7 +49,7 @@ async function wipePublicProjection() {
 async function mintToken(): Promise<{ token: string; uid: string }> {
   // Try sign-up; if the account already exists (prior run before a wipe),
   // fall back to sign-in. Either way we need a valid idToken for the seed writes.
-  const creds = { email: "catalog-seed@example.com", password: "password123", returnSecureToken: true };
+  const creds = { email: ADMIN_EMAIL, password: "password123", returnSecureToken: true };
   let res = await fetch(AUTH, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -109,8 +109,11 @@ async function seedPublicProjection() {
     const res = await fetch(`${FS}/${path}`, { method: "PATCH", headers: auth, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`seed write failed for ${path}: ${res.status} ${await res.text()}`);
   };
-  await patch(`users/${seed.uid}`, { fields: toFields({ email: "catalog-seed@example.com", role: "super_admin" }) });
+  await patch(`users/${seed.uid}`, { fields: toFields({ email: ADMIN_EMAIL, role: "super_admin" }) });
   for (const store of stores) {
+    await patch(`adminStores/${store.storeId}`, {
+      fields: toFields({ ...store, ownerUid: seed.uid, memberUids: [seed.uid], pendingInvites: [] }),
+    });
     await patch(`stores/${store.storeId}`, { fields: toFields({ ...store, ownerUid: seed.uid, memberUids: [seed.uid] }) });
   }
   for (const s of stores) await patch(`publicStores/${s.slug}`, { fields: toFields(s) });
@@ -178,7 +181,7 @@ test("anonymous visitor never sees private fields", async ({ browser }) => {
   await expect(anon.getByText(/Ganancia/)).toHaveCount(0);
   await expect(anon.getByText(/Costo/)).toHaveCount(0);
   // WhatsApp contact CTA present (public interaction only).
-  await expect(anon.getByRole("link", { name: "Escríbeme por WhatsApp" })).toBeVisible();
+  await expect(anon.getByRole("link", { name: "Preguntar por WhatsApp" })).toBeVisible();
   await ctx.close();
 });
 

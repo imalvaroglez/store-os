@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { loginAsFirstAdmin, gotoSantiHome } from "./helpers";
+import { loginAsFirstAdmin, gotoSantiHome, openCatalog } from "./helpers";
 
 // Real end-to-end smoke against the Firebase Emulator. Firebase Auth persists to
 // indexedDB, which Playwright's storageState does NOT capture — so the session
@@ -37,7 +37,7 @@ test("home renders seeded store with primary action", async ({ sharedPage: page 
 
 test("store isolation: Santi product never appears on Joyería catalog", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Catálogo" }).click();
+  await openCatalog(page);
   // Switch Santi -> Joyería via the in-app switcher.
   await page.locator("header button, aside button").filter({ hasText: "▾" }).filter({ visible: true }).first().click();
   await page.getByText("Joyería", { exact: true }).first().click();
@@ -53,7 +53,7 @@ test("create a customer via the sheet form", async ({ sharedPage: page }) => {
   await expect(page.getByRole("heading", { name: "Clientes", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "+ Agregar" }).click();
   await expect(page.getByRole("heading", { name: "Agregar cliente" })).toBeVisible();
-  await page.getByLabel("Nombre").fill(name);
+  await page.getByRole("textbox", { name: "Nombre", exact: true }).fill(name);
   await page.getByLabel("Teléfono").fill("5500000000");
   await page.getByRole("button", { name: "Guardar cliente" }).click();
   await expect(page.getByText(name)).toBeVisible();
@@ -62,9 +62,9 @@ test("create a customer via the sheet form", async ({ sharedPage: page }) => {
 test("create a product and it appears in the catalog", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
   const name = `Producto E2E ${Date.now()}`;
-  await page.getByRole("button", { name: "Catálogo" }).click();
+  await openCatalog(page);
   await page.getByRole("button", { name: "+ Agregar" }).click();
-  await page.getByLabel("Nombre").fill(name);
+  await page.getByRole("textbox", { name: "Nombre", exact: true }).fill(name);
   await page.getByLabel("Precio de venta").fill("999");
   // Publish validation requires a primary category. Santi has seeded categories
   // (Perfumes/Tenis/Gorras) after migration; pick one to satisfy it.
@@ -100,9 +100,9 @@ test("create an order and advance its status", async ({ sharedPage: page }) => {
 test("data persists across a full reload", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
   const name = `Persistente E2E ${Date.now()}`;
-  await page.getByRole("button", { name: "Catálogo" }).click();
+  await openCatalog(page);
   await page.getByRole("button", { name: "+ Agregar" }).click();
-  await page.getByLabel("Nombre").fill(name);
+  await page.getByRole("textbox", { name: "Nombre", exact: true }).fill(name);
   await page.getByLabel("Precio de venta").fill("100");
   await page.getByLabel(/Perfumes|Tenis|Gorras/).first().check();
   await page.getByRole("button", { name: "Guardar producto" }).click();
@@ -111,7 +111,7 @@ test("data persists across a full reload", async ({ sharedPage: page }) => {
   await page.waitForTimeout(1500);
   // gotoSantiHome reloads to "/" + normalizes activeStore to Santi + Inicio.
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Catálogo" }).click();
+  await openCatalog(page);
   await expect(page.getByText(name)).toBeVisible({ timeout: 15000 });
 });
 

@@ -3,14 +3,12 @@ import { defineConfig } from "@playwright/test";
 // E2E against the Firebase Emulator — the FULL suite: smoke + responsive +
 // theme + firebase + public-catalog. The app is served by `vite dev` with
 // VITE_FIREBASE_EMULATOR=true so Auth + Firestore + Storage route to localhost.
-// Under DEV=true the app never forces AuthScreen; each spec logs in via Settings
-// -> "Entrar / Crear cuenta" -> signUp, and seedCloudIfEmpty provisions the demo
-// stores for the first super_admin.
+// Specs authenticate through the real UI and install test data explicitly via
+// emulator REST endpoints; production code never seeds those fixtures.
 //
 // Each spec file creates ONE browser context in beforeAll and reuses it across
 // its tests (Firebase Auth persists to indexedDB, which Playwright's
-// storageState does NOT capture), so login + seed run once per file per project
-// (seedCloudIfEmpty flakes under repeated wipe+seed cycles).
+// storageState does NOT capture), so login + fixtures run once per file/project.
 //
 // Start the emulator first: `npm run emulators`. Then: `npm run e2e:firebase`
 // (which wraps playwright in firebase emulators:exec to auto-start/teardown).
@@ -22,10 +20,7 @@ export default defineConfig({
   testMatch: /(^|\/)(firebase|public-catalog|smoke|responsive|theme)\.spec\.ts$/,
   globalSetup: "./e2e/firebase-global-setup.ts",
   timeout: 40_000,
-  // Retries: the Firestore emulator's bulk-delete is not instantly durable, so
-  // repeated wipe+seed cycles across projects occasionally race the seed. A retry
-  // re-runs the failing file's beforeAll (fresh wipe) and almost always clears it.
-  // This is emulator-only nondeterminism; production signups are unaffected.
+  // Emulator failures must surface; deterministic fixture setup avoids retries.
   retries: 0,
   fullyParallel: false,
   // One worker: tests mutate shared emulator state and each file's beforeAll
@@ -43,8 +38,7 @@ export default defineConfig({
     timeout: 30_000,
   },
   projects: [
-    // Mobile: viewport-sensitive specs. Runs first so its wipe+seed cycles hit a
-    // fresh emulator (seedCloudIfEmpty flakes after several cycles).
+    // Mobile viewport-sensitive specs run first.
     {
       name: "mobile",
       testMatch: /(^|\/)(smoke|responsive|theme)\.spec\.ts$/,

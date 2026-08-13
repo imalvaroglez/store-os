@@ -1,6 +1,6 @@
 # Store OS Engineering Loops
 
-Operating guide for coding agents. Store OS is built through repeatable loops, not isolated prompts. Follow the loop you're in.
+Background engineering guide. The normative workflow and executable gates live in root `LOOPS.md` and `npm run delivery -- ...`; this document cannot authorize a state transition.
 
 ## 1. Why loops
 
@@ -33,6 +33,8 @@ npm run build     # tsc --noEmit + vite build — typecheck AND bundle
 npm run test      # vitest (unit + design-system gate)
 npm run e2e       # playwright (smoke + responsive + theme)
 npm run verify    # NOT A SCRIPT — see note below
+npm run delivery -- next          # selects the only authorized next action
+npm run delivery -- verify final  # executes and records the real final gate
 npm run dev       # local dev server on 5173 (demo mode, no backend)
 ```
 
@@ -42,14 +44,14 @@ Extra, used when relevant:
 npm run typecheck        # tsc --noEmit only
 npm run e2e:firebase     # Firebase emulator suite (needs `npm run emulators`)
 npm run emulators        # Auth + Firestore + Storage emulators on localhost
-npm run deploy:rules     # firebase deploy --only firestore,storage
+npm run deploy:rules     # human-only production operation; agents never execute it
 ```
 
 > **`npm run verify` does NOT exist in this repo.** If asked to run it, **report that it is not defined** — do not pretend success and do not invent a substitute. The closest real equivalent is `npm run build && npm run test && npm run e2e`. Same rule for any other missing script: **say it's missing, don't fake it.**
 
-## 4. READY FOR VERCEL
+## 4. Draft PR ready for human review
 
-A build is deployable only when **all** hold:
+A draft PR is reviewable only when `npm run delivery -- gate publish` and `npm run delivery -- remote <pr-number>` pass. These commands enforce that:
 
 - `npm run build` passes
 - `npm run test` passes
@@ -62,7 +64,7 @@ A build is deployable only when **all** hold:
 - No secrets committed (no keys, tokens, service accounts in the diff)
 - Env requirements documented (which vars Vercel needs)
 
-If any one fails, the verdict is **NOT READY FOR VERCEL**. State which item failed.
+If any one fails, report the exact harness blocker. The only successful verdict is **DRAFT PR GREEN — READY FOR HUMAN REVIEW**.
 
 ### Environment synchronization (STRICT, non-negotiable)
 
@@ -174,7 +176,7 @@ Every **final report** includes all of:
 - **Bugs found/fixed** — one line each.
 - **Remaining issues** — including non-blockers.
 - **Release blocker status** — clear or list the blockers.
-- **Final verdict** — `READY FOR VERCEL` or `NOT READY FOR VERCEL`.
+- **Final verdict** — `DRAFT PR GREEN — READY FOR HUMAN REVIEW` or the exact harness blocker.
 
 No verdict without evidence. "Should work" is not a verdict.
 
@@ -215,5 +217,5 @@ Bug severity:
   - blocker: <must fix before deploy, see §5>
   - non-blocker: <log, ship, report>
 Fix policy: fix blockers with minimal diffs; do not expand scope
-Final verdict: READY FOR VERCEL / NOT READY FOR VERCEL
+Final verdict: DRAFT PR GREEN — READY FOR HUMAN REVIEW / <exact harness blocker>
 ```
