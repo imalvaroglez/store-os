@@ -529,6 +529,20 @@ describe.sequential("delivery harness", () => {
     expect(() => harness.gate(root, "publish", [])).toThrow(/SPEC BLOQUEADA/);
   });
 
+  it("autoriza specs paralelas: un PR para el segundo item aunque el primero esté needs-spec", () => {
+    const root = initRepo([item("one", 10, { status: "needs-spec" }), item("two", 20, { status: "needs-spec" })]);
+    const queue = JSON.parse(readFileSync(join(root, ".delivery", "queue.json"), "utf8"));
+    queue.items[1].status = "awaiting-approval";
+    writeJson(join(root, ".delivery", "queue.json"), queue);
+    mkdirSync(join(root, "docs"), { recursive: true });
+    writeFileSync(join(root, "docs", "two.md"), "Delivery-ID: two\nDelivery-Status: Pending approval\n");
+    git(root, "add", ".");
+    git(root, "commit", "-m", "docs: propose two in parallel");
+    expect(harness.gate(root, "publish", [])).toMatchObject({ allowed: true, kind: "spec", id: "two" });
+    const dupPr = [{ number: 7, body: "Delivery-ID: two\n", headRefName: "spec/two", url: "u", files: [], isDraft: true }];
+    expect(() => harness.gate(root, "publish", dupPr)).toThrow(/SPEC BLOQUEADA/);
+  });
+
   it("no salta dependencias y detecta solapamiento con PRs abiertos", () => {
     const root = initRepo([item("one", 10, { dependsOn: ["two"] }), item("two", 20)]);
     expect(harness.nextDelivery(root, []).outcome).toBe("BLOCKED_DEPENDENCY");

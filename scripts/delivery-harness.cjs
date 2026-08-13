@@ -1218,20 +1218,32 @@ function specPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
   try { queue = validateQueue(root); } catch (error) {
     blockers.push(error.message, ...(error.details || []));
   }
-  const previous = loadActiveRun(root, false);
-  const baseOutcome = baseQueue ? queueOutcome(baseQueue, completedIds(root, ref), prs,
-    previous?.state === "REMOTE_GREEN" ? previous : null) : null;
-  const candidate = baseOutcome?.outcome === "DRAFT_SPEC"
-    ? queue?.items.find((item) => item.id === baseOutcome.item.id && item.status === "awaiting-approval")
-    : null;
-  if (!candidate) {
-    blockers.push(`La primera acción de main no autoriza este draft de spec: ${baseOutcome?.outcome || "cola inválida"}`);
+  // ponytail: accept a spec PR for ANY needs-spec item whose Delivery-ID has no open PR yet, not only the
+  // first-priority one. Specs of different items touch disjoint files, so parallel spec PRs are safe and let the
+  // agent batch-design the backlog instead of one-spec-at-a-time. The candidate is declared by this branch's own
+  // queue transition (needs-spec -> awaiting-approval) for exactly one item.
+  const baseById = new Map((baseQueue?.items || []).map(function (it) { return [it.id, it]; }));
+  const promoted = (queue?.items || []).filter(function (it) {
+    const base = baseById.get(it.id);
+    return base && base.status === "needs-spec" && it.status === "awaiting-approval";
+  });
+  if (promoted.length === 0) {
+    blockers.push("La rama no promueve ningún item needs-spec a awaiting-approval");
     return { blockers, item: null };
+  }
+  if (promoted.length > 1) {
+    blockers.push("La rama promueve más de un item a awaiting-approval; un PR de spec es por item");
+    return { blockers, item: null };
+  }
+  const candidate = promoted[0];
+  if (prs.some(function (pr) { return deliveryIdFromBody(pr.body) === candidate.id; })) {
+    blockers.push(`Ya existe un PR abierto para ${candidate.id}`);
+    return { blockers, item: candidate };
   }
   const expectedQueue = JSON.parse(JSON.stringify(baseQueue));
   expectedQueue.items.find((item) => item.id === candidate.id).status = "awaiting-approval";
   if (JSON.stringify(queue) !== JSON.stringify(expectedQueue)) {
-    blockers.push("El PR de spec sólo puede cambiar el status del primer item a awaiting-approval");
+    blockers.push(`El PR de spec sólo puede cambiar el status de ${candidate.id} a awaiting-approval`);
   }
   const changed = changedFiles(root, baseSha).sort();
   const expected = [".delivery/queue.json", candidate.specPath].sort();
@@ -1241,7 +1253,6 @@ function specPublishBlockers(root = ROOT, prs = openPullRequests(root)) {
     const metadata = validateSpec(candidate, text, "Pending approval");
     if (metadata.approvedBy) blockers.push("El agente no puede escribir Approved-By");
   } catch (error) { blockers.push(error.message, ...(error.details || [])); }
-  if (prs.some((pr) => deliveryIdFromBody(pr.body) === candidate.id)) blockers.push(`Ya existe un PR abierto para ${candidate.id}`);
   return { blockers, item: candidate };
 }
 
