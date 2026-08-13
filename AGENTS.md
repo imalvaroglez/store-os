@@ -2,6 +2,12 @@
 
 Guía para trabajar en Store OS. Lee esto antes de empezar.
 
+## Delivery harness obligatorio
+
+Toda solicitud de construir, cambiar, arreglar, refactorizar o procesar backlog debe usar primero la skill `.agents/skills/store-os-delivery/SKILL.md` y obedecer `LOOPS.md`. El agente no decide por prosa que una entrega está lista: `npm run delivery -- ...` autoriza el inicio, ejecuta validaciones reales y decide los gates de publicación y Stop.
+
+Autonomía permitida: rama, commits, push, draft PR, CI y Preview. Nunca merge, push a `main`, producción ni datos productivos.
+
 ## Qué es Store OS
 
 PWA **local-first**, **mobile-first** y **100% en español (México)** para administrar tiendas pequeñas. Multitienda, dos tipos de tienda (Bajo pedido / Inventario y precios). Ver [`README.md`](README.md) y [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -15,13 +21,15 @@ npm run dev            # desarrollo (5173) — modo demo local sin backend
 npm run build          # tsc --noEmit + vite build
 npm run typecheck      # tsc --noEmit
 npm run test           # vitest (unit + design-system gate)
+npm run test:rules     # pruebas de reglas Firebase contra el emulador
+npm run delivery -- next # siguiente acción autorizada de la cola
 npm run e2e            # playwright frontend (smoke + responsive + theme, móvil + escritorio)
 npm run e2e:firebase   # pruebas contra el emulador Firebase (requiere `npm run emulators`)
 npm run emulators      # Firebase Auth + Firestore emuladores en localhost
 npm run preview        # build de producción
 ```
 
-Antes de declarar algo "listo": `npm run typecheck && npm run test && npm run build` deben pasar (idealmente `npm run e2e` también). Cambios en auth/cloud: `npm run e2e:firebase`.
+No declares algo "listo" con comandos manuales: usa `npm run delivery -- verify quick|final`. El gate final siempre ejecuta typecheck, test, build y e2e; añade Firebase/rules/audit según el diff.
 
 ## Arquitectura (lo esencial)
 

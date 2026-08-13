@@ -111,18 +111,18 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
 - **`pnpm-lock.yaml` commiteado junto a `package-lock.json`** — Vercel buildea con
   pnpm (detecta el lockfile), puede producir builds distintos a npm/local. Borrar
   y gitignorar.
-  > **Objetivo workflow:** `objective: "Eliminar pnpm-lock.yaml del repo y añadirlo a .gitignore. Vercel detecta el lockfile y buildea con pnpm, produciendo builds distintos a npm/local (que es lo que usamos en dev). Verificar que tras el cambio, build local y build de Vercel usen el mismo package-lock.json. Restricciones: un commit atómico, no tocar package-lock.json. Criterio de cierre: git status limpio, .gitignore incluye pnpm-lock.yaml, build pasa."`
+  > **Delivery-ID: pnpm-lockfile.** La futura spec conserva este alcance; sólo cola `queued` + aprobación humana autoriza el cambio.
 - **`persistEntity` fire-and-forget sin `.catch`** — un rechazo de Firestore
   queda como `pageerror` no manejado y el toast de éxito miente (ej: la regresión
   de persistencia de compras F3). Endurecer con `.catch` + toast de error.
-  > **Objetivo workflow:** `objective: "Endurecer persistEntity (y todo fire-and-forget Firestore en StoreProvider) con manejo de errores: cada persistEntity(...).catch() que hoy traga el rechazo debe (1) loguear el error, (2) mostrar un toast de error al usuario (hoy el toast de éxito miente si Firestore rechaza — regresión F3). Auditar todos los sitios donde persistEntity se llama sin await ni catch. Restricciones: cero-costos, código inglés, no cambiar la firma de persistEntity. Criterio de cierre: un test que fuerce un rechazo de persistEntity y afirme que aparece toast de error (no de éxito)."`
+  > **Delivery-ID: persist-entity-error-handling.** La futura spec debe exigir el toast de error y una prueba que fuerce el rechazo; `ready` no autoriza código.
 - **Token Full Access de Vercel** — el `vcp_` project-scoped no cubre
   `vercel pull` (bug de Vercel); usamos Full Access. Pendiente re-bajar el scope
   cuando Vercel lo arregle.
 - **Migración `adminStores` idempotente** — el hotfix del incidente
   Olivia-desaparece-de-prod fue manual; falta script `scripts/migrate-adminstores.cjs`
   + test de "store sin adminStores" (este último sí existe; falta el script).
-  > **Objetivo workflow:** `objective: "Crear scripts/migrate-adminstores.cjs idempotente que, para cada doc en stores/, asegure que exista el doc adminStores/{id} correspondiente con los mismos campos de allow-list (storeId, name, slug, type, ownerUid, memberUids, pendingInvites, retainedPrivacyRequestCount, createdAt, updatedAt). Debe ser seguro de correr contra dev Y prod (idempotente: no sobreescribe lo correcto, solo llena lo faltante). Abortar con error claro si no se pasa --env dev|prod. Restricciones: cero-costos (script local, no Cloud Function), no mutar campos de negocio. Criterio de cierre: el script corre contra dev limpio (no-op si todo OK), y un test del emulador afirma que una store sin adminStores la crea tras correrlo."`
+  > **Delivery-ID: migrate-adminstores.** La futura spec conserva idempotencia y cobertura en emulador. Leer producción necesita aprobación humana específica y cualquier `--apply` una segunda aprobación separada.
 - **Cascade al borrar cliente** — `deleteCustomer` no borra sus pedidos (quedan
   huérfanos mostrando "Sin cliente"). Hoy se advierte en el diálogo; decidir si
   cascade o bloqueo.
@@ -141,7 +141,7 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
   `pendingInvites` contenga el email y migrar el email → UID en `memberUids`
   de **ambos** planos (`stores` y `adminStores`) + limpiar `pendingInvites`.
   > **Parte de la feature 'Invitar miembros por correo'.** Hacer junto con esa
-  > feature (mismo objetivo workflow). La decisión técnica ya está cerrada
+  > feature (misma entrega). La decisión técnica ya está cerrada
   > (reusar `pendingInvites` + regla por-email) — **no** reopening.
 - **Sin vista de "usuarios de la plataforma" para el super_admin** — para
   descubrir quién entró (y con qué email real) hoy hay que ir a la consola de
@@ -149,7 +149,7 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
   era el real (`oliviaaa.jewerly`); solo listando la colección `users` se vio
   la verdad. Mínimo: una lista read-only de `users/{uid}` (email, rol, creado)
   en el plano de control.
-  > **Objetivo workflow:** `objective: "Añadir una vista read-only de 'usuarios de la plataforma' para el super_admin: lista de users/{uid} (email, rol, fecha de creación) en el plano de control. Hoy no existe — para saber quién entró hay que ir a la consola de Firebase, lo que enmascaró el incidente Mar (email dado != email real). Restricciones: solo super_admin ve esta vista (plano de CONTROL), read-only, sin PII de clientas, cero-costos. Criterio de cierre: el super_admin ve la lista de usuarios con su email real y rol; un member no ve esta vista."`
+  > **Delivery-ID: platform-users-view.** La futura spec debe mantener la vista read-only, el aislamiento de roles y cero PII de clientas.
   >
   > **Readiness: 🟢 ready** y es **dependencia previa** de la feature de
   > invitación (la UI de invitar elige de esta lista, no email a ciegas).
@@ -159,7 +159,7 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
   `pendingInvites` en vez de `memberUids`. Normalizar ambos lados (lowercase +
   quitar puntos de Gmail) al comparar.
   > **Incluida en la feature 'Invitar miembros por correo'** (la normalización
-  > va en ese mismo objetivo workflow). No ejecutar aislado.
+  > va en esa misma entrega). No ejecutar aislado.
 - **Eliminar el seed de datos de ejemplo** — Store OS ya es producto real en
   producción (Olivia operando, ventas reales). La opción de cargar datos
   ejemplo (Olivia/Santi/Joyería ficticios) ya no corresponde: confunde,
@@ -168,7 +168,7 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
   script `scripts/seed-dev.cjs` queda **solo para dev/preview** (sembrar
   `store-os-dev`, nunca prod — aborta si `projectId !== 'store-os-dev'`),
   pero no expone nada en la UI de prod.
-  > **Objetivo workflow:** `objective: "Eliminar de la app cliente (src/) todo código que cargue datos de ejemplo (Olivia/Santi/Joyería ficticios) — botones, llamadas a seedCloudIfEmpty, buildSeedState aplicado a cloud. Store OS es producto real en producción; el demo ya no corresponde (0.5.0 removió el modo demo). El script scripts/seed-dev.cjs SE CONSERVA pero solo para dev/preview (ya aborta si projectId !== store-os-dev); NO borrarlo. Restricciones: no romper el modo demo local puro (sin cloud) si aún aplica, no tocar seed-dev.cjs, UI español. Criterio de cierre: en prod, una cuenta nueva NUNCA ve datos de Olivia/Santi/Joyería ficticios; build+test+e2e pasan."`
+  > **Delivery-ID: remove-client-demo-seed.** La cola y una spec aprobada autorizan su implementación. Alcance: eliminar de la app cliente (`src/`) el seed ficticio, conservar `scripts/seed-dev.cjs` sólo para dev/preview y cubrir que una cuenta nueva no reciba datos demo.
 
 ---
 
@@ -183,10 +183,9 @@ invita **eligiendo de la lista de usuarios existentes** (no email a ciegas) →
 **depende de la "vista de usuarios plataforma"** (item ready). Hacer esa vista
 antes o junto.
 
-### Objetivo para el workflow
+### Objetivo para la futura spec
 
-> Cuando se ejecute (después de la vista-usuarios):
-> `Workflow({ scriptPath: ".claude/workflows/software-delivery.js", args: { objective: "Hacer que invitar un miembro funcione sin importar cómo entre el invitado (Google o email-link). Hoy el email-link de Firebase y el login Google no se reconcilian: la invitación queda 'pendiente' y el invitado ve selector vacío. Alcance: (1) reconciliación en ensureUserDoc que, al loguear por cualquier método, busque tiendas con query(stores, where('pendingInvites','array-contains',emailNormalizado)) y migre email→UID en memberUids de AMBOS planos (stores Y adminStores — invariante dual-plane) + quite el email de pendingInvites; (2) UI de invitación que muestra la lista de usuarios existentes (email+rol) para elegir, NO input de email a ciegas (evita el caso Mar: email equivocado); (3) normalización de email al comparar (lowercase + Gmail sin puntos); (4) correo informativo reutilizando el email-link de Firebase como botón 'Entrar'. Necesita regla nueva: allow read de stores filtrando por pendingInvites que contenga el email del solicitante (antes de ser miembro). Restricciones: cero-costos (sin Cloud Function), UI español, código inglés, design-system tokens. Criterio de cierre: test e2e que invite a un usuario existente, ese usuario entre con Google, y afirme que la tienda aparece en su selector sin intervención manual; y que la regla no permita leer stores donde no estás invitado ni eres miembro." } })`
+> **Delivery-ID: reliable-member-invitations.** La cola mantiene su dependencia en `platform-users-view`. Su spec deberá conservar el alcance y los criterios detallados abajo; `ready` por sí solo no autoriza código.
 
 ### Problema
 
@@ -282,7 +281,7 @@ solo de la "vista de usuarios plataforma".
 **Solicitó:** Álvaro (PO), 2026-08-11
 **Readiness:** 🔴 congelado. **No entra al workflow.** Registrado para no perder el contexto; cuando la dueña (Fer/Mar) reporte la necesidad de delegar administración, se descongela y se escribe spec.
 
-### Objetivo para el workflow
+### Objetivo para la futura spec
 
 > **N/A — congelado.** No hay objetivo hasta que el PO lo reactive. Descongelar
 > requiere: (1) decisión de cuántos perfiles y cuáles, con Fer; (2) rediseño de
@@ -498,8 +497,7 @@ edita cost/quantityOnHand/prices → el cambio es mayormente de UI.
 
 ### Objetivo para el workflow
 
-> Cuando se ejecute:
-> `Workflow({ scriptPath: ".claude/workflows/software-delivery.js", args: { objective: "Fusionar las pestañas Catálogo (/catalogo-admin) e Inventario (/inventario) en una sola pestaña 'Productos'. Cada producto se muestra completo en una sola lista: foto, nombre, precios, existencia (quantityOnHand) y badge publicado/borrador. Categorías viven DENTRO de Productos como filtro/accordion. Las Compras a proveedores viven DENTRO de Productos como botón 'Registrar compra' (no pantalla aparte). DECISIONES PO (cerradas): el stock y costo se editan por AMBOS caminos — la ficha del producto (ProductForm ya lo hace) Y el flujo de compra (promedio ponderado); no eliminar ninguno. No rediseñar el modelo de datos: Product ya lleva quantityOnHand/cost/prices/status. Resuelve la fricción raíz que generó los fixes F1-F3 del flujo de compra. Restricciones: cero-costos, UI español, código inglés, design-system tokens, mobile-first, sin migración de datos. Criterio de cierre: flujo e2e de crear un producto con nombre+foto+precio+costo+stock en una sola pantalla, asignarle categoría, y publicarlo; y registrar una compra desde esa misma pestaña." } })`
+> **Delivery-ID: unified-products.** Su futura spec deberá conservar las decisiones y criterios detallados abajo. La cola y una aprobación humana, no este estado `ready`, autorizan código.
 
 ### Problema
 
@@ -555,7 +553,7 @@ Ya existe casi todo: `Product` lleva `quantityOnHand`, `cost`, `prices`, fotos,
 **Solicitó:** Fer (dueña de Olivia), vía Álvaro (2026-08-10)
 **Readiness:** 🔴 needs-spec. Rediseña el modelo de precios — feature con spec propia. 4 decisiones abiertas. No entra al workflow hasta tener spec firmada.
 
-### Objetivo para el workflow
+### Objetivo para la entrega
 
 > **N/A hasta spec.** Este item rediseña el modelo (`ProductPrices` enum →
 > `prices: {[tierId]:n}` + `store.priceTiers`). Requiere writing-plans antes de
@@ -698,8 +696,7 @@ como 🟢 ready.
 
 ### Objetivo para el workflow
 
-> Cuando se ejecute (la parte de código, en paralelo al trabajo legal de Fer):
-> `Workflow({ scriptPath: ".claude/workflows/software-delivery.js", args: { objective: "Implementar Compliance/Privacidad Espec 2 según docs/superpowers/specs/2026-08-06-privacidad-arco-v1-design.md. Parte de código: (1) ruta pública /privacidad/:slug con aviso de privacidad de la tienda, informativo y de contacto (WhatsApp/correo), SIN formulario ni escrituras anónimas a Firestore; (2) edición del contenido del aviso por la dueña en StoreSettingsScreen; (3) plantilla basada en requisitos LFPDPPP arts. 15-16 marcada 'sujeta a validación jurídica'. Separación de planos: super_admin = plano de CONTROL sin PII rutinaria de clientas (Espec 1 ya mergeada). NO incluye: ATD final validado, método de acreditación cerrado, ni la parte legal/humana (eso avanza con Fer en paralelo). Restricciones: cero-costos (sin Cloud Function, sin formulario anónimo), cero telemetría cliente, UI español, código inglés, design-system tokens, mobile-first. Criterio de cierre: /privacidad/olivia renderiza el aviso editable, anónimo no puede escribir, miembro no ve privacyRequests." } })`
+> **Delivery-ID: privacy-arco-v1.** La spec está en `Pending approval`; el harness pausa hasta que una persona añada `Approved-By`, cambie el estado a `Approved`, fusione la spec y ponga la entrada en `queued`.
 
 ### Qué está aprobado (diseño)
 

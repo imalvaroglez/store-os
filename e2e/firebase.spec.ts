@@ -6,14 +6,15 @@ import {
   openSettings,
   ensureSignedOut,
   signUp,
-  waitForCloudSeed,
-  wipeEmulator,
+  signIn,
   ADMIN_EMAIL,
+  loginAsFirstAdmin,
+  openCatalog,
 } from "./helpers";
 
 // End-to-end against the Firebase Emulator (Auth + Firestore). Covers the
-// foundation: first signup -> super_admin + cloud seed; sign out -> local demo;
-// a second signup -> member with no stores until invited.
+// foundation: allow-listed admin + explicit emulator fixtures; sign out; and a
+// second signup that remains a member with no stores until invited.
 //
 // One browser context is created in beforeAll and reused across the admin tests
 // (picker/photo) so Firebase Auth's indexedDB session persists. The auth-specific
@@ -28,11 +29,9 @@ const test = base.extend<{ sharedPage: Page }>({
 });
 
 test.beforeAll(async ({ browser }) => {
-  await wipeEmulator();
   const ctx = await browser.newContext();
   sharedPage = await ctx.newPage();
-  await signUp(sharedPage, ADMIN_EMAIL, "password123");
-  await waitForCloudSeed(sharedPage);
+  await loginAsFirstAdmin(sharedPage, "firebase");
 });
 
 test.afterAll(async () => {
@@ -40,7 +39,7 @@ test.afterAll(async () => {
   sharedPage = null;
 });
 
-test("first signup becomes super_admin and cloud data is seeded", async ({ sharedPage: page }) => {
+test("first signup becomes super_admin and test fixtures stay in the emulator", async ({ sharedPage: page }) => {
   await gotoClean(page);
   await openSettings(page);
   await expect(page.getByText(/administrador/)).toBeVisible({ timeout: 10000 });
@@ -51,21 +50,19 @@ test("first signup becomes super_admin and cloud data is seeded", async ({ share
   });
 });
 
-test("sign out returns to the local demo", async ({ sharedPage: page }) => {
+test("sign out returns to the authentication screen", async ({ sharedPage: page }) => {
   // Hard sign-out on the shared page: clear the cached Firebase session + reload.
   await clearSession(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1000);
-  await expect(page.getByText("¿Qué necesitas hacer hoy en Santi?")).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Entrar", exact: true })).toBeVisible({
     timeout: 15000,
   });
-  await openSettings(page);
-  await expect(page.getByRole("button", { name: /Entrar \/ Crear cuenta/ })).toBeVisible();
 });
 
 test("picker: switch store + manage (rename / type change)", async ({ sharedPage: page }) => {
   await ensureSignedOut(page);
-  await signUp(page, ADMIN_EMAIL, "password123");
+  await signIn(page, ADMIN_EMAIL, "password123");
   await gotoClean(page);
 
   const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
@@ -82,7 +79,7 @@ test("picker: switch store + manage (rename / type change)", async ({ sharedPage
 
 test("picker: create a new store from the picker", async ({ sharedPage: page }) => {
   await ensureSignedOut(page);
-  await signUp(page, ADMIN_EMAIL, "password123");
+  await signIn(page, ADMIN_EMAIL, "password123");
   await gotoClean(page);
 
   const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
@@ -102,21 +99,24 @@ test("picker: create a new store from the picker", async ({ sharedPage: page }) 
   });
 });
 
-test("an invited-less member sees no stores", async ({ sharedPage: page }) => {
-  await ensureSignedOut(page);
-  await signUp(page, unique("member"), "password123");
-  await gotoClean(page);
-  await expect(page.getByText("Crea tu primera tienda")).toBeVisible({ timeout: 15000 });
-  // Defense-in-depth (firestore.rules isAllowlistedSuperAdmin): a non-allowlisted
-  // email is a member, never super_admin — confirmed by the absence of the admin
-  // badge in settings. Only admin@store.os may hold the super_admin role.
-  await openSettings(page);
-  await expect(page.getByText(/administrador/)).toHaveCount(0);
+test("an invited-less member sees no stores", async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await signUp(page, unique("member"), "password123");
+    await gotoClean(page);
+    await expect(page.getByText("Crea tu primera tienda")).toBeVisible({ timeout: 15000 });
+    // A non-allowlisted account has neither a store shell nor admin controls.
+    await expect(page.getByRole("button", { name: "Opciones" })).toHaveCount(0);
+    await expect(page.getByText(/administrador/)).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
 });
 
 test("product photo uploads, resizes, and renders", async ({ sharedPage: page }) => {
   await ensureSignedOut(page);
-  await signUp(page, ADMIN_EMAIL, "password123");
+  await signIn(page, ADMIN_EMAIL, "password123");
   await gotoClean(page);
 
   const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
@@ -128,11 +128,10 @@ test("product photo uploads, resizes, and renders", async ({ sharedPage: page })
   }
   await expect(page.getByText(/¿Qué necesitas hacer hoy en/)).toBeVisible({ timeout: 20000 });
 
-  await page.getByRole("button", { name: "Catálogo" }).click();
-  await expect(page.getByRole("heading", { name: "Catálogo" })).toBeVisible();
+  await openCatalog(page);
   await page.getByRole("button", { name: "+ Agregar" }).click();
   await expect(page.getByRole("heading", { name: "Agregar producto" })).toBeVisible();
-  await page.getByLabel("Nombre").fill("Producto con foto");
+  await page.getByRole("textbox", { name: "Nombre", exact: true }).fill("Producto con foto");
   await page.getByLabel("Precio de venta").fill("500");
 
   const file = await page.evaluate(async () => {
@@ -160,6 +159,7 @@ test("product photo uploads, resizes, and renders", async ({ sharedPage: page })
     mimeType: file.mimeType,
     buffer: Buffer.from(file.buffer, "base64"),
   });
+  await expect(page.locator('img[src^="blob:"]')).toBeVisible({ timeout: 10000 });
 
   await page.getByRole("button", { name: "Guardar producto" }).click();
   await expect(page.getByRole("heading", { name: "Agregar producto" })).toHaveCount(0, {

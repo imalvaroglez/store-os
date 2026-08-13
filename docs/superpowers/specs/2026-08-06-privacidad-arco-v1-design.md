@@ -1,5 +1,8 @@
 # Privacidad y ARCO V1 — Diseño (Espec 2)
 
+Delivery-ID: privacy-arco-v1
+Delivery-Status: Pending approval
+
 **Fecha:** 2026-08-06
 **Autor:** Álvaro González (Product Owner) + Claude (Tech Lead)
 **Estado:** Diseño (pendiente de aprobación; apartados legales sujetos a validación jurídica)

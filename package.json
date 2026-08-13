@@ -15,6 +15,7 @@
     "test": "vitest run --exclude src/app/firebase/firestore.rules.test.ts",
     "test:watch": "vitest",
     "test:rules": "bash scripts/test-rules.sh",
+    "delivery": "node scripts/delivery-harness.cjs",
     "e2e": "playwright test",
     "emulators": "firebase emulators:start --only auth,firestore,storage",
     "e2e:firebase": "bash scripts/e2e-firebase.sh",
