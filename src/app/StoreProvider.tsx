@@ -158,7 +158,7 @@ type StoreContextValue = {
   deleteCategory: (categoryId: string) => void;
   upsertSupplier: (supplier: Supplier) => void;
   deleteSupplier: (supplierId: string) => void;
-  upsertPurchase: (purchase: Purchase) => void;
+  upsertPurchase: (purchase: Purchase) => Promise<void>;
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => void;
   deleteCustomer: (customerId: string) => void;
@@ -228,7 +228,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
     if (!cloud || !user || fromCloud.current) return Promise.resolve();
-    return saveEntity(user, name, entity);
+    return saveEntity(user, name, entity).catch((error) => {
+      // Log with context for debugging, then re-throw so callers can surface a
+      // toast instead of lying with a success. See persist-entity-error-handling.
+      console.error(`[Firestore] Error al guardar ${name} (${entity.id}):`, error);
+      throw error;
+    });
   }
 
   const value: StoreContextValue = {
@@ -241,6 +246,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // don't create a store whose catalog can't be published.
       if (cloud) await claimSlug(store.slug, store.id);
       dispatch({ type: "ADD_STORE", store });
+      // persistEntity re-throws on Firestore rejection; callers surface a toast.
       await persistEntity("stores", storeWithMembership(store, user));
       if (cloud) {
         await projectPublicForStore(store, state.products, state.categories).catch(() => {});
@@ -301,7 +307,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const memberUids = Array.from(new Set([...(store.memberUids ?? []), uid]));
         const updated = { ...store, memberUids, updatedAt: nowIso() };
         dispatch({ type: "UPDATE_STORE", store: updated });
-        persistEntity("stores", updated);
+        void persistEntity("stores", updated).catch(() => {});
         return "invited";
       }
       // No account yet: store a pending invite; the real email-link send happens
@@ -309,7 +315,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const pendingInvites = Array.from(new Set([...(store.pendingInvites ?? []), normalized]));
       const updated = { ...store, pendingInvites, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      persistEntity("stores", updated);
+      void persistEntity("stores", updated).catch(() => {});
       void sendInviteLink(normalized, store).catch(() => {});
       return "pending";
     },
@@ -385,7 +391,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ? state.categories.map((c) => (c.id === category.id ? category : c))
         : [...state.categories, category];
       dispatch({ type: state.categories.some((c) => c.id === category.id) ? "UPDATE_CATEGORY" : "ADD_CATEGORY", category });
-      persistEntity("categories", category);
+      void persistEntity("categories", category).catch(() => {});
       // Category edits reshape the storefront's category list — rebuild the
       // public catalog projection so /catalogo/:slug reflects it.
       if (cloud && !fromCloud.current) {
@@ -419,15 +425,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     upsertSupplier: (supplier) => {
       dispatch({ type: state.suppliers.some((s) => s.id === supplier.id) ? "UPDATE_SUPPLIER" : "ADD_SUPPLIER", supplier });
-      persistEntity("suppliers", supplier);
+      void persistEntity("suppliers", supplier).catch(() => {});
     },
     deleteSupplier: (supplierId) => {
       dispatch({ type: "DELETE_SUPPLIER", supplierId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "suppliers", supplierId).catch(() => {});
     },
-    upsertPurchase: (purchase) => {
+    upsertPurchase: async (purchase) => {
       dispatch({ type: state.purchases.some((p) => p.id === purchase.id) ? "UPDATE_PURCHASE" : "ADD_PURCHASE", purchase });
-      persistEntity("purchases", purchase);
+      // Await so callers (PurchaseForm) can catch a Firestore rejection instead
+      // of showing a false success toast. persistEntity re-throws on rejection.
+      await persistEntity("purchases", purchase);
     },
     deletePurchase: (purchaseId) => {
       dispatch({ type: "DELETE_PURCHASE", purchaseId });
@@ -435,7 +443,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     upsertCustomer: (customer) => {
       dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
-      persistEntity("customers", customer);
+      void persistEntity("customers", customer).catch(() => {});
     },
     deleteCustomer: (customerId) => {
       dispatch({ type: "DELETE_CUSTOMER", customerId });
@@ -459,7 +467,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
       dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order });
-      persistEntity("orders", order);
+      void persistEntity("orders", order).catch(() => {});
     },
     deleteOrder: (orderId) => {
       // Release the reserved stock before removing the order.
