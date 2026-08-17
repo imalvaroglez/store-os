@@ -33,7 +33,12 @@ self.addEventListener("fetch", (event) => {
       fetch(req)
         .then((res) => {
           const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put("/index.html", copy)).catch(() => {});
+          // waitUntil keeps the SW alive until the cache write finishes; without
+          // it the browser may terminate the worker mid-put and silently drop
+          // the rotation.
+          event.waitUntil(
+            caches.open(CACHE).then((cache) => cache.put("/index.html", copy)).catch(() => {})
+          );
           return res;
         })
         .catch(() => caches.match("/index.html"))

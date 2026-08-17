@@ -2,22 +2,19 @@
   "version": 1,
   "items": [
     {
-      "id": "fix-hook-angle-bracket",
-      "title": "Falso positivo del hook de delivery (regex /<>/ sobreampliado)",
-      "priority": 5,
-      "status": "needs-spec",
-      "specPath": "docs/superpowers/specs/fix-hook-angle-bracket-design.md",
-      "dependsOn": [],
-      "previewChecks": []
-    },
-    {
       "id": "refresh-hard-reload",
       "title": "Refresh y hard reload confiables",
       "priority": 10,
       "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/refresh-hard-reload-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "[data-build-marker]",
+          "text": "SHA corto del candidate (coincide con el meta x-build servido)"
+        }
+      ]
     },
     {
       "id": "remove-client-demo-seed",
