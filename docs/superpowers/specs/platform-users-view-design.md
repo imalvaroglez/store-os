@@ -16,7 +16,7 @@ El super_admin actual no tiene visibilidad de los usuarios registrados en la pla
 
 **Verificado en `src/app/firebase/auth.ts` líneas 45-46:** Existe un patrón de lectura de la colección completa: `const all = await getDocs(collection(db, "users"));` usado para determinar el primer usuario (bootstrap).
 
-**Verificado en `src/types/index.ts` líneas 27-32:** El tipo `AppUser` define `uid`, `email`, `displayName` (opcional), y `role` ("super_admin" | "member").
+**Verificado en `src/app/firebase/auth.ts` líneas 25-32:** El tipo `AppUser` define `uid`, `email`, `displayName` (opcional), y `role` ("super_admin" | "member"). (Vive ahí, no en `src/types/index.ts`.)
 
 **Verificado en `src/app/AppShell.tsx` líneas 1-175:** No existe actualmente una pantalla de administración de usuarios. El shell actual solo muestra tiendas, catálogo, pedidos, clientes e inventario.
 
@@ -41,6 +41,8 @@ Implementar una vista de solo lectura que liste todos los usuarios de la platafo
 
 ## Fuera de alcance (out)
 
+- Montar la vista fuera de `AppShell` (super_admin sin tienda activa). Resolver el mounting global del shell es un cambio de producto mayor; V1 requiere tienda activa seleccionada.
+- **Threading de `userRole`:** `visibleNavItems(storeType, userRole?)` exige pasar el rol desde `AppShell` a `Sidebar`/`BottomNav` y al `CommandPalette` (`AppShell.tsx:70`). Es parte del alcance de implementación, no opcional — sin él el tab aparece inconsistente entre paleta y nav.
 - Edición de usuarios (no cambiar roles, no cambiar emails)
 - Creación de usuarios (el signup existente maneja esto)
 - Eliminación de usuarios
@@ -75,7 +77,7 @@ interface PlatformUser {
   email: string;
   displayName?: string | null;
   role: "super_admin" | "member";
-  createdAt: string; // ISO string del serverTimestamp
+  createdAt: Timestamp | null; // serverTimestamp() → objeto Timestamp de Firestore, null si el server timestamp aún no resuelve
 }
 
 // Estado local para la lista
@@ -118,7 +120,7 @@ Para cada usuario:
   - Nombre principal: `displayName || email` (si no hay displayName, usar email)
   - Secundario: email (si displayName existe) + uid recortado
   - Badge de rol: "super_admin" (tone="primary") o "member" (tone="default")
-  - Fecha: `new Date(createdAt).toLocaleDateString("es-MX")`
+  - Fecha: `createdAt?.toDate().toLocaleDateString("es-MX") ?? "—"`. **Nunca `new Date(createdAt)`**: es un Timestamp de Firestore (`serverTimestamp()` en `auth.ts:51`), no un string ISO — `new Date(Timestamp)` produce "Fecha inválida".
   - Sin acciones (dropdown, editar, eliminar) — es solo lectura
 
 **Estado vacío:**
@@ -169,7 +171,8 @@ const TAB_FOR_PATH: Record<string, Tab> = {
 
 ## Criterios de aceptación
 
-1. **Super_admin puede ver la lista:** Al loguear como `admin@store.os` (o cualquier usuario con `role === "super_admin"`), el tab "Usuarios" aparece en navegación móvil y desktop.
+1. **Super_admin con tienda activa ve la lista:** Al loguear como `admin@store.os` **con una tienda activa seleccionada**, el tab "Usuarios" aparece en navegación móvil y desktop.
+   - **Caso sin tienda activa (conocido):** `AppShell.tsx:65` devuelve `null` sin `activeStore`, así que un super_admin sin membresía de tienda aterriza en `StorePickerScreen` y no reach esta vista. V1 no lo resuelve (ver "Fuera de alcance"); el workaround es seleccionar cualquier tienda primero.
 2. **La lista carga correctamente:** La pantalla muestra todos los usuarios de la colección `users/{uid}` con email, displayName, rol y fecha de creación.
 3. **Member no ve el tab:** Un usuario con `role === "member"` NO ve el tab "Usuarios" en ninguna parte de la UI.
 4. **Búsqueda local funciona:** El campo de búsqueda filtra la lista por email (case-insensitive) en tiempo real.
@@ -179,6 +182,8 @@ const TAB_FOR_PATH: Record<string, Tab> = {
 8. **Preview check válido:** En Preview (Vercel), la pantalla carga y muestra los usuarios de `store-os-dev`.
 
 ## previewChecks
+
+Los selectores asumen contract creado por esta entrega: la implementación **debe** agregar `data-testid="user-card"` a cada tarjeta y `aria-label="Usuarios"` al tab, o los checks fallan. No son selectores especulativos.
 
 ```json
 {
@@ -216,6 +221,7 @@ const TAB_FOR_PATH: Record<string, Tab> = {
 
 ## Riesgos
 
+- **Postura de privacidad preexistente (informada, no regresión):** la regla actual `users: allow read if isSignedIn()` significa que **cualquier miembro de cualquier tienda ya puede leer el email de todos los usuarios** vía SDK. Esta vista no cambia eso, pero el super_admin debe saberlo: la única protección es la puerta de UI. Endurecer la regla (lectura solo super_admin + propio doc) es trabajo futuro; hacerlo aquí rompería el bootstrap de primer usuario.
 - **Riesgo bajo:** La colección `users` puede crecer más de 100 usuarios en producción, lo que haría la lista lenta. Si esto ocurre, se necesitará paginación en una iteración futura (fuera del alcance de V1).
 - **Riesgo mitigado:** Las reglas de Firestore ya permiten la lectura (`allow read: if isSignedIn()`), así que no hay cambios de seguridad necesarios.
 - **Riesgo nulo:** Al ser solo lectura, no hay riesgo de corrupción de datos.

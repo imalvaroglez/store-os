@@ -211,3 +211,10 @@ const Wrapper = withState(testState);
 ## Dependencias
 
 Ninguna. Este cambio es independiente de otros items de la cola.
+
+## Notas de revisión (2026-08-17, ajustes menores incorporados)
+
+1. `scripts/seed-dev.cjs:17-19` documenta un contrato espejo con `buildSeedState()` (copia Olivia hardcodeada propia). Al retirar el seed del cliente, actualizar ese comentario: `seed-dev.cjs` queda como el único dueño del fixture de Olivia.
+2. Simplificación recomendada: en vez de dejar un `buildSeedState()` que devuelve estado vacío, que el action `RESET_DEMO` devuelva `emptyState()` exportado de `src/lib/storage.ts` y **borrar `src/lib/seed.ts` completo** (evita duplicar el `emptyState` privado). El botón en StoresScreen pasa a "Limpiar datos locales".
+3. El botón es hoy un no-op silencioso en modo cloud (`StoreProvider.tsx:486` retorna si `cloud`): **ocultarlo en modo cloud** para no dejar un botón muerto.
+4. Los tests afectados por `buildSeedState` son más de los citados: además de `StoreProvider.reducer.test.ts:13,29-50`, están las líneas 138, 150 y 163 del mismo archivo, y `App.test.tsx:7,13,28,46` y `selectors.test.ts:11,15,42`.

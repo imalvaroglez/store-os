@@ -184,3 +184,9 @@ Consolidar la administración de productos en **una sola pestaña "Productos"** 
 ## Dependencias
 
 - Ninguna: esta entrega es puramente de reorganización de navegación/UI sin cambios de backend ni modelo de datos.
+
+## Notas de revisión (2026-08-17, ajustes menores incorporados)
+
+1. El riesgo 3 promete un "redirect temporal" de `/catalogo-admin/*` que NO está en el Alcance ni en los criterios de aceptación. **Decisión:** el redirect SÍ entra al alcance (regla del router: `/catalogo-admin/*` → `/productos/*`) con un test mínimo — relevante porque con el issue de SW stale en el backlog, un SW viejo sirviendo links muertos es un vector de regresión plausible.
+2. La implementación debe reescribir el special-case hardcodeado `seg === "catalogo-admin"` en `AppShell.tsx:47-51` al nuevo segmento `productos` (TAB_FOR_PATH y mapeo de seg).
+3. Evitar etiqueta duplicada "Productos → Productos" en el nav: el hijo de lista se etiqueta "Catálogo" (o el tab padre se colapsa a un solo nivel).
