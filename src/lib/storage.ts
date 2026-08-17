@@ -7,12 +7,11 @@ export const STORAGE_KEY = "store_os_state_v1";
 // When Firebase lands later, swap this adapter; the reducer/UI shape stays.
 
 // A signed-out visitor (or a developer who hasn't logged in) with empty storage
-// reaches the AuthScreen — we NEVER auto-seed demo stores (Olivia/Santi/Joyería)
-// into the browser. Seeing phantom demo stores was confusing operators. Demo
-// data is still available for tests via buildSeedState(); it just isn't loaded
-// automatically into localStorage anymore. The resetDemo() action can still
-// pull it in on demand from the UI.
-function emptyState(): AppState {
+// reaches the AuthScreen — we NEVER auto-seed demo stores into the browser.
+// Client demo data was removed entirely (delivery remove-client-demo-seed);
+// resetDemo() now clears local state. The Olivia fixture for the DEV backend
+// lives only in scripts/seed-dev.cjs.
+export function emptyState(): AppState {
   return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
 }
 
