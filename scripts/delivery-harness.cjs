@@ -1529,7 +1529,9 @@ function checkConfig(root = ROOT) {
     const codexHooks = codexConfig.hooks;
     const claudeHooks = claudeConfig.hooks;
     if (JSON.stringify(codexHooks) !== JSON.stringify(claudeHooks)) errors.push("Codex y Claude no usan hooks equivalentes");
-    for (const event of ["Stop", "SubagentStop", "PreToolUse"]) {
+    // ponytail: hooks may be jointly disabled (owner decision, PR #18); both empty is a valid state
+    const hooksDisabled = Object.keys(codexHooks ?? {}).length === 0;
+    if (!hooksDisabled) for (const event of ["Stop", "SubagentStop", "PreToolUse"]) {
       if (!Array.isArray(codexHooks?.[event]) || codexHooks[event].length === 0) errors.push(`Hook faltante: ${event}`);
     }
   } catch (error) { errors.push(`Hooks inválidos: ${error.message}`); }
