@@ -87,23 +87,30 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     // catalog). If several lines touch the same product, the last line's price
     // wins (applyPurchaseLines already folds qty/cost the same way).
     const computed = applyPurchaseLines(products, draft.lines);
-    for (const [productId, update] of computed) {
-      const p = state.products.find((x) => x.id === productId);
-      if (p) {
-        const line = draft.lines.find((l) => l.productId === productId);
-        await upsertProduct({
-          ...p,
-          quantityOnHand: update.quantityOnHand,
-          cost: update.cost,
-          // Merge price edits only if the line carries them (undefined → keep
-          // the product's existing price).
-          prices: line?.prices ?? p.prices,
-          price: line?.price ?? p.price,
-          updatedAt: nowIso(),
-        });
+    try {
+      for (const [productId, update] of computed) {
+        const p = state.products.find((x) => x.id === productId);
+        if (p) {
+          const line = draft.lines.find((l) => l.productId === productId);
+          await upsertProduct({
+            ...p,
+            quantityOnHand: update.quantityOnHand,
+            cost: update.cost,
+            // Merge price edits only if the line carries them (undefined → keep
+            // the product's existing price).
+            prices: line?.prices ?? p.prices,
+            price: line?.price ?? p.price,
+            updatedAt: nowIso(),
+          });
+        }
       }
+      await upsertPurchase({ ...draft, subtotal, updatedAt: nowIso() });
+    } catch {
+      // persistEntity (StoreProvider) already logged the Firestore rejection.
+      // Do NOT show the success toast — that lied when a write silently failed.
+      toast.error("No se pudo registrar la compra. Revisa tu conexión e intenta de nuevo.");
+      return;
     }
-    upsertPurchase({ ...draft, subtotal, updatedAt: nowIso() });
     toast.success(`Compra registrada: ${formatMoney(draft.totalConfirmed || subtotal)}`);
     onDone();
   }
