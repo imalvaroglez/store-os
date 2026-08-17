@@ -330,3 +330,36 @@ El marcador es un **nodo del DOM visible** con el SHA como texto (ver #1bis).
 ## Dependencias
 
 Ninguna (`dependsOn: []`).
+
+## Evidencia de repro local (2026-08-17, branch delivery/refresh-hard-reload)
+
+`npm run repro:stale` (Playwright + servidor estático stdlib, mismo origen/puerto,
+SW registrado, swap dist-a → dist-b):
+
+- Reload **normal** tras el swap: sirvió marcador **B** y el bundle nuevo
+  (`main-C5KvKciG.js`); el SW quedó `activating` y terminó `activated` tras el
+  hard reload.
+- **Conclusión del harness:** NO reproduce localmente. Bajo `vite preview` (sin
+  caché HTTP ni CDN) la navegación network-first ya trae HTML fresco.
+
+### Consecuencia (alcance de cierre de esta entrega)
+
+1. **El ciclo SW no es el causante confirmado.** Con statically-served builds el
+   refresh normal funciona. Las hipótesis #1 (SW) queda degradada a "no
+   reproducida"; el endurecimiento (#2 headers + #3 updateViaCache) queda como
+   defensa, no como fix verificado de la causa.
+2. **La causa más probable del síntoma de producción es la caché HTTP/CDN de
+   Vercel sobre `index.html`** (hipótesis #4): local no existe esa capa y no
+   reproduce; producción sí la tiene y sí reporta el síntoma. El fix de cabeceras
+   `no-cache` de `vercel.json` apunta exactamente ahí.
+3. **Confirmación pendiente = solo observable en producción.** El circuito
+   completo (CDN + SW + dominio real) no existe ni en local ni en Preview de
+   Vercel (que no reproduce la caché del dominio productivo). Verificación post-
+   merge: desplegar a prod, esperar propagación, recargar normal en el navegador
+   de la dueña y comprobar que el marcador `[data-build-marker]` muestra el SHA
+   nuevo. Si NO lo muestra con las cabeceras ya vivas, el síntoma es de dato
+   (hipótesis #2/#3) y se abre item nuevo.
+4. **El release blocker NO se declara cerrado por este PR.** Se cierra con la
+   verificación en prod del punto 3 (o con la evidencia de que la causa era de
+   dato). El criterio de cierre del backlog (e2e que deployee y afirme estado
+   fresco) queda en pie.

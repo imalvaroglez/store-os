@@ -123,6 +123,16 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
   **Criterio de cierre:** un test e2e que deployee un cambio, recargue, y
   afirme que el estado fresco aparece sin trucos. Relacionado con el bug
   dual-plane abajo (una de las causas confirmadas del síntoma "no aparece").
+
+  **Evidencia (2026-08-17, PR #16):** el repro A→B local (con SW, mismo origen)
+  NO reproduce: el refresh normal sirve el build nuevo. La causa más probable
+  del síntoma productivo es la **caché HTTP/CDN de Vercel sobre `index.html`**
+  (hipótesis 4), que no existe en local. El PR endurece headers (`no-cache` en
+  HTML/sw.js) + `updateViaCache:"none"` + marcador de build visible
+  (`[data-build-marker]`), pero el **bloqueador NO se declara cerrado**: exige
+  confirmación en producción (recargar normal y ver el SHA nuevo en el
+  marcador). Si el marcador rotó y el dato sigue estancado, la causa es de
+  dato (hipótesis 2/3) → item nuevo.
 - **Dual-plane membership: `stores` y `adminStores` duplican `memberUids`/
   `ownerUid`/`pendingInvites`** — las Security Rules validan membresía contra
   `adminStores` (plano de control), pero la app lee de `stores` (plano de
