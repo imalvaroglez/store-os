@@ -16,8 +16,7 @@ import type {
   Supplier,
   Purchase,
 } from "../types";
-import { loadState, saveState } from "../lib/storage";
-import { buildSeedState } from "../lib/seed";
+import { loadState, saveState, emptyState } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
@@ -131,7 +130,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "DELETE_ORDER":
       return { ...state, orders: state.orders.filter((o) => o.id !== action.orderId) };
     case "RESET_DEMO":
-      return buildSeedState();
+      return emptyState(); // "reset demo" now means "clear local data" (client demo seed removed)
     case "REPLACE_STATE":
       return action.state;
     default:

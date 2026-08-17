@@ -13,11 +13,10 @@
  * (a browser login; no password, no committed secret, no `.env.seed-dev`). If
  * ADC is absent the script prints the gcloud command and exits.
  *
- * ponytail: the repo is `type:module` + `tsconfig` is `noEmit`, so this script
- * cannot import the TypeScript `buildSeedState()` directly. Instead the Olivia
- * subset is re-declared inline as a self-contained CommonJS object — the
- * contract is "the same Olivia entities buildSeedState() produces, deterministic
- * fixed ids for idempotent re-run". If seed.ts drifts, this needs the same bump.
+ * This script is now the ONLY owner of the Olivia fixture: the client demo
+ * seed (src/lib/seed.ts) was removed (delivery remove-client-demo-seed). What
+ * stays is a self-contained CommonJS object with deterministic fixed ids for
+ * idempotent re-run — evolve the DEV fixture here, not in the client.
  *
  * LOAD-BEARING GUARD: this script aborts unless projectId === 'store-os-dev'.
  * The Admin SDK bypasses BOTH Firestore and Storage Security Rules entirely, so
