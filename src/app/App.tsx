@@ -79,6 +79,20 @@ export function App() {
   return (
     <ToastProvider>
       <Root />
+      {/* Build marker for the refresh-hard-reload previewCheck/repro: visible text
+          carrying the served deploy's SHA. Reads the same meta the Vite plugin injects. */}
+      <BuildMarker />
     </ToastProvider>
+  );
+}
+
+// ponytail: reads the x-build meta at runtime instead of duplicating the SHA at
+// build time in a second channel — one source of truth, both HTML and DOM agree.
+function BuildMarker() {
+  const sha = document.querySelector('meta[name="x-build"]')?.getAttribute("content") ?? "dev";
+  return (
+    <div data-build-marker={sha} style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clipPath: "inset(50%)", whiteSpace: "nowrap" }}>
+      {sha}
+    </div>
   );
 }
