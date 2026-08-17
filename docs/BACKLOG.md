@@ -173,6 +173,40 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
 ---
 
 
+## 🔧 Limpieza de repo: archivos de implementación que ya cumplieron su ciclo
+
+**Estado:** 💡 idea (tech debt)
+**Solicitó:** PO, 2026-08-17
+
+### Problema
+
+El repo acumula archivos que solo sirvieron para implementar una entrega y no
+tienen valor permanente en `main`: specs detalladas de implementación ya
+ejecutadas (`docs/superpowers/specs/*-design.md`), harnesses de reproducción
+puntuales (`scripts/repro-stale.mjs` y sus artefactos `dist-a/`, `dist-b/`), y
+evidencia de runs del delivery harness. Mezclan ruido en el historial y en la
+navegación del repo para quien llega nuevo.
+
+### Política decidida (2026-08-17)
+
+Los files específicos de una implementación **no se mezclan a `main`**: viven en
+la rama de la entrega durante el ciclo y se descartan (o archivan fuera del
+repo) al cerrarla.
+
+### Alcance propuesto (MVP)
+
+- Inventario de `docs/superpowers/specs/`: separar specs producto/backlog
+  (se quedan) de specs de implementación one-shot (se van).
+- Remover `scripts/repro-stale.mjs` y las entradas `repro:stale` /
+  `dist-a|dist-b` del `.gitignore` cuando el item refresh-hard-reload cierre.
+- Decidir destino del historial `.delivery/` (¿se queda como evidencia viva?).
+
+### Out-of-scope explícito
+
+- No reescribir historia de git; solo estado presente del árbol.
+
+---
+
 ## 💡 Invitar miembros por correo (flujo confiable)
 
 **Estado:** 🟢 ready (decisiones cerradas 2026-08-11, depende de vista-usuarios)
