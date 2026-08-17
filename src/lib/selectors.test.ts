@@ -8,11 +8,11 @@ import {
   purchasesForStore,
   committedForProduct,
 } from "./selectors";
-import { buildSeedState } from "./seed";
+import { fixtureState } from "./testFixtures";
 import type { Supplier, Purchase, Order } from "../types";
 
 describe("store isolation", () => {
-  const state = buildSeedState();
+  const state = fixtureState();
   const santi = state.stores.find((s) => s.slug === "santi")!;
   const joyeria = state.stores.find((s) => s.slug === "joyeria")!;
 
@@ -39,7 +39,7 @@ describe("store isolation", () => {
 });
 
 describe("public catalog filtering", () => {
-  const state = buildSeedState();
+  const state = fixtureState();
   const joyeria = state.stores.find((s) => s.slug === "joyeria")!;
 
   it("only shows isPublic products", () => {

@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { buildSeedState } from "../src/lib/seed";
+import { buildSeedState } from "./seed";
 
 // Shared helpers for the Firebase-emulator e2e specs. Every helper here is the
 // exact behavior that used to live as module-local copies in firebase.spec.ts,

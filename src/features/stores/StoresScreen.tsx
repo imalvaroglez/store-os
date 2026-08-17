@@ -5,7 +5,7 @@ import { StoreForm } from "./StoreForm";
 
 // First-run / no-store screen. Also the fallback if a user deletes down to zero.
 export function StoresScreen() {
-  const { resetDemo } = useStore();
+  const { resetDemo, cloud } = useStore();
   const [creating, setCreating] = useState(false);
 
   return (
@@ -19,20 +19,23 @@ export function StoresScreen() {
           </Button>
         }
       />
-      <div className="mt-auto pb-8 text-center">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            if (confirm("¿Cargar datos de ejemplo? Esto reinicia los datos actuales.")) {
-              resetDemo();
-            }
-          }}
-          className="underline"
-        >
-          Cargar datos de ejemplo
-        </Button>
-      </div>
+      {/* Local mode only: cloud data lives in Firestore, the button would be a dead no-op. */}
+      {!cloud && (
+        <div className="mt-auto pb-8 text-center">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (confirm("¿Limpiar todos los datos locales? Esto borra tiendas, productos y pedidos de este navegador.")) {
+                resetDemo();
+              }
+            }}
+            className="underline"
+          >
+            Limpiar datos locales
+          </Button>
+        </div>
+      )}
 
       <Sheet open={creating} onClose={() => setCreating(false)} title="Nueva tienda">
         <StoreForm onDone={() => setCreating(false)} />

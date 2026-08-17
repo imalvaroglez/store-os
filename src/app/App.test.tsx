@@ -4,13 +4,14 @@ import { StoreProvider } from "./StoreProvider";
 import { App } from "./App";
 import { AuthProvider } from "./firebase/AuthProvider";
 import { HomeScreen } from "../features/home/HomeScreen";
-import { buildSeedState } from "../lib/seed";
+import { fixtureState } from "../lib/testFixtures";
+import type { AppState } from "../types";
 import { saveState } from "../lib/storage";
 
 // Runtime mount smoke: catches render-time crashes curl/static checks can't.
 // AuthProvider is in pure-local mode here (no VITE_FIREBASE_* in the test env),
 // so StoreProvider stays on the localStorage path these tests expect.
-function withState(state: ReturnType<typeof buildSeedState>) {
+function withState(state: AppState) {
   saveState(state); // so the provider loads this exact state, not a fresh seed
   return ({ children }: { children: React.ReactNode }) => (
     <AuthProvider>
@@ -25,7 +26,7 @@ function withState(state: ReturnType<typeof buildSeedState>) {
 
 describe("HomeScreen store isolation render", () => {
   it("renders the active store's data and primary action", () => {
-    const Wrapper = withState(buildSeedState());
+    const Wrapper = withState(fixtureState());
     render(
       <Wrapper>
         <HomeScreen />
@@ -43,7 +44,7 @@ describe("HomeScreen store isolation render", () => {
   });
 
   it("isolates when switching active store via the provider", () => {
-    const state = buildSeedState();
+    const state = fixtureState();
     const joyeria = state.stores.find((s) => s.slug === "joyeria")!;
     state.activeStoreId = joyeria.id;
     const Wrapper = withState(state);
