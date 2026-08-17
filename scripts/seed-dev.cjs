@@ -30,7 +30,7 @@ const ADMIN_EMAIL = "admin@store.os";
 const STORE_ID = "store_olivia";
 const STORE_SLUG = "olivia";
 
-// --- Olivia seed data (mirrors src/lib/seed.ts buildSeedState() Olivia subset) ---
+// --- Olivia seed data (self-contained; this script owns the DEV fixture) ---
 // Deterministic fixed ids => idempotent re-runs overwrite, never duplicate.
 const now = new Date().toISOString();
 
