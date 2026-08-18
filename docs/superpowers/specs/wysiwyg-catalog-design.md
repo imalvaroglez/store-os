@@ -67,9 +67,9 @@ dependencias nuevas.
    batch (§Persistencia). Compatible con el patrón de `StorefrontEditor` hoy:
    N ediciones = 1 guardado. El draft se descarta al salir sin guardar.
 4. **Permisos V1: solo la dueña** (`ownerUid` de la tienda). Miembros y
-   `super_admin` sin ser dueños no ven el chip "Editar" ni controles inline
-   (pueden seguir usando el formulario de Ajustes). La clienta anónima nunca ve
-   el modo edición.
+   `super_admin` sin ser dueños no ven el chip "Editar" ni controles inline.
+   Nota: el editor de Ajustes (`StorefrontEditor`) es **owner-only** hoy y V1 lo
+   mantiene así. La clienta anónima nunca ve el modo edición.
 
 ## Diseño técnico
 
@@ -97,7 +97,7 @@ Un componente único y pequeño, `InlineEditable` (en
   value={draft.hero?.body}
   placeholder="Mensaje principal"
   multiline
-  onSave={(v) => patchDraft({ hero: { ...draft.hero, body: v || undefined } })}
+  onChange={(v) => patchDraft({ hero: { ...draft.hero, body: v || undefined } })}
 />
 ```
 
@@ -105,10 +105,15 @@ Un componente único y pequeño, `InlineEditable` (en
   (`ring-1 ring-dashed` con token de borde del tema) y un ícono de lápiz
   pequeño. Tap → cambia a `TextField`/`TextArea` del sistema de diseño (sin
   `<input>` crudo — lo exige el gate del design system).
-- `multiline` para los textos largos; los campos tipo lista (`benefits`,
-  `payments`, `hours`, `shipping`) se editan como texto "una por línea" con
-  `split("\n")`, como ya lo hace el formulario
+- `multiline` para los textos largos. **Tipos reales:** `hours` y `shipping`
+  son `string` (`src/types/index.ts:62,65`) — se editan como texto simple, sin
+  transformación; sólo `benefits` y `payments` son listas y se editan como
+  texto "una por línea" con `split("\n")`, como ya lo hace el formulario
   (`StorefrontEditor.tsx:80-81,130-131`).
+- **Campos vacíos:** hoy una sección con campo vacío no se renderiza y no
+  tendría punto de entrada inline. En modo edición, TODA sección editable
+  muestra un placeholder ("Toca para añadir…") aunque el campo esté vacío, de
+  modo que siempre exista cómo empezar a editarlo.
 - **FAQ reutiliza el editor existente:** `FAQEditor`
   (`StorefrontEditor.tsx:205-…`, se exporta/mueve a su archivo si hace falta)
   gobierna agregar/quitar/editar pregunta-respuesta — no se reescribe.
