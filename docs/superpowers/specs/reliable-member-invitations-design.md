@@ -2,7 +2,6 @@
 Delivery-ID: reliable-member-invitations
 Delivery-Status: Pending approval
 specPath: docs/superpowers/specs/reliable-member-invitations-design.md
-dependsOn: [platform-users-view]
 ---
 
 # Invitar miembros por correo (flujo confiable)
