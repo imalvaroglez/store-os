@@ -132,20 +132,22 @@ export type Order = {
   navegador/OS ya ofrece "Guardar como PDF" (incluye Android/iOS → compartir a
   WhatsApp). **Cero dependencias nuevas de PDF** (no jsPDF/pdfmake) y cero
   servicios: todo en el cliente, sin Function de render.
-- **Folio en la misma transacción que el Order:** al crear la venta (cloud), una
-  sola transacción Firestore hace las tres cosas juntas — crea el Order, le
-  asigna `receiptFolio = "REC-" + pad4(store.receiptSeq + 1)` y incrementa
-  `receiptSeq` en `Store`. Sin incrementos por separado (permiten huecos o
-  falsos éxitos). Si la transacción falla, no hay pedido ni folio: **no se
-  imprime nada y no se muestra éxito**; se notifica el error y la dueña
-  reintenta. En modo demo (sin backend) el folio se asigna localmente con el
-  mismo sequential.
+- **Folio en la misma transacción que el Order (3 writes, §5):** al crear la
+  venta (cloud), una sola transacción Firestore escribe el Order con
+  `receiptFolio = "REC-" + pad4(store.receiptSeq + 1)`, incrementa
+  `receiptSeq` en `stores/{id}` y re-escribe `adminStores/{id}` sin cambios
+  (G-P02, ver §5). Sin incrementos por separado (permiten huecos o falsos
+  éxitos). Si la transacción falla, no hay pedido ni folio: **no se imprime
+  nada y no se muestra éxito**; se notifica el error y la dueña reintenta. En
+  modo demo (sin backend) el folio se asigna localmente con el mismo
+  sequential.
 - **Orders legacy (migrados sin folio):** el **primer clic en "Imprimir /
   Guardar PDF"** ejecuta la misma transacción (asignar folio + incrementar
-  `receiptSeq`) y, sólo al confirmarla, llama `window.print()` — sin botón
-  adicional. Si la transacción falla, no se imprime ni se muestra éxito.
-  Abrir "Ver recibo" por sí solo NO asigna folio (el Sheet muestra el recibo
-  con folio pendiente y el botón "Imprimir" como acción de emisión).
+  `receiptSeq` + `adminStores` sin cambios) y, sólo al confirmarla, llama
+  `window.print()` — sin botón adicional. Si la transacción falla, no se
+  imprime ni se muestra éxito. Abrir "Ver recibo" por sí solo NO asigna folio
+  (el Sheet muestra el recibo con folio pendiente y el botón "Imprimir" como
+  acción de emisión).
 
 ### 5. Ajustes menores por el rediseño de Order
 
@@ -154,31 +156,29 @@ export type Order = {
 - El catálogo público no cambia (`Order` no participa en proyecciones
   públicas).
 - **Reglas:** `receiptSeq` es información operativa y vive **solo en `stores`**
-  — nunca en `adminStores` (plano de control puro, G-P02). La transacción de
-  folio = 2 escrituras (Order + `stores/{id}`).
-- **`saveEntity("stores")` queda INTACTO: siempre escribe ambos planos.** El
-  chokepoint (`src/app/firebase/firestoreData.ts:249`) recibe la entidad
-  completa y no conoce el diff, así que NO se le añade ninguna excepción ni se
-  edita su contrato.
-- **Writer transaccional dedicado para el folio.** Función nueva (transacción
-  Firestore: crea el Order con folio + incrementa `receiptSeq` en
-  `stores/{id}`) — es el único escritor autorizado a tocar `stores` sin
-  proyectar `adminStores`. La excepción es **normativa y explícita en
-  `firestore.rules`**: la rama de miembro sobre `stores/{id}` exige
-  `diff == { receiptSeq }` (el conjunto exacto de campos cambiados es sólo
-  `receiptSeq`). Todo campo proyectado a `adminStores` — `slug`, `type`,
-  timestamps, `retainedPrivacyRequestCount`, `ownerUid`, `memberUids`,
-  `pendingInvites`, y cualquier otro del plano de control — sigue pasando por
-  `saveEntity` con doble plano; sólo `receiptSeq` está exento y sólo vía este
-  writer.
-- La prueba del "1 documento / sin `adminStores`" pertenece al **writer
-  transaccional** (afirma sus writes), no a `saveEntity` (cuyo contrato no
-  cambia).
-- Rama de `firestore.rules` con semántica legacy
-  `resource.data.get("receiptSeq", 0)` (tiendas sin el campo aún): el nuevo
-  valor debe ser exactamente `get(...) + 1`. Pruebas en `npm run test:rules`:
-  ausente→1, n→n+1, saltos rechazados, cualquier campo adicional en el diff
-  rechazado, y **ninguna escritura a `adminStores`**.
+  — nunca se guarda en `adminStores` (plano de control puro, G-P02).
+- **G-P02 es no renunciable: transacción de 3 writes.** El writer
+  transaccional dedicado del folio escribe, en la MISMA operación: (1) el
+  Order con folio, (2) `stores/{id}` con `receiptSeq` incrementado, y (3)
+  `adminStores/{id}` **sin cambios** (re-escritura del documento idéntico al
+  actual). Así se satisface la garantía "stores y adminStores en la misma
+  operación" sin almacenar `receiptSeq` en el plano de control. La rama de
+  reglas del folio cubre ambos documentos: diff de `stores/{id}` ==
+  `{ receiptSeq }` (semántica legacy `resource.data.get("receiptSeq", 0)`:
+  nuevo valor == `get(...) + 1`) Y diff de `adminStores/{id}` == ∅.
+- **`saveEntity("stores")` mantiene su comportamiento dual**, pero su
+  comentario (`src/app/firebase/firestoreData.ts:249`, que hoy afirma cubrir
+  TODA escritura de Store) se actualiza: existen exactamente **dos caminos
+  autorizados** para escribir Store — el chokepoint dual (`saveEntity`) y el
+  writer transaccional del folio (3 writes).
+- **Gate anti-writers-directos:** un gate en `npm run test` (mismo patrón que
+  el gate de design system) impide writers directos de `stores`/`adminStores`
+  fuera de los dos caminos autorizados (grep estático sobre `src/` de
+  `setDoc`/`updateDoc`/`writeBatch` hacia `stores/` o `adminStores/` fuera de
+  `firestoreData.ts`).
+- Pruebas en `npm run test:rules`: ausente→1, n→n+1, saltos rechazados, campo
+  adicional en `stores` rechazado, cualquier cambio en `adminStores` (diff ≠
+  ∅) rechazado; y prueba del writer transaccional afirmando sus 3 writes.
 
 ## Alcance (out)
 
@@ -196,11 +196,11 @@ export type Order = {
 - Sin PDF-as-a-service, sin librerías de PDF, sin Cloud Function de render.
 - Migración = escrituras puntuales una sola vez por documento (≈ #Orders
   existentes, cuota muy por debajo de 20K/día).
-- **Folio en pedido nuevo:** la venta pasa de 1 a **2 writes** (Order + Store;
-  la escritura adicional es `Store`, por el `receiptSeq` en la misma
-  transacción) y añade **≥1 read** (Store dentro de la transacción).
-  **Emisión de recibo legacy:** 2 writes totales (actualizar el Order con su
-  folio + actualizar `Store`) y **2 reads** (Store + Order leídos por la
+- **Folio en pedido nuevo:** la venta pasa de 1 a **3 writes** (Order +
+  `stores/{id}` con `receiptSeq` + `adminStores/{id}` sin cambios) y añade
+  **≥1 read** (Store dentro de la transacción). **Emisión de recibo
+  legacy:** 3 writes totales (Order con folio + `stores/{id}` +
+  `adminStores/{id}` sin cambios) y **2 reads** (Store + Order leídos por la
   transacción). Las reglas pueden añadir lecturas dependientes
   (`firestore.get()`/`exists()` se facturan como lecturas). Tanto writes como
   reads contrastados contra 20K writes/día y **50K reads/día** — con margen
