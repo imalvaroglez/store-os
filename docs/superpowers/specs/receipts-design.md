@@ -156,27 +156,29 @@ export type Order = {
 - **Reglas:** `receiptSeq` es información operativa y vive **solo en `stores`**
   — nunca en `adminStores` (plano de control puro, G-P02). La transacción de
   folio = 2 escrituras (Order + `stores/{id}`).
-- **Excepción estrecha y documentada al invariante de doble plano:** el
-  chokepoint proyecta toda escritura de `stores` a `adminStores`, pero la
-  transacción de folio escribe **solo Order + `stores/{id}`**, y el diff de
-  `stores/{id}` sólo puede contener `receiptSeq` — ningún campo de control
-  (`ownerUid`, `memberUids`, `pendingInvites`) cambia, así que `adminStores`
-  queda intacto por construcción y no se amplían sus permisos.
-- **La spec ORDENA actualizar el contrato del chokepoint y sus pruebas:** el
-  comentario/contrato de `saveEntity("stores", ...)` en
-  `src/app/firebase/firestoreData.ts:249` se reescribe para decir: *toda
-  mutación de campos de control (`ownerUid`, `memberUids`, `pendingInvites`,
-  nombre) sigue escribiendo ambos planos en el mismo batch; únicamente
-  `receiptSeq` puede escribir `stores` sin proyectar a `adminStores`* — y las
-  pruebas del chokepoint afirman ambos lados (mutación de control ⇒ batch de
-  2 docs; mutación sólo-`receiptSeq` ⇒ 1 doc). Declarar la excepción en la
-  spec no basta; el contrato del código debe reflejarla.
-- Nueva rama en `firestore.rules` que permite a un miembro actualizar
-  **únicamente** `receiptSeq` en `stores/{id}`, con semántica legacy
+- **`saveEntity("stores")` queda INTACTO: siempre escribe ambos planos.** El
+  chokepoint (`src/app/firebase/firestoreData.ts:249`) recibe la entidad
+  completa y no conoce el diff, así que NO se le añade ninguna excepción ni se
+  edita su contrato.
+- **Writer transaccional dedicado para el folio.** Función nueva (transacción
+  Firestore: crea el Order con folio + incrementa `receiptSeq` en
+  `stores/{id}`) — es el único escritor autorizado a tocar `stores` sin
+  proyectar `adminStores`. La excepción es **normativa y explícita en
+  `firestore.rules`**: la rama de miembro sobre `stores/{id}` exige
+  `diff == { receiptSeq }` (el conjunto exacto de campos cambiados es sólo
+  `receiptSeq`). Todo campo proyectado a `adminStores` — `slug`, `type`,
+  timestamps, `retainedPrivacyRequestCount`, `ownerUid`, `memberUids`,
+  `pendingInvites`, y cualquier otro del plano de control — sigue pasando por
+  `saveEntity` con doble plano; sólo `receiptSeq` está exento y sólo vía este
+  writer.
+- La prueba del "1 documento / sin `adminStores`" pertenece al **writer
+  transaccional** (afirma sus writes), no a `saveEntity` (cuyo contrato no
+  cambia).
+- Rama de `firestore.rules` con semántica legacy
   `resource.data.get("receiptSeq", 0)` (tiendas sin el campo aún): el nuevo
   valor debe ser exactamente `get(...) + 1`. Pruebas en `npm run test:rules`:
-  ausente→1, n→n+1, saltos rechazados, cualquier cambio adicional rechazado, y
-  **ninguna escritura a `adminStores`** en la transacción.
+  ausente→1, n→n+1, saltos rechazados, cualquier campo adicional en el diff
+  rechazado, y **ninguna escritura a `adminStores`**.
 
 ## Alcance (out)
 
