@@ -139,8 +139,13 @@ export type Order = {
   falsos éxitos). Si la transacción falla, no hay pedido ni folio: **no se
   imprime nada y no se muestra éxito**; se notifica el error y la dueña
   reintenta. En modo demo (sin backend) el folio se asigna localmente con el
-  mismo sequential. El botón "Imprimir" del Sheet sólo habilita cuando el Order
-  ya tiene folio.
+  mismo sequential.
+- **Orders legacy (migrados sin folio):** el **primer clic en "Imprimir /
+  Guardar PDF"** ejecuta la misma transacción (asignar folio + incrementar
+  `receiptSeq`) y, sólo al confirmarla, llama `window.print()` — sin botón
+  adicional. Si la transacción falla, no se imprime ni se muestra éxito.
+  Abrir "Ver recibo" por sí solo NO asigna folio (el Sheet muestra el recibo
+  con folio pendiente y el botón "Imprimir" como acción de emisión).
 
 ### 5. Ajustes menores por el rediseño de Order
 
@@ -148,10 +153,12 @@ export type Order = {
   cualquier agregado (disponible/comprometido) pasan a leer `items[]`.
 - El catálogo público no cambia (`Order` no participa en proyecciones
   públicas).
-- **Reglas:** la transacción de folio escribe `receiptSeq` en `Store` y su
-  espejo `adminStores`. Nueva rama en `firestore.rules` que permite a un
-  miembro actualizar **únicamente** `receiptSeq` (diferencia exacta: +1) en
-  ambos documentos; ningún otro campo. Cubierta en `npm run test:rules`.
+- **Reglas:** `receiptSeq` es información operativa y vive **solo en `stores`**
+  — nunca en `adminStores` (plano de control puro, G-P02). La transacción de
+  folio = 2 escrituras (Order + `stores/{id}`). Nueva rama en `firestore.rules`
+  que permite a un miembro actualizar **únicamente** `receiptSeq`
+  (diferencia exacta: +1) en `stores/{id}`; ningún otro campo, y ninguna
+  escritura a `adminStores`. Cubierta en `npm run test:rules`.
 
 ## Alcance (out)
 
@@ -183,7 +190,9 @@ export type Order = {
    (`window.print`), sin dependencias nuevas en `package.json`.
 4. El folio es consecutivo por tienda (`REC-0001`, `REC-0002`, …), asignado en
    la misma transacción que crea el Order; si la transacción falla, no existe
-   el pedido ni el folio y no se muestra éxito.
+   el pedido ni el folio y no se muestra éxito. Un Order legacy sin folio se
+   imprime con folio en su primer clic de "Imprimir / Guardar PDF" (misma
+   transacción, luego `window.print()`); si falla, no imprime.
 5. En stores inventory_tiered, el "comprometido" por producto refleja todas las
    líneas de los pedidos abiertos (incluye pedidos multi-línea con el mismo
    producto repetido).
