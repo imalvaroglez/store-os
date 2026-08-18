@@ -161,9 +161,18 @@ export type Order = {
   transacción de folio escribe **solo Order + `stores/{id}`**, y el diff de
   `stores/{id}` sólo puede contener `receiptSeq` — ningún campo de control
   (`ownerUid`, `memberUids`, `pendingInvites`) cambia, así que `adminStores`
-  queda intacto por construcción y no se amplían sus permisos. Nueva rama en
-  `firestore.rules` que permite a un miembro actualizar **únicamente**
-  `receiptSeq` en `stores/{id}`, con semántica legacy
+  queda intacto por construcción y no se amplían sus permisos.
+- **La spec ORDENA actualizar el contrato del chokepoint y sus pruebas:** el
+  comentario/contrato de `saveEntity("stores", ...)` en
+  `src/app/firebase/firestoreData.ts:249` se reescribe para decir: *toda
+  mutación de campos de control (`ownerUid`, `memberUids`, `pendingInvites`,
+  nombre) sigue escribiendo ambos planos en el mismo batch; únicamente
+  `receiptSeq` puede escribir `stores` sin proyectar a `adminStores`* — y las
+  pruebas del chokepoint afirman ambos lados (mutación de control ⇒ batch de
+  2 docs; mutación sólo-`receiptSeq` ⇒ 1 doc). Declarar la excepción en la
+  spec no basta; el contrato del código debe reflejarla.
+- Nueva rama en `firestore.rules` que permite a un miembro actualizar
+  **únicamente** `receiptSeq` en `stores/{id}`, con semántica legacy
   `resource.data.get("receiptSeq", 0)` (tiendas sin el campo aún): el nuevo
   valor debe ser exactamente `get(...) + 1`. Pruebas en `npm run test:rules`:
   ausente→1, n→n+1, saltos rechazados, cualquier cambio adicional rechazado, y
@@ -187,8 +196,13 @@ export type Order = {
   existentes, cuota muy por debajo de 20K/día).
 - **Folio en pedido nuevo:** la venta pasa de 1 a **2 writes** (Order + Store;
   la escritura adicional es `Store`, por el `receiptSeq` en la misma
-  transacción). **Emisión de recibo legacy:** 2 writes totales (actualizar el
-  Order con su folio + actualizar `Store`).
+  transacción) y añade **≥1 read** (Store dentro de la transacción).
+  **Emisión de recibo legacy:** 2 writes totales (actualizar el Order con su
+  folio + actualizar `Store`) y **2 reads** (Store + Order leídos por la
+  transacción). Las reglas pueden añadir lecturas dependientes
+  (`firestore.get()`/`exists()` se facturan como lecturas). Tanto writes como
+  reads contrastados contra 20K writes/día y **50K reads/día** — con margen
+  amplio al volumen actual.
 - Sin telemetría; sin PII nueva (los datos del recibo ya viven en
   `Order`/`Customer`, sujetos a las mismas reglas G-P01–G-P08).
 
