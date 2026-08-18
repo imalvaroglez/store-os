@@ -29,11 +29,24 @@ export function matchRoute(pathname: string): RouteMatch {
   if (storeMatch) {
     return { name: "public_store", params: { slug: decodeURIComponent(storeMatch[1]) } };
   }
-  // Admin shell. Capture an optional second segment so /catalogo-admin/productos
-  // resolves (the catalog parent expands into Productos / Categorías sub-routes).
+  // Admin shell. Capture an optional second segment so /productos/categorias
+  // resolves (the productos parent renders the list and expands into sub-routes).
   // Fallback after the public /catalogo/:slug family above.
   const adminMatch = pathname.match(/^\/?([a-z-]+)(?:\/([a-z-]+))?\/?$/);
   return { name: "admin", params: { tab: adminMatch?.[1] || "", sub: adminMatch?.[2] || "" } };
+}
+
+// Legacy redirect (unified-products): /catalogo-admin moved to /productos.
+// The list was the old parent default, so /catalogo-admin/productos collapses
+// onto the parent path itself. History replace + popstate so the app and the
+// URL bar land on the new path without an extra back-stack entry.
+export function redirectLegacyAdmin(pathname: string): boolean {
+  const legacy = pathname.match(/^\/catalogo-admin(?:\/([a-z-]+))?\/?$/);
+  if (!legacy) return false;
+  const target = legacy[1] && legacy[1] !== "productos" ? `/productos/${legacy[1]}` : "/productos";
+  window.history.replaceState({}, "", target);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  return true;
 }
 
 export function navigate(path: string): void {

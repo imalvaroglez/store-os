@@ -6,7 +6,7 @@ import { formatDate } from "../../lib/dates";
 
 // Purchase history — the cost/stock ledger (each line stores unitCost + date +
 // productId). Newest first. Reached from the Inventario screen ("Compras").
-export function PurchaseList({ onBack }: { onBack: () => void }) {
+export function PurchaseList({ onBack }: { onBack?: () => void }) {
   const { state, activeStore } = useStore();
   if (!activeStore) return null;
   const purchases = purchasesForStore(state.purchases, activeStore.id).sort((a, b) =>
@@ -16,9 +16,11 @@ export function PurchaseList({ onBack }: { onBack: () => void }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          ← Inventario
-        </Button>
+        {onBack && (
+          <Button variant="ghost" size="sm" onClick={onBack}>
+            ← Inventario
+          </Button>
+        )}
       </div>
       {purchases.length === 0 ? (
         <EmptyState

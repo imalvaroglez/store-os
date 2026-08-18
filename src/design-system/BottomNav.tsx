@@ -12,27 +12,27 @@ export function BottomNav({
   storeType: import("../types").StoreType;
 }) {
   const tabs = visibleNavItems(storeType);
-  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [productosOpen, setProductosOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);
 
   // Close the upward panel on outside-click or Esc.
   useEffect(() => {
-    if (!catalogOpen) return;
+    if (!productosOpen) return;
     const onDoc = (e: MouseEvent) => {
-      if (!navRef.current?.contains(e.target as Node)) setCatalogOpen(false);
+      if (!navRef.current?.contains(e.target as Node)) setProductosOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setCatalogOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setProductosOpen(false);
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDoc);
       window.removeEventListener("keydown", onKey);
     };
-  }, [catalogOpen]);
+  }, [productosOpen]);
 
-  // Close when navigating away from the catalog group.
+  // Close when navigating away from the productos group.
   useEffect(() => {
-    if (!parentActive(active)) setCatalogOpen(false);
+    if (!parentActive(active)) setProductosOpen(false);
   }, [active]);
 
   return (
@@ -42,26 +42,29 @@ export function BottomNav({
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {tabs.map((t) => {
-        // Catalog parent: toggles an upward panel, does not navigate itself.
+        // Productos parent: navigates to the list and toggles the child panel.
         if (t.children) {
-          const parentOn = parentActive(active) || catalogOpen;
+          const parentOn = parentActive(active) || productosOpen;
           return (
             <button
               key={t.id}
-              aria-expanded={catalogOpen}
+              aria-expanded={productosOpen}
               aria-haspopup="menu"
-              onClick={() => setCatalogOpen((v) => !v)}
+              onClick={() => {
+              setProductosOpen((v) => !v);
+              navigate(t.path);
+            }}
               className={`relative flex-1 py-3 text-[13px] font-semibold transition-colors ${
                 parentOn ? "text-ink" : "text-ink-soft/50"
               }`}
             >
               <span className="block">
-                {t.label} <span className={`inline-block transition-transform ${catalogOpen ? "rotate-180" : ""}`}>▾</span>
+                {t.label} <span className={`inline-block transition-transform ${productosOpen ? "rotate-180" : ""}`}>▾</span>
               </span>
               {parentActive(active) && (
                 <span className="absolute top-0 left-1/2 -translate-x-1/2 h-[3px] w-8 rounded-full bg-terracotta" />
               )}
-              {catalogOpen && (
+              {productosOpen && (
                 <div
                   role="menu"
                   className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-44 rounded-lg bg-paper border border-rule shadow-lift py-1"
@@ -75,7 +78,7 @@ export function BottomNav({
                         role="menuitem"
                         onClick={() => {
                           navigate(c.path);
-                          setCatalogOpen(false);
+                          setProductosOpen(false);
                         }}
                         className={`block w-full text-center px-4 py-2 text-sm ${
                           childOn ? "text-terracotta font-semibold" : "text-ink"

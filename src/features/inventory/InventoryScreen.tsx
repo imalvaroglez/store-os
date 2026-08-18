@@ -1,28 +1,21 @@
-import { useState } from "react";
-import { useStore, newPurchase } from "../../app/StoreProvider";
+import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
-  Button,
   Card,
   EmptyState,
   IconButton,
   ScreenHeader,
   Screen,
-  Sheet,
   StatRow,
 } from "../../design-system";
 import { productsForStore, committedForProduct } from "../../lib/selectors";
 import { formatMoney } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
-import { PurchaseForm } from "./PurchaseForm";
-import { PurchaseList } from "./PurchaseList";
 
-// Inventario: Disponible / Comprometido / Físico per product, ±1 corrections,
-// "+ Compra" entry to a multi-line ticket, and the purchase history view.
+// Inventario: Disponible / Comprometido / Físico per product with ±1 corrections.
+// Purchases moved to Productos → Compras (PurchasesScreen) in unified-products.
 export function InventoryScreen() {
   const { state, activeStore, upsertProduct } = useStore();
-  const [creatingPurchase, setCreatingPurchase] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
 
   if (!activeStore) return null;
   const products = productsForStore(state.products, activeStore.id).filter(
@@ -41,31 +34,9 @@ export function InventoryScreen() {
     });
   }
 
-  if (showHistory) {
-    return (
-      <Screen>
-        <ScreenHeader title="Compras" subtitle="Historial de compras a proveedores" />
-        <PurchaseList onBack={() => setShowHistory(false)} />
-      </Screen>
-    );
-  }
-
   return (
     <Screen>
-      <ScreenHeader
-        title="Inventario"
-        subtitle="Disponible / comprometido / físico"
-        action={
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setShowHistory(true)}>
-              Compras
-            </Button>
-            <Button size="sm" onClick={() => setCreatingPurchase(true)}>
-              + Compra
-            </Button>
-          </div>
-        }
-      />
+      <ScreenHeader title="Inventario" subtitle="Disponible / comprometido / físico" />
 
       {products.length === 0 ? (
         <EmptyState
@@ -131,10 +102,6 @@ export function InventoryScreen() {
           })}
         </div>
       )}
-
-      <Sheet open={creatingPurchase} onClose={() => setCreatingPurchase(false)} title="Nueva compra">
-        <PurchaseForm purchase={newPurchase(activeStore.id)} onDone={() => setCreatingPurchase(false)} />
-      </Sheet>
     </Screen>
   );
 }

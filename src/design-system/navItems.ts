@@ -1,13 +1,14 @@
 import { navigate } from "../lib/router";
 import type { StoreType } from "../types";
 
-// Nav tabs. "catalogo" is a parent that expands into the Productos / Categorías
-// children (each its own route). The other tabs are flat leaves.
+// Nav tabs. "productos" is a parent that renders the product list at /productos
+// and expands into the Categorías / Compras children (each its own route).
+// The other tabs are flat leaves.
 export type Tab =
   | "inicio"
-  | "catalogo"
-  | "catalogo_productos"
-  | "catalogo_categorias"
+  | "productos"
+  | "productos_categorias"
+  | "productos_compras"
   | "pedidos"
   | "clientes"
   | "inventario";
@@ -19,12 +20,12 @@ export type NavItem = { id: Tab; label: string; path: string; children?: NavItem
 export const NAV_ITEMS: NavItem[] = [
   { id: "inicio", label: "Inicio", path: "/" },
   {
-    id: "catalogo",
-    label: "Catálogo",
-    path: "/catalogo-admin",
+    id: "productos",
+    label: "Productos",
+    path: "/productos",
     children: [
-      { id: "catalogo_productos", label: "Productos", path: "/catalogo-admin/productos" },
-      { id: "catalogo_categorias", label: "Categorías", path: "/catalogo-admin/categorias" },
+      { id: "productos_categorias", label: "Categorías", path: "/productos/categorias" },
+      { id: "productos_compras", label: "Compras", path: "/productos/compras" },
     ],
   },
   { id: "pedidos", label: "Pedidos", path: "/pedidos" },
@@ -32,14 +33,17 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "inventario", label: "Inventario", path: "/inventario" },
 ];
 
-// The catalog parent is highlighted when itself or any of its children is active.
+// The productos parent is highlighted when itself or any of its children is active.
 export function parentActive(active: Tab): boolean {
-  return active === "catalogo" || active.startsWith("catalogo_");
+  return active === "productos" || active.startsWith("productos_");
 }
 
-// Inventario tab only exists for inventory-tiered stores.
+// Inventario tab and the Compras child only exist for inventory-tiered stores.
 export function visibleNavItems(storeType: StoreType) {
-  return NAV_ITEMS.filter((t) => t.id !== "inventario" || storeType === "inventory_tiered");
+  const keep = (item: NavItem) =>
+    storeType === "inventory_tiered" ||
+    (item.id !== "inventario" && item.id !== "productos_compras");
+  return NAV_ITEMS.filter(keep).map((t) => ({ ...t, children: t.children?.filter(keep) }));
 }
 
 export { navigate };
