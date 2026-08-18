@@ -86,11 +86,12 @@ En `StoreSettingsScreen.tsx`, sección "Niveles de precio" (solo tiendas `invent
 - `ProductForm.tsx`: los 3 TextFields fijos (`:429` y hermanos) pasan a iterar `tiersForStore(activeStore)`. Junto al campo del tier por defecto, si `cost` y `pricingRule` existen: texto de ayuda "Sugerido: $X" y botón/chip "Usar" que llena el campo.
 - `PurchaseForm.tsx`: el mapa sobre `["retail","wholesale","reseller"]` (`:201-209`) y los estados fijos (`:339-385`) iteran los tiers de la tienda con sus labels.
 - `OrderForm.tsx`: `TIER_OPTIONS` se construye desde `tiersForStore(activeStore)`; `selectTier`/`selectProduct` usan tier ids string.
-- `CatalogScreen.tsx:119` e `InventoryScreen.tsx:89`: label y valor desde el tier por defecto de la tienda (texto "Menudeo" fijo → `defaultTier(store).label`).
+- `CatalogScreen.tsx:119`: label y valor del tier por defecto en la tarjeta de producto (texto "Menudeo" fijo → `defaultTier(store).label`). Nota: `InventoryScreen` ya no existirá — `unified-products` lo retira y mueve stats a las tarjetas; si esa entrega aún no cae, el mismo cambio aplica al listado de Inventario y desaparece al fusionarla.
 
 ### 5. Proyecciones públicas y reglas
 
-- `src/app/firebase/firestoreData.ts:377,423`: el DTO público expone un **único `price` ya resuelto** (escalar: `prices[defaultTierId]`), nunca el mapa completo de precios ni precios privados (mayoreo, costos). Un cambio de `defaultTierId` se refleja al republicar. Allow-list G-P05 intacta.
+- `src/app/firebase/firestoreData.ts:377,423`: el DTO público expone un **único `price` ya resuelto** (escalar: `prices[defaultTierId]`), nunca el mapa completo de precios ni precios privados (mayoreo, costos). Un cambio de `defaultTierId` se refleja al republicar.
+- **Requisito de la implementación (no de este PR de spec):** retirar `prices` del allow-list público (`src/app/firebase/rules-allowlist.ts`) dejando únicamente `price`. Este PR sólo cambia la spec; el allow-list lo modifica la entrega de implementación.
 - `firestore.rules` sin cambios: `priceTiers` vive en `stores` (plano de datos, ya cubierto por reglas de membresía); **no** se agrega a `adminStores` ni a su allow-list (`src/app/firebase/rules-allowlist.ts`) — es contenido de negocio, no control (G-P02).
 
 ## Alcance (out)
@@ -102,7 +103,7 @@ En `StoreSettingsScreen.tsx`, sección "Niveles de precio" (solo tiendas `invent
 
 ## Costo (free tier) — estimación corregida
 
-- **Migración (una sola vez):** 1 write por tienda sin `priceTiers` + 1 write por producto con schema viejo + 1 write por orden con `priceTier` legacy + republicación (1 write de `publicStores` + 1 por `publicProducts`) por tienda afectada. Con el catálogo actual (~decenas de documentos) son decenas de writes, una sola vez — muy por debajo de 20K/día. Lecturas: las que ya hace la carga de estado; 0 extra.
+- **Migración (una sola vez), por tienda afectada:** 1 write por tienda sin `priceTiers` **+ 1 write a `adminStores`** (`saveEntity("stores")` siempre batchea ambos planos) + 1 write por producto con schema viejo + 1 write por orden con `priceTier` legacy + **republicación**: 1 write de `publicStores/{slug}` + 1 de `publicCatalogs/{slug}` + 1 por cada `publicProduct` de la tienda, más las lecturas de los documentos públicos actuales para detectar obsoletos. Con el catálogo actual (~decenas de documentos) son decenas de writes/lecturas, una sola vez — muy por debajo de 50K lecturas y 20K writes/día.
 - Editar tiers: 1 write de `stores/{id}` por guardado en ajustes (+1 de republicación si cambió label/default).
 - Guardar producto/orden: mismo número de writes que hoy (el mapa `prices` es el mismo campo).
 - Sin dependencias nuevas, sin Functions, sin Storage extra.
