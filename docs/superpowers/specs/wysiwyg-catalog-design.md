@@ -146,8 +146,9 @@ Guardar ejecuta **un único `writeBatch`** con tres documentos:
    **no** se republican los `publicProducts`, que no cambian).
 
 Si el batch falla, el error **se propaga**: `toast.error` y sin éxito falso; el
-draft se conserva para reintentar. En modo demo local funciona igual
-(`localStorage`). **Sin cambios en `firestore.rules`**, sin colecciones nuevas,
+draft se conserva para reintentar. V1 requiere sesión autenticada (el gate
+actual no permite panel privado sin login); los flujos owner-only ya descritos.
+**Sin cambios en `firestore.rules`**, sin colecciones nuevas,
 sin Functions, sin dependencias npm.
 
 ### Costo (free tier)
