@@ -110,7 +110,7 @@
       "id": "wysiwyg-catalog",
       "title": "Editor visual de catálogo",
       "priority": 120,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/wysiwyg-catalog-design.md",
       "dependsOn": ["unified-products"],
       "previewChecks": []
