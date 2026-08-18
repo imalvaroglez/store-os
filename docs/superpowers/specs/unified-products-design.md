@@ -85,7 +85,7 @@ Consolidar la administración de productos en **una sola pestaña "Productos"** 
 
 2. **`InventoryScreen` se elimina** junto con su pestaña y la ruta `/inventario` (que pasa a redirigir). Lo que sobrevive de ella se integra a la lista de productos:
    - En stores `inventory_tiered`, cada tarjeta de producto (`CatalogScreen`) muestra las stats Disponible/Comprometido/Físico y los ajustes manuales ± (los controles de `InventoryScreen.tsx:70-133`, movidos a la tarjeta, no reescritos)
-   - En stores `made_to_order` las tarjetas no cambian
+   - En stores `on_demand` las tarjetas no cambian
    - El resto de `InventoryScreen` (botones "Compras"/"+ Compra", historial, Sheet de `PurchaseForm`) ya vive en `/productos/compras` y se borra con la pantalla
 
 3. **navItems.ts actualizado** (`src/design-system/navItems.ts`):
@@ -127,7 +127,7 @@ En `src/lib/router.ts`, al hacer match de la ruta admin, si `tab === "catalogo-a
 2. ✅ La pestaña "Inventario" desaparece del nav (móvil y desktop); no existe `InventoryScreen` en el código
 3. ✅ Nueva pestaña "Productos" (padre) que renderiza la lista directamente, con hijos Categorías y (Compras si inventory_tiered) — sin pantalla wrapper nueva ni etiqueta duplicada
 4. ✅ El padre "Productos" navega a `/productos` al tocar su etiqueta; el control de expandir hijos es un control separado (chevron)
-5. ✅ En stores inventory_tiered, las tarjetas de producto muestran stats (Disponible/Comprometido/Físico) y ajustes ±; en made_to_order no cambian
+5. ✅ En stores inventory_tiered, las tarjetas de producto muestran stats (Disponible/Comprometido/Físico) y ajustes ±; en on_demand no cambian
 6. ✅ Categorías funciona igual que antes, solo accesible desde Productos
 7. ✅ Compras funciona igual que antes, solo accesible desde Productos
 8. ✅ URL routing funciona: `/productos` → lista (CatalogScreen), `/productos/categorias` → Categorías, `/productos/compras` → Compras. No existe `/productos/productos` ni `/inventario`
