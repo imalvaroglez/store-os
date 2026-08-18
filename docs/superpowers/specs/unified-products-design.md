@@ -24,9 +24,9 @@ Consolidar la administración de productos en **una sola pestaña "Productos"** 
 
 ## Alcance (in)
 
-1. **Crear una nueva pantalla "ProductosScreen"** que reemplace `CatalogScreen` como la vista principal de productos
-2. **Mover Categorías dentro de Productos** como un sub-tab o panel interno
-3. **Mover Compras dentro de Productos** como un sub-tab o panel interno
+1. **Renombrar el grupo de navegación** "Catálogo" → "Productos" (`/catalogo-admin` → `/productos`), con el padre renderizando la lista (patrón actual, sin pantalla wrapper nueva)
+2. **Mover Categorías dentro de Productos** como hijo del nav (`/productos/categorias`)
+3. **Extraer la vista de Compras** de `InventoryScreen` a su propia pantalla `/productos/compras` (lista + "+ Compra" + Sheet de `PurchaseForm`)
 4. **Eliminar la pestaña "Catálogo"** del navigation (`src/design-system/navItems.ts:21-28`)
 5. **Mantener Inventario solo para stores inventory_tiered** pero simplificado a solo la vista de ajustes +/- y stats (Disponible/Comprometido/Físico)
 6. **Preservar toda la funcionalidad existente:** ProductForm, PurchaseForm, CategoriesScreen siguen funcionando igual, solo cambian de ubicación en la navegación
@@ -62,8 +62,7 @@ Consolidar la administración de productos en **una sola pestaña "Productos"** 
 
 ```
 - Inicio
-- Productos (parent, path /productos)
-  - Catálogo (/productos/productos — lista y CRUD)
+- Productos (parent, path /productos — renderiza la lista directamente)
   - Categorías (/productos/categorias)
   - Compras (/productos/compras — solo inventory_tiered)
 - Pedidos
@@ -71,37 +70,38 @@ Consolidar la administración de productos en **una sola pestaña "Productos"** 
 - Inventario (solo inventory_tiered, reducido a ajustes manuales +/-)
 ```
 
-**Etiquetado sin duplicados:** el hijo de lista NO se llama "Productos" (evitar "Productos → Productos"); se etiqueta **"Catálogo"**, consistente con el título que ya muestra `CatalogScreen` (`ScreenHeader title="Catálogo"`). El botón "Ver público" de CatalogScreen sigue apuntando a la ruta pública `/catalogo/:slug`, que no cambia.
+**Decisiones cerradas:**
+
+1. **El padre renderiza la lista — no existe `/productos/productos`.** Igual que hoy `/catalogo-admin` (sin sub) ya muestra la lista (`AppShell.tsx:47-48`: `sub === "categorias" ? ... : catalogo_productos`), `/productos` muestra la lista de productos. La doble ruta `/productos/productos` es ruido; se elimina del diseño.
+2. **No se crea `ProductosScreen`.** El patrón parent/children ya existe en el nav (`Sidebar.tsx:49-72` expande el grupo; `BottomNav.tsx:46-75` muestra los hijos bajo el padre activo). La navegación la resuelve el nav; `AppShell` mapea cada ruta a las pantallas existentes, como hace hoy. La única pieza nueva de UI es la vista de Compras extraída de `InventoryScreen` (lista + botón "+ Compra" + Sheet de `PurchaseForm`), que pasa a ser su propia pantalla en `/productos/compras`.
+3. **Etiquetado:** padre "Productos", hijos "Categorías" y "Compras" — sin duplicados y sin hijo "Catálogo" (la lista es el default del padre; el título de pantalla "Catálogo" que ya muestra `CatalogScreen` se mantiene).
+4. **Visibilidad de "Compras":** mismo criterio que Inventario hoy (`visibleNavItems` filtra por `storeType === "inventory_tiered"`); extender el filtro a los children del padre Productos. El botón "Ver público" de CatalogScreen sigue apuntando a `/catalogo/:slug`, que no cambia.
 
 ### Implementación UI
 
-1. **Nueva `ProductosScreen`**: envoltorio con tabs internos o botón de toggle
-   - Tab principal: lista de productos (reutiliza el contenido de `CatalogScreen`, líneas 154-192)
-   - Tab secundario: Categorías (reutiliza el contenido de `CategoriesScreen`)
-   - Tab terciario (solo inventory_tiered): Compras (reutiliza `PurchaseList` y botón "+ Compra")
+1. **Sin wrapper nuevo.** `AppShell` mapea `/productos` (con o sin sub) a las pantallas existentes: sin sub → `CatalogScreen`; `categorias` → `CategoriesScreen`; `compras` → nueva `PurchasesScreen` (movida, no reescrita, de `InventoryScreen`: su lista, botón "+ Compra" y Sheet de `PurchaseForm`).
 
 2. **InventarioScreen simplificado**:
    - Remueve los botones "Compras" y "+ Compra" y la vista de historial (`src/features/inventory/InventoryScreen.tsx:58-67`, `showHistory` líneas 44-51, y el Sheet de `PurchaseForm` líneas 135-137)
    - Solo conserva los ajustes +/- y stats (líneas 70-133)
 
 3. **navItems.ts actualizado** (`src/design-system/navItems.ts`):
-   - Renombrar `catalogo` → `productos` en el union `Tab`
-   - Renombrar hijos `catalogo_productos` → `productos_catalogo`, `catalogo_categorias` → `productos_categorias`
-   - Agregar hijo `productos_compras` (solo visible en inventory_tiered, misma exclusión que hoy tiene inventario en `visibleNavItems`)
+   - Renombrar `catalogo` → `productos` en el union `Tab`; el padre `productos` mantiene su propio tab id (la lista renderiza bajo él)
+   - Hijo `catalogo_categorias` → `productos_categorias`; agregar hijo `productos_compras` (solo visible en inventory_tiered — extender `visibleNavItems` para filtrar children, hoy solo filtra tabs)
    - Actualizar `parentActive()` a los prefijos nuevos
-   - `Sidebar.tsx` también referencia ids `catalogo_*` / el path `/catalogo-admin` y debe actualizarse en paralelo
+   - `Sidebar.tsx` y `BottomNav.tsx` referencian ids `catalogo_*` / `catalogoOpen` y deben actualizarse en paralelo (renombrar el estado local a `productosOpen`)
 
 4. **Router actualizado** (`src/lib/router.ts`): el regex admin ya captura `tab`/`sub` genéricos; no requiere cambio para `/productos/*`. El cambio es el redirect (siguiente sección).
 
 ### Redirect `/catalogo-admin/*` → `/productos/*`
 
-En `src/lib/router.ts`, al hacer match de la ruta admin, si `tab === "catalogo-admin"` se redirige (reemplazo en `history` + dispatch `popstate`, o `navigate()` — `pushState` simple) a `/productos` + (`/` + `sub` si existe): `/catalogo-admin` → `/productos`, `/catalogo-admin/productos` → `/productos/productos`, `/catalogo-admin/categorias` → `/productos/categorias`. El admin regex solo acepta un `sub`, así que no hay paths más profundos que cubrir.
+En `src/lib/router.ts`, al hacer match de la ruta admin, si `tab === "catalogo-admin"` se redirige (reemplazo en `history` + dispatch `popstate`, o `navigate()` — `pushState` simple) a `/productos` o `/productos/<sub>`: `/catalogo-admin` → `/productos`, `/catalogo-admin/productos` → `/productos` (la lista es el default del padre), `/catalogo-admin/categorias` → `/productos/categorias`. El admin regex solo acepta un `sub`, así que no hay paths más profundos que cubrir.
 
 **Test mínimo (vitest):** para cada una de las tres URLs viejas, `matchRoute` (o la función de redirect) resuelve a la nueva URL y `AppShell`/`TAB_FOR_PATH` mapean el resultado a un tab de `productos`, no a `inicio`.
 
 ### AppShell: reescritura del special-case
 
-`src/app/AppShell.tsx:47-51` hoy hardcodea `seg === "catalogo-admin"`. Se reescribe al nuevo segmento: `TAB_FOR_PATH` cambia `"catalogo-admin": "catalogo"` → `"productos": "productos"` y el branch especial pasa a `seg === "productos"` con `tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : "productos_catalogo"`. El `switch` de screens (líneas 79-97) mapea los tres ids nuevos a los componentes reutilizados.
+`src/app/AppShell.tsx:47-51` hoy hardcodea `seg === "catalogo-admin"`. Se reescribe al nuevo segmento: `TAB_FOR_PATH` cambia `"catalogo-admin": "catalogo"` → `"productos": "productos"` y el branch especial pasa a `seg === "productos"` con `tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : "productos"`. El `switch` de screens (líneas 79-97) mapea: `productos` → `CatalogScreen`, `productos_categorias` → `CategoriesScreen`, `productos_compras` → `PurchasesScreen`.
 
 ### Referencias concretas al código existente
 
@@ -121,13 +121,13 @@ En `src/lib/router.ts`, al hacer match de la ruta admin, si `tab === "catalogo-a
 ## Criterios de aceptación
 
 1. ✅ La pestaña "Catálogo" desaparece del nav (móvil y desktop)
-2. ✅ Nueva pestaña "Productos" con dropdown o tabs internos: Catálogo, Categorías, (Compras si inventory_tiered) — sin etiqueta duplicada "Productos → Productos"
+2. ✅ Nueva pestaña "Productos" (padre) que renderiza la lista directamente, con hijos Categorías y (Compras si inventory_tiered) — sin pantalla wrapper nueva ni etiqueta duplicada
 3. ✅ La lista de productos se ve idéntica a antes (mismo `ProductCard`, mismo `ProductForm` al editar)
 4. ✅ Categorías funciona igual que antes, solo accesible desde Productos
 5. ✅ Compras funciona igual que antes, solo accesible desde Productos
 6. ✅ Inventario (solo inventory_tiered) muestra solo los ajustes +/- y stats, sin botones de compras
-7. ✅ URL routing funciona: `/productos` → ProductosScreen, `/productos/categorias` → tab categorías, `/productos/compras` → tab compras
-8. ✅ Redirect: `/catalogo-admin`, `/catalogo-admin/productos` y `/catalogo-admin/categorias` redirigen a su equivalente bajo `/productos/*` (cubierto por test vitest)
+7. ✅ URL routing funciona: `/productos` → lista (CatalogScreen), `/productos/categorias` → Categorías, `/productos/compras` → Compras. No existe `/productos/productos`
+8. ✅ Redirect: `/catalogo-admin` y `/catalogo-admin/categorias` → equivalentes bajo `/productos/*`; `/catalogo-admin/productos` → `/productos` (cubierto por test vitest)
 9. ✅ No hay cambios en el modelo de datos ni en los forms existentes
 10. ✅ La edición de stock/cost/prices desde ProductForm sigue funcionando
 11. ✅ La creación de compras con edición de precios inline sigue funcionando
@@ -149,7 +149,7 @@ En `src/lib/router.ts`, al hacer match de la ruta admin, si `tab === "catalogo-a
     {
       "name": "CatalogoDentroDeProductos",
       "viewport": "mobile",
-      "path": "/productos/productos",
+      "path": "/productos",
       "selector": "main h1, main h2, main h3",
       "text": "Catálogo",
       "expect": "Lista de productos idéntica a la actual CatalogScreen (título 'Catálogo')"
@@ -176,7 +176,7 @@ En `src/lib/router.ts`, al hacer match de la ruta admin, si `tab === "catalogo-a
       "path": "/catalogo-admin/productos",
       "selector": "main",
       "text": "Catálogo",
-      "expect": "La URL vieja termina en /productos/productos y renderiza la lista de productos"
+      "expect": "La URL vieja termina en /productos y renderiza la lista de productos"
     },
     {
       "name": "InventarioSimplificado",
@@ -188,7 +188,7 @@ En `src/lib/router.ts`, al hacer match de la ruta admin, si `tab === "catalogo-a
     {
       "name": "ProductFormEditaStock",
       "viewport": "mobile",
-      "path": "/productos/productos",
+      "path": "/productos",
       "selector": "main form label",
       "text": "En existencia",
       "expect": "Al editar un producto en store inventory_tiered, el formulario muestra cost, precios y cantidad como ahora"
