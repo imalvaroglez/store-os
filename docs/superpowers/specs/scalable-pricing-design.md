@@ -70,7 +70,7 @@ Extiende la migración existente en `src/lib/catalog.ts` (`migrateCatalog`, `:16
 - Re-corrida = no-op (schemaVersion + priceTiers presentes).
 - **Persistencia explícita:** la migración no se queda en memoria — persiste **solo los documentos que cambiaron** (tiendas sin `priceTiers`, productos con schema viejo, órdenes con `priceTier` legacy), vía el adapter (`persistEntity` / batch existente, mismo patrón que el backfill de `publicProducts`). Documentos sin cambio = 0 writes.
 - **Republicación única:** tras migrar, cada tienda afectada república su catálogo **una sola vez** (reusa la proyección existente de `publicStores`/`publicProducts`), no una vez por producto.
-- **Cloud:** corre en cliente al cargar estado (`StoreProvider`), igual que hoy; no se requiere script de servidor. El guardado de tiers editados reutiliza `updateStore` (2 writes privados + proyección pública completa, contabilizada en §Costo).
+- **Cloud:** corre en cliente al cargar estado (`StoreProvider`), igual que hoy; no se requiere script de servidor. La migración persiste por el **adapter** (`persistEntity`, solo documentos cambiados) y república una vez por tienda; el guardado de tiers editados reutiliza `updateStore` (2 writes privados + proyección pública completa, contabilizada en §Costo, con propagación de error — ver abajo).
 
 ### 3. UI — edición de tiers (StoreSettingsScreen)
 
@@ -105,6 +105,7 @@ En `StoreSettingsScreen.tsx`, sección "Niveles de precio" (solo tiendas `invent
 
 - **Migración (una sola vez), por tienda afectada:** **2 writes privados de Store** (`stores` + `adminStores`; `saveEntity("stores")` siempre batchea ambos planos) + P writes de productos cambiados + O writes de órdenes cambiadas + **proyección pública completa**: 1 write de `publicStores/{slug}` + 1 de `publicCatalogs/{slug}` + 1 por cada `publicProduct` publicado (N), más las lecturas de la consulta de documentos públicos actuales y D borrados de obsoletos. Con el catálogo actual (~decenas de documentos) son decenas de writes/lecturas/borrados, una sola vez — muy por debajo de 50K lecturas, 20K writes y 20K borrados/día.
 - **Edición interactiva de tiers:** cada guardado reutiliza `updateStore` — **2 writes privados** (`stores` + `adminStores`) y la **misma proyección pública completa** del punto anterior. Sin ruta especial ni optimización adicional.
+- **Propagación de error en la proyección (requisito):** hoy `updateStore` silencia el error de `projectPublicForStore` (`src/app/StoreProvider.tsx:276`) — puede persistir el default privado, aparentar éxito y dejar el precio público anterior. Esta entrega lo corrige: si la proyección falla, el error **se propaga** (sin éxito falso; toast de error), el draft/configuración **se conserva** y se permite **reintentar** (los 2 writes privados ya hechos no se repiten innecesariamente; el reintento re-ejecuta la proyección). Con test que falle la proyección y afirme: error visible, sin toast de éxito, datos privados persistidos, proyección anterior intacta, reintento exitoso la completa.
 - Guardar producto/orden: mismo número de writes que hoy (el mapa `prices` es el mismo campo).
 - Sin dependencias nuevas, sin Functions, sin Storage extra.
 
@@ -127,4 +128,4 @@ los tests unitarios y e2e.)
 ## Riesgos
 
 - **Snapshot de labels:** órdenes guardan `priceTier` (id) y `price` (número); renombrar un label no rompe nada. **Ocultar** un tier conserva las claves históricas de productos; eliminarlo (confirmación explícita) deja órdenes históricas con id huérfano → mostrar "—" como fallback.
-- **Proyecciones stale:** la migración y cada guardado de tiers reutilizan `updateStore`, que dispara la proyección completa — no se promete ni se necesita republicación manual para este cambio de tiers.
+- **Proyecciones stale:** la migración persiste por adapter y república una vez por tienda; cada guardado de tiers usa `updateStore`, que dispara la proyección completa (con propagación de error — sin éxito falso si la proyección falla). No se promete republicación manual para este cambio de tiers.
