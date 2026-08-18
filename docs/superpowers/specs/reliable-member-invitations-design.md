@@ -62,6 +62,8 @@ Nuevo paso `reconcilePendingInvites(user)` que corre tras `ensureUserDoc` en cad
 
 **Cambio de reglas (`firestore.rules`)**, mínimo y auditado en `npm run test:rules`:
 
+- **Anti-spoofing en `users` (crítico).** Hoy `users.create`/`users.update` permiten al propio usuario fijar `email`/`emailNormalized` arbitrarios — con la búsqueda por email eso permitiría suplantar a cualquiera. Ambas reglas pasan a exigir que el documento deje `email == verifiedEmail()` y `emailNormalized == canonicalEmail()` (email verificado/canonicalizado del token, nunca del body). Pruebas de reglas que **rechacen spoofing en create y en update** (email ajeno y emailNormalized inconsistente).
+
 - `stores.list`: añadir `|| (isSignedIn() && resource.data.pendingInvites.hasAny([canonicalEmail()]))` — el invitado puede descubrir solo la tienda que lo nombra **a él** (email verificado del token JWT, canonicalizado en reglas con `lower()`/`replace()`; reusa `verifiedEmail()` ya definido en `firestore.rules:42` como base de `canonicalEmail()`).
 - `stores.update` / `adminStores.update`: rama invitee — permitida solo si `resource.data.pendingInvites.hasAny([canonicalEmail()])` Y el diff toca únicamente `memberUids` (agregando exactamente `request.auth.uid`) y `pendingInvites` (quitando exactamente `canonicalEmail()`). Se mantiene la rama `isOwner` intacta; la rama invitee no puede tocar `ownerUid` ni ningún otro campo.
 - Sin colección nueva (decisión PO): `pendingInvites` es la única fuente del estado pendiente.
@@ -85,7 +87,7 @@ Nuevo paso `reconcilePendingInvites(user)` que corre tras `ensureUserDoc` en cad
 ## Plan de pruebas
 
 - **Unit (vitest):** `normalizeEmail` (casos: Gmail con puntos, mayúsculas, no-Gmail con puntos que SÍ importan); `findUidByEmail` con fallback a `emailNormalized`; `inviteMember` agrega uid directo cuando hay cuenta; `reconcilePendingInvites` produce batch de 2 docs con memberUids+uid y pendingInvites−email, idempotente.
-- **Rules (`npm run test:rules`):** invitado lista solo su tienda; invitee-update aceptado solo con el diff exacto; intento de escalar ownerUid o tocar otro campo rechazado; owner-path sin regresión.
+- **Rules (`npm run test:rules`):** invitado lista solo su tienda; invitee-update aceptado solo con el diff exacto; intento de escalar ownerUid o tocar otro campo rechazado; owner-path sin regresión; spoofing de `email`/`emailNormalized` rechazado en `users.create` y `users.update`.
 - **E2E (emulador, `npm run e2e:firebase`):** A invita a B (email) → B entra con Google → B ve la tienda de A en el selector → en ajustes de A la invitación ya no aparece en pendientes.
 
 ## previewChecks
@@ -101,4 +103,4 @@ emulador del plan de pruebas.)
 
 ## Coste estimado (free tier)
 
-Por login con invitaciones pendientes: 1 query `stores` (con `array-contains`, indexada) + 2 writes por tienda reconciliada. Backfill `emailNormalized`: 1 write por usuario, una sola vez. Muy por debajo de 20K writes/día.
+Por login con invitaciones pendientes: 1 query `stores` (con `array-contains`, indexada) + 2 writes por tienda reconciliada. Backfill `emailNormalized`: 1 write por usuario, una sola vez. Backfill de `pendingInvites` legacy: 2 writes por tienda normalizada (`stores` + `adminStores`), una sola vez. Muy por debajo de 20K writes/día.
