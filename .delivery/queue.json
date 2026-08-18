@@ -74,7 +74,7 @@
       "id": "unified-products",
       "title": "Productos unificados",
       "priority": 80,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/unified-products-design.md",
       "dependsOn": [],
       "previewChecks": []
