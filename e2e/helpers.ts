@@ -249,10 +249,8 @@ export async function gotoSantiHome(page: Page) {
 }
 
 export async function openCatalog(page: Page) {
-  await page.getByRole("button", { name: /^Catálogo/ }).click();
-  const products = page.getByRole("menuitem", { name: "Productos" });
-  if (await products.isVisible().catch(() => false)) await products.click();
-  else await page.getByRole("button", { name: "Productos", exact: true }).click();
+  // unified-products: the Productos parent renders the list at /productos.
+  await page.getByRole("button", { name: /^Productos/ }).click();
   await expect(page.getByRole("heading", { name: "Catálogo", exact: true })).toBeVisible();
 }
 
