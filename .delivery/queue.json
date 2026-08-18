@@ -83,7 +83,7 @@
       "id": "reliable-member-invitations",
       "title": "Invitaciones de miembros confiables",
       "priority": 90,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/reliable-member-invitations-design.md",
       "dependsOn": ["platform-users-view"],
       "previewChecks": []
