@@ -155,10 +155,19 @@ export type Order = {
   públicas).
 - **Reglas:** `receiptSeq` es información operativa y vive **solo en `stores`**
   — nunca en `adminStores` (plano de control puro, G-P02). La transacción de
-  folio = 2 escrituras (Order + `stores/{id}`). Nueva rama en `firestore.rules`
-  que permite a un miembro actualizar **únicamente** `receiptSeq`
-  (diferencia exacta: +1) en `stores/{id}`; ningún otro campo, y ninguna
-  escritura a `adminStores`. Cubierta en `npm run test:rules`.
+  folio = 2 escrituras (Order + `stores/{id}`).
+- **Excepción estrecha y documentada al invariante de doble plano:** el
+  chokepoint proyecta toda escritura de `stores` a `adminStores`, pero la
+  transacción de folio escribe **solo Order + `stores/{id}`**, y el diff de
+  `stores/{id}` sólo puede contener `receiptSeq` — ningún campo de control
+  (`ownerUid`, `memberUids`, `pendingInvites`) cambia, así que `adminStores`
+  queda intacto por construcción y no se amplían sus permisos. Nueva rama en
+  `firestore.rules` que permite a un miembro actualizar **únicamente**
+  `receiptSeq` en `stores/{id}`, con semántica legacy
+  `resource.data.get("receiptSeq", 0)` (tiendas sin el campo aún): el nuevo
+  valor debe ser exactamente `get(...) + 1`. Pruebas en `npm run test:rules`:
+  ausente→1, n→n+1, saltos rechazados, cualquier cambio adicional rechazado, y
+  **ninguna escritura a `adminStores`** en la transacción.
 
 ## Alcance (out)
 
@@ -175,8 +184,11 @@ export type Order = {
 
 - Sin PDF-as-a-service, sin librerías de PDF, sin Cloud Function de render.
 - Migración = escrituras puntuales una sola vez por documento (≈ #Orders
-  existentes, cuota muy por debajo de 20K/día); folio = la transacción de
-  creación del Order (2 escrituras: Order + Store) — cero escrituras extra.
+  existentes, cuota muy por debajo de 20K/día).
+- **Folio en pedido nuevo:** la venta pasa de 1 a **2 writes** (Order + Store;
+  la escritura adicional es `Store`, por el `receiptSeq` en la misma
+  transacción). **Emisión de recibo legacy:** 2 writes totales (actualizar el
+  Order con su folio + actualizar `Store`).
 - Sin telemetría; sin PII nueva (los datos del recibo ya viven en
   `Order`/`Customer`, sujetos a las mismas reglas G-P01–G-P08).
 
