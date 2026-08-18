@@ -101,7 +101,7 @@
       "id": "scalable-pricing",
       "title": "Precios escalables",
       "priority": 110,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/scalable-pricing-design.md",
       "dependsOn": [],
       "previewChecks": []
