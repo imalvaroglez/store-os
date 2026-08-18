@@ -23,7 +23,7 @@
       "id": "pnpm-lockfile",
       "title": "Resolver el lockfile de pnpm",
       "priority": 30,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/pnpm-lockfile-design.md",
       "dependsOn": [],
       "previewChecks": []
