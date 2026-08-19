@@ -1,6 +1,7 @@
 ---
 Delivery-ID: pnpm-lockfile
-Delivery-Status: Pending approval
+Delivery-Status: Approved
+Approved-By: Álvaro González (PO)
 specPath: docs/superpowers/specs/pnpm-lockfile-design.md
 ---
 
