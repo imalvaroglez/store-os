@@ -1,6 +1,7 @@
 ---
 Delivery-ID: reliable-member-invitations
-Delivery-Status: Pending approval
+Delivery-Status: Approved
+Approved-By: Álvaro González (PO)
 specPath: docs/superpowers/specs/reliable-member-invitations-design.md
 ---
 
