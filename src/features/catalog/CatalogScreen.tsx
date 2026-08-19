@@ -19,6 +19,7 @@ import {
 import { ProductForm } from "./ProductForm";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore } from "../../lib/selectors";
+import { defaultTier } from "../../lib/pricing";
 import { publicPrice, profit, formatMoney } from "../../lib/money";
 import type { Product } from "../../types";
 import type { StatusTone } from "../../design-system";
@@ -52,11 +53,15 @@ function statusTone(p: Product): StatusTone {
 function ProductCard({
   product,
   isTiered,
+  defaultId,
+  defaultLabel,
   onEdit,
   onDelete,
 }: {
   product: Product;
   isTiered: boolean;
+  defaultId: string;
+  defaultLabel: string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -116,7 +121,7 @@ function ProductCard({
           {isTiered ? (
             <div className="flex gap-3 mt-1.5 text-xs">
               <span className="text-ink">
-                Menudeo <b>{formatMoney(product.prices?.retail)}</b>
+                {defaultLabel} <b>{formatMoney(product.prices?.[defaultId])}</b>
               </span>
               {typeof product.quantityOnHand === "number" && (
                 <span className={low ? "text-danger font-semibold" : "text-on-surface-soft"}>
@@ -149,6 +154,8 @@ export function CatalogScreen() {
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
+  const defaultId = defaultTier(activeStore)?.id ?? "t_retail";
+  const defaultLabel = defaultTier(activeStore)?.label ?? "Menudeo";
   const products = productsForStore(state.products, activeStore.id);
 
   return (
@@ -184,6 +191,8 @@ export function CatalogScreen() {
               key={p.id}
               product={p}
               isTiered={isTiered}
+              defaultId={defaultId}
+              defaultLabel={defaultLabel}
               onEdit={() => setEditing(p)}
               onDelete={() => setDeleting(p)}
             />

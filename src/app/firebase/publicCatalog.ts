@@ -26,7 +26,6 @@ export type PublicProductSummary = {
   publicDescription?: string | null;
   imageUrl?: string | null;
   price?: number;
-  prices?: { retail?: number };
   availability?: string;
   isFeatured?: boolean;
   isNew?: boolean;
@@ -74,7 +73,6 @@ export type PublicProductDetail = {
   isFeatured?: boolean;
   isNew?: boolean;
   price?: number;
-  prices?: { retail?: number };
   categories: { id: string; name: string; slug: string }[];
 };
 

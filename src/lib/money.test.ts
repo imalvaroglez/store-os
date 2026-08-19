@@ -27,12 +27,16 @@ describe("formatMoney", () => {
 
 describe("publicPrice", () => {
   it("uses single price for on-demand products", () => {
-    const p = { price: 500 } as Product;
+    const p = { price: 500 } as unknown as Product;
     expect(publicPrice(p)).toBe(500);
   });
-  it("falls back to retail for tiered products", () => {
-    const p = { prices: { retail: 900, wholesale: 700, reseller: 600 } } as Product;
-    expect(publicPrice(p)).toBe(900);
+  it("uses the store's default tier when provided", () => {
+    const p = { prices: { t_retail: 900, t_wholesale: 700 } } as unknown as Product;
+    expect(publicPrice(p, "t_wholesale")).toBe(700);
+  });
+  it("falls back to the legacy retail key, then cheapest, without a default", () => {
+    expect(publicPrice({ prices: { retail: 900, wholesale: 700, reseller: 600 } })).toBe(900);
+    expect(publicPrice({ prices: { t_wholesale: 700, t_reseller: 600 } })).toBe(600);
   });
   it("returns undefined when nothing set", () => {
     expect(publicPrice({})).toBeUndefined();

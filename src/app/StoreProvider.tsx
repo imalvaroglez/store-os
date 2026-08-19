@@ -196,7 +196,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               writes.push(saveEntity(user, "categories", category));
             }
           }
+          // scalable-pricing migration: persist ONLY the docs that changed
+          // (identity comparison — the migration keeps refs for unchanged
+          // entities) and republish each affected store's catalog ONCE.
+          const migratedStores: Store[] = [];
+          for (const store of migrated.stores) {
+            const before = s.stores.find((x) => x.id === store.id);
+            if (before !== store) {
+              writes.push(saveEntity(user, "stores", storeWithMembership(store, user)));
+              migratedStores.push(store);
+            }
+          }
+          for (const order of migrated.orders) {
+            const before = s.orders.find((o) => o.id === order.id);
+            if (before !== order) writes.push(saveEntity(user, "orders", order));
+          }
           await Promise.all(writes);
+          // One public republish per affected store (not per product).
+          await Promise.all(
+            migratedStores.map((store) =>
+              projectPublicForStore(store, migrated.products, migrated.categories).catch(() => {})
+            )
+          );
           fromCloud.current = true;
           dispatch({ type: "REPLACE_STATE", state: migrated });
           fromCloud.current = false;
@@ -275,7 +296,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         // Always re-project: storefront content (hero, FAQ, contact, SEO) lives
         // in publicStores, so an edit with no slug change must still republish.
-        await projectPublicForStore(store, state.products, state.categories).catch(() => {});
+        // No silent catch (scalable-pricing): if the projection fails the caller
+        // must SEE it — a private write that "succeeds" while the public price
+        // stays stale is a false success. Repair paths: save again, or
+        // "Republicar catálogo" (projection only, no private writes).
+        await projectPublicForStore(store, state.products, state.categories);
       }
     },
     deleteStore: (storeId) => {
@@ -361,7 +386,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const next = state.products.some((p) => p.id === product.id)
             ? state.products.map((p) => (p.id === product.id ? product : p))
             : [...state.products, product];
-          await upsertPublicProduct(product, store.slug, next, state.categories);
+          await upsertPublicProduct(product, store.slug, next, state.categories, store.defaultTierId);
         }
       }
     },
@@ -379,7 +404,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const store = state.stores.find((s) => s.id === storeId);
           if (store) {
             const remaining = state.products.filter((p) => p.id !== productId);
-            rebuildPublicCatalog(store.slug, storeId, remaining).catch(() => {});
+            rebuildPublicCatalog(store.slug, storeId, remaining, store?.defaultTierId).catch(() => {});
           }
         }
         if (product) deleteProductImage(product.storeId, productId).catch(() => {});

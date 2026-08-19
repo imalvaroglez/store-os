@@ -12,7 +12,7 @@ export const PUBLIC_PRODUCT_FIELDS = [
   "storeId", "storeSlug", "productSlug", "name", "sku",
   "publicDescription", "images", "material", "finish", "dimensions", "care",
   "availability", "canInquire", "isFeatured", "isNew", "categories",
-  "price", "prices",
+  "price",
 ] as const;
 
 // G-P02: exact fields the control-plane document adminStores/{storeId} may carry.

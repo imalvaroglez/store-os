@@ -14,7 +14,8 @@ import { suppliersForStore, productsForStore } from "../../lib/selectors";
 import { applyPurchaseLines } from "../../lib/inventory";
 import { todayIso, nowIso } from "../../lib/dates";
 import { formatMoney, parseAmount } from "../../lib/money";
-import type { Purchase, PurchaseLine, Supplier, Product } from "../../types";
+import { tiersForStore } from "../../lib/pricing";
+import type { PriceTierDef, Purchase, PurchaseLine, Supplier, Product } from "../../types";
 import { SupplierForm } from "./SupplierForm";
 
 // Multi-line supplier purchase ticket. Each line replenishes a product's stock
@@ -197,16 +198,16 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   on save. Only after a product is picked. */}
               {line.productId && (
                 isTiered ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {(["retail", "wholesale", "reseller"] as const).map((tier) => (
+                  <div className={tiersForStore(activeStore).length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+                    {tiersForStore(activeStore).map((t) => (
                       <TextField
-                        key={tier}
-                        label={tier === "retail" ? "Menudeo" : tier === "wholesale" ? "Mayoreo" : "Emprendedora"}
+                        key={t.id}
+                        label={t.label}
                         inputMode="decimal"
-                        value={(line.prices?.[tier] ?? 0).toString()}
+                        value={(line.prices?.[t.id] ?? 0).toString()}
                         onChange={(e) =>
                           updateLine(idx, {
-                            prices: { ...(line.prices ?? { retail: 0, wholesale: 0, reseller: 0 }), [tier]: parseAmount(e.target.value) },
+                            prices: { ...(line.prices ?? {}), [t.id]: parseAmount(e.target.value) ?? 0 },
                           })
                         }
                       />
@@ -295,6 +296,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           <ProductMiniForm
             draft={productDraft}
             isTiered={isTiered}
+            tiers={tiersForStore(activeStore)}
             onDone={async (saved) => {
               // Upsert (private by default; published if the user toggled it),
               // then set it directly on the line. We bypass pickProduct because
@@ -327,18 +329,20 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
 function ProductMiniForm({
   draft,
   isTiered,
+  tiers,
   onDone,
   onDraftChange,
 }: {
   draft: Product;
   isTiered: boolean;
+  tiers: PriceTierDef[];
   onDone: (saved: Product) => void;
   onDraftChange: (p: Product) => void;
 }) {
   const [publish, setPublish] = useState(false);
-  const [retail, setRetail] = useState(draft.prices?.retail?.toString() ?? "0");
-  const [wholesale, setWholesale] = useState(draft.prices?.wholesale?.toString() ?? "0");
-  const [reseller, setReseller] = useState(draft.prices?.reseller?.toString() ?? "0");
+  const [tierPrices, setTierPrices] = useState<Record<string, string>>(
+    () => Object.fromEntries(Object.entries(draft.prices ?? {}).map(([k, v]) => [k, v?.toString() ?? "0"]))
+  );
   const [price, setPrice] = useState(draft.price?.toString() ?? "0");
   const [cost, setCost] = useState(draft.cost?.toString() ?? "0");
   const toast = useToast();
@@ -354,7 +358,7 @@ function ProductMiniForm({
       cost: parseAmount(cost) || undefined,
       // Prices only when the store uses them.
       prices: isTiered
-        ? { retail: parseAmount(retail), wholesale: parseAmount(wholesale), reseller: parseAmount(reseller) }
+        ? Object.fromEntries(tiers.map((t) => [t.id, parseAmount(tierPrices[t.id]) ?? 0]))
         : draft.prices,
       price: isTiered ? draft.price : parseAmount(price),
       status: publish ? "published" : "draft",
@@ -381,10 +385,17 @@ function ProductMiniForm({
         onChange={(e) => setCost(e.target.value)}
       />
       {isTiered ? (
-        <div className="grid grid-cols-3 gap-2">
-          <TextField label="Menudeo" inputMode="decimal" placeholder="0" value={retail} onChange={(e) => setRetail(e.target.value)} />
-          <TextField label="Mayoreo" inputMode="decimal" placeholder="0" value={wholesale} onChange={(e) => setWholesale(e.target.value)} />
-          <TextField label="Emprendedora" inputMode="decimal" placeholder="0" value={reseller} onChange={(e) => setReseller(e.target.value)} />
+        <div className={tiers.length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+          {tiers.map((t) => (
+            <TextField
+              key={t.id}
+              label={t.label}
+              inputMode="decimal"
+              placeholder="0"
+              value={tierPrices[t.id] ?? ""}
+              onChange={(e) => setTierPrices((m) => ({ ...m, [t.id]: e.target.value }))}
+            />
+          ))}
         </div>
       ) : (
         <TextField label="Precio de venta" inputMode="decimal" placeholder="0" value={price} onChange={(e) => setPrice(e.target.value)} />

@@ -12,6 +12,7 @@ import {
   StatRow,
 } from "../../design-system";
 import { productsForStore, committedForProduct } from "../../lib/selectors";
+import { defaultTier } from "../../lib/pricing";
 import { formatMoney } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
 import { PurchaseForm } from "./PurchaseForm";
@@ -25,6 +26,7 @@ export function InventoryScreen() {
   const [showHistory, setShowHistory] = useState(false);
 
   if (!activeStore) return null;
+  const defTier = defaultTier(activeStore);
   const products = productsForStore(state.products, activeStore.id).filter(
     (p) => typeof p.quantityOnHand === "number"
   );
@@ -86,7 +88,7 @@ export function InventoryScreen() {
                   <div className="min-w-0">
                     <h3 className="font-semibold text-ink truncate">{p.name}</h3>
                     <p className="text-xs text-ink-soft">
-                      Menudeo {formatMoney(p.prices?.retail)} · costo {formatMoney(p.cost)}
+                      {defTier?.label ?? "Menudeo"} {formatMoney(p.prices?.[defTier?.id ?? "t_retail"])} · costo {formatMoney(p.cost)}
                     </p>
                     {low && (
                       <div className="mt-1">

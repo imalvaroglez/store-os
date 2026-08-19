@@ -8,15 +8,13 @@ import {
   useToast,
 } from "../../design-system";
 import { customersForStore } from "../../lib/selectors";
-import { TIER_LABELS } from "../../lib/labels";
+import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { parseAmount } from "../../lib/money";
 import { todayIso } from "../../lib/dates";
 import { ORDER_STATUS_LABELS } from "./orderStatus";
-import type { Order, OrderStatus, PriceTier } from "../../types";
+import type { Order, OrderStatus } from "../../types";
 
-const TIER_OPTIONS: { value: PriceTier; label: string }[] = (
-  ["retail", "wholesale", "reseller"] as PriceTier[]
-).map((t) => ({ value: t, label: TIER_LABELS[t] }));
+
 
 const STATUS_OPTIONS: { value: OrderStatus; label: string }[] = (
   Object.keys(ORDER_STATUS_LABELS) as OrderStatus[]
@@ -25,6 +23,8 @@ const STATUS_OPTIONS: { value: OrderStatus; label: string }[] = (
 export function OrderForm({ order, onDone }: { order: Order; onDone: () => void }) {
   const { state, activeStore, upsertOrder } = useStore();
   const isTiered = activeStore?.type === "inventory_tiered";
+  const tiers = tiersForStore(activeStore);
+  const def = defaultTier(activeStore) ?? tiers[0];
   const customers = activeStore ? customersForStore(state.customers, activeStore.id) : [];
   const toast = useToast();
 
@@ -42,7 +42,7 @@ export function OrderForm({ order, onDone }: { order: Order; onDone: () => void 
       setDraft({ ...draft, productId: undefined, productName: "" });
       return;
     }
-    const tier: PriceTier = draft.priceTier ?? "retail";
+    const tier: string = draft.priceTier ?? def.id;
     const tierPrice = product.prices?.[tier];
     setDraft({
       ...draft,
@@ -55,7 +55,7 @@ export function OrderForm({ order, onDone }: { order: Order; onDone: () => void 
     else if (!isTiered && product.price != null) setPrice(product.price.toString());
   }
 
-  function selectTier(tier: PriceTier) {
+  function selectTier(tier: string) {
     const product = draft.productId
       ? state.products.find((p) => p.id === draft.productId)
       : undefined;
@@ -150,9 +150,9 @@ export function OrderForm({ order, onDone }: { order: Order; onDone: () => void 
             />
             <SelectField
               label="Nivel de precio"
-              value={draft.priceTier ?? "retail"}
+              value={draft.priceTier ?? def.id}
               onChange={(next) => selectTier(next)}
-              options={TIER_OPTIONS}
+              options={tiers.map((t) => ({ value: t.id, label: t.label }))}
             />
           </div>
           <TextField

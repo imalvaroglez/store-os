@@ -8,6 +8,11 @@ import { createWhatsAppShareCatalogUrl } from "../../lib/whatsapp";
 import { slugify } from "./slugify";
 import { StorefrontEditor } from "../catalog/StorefrontEditor";
 import { normalizeSkuPrefixToken } from "../../lib/catalog";
+import { CANONICAL_TIERS } from "../../lib/pricing";
+import { parseAmount } from "../../lib/money";
+import { uid } from "../../lib/ids";
+import { IconButton } from "../../design-system";
+import type { PriceTierDef } from "../../types";
 import { productsForStore } from "../../lib/selectors";
 import { SuppliersScreen } from "../inventory/SuppliersScreen";
 import type { StoreType } from "../../types";
@@ -45,6 +50,12 @@ export function StoreSettingsScreen({
   const [skuPrefix, setSkuPrefix] = useState(store?.skuPrefix ?? "");
   const [confirmSkuPrefix, setConfirmSkuPrefix] = useState(false);
   const [showSuppliers, setShowSuppliers] = useState(false);
+  // ── Niveles de precio (scalable-pricing) ──
+  const [tiersDraft, setTiersDraft] = useState<PriceTierDef[]>(() => (store?.priceTiers ?? CANONICAL_TIERS).map((t) => ({ ...t })));
+  const [defaultTierDraft, setDefaultTierDraft] = useState<string>(store?.defaultTierId ?? "t_retail");
+  const [markupPercent, setMarkupPercent] = useState(store?.pricingRule?.percent?.toString() ?? "");
+  const [tierError, setTierError] = useState<string | null>(null);
+  const [confirmTierDelete, setConfirmTierDelete] = useState<string | null>(null);
 
   if (!store) {
     return <p className="text-sm text-ink-soft">Tienda no encontrada.</p>;
@@ -128,6 +139,46 @@ export function StoreSettingsScreen({
     setConfirmSkuPrefix(false);
     await updateStore({ id: store!.id, skuPrefix: skuPrefix.trim() || undefined });
     toast.success("Prefijo de SKU guardado");
+  }
+
+  // Save the tier editor. Blocks: zero visible tiers, or a default tier that is
+  // missing/hidden (defaultTier also falls back defensively at read time).
+  async function saveTiers() {
+    setTierError(null);
+    const visible = tiersDraft.filter((t) => !t.hidden && t.label.trim());
+    if (visible.length === 0) {
+      setTierError("Debe haber al menos un nivel visible con nombre.");
+      return;
+    }
+    if (!visible.some((t) => t.id === defaultTierDraft)) {
+      setTierError("El nivel al público debe ser un nivel visible.");
+      return;
+    }
+    // Re-index order 0..n so moves are stable.
+    const priceTiers = tiersDraft.map((t, i) => ({ ...t, label: t.label.trim() || t.label, order: i }));
+    const percent = parseAmount(markupPercent);
+    try {
+      await updateStore({
+        id: store!.id,
+        priceTiers,
+        defaultTierId: defaultTierDraft,
+        ...(percent != null && percent >= 0 ? { pricingRule: { kind: "markup", percent } } : {}),
+      });
+      toast.success("Niveles de precio guardados");
+    } catch {
+      setTierError("No se pudo guardar (¿catálogo público?). Vuelve a intentar o usa \"Republicar catálogo\".");
+    }
+  }
+
+  function moveTier(id: string, delta: number) {
+    setTiersDraft((list) => {
+      const i = list.findIndex((t) => t.id === id);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= list.length) return list;
+      const next = [...list];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
   }
 
   async function doInvite() {
@@ -276,6 +327,77 @@ export function StoreSettingsScreen({
         <Sheet open onClose={() => setEditSite(false)} title="Sitio público">
           <StorefrontEditor store={store} onDone={() => setEditSite(false)} />
         </Sheet>
+      )}
+
+      {isOwnerOrAdmin && store.type === "inventory_tiered" && (
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Niveles de precio</h3>
+          {tiersDraft.map((t, i) => (
+            <div key={t.id} className="space-y-1 bg-surface rounded-md px-3 py-2 ring-1 ring-edge">
+              <div className="flex items-center gap-2">
+                <TextField
+                  label={i === 0 ? "Nombre del nivel" : " "}
+                  value={t.label}
+                  onChange={(e) =>
+                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, label: e.target.value } : x)))
+                  }
+                />
+                <div className="flex items-center gap-1 shrink-0">
+                  <IconButton variant="secondary" aria-label="Subir" onClick={() => moveTier(t.id, -1)}>↑</IconButton>
+                  <IconButton variant="secondary" aria-label="Bajar" onClick={() => moveTier(t.id, 1)}>↓</IconButton>
+                  <IconButton
+                    variant="secondary"
+                    aria-label={t.hidden ? "Mostrar" : "Ocultar"}
+                    onClick={() => setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, hidden: !x.hidden } : x)))}
+                  >
+                    {t.hidden ? "👁" : "🚫"}
+                  </IconButton>
+                  <IconButton
+                    variant="secondary"
+                    aria-label="Eliminar"
+                    onClick={() => {
+                      if (confirmTierDelete !== t.id) {
+                        setConfirmTierDelete(t.id);
+                        return;
+                      }
+                      setTiersDraft((list) => list.filter((x) => x.id !== t.id));
+                      setConfirmTierDelete(null);
+                    }}
+                  >
+                    {confirmTierDelete === t.id ? "¿Seguro?" : "×"}
+                  </IconButton>
+                </div>
+              </div>
+              {t.hidden && <p className="text-xs text-ink-soft">Oculto: los precios guardados se conservan.</p>}
+              {confirmTierDelete === t.id && (
+                <p className="text-xs text-danger">Toca × otra vez para eliminar. Las órdenes históricas quedan como están.</p>
+              )}
+            </div>
+          ))}
+          <Button
+            full
+            variant="secondary"
+            onClick={() => setTiersDraft((list) => [...list, { id: uid("t_"), label: "Nuevo nivel", order: list.length }])}
+          >
+            + Agregar nivel
+          </Button>
+          <SelectField
+            label="Precio al público"
+            value={defaultTierDraft}
+            onChange={(v) => setDefaultTierDraft(v)}
+            options={tiersDraft.filter((t) => !t.hidden).map((t) => ({ value: t.id, label: t.label || t.id }))}
+          />
+          <TextField
+            label="Ganancia sobre costo (%)"
+            hint="Sugiere el precio público a partir del costo. Vacío = sin asistente."
+            inputMode="numeric"
+            placeholder="120"
+            value={markupPercent}
+            onChange={(e) => setMarkupPercent(e.target.value)}
+          />
+          <Button full onClick={saveTiers}>Guardar niveles</Button>
+          {tierError && <p className="text-xs text-danger">{tierError}</p>}
+        </div>
       )}
 
       {showSuppliers && (
