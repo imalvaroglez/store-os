@@ -1,6 +1,7 @@
 ---
 Delivery-ID: refresh-hard-reload
-Delivery-Status: Pending approval
+Delivery-Status: Approved
+Approved-By: Álvaro González (PO)
 specPath: docs/superpowers/specs/refresh-hard-reload-design.md
 ---
 # Refresh y hard reload confiables ("un refresh debería funcionar como un refresh")
