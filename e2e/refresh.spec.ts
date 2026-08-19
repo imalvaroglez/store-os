@@ -22,7 +22,7 @@ async function expectAppLoaded(page: Page, expectedMarker: string) {
 }
 
 test("SW installs on build A; normal reload after a deploy serves build B", async ({ page }) => {
-  const stopA = await servePreview("dist-a");
+  const stopA = await servePreview("dist-a", MARKER_A);
   try {
     await page.goto("/");
     await expectAppLoaded(page, MARKER_A);
@@ -37,7 +37,7 @@ test("SW installs on build A; normal reload after a deploy serves build B", asyn
   }
 
   // "Deploy": same URL, new build. Reload (plain, no cache tricks).
-  const stopB = await servePreview("dist-b");
+  const stopB = await servePreview("dist-b", MARKER_B);
   try {
     await page.reload();
     await expectAppLoaded(page, MARKER_B);
@@ -47,7 +47,7 @@ test("SW installs on build A; normal reload after a deploy serves build B", asyn
 });
 
 test("tab left open across a deploy reloads to build B", async ({ page }) => {
-  const stopA = await servePreview("dist-a");
+  const stopA = await servePreview("dist-a", MARKER_A);
   try {
     await page.goto("/");
     await expectAppLoaded(page, MARKER_A);
@@ -58,7 +58,7 @@ test("tab left open across a deploy reloads to build B", async ({ page }) => {
   // The tab stays open while the "deploy" happens; before reloading it still
   // shows the old build (expected — no live reload claim), then a plain reload
   // must land on B.
-  const stopB = await servePreview("dist-b");
+  const stopB = await servePreview("dist-b", MARKER_B);
   try {
     expect(await buildMarker(page)).toBe(MARKER_A);
     await page.reload();
@@ -69,7 +69,7 @@ test("tab left open across a deploy reloads to build B", async ({ page }) => {
 });
 
 test("hard reload (cache bypass) after a deploy serves build B", async ({ page }) => {
-  const stopA = await servePreview("dist-a");
+  const stopA = await servePreview("dist-a", MARKER_A);
   try {
     await page.goto("/");
     await expectAppLoaded(page, MARKER_A);
@@ -77,7 +77,7 @@ test("hard reload (cache bypass) after a deploy serves build B", async ({ page }
     await stopA();
   }
 
-  const stopB = await servePreview("dist-b");
+  const stopB = await servePreview("dist-b", MARKER_B);
   try {
     // CDP hard reload = browser "Empty Cache and Hard Reload".
     const cdp = await page.context().newCDPSession(page);
@@ -93,7 +93,7 @@ test("cloud: session survives reload and fresh data appears (emulator)", async (
   // The admin bootstrap (wipe + signup + full fixture seed + catalog wait) is
   // expensive on its own; give the whole cycle room beyond the 90s default.
   test.setTimeout(180_000);
-  const stop = await servePreview("dist-cloud");
+  const stop = await servePreview("dist-cloud", MARKER_CLOUD);
   try {
     // Wipes the emulator, signs up the allow-listed admin, seeds Santi, ends at Inicio.
     await loginAsFirstAdmin(page, "refresh");
