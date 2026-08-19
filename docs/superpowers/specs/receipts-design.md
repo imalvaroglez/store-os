@@ -171,11 +171,17 @@ export type Order = {
   TODA escritura de Store) se actualiza: existen exactamente **dos caminos
   autorizados** para escribir Store — el chokepoint dual (`saveEntity`) y el
   writer transaccional del folio (3 writes).
-- **Gate anti-writers-directos:** un gate en `npm run test` (mismo patrón que
-  el gate de design system) impide writers directos de `stores`/`adminStores`
-  fuera de los dos caminos autorizados (grep estático sobre `src/` de
-  `setDoc`/`updateDoc`/`writeBatch` hacia `stores/` o `adminStores/` fuera de
-  `firestoreData.ts`).
+- **Gate anti-writers-directos (allowlist de FUNCIONES, no de archivo):** un
+  gate en `npm run test` (mismo patrón que el gate de design system) permite
+  escrituras de `stores`/`adminStores` **únicamente desde dos funciones
+  allowlisteadas**: `saveEntity` y el writer transaccional del folio. Un
+  tercer writer — incluso dentro de `firestoreData.ts` — hace fallar el gate.
+- **División de garantías del no-op:** Rules sólo puede validar el payload
+  (`diff(adminStores) == ∅` si el write existe); **no** puede demostrar que el
+  write no-op fue incluido. La garantía de que los 3 writes van siempre
+  juntos vive en el **writer** (transacción única), se afirma en su **prueba
+  de tres writes**, y la permanencia de la allowlist la custodia el **gate
+  estático**.
 - Pruebas en `npm run test:rules`: ausente→1, n→n+1, saltos rechazados, campo
   adicional en `stores` rechazado, cualquier cambio en `adminStores` (diff ≠
   ∅) rechazado; y prueba del writer transaccional afirmando sus 3 writes.
