@@ -1,6 +1,7 @@
 ---
 Delivery-ID: unified-products
-Delivery-Status: Pending approval
+Delivery-Status: Approved
+Approved-By: Álvaro González (PO)
 specPath: docs/superpowers/specs/unified-products-design.md
 ---
 # Diseño unificado de productos
