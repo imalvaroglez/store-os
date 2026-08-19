@@ -119,10 +119,16 @@
       "id": "scalable-pricing",
       "title": "Precios escalables",
       "priority": 110,
-      "status": "awaiting-approval",
+      "status": "queued",
       "specPath": "docs/superpowers/specs/scalable-pricing-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
     },
     {
       "id": "wysiwyg-catalog",

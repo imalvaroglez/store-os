@@ -1,6 +1,7 @@
 ---
 Delivery-ID: scalable-pricing
-Delivery-Status: Pending approval
+Delivery-Status: Approved
+Approved-By: Álvaro González (PO)
 specPath: docs/superpowers/specs/scalable-pricing-design.md
 ---
 # Precios escalables (nombres mutables + extensibles) y precio sugerido
