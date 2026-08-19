@@ -1,6 +1,7 @@
 ---
 Delivery-ID: wysiwyg-catalog
-Delivery-Status: Pending approval
+Delivery-Status: Approved
+Approved-By: Álvaro González (PO)
 specPath: docs/superpowers/specs/wysiwyg-catalog-design.md
 ---
 # Edición WYSIWYG del catálogo público in-place
