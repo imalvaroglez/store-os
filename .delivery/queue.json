@@ -5,7 +5,7 @@
       "id": "refresh-hard-reload",
       "title": "Refresh y hard reload confiables",
       "priority": 10,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/refresh-hard-reload-design.md",
       "dependsOn": [],
       "previewChecks": []
