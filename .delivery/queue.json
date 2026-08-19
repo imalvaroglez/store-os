@@ -5,10 +5,16 @@
       "id": "refresh-hard-reload",
       "title": "Refresh y hard reload confiables",
       "priority": 10,
-      "status": "needs-spec",
+      "status": "queued",
       "specPath": "docs/superpowers/specs/refresh-hard-reload-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
     },
     {
       "id": "remove-client-demo-seed",
@@ -23,10 +29,16 @@
       "id": "pnpm-lockfile",
       "title": "Resolver el lockfile de pnpm",
       "priority": 30,
-      "status": "awaiting-approval",
+      "status": "queued",
       "specPath": "docs/superpowers/specs/pnpm-lockfile-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
     },
     {
       "id": "persist-entity-error-handling",
@@ -74,10 +86,16 @@
       "id": "unified-products",
       "title": "Productos unificados",
       "priority": 80,
-      "status": "awaiting-approval",
+      "status": "queued",
       "specPath": "docs/superpowers/specs/unified-products-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
     },
     {
       "id": "reliable-member-invitations",
@@ -110,10 +128,16 @@
       "id": "wysiwyg-catalog",
       "title": "Editor visual de catálogo",
       "priority": 120,
-      "status": "awaiting-approval",
+      "status": "queued",
       "specPath": "docs/superpowers/specs/wysiwyg-catalog-design.md",
       "dependsOn": ["unified-products"],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/catalogo/olivia",
+          "selector": "body",
+          "text": "Olivia"
+        }
+      ]
     },
     {
       "id": "member-roles",
