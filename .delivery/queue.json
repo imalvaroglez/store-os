@@ -5,10 +5,16 @@
       "id": "refresh-hard-reload",
       "title": "Refresh y hard reload confiables",
       "priority": 10,
-      "status": "needs-spec",
+      "status": "queued",
       "specPath": "docs/superpowers/specs/refresh-hard-reload-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
     },
     {
       "id": "remove-client-demo-seed",
