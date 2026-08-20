@@ -133,10 +133,6 @@ function ProductCard({
                 {typeof product.quantityOnHand === "number" && (
                   <span className={low ? "text-danger font-semibold" : "text-on-surface-soft"}>
                     Existencia: {product.quantityOnHand}
-                </span>
-                {typeof product.quantityOnHand === "number" && (
-                  <span className={low ? "text-danger font-semibold" : "text-on-surface-soft"}>
-                    Existencia: {product.quantityOnHand}
                   </span>
                 )}
               </div>
