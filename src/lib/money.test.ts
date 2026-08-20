@@ -34,9 +34,10 @@ describe("publicPrice", () => {
     const p = { prices: { t_retail: 900, t_wholesale: 700 } } as unknown as Product;
     expect(publicPrice(p, "t_wholesale")).toBe(700);
   });
-  it("falls back to the legacy retail key, then cheapest, without a default", () => {
+  it("falls back to the legacy retail key, never to a private tier", () => {
     expect(publicPrice({ prices: { retail: 900, wholesale: 700, reseller: 600 } })).toBe(900);
-    expect(publicPrice({ prices: { t_wholesale: 700, t_reseller: 600 } })).toBe(600);
+    // Without a default tier, private tiers must NOT leak as "cheapest".
+    expect(publicPrice({ prices: { t_wholesale: 700, t_reseller: 600 } })).toBeUndefined();
   });
   it("returns undefined when nothing set", () => {
     expect(publicPrice({})).toBeUndefined();

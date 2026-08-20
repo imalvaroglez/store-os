@@ -165,7 +165,11 @@ export function StoreSettingsScreen({
         id: store!.id,
         priceTiers,
         defaultTierId: defaultTierDraft,
-        ...(percent != null && percent >= 0 ? { pricingRule: { kind: "markup", percent } } : {}),
+        // Empty % clears the rule: explicit undefined overwrites the existing
+        // value in the reducer merge, and persistence strips undefined keys.
+        ...(percent != null && percent >= 0
+          ? { pricingRule: { kind: "markup", percent } }
+          : { pricingRule: undefined }),
       });
       toast.success("Niveles de precio guardados");
     } catch {

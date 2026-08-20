@@ -16,10 +16,10 @@ export function publicPrice(
   if (typeof p.price === "number") return p.price;
   if (!p.prices) return undefined;
   if (defaultTierId && typeof p.prices[defaultTierId] === "number") return p.prices[defaultTierId];
-  // Fallbacks: legacy retail key, then cheapest visible value (defensive).
+  // Legacy retail fallback only. Never fall back to "cheapest" — that could
+  // leak a private (wholesale) tier price into the public catalog.
   if (typeof p.prices.retail === "number") return p.prices.retail;
-  const values = Object.values(p.prices).filter((v): v is number => typeof v === "number");
-  return values.length ? Math.min(...values) : undefined;
+  return undefined;
 }
 
 /** Best available cost for profit math. */
