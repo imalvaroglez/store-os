@@ -17,6 +17,7 @@ import { formatMoney, parseAmount } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import type { PriceTierDef, Purchase, PurchaseLine, Supplier, Product } from "../../types";
 import { SupplierForm } from "./SupplierForm";
+import { PurchasePdfImport } from "./PurchasePdfImport";
 
 // Multi-line supplier purchase ticket. Each line replenishes a product's stock
 // and recomputes its weighted-average cost. The first repeating line-item form
@@ -118,6 +119,20 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        {/* purchase-pdf-import: optional OCR assist — manual capture stays intact */}
+        <PurchasePdfImport
+          onApply={(lines, meta) =>
+            setDraft((d) => ({
+              ...d,
+              lines: [...d.lines, ...lines],
+              supplierOrder: meta.supplierOrder ?? d.supplierOrder,
+              documentUrl: meta.documentUrl ?? d.documentUrl,
+              totalConfirmed: meta.total ?? d.totalConfirmed,
+            }))
+          }
+        />
+      </div>
       <div>
         <SelectField
           label="Proveedor"

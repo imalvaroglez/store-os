@@ -26,6 +26,17 @@ service firebase.storage {
         && request.resource.name.matches('.*\\.jpg');
     }
 
+    // Supplier-order PDFs (purchase-pdf-import): private to the store's
+    // members. Not part of any public projection.
+    match /purchases/{storeId}/{fileName} {
+      allow read: if isStoreMember(storeId);
+      allow create, update: if isStoreMember(storeId)
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.name.matches('.*\\.pdf');
+      allow delete: if isStoreOwner(storeId);
+    }
+
     // The recursive path covers both legacy product photos and gallery photos.
     match /products/{storeId}/{path=**} {
       allow read: if true;

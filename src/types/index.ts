@@ -249,6 +249,10 @@ export type Purchase = {
   lines: PurchaseLine[];
   subtotal: number; // Σ quantity × unitCost (computed)
   totalConfirmed: number; // the total Fer confirms (may differ from subtotal)
+  // purchase-pdf-import: the supplier's order document, when the purchase was
+  // built by importing a PDF. Private (members-only Storage path).
+  documentUrl?: string;
+  supplierOrder?: string; // folio/número de pedido del proveedor
   createdAt: string;
   updatedAt: string;
 };

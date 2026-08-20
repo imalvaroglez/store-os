@@ -1,0 +1,80 @@
+import {
+  getFunctions,
+  connectFunctionsEmulator,
+  httpsCallable,
+  type Functions,
+} from "firebase/functions";
+import { getStorage, ref, uploadBytes, getDownloadURL, connectStorageEmulator, type FirebaseStorage } from "firebase/storage";
+import { getFirebase } from "./config";
+
+// PDF import transport (purchase-pdf-import): upload the supplier PDF to
+// Storage, then call importPurchasePdf (OCR) and get the parsed lines back.
+// Demo/local mode (no Firebase) is handled by the caller — this module is
+// only used when cloud is available.
+
+const EMULATOR =
+  import.meta.env.MODE !== "production" &&
+  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
+
+export type ParsedPdfLine = {
+  name: string;
+  quantity: number;
+  unitAmount: number; // line total as printed; unit cost = unitAmount / quantity
+  color?: string;
+};
+
+export type ParsedPdfOrder = {
+  supplierOrder?: string;
+  dateLabel?: string;
+  lines: ParsedPdfLine[];
+  subtotal?: number;
+  total?: number;
+  discount?: number;
+  warning?: string;
+};
+
+let fns: Functions | null = null;
+let fnsConnected = false;
+let storage: FirebaseStorage | null = null;
+let storageConnected = false;
+
+function functionsInstance(): Functions {
+  const { app } = getFirebase();
+  if (!fns) fns = getFunctions(app, EMULATOR ? "store-os-demo" : undefined);
+  if (EMULATOR && !fnsConnected) {
+    const host = import.meta.env.VITE_FIREBASE_FUNCTIONS_EMULATOR_HOST || "127.0.0.1:5001";
+    const [hostname, port] = host.split(":");
+    connectFunctionsEmulator(fns, hostname, Number(port));
+    fnsConnected = true;
+  }
+  return fns;
+}
+
+function storageInstance(): FirebaseStorage {
+  const { app } = getFirebase();
+  if (!storage) storage = getStorage(app, EMULATOR ? "store-os-demo.appspot.com" : undefined);
+  if (EMULATOR && !storageConnected) {
+    connectStorageEmulator(storage, "127.0.0.1", 9199);
+    storageConnected = true;
+  }
+  return storage;
+}
+
+/** Upload the PDF privately and return { storagePath, downloadUrl }. */
+export async function uploadPurchasePdf(
+  storeId: string,
+  file: File
+): Promise<{ storagePath: string; downloadUrl: string }> {
+  const storagePath = `purchases/${storeId}/${Date.now()}-${file.name.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
+  const r = ref(storageInstance(), storagePath);
+  await uploadBytes(r, file, { contentType: "application/pdf" });
+  const downloadUrl = await getDownloadURL(r);
+  return { storagePath, downloadUrl };
+}
+
+/** OCR + parse the uploaded PDF (server-side, tesseract spa). */
+export async function importPurchasePdf(storagePath: string): Promise<ParsedPdfOrder> {
+  const call = httpsCallable<{ storagePath: string }, ParsedPdfOrder>(functionsInstance(), "importPurchasePdf");
+  const res = await call({ storagePath });
+  return res.data;
+}
