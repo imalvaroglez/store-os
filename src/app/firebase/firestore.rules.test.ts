@@ -271,3 +271,158 @@ describe("G-P02 super_admin bare adminStores query", () => {
     await assertSucceeds(getDocs(collection(db, "adminStores")));
   });
 });
+
+// ── reliable-member-invitations ────────────────────────────────────────
+// Verified-email guard + anti-spoofing on users, invitee discovery via
+// pendingInvites (canonical email), and the exact invitee join diff.
+
+async function asUserWithClaims(uid: string, claims: Record<string, unknown>) {
+  const ctx = env.authenticatedContext(uid, claims);
+  return ctx.firestore();
+}
+const VERIFIED = { email: "a.b@gmail.com", email_verified: true };
+
+describe("reliable invitations — users anti-spoofing", () => {
+  it("self create with verified token and matching identity succeeds", async () => {
+    const db = await asUserWithClaims("u_new", VERIFIED);
+    await assertSucceeds(
+      setDoc(doc(db, "users/u_new"), {
+        email: "a.b@gmail.com", emailNormalized: "ab@gmail.com", emailVerified: true,
+        displayName: "", role: "member",
+      })
+    );
+  });
+  it("rejects claiming someone else's email", async () => {
+    const db = await asUserWithClaims("u_new2", VERIFIED);
+    await assertFails(
+      setDoc(doc(db, "users/u_new2"), {
+        email: "victim@x.com", emailNormalized: "victim@x.com", emailVerified: true, role: "member",
+      })
+    );
+  });
+  it("rejects inconsistent emailNormalized and emailVerified=false", async () => {
+    const db = await asUserWithClaims("u_new3", VERIFIED);
+    await assertFails(
+      setDoc(doc(db, "users/u_new3"), {
+        email: "a.b@gmail.com", emailNormalized: "WRONG@gmail.com", emailVerified: true, role: "member",
+      })
+    );
+    await assertFails(
+      setDoc(doc(db, "users/u_new3"), {
+        email: "a.b@gmail.com", emailNormalized: "ab@gmail.com", emailVerified: false, role: "member",
+      })
+    );
+  });
+  it("rejects a token without email_verified", async () => {
+    const db = await asUserWithClaims("u_new4", { email: "a.b@gmail.com" });
+    await assertFails(
+      setDoc(doc(db, "users/u_new4"), {
+        email: "a.b@gmail.com", emailNormalized: "ab@gmail.com", emailVerified: true, role: "member",
+      })
+    );
+  });
+  it("self-update changing identity fails; displayName update passes", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_me"), {
+        email: "a.b@gmail.com", emailNormalized: "ab@gmail.com", emailVerified: true, role: "member",
+      });
+    });
+    const db = await asUserWithClaims("u_me", VERIFIED);
+    await assertFails(updateDoc(doc(db, "users/u_me"), { email: "other@x.com" }));
+    await assertFails(updateDoc(doc(db, "users/u_me"), { emailVerified: false }));
+    await assertSucceeds(updateDoc(doc(db, "users/u_me"), { displayName: "Ana" }));
+  });
+  it("admin cross-user update: role change ok, identity change denied", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_sa2"), { email: "sa@x.com", role: "super_admin" });
+      await setDoc(doc(c.firestore(), "users/u_other"), {
+        email: "o@x.com", emailNormalized: "o@x.com", emailVerified: true, role: "member",
+      });
+    });
+    const db = await asUserWithClaims("u_sa2", { email: "sa@x.com", email_verified: true });
+    await assertSucceeds(updateDoc(doc(db, "users/u_other"), { role: "member" }));
+    await assertFails(updateDoc(doc(db, "users/u_other"), { email: "hijack@x.com" }));
+  });
+});
+
+describe("reliable invitations — invitee discovery + join", () => {
+  beforeAll(async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      const fs = c.firestore();
+      await setDoc(doc(fs, "stores/s_inv"), {
+        ownerUid: "u_owner", memberUids: ["u_owner"], pendingInvites: ["ab@gmail.com"],
+      });
+      await setDoc(doc(fs, "adminStores/s_inv"), {
+        storeId: "s_inv", ownerUid: "u_owner", memberUids: ["u_owner"], pendingInvites: ["ab@gmail.com"],
+      });
+    });
+  });
+
+  it("canonical email matches across Gmail dots/case (no TS/Rules drift)", async () => {
+    // Token says A.B@Googlemail.com — canonical ab@gmail.com must hit the invite.
+    const db = await asUserWithClaims("u_guest", { email: "A.B@Googlemail.com", email_verified: true });
+    await assertSucceeds(
+      getDocs(query(collection(db, "stores"), where("pendingInvites", "array-contains", "ab@gmail.com")))
+    );
+  });
+
+  it("unverified or uninvited users cannot list invited stores", async () => {
+    const unverified = await asUserWithClaims("u_guest", { email: "A.B@gmail.com" });
+    await assertFails(
+      getDocs(query(collection(unverified, "stores"), where("pendingInvites", "array-contains", "ab@gmail.com")))
+    );
+    const stranger = await asUserWithClaims("u_stranger", { email: "z@x.com", email_verified: true });
+    await assertFails(
+      getDocs(query(collection(stranger, "stores"), where("pendingInvites", "array-contains", "ab@gmail.com")))
+    );
+  });
+
+  it("invitee join: exact two-doc batch succeeds", async () => {
+    const db = await asUserWithClaims("u_guest", VERIFIED);
+    const batch = writeBatch(db);
+    batch.update(doc(db, "stores/s_inv"), {
+      memberUids: ["u_owner", "u_guest"], pendingInvites: [],
+    });
+    batch.update(doc(db, "adminStores/s_inv"), {
+      memberUids: ["u_owner", "u_guest"], pendingInvites: [],
+    });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("after joining, the new member can read the store; escalation attempts fail", async () => {
+    const db = await asUserWithClaims("u_guest", VERIFIED);
+    await assertSucceeds(getDoc(doc(db, "stores/s_inv")));
+    // Re-seed pending state to probe bad diffs.
+    await env.withSecurityRulesDisabled(async (c) => {
+      const fs = c.firestore();
+      await setDoc(doc(fs, "stores/s_inv"), { ownerUid: "u_owner", memberUids: ["u_owner"], pendingInvites: ["ab@gmail.com"] });
+      await setDoc(doc(fs, "adminStores/s_inv"), { storeId: "s_inv", ownerUid: "u_owner", memberUids: ["u_owner"], pendingInvites: ["ab@gmail.com"] });
+    });
+    // Escalate ownerUid alongside the join → denied.
+    await assertFails(
+      updateDoc(doc(db, "stores/s_inv"), {
+        ownerUid: "u_guest", memberUids: ["u_owner", "u_guest"], pendingInvites: [],
+      })
+    );
+    // Adding someone ELSE'S uid instead of their own → denied.
+    await assertFails(
+      updateDoc(doc(db, "stores/s_inv"), {
+        memberUids: ["u_owner", "u_other"], pendingInvites: [],
+      })
+    );
+    // Keeping the invite (not removing it) → denied.
+    await assertFails(
+      updateDoc(doc(db, "stores/s_inv"), {
+        memberUids: ["u_owner", "u_guest"], pendingInvites: ["ab@gmail.com"],
+      })
+    );
+  });
+
+  it("owner path has no regression (owner can still update members)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_owner2"), { email: "own@x.com", emailNormalized: "own@x.com", emailVerified: true, role: "member" });
+    });
+    const db = await asUserWithClaims("u_owner", { email: "own@x.com", email_verified: true });
+    await assertSucceeds(updateDoc(doc(db, "stores/s_inv"), { name: "Renamed" }));
+  });
+});

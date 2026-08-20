@@ -33,6 +33,19 @@ service cloud.firestore {
     // client-supplied and trivially spoofable, so super_admin escalation MUST be
     // gated on this verified token value, not request.resource.data.email.
     function verifiedEmail() { return request.auth.token.email; }
+    // Verified-email guard: an unverified token proves nothing (no profile, no
+    // invite reconciliation, no invitee branches).
+    function hasVerifiedEmail() {
+      return isSignedIn() && verifiedEmail() != null && request.auth.token.email_verified == true;
+    }
+    // Canonical email (must mirror normalizeEmail in src/app/firebase/auth.ts):
+    // lowercase + strip local-part dots on Gmail, googlemail == gmail.
+    function canonicalEmail() {
+      let parts = verifiedEmail().lower().split('@');
+      return (parts[1] == 'gmail.com' || parts[1] == 'googlemail.com')
+        ? parts[0].replace('\\.', '') + '@gmail.com'
+        : parts[0] + '@' + parts[1];
+    }
     // Defense-in-depth: even if the prod users/ collection is emptied by accident,
     // only these verified email(s) may create a super_admin doc. The next arbitrary
     // signup cannot escalate. Keep member self-signup open. The platform
@@ -45,16 +58,28 @@ service cloud.firestore {
     }
 
     // users/{uid} — readable by any signed-in user (needed for the first-user
-    // bootstrap count and for looking up members by email). A user creates/edits
-    // their own doc; the client sets role (super_admin for the first user, member
-    // after). Updates by a non-admin may not touch role.
+    // bootstrap count and for looking up members by email). Self create/update
+    // require a VERIFIED email and identity fields consistent with the token
+    // (anti-spoofing: a user can never claim someone else's — or an
+    // unverified — email/emailNormalized/emailVerified). Cross-user updates by
+    // super_admin may change role but never the identity fields.
     match /users/{uid} {
       allow read: if isSignedIn();
       allow create: if isSelf(uid)
+        && hasVerifiedEmail()
+        && request.resource.data.email == verifiedEmail()
+        && request.resource.data.emailNormalized == canonicalEmail()
+        && request.resource.data.emailVerified == true
         && (roleIs('member')
             || (roleIs('super_admin') && isAllowlistedSuperAdmin()));
-      allow update: if (isSelf(uid) || isSuperAdmin())
-        && (isSuperAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
+      allow update: if (isSuperAdmin()
+          || (isSelf(uid)
+            && hasVerifiedEmail()
+            && request.resource.data.email == verifiedEmail()
+            && request.resource.data.emailNormalized == canonicalEmail()
+            && request.resource.data.emailVerified == true))
+        && (isSuperAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
+        && (isSelf(uid) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['email', 'emailNormalized', 'emailVerified']));
       allow delete: if isSuperAdmin();
     }
 
@@ -64,28 +89,47 @@ service cloud.firestore {
     // super_admin reads all (platform administration); members read their own;
     // only the owner may write. retainedPrivacyRequestCount is a control counter
     // (Espec 2) carried here because it is control data, not catalog content.
+    // Invitee reconciliation (reliable-member-invitations): a verified user
+    // named in pendingInvites may, in ONE write, add exactly their own uid to
+    // memberUids and remove exactly their canonical email from pendingInvites.
+    // Nothing else may change (no ownerUid, no other members, no business fields).
+    function inviteeJoinOk() {
+      return hasVerifiedEmail()
+        && resource.data.pendingInvites.hasAny([canonicalEmail()])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids', 'pendingInvites'])
+        && request.resource.data.memberUids.hasAny([request.auth.uid])
+        && request.resource.data.memberUids.size() == resource.data.memberUids.size() + 1
+        && request.resource.data.pendingInvites.size() == resource.data.pendingInvites.size() - 1
+        && !request.resource.data.pendingInvites.hasAny([canonicalEmail()]);
+    }
+
     match /adminStores/{storeId} {
       allow get: if isSuperAdmin() || isMember(storeId);
       allow list: if isSuperAdmin();
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
-      allow update: if isOwner(storeId)
-        && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]);
+      allow update: if (isOwner(storeId)
+          && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
+        || inviteeJoinOk();
       allow delete: if false;
     }
 
     match /stores/{id} {
       allow get: if isMember(id);
       allow list: if isSignedIn()
-        && resource.data.memberUids.hasAny([request.auth.uid]);
+        && (resource.data.memberUids.hasAny([request.auth.uid])
+            // Invitee discovery: a verified user may list exactly the stores
+            // whose pendingInvites name THEM (canonical email).
+            || (hasVerifiedEmail() && resource.data.pendingInvites.hasAny([canonicalEmail()])));
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
       // Owners can manage members and transfer ownership, but the new owner
       // must already be a member. Ordinary members cannot alter store settings.
-      allow update: if isOwner(id)
-        && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]);
+      allow update: if (isOwner(id)
+          && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
+        || inviteeJoinOk();
       allow delete: if isOwner(id);
     }
 
