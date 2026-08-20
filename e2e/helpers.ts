@@ -90,6 +90,26 @@ export async function seedEmulatorFixtures(email = ADMIN_EMAIL, password = "pass
   }
 }
 
+// Test-only direct Firestore write (emulator REST). Used by the refresh e2e to
+// simulate data landing "between deploys" without going through the UI.
+export async function writeEmulatorDoc(
+  collection: string,
+  id: string,
+  data: Record<string, unknown>,
+  email = ADMIN_EMAIL,
+  password = "password123"
+) {
+  const auth = await adminToken(email, password);
+  const response = await fetch(`${FIRESTORE_REST}/${collection}/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+    body: JSON.stringify({ fields: toFields(data) }),
+  });
+  if (!response.ok) {
+    throw new Error(`Emulator write failed for ${collection}/${id}: ${response.status} ${await response.text()}`);
+  }
+}
+
 // Wipe Auth + Firestore in the emulator (same endpoints as firebase-global-setup).
 // The explicit fixture login below always starts from this deterministic state.
 export async function wipeEmulator(): Promise<void> {

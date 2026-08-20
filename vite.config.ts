@@ -7,14 +7,17 @@ import { execSync } from "node:child_process";
 // repro (scripts/repro-stale.mjs) and the refresh-hard-reload previewCheck read
 // this meta to know WHICH deploy was served — the direct evidence the spec requires.
 function buildMarker(): Plugin {
-  let sha = "dev";
-  if (process.env.NODE_ENV === "production") {
+  // STORE_OS_BUILD_SHA overrides the git SHA so the refresh e2e can fabricate
+  // two distinct "deploys" (A/B) from one working tree without fake commits.
+  let sha = process.env.STORE_OS_BUILD_SHA?.trim() || "";
+  if (!sha && process.env.NODE_ENV === "production") {
     try {
       sha = execSync("git rev-parse --short HEAD").toString().trim();
     } catch {
       sha = "unknown";
     }
   }
+  if (!sha) sha = "dev";
   return {
     name: "store-os-build-marker",
     transformIndexHtml(html) {

@@ -147,6 +147,10 @@ jobs:
         run: npm run e2e
       - name: E2E with Firebase Emulator
         run: npm run e2e:firebase
+      # Refresh-hard-reload guard: builds A/B/cloud and asserts a browser that
+      # lived through a "deploy" gets the new version on plain + hard reload.
+      - name: E2E refresh (deploy rotation)
+        run: npm run e2e:refresh
 
   # ───────────────────────────── deploy ──────────────────────────────
   # The ONLY path to a Vercel deployment. Runs only if BOTH gates passed.
