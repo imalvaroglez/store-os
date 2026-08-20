@@ -82,19 +82,25 @@ describe("projectPublicProductSummary", () => {
     expect(projected.productSlug).toBe("perfume");
   });
 
-  it("inventory-tiered: copies only prices.retail, never wholesale/reseller", () => {
+  it("inventory-tiered: exposes ONE resolved price (default tier), never the tier map or private prices", () => {
     const projected = projectPublicProductSummary(
       baseProduct({
-        prices: { retail: 2000, wholesale: 1500, reseller: 1700 },
+        prices: { t_retail: 2000, t_wholesale: 1500, t_reseller: 1700 },
         cost: 800,
       }),
+      "joyeria",
+      "t_wholesale"
+    );
+    expect(projected.price).toBe(1500);
+    expect("prices" in projected).toBe(false);
+    expect("cost" in projected).toBe(false);
+    // Without a defaultTierId it falls back to the legacy retail key.
+    const legacy = projectPublicProductSummary(
+      baseProduct({ prices: { retail: 2000, wholesale: 1500 } }),
       "joyeria"
     );
-    const prices = projected.prices as Record<string, unknown> | undefined;
-    expect(prices).toEqual({ retail: 2000 });
-    expect(prices && "wholesale" in prices).toBe(false);
-    expect(prices && "reseller" in prices).toBe(false);
-    expect("cost" in projected).toBe(false);
+    expect(legacy.price).toBe(2000);
+    expect("prices" in legacy).toBe(false);
   });
 
   it("picks the primary gallery image for the grid", () => {

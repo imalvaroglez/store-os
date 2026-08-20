@@ -14,7 +14,8 @@ import {
   MultiPhotoPicker,
   type GalleryTile,
 } from "../../design-system";
-import { parseAmount } from "../../lib/money";
+import { parseAmount, formatMoney } from "../../lib/money";
+import { defaultTier, suggestedPrice, tiersForStore } from "../../lib/pricing";
 import { slugify, uniqueProductSlug, suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
 import { uid } from "../../lib/ids";
 import { activeCategoriesForStore } from "../../lib/selectors";
@@ -61,15 +62,18 @@ export function ProductForm({
   // Numeric inputs as strings, coerced on submit (no NaN into state).
   const [cost, setCost] = useState(product.cost?.toString() ?? "");
   const [price, setPrice] = useState(product.price?.toString() ?? "");
-  const [retail, setRetail] = useState(product.prices?.retail?.toString() ?? "");
-  const [wholesale, setWholesale] = useState(product.prices?.wholesale?.toString() ?? "");
-  const [reseller, setReseller] = useState(product.prices?.reseller?.toString() ?? "");
+  // Tier prices keyed by tier id (scalable-pricing: tiers are store-defined).
+  const [tierPrices, setTierPrices] = useState<Record<string, string>>(
+    () => Object.fromEntries(Object.entries(product.prices ?? {}).map(([k, v]) => [k, v?.toString() ?? ""]))
+  );
   const [qty, setQty] = useState(product.quantityOnHand?.toString() ?? "");
   const [lowAt, setLowAt] = useState(product.lowStockAt?.toString() ?? "");
 
   if (!activeStore) return null;
   // Capture the non-null store so async closures (submit/handleAdd) stay narrowed.
   const store = activeStore;
+  const tiers = tiersForStore(store);
+  const def = defaultTier(store);
   const categories = activeCategoriesForStore(state.categories, store.id);
 
   // Build the tile list shown in the picker: saved images + staged ones.
@@ -205,7 +209,8 @@ export function ProductForm({
         setSaving(false);
         return;
       }
-      const hasPrice = isTiered ? !!parseAmount(retail) : !!parseAmount(price);
+      const def = defaultTier(activeStore);
+      const hasPrice = isTiered ? !!parseAmount(tierPrices[def?.id ?? ""]) : !!parseAmount(price);
       if (!hasPrice) {
         setValidationError("Para publicar, define un precio.");
         setSaving(false);
@@ -259,11 +264,9 @@ export function ProductForm({
     };
 
     if (isTiered) {
-      next.prices = {
-        retail: parseAmount(retail),
-        wholesale: parseAmount(wholesale),
-        reseller: parseAmount(reseller),
-      };
+      next.prices = Object.fromEntries(
+        Object.entries(tierPrices).map(([k, v]) => [k, parseAmount(v) ?? 0])
+      );
       next.quantityOnHand = parseAmount(qty) ?? 0;
       next.lowStockAt = parseAmount(lowAt);
       next.price = undefined;
@@ -425,10 +428,33 @@ export function ProductForm({
 
       {isTiered ? (
         <>
-          <div className="grid grid-cols-3 gap-2">
-            <TextField label="Menudeo" inputMode="decimal" placeholder="0" value={retail} onChange={(e) => setRetail(e.target.value)} />
-            <TextField label="Mayoreo" inputMode="decimal" placeholder="0" value={wholesale} onChange={(e) => setWholesale(e.target.value)} />
-            <TextField label="Emprendedora" inputMode="decimal" placeholder="0" value={reseller} onChange={(e) => setReseller(e.target.value)} />
+          <div className={tiers.length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+            {tiers.map((t) => {
+              const isDefault = t.id === def?.id;
+              const suggested = isDefault ? suggestedPrice(parseAmount(cost), activeStore.pricingRule) : undefined;
+              return (
+                <div key={t.id}>
+                  <TextField
+                    label={t.label + (isDefault ? " · público" : "")}
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={tierPrices[t.id] ?? ""}
+                    onChange={(e) => setTierPrices((m) => ({ ...m, [t.id]: e.target.value }))}
+                    hint={suggested != null ? `Sugerido: ${formatMoney(suggested)}` : undefined}
+                  />
+                  {suggested != null && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs text-terracotta font-semibold"
+                      onClick={() => setTierPrices((m) => ({ ...m, [t.id]: String(suggested) }))}
+                    >
+                      Usar sugerido
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <div className="grid grid-cols-2 gap-2">
             <TextField label="En existencia" inputMode="numeric" placeholder="0" value={qty} onChange={(e) => setQty(e.target.value)} />

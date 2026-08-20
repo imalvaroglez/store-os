@@ -10,7 +10,7 @@ import {
 } from "../../design-system";
 import { ORDER_STATUS_LABELS, nextActionVerb, nextStatus } from "./orderStatus";
 import { pending, profit } from "../../lib/money";
-import { TIER_LABELS } from "../../lib/labels";
+import { tiersForStore } from "../../lib/pricing";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
@@ -45,7 +45,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           <h3 className="font-semibold text-ink truncate">{order.productName}</h3>
           <p className="text-xs text-ink-soft truncate">
             {customer?.name ?? "Sin cliente"}
-            {order.priceTier && ` · ${TIER_LABELS[order.priceTier]}`}
+            {order.priceTier && ` · ${tiersForStore(state.stores.find((s) => s.id === order.storeId)).find((t) => t.id === order.priceTier)?.label ?? "—"}`}
             {order.quantity > 1 && ` · ${order.quantity} pzs`}
           </p>
         </div>

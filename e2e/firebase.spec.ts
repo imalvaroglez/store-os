@@ -10,6 +10,7 @@ import {
   ADMIN_EMAIL,
   loginAsFirstAdmin,
   openCatalog,
+  switchToStore,
 } from "./helpers";
 
 // End-to-end against the Firebase Emulator (Auth + Firestore). Covers the
@@ -120,7 +121,10 @@ test("product photo uploads, resizes, and renders", async ({ sharedPage: page })
   await gotoClean(page);
 
   const cambiar = page.getByRole("button", { name: /Cambiar tienda/ });
-  if (!(await cambiar.count().catch(() => 0))) {
+  if ((await cambiar.count().catch(() => 0))) {
+    // Normalize to an on_demand store: the tiered form has no "Precio de venta".
+    await switchToStore(page, "Santi");
+  } else {
     await page.getByRole("button", { name: /Crear tienda/ }).click();
     await page.waitForTimeout(400);
     await page.getByLabel("Nombre de la tienda").fill("Tienda Foto");

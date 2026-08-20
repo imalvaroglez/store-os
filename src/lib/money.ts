@@ -8,13 +8,18 @@ export function formatMoney(amount: number | undefined | null): string {
   return "$" + rounded.toLocaleString("es-MX");
 }
 
-/** Price a product shows to the public: single price (on-demand) or retail (tiered). */
-export function publicPrice(p: {
-  price?: number;
-  prices?: { retail?: number; wholesale?: number; reseller?: number };
-}): number | undefined {
+/** Price a product shows to the public: single price (on-demand) or the store's default tier. */
+export function publicPrice(
+  p: { price?: number; prices?: Record<string, number> },
+  defaultTierId?: string
+): number | undefined {
   if (typeof p.price === "number") return p.price;
-  return p.prices?.retail;
+  if (!p.prices) return undefined;
+  if (defaultTierId && typeof p.prices[defaultTierId] === "number") return p.prices[defaultTierId];
+  // Legacy retail fallback only. Never fall back to "cheapest" — that could
+  // leak a private (wholesale) tier price into the public catalog.
+  if (typeof p.prices.retail === "number") return p.prices.retail;
+  return undefined;
 }
 
 /** Best available cost for profit math. */

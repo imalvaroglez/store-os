@@ -22,6 +22,11 @@ export type Store = {
   // Editable public storefront content. Absent on legacy stores until migrated;
   // screens fall back to defaults via emptyStorefront().
   storefront?: Storefront;
+  // Scalable pricing (business content — lives in `stores`, never adminStores).
+  // Absent = store not yet migrated; tiersForStore falls back to the canonical 3.
+  priceTiers?: PriceTierDef[];
+  defaultTierId?: string; // public price tier; absent = first tier by order
+  pricingRule?: { kind: "markup"; percent: number }; // suggested-price assistant
 };
 
 // Control-plane projection of a store (G-P02). Canonical document read by
@@ -95,10 +100,14 @@ export type Category = {
 
 export type ProductCategory = "perfume" | "sneakers" | "cap" | "jewelry" | "other";
 
-export type ProductPrices = {
-  retail?: number;
-  wholesale?: number;
-  reseller?: number;
+// A store-defined price level (scalable-pricing). ids are stable forever;
+// labels are cosmetic and editable. `hidden` removes the tier from forms and
+// the public catalog but never deletes price keys from products.
+export type PriceTierDef = {
+  id: string;
+  label: string;
+  order: number;
+  hidden?: boolean;
 };
 
 // A gallery image. Exactly one is primary (the cover/thumbnail). Stored optimized
@@ -154,8 +163,9 @@ export type Product = {
   cost?: number;
   price?: number;
 
-  // inventory-tiered stores use tiered `prices`.
-  prices?: ProductPrices;
+  // inventory-tiered stores use tiered `prices` keyed by PriceTierDef.id
+  // (open map: stores define their own levels).
+  prices?: Record<string, number>;
 
   quantityOnHand?: number;
   lowStockAt?: number;
@@ -186,8 +196,6 @@ export type OrderStatus =
   | "delivered"
   | "paid";
 
-export type PriceTier = "retail" | "wholesale" | "reseller";
-
 export type Order = {
   id: string;
   storeId: string;
@@ -201,7 +209,7 @@ export type Order = {
   status: OrderStatus;
   promisedDate?: string;
   notes?: string;
-  priceTier?: PriceTier;
+  priceTier?: string; // tier id snapshot at order time
   createdAt: string;
   updatedAt: string;
 };
@@ -228,7 +236,7 @@ export type PurchaseLine = {
   // product when the purchase is saved. inventory_tiered uses `prices`;
   // on_demand uses `price`.
   price?: number;
-  prices?: ProductPrices;
+  prices?: Record<string, number>; // tierId → price (inventory_tiered)
 };
 
 /** A supplier purchase (a "ticket"): one or more lines, a confirmed total. */
@@ -260,4 +268,4 @@ export type AppState = {
 // Catalog business rules (single source of truth).
 export const MAX_PRODUCT_IMAGES = 5;
 export const MAX_PRODUCT_CATEGORIES = 3; // 1 primary + up to 2 secondary
-export const CURRENT_PRODUCT_SCHEMA_VERSION = 1;
+export const CURRENT_PRODUCT_SCHEMA_VERSION = 2;

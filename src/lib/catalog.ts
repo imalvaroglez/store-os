@@ -6,6 +6,7 @@ import type {
   ProductCategory,
 } from "../types";
 import { CURRENT_PRODUCT_SCHEMA_VERSION } from "../types";
+import { CANONICAL_TIERS, LEGACY_TIER_IDS } from "./pricing";
 
 // ponytail: accents/case folding via normalize+regex; no slug lib needed.
 // Strips diacritics, lowercases, keeps a-z0-9 and hyphens, collapses runs.
@@ -164,11 +165,40 @@ export function categoryFromLegacy(
  * Returns a new AppState; does not mutate the input. Safe to call repeatedly.
  */
 export function migrateCatalog(state: AppState): AppState {
-  const products = state.products;
+  let next = state;
+
+  // ── scalable-pricing step (schema v2) ─────────────────────────────────
+  // Stores without priceTiers get the 3 canonical tiers + t_retail default;
+  // products re-key prices by tier id; orders remap legacy priceTier values.
+  // Unchanged entities keep their REFERENCE so callers can persist only what
+  // actually changed (identity comparison).
+  const storesChanged = next.stores.some((s) => !s.priceTiers);
+  if (storesChanged) {
+    next = {
+      ...next,
+      stores: next.stores.map((s) =>
+        s.priceTiers
+          ? s
+          : { ...s, priceTiers: CANONICAL_TIERS.map((t) => ({ ...t })), defaultTierId: "t_retail" }
+      ),
+    };
+  }
+  const ordersChanged = (next.orders ?? []).some((o) => o.priceTier && LEGACY_TIER_IDS[o.priceTier]);
+  if (ordersChanged) {
+    next = {
+      ...next,
+      orders: next.orders.map((o) =>
+        o.priceTier && LEGACY_TIER_IDS[o.priceTier]
+          ? { ...o, priceTier: LEGACY_TIER_IDS[o.priceTier] }
+          : o
+      ),
+    };
+  }
+  const products = next.products;
   const needsMigration = products.some(
     (p) => p.schemaVersion !== CURRENT_PRODUCT_SCHEMA_VERSION
   );
-  if (!needsMigration) return state;
+  if (!needsMigration) return next;
 
   const now = new Date().toISOString();
   const categoriesById = new Map<string, Category>();
@@ -226,6 +256,17 @@ export function migrateCatalog(state: AppState): AppState {
       slugsByStore.set(p.storeId, taken);
     }
 
+    // v2: re-key tiered prices by canonical tier id (undefined keys dropped).
+    const prices =
+      p.prices &&
+      Object.fromEntries(
+        Object.entries(p.prices)
+          .map(([k, v]) => [LEGACY_TIER_IDS[k] ?? k, v] as const)
+          .filter(([, v]) => v !== undefined)
+      );
+    const pricesChanged =
+      !!p.prices && Object.keys(p.prices).some((k) => k in LEGACY_TIER_IDS);
+
     return {
       ...p,
       categoryIds,
@@ -234,12 +275,13 @@ export function migrateCatalog(state: AppState): AppState {
       sku: p.sku?.trim() || suggestSkuBase(p.name, prefixByStore.get(p.storeId)) || p.id,
       status,
       availability: p.availability ?? "available",
+      ...(pricesChanged ? { prices } : {}),
       schemaVersion: CURRENT_PRODUCT_SCHEMA_VERSION,
     } as Product;
   });
 
   return {
-    ...state,
+    ...next,
     categories: Array.from(categoriesById.values()),
     products: migratedProducts,
   };
