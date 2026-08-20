@@ -14,6 +14,7 @@ import {
 import { getFirebase } from "./config";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
+import { publicPrice } from "../../lib/money";
 
 // Cloud data adapter. The cloud analog of lib/storage.ts: the StoreProvider talks
 // to this when signed in. Reads are scoped to the user (super_admin sees all
@@ -354,10 +355,10 @@ export function projectPublicStore(store: Store) {
 
 /**
  * Lightweight product summary for the grid (lives inside publicCatalogs). No
- * private fields. Mirrors publicPrice: on-demand exposes `price`, inventory
- * exposes only `prices.retail`.
+ * private fields. Exposes a SINGLE resolved `price` (the store's default tier
+ * for inventory stores) — never the full tier map or private prices.
  */
-export function projectPublicProductSummary(product: Product, storeSlug: string) {
+export function projectPublicProductSummary(product: Product, storeSlug: string, defaultTierId?: string) {
   const summary: Record<string, unknown> = {
     storeSlug,
     storeId: product.storeId,
@@ -372,10 +373,8 @@ export function projectPublicProductSummary(product: Product, storeSlug: string)
     categoryIds: product.categoryIds ?? [],
     sortOrder: product.sortOrder ?? 0,
   };
-  if (typeof product.price === "number") summary.price = product.price;
-  if (product.prices && typeof product.prices.retail === "number") {
-    summary.prices = { retail: product.prices.retail };
-  }
+  const resolved = publicPrice(product, defaultTierId);
+  if (typeof resolved === "number") summary.price = resolved;
   return summary;
 }
 
@@ -387,7 +386,8 @@ export function projectPublicProductSummary(product: Product, storeSlug: string)
 export function projectPublicProductDetail(
   product: Product,
   storeSlug: string,
-  categories: Category[]
+  categories: Category[],
+  defaultTierId?: string
 ) {
   const named = (product.categoryIds ?? [])
     .map((id) => categories.find((c) => c.id === id))
@@ -418,10 +418,8 @@ export function projectPublicProductDetail(
     isNew: product.isNew ?? false,
     categories: named,
   };
-  if (typeof product.price === "number") detail.price = product.price;
-  if (product.prices && typeof product.prices.retail === "number") {
-    detail.prices = { retail: product.prices.retail };
-  }
+  const resolved = publicPrice(product, defaultTierId);
+  if (typeof resolved === "number") detail.price = resolved;
   return detail;
 }
 
@@ -468,7 +466,7 @@ export async function projectPublicForStore(
         categories: activeCats,
         products: published
           .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-          .map((p) => projectPublicProductSummary(p, store.slug)),
+          .map((p) => projectPublicProductSummary(p, store.slug, store.defaultTierId)),
       },
       {}
     )
@@ -481,7 +479,7 @@ export async function projectPublicForStore(
     const id = publicProductId(store.id, p.slug);
     keepIds.add(id);
     writes.push(
-      setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories))
+      setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories, store.defaultTierId))
     );
   }
 
@@ -519,7 +517,8 @@ export async function upsertPublicProduct(
   product: Product,
   storeSlug: string,
   allStoreProducts: Product[],
-  categories: Category[]
+  categories: Category[],
+  defaultTierId?: string
 ): Promise<void> {
   const { db } = getFirebase();
   const id = product.slug ? publicProductId(product.storeId, product.slug) : null;
@@ -527,7 +526,7 @@ export async function upsertPublicProduct(
   if (!isPublished(product)) {
     if (id) await deleteDoc(doc(db, "publicProducts", id)).catch(() => {});
   } else if (id) {
-    await setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(product, storeSlug, categories));
+    await setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(product, storeSlug, categories, defaultTierId));
   }
 
   // Refresh the catalog summaries for this store.
@@ -538,7 +537,7 @@ export async function upsertPublicProduct(
       storeSlug,
       products: published
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-        .map((p) => projectPublicProductSummary(p, storeSlug)),
+        .map((p) => projectPublicProductSummary(p, storeSlug, defaultTierId)),
     },
     { merge: true }
   );
@@ -557,7 +556,8 @@ export async function removePublicProductDoc(storeId: string, productSlug: strin
 export async function rebuildPublicCatalog(
   storeSlug: string,
   storeId: string,
-  products: Product[]
+  products: Product[],
+  defaultTierId?: string
 ): Promise<void> {
   const { db } = getFirebase();
   const published = products.filter((p) => p.storeId === storeId && isPublished(p));
@@ -567,7 +567,7 @@ export async function rebuildPublicCatalog(
       storeSlug,
       products: published
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-        .map((p) => projectPublicProductSummary(p, storeSlug)),
+        .map((p) => projectPublicProductSummary(p, storeSlug, defaultTierId)),
     },
     { merge: true }
   );
