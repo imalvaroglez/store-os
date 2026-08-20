@@ -78,6 +78,11 @@ web_modules/
 .next
 out
 
+# Refresh e2e deploy-rotation build artifacts
+dist-a
+dist-b
+dist-cloud
+
 # Nuxt.js build / generate output
 .nuxt
 dist
@@ -127,6 +132,7 @@ dist
 
 # pnpm
 .pnpm-store
+pnpm-lock.yaml
 
 # yarn v3
 .pnp.*

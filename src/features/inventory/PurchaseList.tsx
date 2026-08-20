@@ -5,7 +5,7 @@ import { formatMoney } from "../../lib/money";
 import { formatDate } from "../../lib/dates";
 
 // Purchase history — the cost/stock ledger (each line stores unitCost + date +
-// productId). Newest first. Reached from the Inventario screen ("Compras").
+// productId). Newest first. Shown at /productos/compras (unified-products).
 export function PurchaseList({ onBack }: { onBack: () => void }) {
   const { state, activeStore } = useStore();
   if (!activeStore) return null;
@@ -17,7 +17,7 @@ export function PurchaseList({ onBack }: { onBack: () => void }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onBack}>
-          ← Inventario
+          ← Productos
         </Button>
       </div>
       {purchases.length === 0 ? (

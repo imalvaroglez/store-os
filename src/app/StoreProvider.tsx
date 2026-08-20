@@ -23,7 +23,7 @@ import { nowIso } from "../lib/dates";
 import { reservationDelta } from "../lib/inventory";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
-import { findUidByEmail, sendInviteLink } from "./firebase/auth";
+import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
 import {
   loadCloudState,
   subscribeCloudState,
@@ -246,6 +246,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveState(state);
   }, [state, cloud]);
 
+  // Cloud: backfill legacy pendingInvites to their canonical form (one batched
+  // write per store, only when something actually changes) so invitations
+  // saved before reliable-member-invitations match the login reconciliation.
+  useEffect(() => {
+    if (!cloud || !user) return;
+    for (const store of state.stores) {
+      const invites = store.pendingInvites ?? [];
+      const normalized = Array.from(new Set(invites.map(normalizeEmail)));
+      if (normalized.length === invites.length && invites.every((e, i) => e === normalized[i])) continue;
+      const updated = { ...store, pendingInvites: normalized, updatedAt: nowIso() };
+      dispatch({ type: "UPDATE_STORE", store: updated });
+      void saveEntity(user, "stores", storeWithMembership(updated, user)).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloud, user?.uid, state.stores]);
+
   function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
     if (!cloud || !user || fromCloud.current) return Promise.resolve();
     return saveEntity(user, name, entity).catch((error) => {
@@ -325,7 +341,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const store = state.stores.find((s) => s.id === storeId);
       if (!store) return "pending";
       const normalized = email.toLowerCase().trim();
-      // Try to find an existing user by email.
+      // Try to find an existing (verified) account by email — literal first,
+      // then the canonical form (Gmail dots/case).
       const uid = await findUidByEmail(normalized).catch(() => null);
       if (uid) {
         const memberUids = Array.from(new Set([...(store.memberUids ?? []), uid]));
@@ -334,9 +351,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         void persistEntity("stores", updated).catch(() => {});
         return "invited";
       }
-      // No account yet: store a pending invite; the real email-link send happens
-      // in the cloud path (emulator can't deliver email, so this is the durable bit).
-      const pendingInvites = Array.from(new Set([...(store.pendingInvites ?? []), normalized]));
+      // No account yet: store a pending invite (canonical form, so the login
+      // reconciliation matches); the email-link send happens in the cloud path.
+      const pendingInvites = Array.from(new Set([...(store.pendingInvites ?? []), normalizeEmail(normalized)]));
       const updated = { ...store, pendingInvites, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
       void persistEntity("stores", updated).catch(() => {});

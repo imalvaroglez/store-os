@@ -17,9 +17,10 @@ export function Sidebar({
   onChangeStore?: () => void;
 }) {
   const tabs = visibleNavItems(storeType);
-  // Catalog parent expands inline. Open by default when a catalog child is active
-  // so deep-linking to /catalogo-admin/categorias shows the open group.
-  const [catalogOpen, setCatalogOpen] = useState<boolean>(() => parentActive(active));
+  // Productos parent expands inline. Open by default when a child is active so
+  // deep-linking to /productos/categorias shows the open group. The label
+  // navigates; the chevron is a separate expand control (unified-products).
+  const [productosOpen, setProductosOpen] = useState<boolean>(() => parentActive(active));
   return (
     <aside className="hidden md:flex flex-col w-60 shrink-0 border-r border-rule/70 bg-paper/60 backdrop-blur h-full sticky top-0">
       <div className="px-5 pt-6 pb-4">
@@ -45,23 +46,31 @@ export function Sidebar({
 
       <nav className="flex-1 px-3 space-y-1">
         {tabs.map((t) => {
-          // Catalog parent: toggles expansion, does not navigate by itself.
+          // Productos parent: the label navigates to the parent route; the
+          // chevron is a separate control that expands the children.
           if (t.children) {
             return (
               <div key={t.id} className="space-y-1">
-                <button
-                  aria-expanded={catalogOpen}
-                  onClick={() => setCatalogOpen((v) => !v)}
-                  className={`w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold transition-colors flex items-center justify-between ${
+                <div
+                  className={`rounded-md text-sm font-semibold transition-colors flex items-center justify-between ${
                     parentActive(active)
                       ? "bg-terracotta text-on-accent"
                       : "text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
                   }`}
                 >
-                  <span>{t.label}</span>
-                  <span className={`transition-transform ${catalogOpen ? "rotate-180" : ""}`}>▾</span>
-                </button>
-                {catalogOpen && (
+                  <button onClick={() => navigate(t.path)} className="flex-1 text-left px-3 py-2.5 rounded-md">
+                    {t.label}
+                  </button>
+                  <button
+                    aria-expanded={productosOpen}
+                    aria-label="Expandir"
+                    onClick={() => setProductosOpen((v) => !v)}
+                    className="px-3 py-2.5 rounded-md"
+                  >
+                    <span className={`inline-block transition-transform ${productosOpen ? "rotate-180" : ""}`}>▾</span>
+                  </button>
+                </div>
+                {productosOpen && (
                   <div className="space-y-1 pl-3">
                     {t.children.map((c) => {
                       const childOn = c.id === active;
