@@ -1,0 +1,20 @@
+{
+  "name": "Store OS",
+  "short_name": "Store OS",
+  "description": "Un cuaderno moderno para llevar tu pequeña tienda.",
+  "lang": "es-MX",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

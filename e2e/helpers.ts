@@ -249,10 +249,9 @@ export async function gotoSantiHome(page: Page) {
 }
 
 export async function openCatalog(page: Page) {
-  await page.getByRole("button", { name: /^Catálogo/ }).click();
-  const products = page.getByRole("menuitem", { name: "Productos" });
-  if (await products.isVisible().catch(() => false)) await products.click();
-  else await page.getByRole("button", { name: "Productos", exact: true }).click();
+  // The "Productos" parent navigates directly to the product list (the former
+  // "Catálogo" tab; unified-products). Its chevron only expands children.
+  await page.getByRole("button", { name: /^Productos/ }).first().click();
   await expect(page.getByRole("heading", { name: "Catálogo", exact: true })).toBeVisible();
 }
 
