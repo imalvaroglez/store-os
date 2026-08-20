@@ -211,16 +211,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const before = s.orders.find((o) => o.id === order.id);
             if (before !== order) writes.push(saveEntity(user, "orders", order));
           }
-          await Promise.all(writes);
-          // One public republish per affected store (not per product).
-          await Promise.all(
-            migratedStores.map((store) =>
-              projectPublicForStore(store, migrated.products, migrated.categories).catch(() => {})
-            )
-          );
+          // Render FIRST, persist in the background: on a cold/slow backend the
+          // awaited writes delayed REPLACE_STATE so much that a REPLACE arriving
+          // after the user switched stores reverted their selection. Migration
+          // is idempotent, so a failed background write just re-migrates on the
+          // next load.
           fromCloud.current = true;
           dispatch({ type: "REPLACE_STATE", state: migrated });
           fromCloud.current = false;
+          void (async () => {
+            try {
+              await Promise.all(writes);
+              // One public republish per affected store (not per product).
+              await Promise.all(
+                migratedStores.map((store) =>
+                  projectPublicForStore(store, migrated.products, migrated.categories).catch(() => {})
+                )
+              );
+            } catch {
+              // Background migration write failed — retried on next load.
+            }
+          })();
         })
         .catch(() => {});
       unsub = subscribeCloudState(user, (s) => {
