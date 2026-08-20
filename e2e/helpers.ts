@@ -216,7 +216,52 @@ export async function ensureSignedOut(page: Page) {
   await gotoClean(page);
 }
 
+// Emulator-only: complete the REAL email verification round-trip via REST
+// (sendOobCode with returnOobLink is an emulator-privileged admin call, then
+// accounts:update consumes the oobCode). Password signups in the emulator are
+// unverified — the app's central guard correctly holds the profile back until
+// the email is verified, so tests must verify before expecting a profile.
+export async function verifyEmulatorEmail(email: string, password: string) {
+  const base = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
+  const idToken = await fetch(`${base}/accounts:signInWithPassword?key=fake`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, returnSecureToken: true }),
+  })
+    .then((r) => r.json())
+    .then((v: { idToken?: string }) => {
+      if (!v.idToken) throw new Error(`verifyEmulatorEmail: cannot sign in ${email}`);
+      return v.idToken;
+    });
+  const oobCode = await fetch(`${base}/accounts:sendOobCode?key=fake`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer owner" },
+    body: JSON.stringify({ requestType: "VERIFY_EMAIL", idToken, returnOobLink: true }),
+  })
+    .then((r) => r.json())
+    .then((v: { oobCode?: string }) => {
+      if (!v.oobCode) throw new Error(`verifyEmulatorEmail: no oobCode for ${email}`);
+      return v.oobCode;
+    });
+  const done = await fetch(`${base}/accounts:update?key=fake`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ oobCode }),
+  }).then((r) => r.json());
+  if (done.emailVerified !== true) throw new Error(`verifyEmulatorEmail: not verified for ${email}`);
+}
+
 export async function signUp(page: Page, email: string, password: string) {
+  await signUpInUi(page, email, password);
+  // Sign the fresh account in again with a verified email: the signup session's
+  // token predates verification, so clear it and log in (the login path then
+  // creates the profile and reconciles pending invites like any real user).
+  await verifyEmulatorEmail(email, password);
+  await clearSession(page);
+  await signIn(page, email, password);
+}
+
+async function signUpInUi(page: Page, email: string, password: string) {
   await gotoClean(page);
   // The Firebase emulator injects a fixed-position banner that, on small
   // viewports, overlays and intercepts pointer events on the auth-sheet buttons.

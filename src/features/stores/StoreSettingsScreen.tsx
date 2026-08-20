@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { useAuth } from "../../app/firebase/AuthProvider";
+import { findAccountByEmail, type EmailAccount } from "../../app/firebase/auth";
 import { Button, TextField, SelectField, Dialog, Sheet, useToast } from "../../design-system";
 import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { SlugTakenError } from "../../app/firebase/firestoreData";
@@ -33,6 +34,8 @@ export function StoreSettingsScreen({
   const [whatsapp, setWhatsapp] = useState(store?.whatsappPhone ?? "");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteMsg, setInviteMsg] = useState<string | null>(null);
+  // Exact-email search result (single verified account or null = not found).
+  const [foundAccount, setFoundAccount] = useState<EmailAccount | null>(null);
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
@@ -130,6 +133,24 @@ export function StoreSettingsScreen({
     toast.success("Prefijo de SKU guardado");
   }
 
+  async function doSearch() {
+    if (!inviteEmail.trim()) return;
+    setBusy(true);
+    setInviteMsg(null);
+    setFoundAccount(null);
+    try {
+      const account = await findAccountByEmail(inviteEmail.trim());
+      setFoundAccount(account);
+      if (!account) {
+        setInviteMsg("No hay una cuenta con ese correo. Puedes enviar una invitación: quedará pendiente hasta que la persona cree su cuenta.");
+      }
+    } catch {
+      setInviteMsg("No se pudo buscar. Intenta de nuevo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function doInvite() {
     if (!inviteEmail.trim()) return;
     setBusy(true);
@@ -142,6 +163,7 @@ export function StoreSettingsScreen({
           : "Invitación enviada. Quedará pendiente hasta que la persona cree su cuenta."
       );
       setInviteEmail("");
+      setFoundAccount(null);
     } catch {
       setInviteMsg("No se pudo invitar. Intenta de nuevo.");
     } finally {
@@ -210,15 +232,31 @@ export function StoreSettingsScreen({
         {isOwnerOrAdmin && (
           <>
             <TextField
-              label="Invitar por correo"
+              label="Buscar por correo"
               placeholder="correo@ejemplo.com"
               type="email"
               value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
+              onChange={(e) => { setInviteEmail(e.target.value); setFoundAccount(null); }}
             />
-            <Button full onClick={doInvite} disabled={busy || !inviteEmail.trim()}>
-              Enviar invitación
+            <Button full variant="secondary" onClick={doSearch} disabled={busy || !inviteEmail.trim()}>
+              Buscar cuenta
             </Button>
+            {foundAccount && (
+              <div className="flex items-center justify-between bg-surface rounded-md px-3 py-2 ring-1 ring-edge">
+                <span className="text-sm text-ink min-w-0">
+                  {foundAccount.email}
+                  {foundAccount.displayName && <span className="text-ink-soft"> · {foundAccount.displayName}</span>}
+                </span>
+                <Button size="sm" onClick={doInvite} disabled={busy}>
+                  Agregar
+                </Button>
+              </div>
+            )}
+            {foundAccount === null && inviteEmail.trim() !== "" && inviteMsg?.startsWith("No hay una cuenta") && (
+              <Button full onClick={doInvite} disabled={busy || !inviteEmail.trim()}>
+                Enviar invitación
+              </Button>
+            )}
           </>
         )}
         {isOwnerOrAdmin && (
