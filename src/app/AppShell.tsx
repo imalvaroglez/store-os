@@ -21,14 +21,13 @@ import { CatalogScreen } from "../features/catalog/CatalogScreen";
 import { CategoriesScreen } from "../features/catalog/CategoriesScreen";
 import { OrdersScreen } from "../features/orders/OrdersScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
-import { InventoryScreen } from "../features/inventory/InventoryScreen";
+import { PurchasesScreen } from "../features/inventory/PurchasesScreen";
 
 const TAB_FOR_PATH: Record<string, Tab> = {
   "": "inicio",
-  "catalogo-admin": "catalogo",
+  productos: "productos",
   pedidos: "pedidos",
   clientes: "clientes",
-  inventario: "inventario",
 };
 
 export function AppShell() {
@@ -41,11 +40,12 @@ export function AppShell() {
 
   const seg = route.name === "admin" ? route.params.tab ?? "" : "";
   const sub = route.name === "admin" ? route.params.sub ?? "" : "";
-  // Catalog parent resolves to a child tab when a sub-route is present
-  // (/catalogo-admin/productos → catalogo_productos). Other tabs stay flat.
+  // The productos parent renders the list by default and resolves to a child
+  // tab when a sub-route is present (/productos/categorias). Legacy
+  // /catalogo-admin and /inventario URLs never reach here (router redirects).
   let tab: Tab;
-  if (seg === "catalogo-admin") {
-    tab = sub === "categorias" ? "catalogo_categorias" : "catalogo_productos";
+  if (seg === "productos") {
+    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : "productos";
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
@@ -77,20 +77,20 @@ export function AppShell() {
 
   let screen;
   switch (tab) {
-    case "catalogo_productos":
+    case "productos":
       screen = <CatalogScreen />;
       break;
-    case "catalogo_categorias":
+    case "productos_categorias":
       screen = <CategoriesScreen />;
+      break;
+    case "productos_compras":
+      screen = <PurchasesScreen />;
       break;
     case "pedidos":
       screen = <OrdersScreen />;
       break;
     case "clientes":
       screen = <CustomersScreen />;
-      break;
-    case "inventario":
-      screen = <InventoryScreen />;
       break;
     default:
       screen = <HomeScreen />;

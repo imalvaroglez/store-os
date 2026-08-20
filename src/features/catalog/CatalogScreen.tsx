@@ -14,12 +14,14 @@ import {
   DropdownSeparator,
   IconButton,
   Dialog,
+  StatRow,
   useToast,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
 import { CATEGORY_LABELS } from "../../lib/labels";
-import { productsForStore } from "../../lib/selectors";
+import { productsForStore, committedForProduct } from "../../lib/selectors";
 import { publicPrice, profit, formatMoney } from "../../lib/money";
+import { nowIso } from "../../lib/dates";
 import type { Product } from "../../types";
 import type { StatusTone } from "../../design-system";
 
@@ -52,13 +54,17 @@ function statusTone(p: Product): StatusTone {
 function ProductCard({
   product,
   isTiered,
+  committed,
   onEdit,
   onDelete,
+  onAdjust,
 }: {
   product: Product;
   isTiered: boolean;
+  committed: number;
   onEdit: () => void;
   onDelete: () => void;
+  onAdjust: (delta: number) => void;
 }) {
   const [menu, setMenu] = useState(false);
   // Stable callback so the Dropdown effect (which depends on `onClose`) does not
@@ -114,16 +120,52 @@ function ProductCard({
           <p className="text-xs text-ink-soft">{CATEGORY_LABELS[product.category]}</p>
 
           {isTiered ? (
-            <div className="flex gap-3 mt-1.5 text-xs">
-              <span className="text-ink">
-                Menudeo <b>{formatMoney(product.prices?.retail)}</b>
-              </span>
-              {typeof product.quantityOnHand === "number" && (
-                <span className={low ? "text-danger font-semibold" : "text-on-surface-soft"}>
-                  Existencia: {product.quantityOnHand}
+            <>
+              <div className="flex gap-3 mt-1.5 text-xs">
+                <span className="text-ink">
+                  Menudeo <b>{formatMoney(product.prices?.retail)}</b>
                 </span>
+                {typeof product.quantityOnHand === "number" && (
+                  <span className={low ? "text-danger font-semibold" : "text-on-surface-soft"}>
+                    Existencia: {product.quantityOnHand}
+                  </span>
+                )}
+              </div>
+              {/* Tiered stats + manual ± moved from the old InventoryScreen
+                  (unified-products): Disponible/Comprometido/Físico right on
+                  the card. stopPropagation so the buttons don't open the edit
+                  sheet (the whole card is clickable). */}
+              {typeof product.quantityOnHand === "number" && (
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2">
+                    <IconButton
+                      variant="secondary"
+                      onClick={() => onAdjust(-1)}
+                      aria-label="Restar uno"
+                    >
+                      −
+                    </IconButton>
+                    <span className="w-8 text-center text-lg font-extrabold text-ink">
+                      {product.quantityOnHand}
+                    </span>
+                    <IconButton variant="primary" onClick={() => onAdjust(1)} aria-label="Sumar uno">
+                      +
+                    </IconButton>
+                    {low && <Badge tone="warning">Baja existencia</Badge>}
+                    {product.quantityOnHand < 0 && (
+                      <Badge tone="danger">Faltan {Math.abs(product.quantityOnHand)}</Badge>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2">
+                    <StatRow label="Disponible">{product.quantityOnHand}</StatRow>
+                    <StatRow label="Comprometido" tone={committed > 0 ? "danger" : "default"}>
+                      {committed}
+                    </StatRow>
+                    <StatRow label="Físico">{product.quantityOnHand + committed}</StatRow>
+                  </div>
+                </div>
               )}
-            </div>
+            </>
           ) : (
             <div className="flex gap-3 mt-1.5 text-xs">
               <span className="text-ink">
@@ -141,7 +183,7 @@ function ProductCard({
 }
 
 export function CatalogScreen() {
-  const { state, activeStore, deleteProduct } = useStore();
+  const { state, activeStore, deleteProduct, upsertProduct } = useStore();
   const toast = useToast();
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
@@ -184,8 +226,19 @@ export function CatalogScreen() {
               key={p.id}
               product={p}
               isTiered={isTiered}
+              committed={committedForProduct(state.orders, activeStore.id, p.id)}
               onEdit={() => setEditing(p)}
               onDelete={() => setDeleting(p)}
+              onAdjust={(delta) => {
+                // Physical-count corrections floor at 0 (same rule the old
+                // InventoryScreen ± buttons had).
+                if (typeof p.quantityOnHand !== "number") return;
+                upsertProduct({
+                  ...p,
+                  quantityOnHand: Math.max(0, p.quantityOnHand + delta),
+                  updatedAt: nowIso(),
+                });
+              }}
             />
           ))}
         </div>
