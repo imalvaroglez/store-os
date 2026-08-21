@@ -11,8 +11,9 @@ import {
   useToast,
 } from "../../design-system";
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
-import { applyPurchaseLines } from "../../lib/inventory";
+
 import { todayIso, nowIso } from "../../lib/dates";
+import { recalcPurchaseStatus } from "../../types";
 import { formatMoney, parseAmount } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import type { PriceTierDef, Purchase, PurchaseLine, Supplier, Product } from "../../types";
@@ -78,42 +79,25 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       toast.error("Agrega al menos una pieza.");
       return;
     }
-    if (draft.lines.some((l) => !l.productId)) {
-      toast.error("Cada línea necesita un producto.");
-      return;
-    }
-    // Apply stock + weighted-average cost to each product. Also merge any
-    // sale-price edits from the line (F3). upsertProduct re-projects the public
-    // catalog — stock/cost are private (no-op projection), but a price change
-    // DOES republish (intended: adjusting price while buying updates the
-    // catalog). If several lines touch the same product, the last line's price
-    // wins (applyPurchaseLines already folds qty/cost the same way).
-    const computed = applyPurchaseLines(products, draft.lines);
+    // Draft-only save: a purchase NEVER mutates products on save. Stock and
+    // cost are applied by "Recibir mercancía" (receivePurchase), the single
+    // inventory transaction.
+    const next: Purchase = {
+      ...draft,
+      subtotal,
+      status: recalcPurchaseStatus(draft, { totalPaid: draft.totalConfirmed || subtotal }),
+      updatedAt: nowIso(),
+    };
     try {
-      for (const [productId, update] of computed) {
-        const p = state.products.find((x) => x.id === productId);
-        if (p) {
-          const line = draft.lines.find((l) => l.productId === productId);
-          await upsertProduct({
-            ...p,
-            quantityOnHand: update.quantityOnHand,
-            cost: update.cost,
-            // Merge price edits only if the line carries them (undefined → keep
-            // the product's existing price).
-            prices: line?.prices ?? p.prices,
-            price: line?.price ?? p.price,
-            updatedAt: nowIso(),
-          });
-        }
-      }
-      await upsertPurchase({ ...draft, subtotal, updatedAt: nowIso() });
+      await upsertPurchase(next);
     } catch {
       // persistEntity (StoreProvider) already logged the Firestore rejection.
       // Do NOT show the success toast — that lied when a write silently failed.
-      toast.error("No se pudo registrar la compra. Revisa tu conexión e intenta de nuevo.");
+      toast.error("No se pudo guardar la compra. Revisa tu conexión e intenta de nuevo.");
       return;
     }
-    toast.success(`Compra registrada: ${formatMoney(draft.totalConfirmed || subtotal)}`);
+    setDraft(next);
+    toast.success("Borrador guardado. Recibe la mercancía para sumar inventario.");
     onDone();
   }
 
@@ -127,7 +111,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               ...d,
               lines: [...d.lines, ...lines],
               supplierOrder: meta.supplierOrder ?? d.supplierOrder,
-              documentUrl: meta.documentUrl ?? d.documentUrl,
+              documentPath: meta.documentPath ?? d.documentPath,
               totalConfirmed: meta.total ?? d.totalConfirmed,
             }))
           }

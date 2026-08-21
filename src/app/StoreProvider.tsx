@@ -6,6 +6,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { effectivePurchaseStatus } from "../types";
 import type {
   AppState,
   Store,
@@ -20,7 +21,7 @@ import { loadState, saveState, emptyState } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
-import { reservationDelta } from "../lib/inventory";
+import { reservationDelta, applyPurchaseLines } from "../lib/inventory";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
@@ -36,6 +37,8 @@ import {
   upsertPublicProduct,
   removePublicProductDoc,
   rebuildPublicCatalog,
+  receivePurchaseTx,
+  PurchaseAlreadyReceived,
 } from "./firebase/firestoreData";
 import { deleteProductImage } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
@@ -158,6 +161,8 @@ type StoreContextValue = {
   upsertSupplier: (supplier: Supplier) => void;
   deleteSupplier: (supplierId: string) => void;
   upsertPurchase: (purchase: Purchase) => Promise<void>;
+  /** The ONLY operation that moves inventory. Idempotent; throws "received" softly. */
+  receivePurchase: (purchaseId: string) => Promise<"received" | "already">;
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => void;
   deleteCustomer: (customerId: string) => void;
@@ -490,8 +495,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await persistEntity("purchases", purchase);
     },
     deletePurchase: (purchaseId) => {
+      // A received purchase is inventory evidence: deleting it would strand
+      // stock that entered through it. Block it (no reversals in V1).
+      const purchase = state.purchases.find((p) => p.id === purchaseId);
+      if (purchase && effectivePurchaseStatus(purchase) === "received") return;
       dispatch({ type: "DELETE_PURCHASE", purchaseId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "purchases", purchaseId).catch(() => {});
+    },
+    receivePurchase: async (purchaseId) => {
+      const purchase = state.purchases.find((p) => p.id === purchaseId);
+      if (!purchase) throw new Error("No se encontró la compra.");
+      // Both guards BEFORE any effect: legacy (status undefined) already
+      // applied stock when it was saved, and receivedAt marks a prior receive.
+      if (effectivePurchaseStatus(purchase) === "received" || purchase.receivedAt != null) {
+        return "already";
+      }
+      if (cloud) {
+        // Transactional in Firestore: stock + purchase in ONE commit, with the
+        // legacy/receivedAt guards re-checked inside.
+        try {
+          await receivePurchaseTx(purchaseId);
+        } catch (e) {
+          if (e instanceof PurchaseAlreadyReceived) return "already";
+          throw e;
+        }
+        // Reconcile local state from the transaction's outcome.
+        const at = nowIso();
+        const updated = applyPurchaseLines(state.products, purchase.lines);
+        for (const [productId, update] of updated) {
+          const p = state.products.find((x) => x.id === productId);
+          if (p) {
+            dispatch({ type: "UPDATE_PRODUCT", product: { ...p, ...update, updatedAt: at } });
+          }
+        }
+        dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
+        return "received";
+      }
+      // Demo local: same effect, guarded by the check above.
+      const at = nowIso();
+      const updated = applyPurchaseLines(state.products, purchase.lines);
+      for (const [productId, update] of updated) {
+        const p = state.products.find((x) => x.id === productId);
+        if (p) {
+          dispatch({ type: "UPDATE_PRODUCT", product: { ...p, ...update, updatedAt: at } });
+          void persistEntity("products", { ...p, ...update, updatedAt: at }).catch(() => {});
+        }
+      }
+      dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
+      void persistEntity("purchases", { ...purchase, status: "received", receivedAt: at, updatedAt: at }).catch(() => {});
+      return "received";
     },
     upsertCustomer: (customer) => {
       dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
@@ -587,5 +639,5 @@ export function newSupplier(storeId: string): Supplier {
 }
 export function newPurchase(storeId: string): Purchase {
   const now = nowIso();
-  return { id: uid("purchase"), storeId, date: now.slice(0, 10), lines: [], subtotal: 0, totalConfirmed: 0, createdAt: now, updatedAt: now };
+  return { id: uid("purchase"), storeId, date: now.slice(0, 10), lines: [], subtotal: 0, totalConfirmed: 0, status: "draft", origin: "manual", createdAt: now, updatedAt: now };
 }

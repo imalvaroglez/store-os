@@ -237,7 +237,19 @@ export type PurchaseLine = {
   // on_demand uses `price`.
   price?: number;
   prices?: Record<string, number>; // tierId → price (inventory_tiered)
+  // purchase-pdf-import: as read from the document, before any interpretation.
+  variant?: string;
+  sourceAmount?: number; // the printed amount, semantics unresolved
+  sourceAmountType?: "unit" | "line" | "unknown";
+  matchStatus?: "unmatched" | "matched" | "new_product" | "needs_review";
 };
+
+/**
+ * Purchase lifecycle. `receivePurchase` is the ONLY operation that touches
+ * inventory. Legacy purchases (created before the lifecycle) have
+ * `status: undefined` and MUST be treated as already received.
+ */
+export type PurchaseStatus = "draft" | "needs_review" | "ready" | "received";
 
 /** A supplier purchase (a "ticket"): one or more lines, a confirmed total. */
 export type Purchase = {
@@ -250,12 +262,49 @@ export type Purchase = {
   subtotal: number; // Σ quantity × unitCost (computed)
   totalConfirmed: number; // the total Fer confirms (may differ from subtotal)
   // purchase-pdf-import: the supplier's order document, when the purchase was
-  // built by importing a PDF. Private (members-only Storage path).
-  documentUrl?: string;
+  // built by importing a PDF. Private (members-only Storage path) — we store
+  // the PATH, never a download URL (those carry a reusable token).
+  documentPath?: string;
+  documentFingerprint?: string; // SHA-256, duplicate-import detection
   supplierOrder?: string; // folio/número de pedido del proveedor
+  supplierName?: string; // supplier candidate detected in the PDF ("Colore")
+  origin?: "manual" | "pdf";
+  status?: PurchaseStatus; // undefined = legacy (already applied stock on save)
+  receivedAt?: string; // set by receivePurchase; idempotency mark
+  // The admin explicitly confirmed receiving with this unexplained difference.
+  // Any later edit to the draft must clear it (invalidate the confirmation).
+  confirmedMismatchAmount?: number;
+  discount?: number;
+  shipping?: number;
+  tax?: number;
   createdAt: string;
   updatedAt: string;
 };
+
+/** Legacy purchases (no status) already applied stock when saved. */
+export function effectivePurchaseStatus(p: Purchase): PurchaseStatus {
+  return p.status ?? "received";
+}
+
+/**
+ * Recompute a draft's review status from its own data — the single authority.
+ * needs_review: unresolved source-amount semantics, or an unconfirmed total
+ * mismatch. ready: everything resolved. draft: nothing to review yet.
+ */
+export function recalcPurchaseStatus(
+  p: Purchase,
+  opts: { totalPaid: number }
+): PurchaseStatus {
+  if (effectivePurchaseStatus(p) === "received") return "received";
+  if (p.lines.length === 0) return "draft";
+  const unknownAmount = p.lines.some((l) => l.sourceAmountType === "unknown");
+  const merchandise = p.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0);
+  const adjustments = (p.discount ?? 0) + (p.shipping ?? 0) + (p.tax ?? 0);
+  const mismatch = Math.abs(merchandise + adjustments - opts.totalPaid);
+  const mismatchConfirmed = p.confirmedMismatchAmount != null && Math.abs(mismatch - p.confirmedMismatchAmount) < 0.005;
+  if (unknownAmount || (!mismatchConfirmed && mismatch > 0.5)) return "needs_review";
+  return "ready";
+}
 
 // Whole app state persisted to localStorage.
 export type AppState = {

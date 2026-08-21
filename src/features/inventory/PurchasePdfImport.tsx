@@ -10,7 +10,7 @@ import type { PurchaseLine } from "../../types";
 // mandatory — the OCR pre-fills, Fer decides (spec acceptance #2).
 
 type Props = {
-  onApply: (lines: PurchaseLine[], meta: { supplierOrder?: string; documentUrl?: string; total?: number }) => void;
+  onApply: (lines: PurchaseLine[], meta: { supplierOrder?: string; documentPath?: string; total?: number }) => void;
 };
 
 export function PurchasePdfImport({ onApply }: Props) {
@@ -18,7 +18,7 @@ export function PurchasePdfImport({ onApply }: Props) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [parsed, setParsed] = useState<ParsedPdfOrder | null>(null);
-  const [documentUrl, setDocumentUrl] = useState<string>();
+  const [documentPath, setDocumentPath] = useState<string>();
   const [folio, setFolio] = useState("");
   const [totalRaw, setTotalRaw] = useState("");
 
@@ -28,14 +28,14 @@ export function PurchasePdfImport({ onApply }: Props) {
     if (!activeStore) return;
     setBusy(true);
     try {
-      const { storagePath, downloadUrl } = await uploadPurchasePdf(activeStore.id, file);
+      const { storagePath } = await uploadPurchasePdf(activeStore.id, file);
       const result = await importPurchasePdf(storagePath);
       if (!result.lines.length) {
         toast.error("No pudimos leer el pedido. Captura la compra a mano.");
         return;
       }
       setParsed(result);
-      setDocumentUrl(downloadUrl);
+      setDocumentPath(storagePath);
       setFolio(result.supplierOrder ?? "");
       setTotalRaw(result.total != null ? String(result.total) : "");
     } catch {
@@ -63,7 +63,7 @@ export function PurchasePdfImport({ onApply }: Props) {
     }));
     onApply(lines, {
       supplierOrder: folio.trim() || undefined,
-      documentUrl,
+      documentPath,
       total: declaredTotal ?? undefined,
     });
     setParsed(null);

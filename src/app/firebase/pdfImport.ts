@@ -4,7 +4,7 @@ import {
   httpsCallable,
   type Functions,
 } from "firebase/functions";
-import { getStorage, ref, uploadBytes, getDownloadURL, connectStorageEmulator, type FirebaseStorage } from "firebase/storage";
+import { getStorage, ref, uploadBytes, connectStorageEmulator, getBlob, type FirebaseStorage } from "firebase/storage";
 import { getFirebase } from "./config";
 
 // PDF import transport (purchase-pdf-import): upload the supplier PDF to
@@ -60,16 +60,20 @@ function storageInstance(): FirebaseStorage {
   return storage;
 }
 
-/** Upload the PDF privately and return { storagePath, downloadUrl }. */
+/**
+ * Upload the PDF privately. Returns ONLY the storage path — we never persist a
+ * download URL (those carry a reusable token); viewing goes through
+ * `openPurchasePdf`, which fetches the bytes under the user's session and
+ * exposes a short-lived in-memory object URL.
+ */
 export async function uploadPurchasePdf(
   storeId: string,
   file: File
-): Promise<{ storagePath: string; downloadUrl: string }> {
+): Promise<{ storagePath: string }> {
   const storagePath = `purchases/${storeId}/${Date.now()}-${file.name.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
   const r = ref(storageInstance(), storagePath);
   await uploadBytes(r, file, { contentType: "application/pdf" });
-  const downloadUrl = await getDownloadURL(r);
-  return { storagePath, downloadUrl };
+  return { storagePath };
 }
 
 /** OCR + parse the uploaded PDF (server-side, tesseract spa). */
@@ -77,4 +81,14 @@ export async function importPurchasePdf(storagePath: string): Promise<ParsedPdfO
   const call = httpsCallable<{ storagePath: string }, ParsedPdfOrder>(functionsInstance(), "importPurchasePdf");
   const res = await call({ storagePath });
   return res.data;
+}
+
+/**
+ * Open the stored PDF for viewing: downloads the bytes with the Storage SDK
+ * under the signed-in user's session (rules-checked, no lasting URL) and opens
+ * a temporary object URL that the caller should revoke after use.
+ */
+export async function openPurchasePdf(documentPath: string): Promise<string> {
+  const blob = await getBlob(ref(storageInstance(), documentPath));
+  return URL.createObjectURL(blob);
 }
