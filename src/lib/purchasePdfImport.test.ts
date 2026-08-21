@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseMoney, parseSupplierOrder } from "../../functions/src/parser";
+import {
+  parseMoney,
+  parseSupplierOrder,
+  reconcileAmountType,
+} from "../../functions/src/parser";
 
-// The fixture is the real OCR output of Fer's supplier PDF (5 pages).
+// The fixture is the real OCR output of Fer's supplier PDF (5 pages), with
+// `=== render-N.png ===` page markers — the §31 regression suite.
 const realOcr = readFileSync(
   join(__dirname, "../../functions/src/__fixtures__/receipt-ocr.txt"),
   "utf8"
@@ -19,50 +24,121 @@ describe("parseMoney", () => {
   });
 });
 
-describe("parseSupplierOrder (real OCR fixture)", () => {
+describe("parseSupplierOrder — §31 fixture regression", () => {
   const parsed = parseSupplierOrder(realOcr);
 
-  it("extracts the order number and date label", () => {
+  it("detects order number, date label and currency", () => {
     expect(parsed.supplierOrder).toBe("3023");
-    expect(parsed.dateLabel).toMatch(/ago 19/i);
+    expect(parsed.dateLabel).toMatch(/^ago 19$/i);
+    expect(parsed.currency).toBe("MXN");
   });
 
-  it("extracts the totals", () => {
+  it("suggests the supplier from the Tienda section", () => {
+    expect(parsed.supplierCandidate).toBe("Colore");
+  });
+
+  it("detects totals: subtotal/total, discount, tax; shipping free", () => {
     expect(parsed.subtotal).toBe(10001.68);
     expect(parsed.total).toBe(10001.68);
+    expect(parsed.discount).toBe(18574.77);
+    expect(parsed.taxIncluded).toBe(1379.55);
+    expect(parsed.shipping).toBe(0);
   });
 
-  it("extracts at least 40 item lines with prices", () => {
-    expect(parsed.lines.length).toBeGreaterThanOrEqual(40);
+  it("first product is real merchandise, never the document header", () => {
+    const first = parsed.lines[0];
+    expect(first.name).toMatch(/^Brazalete tubular flor/i);
+    expect(first.name).not.toMatch(/recibo/i);
+    expect(first.name).not.toMatch(/pedido/i);
+    expect(first.sourceAmount).toBe(193.2);
+  });
+
+  it("first product: variant Dorado, quantity 3", () => {
+    expect(parsed.lines[0].variant).toBe("Dorado");
+    expect(parsed.lines[0].quantity).toBe(3);
+  });
+
+  it("second product has quantity 4 (bare number)", () => {
+    expect(parsed.lines[1].quantity).toBe(4);
+  });
+
+  it("preserves ×2/×3 multipliers throughout", () => {
+    const x2 = parsed.lines.filter((l) => l.quantity === 2);
+    const x3 = parsed.lines.filter((l) => l.quantity === 3);
+    expect(x2.length).toBeGreaterThanOrEqual(10);
+    expect(x3.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps Dorado/Plateado and ring letters as variants", () => {
+    const variants = new Set(parsed.lines.map((l) => l.variant));
+    expect(variants.has("Dorado")).toBe(true);
+    expect(variants.has("Plateado")).toBe(true);
+    const letters = parsed.lines.filter((l) => l.variant && l.variant.length === 1);
+    expect(letters.length).toBeGreaterThanOrEqual(5); // N, R, A, D, E…
+  });
+
+  it("stitches items split across page boundaries (1→2)", () => {
+    // Page 1 ends "Anillo ajustable eslabon italiano" and page 2 starts
+    // "cerezas y circonias 94,50 MXN" — must be ONE line, not two.
+    const stitched = parsed.lines.find((l) =>
+      /eslabon italiano/i.test(l.name) && /cerezas/i.test(l.name)
+    );
+    expect(stitched).toBeDefined();
+    expect(stitched!.sourceAmount).toBe(94.5);
+  });
+
+  it("never turns totals or addresses into merchandise", () => {
     for (const l of parsed.lines) {
-      expect(l.name.length).toBeGreaterThan(3);
-      expect(l.unitAmount).toBeGreaterThan(0);
+      expect(l.name).not.toMatch(/subtotal|descuento|env[íi]o|^total|impuestos/i);
+      expect(l.name).not.toMatch(/direcci[óo]n|correo|facturaci[óo]n|guadalajara|ch[áa]vez|@/i);
     }
   });
 
-  it("recognizes the first line: name, color, quantity, price", () => {
-    const first = parsed.lines[0];
-    expect(first.name).toMatch(/Brazalete tubular flor/i);
-    expect(first.unitAmount).toBe(193.2);
-    expect(first.color).toBe("dorado");
-    expect(first.quantity).toBe(3);
+  it("recognizes unreconcilable amounts → unknown + needsReview, not an error", () => {
+    // Σ sourceAmount (~7.9k) and Σ×qty (~15k) both miss 10,001.68: the doc's
+    // Descuento is internally inconsistent. The result is review, not failure.
+    expect(parsed.sourceAmountType).toBe("unknown");
+    expect(parsed.needsReview).toBe(true);
   });
 
-  it("never invents quantities (default 1)", () => {
-    expect(parsed.lines.every((l) => l.quantity >= 1)).toBe(true);
+  it("does not invent unit costs when semantics are unknown", () => {
+    for (const l of parsed.lines) expect(l.unitCost).toBeUndefined();
+  });
+
+  it("extracts a plausible number of items (≥ 40)", () => {
+    expect(parsed.lines.length).toBeGreaterThanOrEqual(40);
+  });
+});
+
+describe("reconcileAmountType", () => {
+  const lines = [
+    { sourceAmount: 100, quantity: 2 },
+    { sourceAmount: 50, quantity: 1 },
+  ];
+  it("A matches → line", () => {
+    expect(reconcileAmountType(lines, 150)).toBe("line");
+  });
+  it("B matches → unit", () => {
+    expect(reconcileAmountType(lines, 250)).toBe("unit");
+  });
+  it("neither → unknown", () => {
+    expect(reconcileAmountType(lines, 999)).toBe("unknown");
+    expect(reconcileAmountType([], 100)).toBe("unknown");
   });
 });
 
 describe("parseSupplierOrder (synthetic)", () => {
-  it("handles a simple tabular order", () => {
+  it("handles a simple tabular order with unit amounts", () => {
     const out = parseSupplierOrder(
       ["Pedido: 9988 - 12 may 25", "Anillo plata", "talla 7 250.00 MXN", "x2", "Total 500.00 MXN"].join("\n")
     );
     expect(out.supplierOrder).toBe("9988");
     expect(out.lines[0].name).toContain("Anillo");
-    expect(out.lines[0].unitAmount).toBe(250);
+    expect(out.lines[0].sourceAmount).toBe(250);
     expect(out.lines[0].quantity).toBe(2);
     expect(out.total).toBe(500);
+    expect(out.sourceAmountType).toBe("unit");
+    expect(out.needsReview).toBe(false);
   });
 
   it("returns empty lines for text without prices", () => {

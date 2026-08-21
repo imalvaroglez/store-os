@@ -78,7 +78,7 @@ export const importPurchasePdf = onCall(
     let text = "";
     try {
       const pages = await pdfPagesToPng(buf);
-      for (const png of pages) text += (await ocr(png)) + "\n";
+      for (const png of pages) text += (await ocr(png)) + "\n@@PAGE@@\n";
     } catch (e) {
       console.error("ocr-failed", e?.message);
       throw new HttpsError("internal", "No se pudo leer el PDF. Captura la compra a mano.");
