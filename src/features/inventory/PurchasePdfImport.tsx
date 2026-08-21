@@ -1,72 +1,92 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { Button, Sheet, TextField, Badge, FileButton, useToast } from "../../design-system";
-import { formatMoney, parseAmount } from "../../lib/money";
-import { uploadPurchasePdf, importPurchasePdf, type ParsedPdfOrder } from "../../app/firebase/pdfImport";
-import type { PurchaseLine } from "../../types";
+import { Button, FileButton, useToast } from "../../design-system";
+import { uploadPurchasePdf, importPurchasePdf } from "../../app/firebase/pdfImport";
+import { purchasesForStore } from "../../lib/selectors";
+import { effectivePurchaseStatus, type PurchaseLine } from "../../types";
 
-// purchase-pdf-import: upload a supplier PDF, OCR it server-side, and show an
-// EDITABLE review before anything touches the purchase. Human confirmation is
-// mandatory — the OCR pre-fills, Fer decides (spec acceptance #2).
+// purchase-pdf-import: upload a supplier PDF, OCR it server-side, dedupe by
+// fingerprint, and hand the parsed draft to the shared purchase editor. The
+// HUMAN stays in charge: the editor's review table is where anything real
+// happens (spec invariants 1–3).
 
-type Props = {
-  onApply: (lines: PurchaseLine[], meta: { supplierOrder?: string; documentPath?: string; total?: number }) => void;
+export type PdfApplyPayload = {
+  lines: PurchaseLine[];
+  supplierOrder?: string;
+  supplierCandidate?: string;
+  documentPath?: string;
+  fingerprint?: string;
+  discount?: number;
+  shipping?: number;
+  tax?: number;
+  total?: number;
 };
 
-export function PurchasePdfImport({ onApply }: Props) {
-  const { activeStore, cloud } = useStore();
+async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayload) => void }) {
+  const { activeStore, cloud, state } = useStore();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [parsed, setParsed] = useState<ParsedPdfOrder | null>(null);
-  const [documentPath, setDocumentPath] = useState<string>();
-  const [folio, setFolio] = useState("");
-  const [totalRaw, setTotalRaw] = useState("");
+  const [duplicate, setDuplicate] = useState<{ fingerprint: string } | null>(null);
 
   if (!cloud) return null; // demo local: manual capture only (spec, fuera de alcance)
 
-  async function onFile(file: File) {
+  async function onFile(file: File, skipDuplicateCheck = false) {
     if (!activeStore) return;
     setBusy(true);
     try {
+      const fingerprint = await sha256Hex(file);
+      if (!skipDuplicateCheck) {
+        const existing = purchasesForStore(state.purchases, activeStore.id).find(
+          (p) => p.documentFingerprint === fingerprint
+        );
+        if (existing) {
+          setDuplicate({ fingerprint });
+          toast.error(
+            `Este documento parece haber sido importado antes (compra del ${existing.date}${
+              effectivePurchaseStatus(existing) === "received" ? ", ya recibida" : ""
+            }). Si son compras distintas, impórtalo de todos modos.`
+          );
+          return;
+        }
+      }
+      setDuplicate(null);
       const { storagePath } = await uploadPurchasePdf(activeStore.id, file);
       const result = await importPurchasePdf(storagePath);
       if (!result.lines.length) {
         toast.error("No pudimos leer el pedido. Captura la compra a mano.");
         return;
       }
-      setParsed(result);
-      setDocumentPath(storagePath);
-      setFolio(result.supplierOrder ?? "");
-      setTotalRaw(result.total != null ? String(result.total) : "");
+      const lines: PurchaseLine[] = result.lines.map((l) => ({
+        productId: "",
+        name: l.name,
+        variant: l.variant,
+        quantity: l.quantity || 1,
+        unitCost: l.unitCost ?? 0,
+        sourceAmount: l.sourceAmount,
+        sourceAmountType: result.sourceAmountType,
+        matchStatus: "unmatched",
+      }));
+      onApply({
+        lines,
+        supplierOrder: result.supplierOrder,
+        supplierCandidate: result.supplierCandidate,
+        documentPath: storagePath,
+        fingerprint,
+        discount: result.discount,
+        shipping: result.shipping,
+        tax: result.taxIncluded,
+        total: result.total,
+      });
     } catch {
       toast.error("No se pudo importar el PDF. Intenta de nuevo o captura a mano.");
     } finally {
       setBusy(false);
     }
-  }
-
-  function updateLine(idx: number, patch: Partial<(ParsedPdfOrder)["lines"][number]>) {
-    setParsed((p) => (p ? { ...p, lines: p.lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)) } : p));
-  }
-
-  const sum = parsed?.lines.reduce((s, l) => s + l.quantity * (l.unitAmount ?? 0), 0) ?? 0;
-  const declaredTotal = parseAmount(totalRaw);
-  const mismatch = declaredTotal != null && Math.abs(declaredTotal - sum) > 0.5;
-
-  function apply() {
-    if (!parsed) return;
-    const lines: PurchaseLine[] = parsed.lines.map((l) => ({
-      productId: "", // unmatched by default — Fer links/creates from the review or later
-      name: [l.name, l.color].filter(Boolean).join(" "),
-      quantity: l.quantity || 1,
-      unitCost: l.quantity > 0 ? l.unitAmount / l.quantity : l.unitAmount,
-    }));
-    onApply(lines, {
-      supplierOrder: folio.trim() || undefined,
-      documentPath,
-      total: declaredTotal ?? undefined,
-    });
-    setParsed(null);
   }
 
   return (
@@ -78,58 +98,20 @@ export function PurchasePdfImport({ onApply }: Props) {
         label="Importar pedido (PDF)"
         onSelect={(f) => void onFile(f)}
       />
-
-      {parsed && (
-        <Sheet open title="Revisar pedido importado" onClose={() => setParsed(null)}>
-          <div className="space-y-3">
-            <p className="text-xs text-on-surface-soft">
-              Revisa y corrige antes de agregar. Nada se guarda hasta que confirmes.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <TextField label="Pedido proveedor" value={folio} onChange={(e) => setFolio(e.target.value)} />
-              <TextField
-                label="Total del documento"
-                inputMode="decimal"
-                value={totalRaw}
-                onChange={(e) => setTotalRaw(e.target.value)}
-              />
-            </div>
-            {mismatch && (
-              <div>
-                <Badge tone="warning">
-                  La suma de líneas ({formatMoney(sum)}) no cuadra con el total. Revisa cantidades y precios.
-                </Badge>
-              </div>
-            )}
-            <div className="space-y-2">
-              {parsed.lines.map((l, i) => (
-                <div key={i} className="grid grid-cols-[1fr_64px_96px] gap-2 items-end">
-                  <TextField
-                    label={i === 0 ? "Producto" : ""}
-                    value={l.name}
-                    onChange={(e) => updateLine(i, { name: e.target.value })}
-                  />
-                  <TextField
-                    label={i === 0 ? "Cant." : ""}
-                    inputMode="numeric"
-                    value={String(l.quantity)}
-                    onChange={(e) => updateLine(i, { quantity: parseAmount(e.target.value) ?? 1 })}
-                  />
-                  <TextField
-                    label={i === 0 ? "Importe" : ""}
-                    inputMode="decimal"
-                    value={String(l.unitAmount)}
-                    onChange={(e) => updateLine(i, { unitAmount: parseAmount(e.target.value) ?? 0 })}
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-between items-center pt-2">
-              <span className="text-sm text-on-surface-soft">Suma: {formatMoney(sum)}</span>
-              <Button onClick={apply}>Agregar {parsed.lines.length} líneas a la compra</Button>
-            </div>
-          </div>
-        </Sheet>
+      {duplicate && (
+        <div className="mt-2 flex items-center gap-2 text-xs flex-wrap">
+          <span>¿Son compras distintas?</span>
+          <FileButton
+            accept="application/pdf"
+            disabled={busy}
+            busyLabel="Leyendo pedido…"
+            label="Importar de todos modos"
+            onSelect={(f) => void onFile(f, true)}
+          />
+          <Button size="sm" variant="ghost" onClick={() => setDuplicate(null)}>
+            Cancelar
+          </Button>
+        </div>
       )}
     </div>
   );

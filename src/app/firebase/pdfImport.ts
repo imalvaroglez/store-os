@@ -19,17 +19,24 @@ const EMULATOR =
 export type ParsedPdfLine = {
   name: string;
   quantity: number;
-  unitAmount: number; // line total as printed; unit cost = unitAmount / quantity
-  color?: string;
+  sourceAmount: number; // the printed amount, semantics from sourceAmountType
+  variant?: string;
+  unitCost?: number; // only set when the parser could reconcile semantics
 };
 
 export type ParsedPdfOrder = {
   supplierOrder?: string;
   dateLabel?: string;
+  currency: string;
+  supplierCandidate?: string;
   lines: ParsedPdfLine[];
   subtotal?: number;
-  total?: number;
   discount?: number;
+  shipping?: number;
+  taxIncluded?: number;
+  total?: number;
+  sourceAmountType: "unit" | "line" | "unknown";
+  needsReview: boolean;
   warning?: string;
 };
 
