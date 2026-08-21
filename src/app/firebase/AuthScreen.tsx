@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "./AuthProvider";
+import { fetchSignInMethodsForEmail } from "firebase/auth";
+import { getFirebase } from "./config";
 import { Button, TextField, ScreenHeader } from "../../design-system";
 
 // Email/password sign-in / sign-up + Google. Shown as a sheet from Settings or a
@@ -21,7 +23,18 @@ export function AuthScreen({ onDone }: { onDone?: () => void }) {
       else await signUp(email.trim(), password);
       onDone?.();
     } catch (err) {
-      setError(friendlyError(err));
+      // Firebase returns one generic INVALID_LOGIN_CREDENTIALS for both cases.
+      // Ask which one it was: an unknown email has no sign-in methods.
+      if (mode === "in" && friendlyError(err) === "Correo o contraseña incorrectos.") {
+        try {
+          const methods = await fetchSignInMethodsForEmail(getFirebase().auth, email.trim());
+          setError(methods.length === 0 ? "No hay cuenta con ese correo." : "La contraseña no es correcta.");
+        } catch {
+          setError(friendlyError(err));
+        }
+      } else {
+        setError(friendlyError(err));
+      }
     } finally {
       setBusy(false);
     }
