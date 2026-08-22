@@ -1,6 +1,7 @@
 ---
 Delivery-ID: purchase-ux2-fast-receive
-Delivery-Status: Pending approval
+Delivery-Status: Approved
+Approved-By: Álvaro González (PO) — aprobación explícita en sesión 2026-08-22 + merge del PR #48
 specPath: docs/superpowers/specs/purchase-ux2-fast-receive-design.md
 ---
 

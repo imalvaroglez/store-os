@@ -5,7 +5,7 @@
       "id": "purchase-ux2-fast-receive",
       "title": "UX iteración 2 — Recepción rápida de compras (port + UX2)",
       "priority": 5,
-      "status": "awaiting-approval",
+      "status": "queued",
       "specPath": "docs/superpowers/specs/purchase-ux2-fast-receive-design.md",
       "dependsOn": [],
       "previewChecks": [
