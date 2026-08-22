@@ -44,10 +44,16 @@
       "id": "persist-entity-error-handling",
       "title": "Manejo consistente de errores al guardar",
       "priority": 40,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/persist-entity-error-handling-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
     },
     {
       "id": "migrate-adminstores",
@@ -142,7 +148,9 @@
       "priority": 120,
       "status": "queued",
       "specPath": "docs/superpowers/specs/wysiwyg-catalog-design.md",
-      "dependsOn": ["unified-products"],
+      "dependsOn": [
+        "unified-products"
+      ],
       "previewChecks": [
         {
           "path": "/catalogo/olivia",
