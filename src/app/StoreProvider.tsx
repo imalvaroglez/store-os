@@ -38,6 +38,7 @@ import {
   removePublicProductDoc,
   rebuildPublicCatalog,
   receivePurchaseTx,
+  createDraftProductsForPurchaseTx,
   PurchaseAlreadyReceived,
 } from "./firebase/firestoreData";
 import { deleteProductImage } from "./firebase/storage";
@@ -69,7 +70,11 @@ type Action =
   | { type: "UPDATE_ORDER"; order: Order }
   | { type: "DELETE_ORDER"; orderId: string }
   | { type: "RESET_DEMO" }
-  | { type: "REPLACE_STATE"; state: AppState }; // cloud sync pushes a whole state
+  // cloud sync pushes a whole state
+  | { type: "REPLACE_STATE"; state: AppState }
+  // purchase-ux2 bulk create: products + their purchase land in ONE dispatch
+  // so the UI never shows a half-created batch.
+  | { type: "BULK_CREATE_FOR_PURCHASE"; products: Product[]; purchase: Purchase };
 
 // Exported for direct unit testing of state transitions (stock reservation,
 // cascade deletes, entity CRUD) without spinning up a React tree.
@@ -142,6 +147,22 @@ export function reducer(state: AppState, action: Action): AppState {
         action.state.stores.some((s) => s.id === state.activeStoreId)
         ? { ...action.state, activeStoreId: state.activeStoreId }
         : action.state;
+    case "BULK_CREATE_FOR_PURCHASE": {
+      const products = [...state.products];
+      for (const product of action.products) {
+        const i = products.findIndex((p) => p.id === product.id);
+        if (i >= 0) products[i] = product;
+        else products.push(product);
+      }
+      const exists = state.purchases.some((p) => p.id === action.purchase.id);
+      return {
+        ...state,
+        products,
+        purchases: exists
+          ? state.purchases.map((p) => (p.id === action.purchase.id ? action.purchase : p))
+          : [...state.purchases, action.purchase],
+      };
+    }
     default:
       return state;
   }
@@ -167,8 +188,15 @@ type StoreContextValue = {
   upsertSupplier: (supplier: Supplier) => void;
   deleteSupplier: (supplierId: string) => void;
   upsertPurchase: (purchase: Purchase) => Promise<void>;
-  /** The ONLY operation that moves inventory. Idempotent; throws "received" softly. */
-  receivePurchase: (purchaseId: string) => Promise<"received" | "already">;
+  /**
+   * Bulk-create private draft products and save the purchase that links them
+   * in one atomic commit (cloud-only: the PDF import flow requires cloud).
+   * One reducer action reflects the whole batch locally.
+   */
+  createDraftProductsForPurchase: (products: Product[], purchase: Purchase) => Promise<void>;
+  /** The ONLY operation that moves inventory. Idempotent; throws "received" softly.
+   * Takes the just-saved snapshot (local) or re-reads canonically in the cloud tx. */
+  receivePurchase: (purchase: Purchase) => Promise<"received" | "already">;
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => void;
   deleteCustomer: (customerId: string) => void;
@@ -500,6 +528,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // of showing a false success toast. persistEntity re-throws on rejection.
       await persistEntity("purchases", purchase);
     },
+    createDraftProductsForPurchase: async (products, purchase) => {
+      if (!cloud) throw new Error("La creación en lote requiere sesión (cloud).");
+      // One writeBatch: products + purchase in the same commit; an error
+      // leaves everything untouched and re-throws (no local dispatch yet).
+      await createDraftProductsForPurchaseTx(products, purchase);
+      dispatch({ type: "BULK_CREATE_FOR_PURCHASE", products, purchase });
+    },
     deletePurchase: (purchaseId) => {
       // A received purchase is inventory evidence: deleting it would strand
       // stock that entered through it. Block it (no reversals in V1).
@@ -508,9 +543,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "DELETE_PURCHASE", purchaseId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "purchases", purchaseId).catch(() => {});
     },
-    receivePurchase: async (purchaseId) => {
-      const purchase = state.purchases.find((p) => p.id === purchaseId);
-      if (!purchase) throw new Error("No se encontró la compra.");
+    receivePurchase: async (purchase) => {
       // Both guards BEFORE any effect: legacy (status undefined) already
       // applied stock when it was saved, and receivedAt marks a prior receive.
       if (effectivePurchaseStatus(purchase) === "received" || purchase.receivedAt != null) {
@@ -520,7 +553,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // Transactional in Firestore: stock + purchase in ONE commit, with the
         // legacy/receivedAt guards re-checked inside.
         try {
-          await receivePurchaseTx(purchaseId);
+          await receivePurchaseTx(purchase.id);
         } catch (e) {
           if (e instanceof PurchaseAlreadyReceived) return "already";
           throw e;
@@ -537,7 +570,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
         return "received";
       }
-      // Demo local: same effect, guarded by the check above.
+      // Demo local: same effect, guarded by the check above. A stale or
+      // corrupt localStorage must never mix stores: every linked product must
+      // exist and belong to this purchase's store before stock moves.
+      for (const line of purchase.lines) {
+        if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
+        const product = state.products.find((p) => p.id === line.productId);
+        if (!product) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
+        if (product.storeId !== purchase.storeId) throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
+      }
       const at = nowIso();
       const updated = applyPurchaseLines(state.products, purchase.lines);
       for (const [productId, update] of updated) {

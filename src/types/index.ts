@@ -257,6 +257,10 @@ export type Purchase = {
   storeId: string;
   supplierId?: string;
   date: string; // purchase date (default today)
+  // purchase-ux2: true while `date` came from an inferred PDF date label
+  // (year guessed as the most recent past occurrence). Any manual date edit
+  // turns it off.
+  dateInferred?: boolean;
   notes?: string;
   lines: PurchaseLine[];
   subtotal: number; // Σ quantity × unitCost (computed)
@@ -286,10 +290,21 @@ export function effectivePurchaseStatus(p: Purchase): PurchaseStatus {
   return p.status ?? "received";
 }
 
+/** Calculated per-line review state (never persisted). Fixed precedence. */
+export type PurchaseLineStatus = "amount_review" | "unlinked" | "new_product" | "linked";
+
+export function lineStatus(l: PurchaseLine): PurchaseLineStatus {
+  if (l.sourceAmountType === "unknown") return "amount_review";
+  if (!l.productId) return "unlinked";
+  if (l.matchStatus === "new_product") return "new_product";
+  return "linked";
+}
+
 /**
  * Recompute a draft's review status from its own data — the single authority.
- * needs_review: unresolved source-amount semantics, or an unconfirmed total
- * mismatch. ready: everything resolved. draft: nothing to review yet.
+ * needs_review: unresolved source-amount semantics, an unlinked line, or an
+ * unconfirmed total mismatch. ready: everything resolved. draft: nothing to
+ * review yet.
  */
 export function recalcPurchaseStatus(
   p: Purchase,
@@ -298,11 +313,12 @@ export function recalcPurchaseStatus(
   if (effectivePurchaseStatus(p) === "received") return "received";
   if (p.lines.length === 0) return "draft";
   const unknownAmount = p.lines.some((l) => l.sourceAmountType === "unknown");
+  const unlinked = p.lines.some((l) => !l.productId);
   const merchandise = p.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0);
   const adjustments = (p.discount ?? 0) + (p.shipping ?? 0) + (p.tax ?? 0);
   const mismatch = Math.abs(merchandise + adjustments - opts.totalPaid);
   const mismatchConfirmed = p.confirmedMismatchAmount != null && Math.abs(mismatch - p.confirmedMismatchAmount) < 0.005;
-  if (unknownAmount || (!mismatchConfirmed && mismatch > 0.5)) return "needs_review";
+  if (unknownAmount || unlinked || (!mismatchConfirmed && mismatch > 0.5)) return "needs_review";
   return "ready";
 }
 
