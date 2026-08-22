@@ -2,6 +2,21 @@
   "version": 1,
   "items": [
     {
+      "id": "purchase-ux2-fast-receive",
+      "title": "UX iteración 2 — Recepción rápida de compras (port + UX2)",
+      "priority": 5,
+      "status": "awaiting-approval",
+      "specPath": "docs/superpowers/specs/purchase-ux2-fast-receive-design.md",
+      "dependsOn": [],
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
+    },
+    {
       "id": "refresh-hard-reload",
       "title": "Refresh y hard reload confiables",
       "priority": 10,
@@ -142,7 +157,9 @@
       "priority": 120,
       "status": "queued",
       "specPath": "docs/superpowers/specs/wysiwyg-catalog-design.md",
-      "dependsOn": ["unified-products"],
+      "dependsOn": [
+        "unified-products"
+      ],
       "previewChecks": [
         {
           "path": "/catalogo/olivia",
