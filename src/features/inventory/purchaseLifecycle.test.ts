@@ -80,6 +80,19 @@ describe("recalcPurchaseStatus", () => {
     expect(recalcPurchaseStatus(p, { totalPaid: 120 })).toBe("ready");
   });
 
+  it("discount SUBTRACTS from the calculated total (spec §1)", () => {
+    const p: Purchase = {
+      ...base,
+      status: "draft",
+      lines: [{ productId: "a", name: "A", quantity: 1, unitCost: 150 }],
+      discount: 30, // 150 − 30 = 120 = total paid → ready
+      subtotal: 150,
+      totalConfirmed: 120,
+    };
+    expect(recalcPurchaseStatus(p, { totalPaid: 120 })).toBe("ready");
+    expect(recalcPurchaseStatus(p, { totalPaid: 180 })).toBe("needs_review"); // 150+30 would be the old wrong math
+  });
+
   it("received never downgrades", () => {
     // status undefined = legacy = received; recalc must not "revive" it.
     expect(recalcPurchaseStatus(base, { totalPaid: 999 })).toBe("received");

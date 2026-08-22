@@ -96,4 +96,7 @@ test("locked after receive: controls disabled", async ({ sharedPage: page }) => 
   await page.getByText("#3023").first().click();
   await expect(page.getByText("Recibida").first()).toBeVisible();
   await expect(page.locator('input[aria-label="Producto"]').first()).toBeDisabled();
+  await expect(page.locator('input[aria-label="Cantidad"]').first()).toBeDisabled();
+  await expect(page.locator('input[aria-label="Costo unitario"]').first()).toBeDisabled();
+  await expect(page.getByLabel("Total pagado")).toBeDisabled();
 });
