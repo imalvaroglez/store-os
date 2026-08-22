@@ -8,48 +8,70 @@ import {
   TextArea,
   IconButton,
   Sheet,
+  Badge,
   useToast,
 } from "../../design-system";
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
-import { applyPurchaseLines } from "../../lib/inventory";
 import { todayIso, nowIso } from "../../lib/dates";
 import { formatMoney, parseAmount } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
-import type { PriceTierDef, Purchase, PurchaseLine, Supplier, Product } from "../../types";
+import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
+import { openPurchasePdf } from "../../app/firebase/pdfImport";
+import {
+  effectivePurchaseStatus,
+  recalcPurchaseStatus,
+  type PriceTierDef,
+  type Purchase,
+  type PurchaseLine,
+  type Supplier,
+  type Product,
+} from "../../types";
 import { SupplierForm } from "./SupplierForm";
+import { PurchasePdfImport, type PdfApplyPayload } from "./PurchasePdfImport";
 
-// Multi-line supplier purchase ticket. Each line replenishes a product's stock
-// and recomputes its weighted-average cost. The first repeating line-item form
-// in the app.
+// Shared purchase editor — the single destination for BOTH entries (manual
+// capture and PDF import). Saving only persists the Purchase (a draft);
+// "Recibir mercancía" is the only operation that moves inventory.
+// Row-grid layout: reads as a table on desktop, reflows on mobile.
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
-  const { state, activeStore, upsertPurchase, upsertProduct } = useStore();
+  const { state, activeStore, upsertPurchase, upsertProduct, receivePurchase } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<Purchase>(purchase);
   const [creatingSupplier, setCreatingSupplier] = useState(false);
-  // Draft supplier for the inline-create Sheet. Its id is known up-front so we
-  // can auto-select it on the purchase once saved.
   const [supplierDraft, setSupplierDraft] = useState<Supplier | null>(null);
-  // Inline product create (F2): the index of the line that triggered it, and a
-  // draft product. Mini-form fields tracked alongside.
   const [productLineIdx, setProductLineIdx] = useState<number | null>(null);
   const [productDraft, setProductDraft] = useState<Product | null>(null);
+  const [receiving, setReceiving] = useState(false);
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const suppliers = suppliersForStore(state.suppliers, activeStore.id);
   const products = productsForStore(state.products, activeStore.id);
+  const locked = effectivePurchaseStatus(draft) === "received";
 
-  const subtotal = draft.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0);
-  const delta = draft.totalConfirmed - subtotal;
+  const merchandise = draft.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
+  const adjustments = (draft.discount ?? 0) + (draft.shipping ?? 0) + (draft.tax ?? 0);
+  const calculated = merchandise + adjustments;
+  const totalPaid = draft.totalConfirmed || merchandise + adjustments;
+  const mismatch = Math.abs(calculated - totalPaid);
+  const hasUnknownAmounts = draft.lines.some((l) => l.sourceAmountType === "unknown");
+  const mismatchConfirmed =
+    draft.confirmedMismatchAmount != null && Math.abs(mismatch - draft.confirmedMismatchAmount) < 0.005;
+  const canReceive =
+    !locked &&
+    draft.lines.length > 0 &&
+    draft.lines.every((l) => l.productId && l.quantity >= 1) &&
+    !hasUnknownAmounts &&
+    (mismatch <= 0.5 || mismatchConfirmed);
+  const status = recalcPurchaseStatus(draft, { totalPaid });
 
   function addLine() {
-    setDraft({
-      ...draft,
-      lines: [...draft.lines, { productId: "", name: "", quantity: 1, unitCost: 0 }],
-    });
+    setDraft({ ...draft, lines: [...draft.lines, { productId: "", name: "", quantity: 1, unitCost: 0 }] });
   }
   function updateLine(idx: number, patch: Partial<PurchaseLine>) {
-    setDraft({ ...draft, lines: draft.lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)) });
+    // Any edit invalidates a prior explicit mismatch confirmation.
+    const base = draft.confirmedMismatchAmount != null ? { ...draft, confirmedMismatchAmount: undefined } : draft;
+    setDraft({ ...base, lines: base.lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)) });
   }
   function removeLine(idx: number) {
     setDraft({ ...draft, lines: draft.lines.filter((_, i) => i !== idx) });
@@ -57,204 +79,329 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   function pickProduct(idx: number, productId: string) {
     const product = products.find((p) => p.id === productId);
     if (product) {
-      // Carry the product's current sale prices onto the line so the user can
-      // see and edit them from the purchase (F3). inventory_tiered → prices,
-      // on_demand → price.
       updateLine(idx, {
         productId,
         name: product.name,
         unitCost: product.cost ?? 0,
-        prices: isTiered ? product.prices : undefined,
-        price: isTiered ? undefined : product.price,
+        matchStatus: "matched",
+        // Choosing semantics resolves "unknown" for this line.
+        sourceAmountType: draft.lines[idx].sourceAmountType === "unknown" ? "line" : draft.lines[idx].sourceAmountType,
       });
     } else {
-      updateLine(idx, { productId: "", name: "", unitCost: 0, prices: undefined, price: undefined });
+      updateLine(idx, { productId: "", name: "", matchStatus: "unmatched" });
     }
   }
 
-  async function submit() {
+  function applyPdf(payload: PdfApplyPayload) {
+    setDraft((d) => ({
+      ...d,
+      origin: "pdf",
+      lines: payload.lines,
+      supplierOrder: payload.supplierOrder ?? d.supplierOrder,
+      supplierName: payload.supplierCandidate ?? d.supplierName,
+      documentPath: payload.documentPath ?? d.documentPath,
+      documentFingerprint: payload.fingerprint ?? d.documentFingerprint,
+      discount: payload.discount,
+      shipping: payload.shipping,
+      tax: payload.tax,
+      totalConfirmed: payload.total ?? d.totalConfirmed,
+    }));
+  }
+
+  async function saveDraft(receive = false) {
     if (draft.lines.length === 0) {
       toast.error("Agrega al menos una pieza.");
       return;
     }
-    if (draft.lines.some((l) => !l.productId)) {
-      toast.error("Cada línea necesita un producto.");
+    if (receive && !canReceive) {
+      toast.error("Resuelve las líneas marcadas como Revisar antes de recibir.");
       return;
     }
-    // Apply stock + weighted-average cost to each product. Also merge any
-    // sale-price edits from the line (F3). upsertProduct re-projects the public
-    // catalog — stock/cost are private (no-op projection), but a price change
-    // DOES republish (intended: adjusting price while buying updates the
-    // catalog). If several lines touch the same product, the last line's price
-    // wins (applyPurchaseLines already folds qty/cost the same way).
-    const computed = applyPurchaseLines(products, draft.lines);
+    // Saving persists ONLY the purchase — never products (lifecycle contract).
+    const next: Purchase = {
+      ...draft,
+      subtotal: merchandise,
+      status: receive ? "ready" : status,
+      updatedAt: nowIso(),
+    };
     try {
-      for (const [productId, update] of computed) {
-        const p = state.products.find((x) => x.id === productId);
-        if (p) {
-          const line = draft.lines.find((l) => l.productId === productId);
-          await upsertProduct({
-            ...p,
-            quantityOnHand: update.quantityOnHand,
-            cost: update.cost,
-            // Merge price edits only if the line carries them (undefined → keep
-            // the product's existing price).
-            prices: line?.prices ?? p.prices,
-            price: line?.price ?? p.price,
-            updatedAt: nowIso(),
-          });
-        }
-      }
-      await upsertPurchase({ ...draft, subtotal, updatedAt: nowIso() });
+      await upsertPurchase(next);
     } catch {
-      // persistEntity (StoreProvider) already logged the Firestore rejection.
-      // Do NOT show the success toast — that lied when a write silently failed.
-      toast.error("No se pudo registrar la compra. Revisa tu conexión e intenta de nuevo.");
+      toast.error("No se pudo guardar la compra. Revisa tu conexión e intenta de nuevo.");
       return;
     }
-    toast.success(`Compra registrada: ${formatMoney(draft.totalConfirmed || subtotal)}`);
-    onDone();
+    if (!receive) {
+      setDraft(next);
+      toast.success("Borrador guardado.");
+      return;
+    }
+    setReceiving(true);
+    try {
+      const result = await receivePurchase(next.id);
+      toast.success(
+        result === "already"
+          ? "Esta compra ya había sido recibida; el inventario no cambió."
+          : "Compra recibida: el inventario se actualizó."
+      );
+      onDone();
+    } catch {
+      toast.error("No se pudo recibir la mercancía. Intenta de nuevo.");
+    } finally {
+      setReceiving(false);
+    }
   }
+
+  function lineBadge(l: PurchaseLine) {
+    if (l.matchStatus === "new_product") return <Badge tone="info">Nuevo</Badge>;
+    if (l.productId) return <Badge tone="success">Vinculado</Badge>;
+    return <Badge tone="warning">Revisar</Badge>;
+  }
+
+  const supplierSuggestion =
+    draft.supplierName &&
+    !suppliers.some((s) => s.name.toLowerCase() === draft.supplierName!.toLowerCase())
+      ? draft.supplierName
+      : undefined;
+  const matchingSupplier = draft.supplierName
+    ? suppliers.find((s) => s.name.toLowerCase() === draft.supplierName!.toLowerCase())
+    : undefined;
 
   return (
     <div className="space-y-4">
-      <div>
-        <SelectField
-          label="Proveedor"
-          value={draft.supplierId ?? ""}
-          onChange={(v) => setDraft({ ...draft, supplierId: v || undefined })}
-          options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
-          placeholder="Elegir proveedor…"
+      {/* ── Cabecera ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <SelectField
+            label="Proveedor"
+            value={draft.supplierId ?? ""}
+            onChange={(v) => setDraft({ ...draft, supplierId: v || undefined })}
+            options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
+            placeholder="Elegir proveedor…"
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-1 -ml-2"
+            onClick={() => {
+              if (!activeStore) return;
+              setSupplierDraft({ ...newSupplier(activeStore.id), name: draft.supplierName ?? "" });
+              setCreatingSupplier(true);
+            }}
+          >
+            + Nuevo proveedor
+          </Button>
+          {supplierSuggestion && (
+            <div className="mt-1 text-xs text-on-surface-soft">
+              Proveedor detectado: {supplierSuggestion}{" "}
+              {matchingSupplier ? (
+                <Button size="sm" variant="ghost" className="!px-1" onClick={() => setDraft({ ...draft, supplierId: matchingSupplier.id })}>
+                  Usar {matchingSupplier.name}
+                </Button>
+              ) : (
+                <span>(crea “{supplierSuggestion}” abajo si es nuevo)</span>
+              )}
+            </div>
+          )}
+        </div>
+        <TextField
+          label="Fecha"
+          type="date"
+          value={draft.date || todayIso()}
+          onChange={(e) => setDraft({ ...draft, date: e.target.value })}
         />
-        <Button
-          size="sm"
-          variant="ghost"
-          className="mt-1 -ml-2"
-          onClick={() => {
-            if (!activeStore) return;
-            setSupplierDraft(newSupplier(activeStore.id));
-            setCreatingSupplier(true);
-          }}
-        >
-          + Nuevo proveedor
-        </Button>
+        <div className="space-y-1">
+          <TextField
+            label="Pedido / documento"
+            placeholder="3023"
+            value={draft.supplierOrder ?? ""}
+            onChange={(e) => setDraft({ ...draft, supplierOrder: e.target.value || undefined })}
+          />
+          <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-soft">
+            {draft.origin === "pdf" && <Badge tone="info">PDF importado</Badge>}
+            {locked && <Badge tone="success">Recibida</Badge>}
+            {!locked && status === "needs_review" && <Badge tone="warning">Revisar</Badge>}
+            {draft.documentPath && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="!px-1"
+                onClick={async () => {
+                  try {
+                    const url = await openPurchasePdf(draft.documentPath!);
+                    window.open(url, "_blank");
+                  } catch {
+                    toast.error("No se pudo abrir el documento.");
+                  }
+                }}
+              >
+                Ver documento original
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
-      <TextField
-        label="Fecha"
-        type="date"
-        value={draft.date || todayIso()}
-        onChange={(e) => setDraft({ ...draft, date: e.target.value })}
-      />
 
+      {/* ── Entrada PDF (solo hasta que ya hay líneas importadas) ── */}
+      {!locked && draft.lines.length === 0 && (
+        <div className="flex justify-end">
+          <PurchasePdfImport onApply={applyPdf} />
+        </div>
+      )}
+
+      {/* ── Mercancía ── */}
       <div>
         <span className="block text-xs font-semibold text-on-surface-soft uppercase tracking-wide mb-1.5">
-          Piezas
+          Mercancía ({draft.lines.length} líneas)
         </span>
         <div className="space-y-2">
-          {draft.lines.map((line, idx) => (
-            <div key={idx} className="space-y-2 p-3 rounded-lg bg-surface-soft">
-              <div>
-                <SelectField
-                  label="Producto"
-                  value={line.productId}
-                  onChange={(v) => pickProduct(idx, v)}
-                  options={products.map((p) => ({
-                    value: p.id,
-                    label: `${p.name} (existencia: ${p.quantityOnHand ?? 0})`,
-                  }))}
-                  placeholder="Elegir producto…"
-                />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="mt-1 -ml-2"
-                  onClick={() => {
-                    if (!activeStore) return;
-                    setProductDraft(newProduct(activeStore.id));
-                    setProductLineIdx(idx);
-                  }}
-                >
-                  + Nuevo producto
-                </Button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
+          {draft.lines.map((line, idx) => {
+            const detected = line.sourceAmount != null;
+            return (
+              <div
+                key={idx}
+                className="p-3 rounded-lg bg-surface-soft grid grid-cols-2 md:grid-cols-[auto_1fr_5rem_4rem_6rem_6rem_6rem_1fr_auto] md:items-end gap-2"
+              >
+                <div className="col-span-2 md:col-span-1">{lineBadge(line)}</div>
+                <div className="col-span-2 md:col-span-1">
+                  <TextField
+                    label={idx === 0 ? "Producto detectado" : ""}
+                    value={line.name}
+                    onChange={(e) => updateLine(idx, { name: e.target.value, matchStatus: e.target.value ? line.matchStatus : "unmatched" })}
+                  />
+                </div>
                 <TextField
-                  label="Cantidad"
+                  label={idx === 0 ? "Variante" : ""}
+                  value={line.variant ?? ""}
+                  onChange={(e) => updateLine(idx, { variant: e.target.value || undefined })}
+                />
+                <TextField
+                  label={idx === 0 ? "Cant." : ""}
                   inputMode="numeric"
                   value={line.quantity.toString()}
-                  onChange={(e) =>
-                    updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
-                  }
+                  onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
                 />
+                <div>
+                  {idx === 0 && <span className="block text-xs font-semibold text-on-surface-soft mb-1.5">Importe detectado</span>}
+                  <p className={`text-sm ${detected ? "font-mono text-ink-soft" : "text-ink-soft/40"}`}>
+                    {detected ? formatMoney(line.sourceAmount!) : "—"}
+                  </p>
+                </div>
                 <TextField
-                  label="Costo por pieza"
+                  label={idx === 0 ? "Costo unitario" : ""}
                   inputMode="decimal"
-                  value={line.unitCost.toString()}
-                  onChange={(e) => updateLine(idx, { unitCost: parseFloat(e.target.value) || 0 })}
+                  value={(line.unitCost ?? 0).toString()}
+                  onChange={(e) => updateLine(idx, { unitCost: parseAmount(e.target.value) ?? 0 })}
                 />
-              </div>
-              {/* Sale-price edit (F3): shows the product's current prices so the
-                  user can adjust them while buying. Persisted onto the product
-                  on save. Only after a product is picked. */}
-              {line.productId && (
-                isTiered ? (
-                  <div className={tiersForStore(activeStore).length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
-                    {tiersForStore(activeStore).map((t) => (
-                      <TextField
-                        key={t.id}
-                        label={t.label}
-                        inputMode="decimal"
-                        value={(line.prices?.[t.id] ?? 0).toString()}
-                        onChange={(e) =>
-                          updateLine(idx, {
-                            prices: { ...(line.prices ?? {}), [t.id]: parseAmount(e.target.value) ?? 0 },
-                          })
-                        }
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <TextField
-                    label="Precio de venta"
-                    inputMode="decimal"
-                    value={(line.price ?? 0).toString()}
-                    onChange={(e) => updateLine(idx, { price: parseAmount(e.target.value) })}
+                <div>
+                  {idx === 0 && <span className="block text-xs font-semibold text-on-surface-soft mb-1.5">Total línea</span>}
+                  <p className="text-sm font-semibold text-ink">{formatMoney(line.quantity * (line.unitCost ?? 0))}</p>
+                </div>
+                <div>
+                  <SelectField
+                    label={idx === 0 ? "En Store OS" : ""}
+                    value={line.productId}
+                    onChange={(v) => pickProduct(idx, v)}
+                    options={products.map((p) => ({
+                      value: p.id,
+                      label: `${p.name} (existencia: ${p.quantityOnHand ?? 0})`,
+                    }))}
+                    placeholder="Vincular…"
                   />
-                )
-              )}
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-ink-soft">
-                  Subtotal: {formatMoney(line.quantity * line.unitCost)}
-                </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="mt-1 -ml-2"
+                    onClick={() => {
+                      if (!activeStore) return;
+                      const base = newProduct(activeStore.id);
+                      const skuBase = suggestSkuBase(line.name, activeStore.skuPrefix ?? "");
+                      setProductDraft({
+                        ...base,
+                        name: line.variant ? `${line.name} ${line.variant}` : line.name,
+                        cost: line.unitCost,
+                        sku: uniqueProductSku(state.products, activeStore.id, base.id, skuBase),
+                      });
+                      setProductLineIdx(idx);
+                    }}
+                  >
+                    + Crear producto
+                  </Button>
+                </div>
                 <IconButton variant="ghost" aria-label="Quitar línea" onClick={() => removeLine(idx)}>
                   ✕
                 </IconButton>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-        <Button size="sm" variant="secondary" className="mt-2" onClick={addLine}>
-          + Agregar pieza
-        </Button>
+        {!locked && (
+          <Button size="sm" variant="secondary" className="mt-2" onClick={addLine}>
+            + Agregar línea
+          </Button>
+        )}
       </div>
 
+      {/* ── Totales y reconciliación ── */}
       <div className="border-t border-edge pt-3 space-y-2">
         <div className="flex justify-between text-sm">
-          <span className="text-ink-soft">Subtotal (suma de líneas)</span>
-          <span className="font-semibold text-ink">{formatMoney(subtotal)}</span>
+          <span className="text-ink-soft">Mercancía (Σ líneas)</span>
+          <span className="font-semibold text-ink">{formatMoney(merchandise)}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <TextField
+            label="Descuento"
+            inputMode="decimal"
+            value={(draft.discount ?? 0).toString()}
+            onChange={(e) => setDraft({ ...draft, discount: parseAmount(e.target.value) ?? 0 })}
+          />
+          <TextField
+            label="Envío"
+            inputMode="decimal"
+            value={(draft.shipping ?? 0).toString()}
+            onChange={(e) => setDraft({ ...draft, shipping: parseAmount(e.target.value) ?? 0 })}
+          />
+          <TextField
+            label="Impuestos"
+            inputMode="decimal"
+            value={(draft.tax ?? 0).toString()}
+            onChange={(e) => setDraft({ ...draft, tax: parseAmount(e.target.value) ?? 0 })}
+          />
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-ink-soft">Total calculado</span>
+          <span>{formatMoney(calculated)}</span>
         </div>
         <TextField
-          label="Total del ticket"
-          hint="Lo que realmente pagaste. Si difiere del subtotal, te avisamos."
+          label="Total pagado"
+          hint="Lo que realmente pagaste según el documento."
           inputMode="decimal"
           value={draft.totalConfirmed.toString()}
-          onChange={(e) => setDraft({ ...draft, totalConfirmed: parseFloat(e.target.value) || 0 })}
+          onChange={(e) => setDraft({ ...draft, totalConfirmed: parseAmount(e.target.value) ?? 0 })}
         />
-        {delta !== 0 && (
-          <p className="text-xs text-terracotta">
-            Diferencia de {formatMoney(Math.abs(delta))} ({delta > 0 ? "de más" : "de menos"}) —
-            ¿envío, descuento o redondeo?
-          </p>
+        {mismatch > 0.5 && !locked && (
+          <div className="rounded-lg bg-warning/10 p-3 space-y-2">
+            <p className="text-sm text-ink">
+              Hay una diferencia de {formatMoney(mismatch)} entre la mercancía registrada y el total pagado.
+            </p>
+            {hasUnknownAmounts && (
+              <p className="text-xs text-on-surface-soft">
+                Además, hay importes del PDF que no pudimos interpretar (unitario vs total de línea): revisa el costo
+                unitario de cada línea marcada.
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {!mismatchConfirmed && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setDraft({ ...draft, confirmedMismatchAmount: mismatch })}
+                >
+                  Recibir así, con diferencia de {formatMoney(mismatch)}
+                </Button>
+              )}
+              {mismatchConfirmed && <Badge tone="info">Diferencia confirmada ({formatMoney(mismatch)})</Badge>}
+            </div>
+          </div>
         )}
       </div>
 
@@ -264,21 +411,30 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         onChange={(e) => setDraft({ ...draft, notes: e.target.value || undefined })}
       />
 
-      <Button full size="lg" onClick={() => void submit()} disabled={draft.lines.length === 0}>
-        Guardar compra
-      </Button>
+      {locked ? (
+        <p className="text-sm text-on-surface-soft">
+          Compra recibida: el inventario ya se actualizó y esta compra ya no se puede editar ni borrar.
+        </p>
+      ) : (
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Button variant="secondary" className="flex-1" onClick={() => void saveDraft(false)}>
+            Guardar borrador
+          </Button>
+          <Button
+            className="flex-1"
+            disabled={!canReceive || receiving}
+            onClick={() => void saveDraft(true)}
+          >
+            {receiving ? "Recibiendo…" : "Recibir mercancía"}
+          </Button>
+        </div>
+      )}
 
       {creatingSupplier && supplierDraft && (
-        <Sheet
-          open
-          onClose={() => setCreatingSupplier(false)}
-          title="Nuevo proveedor"
-        >
+        <Sheet open onClose={() => setCreatingSupplier(false)} title="Nuevo proveedor">
           <SupplierForm
             supplier={supplierDraft}
             onDone={() => {
-              // Auto-select the just-created supplier on the purchase. The
-              // SupplierForm upserts before onDone, so it's in state.suppliers.
               setDraft({ ...draft, supplierId: supplierDraft.id });
               setCreatingSupplier(false);
               setSupplierDraft(null);
@@ -290,7 +446,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       {productLineIdx !== null && productDraft && activeStore && (
         <Sheet
           open
-          onClose={() => { setProductLineIdx(null); setProductDraft(null); }}
+          onClose={() => {
+            setProductLineIdx(null);
+            setProductDraft(null);
+          }}
           title="Nuevo producto"
         >
           <ProductMiniForm
@@ -298,18 +457,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             isTiered={isTiered}
             tiers={tiersForStore(activeStore)}
             onDone={async (saved) => {
-              // Upsert (private by default; published if the user toggled it),
-              // then set it directly on the line. We bypass pickProduct because
-              // it reads the `products` array from this render's scope, which is
-              // stale right after the awaited upsert — but we already hold the
-              // full saved product, so set the line fields directly.
               await upsertProduct(saved);
               updateLine(productLineIdx, {
                 productId: saved.id,
                 name: saved.name,
                 unitCost: saved.cost ?? 0,
-                prices: isTiered ? saved.prices : undefined,
-                price: isTiered ? undefined : saved.price,
+                matchStatus: "new_product",
               });
               setProductLineIdx(null);
               setProductDraft(null);
@@ -356,11 +509,11 @@ function ProductMiniForm({
       ...draft,
       name: draft.name.trim(),
       cost: parseAmount(cost) || undefined,
-      // Prices only when the store uses them.
       prices: isTiered
         ? Object.fromEntries(tiers.map((t) => [t.id, parseAmount(tierPrices[t.id]) ?? 0]))
         : draft.prices,
       price: isTiered ? draft.price : parseAmount(price),
+      // Purchasing a product never publishes it by itself (invariant 5).
       status: publish ? "published" : "draft",
       isPublic: publish,
       updatedAt: nowIso(),
@@ -377,13 +530,7 @@ function ProductMiniForm({
         onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
         autoFocus
       />
-      <TextField
-        label="Costo"
-        inputMode="decimal"
-        placeholder="0"
-        value={cost}
-        onChange={(e) => setCost(e.target.value)}
-      />
+      <TextField label="Costo" inputMode="decimal" placeholder="0" value={cost} onChange={(e) => setCost(e.target.value)} />
       {isTiered ? (
         <div className={tiers.length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
           {tiers.map((t) => (

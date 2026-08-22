@@ -12,6 +12,7 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
+import { applyPurchaseLines } from "../../lib/inventory";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
 import { publicPrice } from "../../lib/money";
@@ -323,6 +324,57 @@ export async function claimSlug(slug: string, storeId: string): Promise<void> {
 export async function releaseSlug(slug: string): Promise<void> {
   const { db } = getFirebase();
   await deleteDoc(doc(db, "slugs", slug)).catch(() => {});
+}
+
+/** receivePurchase already done — NOT an error (idempotency signal). */
+export class PurchaseAlreadyReceived extends Error {
+  constructor() {
+    super("La compra ya fue recibida.");
+  }
+}
+
+/**
+ * Atomically receive a purchase into inventory: products get stock + weighted
+ * average cost, the purchase gets status "received" + receivedAt — all in ONE
+ * Firestore commit. Idempotency guards, checked INSIDE the transaction:
+ *   - `receivedAt` already set → already received through the lifecycle
+ *   - `status === undefined` → legacy purchase whose stock was applied on save
+ * V1 does NOT apply sale-price edits here: a direct products write would skip
+ * the public-catalog republish that upsertProduct performs, so prices stay
+ * untouched (editable later from the product form).
+ */
+export async function receivePurchaseTx(purchaseId: string): Promise<void> {
+  const { db } = getFirebase();
+  await runTransaction(db, async (tx) => {
+    const purchaseRef = doc(db, "purchases", purchaseId);
+    const snap = await tx.get(purchaseRef);
+    if (!snap.exists()) throw new Error("No se encontró la compra.");
+    const purchase = snap.data() as Purchase;
+    if (purchase.receivedAt != null || purchase.status === undefined) {
+      throw new PurchaseAlreadyReceived();
+    }
+    const at = new Date().toISOString();
+    const productRefs = new Map<string, ReturnType<typeof doc>>();
+    const productDocs = new Map<string, Product>();
+    for (const line of purchase.lines) {
+      if (!line.productId || productRefs.has(line.productId)) continue;
+      const ref = doc(db, "products", line.productId);
+      productRefs.set(line.productId, ref);
+      productDocs.set(line.productId, (await tx.get(ref)).data() as Product);
+    }
+    const stockUpdates = applyPurchaseLines(
+      [...productDocs.values()].filter(Boolean),
+      purchase.lines
+    );
+    for (const [productId, update] of stockUpdates) {
+      tx.update(productRefs.get(productId)!, {
+        quantityOnHand: update.quantityOnHand,
+        cost: update.cost,
+        updatedAt: at,
+      });
+    }
+    tx.update(purchaseRef, { status: "received", receivedAt: at, updatedAt: at });
+  });
 }
 
 /** Public product doc id: storeId + product slug (stable across renames). */

@@ -166,3 +166,5 @@ playwright-report/
 # Playwright test output
 test-results/
 playwright-report/
+functions/node_modules/
+docs/superpowers/specs/receipt.pdf
