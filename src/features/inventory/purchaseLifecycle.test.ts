@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   effectivePurchaseStatus,
+  lineStatus,
   recalcPurchaseStatus,
   type Purchase,
 } from "../../types";
@@ -82,6 +83,30 @@ describe("recalcPurchaseStatus", () => {
   it("received never downgrades", () => {
     // status undefined = legacy = received; recalc must not "revive" it.
     expect(recalcPurchaseStatus(base, { totalPaid: 999 })).toBe("received");
+  });
+
+  it("an unlinked line forces needs_review even with perfect totals", () => {
+    const p: Purchase = {
+      ...base,
+      status: "ready",
+      lines: [{ productId: "", name: "Nuevo", quantity: 1, unitCost: 100 }],
+      subtotal: 100,
+      totalConfirmed: 100,
+    };
+    expect(recalcPurchaseStatus(p, { totalPaid: 100 })).toBe("needs_review");
+  });
+});
+
+describe("lineStatus (calculated, fixed precedence)", () => {
+  it("unknown amount wins over everything", () => {
+    expect(lineStatus({ productId: "", name: "X", quantity: 1, unitCost: 0, sourceAmountType: "unknown" })).toBe("amount_review");
+    expect(lineStatus({ productId: "a", name: "X", quantity: 1, unitCost: 0, sourceAmountType: "unknown", matchStatus: "new_product" })).toBe("amount_review");
+  });
+  it("then unlinked, then new_product, then linked", () => {
+    expect(lineStatus({ productId: "", name: "X", quantity: 1, unitCost: 0, matchStatus: "new_product" })).toBe("unlinked");
+    expect(lineStatus({ productId: "a", name: "X", quantity: 1, unitCost: 0, matchStatus: "new_product" })).toBe("new_product");
+    expect(lineStatus({ productId: "a", name: "X", quantity: 1, unitCost: 0, matchStatus: "matched" })).toBe("linked");
+    expect(lineStatus({ productId: "a", name: "X", quantity: 1, unitCost: 0 })).toBe("linked");
   });
 });
 

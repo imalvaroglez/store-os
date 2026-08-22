@@ -20,6 +20,7 @@ export type PdfApplyPayload = {
   shipping?: number;
   tax?: number;
   total?: number;
+  dateLabel?: string; // raw date label from the PDF ("ago 19")
 };
 
 async function sha256Hex(file: File): Promise<string> {
@@ -77,6 +78,7 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
         supplierCandidate: result.supplierCandidate,
         documentPath: storagePath,
         fingerprint,
+        dateLabel: result.dateLabel,
         discount: result.discount,
         shipping: result.shipping,
         tax: result.taxIncluded,

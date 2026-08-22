@@ -8,6 +8,18 @@ export function formatMoney(amount: number | undefined | null): string {
   return "$" + rounded.toLocaleString("es-MX");
 }
 
+/** Exact MXN format with cents — purchase review totals must not round. */
+const exactMXN = new Intl.NumberFormat("es-MX", {
+  style: "currency",
+  currency: "MXN",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+export function formatMoneyExact(amount: number | undefined | null): string {
+  if (amount == null || Number.isNaN(amount)) return exactMXN.format(0);
+  return exactMXN.format(amount);
+}
+
 /** Price a product shows to the public: single price (on-demand) or the store's default tier. */
 export function publicPrice(
   p: { price?: number; prices?: Record<string, number> },

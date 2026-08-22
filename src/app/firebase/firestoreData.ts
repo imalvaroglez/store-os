@@ -357,10 +357,17 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
     const productRefs = new Map<string, ReturnType<typeof doc>>();
     const productDocs = new Map<string, Product>();
     for (const line of purchase.lines) {
-      if (!line.productId || productRefs.has(line.productId)) continue;
+      if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
+      if (productRefs.has(line.productId)) continue;
       const ref = doc(db, "products", line.productId);
       productRefs.set(line.productId, ref);
-      productDocs.set(line.productId, (await tx.get(ref)).data() as Product);
+      const snapP = await tx.get(ref);
+      if (!snapP.exists()) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
+      const product = snapP.data() as Product;
+      if (product.storeId !== purchase.storeId) {
+        throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
+      }
+      productDocs.set(line.productId, product);
     }
     const stockUpdates = applyPurchaseLines(
       [...productDocs.values()].filter(Boolean),
@@ -375,6 +382,30 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
     }
     tx.update(purchaseRef, { status: "received", receivedAt: at, updatedAt: at });
   });
+}
+
+/**
+ * Bulk-create private draft products and save the purchase that links them in
+ * ONE writeBatch (max 499 products + the purchase). Any failure leaves
+ * everything untouched. No public projection is written (products are private
+ * drafts; publishing is a later, explicit act).
+ */
+export async function createDraftProductsForPurchaseTx(
+  products: Product[],
+  purchase: Purchase
+): Promise<void> {
+  if (products.length > 499) {
+    throw new Error("Son demasiados productos para un solo lote (máximo 499).");
+  }
+  const { db } = getFirebase();
+  const batch = writeBatch(db);
+  for (const product of products) {
+    const { id, ...data } = product;
+    batch.set(doc(db, "products", id), stripUndefined(data) as Record<string, unknown>, { merge: true });
+  }
+  const { id: purchaseId, ...purchaseData } = purchase;
+  batch.set(doc(db, "purchases", purchaseId), stripUndefined(purchaseData) as Record<string, unknown>, { merge: true });
+  await batch.commit();
 }
 
 /** Public product doc id: storeId + product slug (stable across renames). */
