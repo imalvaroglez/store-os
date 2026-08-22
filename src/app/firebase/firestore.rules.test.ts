@@ -426,3 +426,53 @@ describe("reliable invitations — invitee discovery + join", () => {
     await assertSucceeds(updateDoc(doc(db, "stores/s_inv"), { name: "Renamed" }));
   });
 });
+
+describe("purchase-ux2 — bulk batch: products + purchase in one writeBatch", () => {
+  it("member of s1 can create 50 products + the purchase that links them", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+      await setDoc(doc(c.firestore(), "stores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+    });
+    const db = await asUser("u1");
+    const batch = writeBatch(db);
+    const ids: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const id = `bulk_p_${i}`;
+      ids.push(id);
+      batch.set(doc(db, "products", id), { storeId: "s1", name: `Pieza ${i}`, cost: 20 + i, status: "draft" });
+    }
+    batch.set(doc(db, "purchases/bulk1"), {
+      storeId: "s1",
+      lines: ids.map((id, i) => ({ productId: id, name: `Pieza ${i}`, quantity: 1, unitCost: 20 + i })),
+      status: "draft",
+    });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("batch fails when a product belongs to another store (G-P01)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s2"), { ownerUid: "u2", memberUids: ["u2"] });
+      await setDoc(doc(c.firestore(), "stores/s2"), { ownerUid: "u2", memberUids: ["u2"] });
+      await setDoc(doc(c.firestore(), "products/foreign"), { storeId: "s2", name: "ajena" });
+      await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+      await setDoc(doc(c.firestore(), "stores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+    });
+    const db = await asUser("u1"); // member of s1 only
+    const batch = writeBatch(db);
+    batch.set(doc(db, "products/mine"), { storeId: "s1", name: "propia", status: "draft" });
+    batch.set(doc(db, "products/foreign2"), { storeId: "s2", name: "ajena nueva", status: "draft" });
+    batch.set(doc(db, "purchases/bulk2"), { storeId: "s1", lines: [], status: "draft" });
+    await assertFails(batch.commit());
+  });
+
+  it("member of s1 cannot create a purchase for s2", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s2"), { ownerUid: "u2", memberUids: ["u2"] });
+      await setDoc(doc(c.firestore(), "stores/s2"), { ownerUid: "u2", memberUids: ["u2"] });
+      await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+      await setDoc(doc(c.firestore(), "stores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+    });
+    const db = await asUser("u1");
+    await assertFails(setDoc(doc(db, "purchases/xstore"), { storeId: "s2", lines: [], status: "draft" }));
+  });
+});
