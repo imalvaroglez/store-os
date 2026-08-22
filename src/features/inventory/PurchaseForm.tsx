@@ -71,7 +71,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const locked = effectivePurchaseStatus(draft) === "received";
 
   const merchandise = draft.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
-  const adjustments = (draft.discount ?? 0) + (draft.shipping ?? 0) + (draft.tax ?? 0);
+  // Spec §1: total = mercancía − descuento + envío + impuesto adicional.
+  const adjustments = (draft.shipping ?? 0) + (draft.tax ?? 0) - (draft.discount ?? 0);
   const calculated = merchandise + adjustments;
   const totalPaid = draft.totalConfirmed || merchandise + adjustments;
   const mismatch = Math.abs(calculated - totalPaid);
@@ -170,7 +171,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       documentFingerprint: payload.fingerprint ?? d.documentFingerprint,
       discount: payload.discount,
       shipping: payload.shipping,
-      tax: payload.tax,
+      // taxIncluded stays documental (parser data): it is already inside the
+      // line amounts, so persisting it into Purchase.tax would double-count.
       totalConfirmed: payload.total ?? d.totalConfirmed,
       ...(parsedDate ? { date: parsedDate.iso, dateInferred: parsedDate.inferredYear } : {}),
     }));
@@ -602,7 +604,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </p>
       ) : (
         /* Sticky footer: total, diferencia y acciones — nothing else. */
-        <div className="fixed bottom-0 inset-x-0 z-20 border-t border-edge bg-surface px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
+        <div className="fixed bottom-0 inset-x-0 z-20 border-t border-edge bg-surface px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-sm">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-baseline justify-between text-sm">
               <span className="text-ink-soft">
@@ -673,7 +675,7 @@ function FilterChip({ active, onClick, label }: { active: boolean; onClick: () =
     <Button
       size="sm"
       variant={active ? "primary" : "ghost"}
-      className="!rounded-full !px-2 !py-0.5 !text-xs"
+      className="!rounded-full !px-3 !py-1.5 !text-xs"
       onClick={onClick}
     >
       {label}

@@ -18,7 +18,6 @@ export type PdfApplyPayload = {
   fingerprint?: string;
   discount?: number;
   shipping?: number;
-  tax?: number;
   total?: number;
   dateLabel?: string; // raw date label from the PDF ("ago 19")
 };
@@ -81,7 +80,6 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
         dateLabel: result.dateLabel,
         discount: result.discount,
         shipping: result.shipping,
-        tax: result.taxIncluded,
         total: result.total,
       });
     } catch {
