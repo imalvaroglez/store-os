@@ -171,7 +171,9 @@ test("product photo uploads, resizes, and renders", async ({ sharedPage: page })
   });
 
   const img = page.locator("img").first();
-  await expect(img).toBeVisible({ timeout: 10000 });
+  // CI runners share CPU with the Functions emulator; image serving after the
+  // Storage round-trip can exceed 10s there. Flake mitigation, same assertion.
+  await expect(img).toBeVisible({ timeout: 30000 });
   const src = await img.getAttribute("src");
   expect(src).toBeTruthy();
   expect(src).toMatch(/products%2F.+\.jpg/);
