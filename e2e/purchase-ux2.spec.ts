@@ -1,5 +1,7 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { gotoClean, loginAsFirstAdmin, writeEmulatorDoc } from "./helpers";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { ADMIN_EMAIL as _ADMIN } from "./helpers";
 
 // purchase-ux2-fast-receive: review flow against the Firebase Emulator with a
 // seeded 50-line purchase (NO Tesseract in e2e — the OCR pipeline has its own
@@ -56,6 +58,7 @@ test.afterAll(async () => {
 });
 
 
+
 test("50-line review: filters, global resolution, bulk create, receive", async ({ sharedPage: page }) => {
   await gotoClean(page, "/productos/compras");
   await expect(page.getByText(/50 productos/).first()).toBeVisible({ timeout: 15000 });
@@ -91,9 +94,66 @@ test("50-line review: filters, global resolution, bulk create, receive", async (
   await expect(page.getByText(/el inventario se actualizó/)).toBeVisible({ timeout: 30000 });
 });
 
-test("locked after receive: controls disabled", async ({ sharedPage: page }) => {
+// Negative receive paths: a missing product surfaces as a rules read error on a
+// null resource, mapped to a friendly message in receivePurchaseTx.
+test("receive rejects a purchase whose product does not exist", async ({ sharedPage: page }) => {
+  await writeEmulatorDoc("purchases", "ux2_ghost", {
+    storeId: "store_joyeria",
+    supplierName: "Colore",
+    supplierOrder: "7777",
+    date: "2026-08-19",
+    lines: [{ productId: "does_not_exist", name: "Fantasma", quantity: 1, unitCost: 50 }],
+    subtotal: 50,
+    totalConfirmed: 50,
+    status: "ready",
+    createdAt: "2026-08-19T00:00:00Z",
+    updatedAt: "2026-08-19T00:00:00Z",
+  });
   await gotoClean(page, "/productos/compras");
-  await page.getByText("#3023").first().click();
+  await page.getByText("#7777").first().click();
+  await page.getByRole("button", { name: "Recibir mercancía" }).click();
+  await expect(page.getByText(/No se encontró el producto/)).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText("Recibida")).toHaveCount(0);
+});
+
+test("receive rejects a product that belongs to another store", async ({ sharedPage: page }) => {
+  await writeEmulatorDoc("purchases", "ux2_xstore", {
+    storeId: "store_joyeria",
+    supplierName: "Colore",
+    supplierOrder: "8888",
+    date: "2026-08-19",
+    lines: [{ productId: "prod_santi_1", name: "Ajena", quantity: 1, unitCost: 50 }],
+    subtotal: 50,
+    totalConfirmed: 50,
+    status: "ready",
+    createdAt: "2026-08-19T00:00:00Z",
+    updatedAt: "2026-08-19T00:00:00Z",
+  });
+  await gotoClean(page, "/productos/compras");
+  await page.getByText("#8888").first().click();
+  await page.getByRole("button", { name: "Recibir mercancía" }).click();
+  await expect(page.getByText(/pertenece a otra tienda/)).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText("Recibida")).toHaveCount(0);
+});
+
+test("locked after receive: controls disabled", async ({ sharedPage: page }) => {
+  // Deterministic: seed our own already-received purchase instead of relying
+  // on the happy-path test's writes surviving sibling tests.
+  await writeEmulatorDoc("purchases", "ux2_locked", {
+    storeId: "store_joyeria",
+    supplierName: "Colore",
+    supplierOrder: "9999",
+    date: "2026-08-19",
+    lines: [{ productId: "", name: "Ya recibida", quantity: 1, unitCost: 10 }],
+    subtotal: 10,
+    totalConfirmed: 10,
+    status: "received",
+    receivedAt: "2026-08-20T00:00:00Z",
+    createdAt: "2026-08-19T00:00:00Z",
+    updatedAt: "2026-08-20T00:00:00Z",
+  });
+  await gotoClean(page, "/productos/compras");
+  await page.getByText("#9999").first().click();
   await expect(page.getByText("Recibida").first()).toBeVisible();
   await expect(page.locator('input[aria-label="Producto"]').first()).toBeDisabled();
   await expect(page.locator('input[aria-label="Cantidad"]').first()).toBeDisabled();

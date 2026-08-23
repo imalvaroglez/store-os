@@ -290,6 +290,17 @@ export function effectivePurchaseStatus(p: Purchase): PurchaseStatus {
   return p.status ?? "received";
 }
 
+/**
+ * The ONE totals calculation (spec §1): total = mercancía − descuento +
+ * envío + impuesto adicional. The editor and recalcPurchaseStatus must both
+ * consume this — the discount-sign bug came from the two drifting apart.
+ */
+export function purchaseTotals(p: Purchase): { merchandise: number; calculated: number } {
+  const merchandise = p.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
+  const adjustments = (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
+  return { merchandise, calculated: merchandise + adjustments };
+}
+
 /** Calculated per-line review state (never persisted). Fixed precedence. */
 export type PurchaseLineStatus = "amount_review" | "unlinked" | "new_product" | "linked";
 

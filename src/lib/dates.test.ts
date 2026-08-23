@@ -30,6 +30,19 @@ describe("parseSpanishDate", () => {
     });
   });
 
+  it("day-before-month labels parse fully (12 may 25 → 2025-05-12)", () => {
+    expect(parseSpanishDate("12 may 25", NOW)).toEqual({ iso: "2025-05-12", inferredYear: false });
+  });
+
+  it("Mexico City day boundary is UTC-6, not the host machine's offset", () => {
+    // 23:30 UTC = 17:30 in CDMX, same calendar day.
+    expect(parseSpanishDate("ago 22", new Date("2026-08-22T23:30:00Z"))).toEqual({ iso: "2026-08-22", inferredYear: true });
+    // 05:00 UTC = 23:00 the PREVIOUS day in CDMX → "ago 22" is already past.
+    expect(parseSpanishDate("ago 22", new Date("2026-08-23T05:00:00Z"))).toEqual({ iso: "2026-08-22", inferredYear: true });
+    // 2026-08-23T05:00Z is still Aug 22 in CDMX → "ago 23" is future there → previous year.
+    expect(parseSpanishDate("ago 23", new Date("2026-08-23T05:00:00Z"))).toEqual({ iso: "2025-08-23", inferredYear: true });
+  });
+
   it("rejects garbage", () => {
     expect(parseSpanishDate("hola mundo", NOW)).toBeNull();
     expect(parseSpanishDate("", NOW)).toBeNull();

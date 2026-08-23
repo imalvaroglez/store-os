@@ -56,15 +56,12 @@ export const importPurchasePdf = onCall(
     const uid = req.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Inicia sesión.");
 
-    // Membership check mirroring storage.rules (2 reads, low-volume path).
-    const db = getFirestore();
-    const [userSnap, storeSnap] = await Promise.all([
-      db.collection("users").doc(uid).get(),
-      db.collection("stores").doc(storeId).get(),
-    ]);
-    const isSuperAdmin = userSnap.get("role") === "super_admin";
-    const members = storeSnap.get("memberUids") ?? [];
-    if (!isSuperAdmin && !members.includes(uid)) {
+    // G-P02: membership resolves ONLY from the canonical adminStores control
+    // doc. A super_admin who is not a member must NOT reach the data plane
+    // (supplier PDFs). Mirrors firestore.rules isMember / storage.rules.
+    const adminSnap = await getFirestore().collection("adminStores").doc(storeId).get();
+    const members = adminSnap.get("memberUids") ?? [];
+    if (!members.includes(uid)) {
       throw new HttpsError("permission-denied", "No tienes acceso a esta tienda.");
     }
 
@@ -85,13 +82,13 @@ export const importPurchasePdf = onCall(
     }
     if (!text.trim()) {
       // Likely a scanned-but-blank or handwritten doc: report, don't crash.
-      return { text: "", ...emptyResult() };
+      return emptyResult();
     }
     const parsed = parseSupplierOrder(text);
     if (!parsed.lines.length) {
-      return { text: text.slice(0, 500), ...emptyResult(), warning: "no-lines" };
+      return { ...emptyResult(), warning: "no-lines" };
     }
-    return { ...parsed, text: text.slice(0, 500) };
+    return parsed;
   }
 );
 

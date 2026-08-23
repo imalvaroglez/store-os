@@ -31,7 +31,7 @@ export function PurchaseList({
   const { state, activeStore } = useStore();
   if (!activeStore) return null;
   const purchases = purchasesForStore(state.purchases, activeStore.id).sort((a, b) =>
-    b.date.localeCompare(a.date)
+    (b.date ?? "").localeCompare(a.date ?? "")
   );
 
   return (
