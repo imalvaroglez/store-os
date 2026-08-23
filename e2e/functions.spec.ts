@@ -74,7 +74,12 @@ async function ensureAdmin() {
   return { token, uid };
 }
 
-const admin = await ensureAdmin();
+let admin: { token: string; uid: string } | null = null;
+test.beforeAll(async () => {
+  // Seeded in beforeAll (not top-level): file load must stay side-effect-free
+  // so session 1's --grep-invert never triggers emulator work at import time.
+  admin = await ensureAdmin();
+});
 
 test("@functions unauthenticated call → unauthenticated", async () => {
   const res = await callCallable({ storagePath: "purchases/store_joyeria/x.pdf" });
@@ -101,7 +106,7 @@ test("@functions member of another store → permission-denied (no OCR)", async 
 });
 
 test("@functions member with a missing path → not-found (authorization passed, no OCR)", async () => {
-  const auth = admin;
+  const auth = admin!;
   const res = await callCallable({ storagePath: "purchases/store_joyeria/no-existe.pdf" }, auth.token);
   expect(res.status).toBe(404);
   const body = await res.json();
@@ -109,7 +114,7 @@ test("@functions member with a missing path → not-found (authorization passed,
 });
 
 test("@functions failed OCR on an UNLINKED pdf deletes the file", async () => {
-  const auth = admin;
+  const auth = admin!;
   await uploadPdf("store_joyeria", "cleanup-free", auth.token);
   await expect
     .poll(async () => pdfExists("store_joyeria", "cleanup-free", auth.token), { timeout: 10000 })
@@ -123,7 +128,7 @@ test("@functions failed OCR on an UNLINKED pdf deletes the file", async () => {
 });
 
 test("@functions failed OCR on a LINKED pdf keeps the file", async () => {
-  const auth = admin;
+  const auth = admin!;
   await uploadPdf("store_joyeria", "cleanup-linked", auth.token);
   // A purchase references the path → must survive a failed re-process.
   await writeEmulatorDoc("purchases", "ux2_fn_linked", {
