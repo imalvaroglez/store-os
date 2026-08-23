@@ -47,7 +47,7 @@ let storageConnected = false;
 
 function functionsInstance(): Functions {
   const { app } = getFirebase();
-  if (!fns) fns = getFunctions(app, EMULATOR ? "store-os-demo" : undefined);
+  if (!fns) fns = getFunctions(app, "us-east1"); // region, never a project id
   if (EMULATOR && !fnsConnected) {
     const host = import.meta.env.VITE_FIREBASE_FUNCTIONS_EMULATOR_HOST || "127.0.0.1:5001";
     const [hostname, port] = host.split(":");

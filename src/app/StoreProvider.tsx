@@ -41,7 +41,7 @@ import {
   createDraftProductsForPurchaseTx,
   PurchaseAlreadyReceived,
 } from "./firebase/firestoreData";
-import { deleteProductImage } from "./firebase/storage";
+import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
 
 // Actions: every mutation flows through here. storeId is carried on entity-level
@@ -383,6 +383,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         state.orders.filter((o) => o.storeId === storeId).forEach((o) => deleteEntity(user, "orders", o.id).catch(() => {}));
         state.suppliers.filter((s) => s.storeId === storeId).forEach((s) => deleteEntity(user, "suppliers", s.id).catch(() => {}));
         state.purchases.filter((p) => p.storeId === storeId).forEach((p) => deleteEntity(user, "purchases", p.id).catch(() => {}));
+        // Supplier PDFs are PII: delete them along with the store. Best-effort
+        // (consistent with the entity deletes above) — a failure is logged so
+        // orphaned files are traceable, not guaranteed cleanup.
+        state.purchases
+          .filter((p) => p.storeId === storeId && p.documentPath)
+          .forEach((p) =>
+            deletePurchasePdf(p.documentPath!).catch((e) =>
+              console.error(`[Storage] No se pudo borrar el PDF de la compra ${p.id}:`, e)
+            )
+          );
         // Remove the public catalog projection + release the slug.
         unprojectPublicForStore(store).catch(() => {});
       }

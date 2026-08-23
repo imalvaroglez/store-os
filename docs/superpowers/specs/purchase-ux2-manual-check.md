@@ -40,3 +40,18 @@ menos de 5 minutos en escritorio**; móvil completa el flujo sin desbordes.
 - [ ] La compra recibida queda bloqueada (inputs deshabilitados).
 
 Registra resultado (tiempo + incidencias) en este archivo o en el PR.
+
+## Presupuesto y retención (V1)
+
+- **Retención**: cada PDF vive mientras exista su compra, o hasta eliminar la
+  tienda (el borrado de tienda elimina los PDFs, best-effort documentado).
+  Sin lifecycle automático: cuántos años conservar el documento es decisión
+  de producto pendiente.
+- **Tamaño**: el PDF de referencia pesa ~1.8–2 MB. Dentro del free tier de
+  Storage (5 GB compartidos por TODO el proyecto, incl. fotos): ~2,500 compras
+  de ese tamaño. Revisar el límite antes de habilitar muchas tiendas.
+- **Importación fallida**: los PDFs de OCR fallido sin compra vinculada se
+  borran (1 lectura de guard por fallo); no consumen almacenamiento permanente.
+- **Por importación exitosa**: 1 callable (OCR), 1 escritura compra + N
+  escrituras productos (bulk ≤499+1), lecturas de catálogo normales. Muy
+  dentro del free tier a escala Olivia.
