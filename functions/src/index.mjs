@@ -86,7 +86,9 @@ export const importPurchasePdf = onCall(
           .limit(1)
           .get();
         if (linked.empty) {
-          await file.delete().catch(() => {});
+          await file.delete().catch((e) => {
+            console.error("cleanup-delete-failed", e?.message);
+          });
         }
         // Linked (or query failed): keep the file — it may be re-processed.
       } catch (e) {

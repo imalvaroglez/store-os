@@ -551,7 +551,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const purchase = state.purchases.find((p) => p.id === purchaseId);
       if (purchase && effectivePurchaseStatus(purchase) === "received") return;
       dispatch({ type: "DELETE_PURCHASE", purchaseId });
-      if (cloud && user && !fromCloud.current) deleteEntity(user, "purchases", purchaseId).catch(() => {});
+      if (cloud && user && !fromCloud.current) {
+        deleteEntity(user, "purchases", purchaseId).catch(() => {});
+        // Retention policy: the PDF lives while its purchase does.
+        if (purchase?.documentPath) {
+          deletePurchasePdf(purchase.documentPath).catch((e) =>
+            console.error(`[Storage] No se pudo borrar el PDF de la compra ${purchaseId}:`, e)
+          );
+        }
+      }
     },
     receivePurchase: async (purchase) => {
       // Both guards BEFORE any effect: legacy (status undefined) already
