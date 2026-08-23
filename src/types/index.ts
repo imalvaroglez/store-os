@@ -325,10 +325,8 @@ export function recalcPurchaseStatus(
   if (p.lines.length === 0) return "draft";
   const unknownAmount = p.lines.some((l) => l.sourceAmountType === "unknown");
   const unlinked = p.lines.some((l) => !l.productId);
-  const merchandise = p.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0);
-  // Spec §1: total = mercancía − descuento + envío + impuesto adicional.
-  const adjustments = (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
-  const mismatch = Math.abs(merchandise + adjustments - opts.totalPaid);
+  const { calculated } = purchaseTotals(p);
+  const mismatch = Math.abs(calculated - opts.totalPaid);
   const mismatchConfirmed = p.confirmedMismatchAmount != null && Math.abs(mismatch - p.confirmedMismatchAmount) < 0.005;
   if (unknownAmount || unlinked || (!mismatchConfirmed && mismatch > 0.5)) return "needs_review";
   return "ready";
