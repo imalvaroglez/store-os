@@ -133,6 +133,29 @@ describe("reducer: stock release on order delete", () => {
   });
 });
 
+const storeA = { id: "a", name: "A", slug: "a", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" };
+const storeB = { id: "b", name: "B", slug: "b", type: "on_demand" as const, createdAt: "", updatedAt: "" };
+
+describe("reducer: REPLACE_STATE preserves the active store on late syncs", () => {
+  const state = (activeStoreId: string) =>
+    ({ ...emptyState(), stores: [storeA, storeB], activeStoreId }) as AppState;
+
+  it("keeps the current selection when the store still exists in the synced state", () => {
+    const next = reducer(state("b"), { type: "REPLACE_STATE", state: { ...emptyState(), stores: [storeA, storeB], activeStoreId: "a" } as AppState });
+    expect(next.activeStoreId).toBe("b");
+  });
+
+  it("falls back to the synced selection when the current store vanished", () => {
+    const next = reducer(state("b"), { type: "REPLACE_STATE", state: { ...emptyState(), stores: [storeA], activeStoreId: "a" } as AppState });
+    expect(next.activeStoreId).toBe("a");
+  });
+
+  it("accepts the synced selection when nothing was active", () => {
+    const next = reducer(state(""), { type: "REPLACE_STATE", state: { ...emptyState(), stores: [storeA, storeB], activeStoreId: "b" } as AppState });
+    expect(next.activeStoreId).toBe("b");
+  });
+});
+
 describe("reducer: supplier/purchase CRUD + cascade on store delete", () => {
   it("adds, updates, and deletes suppliers", () => {
     const state = { ...emptyState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }], activeStoreId: "store_1" };
