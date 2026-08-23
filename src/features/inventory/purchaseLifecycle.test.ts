@@ -30,7 +30,7 @@ describe("effectivePurchaseStatus", () => {
 
 describe("recalcPurchaseStatus", () => {
   it("empty purchase stays draft", () => {
-    expect(recalcPurchaseStatus({ ...base, status: "draft" }, { totalPaid: 0 })).toBe("draft");
+    expect(recalcPurchaseStatus({ ...base, status: "draft" })).toBe("draft");
   });
 
   it("unresolved sourceAmountType forces needs_review", () => {
@@ -41,7 +41,7 @@ describe("recalcPurchaseStatus", () => {
       subtotal: 200,
       totalConfirmed: 200,
     };
-    expect(recalcPurchaseStatus(p, { totalPaid: 200 })).toBe("needs_review");
+    expect(recalcPurchaseStatus(p)).toBe("needs_review");
   });
 
   it("unconfirmed mismatch → needs_review; confirmed → ready", () => {
@@ -52,8 +52,8 @@ describe("recalcPurchaseStatus", () => {
       subtotal: 100,
       totalConfirmed: 120,
     };
-    expect(recalcPurchaseStatus(p, { totalPaid: 120 })).toBe("needs_review");
-    expect(recalcPurchaseStatus({ ...p, confirmedMismatchAmount: 20 }, { totalPaid: 120 })).toBe("ready");
+    expect(recalcPurchaseStatus(p)).toBe("needs_review");
+    expect(recalcPurchaseStatus({ ...p, confirmedMismatchAmount: 20 })).toBe("ready");
   });
 
   it("editing after confirmation invalidates it (different mismatch)", () => {
@@ -65,7 +65,7 @@ describe("recalcPurchaseStatus", () => {
       subtotal: 150,
       totalConfirmed: 120,
     };
-    expect(recalcPurchaseStatus(p, { totalPaid: 120 })).toBe("needs_review");
+    expect(recalcPurchaseStatus(p)).toBe("needs_review");
   });
 
   it("footer adjustments count toward the calculated total", () => {
@@ -77,7 +77,36 @@ describe("recalcPurchaseStatus", () => {
       subtotal: 100,
       totalConfirmed: 120,
     };
-    expect(recalcPurchaseStatus(p, { totalPaid: 120 })).toBe("ready");
+    expect(recalcPurchaseStatus(p)).toBe("ready");
+  });
+
+  it("a confirmed total of 0 is real: mismatch surfaces, it never falls back to calculated", () => {
+    const p: Purchase = {
+      ...base,
+      status: "draft",
+      lines: [{ productId: "a", name: "A", quantity: 1, unitCost: 100 }],
+      totalConfirmed: 0, // free/donation total: 100 vs 0 → needs_review
+      subtotal: 100,
+    };
+    expect(recalcPurchaseStatus(p)).toBe("needs_review");
+  });
+
+  it("zero confirmed and zero calculated with resolved lines is ready", () => {
+    const p: Purchase = {
+      ...base,
+      status: "draft",
+      lines: [{ productId: "a", name: "A", quantity: 1, unitCost: 0 }],
+      subtotal: 0,
+      totalConfirmed: 0,
+    };
+    expect(recalcPurchaseStatus(p)).toBe("ready");
+  });
+
+  it("missing/non-finite confirmed total never auto-reconciles", () => {
+    const p = { ...base, status: "draft" as const, lines: [{ productId: "a", name: "A", quantity: 1, unitCost: 100 }], subtotal: 100 };
+    delete (p as Partial<Purchase>).totalConfirmed;
+    expect(recalcPurchaseStatus(p)).toBe("needs_review");
+    expect(recalcPurchaseStatus({ ...base, status: "draft", lines: p.lines, subtotal: 100, totalConfirmed: NaN } as unknown as Purchase)).toBe("needs_review");
   });
 
   it("discount SUBTRACTS from the calculated total (spec §1)", () => {
@@ -89,13 +118,14 @@ describe("recalcPurchaseStatus", () => {
       subtotal: 150,
       totalConfirmed: 120,
     };
-    expect(recalcPurchaseStatus(p, { totalPaid: 120 })).toBe("ready");
-    expect(recalcPurchaseStatus(p, { totalPaid: 180 })).toBe("needs_review"); // 150+30 would be the old wrong math
+    expect(recalcPurchaseStatus(p)).toBe("ready");
+    // If the sign regressed (150+30), the paid 180 would mismatch → review.
+    expect(recalcPurchaseStatus({ ...p, totalConfirmed: 180 })).toBe("needs_review");
   });
 
   it("received never downgrades", () => {
     // status undefined = legacy = received; recalc must not "revive" it.
-    expect(recalcPurchaseStatus(base, { totalPaid: 999 })).toBe("received");
+    expect(recalcPurchaseStatus(base)).toBe("received");
   });
 
   it("an unlinked line forces needs_review even with perfect totals", () => {
@@ -106,7 +136,7 @@ describe("recalcPurchaseStatus", () => {
       subtotal: 100,
       totalConfirmed: 100,
     };
-    expect(recalcPurchaseStatus(p, { totalPaid: 100 })).toBe("needs_review");
+    expect(recalcPurchaseStatus(p)).toBe("needs_review");
   });
 });
 

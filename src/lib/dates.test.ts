@@ -43,6 +43,13 @@ describe("parseSpanishDate", () => {
     expect(parseSpanishDate("ago 23", new Date("2026-08-23T05:00:00Z"))).toEqual({ iso: "2025-08-23", inferredYear: true });
   });
 
+  it("rejects impossible dates (UTC round-trip)", () => {
+    expect(parseSpanishDate("29 feb 2024", NOW)).toEqual({ iso: "2024-02-29", inferredYear: false });
+    expect(parseSpanishDate("29 feb 2025", NOW)).toBeNull();
+    expect(parseSpanishDate("31 abr 2026", NOW)).toBeNull();
+    expect(parseSpanishDate("31 dic 2026", NOW)).toEqual({ iso: "2026-12-31", inferredYear: false });
+  });
+
   it("rejects garbage", () => {
     expect(parseSpanishDate("hola mundo", NOW)).toBeNull();
     expect(parseSpanishDate("", NOW)).toBeNull();

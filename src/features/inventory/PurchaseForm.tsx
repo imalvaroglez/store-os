@@ -73,11 +73,13 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
 
   // Spec §1 totals live in purchaseTotals (single source, shared with status).
   const { merchandise, calculated } = purchaseTotals(draft);
-  const totalPaid = draft.totalConfirmed || calculated;
+  // A confirmed total of 0 is REAL (free order); never fall back to `calculated`
+  // or the difference would vanish. Missing/non-finite reads as 0 → mismatch.
+  const totalPaid = Number.isFinite(draft.totalConfirmed) ? draft.totalConfirmed : 0;
   const mismatch = Math.abs(calculated - totalPaid);
   const mismatchConfirmed =
     draft.confirmedMismatchAmount != null && Math.abs(mismatch - draft.confirmedMismatchAmount) < 0.005;
-  const status = recalcPurchaseStatus(draft, { totalPaid });
+  const status = recalcPurchaseStatus(draft);
   // The single rule lives in recalcPurchaseStatus; the button just obeys it.
   const canReceive = !locked && status === "ready" && draft.lines.length > 0;
 
@@ -121,7 +123,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     setDraft(invalidateMismatch({ ...draft, totalConfirmed: parseAmount(raw) ?? 0 }));
   }
   function setQuantity(idx: number, raw: string) {
-    const qty = Math.max(1, parseInt(raw) || 1);
+    const qty = Math.max(1, Math.trunc(parseAmount(raw) ?? 1));
     const line = draft.lines[idx];
     // When the printed amount is the LINE total, the unit cost follows quantity.
     const unitCost = line.sourceAmountType === "line" && line.sourceAmount != null ? line.sourceAmount / qty : line.unitCost;
@@ -274,7 +276,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         const id = byId.get(String(i));
         if (id) lines[i] = { ...lines[i], productId: id, matchStatus: "new_product" };
       }
-      const next: Purchase = { ...draft, lines, subtotal: merchandise, updatedAt: nowIso() };
+      // The batch itself must carry the invalidation, not just local state.
+      const next: Purchase = invalidateMismatch({ ...draft, lines, subtotal: merchandise, updatedAt: nowIso() });
       await createDraftProductsForPurchase(batchProducts, next);
       setDraft(next);
       toast.success(`${batchProducts.length} ${batchProducts.length === 1 ? "producto creado" : "productos creados"} y vinculados.`);
@@ -429,21 +432,21 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </div>
 
         {/* Header row (desktop only), outside the rows' scroll flow */}
-        <div className="hidden md:grid md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_6rem_1fr_auto] gap-2 px-3 pb-1 text-xs font-semibold text-on-surface-soft uppercase tracking-wide sticky top-0 z-10 bg-surface">
-          <span />
+        <div className="hidden md:grid md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] gap-2 px-3 pb-1 text-xs font-semibold text-on-surface-soft uppercase tracking-wide sticky top-0 z-10 bg-surface">
+          <span>Estado</span>
           <span>Producto</span>
           <span>Cant.</span>
           <span>Importe</span>
           <span>Costo unit.</span>
           <span>Total</span>
+          <span />{/* quitar */}
           <span>En Store OS</span>
-          <span />
         </div>
         <div className="space-y-1.5">
           {visible.map(({ line, status: st, idx }) => (
             <div
               key={idx}
-              className="p-2 md:min-h-14 rounded-lg bg-surface-soft grid grid-cols-2 md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_6rem_1fr_auto] md:items-center gap-2"
+              className="p-2 md:min-h-14 rounded-lg bg-surface-soft grid grid-cols-2 md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] md:items-center gap-2"
             >
               {/* Mobile tier 1: status + name + printed amount. Desktop: flat grid cells. */}
               <div className="col-span-2 flex items-start gap-2 md:contents">
@@ -512,14 +515,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   <div className="hidden md:flex items-center">
                     <span className="text-sm font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
                   </div>
-                  {!locked ? (
-                    <IconButton variant="ghost" aria-label="Quitar línea" className="!min-h-10 !min-w-10" onClick={() => removeLine(idx)}>
-                      ✕
-                    </IconButton>
-                  ) : (
-                    <span />
-                  )}
                 </div>
+                {!locked ? (
+                  <IconButton variant="ghost" aria-label="Quitar línea" className="!min-h-10 !min-w-10 md:justify-self-center" onClick={() => removeLine(idx)}>
+                    ✕
+                  </IconButton>
+                ) : (
+                  <span className="hidden md:block" />
+                )}
                 <div className="col-span-3 md:col-span-1 min-w-0">
                   <SelectField
                     aria-label="Producto en Store OS"

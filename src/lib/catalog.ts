@@ -91,15 +91,16 @@ export function uniqueProductSku(
   const cap = (s: string) => trimTrailingHyphen(s.slice(0, 40));
   let candidate = cap(root);
   if (free(candidate)) return candidate;
-  // Collisions: -02, -03, ... (two digits). Truncate the pre-suffix so it fits.
-  let n = 2;
-  let suffixed = "";
-  do {
-    const suffix = `-${String(n).padStart(2, "0")}`;
-    suffixed = trimTrailingHyphen(root.slice(0, 40 - suffix.length)) + suffix;
-    n++;
-  } while (!free(suffixed) && n < 100);
-  return suffixed;
+  // Collisions: -02, -03, … The taken set is finite so the loop always ends;
+  // the base is re-truncated per suffix length so the SKU stays ≤ 40 chars.
+  // No artificial cap: a 499-line batch plus existing products can exceed -99.
+  for (let n = 2; ; n++) {
+    // Two-digit padding up to -99 keeps the historical format; beyond that
+    // the bare number keeps the SKU within 40 chars.
+    const suffix = `-${n < 100 ? String(n).padStart(2, "0") : n}`;
+    const suffixed = trimTrailingHyphen(root.slice(0, Math.max(1, 40 - suffix.length))) + suffix;
+    if (free(suffixed)) return suffixed;
+  }
 }
 
 /** Uppercase, no accents, alphanumerics only — for the store's skuPrefix field. */

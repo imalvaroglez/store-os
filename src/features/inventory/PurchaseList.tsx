@@ -73,7 +73,7 @@ export function PurchaseList({
                     {p.lines.map((l) => `${l.quantity} ${l.name}`).join(", ")}
                   </p>
                 </div>
-                <Badge tone="neutral">{formatMoney(p.totalConfirmed || p.subtotal)}</Badge>
+                <Badge tone="neutral">{formatMoney(Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0)}</Badge>
               </div>
             </Card>
           );

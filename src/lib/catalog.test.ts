@@ -223,4 +223,13 @@ describe("defaultSkuPrefix", () => {
   it("empty slug → empty", () => {
     expect(defaultSkuPrefix("")).toBe("");
   });
+
+  it("finds a free suffix beyond -99 (500 collisions, batch-scale)", () => {
+    const taken = ["PIEZA"];
+    for (let n = 2; n <= 501; n++) taken.push(`PIEZA-${n < 100 ? String(n).padStart(2, "0") : n}`);
+    const products = taken.map((sku) => ({ id: sku, storeId: "s1", sku }) as unknown as import("../types").Product);
+    const sku = uniqueProductSku(products, "s1", "new", "PIEZA");
+    expect(sku).toBe("PIEZA-502");
+    expect(sku.length).toBeLessThanOrEqual(40);
+  });
 });

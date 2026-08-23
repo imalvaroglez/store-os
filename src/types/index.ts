@@ -291,8 +291,8 @@ export function effectivePurchaseStatus(p: Purchase): PurchaseStatus {
 }
 
 /**
- * The ONE totals calculation (spec §1): total = mercancía − descuento +
- * envío + impuesto adicional. The editor and recalcPurchaseStatus must both
+ * The ONE totals calculation (spec §1): total = merchandise − discount +
+ * shipping + additional tax. The editor and recalcPurchaseStatus must both
  * consume this — the discount-sign bug came from the two drifting apart.
  */
 export function purchaseTotals(p: Purchase): { merchandise: number; calculated: number } {
@@ -317,16 +317,17 @@ export function lineStatus(l: PurchaseLine): PurchaseLineStatus {
  * unconfirmed total mismatch. ready: everything resolved. draft: nothing to
  * review yet.
  */
-export function recalcPurchaseStatus(
-  p: Purchase,
-  opts: { totalPaid: number }
-): PurchaseStatus {
+export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
   if (effectivePurchaseStatus(p) === "received") return "received";
   if (p.lines.length === 0) return "draft";
   const unknownAmount = p.lines.some((l) => l.sourceAmountType === "unknown");
   const unlinked = p.lines.some((l) => !l.productId);
   const { calculated } = purchaseTotals(p);
-  const mismatch = Math.abs(calculated - opts.totalPaid);
+  // The confirmed total is THE paid amount. Missing/non-finite (legacy data)
+  // never auto-reconciles to the calculated total — it reads as 0 so a
+  // mismatch forces review instead of hiding the difference.
+  const totalPaid = Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
+  const mismatch = Math.abs(calculated - totalPaid);
   const mismatchConfirmed = p.confirmedMismatchAmount != null && Math.abs(mismatch - p.confirmedMismatchAmount) < 0.005;
   if (unknownAmount || unlinked || (!mismatchConfirmed && mismatch > 0.5)) return "needs_review";
   return "ready";

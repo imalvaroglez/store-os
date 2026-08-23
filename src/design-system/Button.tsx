@@ -12,9 +12,10 @@ const VARIANTS: Record<Variant, string> = {
   success: "bg-forest text-paper hover:bg-forest-700 active:bg-forest-700 shadow-sm",
 };
 
+// sm/md carry a min tap height (~40px) so dense tables stay touch-friendly.
 const SIZES: Record<Size, string> = {
-  sm: "px-3 py-1.5 text-sm",
-  md: "px-4 py-2 text-sm",
+  sm: "px-3 py-1.5 text-sm min-h-10",
+  md: "px-4 py-2 text-sm min-h-10",
   lg: "px-5 py-3.5 text-base",
 };
 

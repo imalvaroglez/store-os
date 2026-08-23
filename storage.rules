@@ -28,7 +28,8 @@ service firebase.storage {
     // members. Not part of any public projection.
     match /purchases/{storeId}/{fileName} {
       allow read: if isStoreMember(storeId);
-      allow create, update: if isStoreMember(storeId)
+      // create-only: a supplier PDF is evidence; nobody rewrites it (no update).
+      allow create: if isStoreMember(storeId)
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType == 'application/pdf'
         && request.resource.name.matches('.*\\.pdf');

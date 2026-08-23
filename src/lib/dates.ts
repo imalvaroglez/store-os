@@ -44,6 +44,13 @@ export function parseSpanishDate(label: string, now = new Date()): { iso: string
   // when a day already appeared before/after the month ("12 may 25").
   const day = m[1] ? parseInt(m[1], 10) : m[3] ? parseInt(m[3], 10) : m[4] ? parseInt(m[4], 10) : NaN;
   if (!month || !(day >= 1 && day <= 31)) return null;
+  // Reject impossible dates (31 feb, 29 feb non-leap…) with a native UTC
+  // round-trip: rebuilding the date must land on the same year/month/day.
+  const probe = (y: number) => {
+    if (!Number.isFinite(y)) return false;
+    const d = new Date(Date.UTC(y, month - 1, day));
+    return d.getUTCFullYear() === y && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+  };
   let year = m[4] && (m[1] || m[3]) ? parseInt(m[4], 10) : undefined;
   const inferredYear = year === undefined;
   if (year !== undefined && year < 100) year += 2000;
@@ -54,9 +61,14 @@ export function parseSpanishDate(label: string, now = new Date()): { iso: string
   const yNow = nowMx.getUTCFullYear();
 
   if (!inferredYear) {
+    if (!probe(year!)) return null;
     return { iso: isoOf(year!, month, day), inferredYear };
   }
   // Most recent past: this year if not in the future, else the previous year.
+  if (!probe(yNow)) {
+    if (!probe(yNow - 1)) return null;
+    return { iso: isoOf(yNow - 1, month, day), inferredYear };
+  }
   const thisYear = isoOf(yNow, month, day);
   const today = isoOf(yNow, nowMx.getUTCMonth() + 1, nowMx.getUTCDate());
   if (thisYear <= today) return { iso: thisYear, inferredYear };
