@@ -92,7 +92,9 @@ function parsePage(lines, state) {
       if (/^recibo/i.test(line)) continue; // document title, never merchandise
       const ord = line.match(/(?:pedido|order|folio|n[oó°?]?)\s*[.:nº°?]*\s*#?\s*(\d{3,10})/i);
       if (ord) state.supplierOrder = ord[1];
-      const dt = line.match(/\b(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\.?\s+\d{1,2}\b/i);
+      const dt = line.match(/\b(?:(\d{1,2})\s+)?(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\.?\s+(\d{1,2})(?:\s+(\d{2,4}))?\b/i);
+      // Preserve day-before-month ("12 may 25") — the client's date parser
+      // distinguishes "ago 19" from "12 may 25" by the leading day.
       if (dt) state.dateLabel = dt[0];
       if (state.supplierOrder || state.dateLabel) {
         // Metadata line — do not let it contaminate the first product's name.

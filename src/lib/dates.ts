@@ -48,9 +48,9 @@ export function parseSpanishDate(label: string, now = new Date()): { iso: string
   const inferredYear = year === undefined;
   if (year !== undefined && year < 100) year += 2000;
 
-  // "Now" in Mexico City terms.
-  const nowUtc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const nowMx = new Date(nowUtc - 360 * 60000);
+  // "Now" in Mexico City terms: straight from the UTC epoch (never mix in the
+  // host machine's local offset), then read with UTC getters.
+  const nowMx = new Date(now.getTime() - 360 * 60000);
   const yNow = nowMx.getUTCFullYear();
 
   if (!inferredYear) {

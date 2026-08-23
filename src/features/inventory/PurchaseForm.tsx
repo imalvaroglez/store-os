@@ -20,6 +20,7 @@ import { openPurchasePdf } from "../../app/firebase/pdfImport";
 import {
   effectivePurchaseStatus,
   lineStatus,
+  purchaseTotals,
   recalcPurchaseStatus,
   type PriceTierDef,
   type Purchase,
@@ -33,7 +34,7 @@ import { PurchasePdfImport, type PdfApplyPayload } from "./PurchasePdfImport";
 
 // Shared purchase editor — the single destination for BOTH entries (manual
 // capture and PDF import). Saving only persists the Purchase (a draft);
-// "Recibir mercancía" is the only operation that moves inventory.
+// "Receive merchandise" (Recibir mercancía) is the only operation that moves inventory.
 // purchase-ux2: one responsive CSS grid (dense table on desktop, two-tier
 // rows on mobile), sticky footer, calculated line states, global amount
 // resolution and (cloud) bulk product creation.
@@ -70,11 +71,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const products = productsForStore(state.products, activeStore.id);
   const locked = effectivePurchaseStatus(draft) === "received";
 
-  const merchandise = draft.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
-  // Spec §1: total = mercancía − descuento + envío + impuesto adicional.
-  const adjustments = (draft.shipping ?? 0) + (draft.tax ?? 0) - (draft.discount ?? 0);
-  const calculated = merchandise + adjustments;
-  const totalPaid = draft.totalConfirmed || merchandise + adjustments;
+  // Spec §1 totals live in purchaseTotals (single source, shared with status).
+  const { merchandise, calculated } = purchaseTotals(draft);
+  const totalPaid = draft.totalConfirmed || calculated;
   const mismatch = Math.abs(calculated - totalPaid);
   const mismatchConfirmed =
     draft.confirmedMismatchAmount != null && Math.abs(mismatch - draft.confirmedMismatchAmount) < 0.005;
@@ -105,7 +104,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     return d.confirmedMismatchAmount != null ? { ...d, confirmedMismatchAmount: undefined } : d;
   }
   function addLine() {
-    setDraft({ ...draft, lines: [...draft.lines, { productId: "", name: "", quantity: 1, unitCost: 0 }] });
+    // Any line change — including adding — invalidates a prior confirmation.
+    setDraft(invalidateMismatch({ ...draft, lines: [...draft.lines, { productId: "", name: "", quantity: 1, unitCost: 0 }] }));
   }
   function updateLine(idx: number, patch: Partial<PurchaseLine>) {
     // Any line edit invalidates a prior explicit mismatch confirmation.
@@ -127,7 +127,25 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     const unitCost = line.sourceAmountType === "line" && line.sourceAmount != null ? line.sourceAmount / qty : line.unitCost;
     updateLine(idx, { quantity: qty, unitCost });
   }
+  const CREATE_OPTION = "__create__";
+  function openMiniForm(idx: number) {
+    if (!activeStore) return;
+    const line = draft.lines[idx];
+    const base = newProduct(activeStore.id);
+    const fullName = line.variant ? `${line.name} ${line.variant}` : line.name;
+    setProductDraft({
+      ...base,
+      name: fullName,
+      cost: line.unitCost,
+      sku: uniqueProductSku(products, activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? "")),
+    });
+    setProductLineIdx(idx);
+  }
   function pickProduct(idx: number, productId: string) {
+    if (productId === CREATE_OPTION) {
+      openMiniForm(idx);
+      return;
+    }
     const product = products.find((p) => p.id === productId);
     if (product) {
       updateLine(idx, {
@@ -237,8 +255,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     }
     setBulkCreating(true);
     try {
-      const taken = new Set(state.products.filter((p) => p.storeId === activeStore.id).map((p) => p.sku).filter(Boolean));
-      const products: Product[] = [];
+      // `products` is the store-scoped selector (never raw state.products).
+      // The SKU generator sees the accumulated batch so two lines with the
+      // same name can never collide inside one lot.
+      const batchProducts: Product[] = [];
       const byId = new Map<string, string>(); // line index → new product id
       const lines = [...draft.lines];
       for (let i = 0; i < lines.length; i++) {
@@ -246,9 +266,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         if (l.productId) continue;
         const base = newProduct(activeStore.id);
         const fullName = l.variant ? `${l.name} ${l.variant}` : l.name;
-        const sku = uniqueProductSku(state.products, activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
-        taken.add(sku);
-        products.push({ ...base, name: fullName, cost: l.unitCost, sku });
+        const sku = uniqueProductSku([...batchProducts, ...products], activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
+        batchProducts.push({ ...base, name: fullName, cost: l.unitCost, sku });
         byId.set(String(i), base.id);
       }
       for (let i = 0; i < lines.length; i++) {
@@ -256,9 +275,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         if (id) lines[i] = { ...lines[i], productId: id, matchStatus: "new_product" };
       }
       const next: Purchase = { ...draft, lines, subtotal: merchandise, updatedAt: nowIso() };
-      await createDraftProductsForPurchase(products, next);
+      await createDraftProductsForPurchase(batchProducts, next);
       setDraft(next);
-      toast.success(`${products.length} ${products.length === 1 ? "producto creado" : "productos creados"} y vinculados.`);
+      toast.success(`${batchProducts.length} ${batchProducts.length === 1 ? "producto creado" : "productos creados"} y vinculados.`);
     } catch {
       toast.error("No se pudo crear el lote. Revisa tu conexión e intenta de nuevo.");
     } finally {
@@ -271,6 +290,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     !suppliers.some((s) => s.name.toLowerCase() === draft.supplierName!.toLowerCase())
       ? draft.supplierName
       : undefined;
+  // The detected-supplier hint shows whenever the PDF named one, even after
+  // linking, so "Usar" stays reachable for an existing match (spec §2).
   const matchingSupplier = draft.supplierName
     ? suppliers.find((s) => s.name.toLowerCase() === draft.supplierName!.toLowerCase())
     : undefined;
@@ -302,7 +323,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               + Nuevo proveedor
             </Button>
           )}
-          {supplierSuggestion && (
+          {(draft.supplierId == null || supplierSuggestion) && draft.supplierName && (
             <div className="mt-1 text-xs text-on-surface-soft">
               Proveedor detectado: {supplierSuggestion}{" "}
               {matchingSupplier ? (
@@ -316,7 +337,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   className="!px-1"
                   onClick={() => {
                     if (!activeStore) return;
-                    setSupplierDraft({ ...newSupplier(activeStore.id), name: supplierSuggestion });
+                    setSupplierDraft({ ...newSupplier(activeStore.id), name: supplierSuggestion ?? draft.supplierName ?? "" });
                     setCreatingSupplier(true);
                   }}
                 >
@@ -424,88 +445,99 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               key={idx}
               className="p-2 md:min-h-14 rounded-lg bg-surface-soft grid grid-cols-2 md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_6rem_1fr_auto] md:items-center gap-2"
             >
-              <div className="flex items-center gap-1">
-                <Badge tone={LINE_STATUS_TONE[st]}>{LINE_STATUS_LABEL[st]}</Badge>
-              </div>
-              <div className="col-span-2 md:col-span-1 min-w-0">
-                <TextField
-                  aria-label="Producto"
-                  label=""
-                  value={line.name}
-                  disabled={locked}
-                  onChange={(e) => updateLine(idx, { name: e.target.value, matchStatus: e.target.value ? line.matchStatus : "unmatched" })}
-                />
-                {/* mobile second tier */}
-                <div className="md:hidden mt-1 flex items-center justify-between gap-2 text-xs text-on-surface-soft">
-                  <span className="font-mono">{line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}</span>
-                  <span className="font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
+              {/* Mobile tier 1: status + name + printed amount. Desktop: flat grid cells. */}
+              <div className="col-span-2 flex items-start gap-2 md:contents">
+                <div className="flex items-center pt-2.5">
+                  <Badge tone={LINE_STATUS_TONE[st]}>{LINE_STATUS_LABEL[st]}</Badge>
                 </div>
-                {st === "amount_review" && !locked && line.sourceAmount != null && (
-                  <div className="md:hidden mt-1 flex gap-1">
-                    <Button size="sm" variant="ghost" className="!px-1 !text-xs" onClick={() => resolveAmount(idx, "unit")}>
-                      Unitario
-                    </Button>
-                    <Button size="sm" variant="ghost" className="!px-1 !text-xs" onClick={() => resolveAmount(idx, "line")}>
-                      Total línea
-                    </Button>
+                <div className="min-w-0 flex-1 md:col-span-1">
+                  <TextField
+                    aria-label="Producto"
+                    label=""
+                    value={line.name}
+                    disabled={locked}
+                    onChange={(e) => updateLine(idx, { name: e.target.value, matchStatus: e.target.value ? line.matchStatus : "unmatched" })}
+                  />
+                  <div className="md:hidden mt-1 flex items-center justify-between gap-2 text-xs text-on-surface-soft">
+                    <span className="font-mono">{line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}</span>
+                    <span className="font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
                   </div>
-                )}
+                  {st === "amount_review" && !locked && line.sourceAmount != null && (
+                    <div className="md:hidden mt-1 flex gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "unit")}>
+                        Unitario
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "line")}>
+                        Total línea
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <TextField
-                aria-label="Cantidad"
-                  label=""
-                inputMode="numeric"
-                value={line.quantity.toString()}
-                disabled={locked}
-                onChange={(e) => setQuantity(idx, e.target.value)}
-              />
-              <div className="hidden md:block">
-                <p className={`text-sm font-mono ${line.sourceAmount != null ? "text-ink-soft" : "text-ink-soft/40"}`}>
-                  {line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}
-                </p>
-                {st === "amount_review" && !locked && line.sourceAmount != null && (
-                  <div className="flex gap-0.5">
-                    <Button size="sm" variant="ghost" className="!px-1 !text-xs" onClick={() => resolveAmount(idx, "unit")}>
-                      Unitario
-                    </Button>
-                    <Button size="sm" variant="ghost" className="!px-1 !text-xs" onClick={() => resolveAmount(idx, "line")}>
-                      Total
-                    </Button>
+
+              {/* Mobile tier 2: qty/cost/delete on one line, linking below. */}
+              <div className="col-span-2 md:contents">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center md:contents">
+                  <TextField
+                    aria-label="Cantidad"
+                    label=""
+                    inputMode="numeric"
+                    value={line.quantity.toString()}
+                    disabled={locked}
+                    onChange={(e) => setQuantity(idx, e.target.value)}
+                  />
+                  <div className="hidden md:block">
+                    <p className={`text-sm font-mono ${line.sourceAmount != null ? "text-ink-soft" : "text-ink-soft/40"}`}>
+                      {line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}
+                    </p>
+                    {st === "amount_review" && !locked && line.sourceAmount != null && (
+                      <div className="flex gap-0.5">
+                        <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "unit")}>
+                          Unitario
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "line")}>
+                          Total
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                )}
+                  <TextField
+                    aria-label="Costo unitario"
+                    label=""
+                    inputMode="decimal"
+                    value={(line.unitCost ?? 0).toString()}
+                    disabled={locked}
+                    onChange={(e) => updateLine(idx, { unitCost: parseAmount(e.target.value) ?? 0 })}
+                  />
+                  <div className="hidden md:flex items-center">
+                    <span className="text-sm font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
+                  </div>
+                  {!locked ? (
+                    <IconButton variant="ghost" aria-label="Quitar línea" className="!min-h-10 !min-w-10" onClick={() => removeLine(idx)}>
+                      ✕
+                    </IconButton>
+                  ) : (
+                    <span />
+                  )}
+                </div>
+                <div className="col-span-3 md:col-span-1 min-w-0">
+                  <SelectField
+                    aria-label="Producto en Store OS"
+                    label=""
+                    value={line.productId}
+                    disabled={locked}
+                    onChange={(v) => pickProduct(idx, v)}
+                    options={[
+                      ...products.map((p2) => ({
+                        value: p2.id,
+                        label: `${p2.name} (existencia: ${p2.quantityOnHand ?? 0})`,
+                      })),
+                      ...(locked ? [] : [{ value: CREATE_OPTION, label: "Crear nuevo producto…" }]),
+                    ]}
+                    placeholder="Vincular producto…"
+                  />
+                </div>
               </div>
-              <TextField
-                aria-label="Costo unitario"
-                  label=""
-                inputMode="decimal"
-                value={(line.unitCost ?? 0).toString()}
-                disabled={locked}
-                onChange={(e) => updateLine(idx, { unitCost: parseAmount(e.target.value) ?? 0 })}
-              />
-              <div className="hidden md:flex items-center">
-                <span className="text-sm font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
-              </div>
-              <div className="col-span-2 md:col-span-1 min-w-0">
-                <SelectField
-                  aria-label="Producto en Store OS"
-                  label=""
-                  value={line.productId}
-                  disabled={locked}
-                  onChange={(v) => pickProduct(idx, v)}
-                  options={products.map((p) => ({
-                    value: p.id,
-                    label: `${p.name} (existencia: ${p.quantityOnHand ?? 0})`,
-                  }))}
-                  placeholder="Vincular producto…"
-                />
-              </div>
-              {!locked ? (
-                <IconButton variant="ghost" aria-label="Quitar línea" onClick={() => removeLine(idx)}>
-                  ✕
-                </IconButton>
-              ) : (
-                <span />
-              )}
             </div>
           ))}
         </div>

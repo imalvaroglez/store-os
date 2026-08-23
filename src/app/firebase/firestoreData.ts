@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
   deleteDoc,
@@ -345,6 +346,31 @@ export class PurchaseAlreadyReceived extends Error {
  */
 export async function receivePurchaseTx(purchaseId: string): Promise<void> {
   const { db } = getFirebase();
+  // Pre-validate OUTSIDE the transaction: errors thrown inside runTransaction
+  // reach the caller with an emptied message on the emulator, so the UI toast
+  // would lose the reason. The transaction re-validates canonically below.
+  {
+    const snap = await getDoc(doc(db, "purchases", purchaseId));
+    if (!snap.exists()) throw new Error("No se encontró la compra.");
+    const purchase = snap.data() as Purchase;
+    if (purchase.receivedAt != null || purchase.status === undefined) throw new PurchaseAlreadyReceived();
+    for (const line of purchase.lines) {
+      if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
+      let pSnap;
+      try {
+        pSnap = await getDoc(doc(db, "products", line.productId));
+      } catch {
+        // Reading a MISSING doc fails the isMember(resource.data...) rule with
+        // a raw evaluation error — indistinguishable from a denial, and for the
+        // operator it means the same thing: the product isn't there.
+        throw new Error(`No se encontró el producto de la línea "${line.name}".`);
+      }
+      if (!pSnap.exists()) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
+      if ((pSnap.data() as Product).storeId !== purchase.storeId) {
+        throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
+      }
+    }
+  }
   await runTransaction(db, async (tx) => {
     const purchaseRef = doc(db, "purchases", purchaseId);
     const snap = await tx.get(purchaseRef);

@@ -1,8 +1,10 @@
 import { useRef } from "react";
+import { Button } from "./Button";
 
 // File picker trigger (any file type). The hidden <input type="file"> lives
 // inside this DS component so the design-system gate stays meaningful in
-// features. Presentational only: it hands the raw File to the caller.
+// features. Presentational only: it hands the raw File to the caller. Renders
+// through Button so variant/size and tap-target sizing stay consistent.
 
 export function FileButton({
   accept,
@@ -10,16 +12,18 @@ export function FileButton({
   busyLabel,
   label,
   onSelect,
-  ...rest
+  variant = "secondary",
+  size = "md",
+  className,
 }: {
   accept?: string;
   disabled?: boolean;
   busyLabel?: string;
   label: string;
   onSelect: (file: File) => void;
-  className?: string;
   variant?: "primary" | "secondary" | "ghost";
   size?: "sm" | "md";
+  className?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
@@ -35,14 +39,16 @@ export function FileButton({
           e.target.value = "";
         }}
       />
-      <button
+      <Button
         type="button"
+        variant={variant}
+        size={size}
+        className={className}
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
-        className={rest.className ?? "text-sm font-semibold text-accent disabled:opacity-60 py-2 px-3 rounded-xl ring-1 ring-rule/70 bg-surface"}
       >
         {disabled && busyLabel ? busyLabel : label}
-      </button>
+      </Button>
     </>
   );
 }
