@@ -476,3 +476,28 @@ describe("purchase-ux2 — bulk batch: products + purchase in one writeBatch", (
     await assertFails(setDoc(doc(db, "purchases/xstore"), { storeId: "s2", lines: [], status: "draft" }));
   });
 });
+
+describe("purchase-ux2 — received purchases are immutable evidence", () => {
+  it("member cannot delete a received purchase", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+      await setDoc(doc(c.firestore(), "stores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+      await setDoc(doc(c.firestore(), "purchases/recv1"), { storeId: "s1", status: "received", receivedAt: "2026-08-20T00:00:00Z" });
+    });
+    const db = await asUser("u1");
+    await assertFails(deleteDoc(doc(db, "purchases/recv1")));
+  });
+
+  it("member cannot update a received purchase", async () => {
+    const db = await asUser("u1");
+    await assertFails(updateDoc(doc(db, "purchases/recv1"), { notes: "x" }));
+  });
+
+  it("the receive transaction itself can mark a purchase received (update draft → received)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "purchases/draft1"), { storeId: "s1", status: "ready" });
+    });
+    const db = await asUser("u1");
+    await assertSucceeds(updateDoc(doc(db, "purchases/draft1"), { status: "received", receivedAt: "2026-08-20T00:00:00Z" }));
+  });
+});
