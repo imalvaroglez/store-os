@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  derivedUnitCost,
   effectivePurchaseStatus,
   lineStatus,
   recalcPurchaseStatus,
@@ -150,6 +151,19 @@ describe("recalcPurchaseStatus", () => {
       totalConfirmed: 100,
     };
     expect(recalcPurchaseStatus(p)).toBe("needs_review");
+  });
+});
+
+describe("derivedUnitCost (document amount outranks stored cost)", () => {
+  it("unit reading → sourceAmount as-is", () => {
+    expect(derivedUnitCost({ productId: "", name: "X", quantity: 3, unitCost: 0, sourceAmount: 193.2, sourceAmountType: "unit" })).toBe(193.2);
+  });
+  it("line reading → sourceAmount / quantity", () => {
+    expect(derivedUnitCost({ productId: "", name: "X", quantity: 4, unitCost: 0, sourceAmount: 149.8, sourceAmountType: "line" })).toBe(37.45);
+  });
+  it("unknown or absent amount → undefined (stored cost is the fallback)", () => {
+    expect(derivedUnitCost({ productId: "", name: "X", quantity: 1, unitCost: 0, sourceAmount: 50, sourceAmountType: "unknown" })).toBeUndefined();
+    expect(derivedUnitCost({ productId: "", name: "X", quantity: 1, unitCost: 0 })).toBeUndefined();
   });
 });
 

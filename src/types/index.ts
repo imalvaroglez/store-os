@@ -301,6 +301,16 @@ export function purchaseTotals(p: Purchase): { merchandise: number; calculated: 
   return { merchandise, calculated: merchandise + adjustments };
 }
 
+/**
+ * The unit cost implied by the document's printed amount once its semantics
+ * are resolved. Undefined when the line carries no interpreted amount — the
+ * single source for pickProduct so linking never loses imported money.
+ */
+export function derivedUnitCost(l: PurchaseLine): number | undefined {
+  if (l.sourceAmount == null || !l.sourceAmountType || l.sourceAmountType === "unknown") return undefined;
+  return l.sourceAmountType === "unit" ? l.sourceAmount : l.sourceAmount / (l.quantity || 1);
+}
+
 /** Calculated per-line review state (never persisted). Fixed precedence. */
 export type PurchaseLineStatus = "amount_review" | "unlinked" | "new_product" | "linked";
 

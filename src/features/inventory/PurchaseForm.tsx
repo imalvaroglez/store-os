@@ -19,6 +19,7 @@ import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
 import { openPurchasePdf } from "../../app/firebase/pdfImport";
 import {
   effectivePurchaseStatus,
+  derivedUnitCost,
   lineStatus,
   purchaseTotals,
   recalcPurchaseStatus,
@@ -150,13 +151,18 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     }
     const product = products.find((p) => p.id === productId);
     if (product) {
+      const line = draft.lines[idx];
+      // The document's amount outranks the product's stored cost: linking a
+      // product must never silently zero (or stale) the imported money. The
+      // stored cost is only a fallback for lines without a printed amount.
       updateLine(idx, {
         productId,
         name: product.name,
-        unitCost: product.cost ?? 0,
+        unitCost: derivedUnitCost(line) ?? product.cost ?? line.unitCost,
         matchStatus: "matched",
-        // Choosing semantics resolves "unknown" for this line.
-        sourceAmountType: draft.lines[idx].sourceAmountType === "unknown" ? "line" : draft.lines[idx].sourceAmountType,
+        // Choosing semantics resolves "unknown" for this line (as line-total;
+        // the cost above was derived under that reading).
+        sourceAmountType: line.sourceAmountType === "unknown" ? "line" : line.sourceAmountType,
       });
     } else {
       updateLine(idx, { productId: "", name: "", matchStatus: "unmatched" });
@@ -639,7 +645,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </p>
       ) : (
         /* Sticky footer: total, diferencia y acciones — nothing else. */
-        <div className="fixed bottom-0 inset-x-0 z-20 border-t border-edge bg-surface px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-sm">
+        <div className="fixed inset-x-0 z-40 border-t border-edge bg-surface px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-sm bottom-[calc(4.25rem+env(safe-area-inset-bottom))] md:bottom-0">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-baseline justify-between text-sm">
               <span className="text-ink-soft">
