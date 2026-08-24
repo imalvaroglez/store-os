@@ -132,7 +132,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case "RESET_DEMO":
       return emptyState(); // "reset demo" now means "clear local data" (client demo seed removed)
     case "REPLACE_STATE":
-      return action.state;
+      // A cloud sync must never move the user to another store: on slow
+      // backends the snapshot can land after the user switched/created one,
+      // reverting their selection (and the screen they're looking at).
+      return state.activeStoreId &&
+        action.state.stores.some((s) => s.id === state.activeStoreId)
+        ? { ...action.state, activeStoreId: state.activeStoreId }
+        : action.state;
     default:
       return state;
   }
