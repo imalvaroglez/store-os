@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { Button, FileButton, useToast } from "../../design-system";
 import { uploadPurchasePdf, importPurchasePdf } from "../../app/firebase/pdfImport";
+import { deletePurchasePdf } from "../../app/firebase/storage";
 import { purchasesForStore } from "../../lib/selectors";
 import { effectivePurchaseStatus, type PurchaseLine } from "../../types";
 
@@ -56,7 +57,16 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
       }
       setDuplicate(null);
       const { storagePath } = await uploadPurchasePdf(activeStore.id, file);
-      const result = await importPurchasePdf(storagePath);
+      let result;
+      try {
+        result = await importPurchasePdf(storagePath);
+      } catch (e) {
+        // The upload already landed; if the callable died before OCR (timeout,
+        // maxInstances contention, network), nothing else will clean it up.
+        // Best-effort delete — a purchase referencing it wins if it exists.
+        await deletePurchasePdf(storagePath).catch(() => {});
+        throw e;
+      }
       if (!result.lines.length) {
         toast.error("No pudimos leer el pedido. Captura la compra a mano.");
         return;

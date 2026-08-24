@@ -4,7 +4,7 @@ import { Button, Screen, ScreenHeader } from "../../design-system";
 import { navigate } from "../../lib/router";
 import { PurchaseForm } from "./PurchaseForm";
 import { PurchaseList } from "./PurchaseList";
-import type { Purchase } from "../../types";
+import { effectivePurchaseStatus, type Purchase } from "../../types";
 
 // Compras: the purchase ledger + entry into the shared editor (manual or PDF
 // import — the editor offers both). The editor renders INLINE (wide) so dozens
@@ -19,7 +19,7 @@ export function PurchasesScreen() {
     return (
       <Screen wide>
         <ScreenHeader
-          title={editing.status === undefined ? "Compra" : "Nueva compra"}
+          title={effectivePurchaseStatus(editing) === "received" ? "Compra recibida" : editing.status === undefined ? "Compra" : "Editar compra"}
           subtitle="Revisa, vincula la mercancía y recibe el inventario"
           action={
             <Button size="sm" variant="secondary" onClick={() => setEditing(null)}>

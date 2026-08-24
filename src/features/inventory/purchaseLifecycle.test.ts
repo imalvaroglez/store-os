@@ -128,6 +128,19 @@ describe("recalcPurchaseStatus", () => {
     expect(recalcPurchaseStatus(base)).toBe("received");
   });
 
+  it("a negative calculated total (discount > subtotal) is never confirmable", () => {
+    const p: Purchase = {
+      ...base,
+      status: "draft",
+      lines: [{ productId: "a", name: "A", quantity: 1, unitCost: 100 }],
+      discount: 150, // 100 − 150 = −50
+      subtotal: 100,
+      totalConfirmed: -50,
+    };
+    // Even with the difference "confirmed", a negative total forces review.
+    expect(recalcPurchaseStatus({ ...p, confirmedMismatchAmount: 0 })).toBe("needs_review");
+  });
+
   it("an unlinked line forces needs_review even with perfect totals", () => {
     const p: Purchase = {
       ...base,

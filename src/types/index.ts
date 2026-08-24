@@ -329,7 +329,10 @@ export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
   const totalPaid = Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
   const mismatch = Math.abs(calculated - totalPaid);
   const mismatchConfirmed = p.confirmedMismatchAmount != null && Math.abs(mismatch - p.confirmedMismatchAmount) < 0.005;
-  if (unknownAmount || unlinked || (!mismatchConfirmed && mismatch > 0.5)) return "needs_review";
+  // A negative calculated total (e.g. a document whose discount exceeds its
+  // subtotal) is never confirmable — the operator must fix the numbers.
+  const negativeTotal = calculated < -0.005;
+  if (unknownAmount || unlinked || negativeTotal || (!mismatchConfirmed && mismatch > 0.5)) return "needs_review";
   return "ready";
 }
 
