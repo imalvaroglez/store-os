@@ -32,7 +32,7 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
   const { activeStore, cloud, state } = useStore();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [duplicate, setDuplicate] = useState<{ fingerprint: string } | null>(null);
+  const [duplicate, setDuplicate] = useState(false);
 
   if (!cloud) return null; // demo local: manual capture only (spec, fuera de alcance)
 
@@ -46,7 +46,7 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
           (p) => p.documentFingerprint === fingerprint
         );
         if (existing) {
-          setDuplicate({ fingerprint });
+          setDuplicate(true);
           toast.error(
             `Este documento parece haber sido importado antes (compra del ${existing.date}${
               effectivePurchaseStatus(existing) === "received" ? ", ya recibida" : ""
@@ -55,7 +55,7 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
           return;
         }
       }
-      setDuplicate(null);
+      setDuplicate(false);
       const { storagePath } = await uploadPurchasePdf(activeStore.id, file);
       let result;
       try {
@@ -118,7 +118,7 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
             label="Importar de todos modos"
             onSelect={(f) => void onFile(f, true)}
           />
-          <Button size="sm" variant="ghost" onClick={() => setDuplicate(null)}>
+          <Button size="sm" variant="ghost" onClick={() => setDuplicate(false)}>
             Cancelar
           </Button>
         </div>
