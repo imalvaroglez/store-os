@@ -476,6 +476,11 @@ export function projectPublicProductSummary(product: Product, storeSlug: string,
     publicDescription: product.publicDescription ?? null,
     imageUrl: primaryImage(product),
     availability: product.availability ?? "available",
+    ...(typeof product.quantityOnHand === "number"
+      ? // ponytail: raw on-hand, not minus committed; goes stale between
+        // projections. The submitPublicOrder callable is the authoritative check.
+        { availableQuantity: Math.max(0, product.quantityOnHand) }
+      : {}),
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
     canInquire: product.canInquire ?? false,
@@ -490,7 +495,8 @@ export function projectPublicProductSummary(product: Product, storeSlug: string,
 /**
  * Full public product detail (publicProducts/{storeId}__{slug}). Includes the
  * gallery, material/finish/dimensions/care, categories, and price — never cost,
- * wholesale/reseller, notes, or inventory counts.
+ * wholesale/reseller, or notes. Inventory surfaces only as the derived
+ * `availableQuantity` (clamped on-hand) for the cart UI.
  */
 export function projectPublicProductDetail(
   product: Product,
@@ -507,6 +513,10 @@ export function projectPublicProductDetail(
     storeId: product.storeId,
     storeSlug,
     productSlug: product.slug ?? null,
+    // Lets submitPublicOrder resolve the private product doc without trusting
+    // client-supplied ids (the sku already falls back to product.id, so this
+    // exposes nothing new).
+    productId: product.id,
     name: product.name,
     sku: product.sku ?? product.id,
     publicDescription: product.publicDescription ?? null,
@@ -522,6 +532,11 @@ export function projectPublicProductDetail(
     dimensions: product.dimensions ?? null,
     care: product.care ?? null,
     availability: product.availability ?? "available",
+    ...(typeof product.quantityOnHand === "number"
+      ? // ponytail: raw on-hand, not minus committed; goes stale between
+        // projections. The submitPublicOrder callable is the authoritative check.
+        { availableQuantity: Math.max(0, product.quantityOnHand) }
+      : {}),
     canInquire: product.canInquire ?? false,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,

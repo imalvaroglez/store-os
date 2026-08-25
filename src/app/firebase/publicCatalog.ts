@@ -27,6 +27,7 @@ export type PublicProductSummary = {
   imageUrl?: string | null;
   price?: number;
   availability?: string;
+  availableQuantity?: number; // inventory stores; stale until re-projection, server re-checks
   isFeatured?: boolean;
   isNew?: boolean;
   canInquire?: boolean;
@@ -69,10 +70,12 @@ export type PublicProductDetail = {
   dimensions?: string | null;
   care?: string | null;
   availability?: string;
+  availableQuantity?: number; // inventory stores; stale until re-projection, server re-checks
   canInquire?: boolean;
   isFeatured?: boolean;
   isNew?: boolean;
   price?: number;
+  productId?: string; // the private product id, used by submitPublicOrder server-side
   categories: { id: string; name: string; slug: string }[];
 };
 

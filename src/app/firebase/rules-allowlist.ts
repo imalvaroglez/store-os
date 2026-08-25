@@ -9,9 +9,10 @@ export const PUBLIC_STORE_FIELDS = [
   "storeId", "name", "slug", "type", "whatsappPhone", "storefront",
 ] as const;
 export const PUBLIC_PRODUCT_FIELDS = [
-  "storeId", "storeSlug", "productSlug", "name", "sku",
+  "storeId", "storeSlug", "productSlug", "productId", "name", "sku",
   "publicDescription", "images", "material", "finish", "dimensions", "care",
-  "availability", "canInquire", "isFeatured", "isNew", "categories",
+  "availability", "availableQuantity", "canInquire", "isFeatured", "isNew",
+  "categories",
   "price",
 ] as const;
 
