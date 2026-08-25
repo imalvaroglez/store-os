@@ -3,14 +3,35 @@ import { Button, Card, EmptyState, Badge } from "../../design-system";
 import { purchasesForStore } from "../../lib/selectors";
 import { formatMoney } from "../../lib/money";
 import { formatDate } from "../../lib/dates";
+import { effectivePurchaseStatus, type Purchase } from "../../types";
 
-// Purchase history — the cost/stock ledger (each line stores unitCost + date +
-// productId). Newest first. Shown at /productos/compras (unified-products).
-export function PurchaseList({ onBack }: { onBack: () => void }) {
+// Purchase history — the cost/stock evidence (each line stores unitCost +
+// date + productId). Newest first. Click opens the purchase in the shared
+// editor (received ones render read-only there).
+const STATUS_TONE: Record<string, "success" | "warning" | "info" | "neutral"> = {
+  received: "success",
+  needs_review: "warning",
+  ready: "info",
+  draft: "neutral",
+};
+const STATUS_LABEL: Record<string, string> = {
+  received: "Recibida",
+  needs_review: "Revisar",
+  ready: "Lista",
+  draft: "Borrador",
+};
+
+export function PurchaseList({
+  onBack,
+  onOpen,
+}: {
+  onBack: () => void;
+  onOpen: (p: Purchase) => void;
+}) {
   const { state, activeStore } = useStore();
   if (!activeStore) return null;
   const purchases = purchasesForStore(state.purchases, activeStore.id).sort((a, b) =>
-    b.date.localeCompare(a.date)
+    (b.date ?? "").localeCompare(a.date ?? "")
   );
 
   return (
@@ -22,28 +43,37 @@ export function PurchaseList({ onBack }: { onBack: () => void }) {
       </div>
       {purchases.length === 0 ? (
         <EmptyState
-          title="Sin compras registradas"
-          subtitle="Registra tu primera compra con «+ Compra»."
+          title="Registra tus compras a proveedores"
+          subtitle="Lleva el costo y la entrada de mercancía al inventario. Puedes capturarla a mano o importar el PDF del pedido."
         />
       ) : (
         purchases.map((p) => {
           const supplier = state.suppliers.find((s) => s.id === p.supplierId);
+          const status = effectivePurchaseStatus(p);
+          const pieces = p.lines.reduce((s, l) => s + l.quantity, 0);
           return (
-            <Card key={p.id}>
+            <Card key={p.id} className="cursor-pointer" onClick={() => onOpen(p)}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <h3 className="font-semibold text-ink truncate">
-                    {supplier?.name ?? "Sin proveedor"}
-                  </h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-semibold text-ink truncate">
+                      {supplier?.name ?? p.supplierName ?? "Sin proveedor"}
+                    </h3>
+                    {p.supplierOrder && (
+                      <span className="text-xs text-ink-soft">#{p.supplierOrder}</span>
+                    )}
+                    <Badge tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Badge>
+                  </div>
                   <p className="text-xs text-ink-soft">
                     {formatDate(p.date)} · {p.lines.length}{" "}
-                    {p.lines.length === 1 ? "pieza" : "piezas"}
+                    {p.lines.length === 1 ? "producto" : "productos"} · {pieces}{" "}
+                    {pieces === 1 ? "pieza" : "piezas"}
                   </p>
                   <p className="text-xs text-ink-soft mt-1 truncate">
                     {p.lines.map((l) => `${l.quantity} ${l.name}`).join(", ")}
                   </p>
                 </div>
-                <Badge tone="neutral">{formatMoney(p.totalConfirmed || p.subtotal)}</Badge>
+                <Badge tone="neutral">{formatMoney(Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0)}</Badge>
               </div>
             </Card>
           );

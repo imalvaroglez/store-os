@@ -17,7 +17,7 @@ export default defineConfig({
   testDir: "./e2e",
   // Anchored names so build-smoke.spec.ts (default-config-only) is NOT matched
   // by the "smoke" alternative — it must not run under the emulator config.
-  testMatch: /(^|\/)(firebase|public-catalog|member-invite|smoke|responsive|theme)\.spec\.ts$/,
+  testMatch: /(^|\/)(firebase|public-catalog|member-invite|purchase-ux2|functions|smoke|responsive|theme)\.spec\.ts$/,
   globalSetup: "./e2e/firebase-global-setup.ts",
   timeout: 40_000,
   // Emulator failures must surface; deterministic fixture setup avoids retries.
@@ -55,7 +55,7 @@ export default defineConfig({
     // public-catalog REST-seeds its own projection).
     {
       name: "foundation",
-      testMatch: /(^|\/)(firebase|public-catalog|member-invite)\.spec\.ts$/,
+      testMatch: /(^|\/)(firebase|public-catalog|member-invite|purchase-ux2|functions)\.spec\.ts$/,
     },
   ],
 });

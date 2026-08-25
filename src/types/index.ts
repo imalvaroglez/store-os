@@ -237,7 +237,19 @@ export type PurchaseLine = {
   // on_demand uses `price`.
   price?: number;
   prices?: Record<string, number>; // tierId → price (inventory_tiered)
+  // purchase-pdf-import: as read from the document, before any interpretation.
+  variant?: string;
+  sourceAmount?: number; // the printed amount, semantics unresolved
+  sourceAmountType?: "unit" | "line" | "unknown";
+  matchStatus?: "unmatched" | "matched" | "new_product" | "needs_review";
 };
+
+/**
+ * Purchase lifecycle. `receivePurchase` is the ONLY operation that touches
+ * inventory. Legacy purchases (created before the lifecycle) have
+ * `status: undefined` and MUST be treated as already received.
+ */
+export type PurchaseStatus = "draft" | "needs_review" | "ready" | "received";
 
 /** A supplier purchase (a "ticket"): one or more lines, a confirmed total. */
 export type Purchase = {
@@ -245,13 +257,94 @@ export type Purchase = {
   storeId: string;
   supplierId?: string;
   date: string; // purchase date (default today)
+  // purchase-ux2: true while `date` came from an inferred PDF date label
+  // (year guessed as the most recent past occurrence). Any manual date edit
+  // turns it off.
+  dateInferred?: boolean;
   notes?: string;
   lines: PurchaseLine[];
   subtotal: number; // Σ quantity × unitCost (computed)
   totalConfirmed: number; // the total Fer confirms (may differ from subtotal)
+  // purchase-pdf-import: the supplier's order document, when the purchase was
+  // built by importing a PDF. Private (members-only Storage path) — we store
+  // the PATH, never a download URL (those carry a reusable token).
+  documentPath?: string;
+  documentFingerprint?: string; // SHA-256, duplicate-import detection
+  supplierOrder?: string; // folio/número de pedido del proveedor
+  supplierName?: string; // supplier candidate detected in the PDF ("Colore")
+  origin?: "manual" | "pdf";
+  status?: PurchaseStatus; // undefined = legacy (already applied stock on save)
+  receivedAt?: string; // set by receivePurchase; idempotency mark
+  // The admin explicitly confirmed receiving with this unexplained difference.
+  // Any later edit to the draft must clear it (invalidate the confirmation).
+  confirmedMismatchAmount?: number;
+  discount?: number;
+  shipping?: number;
+  tax?: number;
   createdAt: string;
   updatedAt: string;
 };
+
+/** Legacy purchases (no status) already applied stock when saved. */
+export function effectivePurchaseStatus(p: Purchase): PurchaseStatus {
+  return p.status ?? "received";
+}
+
+/**
+ * The ONE totals calculation (spec §1): total = merchandise − discount +
+ * shipping + additional tax. The editor and recalcPurchaseStatus must both
+ * consume this — the discount-sign bug came from the two drifting apart.
+ */
+export function purchaseTotals(p: Purchase): { merchandise: number; calculated: number } {
+  const merchandise = p.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
+  const adjustments = (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
+  return { merchandise, calculated: merchandise + adjustments };
+}
+
+/**
+ * The unit cost implied by the document's printed amount once its semantics
+ * are resolved. Undefined when the line carries no interpreted amount — the
+ * single source for pickProduct so linking never loses imported money.
+ */
+export function derivedUnitCost(l: PurchaseLine): number | undefined {
+  if (l.sourceAmount == null || !l.sourceAmountType || l.sourceAmountType === "unknown") return undefined;
+  return l.sourceAmountType === "unit" ? l.sourceAmount : l.sourceAmount / (l.quantity || 1);
+}
+
+/** Calculated per-line review state (never persisted). Fixed precedence. */
+export type PurchaseLineStatus = "amount_review" | "unlinked" | "new_product" | "linked";
+
+export function lineStatus(l: PurchaseLine): PurchaseLineStatus {
+  if (l.sourceAmountType === "unknown") return "amount_review";
+  if (!l.productId) return "unlinked";
+  if (l.matchStatus === "new_product") return "new_product";
+  return "linked";
+}
+
+/**
+ * Recompute a draft's review status from its own data — the single authority.
+ * needs_review: unresolved source-amount semantics, an unlinked line, or an
+ * unconfirmed total mismatch. ready: everything resolved. draft: nothing to
+ * review yet.
+ */
+export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
+  if (effectivePurchaseStatus(p) === "received") return "received";
+  if (p.lines.length === 0) return "draft";
+  const unknownAmount = p.lines.some((l) => l.sourceAmountType === "unknown");
+  const unlinked = p.lines.some((l) => !l.productId);
+  const { calculated } = purchaseTotals(p);
+  // The confirmed total is THE paid amount. Missing/non-finite (legacy data)
+  // never auto-reconciles to the calculated total — it reads as 0 so a
+  // mismatch forces review instead of hiding the difference.
+  const totalPaid = Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
+  const mismatch = Math.abs(calculated - totalPaid);
+  const mismatchConfirmed = p.confirmedMismatchAmount != null && Math.abs(mismatch - p.confirmedMismatchAmount) < 0.005;
+  // A negative calculated total (e.g. a document whose discount exceeds its
+  // subtotal) is never confirmable — the operator must fix the numbers.
+  const negativeTotal = calculated < -0.005;
+  if (unknownAmount || unlinked || negativeTotal || (!mismatchConfirmed && mismatch > 0.5)) return "needs_review";
+  return "ready";
+}
 
 // Whole app state persisted to localStorage.
 export type AppState = {
