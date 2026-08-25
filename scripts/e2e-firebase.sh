@@ -12,4 +12,4 @@ firebase emulators:exec --project store-os-demo --config firebase.emulator.json 
 # Session 2: the callable suite with the Functions emulator. Global setup wipes
 # Auth+Firestore between sessions, so this suite seeds its own state.
 firebase emulators:exec --project store-os-demo --config firebase.emulator.json --only auth,firestore,storage,functions \
-  'playwright test --config=playwright.firebase.config.ts --project=foundation e2e/functions.spec.ts'
+  'playwright test --config=playwright.firebase.config.ts --project=foundation e2e/functions.spec.ts e2e/public-order.spec.ts'

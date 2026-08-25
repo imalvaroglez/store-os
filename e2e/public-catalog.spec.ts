@@ -192,3 +192,29 @@ test("unknown slug shows not-found", async ({ browser }) => {
   await expect(anon.getByText("Tienda no encontrada")).toBeVisible({ timeout: 15000 });
   await ctx.close();
 });
+
+test("anonymous visitor can build a cart and open checkout", async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const anon = await ctx.newPage();
+  await openCatalogAnonymous(anon, "santi");
+
+  await expect(anon.getByRole("heading", { name: "Santi" }).first()).toBeVisible({ timeout: 15000 });
+  // Add the same product twice + a second one.
+  await anon.getByRole("button", { name: "Agregar" }).first().click();
+  await anon.getByRole("button", { name: "Agregar" }).first().click();
+  await anon.getByRole("button", { name: "Agregar" }).nth(1).click();
+
+  // Header shows the accumulated count and opens the sheet.
+  await anon.getByRole("button", { name: /🛒 3/ }).click();
+  await expect(anon.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
+  await expect(anon.getByText("Total")).toBeVisible();
+
+  // Checkout form: Enviar stays disabled until name + a 10-15 digit phone.
+  const enviar = anon.getByRole("button", { name: "Enviar pedido" });
+  await expect(enviar).toBeDisabled();
+  await anon.getByLabel("Tu nombre").fill("Ana Test");
+  await expect(enviar).toBeDisabled();
+  await anon.getByLabel("Tu WhatsApp").fill("5512345678");
+  await expect(enviar).toBeEnabled();
+  await ctx.close();
+});
