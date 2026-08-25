@@ -25,7 +25,11 @@ type CartAction =
   | { type: "clear" };
 
 function cap(line: CartLine, quantity: number): number {
-  const max = line.availableQuantity != null ? Math.min(line.availableQuantity, MAX_QTY) : MAX_QTY;
+  // Cap only against a POSITIVE on-hand count. Zero (sold out) does NOT cap:
+  // the item enters as "por surtir" and the store reviews availability.
+  const max = line.availableQuantity != null && line.availableQuantity > 0
+    ? Math.min(line.availableQuantity, MAX_QTY)
+    : MAX_QTY;
   return Math.max(0, Math.min(max, Math.round(quantity)));
 }
 

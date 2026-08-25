@@ -28,8 +28,11 @@ describe("cartReducer", () => {
     expect(items[0].quantity).toBe(1);
   });
 
-  it("rejects adding a sold-out product", () => {
-    expect(cartReducer([], { type: "add", line: line({ availableQuantity: 0 }) })).toEqual([]);
+  it("allows adding a sold-out product (uncapped, 'por surtir')", () => {
+    let items = cartReducer([], { type: "add", line: line({ availableQuantity: 0 }) });
+    expect(items[0].quantity).toBe(1);
+    items = cartReducer(items, { type: "setQty", productSlug: "arete-x", quantity: 7 });
+    expect(items[0].quantity).toBe(7);
   });
 
   it("setQty 0 removes the line", () => {

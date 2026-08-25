@@ -207,6 +207,16 @@ function StoreView({ slug, focusCategory, cart, cartOpen, setCartOpen }: CartPro
   const featured = visibleProducts.filter((p) => p.isFeatured).slice(0, 6);
   const isNew = visibleProducts.filter((p) => p.isNew).slice(0, 6);
 
+  function addToCart(p: PublicProductSummary) {
+    cart.add({
+      productSlug: p.productSlug,
+      name: p.name,
+      price: publicPrice(p) ?? 0,
+      imageUrl: p.imageUrl ?? null,
+      availableQuantity: p.availableQuantity,
+    });
+  }
+
   const heroImg = sf.hero?.imageUrl;
   const checkout = cartCheckout(slug, cart);
 
@@ -279,14 +289,14 @@ function StoreView({ slug, focusCategory, cart, cartOpen, setCartOpen }: CartPro
         {/* Featured (home only) */}
         {!activeCategory && featured.length > 0 && (
           <Section title="Destacados">
-            <ProductGrid products={featured} slug={slug} />
+            <ProductGrid products={featured} slug={slug} onAdd={addToCart} />
           </Section>
         )}
 
         {/* New (home only) */}
         {!activeCategory && isNew.length > 0 && (
           <Section title="Novedades">
-            <ProductGrid products={isNew} slug={slug} />
+            <ProductGrid products={isNew} slug={slug} onAdd={addToCart} />
           </Section>
         )}
 
@@ -295,7 +305,7 @@ function StoreView({ slug, focusCategory, cart, cartOpen, setCartOpen }: CartPro
           {productsInScope.length === 0 ? (
             <EmptyState title="Sin piezas aquí" subtitle={activeCategory ? "Prueba otra categoría." : "Vuelve pronto."} />
           ) : (
-            <ProductGrid products={productsInScope} slug={slug} />
+            <ProductGrid products={productsInScope} slug={slug} onAdd={addToCart} />
           )}
         </Section>
 
@@ -359,9 +369,11 @@ function StoreView({ slug, focusCategory, cart, cartOpen, setCartOpen }: CartPro
 function ProductGrid({
   products,
   slug,
+  onAdd,
 }: {
   products: PublicProductSummary[];
   slug: string;
+  onAdd: (p: PublicProductSummary) => void;
 }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -371,6 +383,11 @@ function ProductGrid({
           <a
             key={p.productSlug}
             href={`/catalogo/${slug}/producto/${p.productSlug}`}
+            // Client-side nav: a raw href reloads the app and wipes the cart.
+            onClick={(e) => {
+              e.preventDefault();
+              navigate(`/catalogo/${slug}/producto/${p.productSlug}`);
+            }}
             className="group block"
           >
             <div className="relative aspect-square rounded-xl overflow-hidden bg-[var(--olv-rule)]">
@@ -388,6 +405,18 @@ function ProductGrid({
             </div>
             <h3 className="olv-display font-semibold text-[var(--olv-ink)] mt-2 text-sm leading-snug">{p.name}</h3>
             <p className="text-sm font-semibold text-[var(--olv-accent)]">{formatMoney(publicPrice(p))}</p>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mt-2 w-full"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onAdd(p);
+              }}
+            >
+              {soldOut || p.availableQuantity === 0 ? "Agregar (por surtir)" : "Agregar"}
+            </Button>
           </a>
         );
       })}
@@ -416,6 +445,10 @@ function CatChip({
   return (
     <a
       href={href}
+      onClick={(e) => {
+        e.preventDefault();
+        navigate(href);
+      }}
       className={
         "rounded-full px-4 py-2.5 text-sm font-semibold transition-colors min-h-10 inline-flex items-center " +
         (active
@@ -625,11 +658,16 @@ function ProductView({ slug, productSlug, cart, cartOpen, setCartOpen }: CartPro
               </div>
             )}
 
-            {/* CTAs: cart (reserves in the store's order list), buy/inquire
-                (respects canInquire + sold-out), contact. */}
+            {/* CTAs: cart (creates the order in the store's list; sold-out items
+                enter as "por surtir"), buy/inquire (respects canInquire +
+                sold-out). General contact lives in the header, not here. */}
             <div className="mt-6 flex flex-col gap-2">
-              <Button full size="lg" disabled={soldOut} onClick={addToCart}>
-                {soldOut ? "Agotado" : cart.items.some((i) => i.productSlug === product.productSlug) ? "Agregar una más" : "Agregar al carrito"}
+              <Button full size="lg" onClick={addToCart}>
+                {soldOut
+                  ? "Agregar (se confirma surtido)"
+                  : cart.items.some((i) => i.productSlug === product.productSlug)
+                    ? "Agregar una más"
+                    : "Agregar al carrito"}
               </Button>
               {canInquire && (
                 <a href={buyUrl} target="_blank" rel="noreferrer">
@@ -638,9 +676,6 @@ function ProductView({ slug, productSlug, cart, cartOpen, setCartOpen }: CartPro
                   </Button>
                 </a>
               )}
-              <a href={createStorefrontContactUrl(store, slug)} target="_blank" rel="noreferrer">
-                <Button full variant="secondary">Contacto general</Button>
-              </a>
               <ContactFallback store={store} />
               <p className="olv-ink-soft text-xs mt-1">
                 Agregar al carrito crea tu pedido; confirmarlo por WhatsApp se lo hace llegar a la tienda.
@@ -692,7 +727,12 @@ function StoreChrome({ store, headerRight, children }: { store?: PublicStore; he
             >
               {store.name}
             </a>
-            {headerRight}
+            <div className="flex items-center gap-2">
+              <a href={createStorefrontContactUrl(store, store.slug)} target="_blank" rel="noreferrer">
+                <Button variant="ghost" size="sm">WhatsApp</Button>
+              </a>
+              {headerRight}
+            </div>
           </div>
         </header>
       )}

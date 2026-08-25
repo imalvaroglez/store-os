@@ -81,6 +81,9 @@ async function seedPublicProjection() {
   const stores = [
     { slug: "santi", storeId: "store_santi", name: "Santi", type: "on_demand", whatsappPhone: "5215512345678", storefront: null },
     { slug: "joyeria", storeId: "store_joyeria", name: "Joyería", type: "inventory_tiered", whatsappPhone: null, storefront: null },
+    // slug "olivia" routes to OliviaStorefront (the branded storefront) so the
+    // grid cart + navigation-persistence behavior is covered by e2e.
+    { slug: "olivia", storeId: "store_olivia", name: "Olivia", type: "inventory_tiered", whatsappPhone: "5215512345678", storefront: null },
   ];
   // Product summaries live INSIDE publicCatalogs (the grid source).
   const summary = (productSlug: string, name: string, storeSlug: string, extra: Record<string, unknown> = {}) => ({
@@ -103,13 +106,24 @@ async function seedPublicProjection() {
         summary("cadena-de-plata-925", "Cadena de plata 925", "joyeria", { prices: { retail: 1800 } }),
       ],
     },
+    {
+      slug: "olivia", storeId: "store_olivia", storeSlug: "olivia",
+      categories: [],
+      products: [
+        summary("anillo-prueba", "Anillo Prueba", "olivia", { price: 800, availableQuantity: 5 }),
+        summary("collar-prueba", "Collar Prueba", "olivia", { price: 950, availableQuantity: 0 }),
+      ],
+    },
   ];
 
-  const patch = async (path: string, body: unknown) => {
+  const patch = async (path: string, body: unknown, optional = false) => {
     const res = await fetch(`${FS}/${path}`, { method: "PATCH", headers: auth, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(`seed write failed for ${path}: ${res.status} ${await res.text()}`);
+    // Optional writes (users role marker) may hit rules depending on whether
+    // the doc/account pre-exists from a prior spec in the same session; the
+    // anonymous catalog reads this suite asserts never depend on them.
+    if (!res.ok && !optional) throw new Error(`seed write failed for ${path}: ${res.status} ${await res.text()}`);
   };
-  await patch(`users/${seed.uid}`, { fields: toFields({ email: ADMIN_EMAIL, role: "super_admin" }) });
+  await patch(`users/${seed.uid}`, { fields: toFields({ email: ADMIN_EMAIL, role: "super_admin" }) }, true);
   for (const store of stores) {
     await patch(`adminStores/${store.storeId}`, {
       fields: toFields({ ...store, ownerUid: seed.uid, memberUids: [seed.uid], pendingInvites: [] }),
@@ -118,6 +132,21 @@ async function seedPublicProjection() {
   }
   for (const s of stores) await patch(`publicStores/${s.slug}`, { fields: toFields(s) });
   for (const c of catalogs) await patch(`publicCatalogs/${c.slug}`, { fields: toFields(c) });
+  // Product DETAIL docs for the Olivia route (ProductView reads
+  // publicProducts/{storeId}__{slug}; summaries alone don't render a detail).
+  for (const p of [
+    { slug: "anillo-prueba", name: "Anillo Prueba", price: 800, availableQuantity: 5 },
+    { slug: "collar-prueba", name: "Collar Prueba", price: 950, availableQuantity: 0 },
+  ]) {
+    await patch(`publicProducts/store_olivia__${p.slug}`, {
+      fields: toFields({
+        storeId: "store_olivia", storeSlug: "olivia", productSlug: p.slug,
+        productId: `prod_${p.slug}`, name: p.name, price: p.price,
+        availability: "available", availableQuantity: p.availableQuantity,
+        images: [], categories: [], canInquire: false,
+      }),
+    });
+  }
 }
 
 // Minimal Firestore value encoder (strings/numbers/bools/null + nested maps).
@@ -216,5 +245,34 @@ test("anonymous visitor can build a cart and open checkout", async ({ browser })
   await expect(enviar).toBeDisabled();
   await anon.getByLabel("Tu WhatsApp").fill("5512345678");
   await expect(enviar).toBeEnabled();
+  await ctx.close();
+});
+
+test("cart survives client-side navigation in the Olivia storefront", async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const anon = await ctx.newPage();
+  await openCatalogAnonymous(anon, "olivia");
+
+  await expect(anon.getByRole("heading", { name: "Olivia" }).first()).toBeVisible({ timeout: 15000 });
+
+  // Add from the grid (no product detail), then navigate into a product.
+  await anon.getByRole("button", { name: "Agregar" }).first().click();
+  await expect(anon.getByRole("button", { name: "🛒 1" })).toBeVisible();
+  await anon.getByRole("link", { name: /Anillo Prueba/i }).first().click();
+  await expect(anon.getByRole("heading", { name: "Anillo Prueba" })).toBeVisible();
+  await expect(anon.getByRole("button", { name: "🛒 1" })).toBeVisible();
+
+  // Back to the catalog, into ANOTHER product: the cart must still be there.
+  await anon.getByRole("button", { name: /Volver al catálogo/i }).click();
+  await expect(anon.getByRole("heading", { name: "Olivia" }).first()).toBeVisible();
+  await anon.getByRole("link", { name: /Collar Prueba/i }).first().click();
+  await expect(anon.getByRole("heading", { name: "Collar Prueba" })).toBeVisible();
+  await expect(anon.getByRole("button", { name: "🛒 1" })).toBeVisible();
+
+  // Sold-out product: addable from the grid with the "por surtir" label.
+  await anon.getByRole("button", { name: /Volver al catálogo/i }).click();
+  await anon.getByRole("button", { name: /Agregar \(por surtir\)/ }).first().click();
+  await anon.getByRole("button", { name: "🛒 2" }).click();
+  await expect(anon.getByText("Sin existencias — se confirmará si se puede surtir.")).toBeVisible();
   await ctx.close();
 });

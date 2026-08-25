@@ -58,22 +58,20 @@ export const submitPublicOrder = onCall(
 
     // Resolve every line against the public projection: the SERVER's price and
     // availability are authoritative; the client only sends slug + quantity.
+    // Sold-out / short-stock items are NOT rejected — they enter the order as
+    // needsReview ("por surtir") and the store decides when fulfilling.
     const resolved = [];
     for (const [slug, quantity] of quantities) {
       const snap = await db.collection("publicProducts").doc(`${storeId}__${slug}`).get();
-      if (!snap.exists) throw new HttpsError("failed-precondition", `Ya no está disponible un producto de tu pedido.`);
-      if (snap.get("availability") === "sold_out") {
-        throw new HttpsError("failed-precondition", `Ya no está disponible: ${snap.get("name") ?? slug}.`);
-      }
-      const price = snap.get("price");
-      if (typeof price !== "number") {
+      if (!snap.exists || typeof snap.get("price") !== "number") {
         throw new HttpsError("failed-precondition", `Ya no está disponible: ${snap.get("name") ?? slug}.`);
       }
       resolved.push({
         productId: typeof snap.get("productId") === "string" ? snap.get("productId") : null,
         productName: snap.get("name") ?? slug,
-        price,
+        price: snap.get("price"),
         quantity,
+        needsReview: snap.get("availability") === "sold_out",
       });
     }
 
@@ -103,18 +101,20 @@ export const submitPublicOrder = onCall(
       }
 
       for (const r of resolved) {
-        if (!r.productId) continue;
+        if (!r.productId || r.needsReview) continue; // sold out: never touch stock
         const snap = productSnaps.get(r.productId);
         if (!snap || !snap.exists) continue; // deleted since projection: order still created
         const qoh = snap.get("quantityOnHand");
-        if (typeof qoh === "number") {
-          // ponytail: compares against raw on-hand, not minus other open
-          // orders' committed stock. Back-order semantics (negative stock)
-          // are already tolerated by the admin flow.
-          if (qoh < r.quantity) {
-            throw new HttpsError("failed-precondition", `Ya no hay existencia suficiente de ${r.productName}.`);
-          }
+        if (typeof qoh !== "number") continue; // on-demand product: nothing to reserve
+        // ponytail: compares against raw on-hand, not minus other open
+        // orders' committed stock. Back-order semantics (negative stock)
+        // are already tolerated by the admin flow.
+        if (qoh >= r.quantity) {
           tx.update(db.collection("products").doc(r.productId), { quantityOnHand: qoh - r.quantity, updatedAt: nowIso });
+        } else {
+          // Short stock: never go negative here — flag for the store to review
+          // ("por surtir") and decide when fulfilling.
+          r.needsReview = true;
         }
       }
 
@@ -135,6 +135,7 @@ export const submitPublicOrder = onCall(
           productName: r.productName,
           price: r.price,
           quantity: r.quantity,
+          ...(r.needsReview ? { needsReview: true } : {}),
         })),
         notes: `WhatsApp: ${phone}`,
         createdAt: nowIso,

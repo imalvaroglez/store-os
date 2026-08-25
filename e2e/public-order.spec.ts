@@ -138,14 +138,26 @@ test("@functions rejects an unknown product slug", async () => {
   expect([400, 409, 412]).toContain(res.status);
 });
 
-test("@functions rejects a sold-out product", async () => {
+test("@functions sold-out product: order created flagged needsReview, stock untouched", async () => {
   const res = await callCallable({ ...validCart, items: [{ productSlug: "agotado", quantity: 1 }] });
-  expect([400, 409, 412]).toContain(res.status);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const order = await readDoc("orders", body.result.orderId);
+  const items = fieldValue(order, "items");
+  expect(items[0].fields.needsReview?.booleanValue).toBe(true);
+  const product = await readDoc("products", "prod_agotado");
+  expect(fieldValue(product, "quantityOnHand")).toBe(2); // not decremented
 });
 
-test("@functions rejects insufficient stock and leaves it unchanged", async () => {
+test("@functions insufficient stock: needsReview, never negative", async () => {
+  // Self-contained (no ordering dependency on the happy-path test).
+  const before = fieldValue(await readDoc("products", "prod_arete"), "quantityOnHand");
   const res = await callCallable({ ...validCart, items: [{ productSlug: "arete", quantity: 99 }] });
-  expect([400, 409, 412]).toContain(res.status);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const order = await readDoc("orders", body.result.orderId);
+  const items = fieldValue(order, "items");
+  expect(items[0].fields.needsReview?.booleanValue).toBe(true);
   const product = await readDoc("products", "prod_arete");
-  expect(fieldValue(product, "quantityOnHand")).toBe(3); // unchanged from happy path
+  expect(fieldValue(product, "quantityOnHand")).toBe(before); // untouched
 });

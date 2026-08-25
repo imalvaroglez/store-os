@@ -74,6 +74,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
             {ORDER_STATUS_LABELS[order.status]}
           </Badge>
           {order.origin === "public" && <Badge tone="info">Catálogo</Badge>}
+          {items.some((i) => i.needsReview) && <Badge tone="warning">Por surtir</Badge>}
           {shortfall > 0 && (
             <Badge tone="warning">
               Faltan {shortfall} {shortfall === 1 ? "pieza" : "piezas"}

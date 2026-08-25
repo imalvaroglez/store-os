@@ -83,6 +83,9 @@ export function CartSheet({
                   <p className="text-xs text-ink-soft">
                     <Money amount={i.price} /> c/u · <Money amount={i.price * i.quantity} />
                   </p>
+                  {i.availableQuantity === 0 && (
+                    <p className="text-xs text-warning mt-0.5">Sin existencias — se confirmará si se puede surtir.</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
@@ -98,7 +101,7 @@ export function CartSheet({
                     variant="ghost"
                     size="sm"
                     aria-label={`Agregar una pieza de ${i.name}`}
-                    disabled={i.availableQuantity != null && i.quantity >= i.availableQuantity}
+                    disabled={i.availableQuantity != null && i.availableQuantity > 0 && i.quantity >= i.availableQuantity}
                     onClick={() => setQty(i.productSlug, i.quantity + 1)}
                   >
                     +

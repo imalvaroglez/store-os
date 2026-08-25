@@ -202,6 +202,9 @@ export type OrderItem = {
   productName: string;
   price: number;
   quantity: number;
+  // Public-order items the store couldn't fully reserve (sold out or short
+  // stock): no stock was decremented; the store reviews availability.
+  needsReview?: boolean;
 };
 
 export type Order = {
