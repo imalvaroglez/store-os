@@ -3,7 +3,9 @@ import {
   weightedAverageCost,
   applyPurchaseLines,
   committedForProduct,
+  orderItems,
   reservationDelta,
+  reservationDeltas,
 } from "./inventory";
 import type { Product, PurchaseLine, Order } from "../types";
 
@@ -115,6 +117,62 @@ describe("committedForProduct", () => {
   it("does not leak across stores", () => {
     const orders = [order({ storeId: "s2", productId: "p1", quantity: 7, status: "asked" })];
     expect(committedForProduct(orders, "s1", "p1")).toBe(0);
+  });
+  it("counts items[] quantities, including multi-item orders", () => {
+    const orders = [
+      order({
+        productId: undefined,
+        items: [
+          { productId: "p1", productName: "A", price: 10, quantity: 2 },
+          { productId: "p2", productName: "B", price: 5, quantity: 4 },
+        ],
+      }),
+      order({ productId: "p1", quantity: 3 }),
+    ];
+    expect(committedForProduct(orders, "s1", "p1")).toBe(5); // 2 from items + 3 flat
+    expect(committedForProduct(orders, "s1", "p2")).toBe(4);
+  });
+});
+
+describe("orderItems", () => {
+  const flat = {
+    id: "o1",
+    storeId: "s1",
+    customerId: "c1",
+    productId: "p1",
+    productName: "X",
+    quantity: 2,
+    price: 15,
+    deposit: 0,
+    status: "asked" as const,
+    createdAt: "",
+    updatedAt: "",
+  };
+  it("adapts legacy single-product orders to one item", () => {
+    expect(orderItems(flat as Order)).toEqual([
+      { productId: "p1", productName: "X", price: 15, quantity: 2 },
+    ]);
+  });
+  it("returns items[] as-is when present", () => {
+    const items = [{ productId: "a", productName: "A", price: 1, quantity: 1 }];
+    expect(orderItems({ ...flat, items } as Order)).toEqual(items);
+  });
+  it("falls back to flat when items is empty", () => {
+    expect(orderItems({ ...flat, items: [] } as Order)).toHaveLength(1);
+  });
+  it("returns [] when there is neither items nor productId", () => {
+    expect(orderItems({ ...flat, productId: undefined } as Order)).toEqual([]);
+  });
+  it("counts items without productId as committed to nothing", () => {
+    const free = { items: [{ productId: undefined, productName: "Libre", price: 1, quantity: 5 }] };
+    expect(committedForProduct([free as unknown as Order], "s1", "p1")).toBe(0);
+  });
+  it("aggregates reservationDeltas per product across both lists", () => {
+    const a = { productId: "p1", productName: "A", price: 1, quantity: 2 };
+    expect(reservationDeltas([], [a])).toEqual(new Map([["p1", -2]])); // new order
+    expect(reservationDeltas([a], [])).toEqual(new Map([["p1", 2]])); // delete
+    expect(reservationDeltas([a], [{ ...a, quantity: 5 }])).toEqual(new Map([["p1", -3]]));
+    expect(reservationDeltas([a], [a])).toEqual(new Map()); // unchanged
   });
 });
 

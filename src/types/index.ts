@@ -196,6 +196,14 @@ export type OrderStatus =
   | "delivered"
   | "paid";
 
+/** One line of an order: product snapshot at order time. */
+export type OrderItem = {
+  productId?: string; // absent for free-text lines not in the catalog
+  productName: string;
+  price: number;
+  quantity: number;
+};
+
 export type Order = {
   id: string;
   storeId: string;
@@ -207,6 +215,10 @@ export type Order = {
   price: number;
   deposit: number;
   status: OrderStatus;
+  // Multi-item orders (public cart). Legacy single-product orders keep only
+  // the flat fields above; readers must go through orderItems() in inventory.ts.
+  items?: OrderItem[];
+  origin?: "public" | "admin";
   promisedDate?: string;
   notes?: string;
   priceTier?: string; // tier id snapshot at order time

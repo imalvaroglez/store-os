@@ -67,11 +67,16 @@ export function OrderForm({ order, onDone }: { order: Order; onDone: () => void 
   function submit() {
     if (!draft.customerId || !draft.productName.trim()) return;
     const qtyNum = parseAmount(qty) ?? 1;
+    const priceNum = parseAmount(price) ?? 0;
+    const name = draft.productName.trim();
+    // Single-line items[] (mirrored into the flat fields for older readers).
+    const item = { productId: draft.productId, productName: name, price: priceNum, quantity: qtyNum };
     const next: Order = {
       ...draft,
-      productName: draft.productName.trim(),
+      productName: name,
       quantity: qtyNum,
-      price: parseAmount(price) ?? 0,
+      price: priceNum,
+      items: [item],
       deposit: parseAmount(deposit) ?? 0,
       cost: parseAmount(cost),
       promisedDate: promised || undefined,

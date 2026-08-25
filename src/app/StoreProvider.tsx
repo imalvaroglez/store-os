@@ -21,7 +21,7 @@ import { loadState, saveState, emptyState } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
-import { reservationDelta, applyPurchaseLines } from "../lib/inventory";
+import { applyPurchaseLines, orderItems, reservationDeltas } from "../lib/inventory";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
@@ -322,6 +322,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  // Apply per-product reserve/release deltas to stock (orders only). Skips
+  // products with no numeric quantityOnHand (on-demand stores).
+  function applyReservationDeltas(deltas: Map<string, number>) {
+    for (const [productId, delta] of deltas) {
+      if (delta === 0) continue;
+      const product = state.products.find((p) => p.id === productId);
+      if (!product || typeof product.quantityOnHand !== "number") continue;
+      const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
+      dispatch({ type: "UPDATE_PRODUCT", product: updated });
+      void persistEntity("products", updated).catch(() => {});
+    }
+  }
+
   const value: StoreContextValue = {
     state,
     activeStore: state.stores.find((s) => s.id === state.activeStoreId) ?? null,
@@ -619,34 +632,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (cloud && user && !fromCloud.current) deleteEntity(user, "customers", customerId).catch(() => {});
     },
     upsertOrder: (order) => {
-      // Reserve/release stock: compare the existing order's quantity to the new
-      // one. Negative stock is allowed (back-orders). On-demand stores carry no
-      // quantityOnHand, so reservation is naturally skipped. Dispatch + persist
-      // the product directly rather than via upsertProduct — reservation is a
-      // stock-only change and stock is never in the public projection, so there
-      // is no catalog re-projection to run.
+      // Reserve/release stock per product: compare the existing order's items
+      // to the new ones. Negative stock is allowed (back-orders). On-demand
+      // stores carry no quantityOnHand, so reservation is naturally skipped.
+      // Dispatch + persist the product directly rather than via upsertProduct —
+      // reservation is a stock-only change and stock is never in the public
+      // projection, so there is no catalog re-projection to run.
       const prev = state.orders.find((o) => o.id === order.id);
-      const product = order.productId ? state.products.find((p) => p.id === order.productId) : undefined;
-      if (product && typeof product.quantityOnHand === "number") {
-        const delta = reservationDelta(prev?.quantity, order.quantity);
-        if (delta !== 0) {
-          const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
-          dispatch({ type: "UPDATE_PRODUCT", product: updated });
-          void persistEntity("products", updated).catch(() => {});
-        }
-      }
+      applyReservationDeltas(reservationDeltas(prev ? orderItems(prev) : [], orderItems(order)));
       dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order });
       void persistEntity("orders", order).catch(() => {});
     },
     deleteOrder: (orderId) => {
       // Release the reserved stock before removing the order.
       const existing = state.orders.find((o) => o.id === orderId);
-      const product = existing?.productId ? state.products.find((p) => p.id === existing.productId) : undefined;
-      if (existing && product && typeof product.quantityOnHand === "number") {
-        const updated = { ...product, quantityOnHand: product.quantityOnHand + existing.quantity, updatedAt: nowIso() };
-        dispatch({ type: "UPDATE_PRODUCT", product: updated });
-        void persistEntity("products", updated).catch(() => {});
-      }
+      if (existing) applyReservationDeltas(reservationDeltas(orderItems(existing), []));
       dispatch({ type: "DELETE_ORDER", orderId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "orders", orderId).catch(() => {});
     },

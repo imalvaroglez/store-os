@@ -1,4 +1,4 @@
-import type { Product, PurchaseLine, Order, OrderStatus } from "../types";
+import type { Product, PurchaseLine, Order, OrderItem, OrderStatus } from "../types";
 
 // Inventory math — pure functions used by the StoreProvider (to apply purchases
 // and reserve stock on order changes) and by the inventory UI (committed stock).
@@ -69,6 +69,18 @@ const OPEN_STATUSES: ReadonlySet<OrderStatus> = new Set([
 ]);
 
 /**
+ * The order's line items. Multi-item orders carry `items[]`; legacy
+ * single-product orders are adapted from their flat fields.
+ */
+export function orderItems(o: Order): OrderItem[] {
+  if (o.items && o.items.length > 0) return o.items;
+  if (!o.productId) return [];
+  return [
+    { productId: o.productId, productName: o.productName, price: o.price, quantity: o.quantity },
+  ];
+}
+
+/**
  * Sum of quantities of open (non-terminal) orders for a product in a store.
  * Used to show "Comprometido" alongside the available quantityOnHand.
  */
@@ -78,13 +90,11 @@ export function committedForProduct(
   productId: string
 ): number {
   return orders
-    .filter(
-      (o) =>
-        o.storeId === storeId &&
-        o.productId === productId &&
-        OPEN_STATUSES.has(o.status)
-    )
-    .reduce((sum, o) => sum + o.quantity, 0);
+    .filter((o) => o.storeId === storeId && OPEN_STATUSES.has(o.status))
+    .reduce(
+      (sum, o) => sum + orderItems(o).filter((i) => i.productId === productId).reduce((s, i) => s + i.quantity, 0),
+      0
+    );
 }
 
 /**
@@ -99,4 +109,24 @@ export function reservationDelta(
   const oldResolved = oldQty ?? 0;
   const newResolved = newQty ?? 0;
   return oldResolved - newResolved; // negative = reserve, positive = release
+}
+
+/**
+ * Per-product stock deltas when an order's items change. Aggregates across
+ * both lists (an item can appear on either side, or twice on one side).
+ * Negative = reserve, positive = release. Empty newItems = deletion.
+ */
+export function reservationDeltas(
+  oldItems: OrderItem[],
+  newItems: OrderItem[]
+): Map<string, number> {
+  const deltas = new Map<string, number>();
+  const bump = (id: string | undefined, d: number) => {
+    if (!id) return; // free-text lines reserve nothing
+    deltas.set(id, (deltas.get(id) ?? 0) + d);
+  };
+  for (const i of oldItems) bump(i.productId, i.quantity); // released
+  for (const i of newItems) bump(i.productId, -i.quantity); // reserved
+  for (const [id, d] of deltas) if (d === 0) deltas.delete(id);
+  return deltas;
 }
