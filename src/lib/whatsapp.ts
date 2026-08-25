@@ -1,4 +1,5 @@
 import type { Store, Product } from "../types";
+import { formatMoney } from "./money";
 
 // Build a wa.me link to ask about a single product from the public catalog.
 export function createWhatsAppProductUrl(product: Product, store: Store): string {
@@ -25,6 +26,29 @@ export function createWhatsAppStoreUrl(store: Store): string {
 export function createWhatsAppShareCatalogUrl(store: Store, catalogUrl: string): string {
   const text = `Mira mi catálogo de ${store.name}: ${catalogUrl}`;
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
+}
+
+// --- Public cart checkout message ---
+
+export type CartMessageItem = { name: string; price: number; quantity: number };
+
+/** Cart summary sent to the store's WhatsApp at public checkout. */
+export function cartCheckoutMessage(customerName: string, items: CartMessageItem[], total: number): string {
+  const lines = items
+    .map((i) => `- ${i.quantity} × ${i.name} (${formatMoney(i.price * i.quantity)})`)
+    .join("\n");
+  return `Hola, soy ${customerName}. Quiero pedir:\n${lines}\nTotal: ${formatMoney(total)}`;
+}
+
+export function createCartCheckoutUrl(
+  whatsappPhone: string | null | undefined,
+  customerName: string,
+  items: CartMessageItem[],
+  total: number
+): string {
+  const digits = (whatsappPhone || "").replace(/[^0-9]/g, "");
+  const base = digits ? `https://wa.me/${digits}` : `https://wa.me/`;
+  return `${base}?text=${encodeURIComponent(cartCheckoutMessage(customerName, items, total))}`;
 }
 
 // --- Olivia storefront messages ---

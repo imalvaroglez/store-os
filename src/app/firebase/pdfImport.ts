@@ -43,7 +43,7 @@ let fnsConnected = false;
 let storage: FirebaseStorage | null = null;
 let storageConnected = false;
 
-function functionsInstance(): Functions {
+export function functionsInstance(): Functions {
   const { app } = getFirebase();
   if (!fns) fns = getFunctions(app, "us-east1"); // region, never a project id
   if (EMULATOR && !fnsConnected) {

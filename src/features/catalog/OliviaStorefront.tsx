@@ -18,20 +18,48 @@ import {
   createStorefrontResaleUrl,
 } from "../../lib/whatsapp";
 import { useSeo } from "./useSeo";
+import { CartSheet } from "./cart/CartSheet";
+import { useCart } from "./cart/useCart";
+import { cartCheckout } from "./cart/useCartCheckout";
 import type { Storefront } from "../../types";
 
 // Olivia's public storefront. Handles all three public sub-routes (store home,
 // category, product) in one component so they share the brand chrome, the store
-// + catalog load, and the WhatsApp helpers. Anonymous-readable; never shows
-// private fields.
+// + catalog load, the WhatsApp helpers — and the cart, which must survive
+// client-side navigation between the sub-routes.
 export function OliviaStorefront({ route }: { route: RouteMatch }) {
+  const cart = useCart();
+  const [cartOpen, setCartOpen] = useState(false);
   if (route.name === "public_product") {
-    return <ProductView slug={route.params.slug} productSlug={route.params.productSlug} />;
+    return (
+      <ProductView
+        slug={route.params.slug}
+        productSlug={route.params.productSlug}
+        cart={cart}
+        cartOpen={cartOpen}
+        setCartOpen={setCartOpen}
+      />
+    );
   }
   if (route.name === "public_category") {
-    return <StoreView slug={route.params.slug} focusCategory={route.params.categorySlug} />;
+    return (
+      <StoreView
+        slug={route.params.slug}
+        focusCategory={route.params.categorySlug}
+        cart={cart}
+        cartOpen={cartOpen}
+        setCartOpen={setCartOpen}
+      />
+    );
   }
-  return <StoreView slug={(route.params as { slug: string }).slug} />;
+  return (
+    <StoreView
+      slug={(route.params as { slug: string }).slug}
+      cart={cart}
+      cartOpen={cartOpen}
+      setCartOpen={setCartOpen}
+    />
+  );
 }
 
 // --- Brand chrome ---------------------------------------------------------
@@ -74,7 +102,13 @@ function ContactFallback({ store }: { store: PublicStore }) {
 
 // --- Store home + category view -------------------------------------------
 
-function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: string }) {
+type CartProps = {
+  cart: ReturnType<typeof useCart>;
+  cartOpen: boolean;
+  setCartOpen: (open: boolean) => void;
+};
+
+function StoreView({ slug, focusCategory, cart, cartOpen, setCartOpen }: CartProps & { slug: string; focusCategory?: string }) {
   const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
   const [store, setStore] = useState<PublicStore | null>(null);
   const [catalog, setCatalog] = useState<PublicCatalog | null>(null);
@@ -174,9 +208,14 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
   const isNew = visibleProducts.filter((p) => p.isNew).slice(0, 6);
 
   const heroImg = sf.hero?.imageUrl;
+  const checkout = cartCheckout(slug, cart);
 
   return (
-    <StoreChrome store={store}>
+    <StoreChrome store={store} headerRight={
+      cart.count > 0 ? (
+        <Button variant="secondary" onClick={() => setCartOpen(true)}>🛒 {cart.count}</Button>
+      ) : undefined
+    }>
       {/* Hero */}
       <section className="relative">
         {heroImg && (
@@ -302,6 +341,17 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
           <ContactFallback store={store} />
         </Section>
       </div>
+
+      <CartSheet
+        open={cartOpen}
+        onClose={() => setCartOpen(false)}
+        whatsappPhone={store.whatsappPhone}
+        items={cart.items}
+        total={cart.total}
+        setQty={cart.setQty}
+        remove={cart.remove}
+        onSubmit={checkout}
+      />
     </StoreChrome>
   );
 }
@@ -392,7 +442,7 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 
 // --- Product detail view --------------------------------------------------
 
-function ProductView({ slug, productSlug }: { slug: string; productSlug: string }) {
+function ProductView({ slug, productSlug, cart, cartOpen, setCartOpen }: CartProps & { slug: string; productSlug: string }) {
   const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
   const [data, setData] = useState<{ product: PublicProductDetail; store: PublicStore } | null>(null);
   const [activeImg, setActiveImg] = useState(0);
@@ -484,11 +534,26 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
 
   const { product, store } = data;
   const images = product.images ?? [];
-  const soldOut = product.availability === "sold_out";
+  const soldOut = product.availability === "sold_out" || product.availableQuantity === 0;
   const canInquire = product.canInquire || !soldOut;
+  const checkout = cartCheckout(slug, cart);
+
+  function addToCart() {
+    cart.add({
+      productSlug: product.productSlug,
+      name: product.name,
+      price: publicPrice(product) ?? 0,
+      imageUrl: images[0]?.url ?? null,
+      availableQuantity: product.availableQuantity,
+    });
+  }
 
   return (
-    <StoreChrome store={store}>
+    <StoreChrome store={store} headerRight={
+      cart.count > 0 ? (
+        <Button variant="secondary" onClick={() => setCartOpen(true)}>🛒 {cart.count}</Button>
+      ) : undefined
+    }>
       <div className="mx-auto max-w-4xl px-4 py-6">
         <Button variant="ghost" onClick={() => navigate(`/catalogo/${slug}`)} className="olv-ink-soft text-sm p-0 min-h-10">
           ← Volver al catálogo
@@ -560,11 +625,15 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
               </div>
             )}
 
-            {/* CTAs: buy/inquire (respects canInquire + sold-out), contact, resale. */}
+            {/* CTAs: cart (reserves in the store's order list), buy/inquire
+                (respects canInquire + sold-out), contact. */}
             <div className="mt-6 flex flex-col gap-2">
+              <Button full size="lg" disabled={soldOut} onClick={addToCart}>
+                {soldOut ? "Agotado" : cart.items.some((i) => i.productSlug === product.productSlug) ? "Agregar una más" : "Agregar al carrito"}
+              </Button>
               {canInquire && (
                 <a href={buyUrl} target="_blank" rel="noreferrer">
-                  <Button full size="lg" variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">
+                  <Button full variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">
                     {soldOut ? "Preguntar por esta pieza" : "Comprar por WhatsApp"}
                   </Button>
                 </a>
@@ -574,12 +643,23 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
               </a>
               <ContactFallback store={store} />
               <p className="olv-ink-soft text-xs mt-1">
-                Iniciar una conversación no reserva la pieza.
+                Agregar al carrito crea tu pedido; confirmarlo por WhatsApp se lo hace llegar a la tienda.
               </p>
             </div>
           </div>
         </div>
       </div>
+
+      <CartSheet
+        open={cartOpen}
+        onClose={() => setCartOpen(false)}
+        whatsappPhone={store.whatsappPhone}
+        items={cart.items}
+        total={cart.total}
+        setQty={cart.setQty}
+        remove={cart.remove}
+        onSubmit={checkout}
+      />
     </StoreChrome>
   );
 }
@@ -595,7 +675,7 @@ function Detail({ label, value }: { label: string; value: string }) {
 
 // --- Shared chrome --------------------------------------------------------
 
-function StoreChrome({ store, children }: { store?: PublicStore; children: React.ReactNode }) {
+function StoreChrome({ store, headerRight, children }: { store?: PublicStore; headerRight?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="olivia-root min-h-full">
       <BrandStyle />
@@ -612,6 +692,7 @@ function StoreChrome({ store, children }: { store?: PublicStore; children: React
             >
               {store.name}
             </a>
+            {headerRight}
           </div>
         </header>
       )}
