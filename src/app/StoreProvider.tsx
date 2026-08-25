@@ -22,8 +22,8 @@ import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { applyPurchaseLines, orderItems, reservationDeltas } from "../lib/inventory";
+import { invitesNeedBackfill, storeWithMembership } from "../lib/membership";
 import { useAuth } from "./firebase/AuthProvider";
-import type { AppUser } from "./firebase/auth";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
 import {
   loadCloudState,
@@ -299,15 +299,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Cloud: backfill legacy pendingInvites to their canonical form (one batched
   // write per store, only when something actually changes) so invitations
   // saved before reliable-member-invitations match the login reconciliation.
+  // Membership is PRESERVED (see lib/membership.ts) — this used to collapse
+  // memberUids to the logged-in user and wipe every other member.
   useEffect(() => {
     if (!cloud || !user) return;
     for (const store of state.stores) {
-      const invites = store.pendingInvites ?? [];
-      const normalized = Array.from(new Set(invites.map(normalizeEmail)));
-      if (normalized.length === invites.length && invites.every((e, i) => e === normalized[i])) continue;
+      if (!invitesNeedBackfill(store.pendingInvites)) continue;
+      const normalized = Array.from(new Set((store.pendingInvites ?? []).map(normalizeEmail)));
       const updated = { ...store, pendingInvites: normalized, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      void saveEntity(user, "stores", storeWithMembership(updated, user)).catch(() => {});
+      void saveEntity(user, "stores", storeWithMembership(updated, user)).catch((error) => {
+        console.error(`[Firestore] Error al normalizar invitaciones (${store.id}):`, error);
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid, state.stores]);
@@ -658,12 +661,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
-}
-
-// A cloud store doc carries ownerUid + memberUids (the signed-in user is owner+member).
-function storeWithMembership(store: Store, user: AppUser | null): Store & { ownerUid?: string; memberUids?: string[] } {
-  if (!user) return store;
-  return { ...store, ownerUid: user.uid, memberUids: [user.uid] };
 }
 
 export function useStore(): StoreContextValue {

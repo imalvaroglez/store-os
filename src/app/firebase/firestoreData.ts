@@ -206,7 +206,9 @@ export function projectAdminStore(store: { id: string } & Record<string, unknown
     slug: store.slug,
     type: store.type,
     ownerUid: store.ownerUid,
-    memberUids: store.memberUids,
+    // Default to [] — an undefined memberUids here would make the whole
+    // dual-plane batch throw ("Unsupported field value") and fail the write.
+    memberUids: store.memberUids ?? [],
     pendingInvites: store.pendingInvites ?? [],
     createdAt: store.createdAt,
     updatedAt: store.updatedAt,
