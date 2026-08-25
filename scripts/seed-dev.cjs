@@ -222,6 +222,9 @@ function projectPublicProductSummary(product, storeSlug) {
     publicDescription: product.publicDescription ?? null,
     imageUrl: primaryImage(product),
     availability: product.availability ?? "available",
+    ...(typeof product.quantityOnHand === "number"
+      ? { availableQuantity: Math.max(0, product.quantityOnHand) }
+      : {}),
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
     canInquire: product.canInquire ?? false,
@@ -229,8 +232,8 @@ function projectPublicProductSummary(product, storeSlug) {
     sortOrder: product.sortOrder ?? 0,
   };
   if (typeof product.price === "number") summary.price = product.price;
-  if (product.prices && typeof product.prices.retail === "number") {
-    summary.prices = { retail: product.prices.retail };
+  else if (product.prices && typeof product.prices.retail === "number") {
+    summary.price = product.prices.retail;
   }
   return summary;
 }
@@ -244,6 +247,7 @@ function projectPublicProductDetail(product, storeSlug, cats) {
     storeId: product.storeId,
     storeSlug,
     productSlug: product.slug ?? null,
+    productId: product.id,
     name: product.name,
     sku: product.sku ?? product.id,
     publicDescription: product.publicDescription ?? null,
@@ -259,14 +263,18 @@ function projectPublicProductDetail(product, storeSlug, cats) {
     dimensions: product.dimensions ?? null,
     care: product.care ?? null,
     availability: product.availability ?? "available",
+    ...(typeof product.quantityOnHand === "number"
+      ? { availableQuantity: Math.max(0, product.quantityOnHand) }
+      : {}),
     canInquire: product.canInquire ?? false,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
     categories: named,
   };
+  // Mirror publicPrice(): a single resolved price, never the tier map.
   if (typeof product.price === "number") detail.price = product.price;
-  if (product.prices && typeof product.prices.retail === "number") {
-    detail.prices = { retail: product.prices.retail };
+  else if (product.prices && typeof product.prices.retail === "number") {
+    detail.price = product.prices.retail;
   }
   return detail;
 }
