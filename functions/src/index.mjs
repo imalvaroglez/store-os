@@ -9,7 +9,10 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { parseSupplierOrder } from "./parser.js";
+import { submitPublicOrder } from "./publicOrder.mjs";
 import "./admin.mjs";
+
+export { submitPublicOrder };
 
 const MAX_PAGES = 8;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
