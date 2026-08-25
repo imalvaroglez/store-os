@@ -5,6 +5,9 @@
   "storage": {
     "rules": "storage.rules"
   },
+  "functions": {
+    "source": "functions"
+  },
   "emulators": {
     "auth": {
       "port": 9099
@@ -18,6 +21,9 @@
     "ui": {
       "enabled": true,
       "port": 4000
+    },
+    "functions": {
+      "port": 5001
     },
     "singleProjectMode": false
   }

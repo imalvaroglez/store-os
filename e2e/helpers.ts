@@ -9,7 +9,7 @@ import { buildSeedState } from "./seed";
 // Prereq: the app is served with VITE_FIREBASE_EMULATOR=true (see
 // playwright.firebase.config.ts) and the emulator is running.
 
-const PROJECT = "store-os-demo";
+export const PROJECT = "store-os-demo";
 
 // The platform super-admin email. firestore.rules gates super_admin creation on
 // this verified email (isAllowlistedSuperAdmin), so any test that needs an admin
@@ -40,7 +40,7 @@ function toFields(value: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined).map(([key, entry]) => [key, encode(entry)]));
 }
 
-async function adminToken(email: string, password: string) {
+export async function adminToken(email: string, password: string) {
   const response = await fetch(
     "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key-for-emulator",
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, returnSecureToken: true }) }

@@ -2,20 +2,18 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Mirror of Firestore `isMember`: super_admin, or a member of the store.
-    // Cross-service rules only support the (default) Firestore database, which
-    // is all this app uses. Two reads per write — fine for a low-volume path.
+    // Mirror of Firestore `isMember`/`isOwner`: the canonical adminStores
+    // control-plane doc is the ONLY source of membership authority (G-P02). A
+    // super_admin who is not a member must NOT reach the data plane (product
+    // photos, supplier PDFs). Cross-service rules only support the (default)
+    // Firestore database, which is all this app uses. One read per check.
     function isStoreMember(storeId) {
-      return request.auth != null && (
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
-        || firestore.get(/databases/(default)/documents/stores/$(storeId)).data.memberUids.hasAny([request.auth.uid])
-      );
+      return request.auth != null
+        && firestore.get(/databases/(default)/documents/adminStores/$(storeId)).data.memberUids.hasAny([request.auth.uid]);
     }
     function isStoreOwner(storeId) {
-      return request.auth != null && (
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
-        || firestore.get(/databases/(default)/documents/stores/$(storeId)).data.ownerUid == request.auth.uid
-      );
+      return request.auth != null
+        && firestore.get(/databases/(default)/documents/adminStores/$(storeId)).data.ownerUid == request.auth.uid;
     }
 
     function validImage() {
@@ -24,6 +22,18 @@ service firebase.storage {
             || request.resource.contentType == 'image/png'
             || request.resource.contentType == 'image/webp')
         && request.resource.name.matches('.*\\.jpg');
+    }
+
+    // Supplier-order PDFs (purchase-pdf-import): private to the store's
+    // members. Not part of any public projection.
+    match /purchases/{storeId}/{fileName} {
+      allow read: if isStoreMember(storeId);
+      // create-only: a supplier PDF is evidence; nobody rewrites it (no update).
+      allow create: if isStoreMember(storeId)
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.name.matches('.*\\.pdf');
+      allow delete: if isStoreOwner(storeId);
     }
 
     // The recursive path covers both legacy product photos and gallery photos.

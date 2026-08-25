@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useStore, newSupplier, newProduct } from "../../app/StoreProvider";
 import {
   Button,
@@ -8,277 +8,669 @@ import {
   TextArea,
   IconButton,
   Sheet,
+  Badge,
   useToast,
 } from "../../design-system";
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
-import { applyPurchaseLines } from "../../lib/inventory";
-import { todayIso, nowIso } from "../../lib/dates";
-import { formatMoney, parseAmount } from "../../lib/money";
+import { todayIso, nowIso, parseSpanishDate } from "../../lib/dates";
+import { formatMoney, formatMoneyExact, parseAmount } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
-import type { PriceTierDef, Purchase, PurchaseLine, Supplier, Product } from "../../types";
+import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
+import { openPurchasePdf } from "../../app/firebase/pdfImport";
+import {
+  effectivePurchaseStatus,
+  derivedUnitCost,
+  lineStatus,
+  purchaseTotals,
+  recalcPurchaseStatus,
+  type PriceTierDef,
+  type Purchase,
+  type PurchaseLine,
+  type PurchaseLineStatus,
+  type Supplier,
+  type Product,
+} from "../../types";
 import { SupplierForm } from "./SupplierForm";
+import { PurchasePdfImport, type PdfApplyPayload } from "./PurchasePdfImport";
 
-// Multi-line supplier purchase ticket. Each line replenishes a product's stock
-// and recomputes its weighted-average cost. The first repeating line-item form
-// in the app.
+// Shared purchase editor — the single destination for BOTH entries (manual
+// capture and PDF import). Saving only persists the Purchase (a draft);
+// "Receive merchandise" (Recibir mercancía) is the only operation that moves inventory.
+// purchase-ux2: one responsive CSS grid (dense table on desktop, two-tier
+// rows on mobile), sticky footer, calculated line states, global amount
+// resolution and (cloud) bulk product creation.
+const LINE_STATUS_LABEL: Record<PurchaseLineStatus, string> = {
+  amount_review: "Importe por revisar",
+  unlinked: "Sin vincular",
+  new_product: "Nuevo",
+  linked: "Vinculado",
+};
+const LINE_STATUS_TONE: Record<PurchaseLineStatus, "warning" | "info" | "success"> = {
+  amount_review: "warning",
+  unlinked: "warning",
+  new_product: "info",
+  linked: "success",
+};
+
+type Filter = "all" | PurchaseLineStatus;
+
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
-  const { state, activeStore, upsertPurchase, upsertProduct } = useStore();
+  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, cloud } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<Purchase>(purchase);
   const [creatingSupplier, setCreatingSupplier] = useState(false);
-  // Draft supplier for the inline-create Sheet. Its id is known up-front so we
-  // can auto-select it on the purchase once saved.
   const [supplierDraft, setSupplierDraft] = useState<Supplier | null>(null);
-  // Inline product create (F2): the index of the line that triggered it, and a
-  // draft product. Mini-form fields tracked alongside.
   const [productLineIdx, setProductLineIdx] = useState<number | null>(null);
   const [productDraft, setProductDraft] = useState<Product | null>(null);
+  const [receiving, setReceiving] = useState(false);
+  const [bulkCreating, setBulkCreating] = useState(false);
+  const [filter, setFilter] = useState<Filter>("all");
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const suppliers = suppliersForStore(state.suppliers, activeStore.id);
   const products = productsForStore(state.products, activeStore.id);
+  const locked = effectivePurchaseStatus(draft) === "received";
 
-  const subtotal = draft.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0);
-  const delta = draft.totalConfirmed - subtotal;
+  // Spec §1 totals live in purchaseTotals (single source, shared with status).
+  const { merchandise, calculated } = purchaseTotals(draft);
+  // A confirmed total of 0 is REAL (free order); never fall back to `calculated`
+  // or the difference would vanish. Missing/non-finite reads as 0 → mismatch.
+  const totalPaid = Number.isFinite(draft.totalConfirmed) ? draft.totalConfirmed : 0;
+  const mismatch = Math.abs(calculated - totalPaid);
+  const mismatchConfirmed =
+    draft.confirmedMismatchAmount != null && Math.abs(mismatch - draft.confirmedMismatchAmount) < 0.005;
+  const status = recalcPurchaseStatus(draft);
+  // The single rule lives in recalcPurchaseStatus; the button just obeys it.
+  const canReceive = !locked && status === "ready" && draft.lines.length > 0;
 
+  const statuses = useMemo(() => draft.lines.map(lineStatus), [draft.lines]);
+  const counts = useMemo(() => {
+    const c: Record<PurchaseLineStatus, number> = { amount_review: 0, unlinked: 0, new_product: 0, linked: 0 };
+    for (const s of statuses) c[s] += 1;
+    return c;
+  }, [statuses]);
+  const hasUnknown = counts.amount_review > 0;
+  const visible = statuses.map((s, i) => ({ line: draft.lines[i], status: s, idx: i })).filter((r) => filter === "all" || r.status === filter);
+
+  const blockReason = locked
+    ? undefined
+    : counts.amount_review > 0
+      ? `${counts.amount_review} ${counts.amount_review === 1 ? "línea tiene un importe sin interpretar" : "líneas tienen importes sin interpretar"}`
+      : counts.unlinked > 0
+        ? `${counts.unlinked} ${counts.unlinked === 1 ? "línea no está vinculada a un producto" : "líneas no están vinculadas a un producto"}`
+        : mismatch > 0.5 && !mismatchConfirmed
+          ? `diferencia de ${formatMoneyExact(mismatch)} sin confirmar`
+          : undefined;
+
+  function invalidateMismatch(d: Purchase): Purchase {
+    return d.confirmedMismatchAmount != null ? { ...d, confirmedMismatchAmount: undefined } : d;
+  }
   function addLine() {
-    setDraft({
-      ...draft,
-      lines: [...draft.lines, { productId: "", name: "", quantity: 1, unitCost: 0 }],
-    });
+    // Any line change — including adding — invalidates a prior confirmation.
+    setDraft(invalidateMismatch({ ...draft, lines: [...draft.lines, { productId: "", name: "", quantity: 1, unitCost: 0 }] }));
   }
   function updateLine(idx: number, patch: Partial<PurchaseLine>) {
-    setDraft({ ...draft, lines: draft.lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)) });
+    // Any line edit invalidates a prior explicit mismatch confirmation.
+    setDraft(invalidateMismatch({ ...draft, lines: draft.lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)) }));
   }
   function removeLine(idx: number) {
-    setDraft({ ...draft, lines: draft.lines.filter((_, i) => i !== idx) });
+    setDraft(invalidateMismatch({ ...draft, lines: draft.lines.filter((_, i) => i !== idx) }));
+  }
+  function setAdjustment(field: "discount" | "shipping" | "tax", raw: string) {
+    setDraft(invalidateMismatch({ ...draft, [field]: parseAmount(raw) ?? 0 }));
+  }
+  function setTotalPaid(raw: string) {
+    setDraft(invalidateMismatch({ ...draft, totalConfirmed: parseAmount(raw) ?? 0 }));
+  }
+  function setQuantity(idx: number, raw: string) {
+    const qty = Math.max(1, Math.trunc(parseAmount(raw) ?? 1));
+    const line = draft.lines[idx];
+    // When the printed amount is the LINE total, the unit cost follows quantity.
+    const unitCost = line.sourceAmountType === "line" && line.sourceAmount != null ? line.sourceAmount / qty : line.unitCost;
+    updateLine(idx, { quantity: qty, unitCost });
+  }
+  const CREATE_OPTION = "__create__";
+  function openMiniForm(idx: number) {
+    if (!activeStore) return;
+    const line = draft.lines[idx];
+    const base = newProduct(activeStore.id);
+    const fullName = line.variant ? `${line.name} ${line.variant}` : line.name;
+    setProductDraft({
+      ...base,
+      name: fullName,
+      cost: line.unitCost,
+      sku: uniqueProductSku(products, activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? "")),
+    });
+    setProductLineIdx(idx);
   }
   function pickProduct(idx: number, productId: string) {
+    if (productId === CREATE_OPTION) {
+      openMiniForm(idx);
+      return;
+    }
     const product = products.find((p) => p.id === productId);
     if (product) {
-      // Carry the product's current sale prices onto the line so the user can
-      // see and edit them from the purchase (F3). inventory_tiered → prices,
-      // on_demand → price.
+      const line = draft.lines[idx];
+      // The document's amount outranks the product's stored cost: linking a
+      // product must never silently zero (or stale) the imported money. The
+      // stored cost is only a fallback for lines without a printed amount.
       updateLine(idx, {
         productId,
         name: product.name,
-        unitCost: product.cost ?? 0,
-        prices: isTiered ? product.prices : undefined,
-        price: isTiered ? undefined : product.price,
+        unitCost: derivedUnitCost(line) ?? product.cost ?? line.unitCost,
+        matchStatus: "matched",
+        // Choosing semantics resolves "unknown" for this line (as line-total;
+        // the cost above was derived under that reading).
+        sourceAmountType: line.sourceAmountType === "unknown" ? "line" : line.sourceAmountType,
       });
     } else {
-      updateLine(idx, { productId: "", name: "", unitCost: 0, prices: undefined, price: undefined });
+      updateLine(idx, { productId: "", name: "", matchStatus: "unmatched" });
     }
   }
+  // Global resolution for every `unknown` line at once (unit vs line total).
+  function resolveAmountsGlobally(type: "unit" | "line") {
+    setDraft(invalidateMismatch({
+      ...draft,
+      lines: draft.lines.map((l) =>
+        l.sourceAmountType === "unknown" && l.sourceAmount != null
+          ? { ...l, sourceAmountType: type, unitCost: type === "unit" ? l.sourceAmount : l.sourceAmount / (l.quantity || 1) }
+          : l
+      ),
+    }));
+  }
+  function resolveAmount(idx: number, type: "unit" | "line") {
+    const l = draft.lines[idx];
+    if (l.sourceAmount == null) return;
+    updateLine(idx, { sourceAmountType: type, unitCost: type === "unit" ? l.sourceAmount : l.sourceAmount / (l.quantity || 1) });
+  }
 
-  async function submit() {
+  function applyPdf(payload: PdfApplyPayload) {
+    const parsedDate = payload.dateLabel ? parseSpanishDate(payload.dateLabel) : null;
+    setDraft((d) => invalidateMismatch({
+      ...d,
+      origin: "pdf",
+      lines: payload.lines,
+      supplierOrder: payload.supplierOrder ?? d.supplierOrder,
+      supplierName: payload.supplierCandidate ?? d.supplierName,
+      documentPath: payload.documentPath ?? d.documentPath,
+      documentFingerprint: payload.fingerprint ?? d.documentFingerprint,
+      discount: payload.discount,
+      shipping: payload.shipping,
+      // taxIncluded stays documental (parser data): it is already inside the
+      // line amounts, so persisting it into Purchase.tax would double-count.
+      totalConfirmed: payload.total ?? d.totalConfirmed,
+      ...(parsedDate ? { date: parsedDate.iso, dateInferred: parsedDate.inferredYear } : {}),
+    }));
+  }
+
+  async function saveDraft(receive = false) {
     if (draft.lines.length === 0) {
       toast.error("Agrega al menos una pieza.");
       return;
     }
-    if (draft.lines.some((l) => !l.productId)) {
-      toast.error("Cada línea necesita un producto.");
+    if (receive && !canReceive) {
+      toast.error(blockReason ? `No se puede recibir: ${blockReason}.` : "Resuelve la compra antes de recibir.");
       return;
     }
-    // Apply stock + weighted-average cost to each product. Also merge any
-    // sale-price edits from the line (F3). upsertProduct re-projects the public
-    // catalog — stock/cost are private (no-op projection), but a price change
-    // DOES republish (intended: adjusting price while buying updates the
-    // catalog). If several lines touch the same product, the last line's price
-    // wins (applyPurchaseLines already folds qty/cost the same way).
-    const computed = applyPurchaseLines(products, draft.lines);
+    // Saving persists ONLY the purchase — never products (lifecycle contract).
+    const next: Purchase = {
+      ...draft,
+      subtotal: merchandise,
+      status: receive ? "ready" : status,
+      updatedAt: nowIso(),
+    };
     try {
-      for (const [productId, update] of computed) {
-        const p = state.products.find((x) => x.id === productId);
-        if (p) {
-          const line = draft.lines.find((l) => l.productId === productId);
-          await upsertProduct({
-            ...p,
-            quantityOnHand: update.quantityOnHand,
-            cost: update.cost,
-            // Merge price edits only if the line carries them (undefined → keep
-            // the product's existing price).
-            prices: line?.prices ?? p.prices,
-            price: line?.price ?? p.price,
-            updatedAt: nowIso(),
-          });
-        }
-      }
-      await upsertPurchase({ ...draft, subtotal, updatedAt: nowIso() });
+      await upsertPurchase(next);
     } catch {
-      // persistEntity (StoreProvider) already logged the Firestore rejection.
-      // Do NOT show the success toast — that lied when a write silently failed.
-      toast.error("No se pudo registrar la compra. Revisa tu conexión e intenta de nuevo.");
+      toast.error("No se pudo guardar la compra. Revisa tu conexión e intenta de nuevo.");
       return;
     }
-    toast.success(`Compra registrada: ${formatMoney(draft.totalConfirmed || subtotal)}`);
-    onDone();
+    if (!receive) {
+      setDraft(next);
+      toast.success("Borrador guardado.");
+      return;
+    }
+    setReceiving(true);
+    try {
+      const result = await receivePurchase(next);
+      toast.success(
+        result === "already"
+          ? "Esta compra ya había sido recibida; el inventario no cambió."
+          : "Compra recibida: el inventario se actualizó."
+      );
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error && e.message ? e.message : "No se pudo recibir la mercancía. Intenta de nuevo.");
+    } finally {
+      setReceiving(false);
+    }
   }
 
-  return (
-    <div className="space-y-4">
-      <div>
-        <SelectField
-          label="Proveedor"
-          value={draft.supplierId ?? ""}
-          onChange={(v) => setDraft({ ...draft, supplierId: v || undefined })}
-          options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
-          placeholder="Elegir proveedor…"
-        />
-        <Button
-          size="sm"
-          variant="ghost"
-          className="mt-1 -ml-2"
-          onClick={() => {
-            if (!activeStore) return;
-            setSupplierDraft(newSupplier(activeStore.id));
-            setCreatingSupplier(true);
-          }}
-        >
-          + Nuevo proveedor
-        </Button>
-      </div>
-      <TextField
-        label="Fecha"
-        type="date"
-        value={draft.date || todayIso()}
-        onChange={(e) => setDraft({ ...draft, date: e.target.value })}
-      />
+  // Bulk-create one private product per unlinked line (cloud-only; PDF import
+  // requires cloud anyway). SKUs avoid collisions within the batch.
+  async function bulkCreateProducts() {
+    if (!activeStore || !cloud) return;
+    const targets = draft.lines.filter((l) => !l.productId);
+    if (!targets.length) return;
+    if (hasUnknown) {
+      toast.error("Primero interpreta los importes (unitario o total por línea).");
+      return;
+    }
+    if (targets.length > 499) {
+      toast.error(`Son ${targets.length} líneas; el máximo por lote es 499.`);
+      return;
+    }
+    setBulkCreating(true);
+    try {
+      // `products` is the store-scoped selector (never raw state.products).
+      // The SKU generator sees the accumulated batch so two lines with the
+      // same name can never collide inside one lot.
+      const batchProducts: Product[] = [];
+      const byId = new Map<string, string>(); // line index → new product id
+      const lines = [...draft.lines];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (l.productId) continue;
+        const base = newProduct(activeStore.id);
+        const fullName = l.variant ? `${l.name} ${l.variant}` : l.name;
+        const sku = uniqueProductSku([...batchProducts, ...products], activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
+        batchProducts.push({ ...base, name: fullName, cost: l.unitCost, sku });
+        byId.set(String(i), base.id);
+      }
+      for (let i = 0; i < lines.length; i++) {
+        const id = byId.get(String(i));
+        if (id) lines[i] = { ...lines[i], productId: id, matchStatus: "new_product" };
+      }
+      // The batch itself must carry the invalidation, not just local state.
+      const next: Purchase = invalidateMismatch({ ...draft, lines, subtotal: merchandise, updatedAt: nowIso() });
+      await createDraftProductsForPurchase(batchProducts, next);
+      setDraft(next);
+      toast.success(`${batchProducts.length} ${batchProducts.length === 1 ? "producto creado" : "productos creados"} y vinculados.`);
+    } catch {
+      toast.error("No se pudo crear el lote. Revisa tu conexión e intenta de nuevo.");
+    } finally {
+      setBulkCreating(false);
+    }
+  }
 
-      <div>
-        <span className="block text-xs font-semibold text-on-surface-soft uppercase tracking-wide mb-1.5">
-          Piezas
-        </span>
-        <div className="space-y-2">
-          {draft.lines.map((line, idx) => (
-            <div key={idx} className="space-y-2 p-3 rounded-lg bg-surface-soft">
-              <div>
-                <SelectField
-                  label="Producto"
-                  value={line.productId}
-                  onChange={(v) => pickProduct(idx, v)}
-                  options={products.map((p) => ({
-                    value: p.id,
-                    label: `${p.name} (existencia: ${p.quantityOnHand ?? 0})`,
-                  }))}
-                  placeholder="Elegir producto…"
-                />
+  const supplierSuggestion =
+    draft.supplierName &&
+    !suppliers.some((s) => s.name.toLowerCase() === draft.supplierName!.toLowerCase())
+      ? draft.supplierName
+      : undefined;
+  // The detected-supplier hint shows whenever the PDF named one, even after
+  // linking, so "Usar" stays reachable for an existing match (spec §2).
+  const matchingSupplier = draft.supplierName
+    ? suppliers.find((s) => s.name.toLowerCase() === draft.supplierName!.toLowerCase())
+    : undefined;
+
+  return (
+    <div className="space-y-4 pb-28">
+      {/* ── Cabecera ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <SelectField
+            label="Proveedor"
+            value={draft.supplierId ?? ""}
+            onChange={(v) => setDraft({ ...draft, supplierId: v || undefined })}
+            options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
+            placeholder="Elegir proveedor…"
+            disabled={locked}
+          />
+          {!locked && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="mt-1 -ml-2"
+              onClick={() => {
+                if (!activeStore) return;
+                setSupplierDraft({ ...newSupplier(activeStore.id), name: draft.supplierName ?? "" });
+                setCreatingSupplier(true);
+              }}
+            >
+              + Nuevo proveedor
+            </Button>
+          )}
+          {(draft.supplierId == null || supplierSuggestion) && draft.supplierName && (
+            <div className="mt-1 text-xs text-on-surface-soft">
+              Proveedor detectado: {supplierSuggestion}{" "}
+              {matchingSupplier ? (
+                <Button size="sm" variant="ghost" className="!px-1" onClick={() => setDraft({ ...draft, supplierId: matchingSupplier.id })}>
+                  Usar {matchingSupplier.name}
+                </Button>
+              ) : (
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="mt-1 -ml-2"
+                  className="!px-1"
                   onClick={() => {
                     if (!activeStore) return;
-                    setProductDraft(newProduct(activeStore.id));
-                    setProductLineIdx(idx);
+                    setSupplierDraft({ ...newSupplier(activeStore.id), name: supplierSuggestion ?? draft.supplierName ?? "" });
+                    setCreatingSupplier(true);
                   }}
                 >
-                  + Nuevo producto
+                  Crear {supplierSuggestion}
                 </Button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <TextField
-                  label="Cantidad"
-                  inputMode="numeric"
-                  value={line.quantity.toString()}
-                  onChange={(e) =>
-                    updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
-                  }
-                />
-                <TextField
-                  label="Costo por pieza"
-                  inputMode="decimal"
-                  value={line.unitCost.toString()}
-                  onChange={(e) => updateLine(idx, { unitCost: parseFloat(e.target.value) || 0 })}
-                />
-              </div>
-              {/* Sale-price edit (F3): shows the product's current prices so the
-                  user can adjust them while buying. Persisted onto the product
-                  on save. Only after a product is picked. */}
-              {line.productId && (
-                isTiered ? (
-                  <div className={tiersForStore(activeStore).length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
-                    {tiersForStore(activeStore).map((t) => (
-                      <TextField
-                        key={t.id}
-                        label={t.label}
-                        inputMode="decimal"
-                        value={(line.prices?.[t.id] ?? 0).toString()}
-                        onChange={(e) =>
-                          updateLine(idx, {
-                            prices: { ...(line.prices ?? {}), [t.id]: parseAmount(e.target.value) ?? 0 },
-                          })
-                        }
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <TextField
-                    label="Precio de venta"
-                    inputMode="decimal"
-                    value={(line.price ?? 0).toString()}
-                    onChange={(e) => updateLine(idx, { price: parseAmount(e.target.value) })}
-                  />
-                )
               )}
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-ink-soft">
-                  Subtotal: {formatMoney(line.quantity * line.unitCost)}
-                </span>
-                <IconButton variant="ghost" aria-label="Quitar línea" onClick={() => removeLine(idx)}>
-                  ✕
-                </IconButton>
+            </div>
+          )}
+        </div>
+        <div>
+          <TextField
+            label="Fecha"
+            type="date"
+            value={draft.date || todayIso()}
+            disabled={locked}
+            onChange={(e) => setDraft({ ...draft, date: e.target.value, dateInferred: false })}
+          />
+          {draft.dateInferred && <p className="text-xs text-on-surface-soft mt-1">Año sugerido según el documento — edítalo si no es correcto.</p>}
+        </div>
+        <div className="space-y-1">
+          <TextField
+            label="Pedido / documento"
+            placeholder="3023"
+            value={draft.supplierOrder ?? ""}
+            disabled={locked}
+            onChange={(e) => setDraft({ ...draft, supplierOrder: e.target.value || undefined })}
+          />
+          <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-soft">
+            {draft.origin === "pdf" && <Badge tone="info">PDF importado</Badge>}
+            {locked && <Badge tone="success">Recibida</Badge>}
+            {!locked && status === "needs_review" && <Badge tone="warning">Revisar</Badge>}
+            {draft.documentPath && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="!px-1"
+                onClick={async () => {
+                  try {
+                    const url = await openPurchasePdf(draft.documentPath!);
+                    window.open(url, "_blank");
+                  } catch {
+                    toast.error("No se pudo abrir el documento.");
+                  }
+                }}
+              >
+                Ver documento original
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Entrada PDF (solo hasta que ya hay líneas importadas) ── */}
+      {!locked && draft.lines.length === 0 && (
+        <div className="flex justify-end">
+          <PurchasePdfImport onApply={applyPdf} />
+        </div>
+      )}
+
+      {/* ── Resolución global de importes ── */}
+      {hasUnknown && !locked && (
+        <div className="rounded-lg bg-warning/10 p-3 flex flex-col sm:flex-row sm:items-center gap-2">
+          <p className="text-sm text-ink flex-1">
+            Hay {counts.amount_review} {counts.amount_review === 1 ? "importe sin interpretar" : "importes sin interpretar"}. ¿Qué
+            significan en el documento?
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => resolveAmountsGlobally("unit")}>
+              Unitarios
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => resolveAmountsGlobally("line")}>
+              Total por línea
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Mercancía: filtros + tabla densa / filas móviles ── */}
+      <div>
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <span className="text-xs font-semibold text-on-surface-soft uppercase tracking-wide">Mercancía</span>
+          <div className="flex flex-wrap gap-1">
+            <FilterChip active={filter === "all"} onClick={() => setFilter("all")} label={`Todas (${draft.lines.length})`} />
+            {counts.amount_review > 0 && <FilterChip active={filter === "amount_review"} onClick={() => setFilter("amount_review")} label={`Importes (${counts.amount_review})`} />}
+            {counts.unlinked > 0 && <FilterChip active={filter === "unlinked"} onClick={() => setFilter("unlinked")} label={`Sin vincular (${counts.unlinked})`} />}
+            {counts.new_product > 0 && <FilterChip active={filter === "new_product"} onClick={() => setFilter("new_product")} label={`Nuevos (${counts.new_product})`} />}
+            {counts.linked > 0 && <FilterChip active={filter === "linked"} onClick={() => setFilter("linked")} label={`Vinculadas (${counts.linked})`} />}
+          </div>
+        </div>
+
+        {/* Header row (desktop only), outside the rows' scroll flow */}
+        <div className="hidden md:grid md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] gap-2 px-3 pb-1 text-xs font-semibold text-on-surface-soft uppercase tracking-wide sticky top-0 z-10 bg-surface">
+          <span>Estado</span>
+          <span>Producto</span>
+          <span>Cant.</span>
+          <span>Importe</span>
+          <span>Costo unit.</span>
+          <span>Total</span>
+          <span />{/* quitar */}
+          <span>En Store OS</span>
+        </div>
+        <div className="space-y-1.5">
+          {visible.map(({ line, status: st, idx }) => (
+            <div
+              key={idx}
+              className="p-2 md:min-h-14 rounded-lg bg-surface-soft grid grid-cols-2 md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] md:items-center gap-2"
+            >
+              {/* Mobile tier 1: status + name + printed amount. Desktop: flat grid cells. */}
+              <div className="col-span-2 flex items-start gap-2 md:contents">
+                <div className="flex items-center pt-2.5">
+                  <Badge tone={LINE_STATUS_TONE[st]}>{LINE_STATUS_LABEL[st]}</Badge>
+                </div>
+                <div className="min-w-0 flex-1 md:col-span-1">
+                  <TextField
+                    aria-label="Producto"
+                    label=""
+                    value={line.name}
+                    disabled={locked}
+                    onChange={(e) => updateLine(idx, { name: e.target.value, matchStatus: e.target.value ? line.matchStatus : "unmatched" })}
+                  />
+                  <div className="md:hidden mt-1 flex items-center justify-between gap-2 text-xs text-on-surface-soft">
+                    <span className="font-mono">{line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}</span>
+                    <span className="font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
+                  </div>
+                  {st === "amount_review" && !locked && line.sourceAmount != null && (
+                    <div className="md:hidden mt-1 flex gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "unit")}>
+                        Unitario
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "line")}>
+                        Total línea
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Mobile tier 2: qty/cost/delete on one line, linking below. */}
+              <div className="col-span-2 md:contents">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center md:contents">
+                  <TextField
+                    aria-label="Cantidad"
+                    label=""
+                    inputMode="numeric"
+                    value={line.quantity.toString()}
+                    disabled={locked}
+                    onChange={(e) => setQuantity(idx, e.target.value)}
+                  />
+                  <div className="hidden md:block">
+                    <p className={`text-sm font-mono ${line.sourceAmount != null ? "text-ink-soft" : "text-ink-soft/40"}`}>
+                      {line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}
+                    </p>
+                    {st === "amount_review" && !locked && line.sourceAmount != null && (
+                      <div className="flex gap-0.5">
+                        <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "unit")}>
+                          Unitario
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "line")}>
+                          Total
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                  <TextField
+                    aria-label="Costo unitario"
+                    label=""
+                    inputMode="decimal"
+                    value={(line.unitCost ?? 0).toString()}
+                    disabled={locked}
+                    onChange={(e) => updateLine(idx, { unitCost: parseAmount(e.target.value) ?? 0 })}
+                  />
+                  <div className="hidden md:flex items-center">
+                    <span className="text-sm font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
+                  </div>
+                </div>
+                {!locked ? (
+                  <IconButton variant="ghost" aria-label="Quitar línea" className="!min-h-10 !min-w-10 md:justify-self-center" onClick={() => removeLine(idx)}>
+                    ✕
+                  </IconButton>
+                ) : (
+                  <span className="hidden md:block" />
+                )}
+                <div className="col-span-3 md:col-span-1 min-w-0">
+                  <SelectField
+                    aria-label="Producto en Store OS"
+                    label=""
+                    value={line.productId}
+                    disabled={locked}
+                    onChange={(v) => pickProduct(idx, v)}
+                    options={[
+                      ...products.map((p2) => ({
+                        value: p2.id,
+                        label: `${p2.name} (existencia: ${p2.quantityOnHand ?? 0})`,
+                      })),
+                      ...(locked ? [] : [{ value: CREATE_OPTION, label: "Crear nuevo producto…" }]),
+                    ]}
+                    placeholder="Vincular producto…"
+                  />
+                </div>
               </div>
             </div>
           ))}
         </div>
-        <Button size="sm" variant="secondary" className="mt-2" onClick={addLine}>
-          + Agregar pieza
-        </Button>
+        {!locked && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            <Button size="sm" variant="secondary" onClick={addLine}>
+              + Agregar línea
+            </Button>
+            {cloud && counts.unlinked > 0 && !hasUnknown && (
+              <Button size="sm" variant="secondary" disabled={bulkCreating} onClick={() => void bulkCreateProducts()}>
+                {bulkCreating ? "Creando…" : `Crear ${counts.unlinked} ${counts.unlinked === 1 ? "producto" : "productos"}`}
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
+      {/* ── Totales y reconciliación (contenido, no footer) ── */}
       <div className="border-t border-edge pt-3 space-y-2">
         <div className="flex justify-between text-sm">
-          <span className="text-ink-soft">Subtotal (suma de líneas)</span>
-          <span className="font-semibold text-ink">{formatMoney(subtotal)}</span>
+          <span className="text-ink-soft">Mercancía (Σ líneas)</span>
+          <span className="font-semibold text-ink">{formatMoneyExact(merchandise)}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <TextField
+            label="Descuento"
+            inputMode="decimal"
+            disabled={locked}
+            value={(draft.discount ?? 0).toString()}
+            onChange={(e) => setAdjustment("discount", e.target.value)}
+          />
+          <TextField
+            label="Envío"
+            inputMode="decimal"
+            disabled={locked}
+            value={(draft.shipping ?? 0).toString()}
+            onChange={(e) => setAdjustment("shipping", e.target.value)}
+          />
+          <TextField
+            label="Impuestos"
+            inputMode="decimal"
+            disabled={locked}
+            value={(draft.tax ?? 0).toString()}
+            onChange={(e) => setAdjustment("tax", e.target.value)}
+          />
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-ink-soft">Total calculado</span>
+          <span>{formatMoneyExact(calculated)}</span>
         </div>
         <TextField
-          label="Total del ticket"
-          hint="Lo que realmente pagaste. Si difiere del subtotal, te avisamos."
+          label="Total pagado"
+          hint="Lo que realmente pagaste según el documento."
           inputMode="decimal"
+          disabled={locked}
           value={draft.totalConfirmed.toString()}
-          onChange={(e) => setDraft({ ...draft, totalConfirmed: parseFloat(e.target.value) || 0 })}
+          onChange={(e) => setTotalPaid(e.target.value)}
         />
-        {delta !== 0 && (
-          <p className="text-xs text-terracotta">
-            Diferencia de {formatMoney(Math.abs(delta))} ({delta > 0 ? "de más" : "de menos"}) —
-            ¿envío, descuento o redondeo?
-          </p>
+        {mismatch > 0.5 && !locked && (
+          <div className="rounded-lg bg-warning/10 p-3 space-y-2">
+            <p className="text-sm text-ink">
+              Hay una diferencia de {formatMoneyExact(mismatch)} entre la mercancía registrada y el total pagado.
+            </p>
+            {hasUnknown && (
+              <p className="text-xs text-on-surface-soft">
+                Además, hay importes del PDF que no pudimos interpretar (unitario vs total de línea): revisa el costo
+                unitario de cada línea marcada.
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {!mismatchConfirmed && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setDraft({ ...draft, confirmedMismatchAmount: mismatch })}
+                >
+                  Recibir así, con diferencia de {formatMoney(mismatch)}
+                </Button>
+              )}
+              {mismatchConfirmed && <Badge tone="info">Diferencia confirmada ({formatMoneyExact(mismatch)})</Badge>}
+            </div>
+          </div>
         )}
       </div>
 
       <TextArea
         label="Notas"
         value={draft.notes ?? ""}
+        disabled={locked}
         onChange={(e) => setDraft({ ...draft, notes: e.target.value || undefined })}
       />
 
-      <Button full size="lg" onClick={() => void submit()} disabled={draft.lines.length === 0}>
-        Guardar compra
-      </Button>
+      {locked ? (
+        <p className="text-sm text-on-surface-soft">
+          Compra recibida: el inventario ya se actualizó y esta compra ya no se puede editar ni borrar.
+        </p>
+      ) : (
+        /* Sticky footer: total, diferencia y acciones — nothing else. */
+        <div className="fixed inset-x-0 z-40 border-t border-edge bg-surface px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-sm bottom-[calc(4.25rem+env(safe-area-inset-bottom))] md:bottom-0">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-baseline justify-between text-sm">
+              <span className="text-ink-soft">
+                Total {formatMoneyExact(calculated)}
+                {mismatch > 0.5 && <span className="text-warning"> · difiere {formatMoneyExact(mismatch)}</span>}
+              </span>
+              {blockReason && <span className="text-xs text-warning">{blockReason}</span>}
+            </div>
+            <div className="flex gap-2 mt-1.5">
+              <Button variant="secondary" className="flex-1" onClick={() => void saveDraft(false)}>
+                Guardar borrador
+              </Button>
+              <Button className="flex-1" disabled={!canReceive || receiving} onClick={() => void saveDraft(true)}>
+                {receiving ? "Recibiendo…" : "Recibir mercancía"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {creatingSupplier && supplierDraft && (
-        <Sheet
-          open
-          onClose={() => setCreatingSupplier(false)}
-          title="Nuevo proveedor"
-        >
+        <Sheet open onClose={() => setCreatingSupplier(false)} title="Nuevo proveedor">
           <SupplierForm
             supplier={supplierDraft}
             onDone={() => {
-              // Auto-select the just-created supplier on the purchase. The
-              // SupplierForm upserts before onDone, so it's in state.suppliers.
               setDraft({ ...draft, supplierId: supplierDraft.id });
               setCreatingSupplier(false);
               setSupplierDraft(null);
@@ -290,7 +682,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       {productLineIdx !== null && productDraft && activeStore && (
         <Sheet
           open
-          onClose={() => { setProductLineIdx(null); setProductDraft(null); }}
+          onClose={() => {
+            setProductLineIdx(null);
+            setProductDraft(null);
+          }}
           title="Nuevo producto"
         >
           <ProductMiniForm
@@ -298,18 +693,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             isTiered={isTiered}
             tiers={tiersForStore(activeStore)}
             onDone={async (saved) => {
-              // Upsert (private by default; published if the user toggled it),
-              // then set it directly on the line. We bypass pickProduct because
-              // it reads the `products` array from this render's scope, which is
-              // stale right after the awaited upsert — but we already hold the
-              // full saved product, so set the line fields directly.
               await upsertProduct(saved);
               updateLine(productLineIdx, {
                 productId: saved.id,
                 name: saved.name,
                 unitCost: saved.cost ?? 0,
-                prices: isTiered ? saved.prices : undefined,
-                price: isTiered ? undefined : saved.price,
+                matchStatus: "new_product",
               });
               setProductLineIdx(null);
               setProductDraft(null);
@@ -319,6 +708,19 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </Sheet>
       )}
     </div>
+  );
+}
+
+function FilterChip({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <Button
+      size="sm"
+      variant={active ? "primary" : "ghost"}
+      className="!rounded-full !px-3 !py-1.5 !text-xs"
+      onClick={onClick}
+    >
+      {label}
+    </Button>
   );
 }
 
@@ -356,11 +758,11 @@ function ProductMiniForm({
       ...draft,
       name: draft.name.trim(),
       cost: parseAmount(cost) || undefined,
-      // Prices only when the store uses them.
       prices: isTiered
         ? Object.fromEntries(tiers.map((t) => [t.id, parseAmount(tierPrices[t.id]) ?? 0]))
         : draft.prices,
       price: isTiered ? draft.price : parseAmount(price),
+      // Purchasing a product never publishes it by itself (invariant 5).
       status: publish ? "published" : "draft",
       isPublic: publish,
       updatedAt: nowIso(),
@@ -377,13 +779,7 @@ function ProductMiniForm({
         onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
         autoFocus
       />
-      <TextField
-        label="Costo"
-        inputMode="decimal"
-        placeholder="0"
-        value={cost}
-        onChange={(e) => setCost(e.target.value)}
-      />
+      <TextField label="Costo" inputMode="decimal" placeholder="0" value={cost} onChange={(e) => setCost(e.target.value)} />
       {isTiered ? (
         <div className={tiers.length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
           {tiers.map((t) => (

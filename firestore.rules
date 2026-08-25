@@ -171,10 +171,15 @@ service cloud.firestore {
     match /purchases/{id} {
       allow read: if isMember(resource.data.storeId);
       allow create: if isMember(request.resource.data.storeId);
+      // A received purchase is inventory evidence: stock was already applied,
+      // so it must never be mutated or deleted by anyone (the app blocks it
+      // in the UI; the rules are the real guarantee against SDK writes).
       allow update: if isMember(resource.data.storeId)
         && isMember(request.resource.data.storeId)
-        && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isMember(resource.data.storeId);
+        && resource.data.storeId == request.resource.data.storeId
+        && resource.data.status != 'received';
+      allow delete: if isMember(resource.data.storeId)
+        && resource.data.status != 'received';
     }
     match /customers/{id} {
       allow read: if isMember(resource.data.storeId);

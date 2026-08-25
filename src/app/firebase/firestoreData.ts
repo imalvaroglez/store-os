@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
   deleteDoc,
@@ -12,6 +13,7 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
+import { applyPurchaseLines } from "../../lib/inventory";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
 import { publicPrice } from "../../lib/money";
@@ -323,6 +325,113 @@ export async function claimSlug(slug: string, storeId: string): Promise<void> {
 export async function releaseSlug(slug: string): Promise<void> {
   const { db } = getFirebase();
   await deleteDoc(doc(db, "slugs", slug)).catch(() => {});
+}
+
+/** receivePurchase already done — NOT an error (idempotency signal). */
+export class PurchaseAlreadyReceived extends Error {
+  constructor() {
+    super("La compra ya fue recibida.");
+  }
+}
+
+/**
+ * Atomically receive a purchase into inventory: products get stock + weighted
+ * average cost, the purchase gets status "received" + receivedAt — all in ONE
+ * Firestore commit. Idempotency guards, checked INSIDE the transaction:
+ *   - `receivedAt` already set → already received through the lifecycle
+ *   - `status === undefined` → legacy purchase whose stock was applied on save
+ * V1 does NOT apply sale-price edits here: a direct products write would skip
+ * the public-catalog republish that upsertProduct performs, so prices stay
+ * untouched (editable later from the product form).
+ */
+export async function receivePurchaseTx(purchaseId: string): Promise<void> {
+  const { db } = getFirebase();
+  // Pre-validate OUTSIDE the transaction: errors thrown inside runTransaction
+  // reach the caller with an emptied message on the emulator, so the UI toast
+  // would lose the reason. The transaction re-validates canonically below.
+  {
+    const snap = await getDoc(doc(db, "purchases", purchaseId));
+    if (!snap.exists()) throw new Error("No se encontró la compra.");
+    const purchase = snap.data() as Purchase;
+    if (purchase.receivedAt != null || purchase.status === undefined) throw new PurchaseAlreadyReceived();
+    for (const line of purchase.lines) {
+      if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
+      let pSnap;
+      try {
+        pSnap = await getDoc(doc(db, "products", line.productId));
+      } catch {
+        // Reading a MISSING doc fails the isMember(resource.data...) rule with
+        // a raw evaluation error — indistinguishable from a denial, and for the
+        // operator it means the same thing: the product isn't there.
+        throw new Error(`No se encontró el producto de la línea "${line.name}".`);
+      }
+      if (!pSnap.exists()) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
+      if ((pSnap.data() as Product).storeId !== purchase.storeId) {
+        throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
+      }
+    }
+  }
+  await runTransaction(db, async (tx) => {
+    const purchaseRef = doc(db, "purchases", purchaseId);
+    const snap = await tx.get(purchaseRef);
+    if (!snap.exists()) throw new Error("No se encontró la compra.");
+    const purchase = snap.data() as Purchase;
+    if (purchase.receivedAt != null || purchase.status === undefined) {
+      throw new PurchaseAlreadyReceived();
+    }
+    const at = new Date().toISOString();
+    const productRefs = new Map<string, ReturnType<typeof doc>>();
+    const productDocs = new Map<string, Product>();
+    for (const line of purchase.lines) {
+      if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
+      if (productRefs.has(line.productId)) continue;
+      const ref = doc(db, "products", line.productId);
+      productRefs.set(line.productId, ref);
+      const snapP = await tx.get(ref);
+      if (!snapP.exists()) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
+      const product = snapP.data() as Product;
+      if (product.storeId !== purchase.storeId) {
+        throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
+      }
+      productDocs.set(line.productId, product);
+    }
+    const stockUpdates = applyPurchaseLines(
+      [...productDocs.values()].filter(Boolean),
+      purchase.lines
+    );
+    for (const [productId, update] of stockUpdates) {
+      tx.update(productRefs.get(productId)!, {
+        quantityOnHand: update.quantityOnHand,
+        cost: update.cost,
+        updatedAt: at,
+      });
+    }
+    tx.update(purchaseRef, { status: "received", receivedAt: at, updatedAt: at });
+  });
+}
+
+/**
+ * Bulk-create private draft products and save the purchase that links them in
+ * ONE writeBatch (max 499 products + the purchase). Any failure leaves
+ * everything untouched. No public projection is written (products are private
+ * drafts; publishing is a later, explicit act).
+ */
+export async function createDraftProductsForPurchaseTx(
+  products: Product[],
+  purchase: Purchase
+): Promise<void> {
+  if (products.length > 499) {
+    throw new Error("Son demasiados productos para un solo lote (máximo 499).");
+  }
+  const { db } = getFirebase();
+  const batch = writeBatch(db);
+  for (const product of products) {
+    const { id, ...data } = product;
+    batch.set(doc(db, "products", id), stripUndefined(data) as Record<string, unknown>, { merge: true });
+  }
+  const { id: purchaseId, ...purchaseData } = purchase;
+  batch.set(doc(db, "purchases", purchaseId), stripUndefined(purchaseData) as Record<string, unknown>, { merge: true });
+  await batch.commit();
 }
 
 /** Public product doc id: storeId + product slug (stable across renames). */

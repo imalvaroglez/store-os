@@ -107,6 +107,12 @@ export async function uploadProductImage(
   return getDownloadURL(r);
 }
 
+/** Delete a supplier-order PDF (purchases/{storeId}/...). Cloud-only. */
+export async function deletePurchasePdf(storagePath: string): Promise<void> {
+  const s = getStorageInstance();
+  await deleteObject(ref(s, storagePath));
+}
+
 /**
  * Upload one gallery image to products/{storeId}/{productId}/{imgId}.jpg and
  * return its public URL + storage path. Accepts up to 10 MB at the edge (the

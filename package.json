@@ -17,7 +17,7 @@
     "test:rules": "bash scripts/test-rules.sh",
     "delivery": "node scripts/delivery-harness.cjs",
     "e2e": "playwright test",
-    "emulators": "firebase emulators:start --only auth,firestore,storage",
+    "emulators": "firebase emulators:start --only auth,firestore,storage,functions",
     "e2e:firebase": "bash scripts/e2e-firebase.sh",
     "e2e:refresh": "bash scripts/e2e-refresh.sh",
     "deploy:rules": "firebase deploy --only firestore,storage"

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatMoney,
+  formatMoneyExact,
   publicPrice,
   profit,
   parseAmount,
@@ -75,5 +76,18 @@ describe("pending", () => {
   });
   it("never goes negative", () => {
     expect(pending(500, 800)).toBe(0);
+  });
+});
+
+describe("formatMoneyExact", () => {
+  it("always shows MXN cents", () => {
+    expect(formatMoneyExact(1234.5)).toBe("$1,234.50");
+    expect(formatMoneyExact(0)).toBe("$0.00");
+    expect(formatMoneyExact(10001.68)).toBe("$10,001.68");
+    expect(formatMoneyExact(9.91)).toBe("$9.91");
+  });
+  it("falls back to $0.00 for invalid input", () => {
+    expect(formatMoneyExact(undefined)).toBe("$0.00");
+    expect(formatMoneyExact(NaN)).toBe("$0.00");
   });
 });
