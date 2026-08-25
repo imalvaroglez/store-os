@@ -34,6 +34,10 @@ export default defineConfig({
   appType: "spa",
   server: {
     port: 5173,
+    // Expose on the LAN so phones on the same Wi-Fi can open the public
+    // catalog (http://<ip>:5173/catalogo/:slug). Firebase Auth still only
+    // accepts localhost for sign-in — anonymous routes are the use case.
+    host: true,
   },
   preview: {
     port: 4319,
