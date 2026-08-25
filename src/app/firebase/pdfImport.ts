@@ -33,11 +33,9 @@ export type ParsedPdfOrder = {
   subtotal?: number;
   discount?: number;
   shipping?: number;
-  taxIncluded?: number;
   total?: number;
   sourceAmountType: "unit" | "line" | "unknown";
   needsReview: boolean;
-  warning?: string;
 };
 
 let fns: Functions | null = null;
