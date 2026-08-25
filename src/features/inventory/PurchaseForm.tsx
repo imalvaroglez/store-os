@@ -267,21 +267,19 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       // The SKU generator sees the accumulated batch so two lines with the
       // same name can never collide inside one lot.
       const batchProducts: Product[] = [];
-      const byId = new Map<string, string>(); // line index → new product id
-      const lines = [...draft.lines];
-      for (let i = 0; i < lines.length; i++) {
-        const l = lines[i];
-        if (l.productId) continue;
+      const newIds: (string | undefined)[] = []; // per-line new product id
+      const lines = draft.lines.map((l, i) => {
+        if (l.productId) {
+          newIds[i] = undefined;
+          return l;
+        }
         const base = newProduct(activeStore.id);
         const fullName = l.variant ? `${l.name} ${l.variant}` : l.name;
         const sku = uniqueProductSku([...batchProducts, ...products], activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
         batchProducts.push({ ...base, name: fullName, cost: l.unitCost, sku });
-        byId.set(String(i), base.id);
-      }
-      for (let i = 0; i < lines.length; i++) {
-        const id = byId.get(String(i));
-        if (id) lines[i] = { ...lines[i], productId: id, matchStatus: "new_product" };
-      }
+        newIds[i] = base.id;
+        return { ...l, productId: base.id, matchStatus: "new_product" as const };
+      });
       // The batch itself must carry the invalidation, not just local state.
       const next: Purchase = invalidateMismatch({ ...draft, lines, subtotal: merchandise, updatedAt: nowIso() });
       await createDraftProductsForPurchase(batchProducts, next);
