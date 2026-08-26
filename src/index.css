@@ -54,7 +54,6 @@
    plus maximalist stamp/pop). These fallbacks avoid a flash before injection. */
 @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes riseIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes toastIn { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
 html, body, #root {
@@ -87,23 +86,10 @@ body {
   height: 1px;
 }
 
-/* Staggered reveal for screen contents — motion duration/easing per theme. */
-.rise > * {
-  animation: riseIn var(--motion-slow) var(--ease-smooth) both;
-}
-.rise > *:nth-child(1) { animation-delay: 0.02s; }
-.rise > *:nth-child(2) { animation-delay: 0.06s; }
-.rise > *:nth-child(3) { animation-delay: 0.10s; }
-.rise > *:nth-child(4) { animation-delay: 0.14s; }
-.rise > *:nth-child(5) { animation-delay: 0.18s; }
-.rise > *:nth-child(6) { animation-delay: 0.22s; }
-
 /* iOS: keep inputs >=16px to avoid zoom-on-focus (text-base in primitives). */
 
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 @keyframes revealUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes lightboxIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes lightboxPop { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
 @keyframes dialogIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dialogPop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
 @keyframes dropdownIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
