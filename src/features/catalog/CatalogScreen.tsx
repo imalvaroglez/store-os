@@ -19,7 +19,8 @@ import {
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
 import { CATEGORY_LABELS } from "../../lib/labels";
-import { productsForStore, committedForProduct } from "../../lib/selectors";
+import { productsForStore } from "../../lib/selectors";
+import { committedForProduct } from "../../lib/inventory";
 import { defaultTier } from "../../lib/pricing";
 import { publicPrice, profit, formatMoney } from "../../lib/money";
 import { nowIso } from "../../lib/dates";

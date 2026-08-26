@@ -1,21 +1,20 @@
 import type { Store, Product } from "../types";
 
+function storefrontBase(phone?: string | null): string {
+  const digits = (phone || "").replace(/[^0-9]/g, "");
+  return digits ? `https://wa.me/${digits}` : `https://wa.me/`;
+}
+
 // Build a wa.me link to ask about a single product from the public catalog.
 export function createWhatsAppProductUrl(product: Product, store: Store): string {
-  const phone = (store.whatsappPhone || "").replace(/[^0-9]/g, "");
-  const name = product.name;
-  const text = `Hola, quiero pedir: ${name}`;
-  const base = phone ? `https://wa.me/${phone}` : `https://wa.me/`;
-  return `${base}?text=${encodeURIComponent(text)}`;
+  const text = `Hola, quiero pedir: ${product.name}`;
+  return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }
 
 // General "ask about the store / catalog" link.
 export function createWhatsAppStoreUrl(store: Store): string {
-  const phone = (store.whatsappPhone || "").replace(/[^0-9]/g, "");
   const text = `Hola, me interesa tu catálogo de ${store.name}`;
-  return phone
-    ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
-    : `https://wa.me/?text=${encodeURIComponent(text)}`;
+  return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }
 
 // Owner-facing "share my catalog" link. Opens WhatsApp with a message that
@@ -47,11 +46,6 @@ export type StorefrontProductRef = {
   productSlug?: string;
   intent?: "buy" | "inquire";
 };
-
-function storefrontBase(phone?: string | null): string {
-  const digits = (phone || "").replace(/[^0-9]/g, "");
-  return digits ? `https://wa.me/${digits}` : `https://wa.me/`;
-}
 
 function productUrl(storeSlug: string, productSlug?: string): string {
   const origin =

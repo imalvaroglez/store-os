@@ -6,10 +6,9 @@ import {
   customersForStore,
   suppliersForStore,
   purchasesForStore,
-  committedForProduct,
 } from "./selectors";
 import { fixtureState } from "./testFixtures";
-import type { Supplier, Purchase, Order } from "../types";
+import type { Supplier, Purchase } from "../types";
 
 describe("store isolation", () => {
   const state = fixtureState();
@@ -77,27 +76,3 @@ describe("suppliers / purchases isolation", () => {
   });
 });
 
-describe("committedForProduct re-export", () => {
-  // Confirms the selector barrel delegates to inventory.committedForProduct
-  // and stays store-scoped (the cross-tenant invariant from firestore memory).
-  const order = (o: Partial<Order>): Order =>
-    ({
-      id: "o", storeId: "s1", customerId: "c", productName: "X",
-      quantity: 1, price: 10, deposit: 0, status: "asked",
-      createdAt: "", updatedAt: "",
-      ...o,
-    }) as Order;
-
-  it("sums open orders for the product in the store", () => {
-    const orders = [
-      order({ id: "a", productId: "p1", quantity: 3, status: "confirmed" }),
-      order({ id: "b", productId: "p1", quantity: 2, status: "delivered" }),
-      order({ id: "c", storeId: "s2", productId: "p1", quantity: 9, status: "asked" }),
-    ];
-    expect(committedForProduct(orders, "s1", "p1")).toBe(3);
-  });
-
-  it("returns 0 when nothing matches", () => {
-    expect(committedForProduct([], "s1", "p1")).toBe(0);
-  });
-});
