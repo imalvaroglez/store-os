@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "./StoreProvider";
 import { useAuth } from "./firebase/AuthProvider";
-import { AuthScreen } from "./firebase/AuthScreen";
 import { useRoute } from "./router";
 import {
   StoreSwitcher,
@@ -35,7 +34,6 @@ export function AppShell() {
   const { user, enabled: authEnabled, signOut } = useAuth();
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [authOpen, setAuthOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
 
   const seg = route.name === "admin" ? route.params.tab ?? "" : "";
@@ -163,10 +161,6 @@ export function AppShell() {
             <p className="text-sm text-ink-soft">Tus datos viven en la nube y se sincronizan entre dispositivos.</p>
           </div>
         </div>
-      </Sheet>
-
-      <Sheet open={authOpen} onClose={() => setAuthOpen(false)} title="Cuenta">
-        <AuthScreen onDone={() => setAuthOpen(false)} />
       </Sheet>
 
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} />

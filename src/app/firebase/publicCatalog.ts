@@ -84,14 +84,6 @@ export class PublicCatalogNotFoundError extends Error {
   }
 }
 
-/** Thrown when a store exists but no public catalog has been projected yet. */
-export class PublicCatalogEmptyError extends Error {
-  constructor(public slug: string) {
-    super(`El catálogo de "${slug}" aún no está publicado.`);
-    this.name = "PublicCatalogEmptyError";
-  }
-}
-
 /** Thrown when a product slug has no public detail doc. */
 export class PublicProductNotFoundError extends Error {
   constructor(public productSlug: string) {
@@ -103,7 +95,7 @@ export class PublicProductNotFoundError extends Error {
 /**
  * Load a store's public storefront + catalog (categories + product summaries).
  * Anonymous. 2 reads. Throws PublicCatalogNotFoundError if the store isn't
- * published, PublicCatalogEmptyError if the storefront exists but its catalog
+ * published, or a plain Error if the storefront exists but its catalog
  * projection hasn't been written yet.
  */
 export async function loadPublicCatalog(slug: string): Promise<{
@@ -129,7 +121,7 @@ export async function loadPublicCatalog(slug: string): Promise<{
       products: data.products ?? [],
     };
   } else {
-    throw new PublicCatalogEmptyError(slug);
+    throw new Error(`El catálogo de "${slug}" aún no está publicado.`);
   }
 
   return { store, catalog };

@@ -4,8 +4,9 @@ import {
   httpsCallable,
   type Functions,
 } from "firebase/functions";
-import { getStorage, ref, uploadBytes, connectStorageEmulator, getBlob, type FirebaseStorage } from "firebase/storage";
+import { ref, uploadBytes, getBlob } from "firebase/storage";
 import { getFirebase } from "./config";
+import { getStorageInstance } from "./storage";
 
 // PDF import transport (purchase-pdf-import): upload the supplier PDF to
 // Storage, then call importPurchasePdf (OCR) and get the parsed lines back.
@@ -40,9 +41,6 @@ export type ParsedPdfOrder = {
 
 let fns: Functions | null = null;
 let fnsConnected = false;
-let storage: FirebaseStorage | null = null;
-let storageConnected = false;
-
 function functionsInstance(): Functions {
   const { app } = getFirebase();
   if (!fns) fns = getFunctions(app, "us-east1"); // region, never a project id
@@ -53,16 +51,6 @@ function functionsInstance(): Functions {
     fnsConnected = true;
   }
   return fns;
-}
-
-function storageInstance(): FirebaseStorage {
-  const { app } = getFirebase();
-  if (!storage) storage = getStorage(app, EMULATOR ? "store-os-demo.appspot.com" : undefined);
-  if (EMULATOR && !storageConnected) {
-    connectStorageEmulator(storage, "127.0.0.1", 9199);
-    storageConnected = true;
-  }
-  return storage;
 }
 
 /**
@@ -76,7 +64,7 @@ export async function uploadPurchasePdf(
   file: File
 ): Promise<{ storagePath: string }> {
   const storagePath = `purchases/${storeId}/${Date.now()}-${file.name.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
-  const r = ref(storageInstance(), storagePath);
+  const r = ref(getStorageInstance(), storagePath);
   await uploadBytes(r, file, { contentType: "application/pdf" });
   return { storagePath };
 }
@@ -94,6 +82,6 @@ export async function importPurchasePdf(storagePath: string): Promise<ParsedPdfO
  * a temporary object URL that the caller should revoke after use.
  */
 export async function openPurchasePdf(documentPath: string): Promise<string> {
-  const blob = await getBlob(ref(storageInstance(), documentPath));
+  const blob = await getBlob(ref(getStorageInstance(), documentPath));
   return URL.createObjectURL(blob);
 }

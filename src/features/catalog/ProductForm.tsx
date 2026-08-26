@@ -3,7 +3,6 @@ import { useStore } from "../../app/StoreProvider";
 import {
   resizeImageFile,
   uploadGalleryImage,
-  deleteGalleryImage,
 } from "../../app/firebase/storage";
 import {
   Button,
@@ -544,20 +543,4 @@ function reorderGallery(images: ProductImageType[]): ProductImageType[] {
     order: idx,
     isPrimary: hasPrimary ? img.isPrimary : idx === 0,
   }));
-}
-
-// Best-effort cleanup of gallery objects removed from a saved product. Called by
-// the host screen after a successful save if needed (kept here for locality).
-export async function pruneRemovedImages(
-  storeId: string,
-  before: ProductImageType[],
-  after: ProductImageType[]
-): Promise<void> {
-  const keep = new Set(after.map((i) => i.storagePath));
-  for (const img of before) {
-    if (!keep.has(img.storagePath)) {
-      await deleteGalleryImage(img.storagePath).catch(() => {});
-    }
-  }
-  void storeId;
 }
