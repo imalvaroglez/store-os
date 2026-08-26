@@ -53,7 +53,11 @@ export const submitPublicOrder = onCall(
     const db = getFirestore();
     const storeSnap = await db.collection("publicStores").doc(storeSlug).get();
     if (!storeSnap.exists) throw new HttpsError("not-found", "Tienda no encontrada.");
-    const storeId = storeSnap.get("storeId");
+    // Some deployed publicStores docs predate the storeId field (prod
+    // 2026-08-25): fall back to publicCatalogs, which always carries it.
+    const storeId =
+      storeSnap.get("storeId") ??
+      (await db.collection("publicCatalogs").doc(storeSlug).get()).get("storeId");
     if (typeof storeId !== "string") throw new HttpsError("not-found", "Tienda no encontrada.");
 
     // Resolve every line against the public projection: the SERVER's price and

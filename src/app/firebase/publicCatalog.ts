@@ -139,12 +139,24 @@ export async function loadPublicCatalog(slug: string): Promise<{
 }
 
 /**
+ * Resolve the storeId for a public product lookup. publicStores is canonical,
+ * but some deployed docs predate its storeId field (prod 2026-08-25 broke every
+ * product-detail page this way) — publicCatalogs always carries it.
+ */
+export function resolveStoreId(
+  store: PublicStore | undefined,
+  catalogStoreId: string | undefined
+): string | undefined {
+  return store?.storeId ?? catalogStoreId;
+}
+
+/**
  * Load a single product's public detail by store slug + product slug. Anonymous.
- * The detail doc id is {storeId}__{slug}; storeId is read from the (already
- * anonymous-readable) publicCatalogs doc rather than the auth-gated slug
- * reservation, so no rule change is needed. +2 reads (catalog for storeId,
- * detail) — the storefront visit already cached the catalog, so in practice this
- * is +1.
+ * The detail doc id is {storeId}__{slug}; storeId is resolved from the (already
+ * anonymous-readable) projections — publicStores first, falling back to
+ * publicCatalogs, because some deployed publicStores docs predate the storeId
+ * field (seen in prod 2026-08-25). +2 reads worst case; the storefront visit
+ * already cached both, so in practice this is +1.
  */
 export async function loadPublicProduct(
   storeSlug: string,
@@ -153,13 +165,21 @@ export async function loadPublicProduct(
 ): Promise<{ product: PublicProductDetail; store: PublicStore }> {
   const { db } = getFirebase();
 
-  let store = knownStore;
-  if (!store) {
+  let store: PublicStore;
+  if (knownStore) {
+    store = knownStore;
+  } else {
     const storeSnap = await getDoc(doc(db, "publicStores", storeSlug));
     if (!storeSnap.exists()) throw new PublicCatalogNotFoundError(storeSlug);
     store = { slug: storeSlug, ...(storeSnap.data() as Omit<PublicStore, "slug">) };
   }
-  if (!store.storeId) throw new PublicCatalogNotFoundError(storeSlug);
+  if (!store.storeId) {
+    // Stale publicStores doc without storeId: publicCatalogs always carries it.
+    const catalogSnap = await getDoc(doc(db, "publicCatalogs", storeSlug));
+    const fallback = resolveStoreId(store, catalogSnap.get("storeId") as string | undefined);
+    if (!fallback) throw new PublicCatalogNotFoundError(storeSlug);
+    store = { ...store, storeId: fallback };
+  }
   const productSnap = await getDoc(doc(db, "publicProducts", `${store.storeId}__${productSlug}`));
 
   if (!productSnap.exists()) throw new PublicProductNotFoundError(productSlug);
