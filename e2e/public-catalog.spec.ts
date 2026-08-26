@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { ADMIN_EMAIL, gotoClean } from "./helpers";
+import { ADMIN_EMAIL, FIRESTORE_REST as FS, gotoClean, mintUserToken, toFields } from "./helpers";
 
 // End-to-end for the PUBLIC CLOUD CATALOG (/catalogo/:slug) against the
 // Firebase Emulator. An anonymous visitor (no session) reads the public
@@ -13,9 +13,6 @@ import { ADMIN_EMAIL, gotoClean } from "./helpers";
 // Prereq: emulator running (`npm run emulators`); app served with
 // VITE_FIREBASE_EMULATOR=true. globalSetup wipes Auth + Firestore before run.
 
-const PROJECT = "store-os-demo";
-const FS = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
-const AUTH = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key-for-emulator";
 
 // Wipe the public projection collections so the REST seed below is the ONLY
 // source of public docs. firebase.spec (which runs before this file in the
@@ -23,7 +20,7 @@ const AUTH = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:s
 // too — without this purge the anonymous catalog would show duplicate products
 // and the strict-mode assertions below would fail.
 async function wipePublicProjection() {
-  const seed = await mintToken();
+  const seed = await mintUserToken();
   const auth = { Authorization: `Bearer ${seed.token}` };
   for (const col of ["publicProducts", "publicStores", "publicCatalogs"]) {
     try {
@@ -42,32 +39,6 @@ async function wipePublicProjection() {
   }
 }
 
-// Mint a Firebase ID token via the Auth emulator so we can seed the public
-// projection with an authenticated REST call (the write rules require a
-// signed-in user). Anonymous READS are then unauthenticated, mirroring a real
-// visitor.
-async function mintToken(): Promise<{ token: string; uid: string }> {
-  // Try sign-up; if the account already exists (prior run before a wipe),
-  // fall back to sign-in. Either way we need a valid idToken for the seed writes.
-  const creds = { email: ADMIN_EMAIL, password: "password123", returnSecureToken: true };
-  let res = await fetch(AUTH, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(creds),
-  });
-  let data = (await res.json()) as { idToken?: string; localId?: string };
-  if (!data.idToken) {
-    res = await fetch(
-      "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key-for-emulator",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(creds) }
-    );
-    data = (await res.json()) as { idToken?: string; localId?: string };
-  }
-  if (!data.idToken) throw new Error(`Could not mint seed token: ${JSON.stringify(data)}`);
-  if (!data.localId) throw new Error("Could not determine seed user.");
-  return { token: data.idToken, uid: data.localId };
-}
-
 // Seed a minimal public projection in the 3-doc model: publicStores (identity)
 // + publicCatalogs (categories + product summaries, with storeId so the product
 // route can resolve). The Santi store deliberately carries membership fields on
@@ -75,7 +46,7 @@ async function mintToken(): Promise<{ token: string; uid: string }> {
 // anonymous reader — written here only because this REST seed bypasses the
 // app's projection logic; the real app never writes them to publicStores.
 async function seedPublicProjection() {
-  const seed = await mintToken();
+  const seed = await mintUserToken();
   const auth = { "Content-Type": "application/json", Authorization: `Bearer ${seed.token}` };
 
   const stores = [
@@ -120,28 +91,6 @@ async function seedPublicProjection() {
   for (const c of catalogs) await patch(`publicCatalogs/${c.slug}`, { fields: toFields(c) });
 }
 
-// Minimal Firestore value encoder (strings/numbers/bools/null + nested maps).
-function toFields(obj: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    out[k] = encode(v);
-  }
-  return out;
-}
-function encode(v: unknown): unknown {
-  if (v === null || v === undefined) return { nullValue: null };
-  if (typeof v === "string") return { stringValue: v };
-  if (typeof v === "number") return { integerValue: String(v) };
-  if (typeof v === "boolean") return { booleanValue: v };
-  if (Array.isArray(v)) {
-    // Firestore REST requires arrays as arrayValue: { values: [...] }.
-    return { arrayValue: { values: v.map(encode) } };
-  }
-  if (typeof v === "object") {
-    return { mapValue: { fields: toFields(v as Record<string, unknown>) } };
-  }
-  return { nullValue: null };
-}
 
 async function openCatalogAnonymous(page: Page, slug: string) {
   await page.context().clearCookies();

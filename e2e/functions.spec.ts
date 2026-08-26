@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 // emulator session (see scripts/e2e-firebase.sh) so the Functions emulator
 // never contends with the photo/preview e2e on CI runners.
 import { readFileSync } from "node:fs";
-import { adminToken, PROJECT, writeEmulatorDoc } from "./helpers";
+import { adminToken, mintUserToken, PROJECT, writeEmulatorDoc } from "./helpers";
 
 // Direct callable authorization + safe-cleanup tests against the Functions
 // emulator. tesseract/mupdf load lazily AFTER these guards, so no OCR runs.
@@ -47,30 +47,8 @@ async function pdfExists(storeId: string, name: string, token: string) {
 // Session-2 state is self-contained (fresh emulator): create the admin
 // account and its store membership if they don't exist yet.
 async function ensureAdmin() {
-  let body = { email: "admin@store.os", password: "password123", returnSecureToken: true };
-  let r = await fetch("http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  let value = await r.json();
-  if (!value.idToken) {
-    r = await fetch("http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    value = await r.json();
-  }
-  const token = value.idToken as string;
-  const uid = value.localId as string;
-  await fetch(
-    `http://127.0.0.1:8080/v1/projects/store-os-demo/databases/(default)/documents/adminStores/store_joyeria`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ fields: {
-        ownerUid: { stringValue: uid },
-        memberUids: { arrayValue: { values: [{ stringValue: uid }] } },
-      } }),
-    }
-  );
+  const { token, uid } = await mintUserToken();
+  await writeEmulatorDoc("adminStores", "store_joyeria", { ownerUid: uid, memberUids: [uid] });
   return { token, uid };
 }
 
