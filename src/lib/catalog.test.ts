@@ -8,7 +8,6 @@ import {
   suggestSkuBase,
   uniqueProductSku,
   normalizeSkuPrefixToken,
-  defaultSkuPrefix,
 } from "./catalog";
 import type { AppState, Product } from "../types";
 import { CURRENT_PRODUCT_SCHEMA_VERSION, MAX_PRODUCT_IMAGES, MAX_PRODUCT_CATEGORIES } from "../types";
@@ -201,6 +200,15 @@ describe("uniqueProductSku", () => {
     expect(out).toMatch(/-02$/);
     expect(out).not.toMatch(/-$/);
   });
+
+  it("finds a free suffix beyond -99 (500 collisions, batch-scale)", () => {
+    const taken = ["PIEZA"];
+    for (let n = 2; n <= 501; n++) taken.push(`PIEZA-${n < 100 ? String(n).padStart(2, "0") : n}`);
+    const products = taken.map((sku) => ({ id: sku, storeId: "s1", sku }) as unknown as import("../types").Product);
+    const sku = uniqueProductSku(products, "s1", "new", "PIEZA");
+    expect(sku).toBe("PIEZA-502");
+    expect(sku.length).toBeLessThanOrEqual(40);
+  });
 });
 
 describe("normalizeSkuPrefixToken", () => {
@@ -215,21 +223,3 @@ describe("normalizeSkuPrefixToken", () => {
   });
 });
 
-describe("defaultSkuPrefix", () => {
-  it("derives from slug, uppercased, clean alphanumerics, capped at 4", () => {
-    expect(defaultSkuPrefix("olivia")).toBe("OLIV");
-    expect(defaultSkuPrefix("la-tiendita-de-fer")).toBe("LATI");
-  });
-  it("empty slug → empty", () => {
-    expect(defaultSkuPrefix("")).toBe("");
-  });
-
-  it("finds a free suffix beyond -99 (500 collisions, batch-scale)", () => {
-    const taken = ["PIEZA"];
-    for (let n = 2; n <= 501; n++) taken.push(`PIEZA-${n < 100 ? String(n).padStart(2, "0") : n}`);
-    const products = taken.map((sku) => ({ id: sku, storeId: "s1", sku }) as unknown as import("../types").Product);
-    const sku = uniqueProductSku(products, "s1", "new", "PIEZA");
-    expect(sku).toBe("PIEZA-502");
-    expect(sku.length).toBeLessThanOrEqual(40);
-  });
-});

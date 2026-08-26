@@ -114,12 +114,6 @@ export function normalizeSkuPrefixToken(raw?: string): string {
     .slice(0, 8);
 }
 
-/** Default skuPrefix from a store slug: "olivia" → "OLIV" (clean alphanumerics). */
-export function defaultSkuPrefix(slug?: string): string {
-  // Clean first, then cap — so hyphens in a multi-word slug don't eat the budget.
-  return normalizeSkuPrefixToken(slugify(slug ?? "").toUpperCase()).slice(0, 4);
-}
-
 // ponytail: trim a trailing hyphen left by truncation; inline one-liner.
 function trimTrailingHyphen(s: string): string {
   return s.replace(/-+$/g, "");

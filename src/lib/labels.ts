@@ -9,14 +9,6 @@ export const CATEGORY_LABELS: Record<ProductCategory, string> = {
   other: "Otro",
 };
 
-export const CATEGORY_OPTIONS: ProductCategory[] = [
-  "perfume",
-  "sneakers",
-  "cap",
-  "jewelry",
-  "other",
-];
-
 export const STORE_TYPE_LABELS: Record<StoreType, string> = {
   on_demand: "Bajo pedido",
   inventory_tiered: "Inventario y precios",

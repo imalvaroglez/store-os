@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { Button, FormField, TextField, Card } from "../../design-system";
 import { SlugTakenError } from "../../app/firebase/firestoreData";
-import { slugify } from "./slugify";
+import { slugify } from "../../lib/catalog";
 import type { StoreType } from "../../types";
 
 const TYPES: { value: StoreType; label: string; desc: string }[] = [
