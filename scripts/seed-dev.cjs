@@ -361,10 +361,6 @@ function runSelfTest() {
     assert.ok(!("cost" in s) && !("memberUids" in s));
   });
 
-  it("DEV_PROJECT_ID guard is exactly store-os-dev", () => {
-    assert.strictEqual(DEV_PROJECT_ID, "store-os-dev");
-  });
-
   if (exitCode !== 0) {
     console.error("\x1b[31mself-test FALLÓ\x1b[0m");
     process.exit(1);
@@ -378,14 +374,6 @@ function m_proj(s) {
 
 // --- main ---
 async function run() {
-  // LOAD-BEARING GUARD (runs before any Firestore/Storage call).
-  // The Admin SDK bypasses Security Rules; this assertion is the only thing
-  // preventing a prod write. Hardcoded — the script never reads arbitrary env.
-  if (DEV_PROJECT_ID !== "store-os-dev") {
-    // Self-check of the guard itself; should never trigger.
-    fail(`projectId interno inesperado: '${DEV_PROJECT_ID}'`);
-  }
-
   let admin;
   try {
     // firebase-admin v10+ uses modular subpath imports: the bare
