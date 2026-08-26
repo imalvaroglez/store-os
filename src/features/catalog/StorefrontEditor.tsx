@@ -10,7 +10,7 @@ import {
 import type { Store, Storefront, FAQItem } from "../../types";
 
 // Structured storefront content editor for Fer: hero, benefits, story, resale,
-// FAQ, notice, shipping, payments, policies, hours, instagram, WhatsApp intros,
+// FAQ, notice, shipping, payments, hours, instagram, WhatsApp intros,
 // and the show-sold-out toggle. No free-form page builder — fixed fields map to
 // fixed sections of the public catalog. SEO fields included.
 export function StorefrontEditor({
@@ -129,11 +129,6 @@ export function StorefrontEditor({
           placeholder={"Transferencia\nEfectivo"}
           value={(sf.payments ?? []).join("\n")}
           onChange={(e) => patch({ payments: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })}
-        />
-        <TextArea
-          label="Políticas"
-          value={sf.policies ?? ""}
-          onChange={(e) => patch({ policies: e.target.value || undefined })}
         />
         <TextField
           label="Horarios"
