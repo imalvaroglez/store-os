@@ -12,14 +12,3 @@ export const OLIVIA_BRAND = {
 } as const;
 
 export const OLIVIA_SLUG = "olivia";
-
-export const OLIVIA_DEFAULT_STOREFRONT = {
-  hero: { heading: "Olivia", body: "Joyería y accesorios para acompañar tus momentos." },
-  benefits: [],
-  story: { heading: "Nuestra historia", body: "" },
-  resale: { heading: "Vende con Olivia", body: "" },
-  faq: [],
-  notice: "",
-  payments: [],
-  showSoldOut: true,
-} as const;
