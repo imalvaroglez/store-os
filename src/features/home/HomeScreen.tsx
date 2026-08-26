@@ -14,7 +14,7 @@ import {
 import { OrderForm } from "../orders/OrderForm";
 import { ordersForStore, lowStockProducts } from "../../lib/selectors";
 import { pending, profit } from "../../lib/money";
-import { ORDER_STATUS_LABELS, nextActionVerb, nextStatus } from "../orders/orderStatus";
+import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { navigate } from "../../lib/router";
 
 export function HomeScreen() {
@@ -38,10 +38,9 @@ export function HomeScreen() {
 
   function advance(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
-    if (!o || !nextActionVerb(o.status)) return;
-    const next = nextStatus(o.status);
-    if (!next) return;
-    upsertOrder({ ...o, status: next, updatedAt: new Date().toISOString() });
+    if (!o) return;
+    const advanced = advanceOrder(o);
+    if (advanced) upsertOrder(advanced);
   }
 
   return (

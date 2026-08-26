@@ -162,6 +162,10 @@ export function ProductForm({
 
   async function submit() {
     setValidationError(null);
+    const fail = (msg: string) => {
+      setValidationError(msg);
+      setSaving(false);
+    };
     if (!draft.name.trim() || saving) return;
 
     // Upload staged images first; block save on failure (no half-uploaded state).
@@ -203,29 +207,13 @@ export function ProductForm({
     // photograph later" flow.
     const willPublish = (draft.status ?? "published") === "published";
     if (willPublish) {
-      if (!draft.sku?.trim()) {
-        setValidationError("Para publicar, agrega una clave.");
-        setSaving(false);
-        return;
-      }
+      if (!draft.sku?.trim()) return fail("Para publicar, agrega una clave.");
       const def = defaultTier(activeStore);
       const hasPrice = isTiered ? !!parseAmount(tierPrices[def?.id ?? ""]) : !!parseAmount(price);
-      if (!hasPrice) {
-        setValidationError("Para publicar, define un precio.");
-        setSaving(false);
-        return;
-      }
-      if ((draft.categoryIds ?? []).length === 0) {
-        setValidationError("Para publicar, elige al menos una categoría.");
-        setSaving(false);
-        return;
-      }
+      if (!hasPrice) return fail("Para publicar, define un precio.");
+      if ((draft.categoryIds ?? []).length === 0) return fail("Para publicar, elige al menos una categoría.");
       const hasPhoto = cloud ? merged.length > 0 && merged.some((image) => image.isPrimary) : !!draft.imageUrl;
-      if (!hasPhoto) {
-        setValidationError("Para publicar, agrega una foto de portada.");
-        setSaving(false);
-        return;
-      }
+      if (!hasPhoto) return fail("Para publicar, agrega una foto de portada.");
     }
 
     // Assign a stable slug if missing (survives renames thereafter).
@@ -244,11 +232,7 @@ export function ProductForm({
       const clashes = state.products.some(
         (p) => p.id !== product.id && p.storeId === store.id && (p.sku ?? "").toUpperCase() === sku.toUpperCase()
       );
-      if (clashes) {
-        setValidationError("Esa clave ya la usa otro producto. Elige otra.");
-        setSaving(false);
-        return;
-      }
+      if (clashes) return fail("Esa clave ya la usa otro producto. Elige otra.");
     }
 
     const next: Product = {
@@ -278,8 +262,7 @@ export function ProductForm({
       await upsertProduct(next);
       onDone();
     } catch {
-      setValidationError("No se pudo guardar. Intenta de nuevo.");
-      setSaving(false);
+      fail("No se pudo guardar. Intenta de nuevo.");
     }
   }
 

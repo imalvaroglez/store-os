@@ -8,7 +8,7 @@ import {
   ORDER_STATUS_TONE,
   useToast,
 } from "../../design-system";
-import { ORDER_STATUS_LABELS, nextActionVerb, nextStatus } from "./orderStatus";
+import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
 import { pending, profit } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import type { Order } from "../../types";
@@ -30,12 +30,11 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const shortfall = typeof stock === "number" ? Math.max(0, order.quantity - stock) : 0;
 
   function advance() {
-    if (!verb) return;
-    const next = nextStatus(order.status);
-    if (!next) return;
-    upsertOrder({ ...order, status: next, updatedAt: new Date().toISOString() });
+    const advanced = advanceOrder(order);
+    if (!advanced) return;
+    upsertOrder(advanced);
     // Show the state reached (participle label), not the action verb.
-    toast.success(`Pedido avanzado a «${ORDER_STATUS_LABELS[next]}»`);
+    toast.success(`Pedido avanzado a «${ORDER_STATUS_LABELS[advanced.status]}»`);
   }
 
   return (
