@@ -109,7 +109,7 @@ export function subscribeCloudState(
   let timer: ReturnType<typeof setTimeout> | null = null;
   // ponytail: trailing debounce is enough — we don't need leading-edge delivery.
   // 150ms coalesces the near-simultaneous fires from a multi-collection write
-  // (e.g. seedCloudIfEmpty) into one loadCloudState call.
+  // into one loadCloudState call.
   const DEBOUNCE_MS = 150;
   const triggerReload = () => {
     if (timer) clearTimeout(timer);
@@ -639,17 +639,7 @@ export async function upsertPublicProduct(
   }
 
   // Refresh the catalog summaries for this store.
-  const published = allStoreProducts.filter((p) => p.storeId === product.storeId && isPublished(p));
-  await setDoc(
-    doc(db, "publicCatalogs", storeSlug),
-    {
-      storeSlug,
-      products: published
-        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-        .map((p) => projectPublicProductSummary(p, storeSlug, defaultTierId)),
-    },
-    { merge: true }
-  );
+  await rebuildPublicCatalog(storeSlug, product.storeId, allStoreProducts, defaultTierId);
 }
 
 /** Remove one product's public detail doc by store + slug. Best-effort. */
@@ -680,16 +670,4 @@ export async function rebuildPublicCatalog(
     },
     { merge: true }
   );
-}
-
-/**
- * No-op. This used to auto-seed demo stores (Santi + Joyería) into Firestore for
- * a brand-new super_admin account. Removed: this is a real product — a new
- * account starts EMPTY and the operator creates their own store. Auto-seeding
- * demo data polluted dev/preview/prod backends with phantom stores. Kept as a
- * no-op (not deleted) because StoreProvider calls it on every cloud login; the
- * signature stays so the call site is unchanged.
- */
-export async function seedCloudIfEmpty(_user: AppUser): Promise<void> {
-  return;
 }

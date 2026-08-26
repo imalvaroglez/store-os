@@ -17,7 +17,7 @@ import type {
   Supplier,
   Purchase,
 } from "../types";
-import { loadState, saveState, emptyState } from "../lib/storage";
+import { loadState, saveState } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
@@ -30,7 +30,6 @@ import {
   subscribeCloudState,
   saveEntity,
   deleteEntity,
-  seedCloudIfEmpty,
   claimSlug,
   projectPublicForStore,
   unprojectPublicForStore,
@@ -69,7 +68,6 @@ type Action =
   | { type: "ADD_ORDER"; order: Order }
   | { type: "UPDATE_ORDER"; order: Order }
   | { type: "DELETE_ORDER"; orderId: string }
-  | { type: "RESET_DEMO" }
   // cloud sync pushes a whole state
   | { type: "REPLACE_STATE"; state: AppState }
   // purchase-ux2 bulk create: products + their purchase land in ONE dispatch
@@ -137,8 +135,6 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, orders: state.orders.map((o) => (o.id === action.order.id ? action.order : o)) };
     case "DELETE_ORDER":
       return { ...state, orders: state.orders.filter((o) => o.id !== action.orderId) };
-    case "RESET_DEMO":
-      return emptyState(); // "reset demo" now means "clear local data" (client demo seed removed)
     case "REPLACE_STATE":
       // A cloud sync must never move the user to another store: on slow
       // backends the snapshot can land after the user switched/created one,
@@ -202,7 +198,6 @@ type StoreContextValue = {
   deleteCustomer: (customerId: string) => void;
   upsertOrder: (order: Order) => void;
   deleteOrder: (orderId: string) => void;
-  resetDemo: () => void;
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -220,9 +215,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let unsub: (() => void) | undefined;
     if (cloud && user) {
-      // Seed demo stores on a brand-new (empty) cloud account, then load + subscribe.
-      seedCloudIfEmpty(user)
-        .then(() => loadCloudState(user))
+      loadCloudState(user)
         .then(async (s) => {
           const migrated = migrateCatalog(s);
           const writes: Promise<void>[] = [];
@@ -649,11 +642,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       dispatch({ type: "DELETE_ORDER", orderId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "orders", orderId).catch(() => {});
-    },
-    resetDemo: () => {
-      // Only meaningful in local mode (cloud has its own data).
-      if (cloud) return;
-      dispatch({ type: "RESET_DEMO" });
     },
   };
 
