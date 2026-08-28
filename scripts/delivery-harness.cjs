@@ -355,7 +355,13 @@ function validateQueue(root = ROOT) {
         errors.push(`Spec faltante para ${item.status}: ${item.id}`);
       } else {
         try {
-          validateSpec(item, fs.readFileSync(specFile, "utf8"), item.status === "queued" ? "Approved" : "Pending approval");
+          // queued exige Approved+Approved-By; awaiting-approval acepta ambos
+          // estados de header (la aprobación real es el merge del owner).
+          const text = fs.readFileSync(specFile, "utf8");
+          const status = item.status === "queued"
+            ? "Approved"
+            : (specMetadata(text).status === "Approved" ? "Approved" : "Pending approval");
+          validateSpec(item, text, status);
         } catch (error) {
           errors.push(`${item.id}: ${error.message}${error.details?.length ? ` (${error.details.join(", ")})` : ""}`);
         }
@@ -411,6 +417,43 @@ function deliveryIdFromBody(body = "") {
   return String(body || "").match(/^Delivery-ID:\s*([a-z0-9-]+)\s*$/m)?.[1] || "";
 }
 
+let repoOwnerCache = null;
+function repoOwnerLogin(root = ROOT) {
+  if (repoOwnerCache) return repoOwnerCache;
+  const command = ghInvocation(root, ["repo", "view", "--json", "owner", "--jq", ".owner.login"]);
+  const result = run(command.command, command.args, { cwd: root });
+  if (result.exitCode !== 0) {
+    repoOwnerCache = null;
+    return null; // falla cerrado: sin owner no hay evidencia de aprobación
+  }
+  repoOwnerCache = JSON.parse(result.stdout).login;
+  return repoOwnerCache;
+}
+
+const ownerMergedSpecCache = new Map();
+function specApprovedByOwnerMerge(root = ROOT, specPath) {
+  if (ownerMergedSpecCache.has(specPath)) return ownerMergedSpecCache.get(specPath);
+  let approved = false;
+  const owner = repoOwnerLogin(root);
+  if (owner) {
+    const command = ghInvocation(root, ["pr", "list", "--state", "merged", "--limit", "100", "--json", "number,mergedBy,files"]);
+    const result = run(command.command, command.args, { cwd: root });
+    if (result.exitCode === 0) {
+      try {
+        approved = JSON.parse(result.stdout).some((pr) =>
+          pr.mergedBy?.login === owner && (pr.files || []).some((file) => file.path === specPath));
+      } catch { approved = false; } // falla cerrado
+    }
+  }
+  ownerMergedSpecCache.set(specPath, approved);
+  return approved;
+}
+
+function ownerApproved(queueItem, root = ROOT) {
+  return queueItem.status === "queued"
+    || (queueItem.status === "awaiting-approval" && specApprovedByOwnerMerge(root, queueItem.specPath));
+}
+
 function queueOutcome(queue, done, prs, active = null) {
   for (const item of queue.items) {
     if (item.status === "frozen" || done.has(item.id)) continue;
@@ -425,7 +468,7 @@ function queueOutcome(queue, done, prs, active = null) {
         message: "Crear únicamente una spec en draft PR y pausar hasta aprobación humana.",
       };
     }
-    if (item.status === "awaiting-approval") {
+    if (item.status === "awaiting-approval" && !specApprovedByOwnerMerge(ROOT, item.specPath)) {
       return { outcome: "WAITING_SPEC_APPROVAL", item, message: "La spec debe ser aprobada y fusionada por una persona." };
     }
     const missing = item.dependsOn.filter((id) => !done.has(id));
@@ -500,7 +543,7 @@ function beginDelivery(root = ROOT, id, prs = openPullRequests(root), closedPrs)
   const queue = validateQueue(root);
   const item = queue.items.find((candidate) => candidate.id === id);
   if (!item) fail(`Delivery-ID desconocido: ${id}`);
-  if (item.status !== "queued") fail(`${id} no está queued`, [item.status]);
+  if (!ownerApproved(item)) fail(`${id} no está autorizado`, [item.status, "se requiere queued o awaiting-approval con spec mergeada por el owner"]);
   if (completedIds(root).has(id)) fail(`${id} ya fue fusionado`);
   if (prs.some((pr) => deliveryIdFromBody(pr.body) === id)) fail(`Ya existe un PR abierto para ${id}`);
   const missing = item.dependsOn.filter((dependency) => !completedIds(root).has(dependency));
@@ -1070,7 +1113,7 @@ function publishBlockers(root = ROOT, prs = openPullRequests(root)) {
   } catch (error) {
     blockers.push(error.message);
   }
-  if (!item || item.status !== "queued") blockers.push("La entrega ya no está queued en main");
+  if (!item || !ownerApproved(item, root)) blockers.push("La entrega ya no está autorizada en main (queued, o awaiting-approval con spec mergeada por el owner)");
   if (completedIds(root, ref).has(runState.id)) blockers.push("La entrega ya fue completada en main");
   const competitors = competingPullRequests(prs, runState);
   for (const competitor of competitors) blockers.push(`PR competidor para ${runState.id}: #${competitor.number}`);
