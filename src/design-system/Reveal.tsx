@@ -39,13 +39,3 @@ export function Reveal({ children }: { children: ReactNode }) {
     </div>
   );
 }
-
-// Staggered reveal for list children. Each direct child fades up ~80ms after the
-// previous, capped at 6 so long lists do not feel slow.
-export function RevealList({ children }: { children: ReactNode }) {
-  return (
-    <div className="rise">
-      {children}
-    </div>
-  );
-}

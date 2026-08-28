@@ -9,7 +9,11 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { parseSupplierOrder } from "./parser.js";
-import "./admin.mjs";
+
+// Initialize the default Admin app once (the emulator may re-evaluate this
+// module on reload; guard against double init).
+if (!globalThis.__storeOsAdmin) globalThis.__storeOsAdmin = initializeApp();
+import { initializeApp } from "firebase-admin/app";
 
 const MAX_PAGES = 8;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;

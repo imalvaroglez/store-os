@@ -4,9 +4,6 @@ import {
 } from "./config";
 import {
   subscribeToAuth,
-  signInWithEmail as doSignIn,
-  signUpWithEmail as doSignUp,
-  signInWithGoogle as doGoogle,
   signOutFirebase as doSignOut,
   type AppUser,
 } from "./auth";
@@ -19,9 +16,6 @@ type AuthContextValue = {
   user: AppUser | null;
   authReady: boolean;
   enabled: boolean; // false when Firebase isn't configured (pure local app)
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
-  signInGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -45,15 +39,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     authReady,
     enabled,
-    signIn: async (email, password) => {
-      await doSignIn(email, password);
-    },
-    signUp: async (email, password) => {
-      await doSignUp(email, password);
-    },
-    signInGoogle: async () => {
-      await doGoogle();
-    },
     signOut: async () => {
       await doSignOut();
       setUser(null);

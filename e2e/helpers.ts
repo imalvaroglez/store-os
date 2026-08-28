@@ -24,9 +24,9 @@ export function unique(prefix: string) {
   return `${prefix}+${Date.now()}_${counter}@example.com`;
 }
 
-const FIRESTORE_REST = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
+export const FIRESTORE_REST = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
 
-function encode(value: unknown): unknown {
+export function encode(value: unknown): unknown {
   if (value === null || value === undefined) return { nullValue: null };
   if (typeof value === "string") return { stringValue: value };
   if (typeof value === "number") return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
@@ -36,7 +36,7 @@ function encode(value: unknown): unknown {
   return { nullValue: null };
 }
 
-function toFields(value: Record<string, unknown>) {
+export function toFields(value: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined).map(([key, entry]) => [key, encode(entry)]));
 }
 
@@ -48,6 +48,23 @@ export async function adminToken(email: string, password: string) {
   const value = (await response.json()) as { idToken?: string; localId?: string };
   if (!value.idToken || !value.localId) throw new Error(`Could not authenticate fixture owner: ${JSON.stringify(value)}`);
   return { token: value.idToken, uid: value.localId };
+}
+
+// Create-or-sign-in an emulator account (REST fixtures can outlive a wipe, so
+// sign-up falls back to sign-in) and return its token + uid.
+export async function mintUserToken(email = ADMIN_EMAIL, password = "password123") {
+  const base = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
+  const creds = { email, password, returnSecureToken: true };
+  const post = (action: string) =>
+    fetch(`${base}/accounts:${action}?key=fake-api-key-for-emulator`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(creds),
+    }).then((r) => r.json() as Promise<{ idToken?: string; localId?: string }>);
+  let data = await post("signUp");
+  if (!data.idToken) data = await post("signInWithPassword");
+  if (!data.idToken || !data.localId) throw new Error(`Could not mint token for ${email}: ${JSON.stringify(data)}`);
+  return { token: data.idToken, uid: data.localId };
 }
 
 // Explicit test-only fixture. Production code intentionally never auto-seeds a
@@ -122,8 +139,8 @@ export async function wipeEmulator(): Promise<void> {
       { method: "DELETE" }
     );
     // The Firestore emulator's bulk DELETE can return before the deletion is fully
-    // durable; a brief settle avoids a follow-up seedCloudIfEmpty seeing stale
-    // stores and skipping the seed (leaving the new admin with no products).
+    // durable; a brief settle avoids a follow-up fixture seed seeing stale
+    // stores and skipping (leaving the new admin with no products).
     await new Promise((r) => setTimeout(r, 400));
   } catch {
     // Emulator not reachable — tests will fail loudly downstream.
@@ -131,58 +148,23 @@ export async function wipeEmulator(): Promise<void> {
 }
 
 export async function gotoClean(page: Page, path = "/") {
-  // Install the banner-killer before navigating (best-effort, see
-  // hideEmulatorBanner).
-  await hideEmulatorBanner(page);
   // Don't use waitForLoadState("networkidle") — Firestore onSnapshot keeps the
   // network busy in cloud mode. domcontentloaded + a settle delay instead.
   await page.goto(path, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(700);
-  // Imperatively hide the emulator banner on the now-live DOM too. addInitScript
-  // races the SDK (the banner is injected post-load by the Firebase emulator
-  // SDK); adding a <style> after the settle delay reliably neutralizes it for the
-  // current page so it can't intercept clicks on small viewports.
-  await killEmulatorBanner(page);
-}
-
-// Inject a <style> hiding the emulator banner on the live DOM. Unlike
-// addInitScript (which races the SDK), this runs AFTER navigation so the banner
-// node already exists. Persists until the next navigation.
-export async function killEmulatorBanner(page: Page) {
-  await page.addStyleTag({
-    content: ".firebase-emulator-warning{display:none!important;pointer-events:none!important;}",
-  }).catch(() => {});
+  await hideEmulatorBanner(page);
 }
 
 // The Firebase emulator SDK injects a fixed-position <p class="firebase-emulator-
 // warning"> banner that, on small viewports, overlays and intercepts pointer
-// events on buttons (signUp was timing out on mobile because the banner sat on
-// top of "¿No tienes cuenta? Crear una"). The SDK re-creates the node, so
-// removing it races; instead we inject a <style> that neutralizes the class
-// (pointer-events: none + display: none) which survives re-creation. The style
-// is re-injected on every navigation via addInitScript.
-const BANNER_KILLER = `
-(() => {
-  const css = '.firebase-emulator-warning{display:none!important;pointer-events:none!important;}';
-  let s = document.getElementById('e2e-banner-killer');
-  if (!s) {
-    s = document.createElement('style');
-    s.id = 'e2e-banner-killer';
-    s.textContent = css;
-    (document.head || document.documentElement).appendChild(s);
-  }
-  new MutationObserver(() => {
-    if (!document.getElementById('e2e-banner-killer')) {
-      const ns = document.createElement('style');
-      ns.id = 'e2e-banner-killer';
-      ns.textContent = css;
-      (document.head || document.documentElement).appendChild(ns);
-    }
-  }).observe(document.documentElement, { childList: true, subtree: true });
-})();
-`;
+// events on buttons. A <style> added AFTER navigation hides the class for the
+// rest of the page's life (also for banner nodes created later). Early injection
+// via addInitScript does NOT survive the HTML parser, so post-navigation is the
+// one reliable spot — call it from the navigation helpers, after the settle.
 export async function hideEmulatorBanner(page: Page) {
-  await page.addInitScript(BANNER_KILLER);
+  await page.addStyleTag({
+    content: ".firebase-emulator-warning{display:none!important;pointer-events:none!important;}",
+  }).catch(() => {});
 }
 
 // Clear browser-stored auth/localStorage so no prior session leaks across tests.
@@ -201,10 +183,9 @@ export async function openSettings(page: Page) {
   // Ensure we're on the admin shell (which has the Opciones button). Navigating
   // home is a no-op if already there and guarantees the sidebar/header is present
   // even after a signup that landed elsewhere.
-  await hideEmulatorBanner(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(700);
-  await killEmulatorBanner(page);
+  await hideEmulatorBanner(page);
   await page.getByRole("button", { name: "Opciones" }).first().click();
   await expect(page.getByRole("heading", { name: "Opciones" })).toBeVisible();
 }
@@ -263,14 +244,6 @@ export async function signUp(page: Page, email: string, password: string) {
 
 async function signUpInUi(page: Page, email: string, password: string) {
   await gotoClean(page);
-  // The Firebase emulator injects a fixed-position banner that, on small
-  // viewports, overlays and intercepts pointer events on the auth-sheet buttons.
-  // addInitScript's banner-killer races the SDK, so also hide it imperatively on
-  // the live DOM right before interacting (addStyleTag applies immediately and
-  // persists until the next navigation; the sheet opens without navigating).
-  await page.addStyleTag({
-    content: ".firebase-emulator-warning{display:none!important;pointer-events:none!important;}",
-  });
   if ((await page.getByRole("heading", { name: "Entrar", exact: true }).count()) === 0) {
     await openSettings(page);
     await page.getByRole("button", { name: /Entrar \/ Crear cuenta/ }).click();
@@ -322,9 +295,8 @@ export async function openCatalog(page: Page) {
 
 // Deterministic super_admin login: wipe, authenticate the allow-listed test
 // admin, install explicit emulator-only fixtures, and wait for them in the UI.
-export async function loginAsFirstAdmin(page: Page, prefix: string, password = "password123") {
+export async function loginAsFirstAdmin(page: Page, password = "password123") {
   await wipeEmulator();
-  void prefix;
   const email = ADMIN_EMAIL;
   await signUp(page, email, password);
   await seedEmulatorFixtures(email, password);
@@ -372,7 +344,6 @@ export async function switchToStore(page: Page, name: string) {
 // switcher button (present on every admin screen), not the home text — after a
 // reload the route may be a deep tab, not Inicio.
 export async function ensureSantiActive(page: Page) {
-  await killEmulatorBanner(page);
   // Wait for the shell (store switcher) to mount — it carries the active store's
   // initial in its avatar + name.
   const switcher = page

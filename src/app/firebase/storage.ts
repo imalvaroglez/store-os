@@ -27,7 +27,7 @@ const EMULATOR_BUCKET = "store-os-demo.appspot.com";
 let storage: FirebaseStorage | null = null;
 let emulatorConnected = false;
 
-function getStorageInstance(): FirebaseStorage {
+export function getStorageInstance(): FirebaseStorage {
   const { app } = getFirebase();
   if (!storage) {
     const bucket = EMULATOR ? EMULATOR_BUCKET : undefined;
@@ -140,17 +140,6 @@ export async function deleteProductImage(
   const s = getStorageInstance();
   try {
     await deleteObject(ref(s, `products/${storeId}/${productId}.jpg`));
-  } catch (err) {
-    const code = (err as { code?: string }).code ?? "";
-    if (!code.includes("object-not-found")) throw err;
-  }
-}
-
-/** Remove one gallery image by its storage path. Swallows not-found. */
-export async function deleteGalleryImage(storagePath: string): Promise<void> {
-  const s = getStorageInstance();
-  try {
-    await deleteObject(ref(s, storagePath));
   } catch (err) {
     const code = (err as { code?: string }).code ?? "";
     if (!code.includes("object-not-found")) throw err;

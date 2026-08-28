@@ -1,4 +1,4 @@
-import type { OrderStatus } from "../../types";
+import type { Order, OrderStatus } from "../../types";
 
 // Spanish labels for order statuses + the linear next step in the flow.
 // Labels are the product language; the enum stays in English.
@@ -48,4 +48,10 @@ export function nextActionVerb(status: OrderStatus): string | null {
   const next = nextStatus(status);
   if (!next) return null;
   return ORDER_ACTION_VERBS[next];
+}
+
+/** One order advanced to its next status (new updatedAt), or null when terminal. */
+export function advanceOrder<T extends Order>(order: T): T | null {
+  const next = nextStatus(order.status);
+  return next ? { ...order, status: next, updatedAt: new Date().toISOString() } : null;
 }

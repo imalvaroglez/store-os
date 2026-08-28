@@ -32,7 +32,7 @@ const test = base.extend<{ sharedPage: Page }>({
 test.beforeAll(async ({ browser }) => {
   const ctx = await browser.newContext();
   sharedPage = await ctx.newPage();
-  await loginAsFirstAdmin(sharedPage, "firebase");
+  await loginAsFirstAdmin(sharedPage);
 });
 
 test.afterAll(async () => {

@@ -6,7 +6,7 @@ import { Button, TextField, SelectField, Dialog, Sheet, useToast } from "../../d
 import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { SlugTakenError } from "../../app/firebase/firestoreData";
 import { createWhatsAppShareCatalogUrl } from "../../lib/whatsapp";
-import { slugify } from "./slugify";
+import { slugify } from "../../lib/catalog";
 import { StorefrontEditor } from "../catalog/StorefrontEditor";
 import { normalizeSkuPrefixToken } from "../../lib/catalog";
 import { CANONICAL_TIERS } from "../../lib/pricing";

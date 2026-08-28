@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { useAuth } from "./AuthProvider";
+import { signInWithEmail as signIn, signUpWithEmail as signUp, signInWithGoogle } from "./auth";
 import { Button, TextField, ScreenHeader } from "../../design-system";
 
 // Email/password sign-in / sign-up + Google. Shown as a sheet from Settings or a
 // standalone screen. First-ever signup becomes super_admin (handled in auth.ts).
 export function AuthScreen({ onDone }: { onDone?: () => void }) {
-  const { signIn, signUp, signInGoogle } = useAuth();
   const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,7 +30,7 @@ export function AuthScreen({ onDone }: { onDone?: () => void }) {
     setError(null);
     setBusy(true);
     try {
-      await signInGoogle();
+      await signInWithGoogle();
       onDone?.();
     } catch (err) {
       setError(friendlyError(err));
