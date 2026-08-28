@@ -20,15 +20,16 @@ Queue authorization commands fetch `origin/main` first and fail closed if it can
 
 Code implementation is authorized only when all of these are true:
 
-1. The queue item is `queued`.
-2. Its spec exists in `main` with matching `Delivery-ID`, `Delivery-Status: Approved`, and a nonempty `Approved-By`.
-3. `.delivery/completed/<id>.json` is not already in `main`.
-4. No open PR already carries that `Delivery-ID`.
-5. Every dependency is completed.
+1. The queue item is `queued`, or `awaiting-approval` with its spec already in `main`.
+2. The owner approved the spec. Either evidence suffices: the pull request that introduced the spec was **merged by the repo owner** (verified with `gh`, fail-closed), or the spec in `main` carries `Delivery-Status: Approved` with a nonempty `Approved-By`. The harness advances the item automatically from that evidence — no separate approval PR, status flip, or manual step exists.
+3. The spec exists in `main` with a matching `Delivery-ID`.
+4. `.delivery/completed/<id>.json` is not already in `main`.
+5. No open PR already carries that `Delivery-ID`.
+6. Every dependency is completed.
 
 A backlog `ready` label is not authorization.
 
-For `needs-spec`, the only permitted change is the new spec plus that queue entry changing to `awaiting-approval`. The spec uses `Delivery-Status: Pending approval`. The agent opens a draft PR and stops. The agent never writes `Approved-By`, approves its own spec, or implements code in that PR.
+For `needs-spec`, the only permitted change is the new spec plus that queue entry changing to `awaiting-approval`. The agent opens a draft PR and stops. **The owner's merge of that PR is the approval** — the harness detects it and the item becomes actionable without any further human step. The agent never approves its own spec or implements code in that PR.
 
 ## One delivery, one writer
 
