@@ -137,7 +137,7 @@
       "id": "receipts",
       "title": "Recibos",
       "priority": 100,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/receipts-design.md",
       "dependsOn": [],
       "previewChecks": []
