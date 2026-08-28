@@ -129,11 +129,12 @@ export async function loadPublicCatalog(slug: string): Promise<{
 
 /**
  * Load a single product's public detail by store slug + product slug. Anonymous.
- * The detail doc id is {storeId}__{slug}; storeId is read from the (already
- * anonymous-readable) publicCatalogs doc rather than the auth-gated slug
- * reservation, so no rule change is needed. +2 reads (catalog for storeId,
- * detail) — the storefront visit already cached the catalog, so in practice this
- * is +1.
+ * The detail doc id is {storeId}__{slug}. storeId comes from publicStores/{slug};
+ * a storefront doc published before 390e76a carries no storeId, in which case the
+ * loader falls back to publicCatalogs/{slug}. PublicCatalogNotFoundError fires
+ * only when NEITHER doc has one (the store was never published). Both sources are
+ * anonymous-readable, so no rule change is needed. +2 reads (store + detail); the
+ * stale-doc fallback adds +1, and only in that case.
  */
 export async function loadPublicProduct(
   storeSlug: string,
@@ -148,7 +149,16 @@ export async function loadPublicProduct(
     if (!storeSnap.exists()) throw new PublicCatalogNotFoundError(storeSlug);
     store = { slug: storeSlug, ...(storeSnap.data() as Omit<PublicStore, "slug">) };
   }
-  if (!store.storeId) throw new PublicCatalogNotFoundError(storeSlug);
+  if (!store.storeId) {
+    // publicStores anterior a 390e76a no trae storeId; publicCatalogs siempre
+    // lo trajo (+1 lectura sólo en el caso estancado).
+    const catSnap = await getDoc(doc(db, "publicCatalogs", storeSlug));
+    const catStoreId = catSnap.exists()
+      ? (catSnap.data() as { storeId?: string }).storeId
+      : undefined;
+    if (!catStoreId) throw new PublicCatalogNotFoundError(storeSlug);
+    store = { ...store, storeId: catStoreId };
+  }
   const productSnap = await getDoc(doc(db, "publicProducts", `${store.storeId}__${productSlug}`));
 
   if (!productSnap.exists()) throw new PublicProductNotFoundError(productSlug);
