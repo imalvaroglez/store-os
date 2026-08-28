@@ -2,6 +2,36 @@
   "version": 1,
   "items": [
     {
+      "id": "public-product-detail",
+      "title": "Catálogo público: detalle de producto inaccesible (storeId ausente en publicStores estancado)",
+      "priority": 1,
+      "status": "needs-spec",
+      "specPath": "docs/superpowers/specs/public-product-detail-design.md",
+      "dependsOn": [],
+      "previewChecks": [
+        {
+          "path": "/catalogo/olivia/producto/anillo-blossom",
+          "selector": "body",
+          "text": "Anillo Blossom"
+        }
+      ]
+    },
+    {
+      "id": "productos-sort-filter",
+      "title": "/productos: ordenar (nombre/precio/stock/fecha) y filtrar por categoría",
+      "priority": 2,
+      "status": "needs-spec",
+      "specPath": "docs/superpowers/specs/productos-sort-filter-design.md",
+      "dependsOn": [],
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
+    },
+    {
       "id": "purchase-ux2-fast-receive",
       "title": "UX iteración 2 — Recepción rápida de compras (port + UX2)",
       "priority": 5,
