@@ -1,6 +1,7 @@
 ---
 Delivery-ID: public-product-detail
-Delivery-Status: Pending approval
+Delivery-Status: Approved
+Approved-By: Álvaro González (owner) — aprobado en sesión 2026-08-28, PR #55
 specPath: docs/superpowers/specs/public-product-detail-design.md
 ---
 # Catálogo público: detalle de producto inaccesible (storeId ausente en publicStores estancado)
