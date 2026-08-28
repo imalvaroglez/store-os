@@ -5,7 +5,7 @@
       "id": "public-product-detail",
       "title": "Catálogo público: detalle de producto inaccesible (storeId ausente en publicStores estancado)",
       "priority": 1,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/public-product-detail-design.md",
       "dependsOn": [],
       "previewChecks": [
