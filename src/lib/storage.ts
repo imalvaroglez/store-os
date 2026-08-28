@@ -8,22 +8,16 @@ export const STORAGE_KEY = "store_os_state_v1";
 
 // A signed-out visitor (or a developer who hasn't logged in) with empty storage
 // reaches the AuthScreen — we NEVER auto-seed demo stores into the browser.
-// Client demo data was removed entirely (delivery remove-client-demo-seed);
-// resetDemo() now clears local state. The Olivia fixture for the DEV backend
-// lives only in scripts/seed-dev.cjs.
+// The Olivia fixture for the DEV backend lives only in scripts/seed-dev.cjs.
 export function emptyState(): AppState {
   return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
-}
-
-function freshState(): AppState {
-  return emptyState();
 }
 
 export function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      const seeded = freshState();
+      const seeded = emptyState();
       saveState(seeded);
       return seeded;
     }
@@ -31,7 +25,7 @@ export function loadState(): AppState {
     return migrateCatalog(normalizeState(parsed));
   } catch {
     // Corrupt state -> reset. Demo seed in dev, empty in production.
-    const seeded = freshState();
+    const seeded = emptyState();
     saveState(seeded);
     return seeded;
   }
@@ -42,14 +36,6 @@ export function saveState(state: AppState): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Storage full / unavailable: no-op. Local-first degrades silently.
-  }
-}
-
-export function clearState(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // ignore
   }
 }
 

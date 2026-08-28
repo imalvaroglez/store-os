@@ -66,7 +66,6 @@ export type Storefront = {
   faq?: FAQItem[];
   shipping?: string; // entregas / envíos
   payments?: string[]; // métodos de pago aceptados
-  policies?: string; // políticas básicas
   hours?: string; // horarios de atención
   instagram?: string; // usuario o enlace
   // Commercial rules:

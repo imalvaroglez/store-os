@@ -16,16 +16,6 @@ export function Skeleton({ className = "" }: { className?: string }) {
   );
 }
 
-export function SkeletonText({ lines = 2 }: { lines?: number }) {
-  return (
-    <div className="flex flex-col gap-2">
-      {Array.from({ length: lines }).map((_, i) => (
-        <Skeleton key={i} className={i === lines - 1 ? "h-3 w-3/5" : "h-3 w-full"} />
-      ))}
-    </div>
-  );
-}
-
 export function SkeletonCard() {
   return (
     <div className="rounded-card bg-surface border border-rule p-3 shadow-card">

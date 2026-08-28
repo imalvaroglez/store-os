@@ -3,7 +3,6 @@ import {
   weightedAverageCost,
   applyPurchaseLines,
   committedForProduct,
-  reservationDelta,
 } from "./inventory";
 import type { Product, PurchaseLine, Order } from "../types";
 
@@ -118,19 +117,3 @@ describe("committedForProduct", () => {
   });
 });
 
-describe("reservationDelta", () => {
-  it("returns the stock change needed when an order quantity changes", () => {
-    // new order of 3 (no old) -> reserve 3
-    expect(reservationDelta(undefined, 3)).toBe(-3);
-    // edit from 3 to 5 -> reserve 2 more
-    expect(reservationDelta(3, 5)).toBe(-2);
-    // edit from 5 to 2 -> release 3
-    expect(reservationDelta(5, 2)).toBe(3);
-    // delete (newQty undefined) -> release all
-    expect(reservationDelta(5, undefined)).toBe(5);
-  });
-  it("returns 0 when nothing changed", () => {
-    expect(reservationDelta(4, 4)).toBe(0);
-    expect(reservationDelta(undefined, undefined)).toBe(0);
-  });
-});

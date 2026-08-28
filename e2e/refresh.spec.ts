@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { servePreview } from "./refresh-server";
-import { killEmulatorBanner, loginAsFirstAdmin, openCatalog, writeEmulatorDoc } from "./helpers";
+import { hideEmulatorBanner, loginAsFirstAdmin, openCatalog, writeEmulatorDoc } from "./helpers";
 
 // The executable closure criterion for the refresh-hard-reload spec: a browser
 // that lived through a "deploy" (same URL, new build marker) must show the new
@@ -96,7 +96,7 @@ test("cloud: session survives reload and fresh data appears (emulator)", async (
   const stop = await servePreview("dist-cloud", MARKER_CLOUD);
   try {
     // Wipes the emulator, signs up the allow-listed admin, seeds Santi, ends at Inicio.
-    await loginAsFirstAdmin(page, "refresh");
+    await loginAsFirstAdmin(page);
     expect(await buildMarker(page)).toBe(MARKER_CLOUD);
 
     // Data lands "between deploys" (here: mid-session, straight to Firestore).
@@ -120,10 +120,9 @@ test("cloud: session survives reload and fresh data appears (emulator)", async (
     });
 
     await page.reload();
-    // The Firebase emulator banner re-injects on load and intercepts clicks on
-    // small viewports; neutralize it (same as gotoClean does for every helper
-    // navigation — a raw reload skips that path).
-    await killEmulatorBanner(page);
+    // A raw reload builds a fresh document: re-neutralize the emulator banner
+    // (gotoClean's post-navigation style does not survive it either).
+    await hideEmulatorBanner(page);
     // Session persisted (no AuthScreen) and the shell rehydrated.
     await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
     // Fresh data visible without any workaround.

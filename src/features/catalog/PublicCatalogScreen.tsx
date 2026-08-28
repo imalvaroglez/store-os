@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
 import { formatMoney, publicPrice } from "../../lib/money";
 import { createWhatsAppProductUrl, createWhatsAppStoreUrl } from "../../lib/whatsapp";
-import { loadPublicCatalog, PublicCatalogNotFoundError, type PublicCatalog, type PublicStore } from "../../app/firebase/publicCatalog";
+import { loadPublicCatalog, type PublicCatalog, type PublicStore } from "../../app/firebase/publicCatalog";
 
 // Generic public catalog for every store except Olivia. It deliberately keeps
 // the established Store OS look instead of inheriting Olivia's fixed brand.
@@ -16,9 +16,8 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
     setFailed(false);
     loadPublicCatalog(slug).then((next) => {
       if (!cancelled) setData(next);
-    }).catch((error) => {
-      if (!cancelled && error instanceof PublicCatalogNotFoundError) setFailed(true);
-      else if (!cancelled) setFailed(true);
+    }).catch(() => {
+      if (!cancelled) setFailed(true);
     });
     return () => { cancelled = true; };
   }, [slug]);

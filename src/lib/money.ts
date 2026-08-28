@@ -34,11 +34,6 @@ export function publicPrice(
   return undefined;
 }
 
-/** Best available cost for profit math. */
-export function productCost(p: { cost?: number }): number | undefined {
-  return p.cost;
-}
-
 /** Profit = (price - cost) * quantity. Undefined when cost unknown. */
 export function profit(
   price: number,

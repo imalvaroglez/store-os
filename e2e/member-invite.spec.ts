@@ -15,7 +15,7 @@ test("invite by email reconciles on the invitee's login", async ({ browser }) =>
   // A: the allow-listed admin, owns Santi (seeded by loginAsFirstAdmin).
   const ctxA = await browser.newContext();
   const pageA = await ctxA.newPage();
-  await loginAsFirstAdmin(pageA, "invite");
+  await loginAsFirstAdmin(pageA);
 
   // Invite B from the store settings sheet (picker → Administrar Santi).
   await pageA.getByRole("button", { name: /Cambiar tienda/ }).first().click();

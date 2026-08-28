@@ -29,7 +29,7 @@ const LINES = Array.from({ length: 50 }, (_, i) => ({
 test.beforeAll(async ({ browser }) => {
   const ctx = await browser.newContext();
   sharedPage = await ctx.newPage();
-  await loginAsFirstAdmin(sharedPage, "ux2");
+  await loginAsFirstAdmin(sharedPage);
   // Seed the 50-line draft AFTER login so the cloud listener already ran; the
   // onSnapshot picks it up live.
   const total = LINES.reduce((s, l) => s + (l.sourceAmount ?? 0), 0);

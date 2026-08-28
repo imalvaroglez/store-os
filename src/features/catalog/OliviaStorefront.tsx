@@ -545,17 +545,13 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
             {product.categories.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-2">
                 {product.categories.map((c) => (
-                  <a
+                  <StorefrontLink
                     key={c.id}
-                    href={`/catalogo/${slug}/categoria/${c.slug}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate(`/catalogo/${slug}/categoria/${c.slug}`);
-                    }}
+                    to={`/catalogo/${slug}/categoria/${c.slug}`}
                     className="text-xs rounded-full bg-white/60 px-3 py-1 text-[var(--olv-ink)]"
                   >
                     {c.name}
-                  </a>
+                  </StorefrontLink>
                 ))}
               </div>
             )}
@@ -595,6 +591,22 @@ function Detail({ label, value }: { label: string; value: string }) {
 
 // --- Shared chrome --------------------------------------------------------
 
+// Anchor that keeps its href (middle-click, copy link) while navigating in-app.
+function StorefrontLink({ to, className, children }: { to: string; className?: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={to}
+      onClick={(e) => {
+        e.preventDefault();
+        navigate(to);
+      }}
+      className={className}
+    >
+      {children}
+    </a>
+  );
+}
+
 function StoreChrome({ store, children }: { store?: PublicStore; children: React.ReactNode }) {
   return (
     <div className="olivia-root min-h-full">
@@ -602,16 +614,9 @@ function StoreChrome({ store, children }: { store?: PublicStore; children: React
       {store && (
         <header className="sticky top-0 z-10 backdrop-blur bg-[var(--olv-bg)]/85 border-b border-[var(--olv-rule)]">
           <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
-            <a
-              href={`/catalogo/${store.slug}`}
-              onClick={(e) => {
-                e.preventDefault();
-                navigate(`/catalogo/${store.slug}`);
-              }}
-              className="olv-display text-xl font-semibold"
-            >
+            <StorefrontLink to={`/catalogo/${store.slug}`} className="olv-display text-xl font-semibold">
               {store.name}
-            </a>
+            </StorefrontLink>
           </div>
         </header>
       )}

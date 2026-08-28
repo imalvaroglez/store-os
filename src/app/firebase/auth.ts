@@ -7,8 +7,6 @@ import {
   onAuthStateChanged,
   sendEmailVerification,
   sendSignInLinkToEmail,
-  isSignInWithEmailLink,
-  signInWithEmailLink,
   type AuthError,
   type User as FbUser,
 } from "firebase/auth";
@@ -245,17 +243,4 @@ export async function sendInviteLink(email: string, store?: { name?: string }): 
     INVITE_ACTION_CODE_SETTINGS
   );
   void store; // store name could be templated into the email in a real backend.
-}
-
-/** Is the current URL a sign-in-with-email-link result? */
-export function isInviteSignInLink(): boolean {
-  const { auth } = getFirebase();
-  return isSignInWithEmailLink(auth, typeof window !== "undefined" ? window.location.href : "");
-}
-
-/** Complete a sign-in from an invite email link. */
-export async function completeInviteSignIn(email: string): Promise<AppUser> {
-  const { auth } = getFirebase();
-  const cred = await signInWithEmailLink(auth, email, window.location.href);
-  return afterLogin(cred.user);
 }
