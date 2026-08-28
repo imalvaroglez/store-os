@@ -59,10 +59,16 @@
       "id": "persist-entity-error-handling",
       "title": "Manejo consistente de errores al guardar",
       "priority": 40,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/persist-entity-error-handling-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
     },
     {
       "id": "migrate-adminstores",

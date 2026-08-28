@@ -4,206 +4,70 @@ Delivery-Status: Pending approval
 specPath: docs/superpowers/specs/persist-entity-error-handling-design.md
 ---
 
-# Manejo de errores en persistEntity (fire-and-forget sin .catch)
+# Manejo consistente de errores al guardar
 
 ## Problema
 
-`persistEntity` en `StoreProvider.tsx:229-232` retorna la Promise de `saveEntity` sin manejar errores. Cuando Firestore rechaza una escritura (ej. valores `undefined` anidados, reglas de seguridad, quota exceeded), la promesa se rechaza silenciosamente y:
+En modo cloud, guardar o borrar una entidad puede fallar (Firestore rechaza la escritura: permiso, red, cuota) y hoy la respuesta del app depende de **qué** entidad sea:
 
-1. La UI muestra un toast de éxito (ej. `toast.success("Compra registrada: ...")` en `PurchaseForm.tsx:314`) **aunque la escritura falló**.
-2. El usuario cree que la operación guardó, pero los datos nunca se escribieron en Firestore.
-3. El error aparece solo en consola como un "unhandled promise rejection", sin feedback al usuario.
+- **Algunas rutas esperan y propagan** (`addStore`, `updateStore`, `upsertProduct`, `upsertPurchase`, `transferStoreOwnership`): `persistEntity` re-throwa y la pantalla puede avisar.
+- **Muchas rutas son fire-and-forget silencioso** — dispatch local + `void persistEntity(...).catch(() => {})`: la UI muestra éxito, Firestore nunca recibió el dato, y al recargar el cambio **desaparece**. Es pérdida de trabajo confirmable.
+- **Todos los borrados** (`deleteEntity(...).catch(() => {})`) y las **escrituras derivadas** (reserva de inventario al guardar un pedido, proyecciones públicas) fallan igual de callados: fantasmas en Firestore que reaparecen tras refresh.
 
-**Causa raíz verificada en código:**
-- `StoreProvider.tsx:229-232`: `persistEntity` retorna `saveEntity(user, name, entity)` sin `.catch()`.
-- Llamadas típicas: `await persistEntity("stores", store)` (línea 244, 262, 347), `await persistEntity("products", product)` (línea 397).
-- El patrón `void persistEntity(...).catch(() => {})` SÍ existe en algunos lugares (líneas 343, 358, 370), pero **no en la mayoría**.
+La operadora (Olivia/Mar en producción) no tiene forma de saber que algo no se guardó.
 
-**Caso real documentado:** Fer (Olivia) reportó que tras una compra la app mostró "Compra registrada" pero el producto no apareció actualizado — resultado de un rechazo de Firestore no visible.
+## Causa raíz verificada en código
 
-**Líneas verificadas (rama main, sin drift):**
-- `persistEntity`: `src/app/StoreProvider.tsx:229-232`.
-- Callers con toast implícito / éxito: `addStore:244`, `updateStore:262`,
-  `transferStoreOwnership:304/312/322`, `upsertProduct:347-349`.
-- `PurchaseForm.submit`: `src/features/inventory/PurchaseForm.tsx:90-107`
-  (el `for` hace `await upsertProduct`; la línea 106 `upsertPurchase` es sin
-  `await`; el toast de éxito está en la 107).
-- Callers con `.catch(() => {})` deliberado (NO tocar): `StoreProvider.tsx`
-  líneas 205, 246, 269, 273, 280-291, 304, 312, 313, 322, 339, 370-377.
-
-## Causa raíz (verificada en código)
-
-1. **`saveEntity` sí lanza errores** — `firestoreData.ts:235-263` tiene varios puntos de fallo:
-   - `batch.commit()` (línea 258) para stores
-   - `setDoc()` (línea 262) para otras entidades
-   - `stripUndefined()` (línea 247) no previene todos los rechazos (ej. reglas de seguridad, quota, red)
-
-2. **`persistEntity` no propaga el error** — `StoreProvider.tsx:229-232`:
-   ```typescript
-   function persistEntity(...): Promise<void> {
-     if (!cloud || !user || fromCloud.current) return Promise.resolve();
-     return saveEntity(user, name, entity); // ← sin .catch()
-   }
-   ```
-
-3. **Los callers asumen éxito** — `PurchaseForm.tsx:314`:
-   ```typescript
-   upsertPurchase({ ...draft, subtotal, updatedAt: nowIso() });
-   toast.success(`Compra registrada: ${formatMoney(draft.totalConfirmed || subtotal)}`);
-   ```
-   Si `upsertPurchase` falla, el toast de éxito miente.
+- **`src/app/StoreProvider.tsx:276-284`** — `persistEntity` loguea y re-throwa (bien), pero nada obliga a los callers a esperar el resultado.
+- **Swallows en writes de entidades** — `void persistEntity(...).catch(() => {})` en: `inviteMember` (`:362`, `:370`), `removeMember` (`:380`), `upsertCategory` (`:446`), `upsertSupplier` (`:480`), `upsertCustomer` (`:498`), `upsertOrder` (`:518`, `:522`), `deleteOrder` (`:531`).
+- **Swallows en deletes** — `deleteEntity(...).catch(() => {})` en `deleteProduct` (`:428`), `deleteCategory` (`:464`), `deleteSupplier` (`:484`), `deletePurchase` (`:494`), `deleteCustomer` (`:502`), `deleteOrder` (`:534`).
+- **Swallows en proyecciones/derivados** — `projectPublicForStore` (`:299`, `:456`, `:473`), `removePublicProductDoc`/`rebuildPublicCatalog` (`:431`, `:435`), `deleteProductImage` (`:438`).
+- **`StoreProvider` está fuera de `ToastProvider`** (`src/app/App.tsx:76-85`; montado en `main.tsx`): el provider no puede lanzar toasts directamente — necesita un canal propio.
 
 ## Objetivo
 
-Todo write a Firestore vía `persistEntity` debe:
-
-1. **Mostrar un error visible al usuario** cuando la escritura falla (toast de error con mensaje claro).
-2. **Nunca mostrar éxito falso** — el toast de éxito solo aparece si `persistEntity` resolvió.
-3. **Escribir el error en consola** para debugging (con contexto útil: entidad, error, tienda).
+**Ninguna escritura fallida es invisible.** Toda operación iniciada por la usuaria termina en una de dos: confirmación real, o un mensaje accionable en español ("No se pudo guardar X. Reintentar"). Sin colas offline, sin reintentos automáticos con backoff — esta entrega es honestidad, no sincronización.
 
 ## Alcance (in)
 
-**Solo `persistEntity` en `StoreProvider.tsx` — un cambio en un solo punto.**
+### 1. Contrato uniforme en `StoreProvider`
 
-- Modificar `persistEntity` (líneas 229-232) para agregar `.catch()` con:
-  - `console.error()` con contexto
-  - Propagar el error para que el caller pueda manejarlo
+- Todos los métodos de mutación del contexto (`upsertCategory`, `upsertSupplier`, `upsertCustomer`, `upsertOrder`, `deleteProduct`, `deleteCategory`, `deleteSupplier`, `deletePurchase`, `deleteCustomer`, `deleteOrder`, `removeMember`, `inviteMember`) pasan a `async` y **propagan** el error de persistencia, como ya hacen `upsertProduct`/`upsertPurchase`. Los tipos del contexto (`StoreContextValue`) se actualizan; los callers que hoy ignoran el retorno siguen compilando (Promise ignorada) pero los de UI de usuario pasan a hacer `try/catch`.
+- El dispatch optimista local se mantiene (local-first): el estado local nunca se revierte por diseño; el error se **reporta**, y el snapshot de Firestore reconcilia al recargar.
 
-- Ajustar los callers principales que muestran success toast hoy:
-  - `addStore` (línea 244) — "Tienda creada" → manejar error
-  - `updateStore` (línea 262) — "Tienda actualizada" → manejar error  
-  - `transferStoreOwnership` (línea 347) — "Tienda transferida" → manejar error
-  - `upsertProduct` (línea 397) → el success toast es implícito (no hay toast explícito, pero el error debe aparecer)
+### 2. Un solo canal de error de sincronización
 
-- **No tocar callers con `.catch(() => {})` existente** — ya son fire-and-forget deliberado (líneas 343, 358, 370).
+- `persistEntity`/`deleteEntity` dejan de tragar en background: nuevos helpers `persistInBackground`/`deleteInBackground` que capturan, loguean con contexto, y publican en el nuevo estado de contexto `syncError: { label: string; retry: () => Promise<void> } | null` (una sola ranura — el último error gana; `retry` re-ejecuta la escritura fallida con closure y limpia la ranura al lograrlo).
+- `App` (dentro de `ToastProvider`) renderiza, cuando `syncError` existe, un banner discreto fijo arriba: texto del label + botón "Reintentar" + "Descartar". Tokens del sistema de diseño (`bg-surface`, `text-danger`…), sin estilos hardcodeados.
+- Las proyecciones públicas (`projectPublicForStore` y familia) usan el mismo canal con label "publicar el catálogo" — sigue sin bloquear el guardado principal, pero deja de ser invisible (con "Republicar catálogo" ya existente como salida manual).
 
-## Fuera de alcance (out)
+### 3. Pantallas
 
-- **No cambiar `deleteEntity`** — ya tiene `.catch(() => {})` en todos sus callers (línea 274, 283-290).
-- **No cambiar funciones de proyección pública** — `projectPublicForStore`, `upsertPublicProduct`, etc., que ya usan `.catch(() => {})` (líneas 246, 269, 273).
-- **No cambiar la lógica de `saveEntity`** — solo el manejo de errores en `persistEntity`.
-- **No añadir retry automático** — YAGNI: un error de Firestore es probablemente transitorio o requiere acción humana (auth, quota); reintentar sin criterio puede empeorar.
-- **No cambiar el modelo de datos** — solo la capa de presentación de errores.
+- Las pantallas que llaman mutaciones ahora propagadas (`CategoriesScreen`, `SuppliersScreen`/`SupplierForm` callers, `CustomersScreen`, `OrdersScreen`, borramientos con confirmación) hacen `try/catch` y muestran toast de error vía `useToast`, igual que `PurchaseForm` hace hoy (`src/features/inventory/PurchaseForm.tsx:109`).
+- Mensajes en español de México, concretos: "No se pudo guardar la categoría." etc. Sin jerga técnica; el detalle técnico vive en `console.error` (ya existente).
 
-## Diseño
+## Alcance (out)
 
-### Cambio en `persistEntity`
+- Cola offline / persistencia de reintentos / backoff — si se necesita, otra entrega.
+- Reversión del estado local optimista (rollback del reducer).
+- Reintentos automáticos de proyecciones públicas.
+- Cambios en reglas de Firestore o en el modo demo local (sin red, no falla nada).
 
-```typescript
-// ANTES (StoreProvider.tsx:229-232)
-function persistEntity(name: CollectionName, entity: { id: string } & Record<string, unknown>): Promise<void> {
-  if (!cloud || !user || fromCloud.current) return Promise.resolve();
-  return saveEntity(user, name, entity);
-}
+## Pruebas
 
-// DESPUÉS
-function persistEntity(name: CollectionName, entity: { id: string } & Record<string, unknown>): Promise<void> {
-  if (!cloud || !user || fromCloud.current) return Promise.resolve();
-  return saveEntity(user, name, entity).catch((error) => {
-    console.error(`[Firestore] Error persisting ${name} (${entity.id}):`, error);
-    throw error; // re-lanzar para que el caller pueda manejarlo
-  });
-}
+- **Unitarias** (`vitest`, extendiendo `src/app/StoreProvider.reducer.test.ts` / un test nuevo del provider con adaptador cloud falso):
+  - un `saveEntity` que rechaza → `syncError` queda seteado con label y `retry`; el `retry` exitoso lo limpia.
+  - los métodos propagados rechazan (promise rejection) cuando el adaptador falla.
+  - el dispatch local ocurre aunque la persistencia falle (optimista intacto).
+- **Estáticas existentes** (`npm run test`) siguen en verde; gate de design-system cubre el banner (sin `<button>` crudo).
+- **E2E (`e2e:firebase`)**: con el emulador, forzar un rechazo de permisos (escribir una entidad ajena) y ver el banner + toast, no un éxito falso. Si forzar el rechazo resulta artificioso en emulador, se cubre con la unitaria del provider y se deja constancia.
+
+## Preview check
+
+```json
+{ "path": "/", "selector": "body", "text": "Entrar" }
 ```
 
-**Por qué `.catch()` + `throw`:**
-- El `console.error` es para debugging (visible en DevTools).
-- El `throw` propaga el error al caller — quien decidió si mostrar toast o no.
+## Estimación de costo
 
-### Ajuste en callers con success toast
-
-**Patrón:** todos los callers que hoy muestran éxito deben envolver la llamada en `try/catch` y mostrar un error toast si falla.
-
-**Ejemplo genérico:**
-```typescript
-// ANTES
-await persistEntity("stores", store);
-toast.success("Tienda creada");
-
-// DESPUÉS
-try {
-  await persistEntity("stores", store);
-  toast.success("Tienda creada");
-} catch (error) {
-  toast.error("No se pudo guardar la tienda. Revisa tu conexión.");
-}
-```
-
-**Callers concretos a ajustar (4 total):**
-
-1. **`addStore` (línea 244)**
-   - Toast actual: ninguno (el éxito es implícito al volver a la pantalla de tiendas)
-   - **Ajuste:** envolver `await persistEntity("stores", storeWithMembership(store, user))` en try/catch
-   - Error toast: "No se pudo crear la tienda. Intenta de nuevo."
-
-2. **`updateStore` (línea 262)**
-   - Toast actual: ninguno
-   - **Ajuste:** envolver `await persistEntity("stores", store)` en try/catch
-   - Error toast: "No se pudo actualizar la tienda. Intenta de nuevo."
-
-3. **`transferStoreOwnership` (línea 347)**
-   - Toast actual: ninguno
-   - **Ajuste:** envolver `await persistEntity("stores", updated)` en try/catch
-   - Error toast: "No se pudo transferir la tienda. Intenta de nuevo."
-
-4. **`upsertProduct` implícito en `PurchaseForm.submit` (línea 313)**
-   - Toast actual de éxito: `toast.success("Compra registrada: ...")` (línea 314)
-   - **Ajuste crítico:** envolver **todo el bloque de escrituras** (líneas 291-314) en try/catch
-   - Si algo falla (producto o compra), NO mostrar el toast de éxito
-   - Error toast: "No se pudo registrar la compra. Revisa tu conexión o intenta de nuevo."
-
-**Mensaje de error estándar:** "No se pudo guardar. Revisa tu conexión o intenta de nuevo."
-
-### Mensajes en español (México), lenguaje simple
-
-- "No se pudo crear la tienda. Intenta de nuevo."
-- "No se pudo actualizar la tienda. Intenta de nuevo."
-- "No se pudo transferir la tienda. Intenta de nuevo."
-- "No se pudo registrar la compra. Revisa tu conexión o intenta de nuevo."
-
-## Criterios de aceptación
-
-1. **`persistEntity` tiene `.catch()` con `console.error` + `throw`**
-   - Verificar en `StoreProvider.tsx:229-232` que el `.catch()` existe
-   - Verificar que `console.error` incluye nombre de colección + id de entidad
-
-2. **Los 4 callers principales tienen `try/catch`**
-   - `addStore` (línea ~244)
-   - `updateStore` (línea ~262)
-   - `transferStoreOwnership` (línea ~347)
-   - `PurchaseForm.submit` (líneas ~291-314)
-
-3. **El toast de éxito NO aparece si falla la escritura**
-   - Simular un error de Firestore (ej. desconectar red, quota exceeded)
-   - Verificar que el toast de éxito no se muestra
-   - Verificar que el toast de error sí se muestra
-
-4. **El error se ve en consola**
-   - Verificar que `console.error` aparece con el mensaje correcto
-
-5. **Los callers con `.catch(() => {})` existente NO cambian**
-   - Líneas 343, 358, 370 deben seguir igual
-
-## previewChecks
-
-Ninguno. Este cambio es a la capa de manejo de errores, no a una pantalla nueva;
-un previewCheck de browser no aplica. La validación es el gate estándar
-(`npm run typecheck && npm run test && npm run build`).
-
-**Deuda de test (registrada):** un test e2e con el Firebase Emulator que fuerce
-un rechazo en `upsertPurchase`/`upsertProduct` y afirme el toast de error (y la
-ausencia del de éxito) quedó pendiente — el test de UI aislado requería un
-fixture completo de `Purchase`/`Store`/`Product` cuyo costo superaba el valor
-inmediato. El contrato nuevo (`persistEntity` rechaza, `upsertPurchase` async)
-está cubierto por typecheck + la suite existente. La lógica del try/catch en
-`PurchaseForm.submit` es trivialmente correcta de leer.
-
-## Riesgos
-
-- **Riesgo bajo:** el cambio es acotado a un solo punto (`persistEntity`) + 4 callers.
-- **Riesgo de regresión:** los callers con `.catch(() => {})` existente NO deben cambiar (líneas 343, 358, 370).
-- **Riesgo de UX:** un toast de error genérico ("No se pudo guardar") no da mucha información, pero es mejor que un falso éxito. Ponytail: futuros refinamientos pueden distinguir entre "sin red", "quota exceeded", "permiso denegado", etc.
-
-## Dependencias
-
-- **Ninguna.** Este cambio es independiente de otros deliveries.
+Cero: solo código cliente; ninguna escritura nueva contra Firestore (mismas operaciones, ahora reportadas).
