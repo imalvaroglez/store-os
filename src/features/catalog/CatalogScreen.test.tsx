@@ -26,6 +26,7 @@ const OLIVIA = "store_olivia";
 const SANTI = "store_santi";
 const CAT_ANILLOS = `${OLIVIA}__anillos`;
 const CAT_ARETES = `${OLIVIA}__aretes`;
+const CAT_BOLSAS = `${OLIVIA}__bolsas`;
 
 function tieredProduct(overrides: Partial<Product> & { id: string; name: string }): Product {
   return {
@@ -48,6 +49,7 @@ function sortFilterState(): AppState {
   state.categories = [
     { id: CAT_ANILLOS, storeId: OLIVIA, name: "Anillos", slug: "anillos", sortOrder: 1, active: true, createdAt: state.stores[0].createdAt, updatedAt: state.stores[0].createdAt },
     { id: CAT_ARETES, storeId: OLIVIA, name: "Aretes", slug: "aretes", sortOrder: 2, active: true, createdAt: state.stores[0].createdAt, updatedAt: state.stores[0].createdAt },
+    { id: CAT_BOLSAS, storeId: OLIVIA, name: "Bolsas", slug: "bolsas", sortOrder: 3, active: true, createdAt: state.stores[0].createdAt, updatedAt: state.stores[0].createdAt },
   ];
   state.products = [
     tieredProduct({ id: "p1", name: "Anillo Blossom", categoryIds: [CAT_ANILLOS], quantityOnHand: 5, createdAt: "2026-08-01T00:00:00.000Z" }),
@@ -149,6 +151,46 @@ describe("CatalogScreen orden", () => {
 
     changeSelect("Ordenar por", "stock");
     expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]);
+  });
+});
+
+describe("CatalogScreen cobertura extra de direcciones y filtro vacío", () => {
+  it("cambiar la dirección en el orden por defecto muestra los más antiguos primero", () => {
+    const Wrapper = withState(sortFilterState());
+    render(
+      <Wrapper>
+        <CatalogScreen />
+      </Wrapper>
+    );
+    fireEvent.click(screen.getByLabelText("Orden descendente"));
+    expect(cardNames()).toEqual(["Anillo Blossom", "anillo perla", "Aretes Luna"]);
+  });
+
+  it("orden por stock en descendente: mayores existencias primero", () => {
+    const Wrapper = withState(sortFilterState());
+    render(
+      <Wrapper>
+        <CatalogScreen />
+      </Wrapper>
+    );
+    changeSelect("Ordenar por", "stock");
+    fireEvent.click(screen.getByLabelText("Orden ascendente"));
+    expect(cardNames()).toEqual(["Anillo Blossom", "anillo perla", "Aretes Luna"]);
+  });
+
+  it("filtro sin coincidencias muestra 'Sin resultados' y Limpiar restaura", () => {
+    const Wrapper = withState(sortFilterState());
+    render(
+      <Wrapper>
+        <CatalogScreen />
+      </Wrapper>
+    );
+    changeSelect("Categoría", CAT_BOLSAS);
+    expect(screen.getByText("Sin resultados")).toBeTruthy();
+    expect(screen.getByText("Ningún producto en esta categoría.")).toBeTruthy();
+    expect(cardNames()).toEqual([]);
+    fireEvent.click(screen.getByText("Limpiar"));
+    expect(cardNames()).toHaveLength(3);
   });
 });
 
