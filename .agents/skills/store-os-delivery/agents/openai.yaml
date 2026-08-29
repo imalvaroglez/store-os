@@ -1,4 +1,0 @@
-interface:
-  display_name: "Store OS Delivery"
-  short_description: "Ejecuta entregas de Store OS con gates verificables"
-  default_prompt: "Usa $store-os-delivery para procesar la siguiente entrega autorizada de Store OS."
