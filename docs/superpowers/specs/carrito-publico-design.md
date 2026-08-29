@@ -102,12 +102,18 @@ export type PriceTierDef = {
     completo 💛"*
   - `"agotado"` → *"Se puede hacer sobre pedido — te confirmamos fecha de
     reabastecimiento 💛"*
-- **Revisión (pre-checkout):** resumen de líneas + hint informativo de tier
-  calculado con la semántica de calificación de arriba (los datos públicos
-  permiten evaluar ambos mínimos en cliente sin comprometer precio):
-  *"llevas 6 piezas · aplica Girly"* / *"a precio Iconic te faltan $50 o 1
-  pieza más"*. Informativo: no obliga a nada; el precio lo confirma el owner
-  en el chat.
+- **Revisión (pre-checkout):** resumen de líneas + hint de ventas calculado
+  en cliente con la semántica de calificación de arriba (todo con datos
+  públicos, sin comprometer precio):
+  - Si ya califica un tier: *"con precio Girly ahorras $N frente a menudeo"*
+    (N = Σ cantidad × (precio menudeo − precio tier) del carrito).
+  - Si falta para el siguiente tier: brecha + valor — *"a precio Iconic te
+    faltan $50 o 1 pieza más: por $95 más te llevas $140 de producto
+    (a precio menudeo) y todo tu pedido ahorra frente a menudeo"*
+    (enfoque del owner 2026-08-29: mostrar cuánto se ahorra y cuánto valor
+    se gana por cerrar la brecha; incentiva pedidos más grandes).
+  - Informativo: no obliga a nada; el precio lo confirma el owner en el
+    chat.
 - **Checkout = WhatsApp:** botón "Enviar pedido por WhatsApp" → nuevo builder
   `buildCartOrderUrl(store, lines)` en `src/lib/whatsapp.ts`: intro editable
   como prefijo (convención `:41-44`), cuerpo `Pedido:` + líneas
