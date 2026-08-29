@@ -532,7 +532,8 @@ export function projectPublicProductDetail(
   return detail;
 }
 
-function isPublished(p: Product): boolean {
+export function isPublished(p: Product): boolean {
+  if (!p.slug) return false; // sin slug no hay doc público direccionable: card muerta
   return p.status ? p.status === "published" : p.isPublic;
 }
 
@@ -584,8 +585,7 @@ export async function projectPublicForStore(
   // 3. Per-product detail docs for published products.
   const keepIds = new Set<string>();
   for (const p of published) {
-    if (!p.slug) continue; // ponytail: a migrated product always has a slug; skip if not
-    const id = publicProductId(store.id, p.slug);
+    const id = publicProductId(store.id, p.slug!); // isPublished already guarantees a slug
     keepIds.add(id);
     writes.push(
       setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories, store.defaultTierId))
