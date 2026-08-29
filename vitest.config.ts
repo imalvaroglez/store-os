@@ -10,6 +10,7 @@ export default defineConfig({
       ["src/design-system/primitives.test.tsx", "jsdom"],
       ["src/design-system/theme/theme.test.tsx", "jsdom"],
       ["src/features/catalog/CatalogScreen.test.tsx", "jsdom"],
+      ["src/lib/cart.test.ts", "jsdom"],
     ],
     setupFiles: ["src/test-setup.ts"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
