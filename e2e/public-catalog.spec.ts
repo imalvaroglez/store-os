@@ -52,6 +52,18 @@ async function seedPublicProjection() {
   const stores = [
     { slug: "santi", storeId: "store_santi", name: "Santi", type: "on_demand", whatsappPhone: "5215512345678", storefront: null },
     { slug: "joyeria", storeId: "store_joyeria", name: "Joyería", type: "inventory_tiered", whatsappPhone: null, storefront: null },
+    // Tiered store with PUBLIC tier minimums (carrito público, owner decision
+    // 2026-08-29) + a whatsapp phone so the cart order URL carries wa.me/<digits>.
+    {
+      slug: "olivia-tiers", storeId: "store_olivia_tiers", name: "Olivia Tiers", type: "inventory_tiered",
+      whatsappPhone: "5213344836691", storefront: null,
+      priceTiers: [
+        { id: "t_retail", label: "Menudeo", order: 0 },
+        { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
+        { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
+      ],
+      defaultTierId: "t_retail",
+    },
   ];
   // Product summaries live INSIDE publicCatalogs (the grid source).
   const summary = (productSlug: string, name: string, storeSlug: string, extra: Record<string, unknown> = {}) => ({
@@ -72,6 +84,19 @@ async function seedPublicProjection() {
       categories: [],
       products: [
         summary("cadena-de-plata-925", "Cadena de plata 925", "joyeria", { prices: { retail: 1800 } }),
+      ],
+    },
+    {
+      slug: "olivia-tiers", storeId: "store_olivia_tiers", storeSlug: "olivia-tiers",
+      categories: [],
+      products: [
+        summary("anillo-blossom", "Anillo Blossom", "olivia-tiers", {
+          sku: "AAN1385", price: 140,
+          prices: { t_retail: 140, t_girly: 115, t_iconic: 95 }, stockSignal: "disponible",
+        }),
+        summary("aretes-luna", "Aretes Luna", "olivia-tiers", {
+          sku: "OLI-002", price: 120, prices: { t_retail: 120 }, stockSignal: "pocas",
+        }),
       ],
     },
   ];
@@ -193,5 +218,41 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   await expect(anon).toHaveURL(/\/catalogo\/olivia\/producto\/anillo-blossom$/);
   await expect(anon.getByRole("heading", { name: "Anillo Blossom" })).toBeVisible({ timeout: 15000 });
   await expect(anon.getByText("Pieza no encontrada")).toHaveCount(0);
+  await ctx.close();
+});
+
+test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const anon = await ctx.newPage();
+  await openCatalogAnonymous(anon, "olivia-tiers");
+
+  await expect(anon.getByRole("heading", { name: "Olivia Tiers" }).first()).toBeVisible({ timeout: 15000 });
+
+  // Add two different pieces from the grid.
+  await anon.getByRole("button", { name: "Agregar al carrito" }).nth(0).click();
+  await anon.getByRole("button", { name: "Agregar al carrito" }).nth(1).click();
+
+  // Floating button shows the piece count and opens the drawer.
+  const open = anon.getByRole("button", { name: "Abrir pedido" });
+  await expect(open).toContainText("2");
+  await open.click();
+
+  await expect(anon.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
+  // Coarse stock legend — never an exact count.
+  await expect(anon.getByText(/Quedan pocas/)).toBeVisible();
+
+  // ONE wa.me message with both lines, SKUs and the catalog link; no prices.
+  const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
+  const href = (await send.getAttribute("href")) ?? "";
+  expect(href).toContain("wa.me/5213344836691");
+  const text = decodeURIComponent(href.split("text=")[1]);
+  expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
+  expect(text).toContain("• 1× Aretes Luna (OLI-002)");
+  expect(text).toContain("/catalogo/olivia-tiers");
+  expect(text).not.toContain("$");
+
+  // The cart survives a full reload (localStorage per store slug).
+  await anon.reload();
+  await expect(anon.getByRole("button", { name: "Abrir pedido" })).toContainText("2", { timeout: 15000 });
   await ctx.close();
 });
