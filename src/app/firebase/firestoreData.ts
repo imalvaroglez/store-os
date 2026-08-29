@@ -17,6 +17,7 @@ import { applyPurchaseLines } from "../../lib/inventory";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
 import { publicPrice } from "../../lib/money";
+import { tiersForStore, defaultTier } from "../../lib/pricing";
 
 // Cloud data adapter. The cloud analog of lib/storage.ts: the StoreProvider talks
 // to this when signed in. Reads are scoped to the user (super_admin sees all
@@ -449,7 +450,33 @@ function primaryImage(product: Product): string | null {
   return product.imageUrl ?? null;
 }
 
-/** Public storefront projection: identity + storefront content + contact. */
+/** Coarse stock signal for the public catalog: NEVER an exact count. */
+export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible" {
+  const qty = p.quantityOnHand;
+  if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
+  if (qty <= 0) return "agotado";
+  if (typeof p.lowStockAt === "number" && qty <= p.lowStockAt) return "pocas";
+  return "disponible";
+}
+
+/** Prices per VISIBLE tier (owner decision 2026-08-29: the tier map is public;
+ *  cost is not). Undefined for stores/projections without a tier map. */
+function publicPricesByTier(
+  product: Product,
+  store?: Pick<Store, "priceTiers" | "defaultTierId">
+): Record<string, number> | undefined {
+  if (!store || !product.prices) return undefined;
+  const prices: Record<string, number> = {};
+  for (const t of tiersForStore(store)) {
+    const value = product.prices[t.id];
+    if (typeof value === "number") prices[t.id] = value;
+  }
+  return Object.keys(prices).length ? prices : undefined;
+}
+
+type PublicPricingSource = Pick<Store, "priceTiers" | "defaultTierId">;
+
+/** Public storefront projection: identity + storefront content + contact + tiers. */
 export function projectPublicStore(store: Store) {
   const sf = store.storefront;
   return {
@@ -459,6 +486,20 @@ export function projectPublicStore(store: Store) {
     type: store.type,
     whatsappPhone: store.whatsappPhone ?? null,
     storefront: sf ?? null,
+    // Visible tiers with their (informative) minimums; null for stores that
+    // never set tiers so stale clients fall back to the single price.
+    priceTiers: store.priceTiers
+      ? tiersForStore(store).map((t) => ({
+          id: t.id,
+          label: t.label,
+          order: t.order,
+          ...(t.minPieces != null ? { minPieces: t.minPieces } : {}),
+          ...(t.minAmount != null ? { minAmount: t.minAmount } : {}),
+        }))
+      : null,
+    // Only stores with their own tier map advertise a default; legacy stores
+    // keep null so clients fall back to the single resolved price.
+    defaultTierId: store.priceTiers ? (defaultTier(store)?.id ?? null) : null,
   };
 }
 
@@ -467,7 +508,11 @@ export function projectPublicStore(store: Store) {
  * private fields. Exposes a SINGLE resolved `price` (the store's default tier
  * for inventory stores) — never the full tier map or private prices.
  */
-export function projectPublicProductSummary(product: Product, storeSlug: string, defaultTierId?: string) {
+export function projectPublicProductSummary(
+  product: Product,
+  storeSlug: string,
+  pricing?: PublicPricingSource
+) {
   const summary: Record<string, unknown> = {
     storeSlug,
     storeId: product.storeId,
@@ -481,9 +526,12 @@ export function projectPublicProductSummary(product: Product, storeSlug: string,
     canInquire: product.canInquire ?? false,
     categoryIds: product.categoryIds ?? [],
     sortOrder: product.sortOrder ?? 0,
+    stockSignal: publicStockSignal(product),
   };
-  const resolved = publicPrice(product, defaultTierId);
+  const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") summary.price = resolved;
+  const prices = publicPricesByTier(product, pricing);
+  if (prices) summary.prices = prices;
   return summary;
 }
 
@@ -496,7 +544,7 @@ export function projectPublicProductDetail(
   product: Product,
   storeSlug: string,
   categories: Category[],
-  defaultTierId?: string
+  pricing?: PublicPricingSource
 ) {
   const named = (product.categoryIds ?? [])
     .map((id) => categories.find((c) => c.id === id))
@@ -526,9 +574,12 @@ export function projectPublicProductDetail(
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
     categories: named,
+    stockSignal: publicStockSignal(product),
   };
-  const resolved = publicPrice(product, defaultTierId);
+  const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") detail.price = resolved;
+  const prices = publicPricesByTier(product, pricing);
+  if (prices) detail.prices = prices;
   return detail;
 }
 
@@ -576,7 +627,7 @@ export async function projectPublicForStore(
         categories: activeCats,
         products: published
           .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-          .map((p) => projectPublicProductSummary(p, store.slug, store.defaultTierId)),
+          .map((p) => projectPublicProductSummary(p, store.slug, store)),
       },
       {}
     )
@@ -588,7 +639,7 @@ export async function projectPublicForStore(
     const id = publicProductId(store.id, p.slug!); // isPublished already guarantees a slug
     keepIds.add(id);
     writes.push(
-      setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories, store.defaultTierId))
+      setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories, store))
     );
   }
 
@@ -627,7 +678,7 @@ export async function upsertPublicProduct(
   storeSlug: string,
   allStoreProducts: Product[],
   categories: Category[],
-  defaultTierId?: string
+  pricing?: PublicPricingSource
 ): Promise<void> {
   const { db } = getFirebase();
   const id = product.slug ? publicProductId(product.storeId, product.slug) : null;
@@ -635,11 +686,11 @@ export async function upsertPublicProduct(
   if (!isPublished(product)) {
     if (id) await deleteDoc(doc(db, "publicProducts", id)).catch(() => {});
   } else if (id) {
-    await setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(product, storeSlug, categories, defaultTierId));
+    await setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(product, storeSlug, categories, pricing));
   }
 
   // Refresh the catalog summaries for this store.
-  await rebuildPublicCatalog(storeSlug, product.storeId, allStoreProducts, defaultTierId);
+  await rebuildPublicCatalog(storeSlug, product.storeId, allStoreProducts, pricing);
 }
 
 /** Remove one product's public detail doc by store + slug. Best-effort. */
@@ -656,7 +707,7 @@ export async function rebuildPublicCatalog(
   storeSlug: string,
   storeId: string,
   products: Product[],
-  defaultTierId?: string
+  pricing?: PublicPricingSource
 ): Promise<void> {
   const { db } = getFirebase();
   const published = products.filter((p) => p.storeId === storeId && isPublished(p));
@@ -666,7 +717,7 @@ export async function rebuildPublicCatalog(
       storeSlug,
       products: published
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-        .map((p) => projectPublicProductSummary(p, storeSlug, defaultTierId)),
+        .map((p) => projectPublicProductSummary(p, storeSlug, pricing)),
     },
     { merge: true }
   );

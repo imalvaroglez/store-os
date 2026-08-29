@@ -456,7 +456,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const next = state.products.some((p) => p.id === product.id)
             ? state.products.map((p) => (p.id === product.id ? product : p))
             : [...state.products, product];
-          await upsertPublicProduct(product, store.slug, next, state.categories, store.defaultTierId);
+          await upsertPublicProduct(product, store.slug, next, state.categories, store);
         }
       }
     },
@@ -474,7 +474,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const store = state.stores.find((s) => s.id === storeId);
           if (store) {
             const remaining = state.products.filter((p) => p.id !== productId);
-            rebuildPublicCatalog(store.slug, storeId, remaining, store?.defaultTierId).catch(() => {});
+            rebuildPublicCatalog(store.slug, storeId, remaining, store).catch(() => {});
           }
         }
         if (product) deleteProductImage(product.storeId, productId).catch(() => {});

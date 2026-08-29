@@ -83,19 +83,28 @@ describe("projectPublicProductSummary", () => {
     expect(projected.productSlug).toBe("perfume");
   });
 
-  it("inventory-tiered: exposes ONE resolved price (default tier), never the tier map or private prices", () => {
+  it("inventory-tiered: resolved default price PLUS the public tier map (owner decision 2026-08-29); cost stays private", () => {
+    const tieredStore = {
+      defaultTierId: "t_wholesale",
+      priceTiers: [
+        { id: "t_retail", label: "Menudeo", order: 0 },
+        { id: "t_wholesale", label: "Mayoreo", order: 1 },
+        { id: "t_reseller", label: "Emprendedora", order: 2, hidden: true },
+      ],
+    } as unknown as Store;
     const projected = projectPublicProductSummary(
       baseProduct({
         prices: { t_retail: 2000, t_wholesale: 1500, t_reseller: 1700 },
         cost: 800,
       }),
       "joyeria",
-      "t_wholesale"
+      tieredStore
     );
     expect(projected.price).toBe(1500);
-    expect("prices" in projected).toBe(false);
+    // Public tier prices — hidden tiers excluded, cost never appears.
+    expect(projected.prices).toEqual({ t_retail: 2000, t_wholesale: 1500 });
     expect("cost" in projected).toBe(false);
-    // Without a defaultTierId it falls back to the legacy retail key.
+    // Without a tier map in the projection (stale doc) only the single price exists.
     const legacy = projectPublicProductSummary(
       baseProduct({ prices: { retail: 2000, wholesale: 1500 } }),
       "joyeria"
@@ -146,6 +155,78 @@ describe("projectPublicProductDetail", () => {
     expect("privateNotes" in projected).toBe(false);
     expect("quantityOnHand" in projected).toBe(false);
     expect("lowStockAt" in projected).toBe(false);
+  });
+
+  it("tiered: prices per visible tier + stock signal (owner decision 2026-08-29)", () => {
+    const tieredStore = {
+      defaultTierId: "t_girly",
+      priceTiers: [
+        { id: "t_retail", label: "Menudeo", order: 0 },
+        { id: "t_girly", label: "Girly", order: 1 },
+      ],
+    } as unknown as Store;
+    const projected = projectPublicProductDetail(
+      baseProduct({ prices: { t_retail: 140, t_girly: 115, t_oculto: 90 }, cost: 60 }),
+      "olivia",
+      [],
+      tieredStore
+    );
+    expect(projected.price).toBe(115);
+    expect(projected.prices).toEqual({ t_retail: 140, t_girly: 115 });
+    expect("cost" in projected).toBe(false);
+  });
+});
+
+describe("projectPublicStore — niveles públicos (carrito)", () => {
+  const tieredStore: Store = {
+    ...store,
+    type: "inventory_tiered",
+    priceTiers: [
+      { id: "t_retail", label: "Menudeo", order: 0 },
+      { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
+      { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
+      { id: "t_secreto", label: "Oculto", order: 3, hidden: true },
+    ],
+    defaultTierId: "t_girly",
+  };
+
+  it("expone los tiers visibles con sus mínimos y el default resuelto", () => {
+    const projected = projectPublicStore(tieredStore);
+    expect(projected.priceTiers).toEqual([
+      { id: "t_retail", label: "Menudeo", order: 0 },
+      { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
+      { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
+    ]);
+    expect(projected.defaultTierId).toBe("t_girly");
+  });
+
+  it("sin priceTiers propias (legacy/estancado) emite null; la UI cae al precio único", () => {
+    const projected = projectPublicStore(store);
+    expect(projected.priceTiers).toBeNull();
+    expect(projected.defaultTierId).toBeNull();
+  });
+});
+
+describe("stockSignal — señal gruesa de inventario (nunca cifras)", () => {
+  it("0 → agotado, <= lowStockAt → pocas, resto → disponible", () => {
+    expect(projectPublicProductSummary(baseProduct({ quantityOnHand: 0, lowStockAt: 2 }), "santi").stockSignal).toBe("agotado");
+    expect(projectPublicProductSummary(baseProduct({ quantityOnHand: 1, lowStockAt: 2 }), "santi").stockSignal).toBe("pocas");
+    expect(projectPublicProductSummary(baseProduct({ quantityOnHand: 9, lowStockAt: 2 }), "santi").stockSignal).toBe("disponible");
+  });
+
+  it("negativo → agotado; sin inventario (on_demand) → disponible", () => {
+    expect(projectPublicProductSummary(baseProduct({ quantityOnHand: -2 }), "santi").stockSignal).toBe("agotado");
+    expect(projectPublicProductSummary(baseProduct({}), "santi").stockSignal).toBe("disponible");
+  });
+
+  it("la señal vive también en el detalle y jamás incluye la cifra", () => {
+    const projected = projectPublicProductDetail(
+      baseProduct({ quantityOnHand: 1, lowStockAt: 3 }),
+      "santi",
+      []
+    );
+    expect(projected.stockSignal).toBe("pocas");
+    expect(JSON.stringify(projected)).not.toContain("quantityOnHand");
   });
 });
 

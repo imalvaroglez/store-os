@@ -2,6 +2,18 @@ import { doc, getDoc } from "firebase/firestore";
 import { getFirebase } from "./config";
 import type { StoreType, Storefront } from "../../types";
 
+/** Coarse stock signal — never an exact count. */
+export type PublicStockSignal = "agotado" | "pocas" | "disponible";
+
+/** Public tier as seen by visitors: label, order and informative minimums. */
+export type PublicPriceTier = {
+  id: string;
+  label: string;
+  order: number;
+  minPieces?: number;
+  minAmount?: number;
+};
+
 // Anonymous public-catalog loader. A visitor at /catalogo/:slug has NO session;
 // they read the three public projection collections, which carry only public-safe
 // fields. Errors propagate to the caller — this is a user-facing path and silent
@@ -26,6 +38,9 @@ export type PublicProductSummary = {
   publicDescription?: string | null;
   imageUrl?: string | null;
   price?: number;
+  /** Prices per visible tier (owner decision 2026-08-29). Absent on stale docs. */
+  prices?: Record<string, number>;
+  stockSignal?: PublicStockSignal;
   availability?: string;
   isFeatured?: boolean;
   isNew?: boolean;
@@ -49,6 +64,9 @@ export type PublicStore = {
   type: StoreType;
   whatsappPhone?: string | null;
   storefront?: Storefront | null;
+  /** Visible tiers with informative minimums; null on legacy/stale projections. */
+  priceTiers?: PublicPriceTier[] | null;
+  defaultTierId?: string | null;
 };
 
 export type PublicCatalog = {
@@ -73,6 +91,9 @@ export type PublicProductDetail = {
   isFeatured?: boolean;
   isNew?: boolean;
   price?: number;
+  /** Prices per visible tier. Absent on stale docs. */
+  prices?: Record<string, number>;
+  stockSignal?: PublicStockSignal;
   categories: { id: string; name: string; slug: string }[];
 };
 
