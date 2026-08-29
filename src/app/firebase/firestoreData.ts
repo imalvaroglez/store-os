@@ -518,6 +518,7 @@ export function projectPublicProductSummary(
     storeId: product.storeId,
     productSlug: product.slug ?? null,
     name: product.name,
+    sku: product.sku ?? null, // public (Clave); the cart line needs it for the WhatsApp order
     publicDescription: product.publicDescription ?? null,
     imageUrl: primaryImage(product),
     availability: product.availability ?? "available",

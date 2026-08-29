@@ -35,6 +35,8 @@ export type PublicProductSummary = {
   productSlug: string;
   storeSlug: string;
   name: string;
+  /** Public Clave; the cart line carries it into the WhatsApp order. */
+  sku?: string | null;
   publicDescription?: string | null;
   imageUrl?: string | null;
   price?: number;
