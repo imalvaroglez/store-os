@@ -20,7 +20,7 @@
       "id": "productos-sort-filter",
       "title": "/productos: ordenar (nombre/precio/stock/fecha) y filtrar por categoría",
       "priority": 2,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/productos-sort-filter-design.md",
       "dependsOn": [],
       "previewChecks": [
