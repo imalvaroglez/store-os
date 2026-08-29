@@ -13,13 +13,14 @@ import {
   DropdownItem,
   DropdownSeparator,
   IconButton,
+  SelectField,
   Dialog,
   StatRow,
   useToast,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
 import { CATEGORY_LABELS } from "../../lib/labels";
-import { productsForStore } from "../../lib/selectors";
+import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
 import { committedForProduct } from "../../lib/inventory";
 import { defaultTier } from "../../lib/pricing";
 import { publicPrice, profit, formatMoney } from "../../lib/money";
@@ -51,6 +52,36 @@ function statusTone(p: Product): StatusTone {
   if (p.status === "draft") return "neutral";
   if (p.status === "archived") return "neutral";
   return "success";
+}
+
+type SortKey = "createdAt" | "name" | "price" | "stock";
+
+// Natural direction per key: Fecha desc (recientes), Nombre asc, Precio asc,
+// Stock asc. Ties always resolve by name ("es" collation, ascending).
+const SORT_DEFAULTS: Record<SortKey, { desc: boolean; label: string }> = {
+  createdAt: { desc: true, label: "Fecha" },
+  name: { desc: false, label: "Nombre" },
+  price: { desc: false, label: "Precio" },
+  stock: { desc: false, label: "Stock" },
+};
+
+function compareBy(key: SortKey, a: Product, b: Product, defaultTierId: string): number {
+  switch (key) {
+    case "name":
+      return a.name.localeCompare(b.name, "es");
+    // Effective public price = what the card shows: default tier for tiered
+    // stores, single price for on-demand. Missing prices sink to the bottom.
+    case "price":
+      return (
+        (publicPrice(a, defaultTierId) ?? Infinity) -
+        (publicPrice(b, defaultTierId) ?? Infinity)
+      );
+    case "stock":
+      return (a.quantityOnHand ?? Infinity) - (b.quantityOnHand ?? Infinity);
+    case "createdAt":
+      // ISO timestamps sort lexicographically.
+      return a.createdAt.localeCompare(b.createdAt);
+  }
 }
 
 function ProductCard({
@@ -194,18 +225,46 @@ export function CatalogScreen() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("createdAt");
+  const [sortDesc, setSortDesc] = useState(true);
+  const [categoryFilter, setCategoryFilter] = useState("");
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const defaultId = defaultTier(activeStore)?.id ?? "t_retail";
   const defaultLabel = defaultTier(activeStore)?.label ?? "Menudeo";
   const products = productsForStore(state.products, activeStore.id);
+  const categories = activeCategoriesForStore(state.categories, activeStore.id);
+  // Filter matches REAL categories (categoryIds, primary or secondary) — not
+  // the legacy `category` enum the badges paint. Sorting is local to this
+  // screen; productsForStore (shared selector) stays untouched.
+  const filtered = categoryFilter
+    ? products.filter((p) => (p.categoryIds ?? []).includes(categoryFilter))
+    : products;
+  const sorted = [...filtered].sort((a, b) => {
+    const cmp = compareBy(sortKey, a, b, defaultId);
+    if (cmp !== 0) return sortDesc ? -cmp : cmp;
+    return a.name.localeCompare(b.name, "es");
+  });
+  const filterActive = categoryFilter !== "";
+  const sortOptions = (Object.keys(SORT_DEFAULTS) as SortKey[])
+    .filter((k) => k !== "stock" || isTiered)
+    .map((k) => ({ value: k, label: SORT_DEFAULTS[k].label }));
+
+  const changeSort = (next: SortKey) => {
+    setSortKey(next);
+    setSortDesc(SORT_DEFAULTS[next].desc);
+  };
 
   return (
     <Screen wide>
       <ScreenHeader
         title="Catálogo"
-        subtitle={`${products.length} ${products.length === 1 ? "producto" : "productos"}`}
+        subtitle={
+          filterActive
+            ? `${filtered.length} de ${products.length} piezas`
+            : `${products.length} ${products.length === 1 ? "producto" : "productos"}`
+        }
         action={
           <div className="flex items-center gap-2">
             {/* Preview what clients see — opens the public storefront in a new tab. */}
@@ -221,15 +280,57 @@ export function CatalogScreen() {
         }
       />
 
+      {products.length > 0 && (
+        <div className="flex items-end gap-2 overflow-x-auto pb-1">
+          <div className="w-36 shrink-0">
+            <SelectField
+              label="Categoría"
+              value={categoryFilter}
+              onChange={setCategoryFilter}
+              options={[
+                { value: "", label: "Todas" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
+          </div>
+          <div className="w-36 shrink-0">
+            <SelectField
+              label="Ordenar por"
+              value={sortKey}
+              onChange={changeSort}
+              options={sortOptions}
+            />
+          </div>
+          <IconButton
+            variant="secondary"
+            aria-label={sortDesc ? "Orden descendente" : "Orden ascendente"}
+            onClick={() => setSortDesc((v) => !v)}
+          >
+            {sortDesc ? "↓" : "↑"}
+          </IconButton>
+          {filterActive && (
+            <Button variant="ghost" size="sm" onClick={() => setCategoryFilter("")}>
+              Limpiar
+            </Button>
+          )}
+        </div>
+      )}
+
       {products.length === 0 ? (
         <EmptyState
           title="Sin productos"
           subtitle="Agrega tu primer producto al catálogo."
           icon={<div className="text-6xl">🛍️</div>}
         />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          title="Sin resultados"
+          subtitle="Ningún producto en esta categoría."
+          icon={<div className="text-6xl">🔍</div>}
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {products.map((p) => (
+          {sorted.map((p) => (
             <ProductCard
               key={p.id}
               product={p}
