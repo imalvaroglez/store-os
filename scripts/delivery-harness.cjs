@@ -483,7 +483,10 @@ function nextDelivery(root = ROOT, prs = openPullRequests(root), closedPrs) {
   const done = completedIds(root);
   const active = loadActiveRun(root, false);
   if (active?.state === "BLOCKED_HUMAN") return { outcome: "BLOCKED_HUMAN", item: queue.items.find((item) => item.id === active.id), run: active.runId };
-  if (active && !TERMINAL_STATES.has(active.state)) {
+  // Run huérfano: la entrega ya fue mergeada a main sin pasar por
+  // REMOTE_GREEN (decisión del owner, p.ej. preview tras SSO). El item está
+  // en completed; el run activo no bloquea la cola.
+  if (active && !TERMINAL_STATES.has(active.state) && !completedIds(root).has(active.id)) {
     const closed = closedPrs || closedPullRequests(root);
     const canRetry = closed.some((pr) => deliveryIdFromBody(pr.body) === active.id && !pr.mergedAt);
     if (!canRetry) fail(`La entrega ${active.id} sigue activa`, [active.state]);
@@ -529,7 +532,9 @@ function beginDelivery(root = ROOT, id, prs = openPullRequests(root), closedPrs)
   const active = loadActiveRun(root, false);
   if (active?.state === "BLOCKED_HUMAN") fail(`La entrega ${active.id} está BLOCKED_HUMAN`, ["Sólo una persona puede retirar la evidencia bloqueada."]);
   let retryingClosed = false;
-  if (active && !TERMINAL_STATES.has(active.state)) {
+  // Igual que en nextDelivery: un run huérfano cuyo item ya está completado
+  // en main no bloquea begin de la siguiente entrega.
+  if (active && !TERMINAL_STATES.has(active.state) && !completedIds(root).has(active.id)) {
     const closed = closedPrs || closedPullRequests(root);
     retryingClosed = active.id === id && closed.some((pr) => deliveryIdFromBody(pr.body) === id && !pr.mergedAt);
     if (!retryingClosed) fail(`Ya existe una entrega activa: ${active.id}`);
