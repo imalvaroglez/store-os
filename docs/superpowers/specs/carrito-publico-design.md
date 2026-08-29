@@ -50,9 +50,18 @@ precio** resuelto al tier default, por diseño
 export type PriceTierDef = {
   id: string; label: string; order: number; hidden?: boolean;
   minPieces?: number;   // califica por número de piezas (Girly: 5)
-  minAmount?: number;   // califica por monto de compra (Iconic: 1000)
+  minAmount?: number;   // califica por monto a precio DEL PROPIO tier (Iconic: 1000)
 };
 ```
+
+**Semántica de calificación (regla del owner, 2026-08-29):**
+
+- `minPieces`: el total de piezas del carrito ≥ `minPieces`.
+- `minAmount`: `Σ(cantidad × precio DE ESE tier) ≥ minAmount` — **nunca** el
+  total a precio regular/default. Ejemplo del owner: 10 piezas × $140
+  (regular) = $1,400 **no** califican para Iconic ($1,000), porque a precio
+  Iconic ($95) son $950; con 11 × $95 = $1,045 sí. La regla empuja comprar
+  más producto a cambio del mejor precio.
 
 - Editor en `StoreSettingsScreen` (Niveles de precio, `:374-443`): dos campos
   numéricos opcionales por tier; vacío = sin mínimo.
@@ -76,8 +85,9 @@ export type PriceTierDef = {
 
 ### 3. Storefront (`OliviaStorefront.tsx`)
 
-- **Detalle:** tabla de precios por tier — nombre, precio y mínimo
-  ("Girly · desde 5 piezas" / "Iconic · desde $1,000"); el default resaltado.
+- **Detalle:** tabla de precios por tier — nombre, precio y mínimo, con el
+  monto siempre referido al precio del propio tier ("Girly · desde 5 piezas"
+  / "Iconic · desde $1,000 a precio Iconic"); el default resaltado.
   Fallback: proyección estancada sin tiers → solo el precio único actual.
 - **Botón "Agregar al carrito"** en detalle y en cada card del grid (agrega
   la cantidad 1 o incrementa si ya está).
@@ -93,9 +103,11 @@ export type PriceTierDef = {
   - `"agotado"` → *"Se puede hacer sobre pedido — te confirmamos fecha de
     reabastecimiento 💛"*
 - **Revisión (pre-checkout):** resumen de líneas + hint informativo de tier
-  por piezas (*"llevas 6 piezas · aplica precio Girly"*) — solo para mínimos
-  por piezas; los mínimos por monto (Iconic) se muestran como condición en
-  la tabla de precios pero no generan hint en v1 (no hay totales).
+  calculado con la semántica de calificación de arriba (los datos públicos
+  permiten evaluar ambos mínimos en cliente sin comprometer precio):
+  *"llevas 6 piezas · aplica Girly"* / *"a precio Iconic te faltan $50 o 1
+  pieza más"*. Informativo: no obliga a nada; el precio lo confirma el owner
+  en el chat.
 - **Checkout = WhatsApp:** botón "Enviar pedido por WhatsApp" → nuevo builder
   `buildCartOrderUrl(store, lines)` en `src/lib/whatsapp.ts`: intro editable
   como prefijo (convención `:41-44`), cuerpo `Pedido:` + líneas
