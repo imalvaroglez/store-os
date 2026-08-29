@@ -32,6 +32,21 @@
       ]
     },
     {
+      "id": "carrito-publico",
+      "title": "Carrito público: acumular piezas y pedir varias por WhatsApp",
+      "priority": 3,
+      "status": "needs-spec",
+      "specPath": "docs/superpowers/specs/carrito-publico-design.md",
+      "dependsOn": [],
+      "previewChecks": [
+        {
+          "path": "/catalogo/olivia",
+          "selector": "body",
+          "text": "Olivia"
+        }
+      ]
+    },
+    {
       "id": "purchase-ux2-fast-receive",
       "title": "UX iteración 2 — Recepción rápida de compras (port + UX2)",
       "priority": 5,
