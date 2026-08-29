@@ -465,7 +465,9 @@ function publicPricesByTier(
   product: Product,
   store?: Pick<Store, "priceTiers" | "defaultTierId">
 ): Record<string, number> | undefined {
-  if (!store || !product.prices) return undefined;
+  // No own tier map → no per-tier prices (review F3): tiersForStore's canonical
+  // fallback must not leak a prices map for stores that declare none.
+  if (!store?.priceTiers || !product.prices) return undefined;
   const prices: Record<string, number> = {};
   for (const t of tiersForStore(store)) {
     const value = product.prices[t.id];

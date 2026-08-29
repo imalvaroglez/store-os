@@ -617,7 +617,7 @@ function ProductDetail({
                   const isDefault = t.id === store.defaultTierId;
                   const min =
                     t.minPieces != null
-                      ? `desde ${t.minPieces} piezas`
+                      ? `desde ${t.minPieces} ${t.minPieces === 1 ? "pieza" : "piezas"}`
                       : t.minAmount != null
                         ? `desde ${formatMoney(t.minAmount)} a precio ${t.label}`
                         : null;

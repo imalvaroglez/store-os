@@ -46,6 +46,7 @@ export function CartDrawer({
 
   const tiers: PublicPriceTier[] = store.priceTiers ?? [];
   const baseTierId = store.defaultTierId ?? tiers[0]?.id;
+  const baseLabel = tiers.find((t) => t.id === baseTierId)?.label ?? "menudeo";
   const qtyLines: CartQtyLine[] = shown.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
 
   // Informative tier hints: the best tier the cart already qualifies for, and
@@ -58,7 +59,7 @@ export function CartDrawer({
     if (best && best.id !== baseTierId) {
       const savings = cartSavings(best, baseTierId, qtyLines);
       if (savings > 0) {
-        savingsLine = `Con precio ${best.label} ahorras ${formatMoney(savings)} frente a menudeo.`;
+        savingsLine = `Con precio ${best.label} ahorras ${formatMoney(savings)} frente a ${baseLabel}.`;
       }
     }
     const deeper = tiers
@@ -71,7 +72,7 @@ export function CartDrawer({
         const falta = gap.piecesMore === 1 ? "te falta" : "te faltan";
         gapLine = `A precio ${deeper.label} ${falta} ${gap.piecesMore} ${piezas} más: por ${formatMoney(
           gap.extraSpend
-        )} más te llevas ${formatMoney(gap.extraValueAtBase)} de producto (a precio menudeo).`;
+        )} más te llevas ${formatMoney(gap.extraValueAtBase)} de producto (a precio ${baseLabel}).`;
       }
     }
   }
