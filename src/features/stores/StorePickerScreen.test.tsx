@@ -63,8 +63,12 @@ describe("StorePickerScreen gear de Administrar", () => {
     expect(screen.getByLabelText("Administrar Santi")).toBeTruthy();
   });
 
-  it("sin sesión (modo demo) no hay ⚙", () => {
+  it("sin sesión (modo demo) no hay ⚙ en ninguna tienda (ni sin ownerUid)", () => {
     renderPicker(null, "uid_fer");
     expect(screen.queryByLabelText("Administrar Olivia")).toBeNull();
+    // Santi/Joyería no tienen ownerUid en el fixture: undefined === undefined
+    // no debe colarse cuando user es null (review F1).
+    expect(screen.queryByLabelText("Administrar Santi")).toBeNull();
+    expect(screen.queryByLabelText("Administrar Joyería")).toBeNull();
   });
 });
