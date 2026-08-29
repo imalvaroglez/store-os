@@ -111,6 +111,16 @@ describe("projectPublicProductSummary", () => {
     );
     expect(legacy.price).toBe(2000);
     expect("prices" in legacy).toBe(false);
+    // A store WITHOUT its own priceTiers must not carry a prices map either,
+    // even when the product has t_* keys (review F3: no canonical fallback).
+    const noTiersStore = { defaultTierId: "t_retail" } as unknown as Store;
+    const noTiers = projectPublicProductSummary(
+      baseProduct({ prices: { t_retail: 2000 } }),
+      "joyeria",
+      noTiersStore
+    );
+    expect(noTiers.price).toBe(2000);
+    expect("prices" in noTiers).toBe(false);
   });
 
   it("picks the primary gallery image for the grid", () => {

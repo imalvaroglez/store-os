@@ -146,6 +146,12 @@ export function StoreSettingsScreen({
 
   // Save the tier editor. Blocks: zero visible tiers, or a default tier that is
   // missing/hidden (defaultTier also falls back defensively at read time).
+  // Minimums are non-negative integers (review F4): parseAmount keeps sign/decimals.
+  const parseMinimum = (v: string): number | undefined => {
+    const n = parseAmount(v);
+    return n == null ? undefined : Math.max(0, Math.floor(n));
+  };
+
   async function saveTiers() {
     setTierError(null);
     const visible = tiersDraft.filter((t) => !t.hidden && t.label.trim());
@@ -421,7 +427,7 @@ export function StoreSettingsScreen({
                   placeholder="5"
                   value={t.minPieces != null ? String(t.minPieces) : ""}
                   onChange={(e) =>
-                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, minPieces: parseAmount(e.target.value) } : x)))
+                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, minPieces: parseMinimum(e.target.value) } : x)))
                   }
                 />
                 <TextField
@@ -431,7 +437,7 @@ export function StoreSettingsScreen({
                   placeholder="1000"
                   value={t.minAmount != null ? String(t.minAmount) : ""}
                   onChange={(e) =>
-                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, minAmount: parseAmount(e.target.value) } : x)))
+                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, minAmount: parseMinimum(e.target.value) } : x)))
                   }
                 />
               </div>
