@@ -35,7 +35,7 @@
       "id": "carrito-publico",
       "title": "Carrito público: acumular piezas y pedir varias por WhatsApp",
       "priority": 3,
-      "status": "needs-spec",
+      "status": "awaiting-approval",
       "specPath": "docs/superpowers/specs/carrito-publico-design.md",
       "dependsOn": [],
       "previewChecks": [
