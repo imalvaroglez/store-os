@@ -32,6 +32,21 @@
       ]
     },
     {
+      "id": "carrito-publico",
+      "title": "Carrito público: acumular piezas y pedir varias por WhatsApp",
+      "priority": 3,
+      "status": "needs-spec",
+      "specPath": "docs/superpowers/specs/carrito-publico-design.md",
+      "dependsOn": [],
+      "previewChecks": [
+        {
+          "path": "/catalogo/olivia",
+          "selector": "body",
+          "text": "Olivia"
+        }
+      ]
+    },
+    {
       "id": "store-settings-owner-entry",
       "title": "Acceso del owner a Administrar tienda (gear en selector bloqueado por super_admin)",
       "priority": 4,
