@@ -92,6 +92,46 @@ async function seedPublicProjection() {
 }
 
 
+// Seed the STALE-shape regression fixture: a store whose publicStores doc was
+// written before storeId existed on that collection. publicStores/olivia has NO
+// storeId, while publicCatalogs/olivia and the detail doc carry
+// store_olivia — the product detail must still resolve through the catalog
+// summary, not the (stale) store identity doc. Doc ids are disjoint from the
+// seedPublicProjection fixtures above.
+//
+// Written with `Authorization: Bearer owner`, the emulator's admin backdoor that
+// bypasses security rules: the current rules REQUIRE storeId on publicStores
+// creates, so no ordinary authenticated write could produce the stale shape that
+// production still carries (that doc predates the rule).
+async function seedStaleOlivia() {
+  const auth = { "Content-Type": "application/json", Authorization: "Bearer owner" };
+
+  const staleStore = { slug: "olivia", name: "Olivia", type: "on_demand", whatsappPhone: null, storefront: null };
+  const catalog = {
+    slug: "olivia", storeId: "store_olivia", storeSlug: "olivia",
+    categories: [],
+    products: [
+      {
+        productSlug: "anillo-blossom", name: "Anillo Blossom", storeSlug: "olivia", imageUrl: null, availability: "available",
+        storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0, price: 1250,
+      },
+    ],
+  };
+  const detail = {
+    storeId: "store_olivia", storeSlug: "olivia", productSlug: "anillo-blossom", name: "Anillo Blossom",
+    sku: "OLI-001", publicDescription: null, images: [], material: null, finish: null, dimensions: null, care: null,
+    availability: "available", canInquire: false, isFeatured: false, isNew: false, price: 1250, categories: [],
+  };
+
+  const patch = async (path: string, body: unknown) => {
+    const res = await fetch(`${FS}/${path}`, { method: "PATCH", headers: auth, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`seed write failed for ${path}: ${res.status} ${await res.text()}`);
+  };
+  await patch("publicStores/olivia", { fields: toFields(staleStore) });
+  await patch("publicCatalogs/olivia", { fields: toFields(catalog) });
+  await patch("publicProducts/store_olivia__anillo-blossom", { fields: toFields(detail) });
+}
+
 async function openCatalogAnonymous(page: Page, slug: string) {
   await page.context().clearCookies();
   await page.evaluate(() => {
@@ -105,6 +145,7 @@ async function openCatalogAnonymous(page: Page, slug: string) {
 test.beforeAll(async () => {
   await wipePublicProjection();
   await seedPublicProjection();
+  await seedStaleOlivia();
 });
 
 test("anonymous visitor sees a cloud store's public catalog", async ({ browser }) => {
@@ -139,5 +180,18 @@ test("unknown slug shows not-found", async ({ browser }) => {
   const anon = await ctx.newPage();
   await openCatalogAnonymous(anon, "no-existe-tal-tienda");
   await expect(anon.getByText("Tienda no encontrada")).toBeVisible({ timeout: 15000 });
+  await ctx.close();
+});
+
+test("anonymous visitor opens a product detail from a stale publicStores doc", async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const anon = await ctx.newPage();
+  await openCatalogAnonymous(anon, "olivia");
+
+  await expect(anon.getByRole("heading", { name: "Olivia" }).first()).toBeVisible({ timeout: 15000 });
+  await anon.getByRole("link", { name: "Anillo Blossom" }).click();
+  await expect(anon).toHaveURL(/\/catalogo\/olivia\/producto\/anillo-blossom$/);
+  await expect(anon.getByRole("heading", { name: "Anillo Blossom" })).toBeVisible({ timeout: 15000 });
+  await expect(anon.getByText("Pieza no encontrada")).toHaveCount(0);
   await ctx.close();
 });

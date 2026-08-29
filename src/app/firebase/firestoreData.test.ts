@@ -5,6 +5,7 @@ import {
   projectPublicStore,
   projectAdminStore,
   publicProductId,
+  isPublished,
   SlugTakenError,
   stripUndefined,
 } from "./firestoreData";
@@ -151,6 +152,23 @@ describe("projectPublicProductDetail", () => {
 describe("publicProductId", () => {
   it("composes storeId + product slug", () => {
     expect(publicProductId("s1", "collar-de-oro")).toBe("s1__collar-de-oro");
+  });
+});
+
+// A product without a slug has no addressable public doc — projecting it would
+// write summaries with productSlug: null (ProductMiniForm publishes slugless
+// products), i.e. a dead card linking /producto/null.
+describe("isPublished", () => {
+  it("con slug → true", () => {
+    expect(isPublished(baseProduct())).toBe(true);
+  });
+
+  it("sin slug → false (no hay doc público direccionable)", () => {
+    expect(isPublished(baseProduct({ slug: null } as unknown as Partial<Product>))).toBe(false);
+  });
+
+  it('status "draft" → false aunque tenga slug e isPublic', () => {
+    expect(isPublished(baseProduct({ status: "draft" }))).toBe(false);
   });
 });
 
