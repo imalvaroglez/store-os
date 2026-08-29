@@ -101,12 +101,16 @@ export type ProductCategory = "perfume" | "sneakers" | "cap" | "jewelry" | "othe
 
 // A store-defined price level (scalable-pricing). ids are stable forever;
 // labels are cosmetic and editable. `hidden` removes the tier from forms and
-// the public catalog but never deletes price keys from products.
+// the public catalog but never deletes price keys from products. The minimums
+// are INFORMATIVE for the public cart (shown with the tier, never enforced in
+// the client — the owner confirms qualification in the chat).
 export type PriceTierDef = {
   id: string;
   label: string;
   order: number;
   hidden?: boolean;
+  minPieces?: number; // qualifies by total cart pieces (e.g. Girly: 5)
+  minAmount?: number; // qualifies by Σ qty × THE TIER'S OWN price (e.g. Iconic: 1000)
 };
 
 // A gallery image. Exactly one is primary (the cover/thumbnail). Stored optimized
