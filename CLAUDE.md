@@ -4,11 +4,9 @@ Guía para trabajar en Store OS. Lee esto antes de empezar.
 
 @LOOPS.md
 
-## Delivery harness obligatorio
+## Flujo de entrega
 
-Toda solicitud de construir, cambiar, arreglar, refactorizar o procesar backlog debe usar primero la skill `.claude/skills/store-os-delivery/SKILL.md` y obedecer `LOOPS.md`. El agente no decide por prosa que una entrega está lista: `npm run delivery -- ...` autoriza el inicio, ejecuta validaciones reales y decide los gates de publicación y Stop.
-
-Autonomía permitida: rama, commits, push, draft PR, CI y Preview. Nunca merge, push a `main`, producción ni datos productivos.
+Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI y Preview. Nunca merge, push a `main`, producción ni datos productivos.
 
 ## Qué es Store OS
 
@@ -24,14 +22,13 @@ npm run build          # tsc --noEmit + vite build
 npm run typecheck      # tsc --noEmit
 npm run test           # vitest (unit + design-system gate)
 npm run test:rules     # pruebas de firestore.rules contra el emulador (G-P01/G-P02/G-P05/G-P06)
-npm run delivery -- next # siguiente acción autorizada de la cola
 npm run e2e            # playwright frontend (smoke + responsive + theme, móvil + escritorio)
 npm run e2e:firebase   # pruebas contra el emulador Firebase (requiere `npm run emulators`)
 npm run emulators      # Firebase Auth + Firestore emuladores en localhost
 npm run preview        # build de producción
 ```
 
-No declares algo "listo" con comandos manuales: usa `npm run delivery -- verify quick|final`. El gate final siempre ejecuta typecheck, test, build y e2e; añade Firebase/rules/audit según el diff.
+No declares algo "listo" sin evidencia: antes de abrir el PR, `npm run typecheck && npm run test && npm run build` en verde, y e2e cuando el diff lo amerite.
 
 ## Arquitectura (lo esencial)
 

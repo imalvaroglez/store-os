@@ -1,6 +1,6 @@
 # ADR 0001 — Autonomous, Verifiable Delivery Harness
 
-- **Status:** Amended
+- **Status:** Superseded by [ADR 0002](0002-remove-delivery-harness-ceremony.md) — the harness was removed as a gate; autonomy limits (human-only merge/production) survive in `LOOPS.md`
 - **Date:** 2026-08-12
 - **Deciders:** Repository owner (Álvaro González), Codex
 - **Supersedes:** the linear FSM/workflow implementation accepted on 2026-08-04

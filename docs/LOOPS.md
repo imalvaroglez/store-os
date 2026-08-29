@@ -1,6 +1,6 @@
 # Store OS Engineering Loops
 
-Background engineering guide. The normative workflow and executable gates live in root `LOOPS.md` and `npm run delivery -- ...`; this document cannot authorize a state transition.
+Background engineering guide. The normative workflow lives in root `LOOPS.md`; this document is guidance, not a gate.
 
 ## 1. Why loops
 
@@ -33,8 +33,6 @@ npm run build     # tsc --noEmit + vite build — typecheck AND bundle
 npm run test      # vitest (unit + design-system gate)
 npm run e2e       # playwright (smoke + responsive + theme)
 npm run verify    # NOT A SCRIPT — see note below
-npm run delivery -- next          # selects the only authorized next action
-npm run delivery -- verify final  # executes and records the real final gate
 npm run dev       # local dev server on 5173 (demo mode, no backend)
 ```
 
@@ -51,7 +49,7 @@ npm run deploy:rules     # human-only production operation; agents never execute
 
 ## 4. Draft PR ready for human review
 
-A draft PR is reviewable only when `npm run delivery -- gate publish` and `npm run delivery -- remote <pr-number>` pass. These commands enforce that:
+A draft PR is reviewable only when CI (`build-test` + `rules-and-e2e`) is green and this checklist holds:
 
 - `npm run build` passes
 - `npm run test` passes
@@ -64,7 +62,7 @@ A draft PR is reviewable only when `npm run delivery -- gate publish` and `npm r
 - No secrets committed (no keys, tokens, service accounts in the diff)
 - Env requirements documented (which vars Vercel needs)
 
-If any one fails, report the exact harness blocker. The only successful verdict is **DRAFT PR GREEN — READY FOR HUMAN REVIEW**.
+If any one fails, report the exact blocker. The only successful verdict is **DRAFT PR GREEN — READY FOR HUMAN REVIEW**.
 
 ### Environment synchronization (STRICT, non-negotiable)
 
@@ -176,7 +174,7 @@ Every **final report** includes all of:
 - **Bugs found/fixed** — one line each.
 - **Remaining issues** — including non-blockers.
 - **Release blocker status** — clear or list the blockers.
-- **Final verdict** — `DRAFT PR GREEN — READY FOR HUMAN REVIEW` or the exact harness blocker.
+- **Final verdict** — `DRAFT PR GREEN — READY FOR HUMAN REVIEW` or the exact blocker.
 
 No verdict without evidence. "Should work" is not a verdict.
 
@@ -217,5 +215,5 @@ Bug severity:
   - blocker: <must fix before deploy, see §5>
   - non-blocker: <log, ship, report>
 Fix policy: fix blockers with minimal diffs; do not expand scope
-Final verdict: DRAFT PR GREEN — READY FOR HUMAN REVIEW / <exact harness blocker>
+Final verdict: DRAFT PR GREEN — READY FOR HUMAN REVIEW / <exact blocker>
 ```

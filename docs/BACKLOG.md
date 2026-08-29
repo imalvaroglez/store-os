@@ -6,8 +6,8 @@ aprobado — es un punto de partida), las **decisiones pendientes** que hay que
 cerrar antes de spec, y los **datos disponibles vs faltantes**.
 
 El flujo para mover una entrada a "en curso" es el **Product Loop** (LOOPS.md
-§2): humano decide capacidad → spec aprobado → harness/agent implementa → QA →
-deploy. Nada aquí está comprometido hasta que hay spec firmado.
+§2): humano decide capacidad → spec (viaja dentro del PR del código) → agente
+implementa → QA → merge. Nada aquí está comprometido hasta que hay spec.
 
 Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` · `✅ done` ·
 `❄️ frozen`
