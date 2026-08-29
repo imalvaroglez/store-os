@@ -180,7 +180,7 @@ describe("carrito — hint de ventas por tier", () => {
     await openDrawer();
 
     // 10 × (140 − 115) = $250 frente a menudeo, con precio Girly.
-    expect(screen.getByText(/Con precio Girly ahorras \$250 frente a menudeo/)).toBeTruthy();
+    expect(screen.getByText(/Con precio Girly ahorras \$250 frente a Menudeo/i)).toBeTruthy();
     // Brecha a Iconic: 1 pieza más ($95) = $140 de producto a precio menudeo.
     expect(screen.getByText(/A precio Iconic te falta 1 pieza más/)).toBeTruthy();
     expect(screen.getByText(/por \$95 más te llevas \$140 de producto/)).toBeTruthy();
