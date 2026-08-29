@@ -40,7 +40,7 @@ export function StorePickerScreen() {
                   </div>
                 </div>
               </Card>
-              {(user?.role === "super_admin" || s.ownerUid === user?.uid) && (
+              {!!user && (user.role === "super_admin" || s.ownerUid === user.uid) && (
                 <IconButton
                   variant="ghost"
                   aria-label={`Administrar ${s.name}`}
