@@ -32,6 +32,21 @@
       ]
     },
     {
+      "id": "store-settings-owner-entry",
+      "title": "Acceso del owner a Administrar tienda (gear en selector bloqueado por super_admin)",
+      "priority": 4,
+      "status": "needs-spec",
+      "specPath": "docs/superpowers/specs/store-settings-owner-entry-design.md",
+      "dependsOn": [],
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ]
+    },
+    {
       "id": "purchase-ux2-fast-receive",
       "title": "UX iteración 2 — Recepción rápida de compras (port + UX2)",
       "priority": 5,
