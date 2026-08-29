@@ -231,6 +231,9 @@ export function CatalogScreen() {
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
+  // The store type can change while the screen stays mounted (Administrar →
+  // tipo); drop a stale stock sort so the select never points at a missing option.
+  const effectiveSortKey: SortKey = sortKey === "stock" && !isTiered ? "createdAt" : sortKey;
   const defaultId = defaultTier(activeStore)?.id ?? "t_retail";
   const defaultLabel = defaultTier(activeStore)?.label ?? "Menudeo";
   const products = productsForStore(state.products, activeStore.id);
@@ -242,7 +245,7 @@ export function CatalogScreen() {
     ? products.filter((p) => (p.categoryIds ?? []).includes(categoryFilter))
     : products;
   const sorted = [...filtered].sort((a, b) => {
-    const cmp = compareBy(sortKey, a, b, defaultId);
+    const cmp = compareBy(effectiveSortKey, a, b, defaultId);
     if (cmp !== 0) return sortDesc ? -cmp : cmp;
     return a.name.localeCompare(b.name, "es");
   });
@@ -296,7 +299,7 @@ export function CatalogScreen() {
           <div className="w-36 shrink-0">
             <SelectField
               label="Ordenar por"
-              value={sortKey}
+              value={effectiveSortKey}
               onChange={changeSort}
               options={sortOptions}
             />
