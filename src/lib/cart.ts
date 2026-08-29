@@ -4,12 +4,15 @@
 // confirms the price in the WhatsApp chat.
 
 export type CartLine = {
-  productId: string;
+  productSlug: string; // stable PUBLIC key (the slug survives renames of the doc id)
   name: string;
   sku: string;
   qty: number;
   image?: string;
   inquire?: boolean; // sold-out piece: ask instead of buy
+  /** Public per-tier unit prices (owner decision: the tier map is public).
+   *  Powers the informative savings hint — totals are never committed. */
+  unitPrices?: Record<string, number>;
 };
 
 const SCHEMA_VERSION = 1;
@@ -22,7 +25,7 @@ export function loadCart(slug: string): CartLine[] {
     const parsed = JSON.parse(raw) as { v?: number; lines?: CartLine[] };
     if (parsed.v !== SCHEMA_VERSION || !Array.isArray(parsed.lines)) return [];
     return parsed.lines.filter(
-      (l) => l && typeof l.productId === "string" && typeof l.name === "string" && typeof l.qty === "number"
+      (l) => l && typeof l.productSlug === "string" && typeof l.name === "string" && typeof l.qty === "number"
     );
   } catch {
     return []; // corrupt JSON: discard and start clean
@@ -35,38 +38,38 @@ export function saveCart(slug: string, lines: CartLine[]): void {
 
 export function addToCart(
   slug: string,
-  item: { productId: string; name: string; sku: string; image?: string },
+  item: Omit<CartLine, "qty">,
   qty = 1
 ): CartLine[] {
   const lines = loadCart(slug);
-  const existing = lines.find((l) => l.productId === item.productId);
+  const existing = lines.find((l) => l.productSlug === item.productSlug);
   const next = existing
-    ? lines.map((l) => (l.productId === item.productId ? { ...l, qty: l.qty + qty } : l))
+    ? lines.map((l) => (l.productSlug === item.productSlug ? { ...l, qty: l.qty + qty } : l))
     : [...lines, { ...item, qty }];
   saveCart(slug, next);
   return next;
 }
 
 /** Set a quantity; 0 or less removes the line. */
-export function setCartQty(slug: string, productId: string, qty: number): CartLine[] {
+export function setCartQty(slug: string, productSlug: string, qty: number): CartLine[] {
   const current = loadCart(slug);
   const next =
     qty <= 0
-      ? current.filter((l) => l.productId !== productId)
-      : current.map((l) => (l.productId === productId ? { ...l, qty } : l));
+      ? current.filter((l) => l.productSlug !== productSlug)
+      : current.map((l) => (l.productSlug === productSlug ? { ...l, qty } : l));
   saveCart(slug, next);
   return next;
 }
 
-export function removeCartLine(slug: string, productId: string): CartLine[] {
-  const next = loadCart(slug).filter((l) => l.productId !== productId);
+export function removeCartLine(slug: string, productSlug: string): CartLine[] {
+  const next = loadCart(slug).filter((l) => l.productSlug !== productSlug);
   saveCart(slug, next);
   return next;
 }
 
 /** Drop lines whose piece no longer exists in the public projection. */
-export function pruneCartLines(lines: CartLine[], knownProductIds: Set<string>): CartLine[] {
-  return lines.filter((l) => knownProductIds.has(l.productId));
+export function pruneCartLines(lines: CartLine[], knownProductSlugs: Set<string>): CartLine[] {
+  return lines.filter((l) => knownProductSlugs.has(l.productSlug));
 }
 
 export function cartPieces(lines: { qty: number }[]): number {

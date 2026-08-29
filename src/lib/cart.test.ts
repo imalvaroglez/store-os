@@ -10,10 +10,10 @@ import {
   type CartLine,
 } from "./cart";
 
-const line = (productId: string, name: string, qty = 1): CartLine => ({
-  productId,
+const line = (productSlug: string, name: string, qty = 1): CartLine => ({
+  productSlug,
   name,
-  sku: `SKU-${productId}`,
+  sku: `SKU-${productSlug}`,
   qty,
 });
 
@@ -47,25 +47,25 @@ describe("cart persistence por tienda", () => {
 
 describe("cart mutations", () => {
   it("addToCart acumula cantidad en la línea existente y conserva el orden", () => {
-    let lines = addToCart("olivia", { productId: "p1", name: "Anillo Blossom", sku: "SKU-p1" });
-    lines = addToCart("olivia", { productId: "p2", name: "Aretes Luna", sku: "SKU-p2" });
-    lines = addToCart("olivia", { productId: "p1", name: "Anillo Blossom", sku: "SKU-p1" });
-    expect(lines.map((l) => [l.productId, l.qty])).toEqual([["p1", 2], ["p2", 1]]);
+    let lines = addToCart("olivia", { productSlug: "p1", name: "Anillo Blossom", sku: "SKU-p1" });
+    lines = addToCart("olivia", { productSlug: "p2", name: "Aretes Luna", sku: "SKU-p2" });
+    lines = addToCart("olivia", { productSlug: "p1", name: "Anillo Blossom", sku: "SKU-p1" });
+    expect(lines.map((l) => [l.productSlug, l.qty])).toEqual([["p1", 2], ["p2", 1]]);
     // y quedó persistido
     expect(loadCart("olivia")).toHaveLength(2);
   });
 
   it("setCartQty actualiza y elimina al llegar a 0", () => {
     saveCart("olivia", [line("p1", "Anillo Blossom", 1), line("p2", "Aretes Luna", 1)]);
-    expect(setCartQty("olivia", "p1", 4).find((l) => l.productId === "p1")?.qty).toBe(4);
+    expect(setCartQty("olivia", "p1", 4).find((l) => l.productSlug === "p1")?.qty).toBe(4);
     const after = setCartQty("olivia", "p2", 0);
-    expect(after.map((l) => l.productId)).toEqual(["p1"]);
-    expect(loadCart("olivia").map((l) => l.productId)).toEqual(["p1"]);
+    expect(after.map((l) => l.productSlug)).toEqual(["p1"]);
+    expect(loadCart("olivia").map((l) => l.productSlug)).toEqual(["p1"]);
   });
 
   it("removeCartLine quita solo esa línea", () => {
     saveCart("olivia", [line("p1", "A", 1), line("p2", "B", 2), line("p3", "C", 3)]);
-    expect(removeCartLine("olivia", "p2").map((l) => l.productId)).toEqual(["p1", "p3"]);
+    expect(removeCartLine("olivia", "p2").map((l) => l.productSlug)).toEqual(["p1", "p3"]);
   });
 });
 
@@ -73,7 +73,7 @@ describe("cart proyección al renderizar", () => {
   it("descarta en silencio líneas cuya pieza ya no está en el catálogo público", () => {
     const lines = [line("p1", "A", 1), line("p2", "B", 2), line("p3", "C", 1)];
     const pruned = pruneCartLines(lines, new Set(["p1", "p3"]));
-    expect(pruned.map((l) => l.productId)).toEqual(["p1", "p3"]);
+    expect(pruned.map((l) => l.productSlug)).toEqual(["p1", "p3"]);
   });
 
   it("cartPieces suma cantidades", () => {
