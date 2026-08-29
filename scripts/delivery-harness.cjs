@@ -417,17 +417,11 @@ function deliveryIdFromBody(body = "") {
   return String(body || "").match(/^Delivery-ID:\s*([a-z0-9-]+)\s*$/m)?.[1] || "";
 }
 
-let repoOwnerCache = null;
-function repoOwnerLogin(root = ROOT) {
-  if (repoOwnerCache) return repoOwnerCache;
-  const command = ghInvocation(root, ["repo", "view", "--json", "owner", "--jq", ".owner.login"]);
-  const result = run(command.command, command.args, { cwd: root });
-  if (result.exitCode !== 0) {
-    repoOwnerCache = null;
-    return null; // falla cerrado: sin owner no hay evidencia de aprobación
-  }
-  repoOwnerCache = JSON.parse(result.stdout).login;
-  return repoOwnerCache;
+// El owner se deriva del repositorio canónico (constante verificada contra
+// origin en repositoryIdentityBlockers). No usamos `gh repo view` porque no
+// acepta el flag --repo que ghInvocation antepone a todo comando gh.
+function repoOwnerLogin() {
+  return CANONICAL_REPOSITORY.split("/")[1] ?? null; // "imalvaroglez"
 }
 
 const ownerMergedSpecCache = new Map();
