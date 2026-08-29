@@ -58,21 +58,11 @@ jobs:
           app_changed=false
           while IFS= read -r file; do
             case "$file" in
-              docs/*|*.md|.delivery/queue.json) ;;
+              docs/*|*.md) ;;
               *) app_changed=true; break ;;
             esac
           done < <(git diff --name-only "$BASE_SHA" "$GITHUB_SHA")
           echo "app-changed=$app_changed" >> "$GITHUB_OUTPUT"
-
-  delivery-config:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Validate delivery harness configuration
-        run: npm run delivery -- check-config
 
   build-test:
     needs: env-select
@@ -156,7 +146,7 @@ jobs:
   # The ONLY path to a Vercel deployment. Runs only if BOTH gates passed.
   # Vercel's Git auto-deploy is OFF, so without this job nothing publishes.
   deploy:
-    needs: [env-select, delivery-config, build-test, rules-and-e2e]
+    needs: [env-select, build-test, rules-and-e2e]
     # Only deploy on push events (a push to a branch, or a merge to main).
     # PR-only synthetic events would double-deploy; the underlying push already
     # triggers this.

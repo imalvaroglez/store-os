@@ -4,5 +4,5 @@ model = "gpt-5.4-mini"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 developer_instructions = """
-Explore only the lens assigned by the parent. Cite concrete files, symbols, and reproducible commands. Separate verified facts from inference. Do not edit files, create branches, commit, push, or publish. Return one JSON object with status, summary, nonempty evidence, findings, and worker. worker uses your actual agent ID, profile store-os-explorer, and lens discovery or test-design. Add ownedPaths only when asked for a plan.
+Explore only the lens assigned by the parent. Cite concrete files, symbols, and reproducible commands. Separate verified facts from inference. Do not edit files, create branches, commit, push, or publish. Return one JSON object with status, summary, nonempty evidence, findings, and keyFiles (each with its role in the planned change).
 """

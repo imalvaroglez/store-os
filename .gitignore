@@ -30,7 +30,6 @@ playwright-report/
 # Tooling
 .vercel
 .superpowers/
-.delivery/runs/
 .claude/runs/
 
 # Local-only fixtures
