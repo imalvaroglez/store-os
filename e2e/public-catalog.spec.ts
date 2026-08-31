@@ -52,18 +52,6 @@ async function seedPublicProjection() {
   const stores = [
     { slug: "santi", storeId: "store_santi", name: "Santi", type: "on_demand", whatsappPhone: "5215512345678", storefront: null },
     { slug: "joyeria", storeId: "store_joyeria", name: "Joyería", type: "inventory_tiered", whatsappPhone: null, storefront: null },
-    // Tiered store with PUBLIC tier minimums (carrito público, owner decision
-    // 2026-08-29) + a whatsapp phone so the cart order URL carries wa.me/<digits>.
-    {
-      slug: "olivia-tiers", storeId: "store_olivia_tiers", name: "Olivia Tiers", type: "inventory_tiered",
-      whatsappPhone: "5213344836691", storefront: null,
-      priceTiers: [
-        { id: "t_retail", label: "Menudeo", order: 0 },
-        { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
-        { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
-      ],
-      defaultTierId: "t_retail",
-    },
   ];
   // Product summaries live INSIDE publicCatalogs (the grid source).
   const summary = (productSlug: string, name: string, storeSlug: string, extra: Record<string, unknown> = {}) => ({
@@ -86,26 +74,13 @@ async function seedPublicProjection() {
         summary("cadena-de-plata-925", "Cadena de plata 925", "joyeria", { prices: { retail: 1800 } }),
       ],
     },
-    {
-      slug: "olivia-tiers", storeId: "store_olivia_tiers", storeSlug: "olivia-tiers",
-      categories: [],
-      products: [
-        summary("anillo-blossom", "Anillo Blossom", "olivia-tiers", {
-          sku: "AAN1385", price: 140,
-          prices: { t_retail: 140, t_girly: 115, t_iconic: 95 }, stockSignal: "disponible",
-        }),
-        summary("aretes-luna", "Aretes Luna", "olivia-tiers", {
-          sku: "OLI-002", price: 120, prices: { t_retail: 120 }, stockSignal: "pocas",
-        }),
-      ],
-    },
   ];
 
   const patch = async (path: string, body: unknown) => {
     const res = await fetch(`${FS}/${path}`, { method: "PATCH", headers: auth, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`seed write failed for ${path}: ${res.status} ${await res.text()}`);
   };
-  await patch(`users/${seed.uid}`, { fields: toFields({ email: ADMIN_EMAIL, role: "super_admin" }) });
+  await patch(`users/${seed.uid}`, { fields: toFields({ email: ADMIN_EMAIL, emailNormalized: ADMIN_EMAIL.toLowerCase(), emailVerified: true, role: "super_admin" }) });
   for (const store of stores) {
     await patch(`adminStores/${store.storeId}`, {
       fields: toFields({ ...store, ownerUid: seed.uid, memberUids: [seed.uid], pendingInvites: [] }),
@@ -131,14 +106,28 @@ async function seedPublicProjection() {
 async function seedStaleOlivia() {
   const auth = { "Content-Type": "application/json", Authorization: "Bearer owner" };
 
-  const staleStore = { slug: "olivia", name: "Olivia", type: "on_demand", whatsappPhone: null, storefront: null };
+  const staleStore = {
+    slug: "olivia", name: "Olivia", type: "inventory_tiered", whatsappPhone: "5213344836691", storefront: null,
+    priceTiers: [
+      { id: "t_retail", label: "Menudeo", order: 0 },
+      { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
+      { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
+    ],
+    defaultTierId: "t_retail",
+  };
   const catalog = {
     slug: "olivia", storeId: "store_olivia", storeSlug: "olivia",
     categories: [],
     products: [
       {
         productSlug: "anillo-blossom", name: "Anillo Blossom", storeSlug: "olivia", imageUrl: null, availability: "available",
-        storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0, price: 1250,
+        storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0,
+        sku: "AAN1385", price: 140, prices: { t_retail: 140, t_girly: 115, t_iconic: 95 }, stockSignal: "disponible",
+      },
+      {
+        productSlug: "aretes-luna", name: "Aretes Luna", storeSlug: "olivia", imageUrl: null, availability: "available",
+        storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0,
+        sku: "OLI-002", price: 120, prices: { t_retail: 120 }, stockSignal: "pocas",
       },
     ],
   };
@@ -224,9 +213,9 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
 test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", async ({ browser }) => {
   const ctx = await browser.newContext();
   const anon = await ctx.newPage();
-  await openCatalogAnonymous(anon, "olivia-tiers");
+  await openCatalogAnonymous(anon, "olivia");
 
-  await expect(anon.getByRole("heading", { name: "Olivia Tiers" }).first()).toBeVisible({ timeout: 15000 });
+  await expect(anon.getByRole("heading", { name: "Olivia" }).first()).toBeVisible({ timeout: 15000 });
 
   // Add two different pieces from the grid.
   await anon.getByRole("button", { name: "Agregar al carrito" }).nth(0).click();
@@ -248,7 +237,7 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   const text = decodeURIComponent(href.split("text=")[1]);
   expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
   expect(text).toContain("• 1× Aretes Luna (OLI-002)");
-  expect(text).toContain("/catalogo/olivia-tiers");
+  expect(text).toContain("/catalogo/olivia");
   expect(text).not.toContain("$");
 
   // The cart survives a full reload (localStorage per store slug).
