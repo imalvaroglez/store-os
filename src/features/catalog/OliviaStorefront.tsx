@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Button, EmptyState, SkeletonCard, ProductImage, OLIVIA_BRAND } from "../../design-system";
 import {
   loadPublicCatalog,
@@ -8,6 +8,7 @@ import {
   type PublicCatalog,
   type PublicProductSummary,
   type PublicProductDetail,
+  type PublicStockSignal,
 } from "../../app/firebase/publicCatalog";
 import type { RouteMatch } from "../../lib/router";
 import { navigate } from "../../lib/router";
@@ -18,7 +19,35 @@ import {
   createStorefrontResaleUrl,
 } from "../../lib/whatsapp";
 import { useSeo } from "./useSeo";
+import { useCart } from "./useCart";
+import { CartDrawer } from "./CartDrawer";
+import { cartPieces, type CartLine } from "../../lib/cart";
 import type { Storefront } from "../../types";
+
+// --- Public cart (context) -------------------------------------------------
+//
+// One cart per storefront visit, scoped to the store slug and persisted in
+// localStorage (src/lib/cart.ts). StoreChrome owns the state so the floating
+// button, the grid's add buttons and the detail's CTA all stay in sync.
+
+type CartContextValue = {
+  store: PublicStore;
+  lines: CartLine[];
+  signalBySlug?: Record<string, PublicStockSignal>;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  add: (item: Omit<CartLine, "qty">, qty?: number) => void;
+  setQty: (productSlug: string, qty: number) => void;
+  remove: (productSlug: string) => void;
+};
+
+const CartContext = createContext<CartContextValue | null>(null);
+
+function useCartContext(): CartContextValue {
+  const ctx = useContext(CartContext);
+  if (!ctx) throw new Error("El carrito solo vive dentro de StoreChrome con tienda cargada.");
+  return ctx;
+}
 
 // Olivia's public storefront. Handles all three public sub-routes (store home,
 // category, product) in one component so they share the brand chrome, the store
@@ -175,8 +204,11 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
 
   const heroImg = sf.hero?.imageUrl;
 
+  const signalBySlug = Object.fromEntries(
+    catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"])
+  );
   return (
-    <StoreChrome store={store}>
+    <StoreChrome store={store} signalBySlug={signalBySlug} visibleSlugs={new Set(catalog.products.map((p) => p.productSlug))}>
       {/* Hero */}
       <section className="relative">
         {heroImg && (
@@ -315,32 +347,54 @@ function ProductGrid({
 }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-      {products.map((p) => {
-        const soldOut = p.availability === "sold_out";
-        return (
-          <a
-            key={p.productSlug}
-            href={`/catalogo/${slug}/producto/${p.productSlug}`}
-            className="group block"
-          >
-            <div className="relative aspect-square rounded-xl overflow-hidden bg-[var(--olv-rule)]">
-              <ProductImage src={p.imageUrl ?? undefined} alt={p.name} size="full" />
-              {soldOut && (
-                <span className="absolute top-2 left-2 bg-white/80 text-[var(--olv-ink)] text-[10px] font-semibold px-2 py-0.5 rounded-full">
-                  Agotado
-                </span>
-              )}
-              {p.isNew && !soldOut && (
-                <span className="absolute top-2 left-2 bg-[var(--olv-accent)] text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
-                  Nuevo
-                </span>
-              )}
-            </div>
-            <h3 className="olv-display font-semibold text-[var(--olv-ink)] mt-2 text-sm leading-snug">{p.name}</h3>
-            <p className="text-sm font-semibold text-[var(--olv-accent)]">{formatMoney(publicPrice(p))}</p>
-          </a>
-        );
-      })}
+      {products.map((p) => (
+        <ProductCard key={p.productSlug} p={p} slug={slug} />
+      ))}
+    </div>
+  );
+}
+
+// Card = link (navigation) + sibling add action. The action is never nested
+// inside the link: the link keeps middle-click/copy-link, the button keeps the tap.
+function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
+  const { add } = useCartContext();
+  const soldOut = p.availability === "sold_out";
+  return (
+    <div className="group">
+      <StorefrontLink to={`/catalogo/${slug}/producto/${p.productSlug}`} className="block">
+        <div className="relative aspect-square rounded-xl overflow-hidden bg-[var(--olv-rule)]">
+          <ProductImage src={p.imageUrl ?? undefined} alt={p.name} size="full" />
+          {soldOut && (
+            <span className="absolute top-2 left-2 bg-white/80 text-[var(--olv-ink)] text-[10px] font-semibold px-2 py-0.5 rounded-full">
+              Agotado
+            </span>
+          )}
+          {p.isNew && !soldOut && (
+            <span className="absolute top-2 left-2 bg-[var(--olv-accent)] text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
+              Nuevo
+            </span>
+          )}
+        </div>
+        <h3 className="olv-display font-semibold text-[var(--olv-ink)] mt-2 text-sm leading-snug">{p.name}</h3>
+        <p className="text-sm font-semibold text-[var(--olv-accent)]">{formatMoney(publicPrice(p))}</p>
+      </StorefrontLink>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="mt-2 w-full"
+        onClick={() =>
+          add({
+            productSlug: p.productSlug,
+            name: p.name,
+            sku: p.sku ?? p.productSlug,
+            image: p.imageUrl ?? undefined,
+            unitPrices: p.prices,
+            inquire: p.stockSignal === "agotado",
+          })
+        }
+      >
+        Agregar al carrito
+      </Button>
     </div>
   );
 }
@@ -416,16 +470,6 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
     };
   }, [slug, productSlug]);
 
-  const buyUrl = useMemo(() => {
-    if (!data) return "#";
-    return createStorefrontBuyUrl(data.store, slug, {
-      name: data.product.name,
-      sku: data.product.sku,
-      productSlug: data.product.productSlug,
-      intent: data.product.availability === "sold_out" ? "inquire" : "buy",
-    });
-  }, [data, slug]);
-
   // SEO: unconditional, derived from possibly-null data.
   const seoProduct = data?.product;
   const seoImages = seoProduct?.images ?? [];
@@ -483,13 +527,48 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
   }
 
   const { product, store } = data;
+
+  return (
+    <StoreChrome
+      store={store}
+      signalBySlug={{ [product.productSlug]: product.stockSignal ?? "disponible" }}
+    >
+      <ProductDetail product={product} store={store} slug={slug} activeImg={activeImg} setActiveImg={setActiveImg} />
+    </StoreChrome>
+  );
+}
+
+// Detail content lives under the chrome's cart provider so "Agregar" and the
+// floating button share state.
+function ProductDetail({
+  product,
+  store,
+  slug,
+  activeImg,
+  setActiveImg,
+}: {
+  product: PublicProductDetail;
+  store: PublicStore;
+  slug: string;
+  activeImg: number;
+  setActiveImg: (i: number) => void;
+}) {
+  const { add } = useCartContext();
   const images = product.images ?? [];
   const soldOut = product.availability === "sold_out";
   const canInquire = product.canInquire || !soldOut;
 
+  const buyUrl = useMemo(() => {
+    return createStorefrontBuyUrl(store, slug, {
+      name: product.name,
+      sku: product.sku,
+      productSlug: product.productSlug,
+      intent: soldOut ? "inquire" : "buy",
+    });
+  }, [store, slug, product, soldOut]);
+
   return (
-    <StoreChrome store={store}>
-      <div className="mx-auto max-w-4xl px-4 py-6">
+    <div className="mx-auto max-w-4xl px-4 py-6">
         <Button variant="ghost" onClick={() => navigate(`/catalogo/${slug}`)} className="olv-ink-soft text-sm p-0 min-h-10">
           ← Volver al catálogo
         </Button>
@@ -527,6 +606,47 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
               {formatMoney(publicPrice(product))}
             </p>
 
+            {/* Public tier table (owner decision 2026-08-29): label, price and
+                INFORMATIVE minimum — amounts always at the tier's own price.
+                Falls back to the single price on stale projections. */}
+            {(store.priceTiers ?? []).length > 0 && (
+              <div className="mt-3 rounded-xl bg-white/60 ring-1 ring-[var(--olv-rule)] divide-y divide-[var(--olv-rule)]">
+                {(store.priceTiers ?? []).map((t) => {
+                  const price = product.prices?.[t.id];
+                  if (typeof price !== "number") return null;
+                  const isDefault = t.id === store.defaultTierId;
+                  const min =
+                    t.minPieces != null
+                      ? `desde ${t.minPieces} ${t.minPieces === 1 ? "pieza" : "piezas"}`
+                      : t.minAmount != null
+                        ? `desde ${formatMoney(t.minAmount)} a precio ${t.label}`
+                        : null;
+                  return (
+                    <div
+                      key={t.id}
+                      className={
+                        "flex items-center justify-between gap-2 px-3 py-2 text-sm" +
+                        (isDefault ? " font-semibold" : "")
+                      }
+                    >
+                      <span className="text-[var(--olv-ink)]">
+                        {t.label}
+                        {isDefault && (
+                          <span className="ml-2 rounded-full bg-[var(--olv-accent)] text-white text-[10px] font-semibold px-2 py-0.5 align-middle">
+                            Precio público
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-right">
+                        <b>{formatMoney(price)}</b>
+                        {min && <span className="olv-ink-soft block text-xs">{min}</span>}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {soldOut && (
               <p className="mt-2 inline-block bg-white/70 px-3 py-1 rounded-full text-sm font-semibold">Agotado</p>
             )}
@@ -556,8 +676,25 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
               </div>
             )}
 
-            {/* CTAs: buy/inquire (respects canInquire + sold-out), contact, resale. */}
+            {/* CTAs: cart, buy/inquire (respects canInquire + sold-out), contact. */}
             <div className="mt-6 flex flex-col gap-2">
+              <Button
+                full
+                size="lg"
+                variant="secondary"
+                onClick={() =>
+                  add({
+                    productSlug: product.productSlug,
+                    name: product.name,
+                    sku: product.sku,
+                    image: images[0]?.url,
+                    unitPrices: product.prices,
+                    inquire: soldOut,
+                  })
+                }
+              >
+                Agregar al carrito
+              </Button>
               {canInquire && (
                 <a href={buyUrl} target="_blank" rel="noreferrer">
                   <Button full size="lg" variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">
@@ -576,7 +713,6 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
           </div>
         </div>
       </div>
-    </StoreChrome>
   );
 }
 
@@ -607,10 +743,24 @@ function StorefrontLink({ to, className, children }: { to: string; className?: s
   );
 }
 
-function StoreChrome({ store, children }: { store?: PublicStore; children: React.ReactNode }) {
-  return (
-    <div className="olivia-root min-h-full">
-      <BrandStyle />
+function StoreChrome({
+  store,
+  signalBySlug,
+  visibleSlugs,
+  children,
+}: {
+  store?: PublicStore;
+  signalBySlug?: Record<string, PublicStockSignal>;
+  visibleSlugs?: Set<string>;
+  children: React.ReactNode;
+}) {
+  // Hooks run unconditionally; the cart is inert (empty) without a store.
+  const cart = useCart(store?.slug);
+  const [cartOpen, setCartOpen] = useState(false);
+  const pieces = cartPieces(cart.lines);
+
+  const body = (
+    <>
       {store && (
         <header className="sticky top-0 z-10 backdrop-blur bg-[var(--olv-bg)]/85 border-b border-[var(--olv-rule)]">
           <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
@@ -624,7 +774,48 @@ function StoreChrome({ store, children }: { store?: PublicStore; children: React
       <footer className="border-t border-[var(--olv-rule)] mt-8 py-6 text-center text-xs">
         <p className="olv-ink-soft">© {store?.name}</p>
       </footer>
-    </div>
+    </>
+  );
+
+  if (!store) {
+    return (
+      <div className="olivia-root min-h-full">
+        <BrandStyle />
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <CartContext.Provider
+      value={{ store, ...cart, signalBySlug, open: cartOpen, setOpen: setCartOpen }}
+    >
+      <div className="olivia-root min-h-full">
+        <BrandStyle />
+        {body}
+        {/* Floating cart button: appears once the visit has pieces in the cart. */}
+        {pieces > 0 && !cartOpen && (
+          <Button
+            variant="primary"
+            aria-label="Abrir pedido"
+            onClick={() => setCartOpen(true)}
+            className="fixed bottom-5 right-5 z-20 rounded-full shadow-lg bg-[var(--olv-accent)] text-white hover:opacity-90 px-5"
+          >
+            🛍 {pieces}
+          </Button>
+        )}
+        <CartDrawer
+          open={cartOpen}
+          onClose={() => setCartOpen(false)}
+          store={store}
+          lines={cart.lines}
+          signalBySlug={signalBySlug}
+          visibleSlugs={visibleSlugs}
+          onSetQty={cart.setQty}
+          onRemove={cart.remove}
+        />
+      </div>
+    </CartContext.Provider>
   );
 }
 
