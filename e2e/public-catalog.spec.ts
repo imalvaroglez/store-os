@@ -68,7 +68,7 @@ async function seedPublicProjection() {
   // Product summaries live INSIDE publicCatalogs (the grid source).
   const summary = (productSlug: string, name: string, storeSlug: string, extra: Record<string, unknown> = {}) => ({
     productSlug, name, storeSlug, imageUrl: null, availability: "available",
-    storeId: storeSlug === "santi" ? "store_santi" : "store_joyeria", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0, ...extra,
+    storeId: `store_${storeSlug.replace(/-/g, "_")}`, isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0, ...extra,
   });
   const catalogs = [
     {
