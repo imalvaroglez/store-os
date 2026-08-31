@@ -146,6 +146,12 @@ export function StoreSettingsScreen({
 
   // Save the tier editor. Blocks: zero visible tiers, or a default tier that is
   // missing/hidden (defaultTier also falls back defensively at read time).
+  // Minimums are non-negative integers (review F4): parseAmount keeps sign/decimals.
+  const parseMinimum = (v: string): number | undefined => {
+    const n = parseAmount(v);
+    return n == null ? undefined : Math.max(0, Math.floor(n));
+  };
+
   async function saveTiers() {
     setTierError(null);
     const visible = tiersDraft.filter((t) => !t.hidden && t.label.trim());
@@ -411,6 +417,30 @@ export function StoreSettingsScreen({
                 </div>
               </div>
               {t.hidden && <p className="text-xs text-ink-soft">Oculto: los precios guardados se conservan.</p>}
+              {/* Informative minimums for the public cart (never enforced in
+                  the client — qualification is confirmed in the chat). */}
+              <div className="grid grid-cols-2 gap-2">
+                <TextField
+                  label={i === 0 ? "Mínimo de piezas" : " "}
+                  hint={i === 0 ? "Piezas que necesita el pedido. Vacío = sin mínimo." : undefined}
+                  inputMode="numeric"
+                  placeholder="5"
+                  value={t.minPieces != null ? String(t.minPieces) : ""}
+                  onChange={(e) =>
+                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, minPieces: parseMinimum(e.target.value) } : x)))
+                  }
+                />
+                <TextField
+                  label={i === 0 ? "Mínimo de compra" : " "}
+                  hint={i === 0 ? "A precio del propio nivel. Vacío = sin mínimo." : undefined}
+                  inputMode="numeric"
+                  placeholder="1000"
+                  value={t.minAmount != null ? String(t.minAmount) : ""}
+                  onChange={(e) =>
+                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, minAmount: parseMinimum(e.target.value) } : x)))
+                  }
+                />
+              </div>
               {confirmTierDelete === t.id && (
                 <p className="text-xs text-danger">Toca × otra vez para eliminar. Las órdenes históricas quedan como están.</p>
               )}

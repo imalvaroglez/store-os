@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildCartOrderUrl,
   createWhatsAppShareCatalogUrl,
   createStorefrontBuyUrl,
   createStorefrontContactUrl,
   createStorefrontResaleUrl,
   type StorefrontWhatsAppTarget,
   type StorefrontProductRef,
+  type CartOrderLine,
 } from "./whatsapp";
 import type { Store } from "../types";
 
@@ -116,5 +118,40 @@ describe("createStorefrontResaleUrl", () => {
     );
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text.toLowerCase()).toContain("reventa");
+  });
+});
+
+describe("buildCartOrderUrl — pedido de varias líneas", () => {
+  const cartLines: CartOrderLine[] = [
+    { name: "Anillo Blossom", sku: "AAN1385", qty: 2 },
+    { name: "Aretes Luna", sku: "OLI-002", qty: 1, inquire: true },
+  ];
+
+  it("arma un solo mensaje con intro, Pedido:, las líneas y el link al catálogo", () => {
+    const url = buildCartOrderUrl(sfStore, "olivia", cartLines);
+    expect(url).toContain("wa.me/5215512345678");
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Hola, me interesa esta pieza:"); // intro editable como prefijo
+    expect(text).toContain("Pedido:");
+    expect(text).toContain("• 2× Anillo Blossom (AAN1385)");
+    expect(text).toContain("• 1× Aretes Luna (OLI-002) — sobre pedido");
+    expect(text).toContain("/catalogo/olivia");
+  });
+
+  it("nunca incluye precios ni totales", () => {
+    const url = buildCartOrderUrl(sfStore, "olivia", cartLines);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).not.toContain("$");
+    expect(text).not.toContain("precio");
+  });
+
+  it("usa un intro por defecto cuando la tienda no definió uno", () => {
+    const url = buildCartOrderUrl(
+      { whatsappPhone: "5215512345678", storefront: { whatsappBuyIntro: "" } },
+      "olivia",
+      cartLines
+    );
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Hola, quiero hacer un pedido:");
   });
 });

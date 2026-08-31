@@ -86,3 +86,29 @@ export function createStorefrontResaleUrl(
   const text = `${intro}\n${productUrl(storeSlug)}`;
   return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }
+
+export type CartOrderLine = {
+  name: string;
+  sku: string;
+  qty: number;
+  inquire?: boolean; // sold-out piece → asked, not bought
+};
+
+/**
+ * Multi-line cart order in ONE message. Same intro convention as
+ * createStorefrontBuyUrl: the editable intro is a PREFIX, each line carries
+ * name + SKU, and the catalog URL is appended. Prices/totals are intentionally
+ * absent — the owner confirms the price and tier qualification in the chat.
+ */
+export function buildCartOrderUrl(
+  store: StorefrontWhatsAppTarget,
+  storeSlug: string,
+  lines: CartOrderLine[]
+): string {
+  const intro = store.storefront?.whatsappBuyIntro?.trim() || "Hola, quiero hacer un pedido:";
+  const body = lines
+    .map((l) => `• ${l.qty}× ${l.name} (${l.sku})${l.inquire ? " — sobre pedido" : ""}`)
+    .join("\n");
+  const text = `${intro}\nPedido:\n${body}\n${productUrl(storeSlug)}`;
+  return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
+}
