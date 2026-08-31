@@ -104,6 +104,12 @@ test("cloud: session survives reload and fresh data appears (emulator)", async (
     // cloud reload — with its inventory-tiered shape so the catalog lists it.
     const FRESH = "Producto Refresh E2E";
     const now = Date.now();
+    // createdAt/updatedAt are ISO strings in the domain (types.Product, e2e/
+    // seed.ts) — the app writes nowIso(). A numeric timestamp here used to be
+    // harmless until the catalog sorted by createdAt (#66): every product card
+    // list ran e.createdAt.localeCompare and a single numeric doc crashed the
+    // whole screen into the error boundary right after the reload.
+    const createdAt = new Date().toISOString();
     await writeEmulatorDoc("products", `prod_refresh_${now}`, {
       id: `prod_refresh_${now}`,
       storeId: "store_joyeria",
@@ -115,8 +121,8 @@ test("cloud: session survives reload and fresh data appears (emulator)", async (
       prices: { retail: 20, wholesale: 15, reseller: 12 },
       quantityOnHand: 5,
       lowStockAt: 2,
-      createdAt: now,
-      updatedAt: now,
+      createdAt,
+      updatedAt: createdAt,
     });
 
     await page.reload();
