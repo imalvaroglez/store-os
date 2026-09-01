@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { gotoClean, loginAsFirstAdmin, writeEmulatorDoc } from "./helpers";
+import { ensureStoreActive, gotoClean, loginAsFirstAdmin, writeEmulatorDoc } from "./helpers";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { ADMIN_EMAIL as _ADMIN } from "./helpers";
 
@@ -61,6 +61,7 @@ test.afterAll(async () => {
 
 test("50-line review: filters, global resolution, bulk create, receive", async ({ sharedPage: page }) => {
   await gotoClean(page, "/productos/compras");
+  await ensureStoreActive(page, "Joyería");
   await expect(page.getByText(/50 productos/).first()).toBeVisible({ timeout: 15000 });
 
   // Open the seeded draft.
@@ -110,6 +111,7 @@ test("receive rejects a purchase whose product does not exist", async ({ sharedP
     updatedAt: "2026-08-19T00:00:00Z",
   });
   await gotoClean(page, "/productos/compras");
+  await ensureStoreActive(page, "Joyería");
   await page.getByText("#7777").first().click();
   await page.getByRole("button", { name: "Recibir mercancía" }).click();
   await expect(page.getByText(/No se encontró el producto/)).toBeVisible({ timeout: 20000 });
@@ -130,6 +132,7 @@ test("receive rejects a product that belongs to another store", async ({ sharedP
     updatedAt: "2026-08-19T00:00:00Z",
   });
   await gotoClean(page, "/productos/compras");
+  await ensureStoreActive(page, "Joyería");
   await page.getByText("#8888").first().click();
   await page.getByRole("button", { name: "Recibir mercancía" }).click();
   await expect(page.getByText(/pertenece a otra tienda/)).toBeVisible({ timeout: 20000 });
@@ -153,6 +156,7 @@ test("locked after receive: controls disabled", async ({ sharedPage: page }) => 
     updatedAt: "2026-08-20T00:00:00Z",
   });
   await gotoClean(page, "/productos/compras");
+  await ensureStoreActive(page, "Joyería");
   await page.getByText("#9999").first().click();
   await expect(page.getByText("Recibida").first()).toBeVisible();
   await expect(page.locator('input[aria-label="Producto"]').first()).toBeDisabled();

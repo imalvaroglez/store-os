@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { addToCart, loadCart, removeCartLine, setCartQty, type CartLine } from "../../lib/cart";
+import { addToCart, loadCart, pruneCartLines, refreshCart, removeCartLine, saveCart, setCartQty, type CartLine } from "../../lib/cart";
 
 /** Cart state for one public storefront slug. Local-first: localStorage is the
  *  source of truth and every mutation returns the next lines from cart.ts, so
@@ -35,5 +35,25 @@ export function useCart(slug: string | undefined) {
     [slug]
   );
 
-  return { lines, add, setQty, remove };
+  const refresh = useCallback(
+    (items: Omit<CartLine, "qty">[]) => {
+      if (!slug) return;
+      setLines(refreshCart(slug, items));
+    },
+    [slug]
+  );
+
+  const prune = useCallback(
+    (knownProductSlugs: Set<string>) => {
+      if (!slug) return;
+      const current = loadCart(slug);
+      const next = pruneCartLines(current, knownProductSlugs);
+      if (next.length === current.length) return;
+      saveCart(slug, next);
+      setLines(next);
+    },
+    [slug]
+  );
+
+  return { lines, add, setQty, remove, refresh, prune };
 }

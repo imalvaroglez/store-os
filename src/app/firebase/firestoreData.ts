@@ -31,15 +31,13 @@ type CollectionName = (typeof COLLECTIONS)[number];
 export async function loadCloudState(user: AppUser): Promise<AppState> {
   const { db } = getFirebase();
 
-  // Stores: super_admin reads the CONTROL plane (adminStores) — never the
-  // business docs, so platform administration cannot leak tenant PII (G-P02).
-  // adminStores carries only control metadata, so the Store objects built here
-  // are control-shaped (no whatsappPhone/storefront/skuPrefix); that is the
-  // intended super_admin view. Members read their full `stores` business docs.
+  // Super_admins can operate every store, so they need the complete business
+  // store docs (WhatsApp, storefront, pricing, and membership). Members remain
+  // scoped to stores where they are members.
   let stores: Store[] = [];
   if (user.role === "super_admin") {
-    const snap = await getDocs(collection(db, "adminStores"));
-    stores = snap.docs.map((d) => adminStoreToStore(d.data(), d.id));
+    const snap = await getDocs(collection(db, "stores"));
+    stores = snap.docs.map((d) => ({ ...(d.data() as Store), id: d.id }));
   } else {
     const q = query(collection(db, "stores"), where("memberUids", "array-contains", user.uid));
     const snap = await getDocs(q);
@@ -48,12 +46,14 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
 
   const storeIds = stores.map((s) => s.id);
 
-  // Fetch each entity collection scoped to the accessible stores. For super_admin
-  // that's effectively all; for members it stays within their stores (and avoids
-  // permission-denied on other stores' docs).
+  // Fetch each entity collection scoped to the accessible stores. For a
+  // super_admin this is the full collection (no `in`-query size limit); for
+  // members it remains scoped to their store set.
   async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders"): Promise<T[]> {
     if (storeIds.length === 0) return [];
-    const q = query(collection(db, name), where("storeId", "in", storeIds));
+    const q = user.role === "super_admin"
+      ? collection(db, name)
+      : query(collection(db, name), where("storeId", "in", storeIds));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
@@ -86,24 +86,19 @@ export function subscribeCloudState(
 ): Unsubscribe {
   const { db } = getFirebase();
   // Both roles subscribe to the stores they can see, then scope entity listeners
-  // by those store ids (see below). super_admin reads the adminStores control
-  // plane (G-P02); members read their member `stores` business docs. The store
-  // ids from either feed the `where("storeId","in",[...])` filter every entity
-  // listener needs (rules are not filters).
+  // by those store ids (see below). A super_admin sees every full store doc;
+  // members see only their member stores.
   const storesQ =
     user.role === "super_admin"
-      ? collection(db, "adminStores")
+      ? collection(db, "stores")
       : query(collection(db, "stores"), where("memberUids", "array-contains", user.uid));
 
   // Re-load everything on any entity change. Watch all four collections so edits
   // made on another device propagate live (not just stores).
   //
-  // Scoping: firestore.rules allows `list: if isSignedIn()` on
-  // products/customers/orders — the CLIENT must scope with
-  // `where("storeId", "in", [...])`, matching loadCloudState. A super_admin sees
-  // every store, so bare collection listeners are correct for them. A member must
-  // NEVER receive other stores' entities over the wire: we read their member
-  // stores once at subscribe time and filter entity listeners to those store ids.
+  // Scoping: members use `where("storeId", "in", [...])` and must NEVER
+  // receive another store's entities over the wire. A super_admin uses the
+  // full entity collection, which avoids the Firestore `in` limit.
   // If the member is added to a NEW store mid-session, the scoped storesQ
   // listener fires → triggerReload → loadCloudState re-reads everything (now
   // including the new store), so the data still arrives via the full reload path.
@@ -132,22 +127,18 @@ export function subscribeCloudState(
   // Stores listener is always live — storesQ is already role-scoped above.
   unsubscribers.push(onSnapshot(storesQ, triggerReload));
 
-  // Entity listeners: BOTH roles read their accessible stores once, then
-  // register storeId-filtered listeners. A bare collection(products) listener is
-  // NOT possible: firestore.rules gate each entity on
-  // isMember(resource.data.storeId), a resource.data-dependent rule, and Firestore
-  // rejects any query whose `where()` can't validate that rule ("rules are not
-  // filters"). So every entity listener MUST carry `where("storeId", "in", [...])`
-  // — for super_admin that's the stores they own/are members of (read from the
-  // adminStores control plane), for a member their member stores. A user with no
-  // stores subscribes to no entity listeners (nothing to watch). If they are
-  // added to a new store mid-session, the storesQ listener fires → triggerReload
-  // → loadCloudState re-reads everything including the new store.
+  // Members use storeId-filtered listeners because Firestore rules cannot use
+  // rules as filters. Super_admins can use full collection listeners because
+  // their role is independent of resource data and avoids the `in` limit.
+  // If a member is added to a new store mid-session, storesQ fires and the full
+  // state reloads; the next subscription is scoped to the new store set.
   function registerEntityListeners(storeIds: string[]) {
     if (tornDown) return;
-    if (storeIds.length === 0) return;
+    if (storeIds.length === 0 && user.role !== "super_admin") return;
     for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders"] as const) {
-      const entityQ = query(collection(db, name), where("storeId", "in", storeIds));
+      const entityQ = user.role === "super_admin"
+        ? collection(db, name)
+        : query(collection(db, name), where("storeId", "in", storeIds));
       unsubscribers.push(onSnapshot(entityQ, triggerReload));
     }
   }
@@ -155,8 +146,8 @@ export function subscribeCloudState(
   // Read accessible stores once, then register scoped listeners.
   getDocs(storesQ)
     .then((snap) => {
-      // For super_admin, storesQ is the adminStores control plane (docs keyed by
-      // storeId); for members it's their member `stores` docs. Both yield store ids.
+      // Both roles receive stores/{id} docs here; the super_admin query is global
+      // and the member query is scoped by membership. Both yield store ids.
       registerEntityListeners(snap.docs.map((d) => d.id));
     })
     .catch(() => {
@@ -174,10 +165,9 @@ export function subscribeCloudState(
 }
 
 /**
- * Control-plane projection of a store: adminStores/{id} carries ONLY allow-listed
- * control metadata (never business content like whatsappPhone/storefront), so a
- * super_admin `list` of adminStores cannot leak tenant PII (G-P02). This is the
- * only shape the rules read for membership/ownership (isMember/isOwner).
+ * Control-plane projection of a store: adminStores/{id} carries only the
+ * allow-listed membership metadata used by rules. Business data stays in
+ * stores/{id}; super_admins may access both planes when operating a store.
  */
 /**
  * Deep-clone with all `undefined` values removed (recursively), including those
@@ -212,26 +202,6 @@ export function projectAdminStore(store: { id: string } & Record<string, unknown
     createdAt: store.createdAt,
     updatedAt: store.updatedAt,
     retainedPrivacyRequestCount: store.retainedPrivacyRequestCount ?? 0,
-  };
-}
-
-/**
- * Build a control-shaped Store from an adminStores doc (for loadCloudState's
- * super_admin path). Business fields (whatsappPhone, storefront, skuPrefix) are
- * absent by design — super_admin sees the control plane only (G-P02).
- */
-function adminStoreToStore(data: unknown, id: string): Store {
-  const d = data as Record<string, unknown>;
-  return {
-    id,
-    name: (d.name as string) ?? "",
-    slug: (d.slug as string) ?? "",
-    type: (d.type as Store["type"]) ?? "on_demand",
-    createdAt: (d.createdAt as string) ?? "",
-    updatedAt: (d.updatedAt as string) ?? "",
-    ownerUid: d.ownerUid as string | undefined,
-    memberUids: d.memberUids as string[] | undefined,
-    pendingInvites: d.pendingInvites as string[] | undefined,
   };
 }
 
@@ -603,10 +573,13 @@ export async function projectPublicForStore(
   categories: Category[]
 ): Promise<void> {
   const { db } = getFirebase();
-  const writes: Promise<unknown>[] = [];
 
-  // 1. Storefront (identity + content + contact).
-  writes.push(setDoc(doc(db, "publicStores", store.slug), projectPublicStore(store)));
+  // 1. Storefront (identity + content + contact). Write this first: contact
+  // links depend on publicStores, and a later projection read must not leave
+  // the phone stale if it fails or is denied.
+  await setDoc(doc(db, "publicStores", store.slug), projectPublicStore(store));
+
+  const writes: Promise<unknown>[] = [];
 
   // 2. Catalog: active categories + published product summaries.
   const published = products.filter((p) => p.storeId === store.id && isPublished(p));

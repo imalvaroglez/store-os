@@ -10,6 +10,13 @@
 
 **Spec reference:** `docs/superpowers/specs/2026-08-06-security-compliance-harness-design.md`. This plan implements G-P01, G-P02, G-P03, G-P05, G-P06, G-P08 and the harness scaffolding. G-P04 and the `privacyRequests` collection belong to Espec 2 (separate plan). G-P07 (no secrets in client) is already true today; its gate is added here.
 
+> **Revisión posterior:** el diseño original de G-P02 separaba al
+> `super_admin` del plano de datos. Esa política fue reemplazada por
+> [ADR 0003](../../adr/0003-platform-super-admin-access.md): el superadmin
+> puede operar globalmente las tiendas, mientras `adminStores` conserva la
+> autoridad de membresía/propiedad y G-P01 mantiene el aislamiento entre
+> miembros.
+
 ---
 
 ## File Structure

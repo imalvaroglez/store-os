@@ -29,9 +29,9 @@ export type Store = {
   pricingRule?: { kind: "markup"; percent: number }; // suggested-price assistant
 };
 
-// Control-plane projection of a store (G-P02). Canonical document read by
-// super_admin for platform administration. Carries ONLY control metadata;
-// never business content (whatsappPhone/skuPrefix/storefront) or client PII.
+// Control-plane projection of a store. It remains the canonical source for
+// membership and ownership rules; the platform super_admin separately reads
+// the full stores/{id} business document when operating a store.
 // See src/app/firebase/rules-allowlist.ts ADMIN_STORE_FIELDS.
 export type AdminStore = {
   storeId: string;

@@ -73,7 +73,8 @@ test("form Sheet is centered modal on desktop, bottom-anchored on mobile", async
   const viewportH = testInfo.project.use.viewport?.height ?? 844;
   if (testInfo.project.name === "desktop") {
     expect(box!.y).toBeGreaterThan(40);
-    expect(box!.width).toBeLessThan(700);
+    expect(box!.width).toBeGreaterThan(700);
+    expect(box!.width).toBeLessThanOrEqual(1024);
   } else {
     expect(box!.y + box!.height).toBeGreaterThan(viewportH - 80);
   }

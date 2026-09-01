@@ -1,4 +1,6 @@
 import type { Store, Product } from "../types";
+import type { OrderPricing } from "./pricing";
+import { formatMoney } from "./money";
 
 function storefrontBase(phone?: string | null): string {
   const digits = (phone || "").replace(/[^0-9]/g, "");
@@ -97,18 +99,22 @@ export type CartOrderLine = {
 /**
  * Multi-line cart order in ONE message. Same intro convention as
  * createStorefrontBuyUrl: the editable intro is a PREFIX, each line carries
- * name + SKU, and the catalog URL is appended. Prices/totals are intentionally
- * absent — the owner confirms the price and tier qualification in the chat.
+ * name + SKU, and the catalog URL is appended. A canonical pricing result is
+ * optional so legacy single-price stores keep their existing message.
  */
 export function buildCartOrderUrl(
   store: StorefrontWhatsAppTarget,
   storeSlug: string,
-  lines: CartOrderLine[]
+  lines: CartOrderLine[],
+  pricing?: OrderPricing | null
 ): string {
   const intro = store.storefront?.whatsappBuyIntro?.trim() || "Hola, quiero hacer un pedido:";
   const body = lines
     .map((l) => `• ${l.qty}× ${l.name} (${l.sku})${l.inquire ? " — sobre pedido" : ""}`)
     .join("\n");
-  const text = `${intro}\nPedido:\n${body}\n${productUrl(storeSlug)}`;
+  const summary = pricing
+    ? `\nTotal de piezas: ${pricing.totalQuantity}\nPrecio aplicable: ${pricing.activeTier.tier.label}\nSubtotal estimado: ${formatMoney(pricing.estimatedSubtotal)} MXN\nEnvío no incluido.\nPrecio y existencia por confirmar por WhatsApp.`
+    : "";
+  const text = `${intro}\nPedido:\n${body}${summary}\n${productUrl(storeSlug)}`;
   return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }

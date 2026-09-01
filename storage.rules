@@ -2,18 +2,23 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Mirror of Firestore `isMember`/`isOwner`: the canonical adminStores
-    // control-plane doc is the ONLY source of membership authority (G-P02). A
-    // super_admin who is not a member must NOT reach the data plane (product
-    // photos, supplier PDFs). Cross-service rules only support the (default)
-    // Firestore database, which is all this app uses. One read per check.
-    function isStoreMember(storeId) {
+    // Mirror of Firestore store access: the canonical adminStores control-plane
+    // doc remains the source of membership authority, while super_admins may
+    // operate any store by platform policy. Cross-service rules only support
+    // the (default) Firestore database, which is all this app uses.
+    function isSuperAdmin() {
       return request.auth != null
-        && firestore.get(/databases/(default)/documents/adminStores/$(storeId)).data.memberUids.hasAny([request.auth.uid]);
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+    function isStoreMember(storeId) {
+      return isSuperAdmin()
+        || (request.auth != null
+        && firestore.get(/databases/(default)/documents/adminStores/$(storeId)).data.memberUids.hasAny([request.auth.uid]));
     }
     function isStoreOwner(storeId) {
-      return request.auth != null
-        && firestore.get(/databases/(default)/documents/adminStores/$(storeId)).data.ownerUid == request.auth.uid;
+      return isSuperAdmin()
+        || (request.auth != null
+        && firestore.get(/databases/(default)/documents/adminStores/$(storeId)).data.ownerUid == request.auth.uid);
     }
 
     function validImage() {

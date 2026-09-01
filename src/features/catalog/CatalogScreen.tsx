@@ -193,13 +193,6 @@ function ProductCard({
                       <Badge tone="danger">Faltan {Math.abs(product.quantityOnHand)}</Badge>
                     )}
                   </div>
-                  <div className="grid grid-cols-3 gap-2 mt-2">
-                    <StatRow label="Disponible">{product.quantityOnHand}</StatRow>
-                    <StatRow label="Comprometido" tone={committed > 0 ? "danger" : "default"}>
-                      {committed}
-                    </StatRow>
-                    <StatRow label="Físico">{product.quantityOnHand + committed}</StatRow>
-                  </div>
                 </div>
               )}
             </>
@@ -215,6 +208,15 @@ function ProductCard({
           )}
         </div>
       </div>
+      {isTiered && typeof product.quantityOnHand === "number" && (
+        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,.8fr)] gap-x-3 mt-3 min-w-0">
+          <StatRow label="Disponible">{product.quantityOnHand}</StatRow>
+          <StatRow label="Comprometido" tone={committed > 0 ? "danger" : "default"}>
+            {committed}
+          </StatRow>
+          <StatRow label="Físico">{product.quantityOnHand + committed}</StatRow>
+        </div>
+      )}
     </Card>
   );
 }
