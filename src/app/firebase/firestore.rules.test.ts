@@ -97,8 +97,8 @@ describe("G-P01 isolation between stores", () => {
   });
 });
 
-describe("G-P02 super_admin cannot read data PII by role", () => {
-  it("super_admin (not a member) cannot read customers/orders of s1", async () => {
+describe("G-P02 super_admin can operate any store by role", () => {
+  it("super_admin (not a member) can read and update customers/orders of s1", async () => {
     await env.withSecurityRulesDisabled(async (c) => {
       await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
       await setDoc(doc(c.firestore(), "users/admin"), { email: "admin@store.os", role: "super_admin" });
@@ -106,8 +106,35 @@ describe("G-P02 super_admin cannot read data PII by role", () => {
       await setDoc(doc(c.firestore(), "orders/o1"), { storeId: "s1", productName: "x" });
     });
     const db = await asUser("admin"); // role super_admin
-    await assertFails(getDoc(doc(db, "customers/c1")));
-    await assertFails(getDoc(doc(db, "orders/o1")));
+    await assertSucceeds(getDoc(doc(db, "customers/c1")));
+    await assertSucceeds(getDoc(doc(db, "orders/o1")));
+    await assertSucceeds(updateDoc(doc(db, "customers/c1"), { name: "y" }));
+    await assertSucceeds(updateDoc(doc(db, "orders/o1"), { status: "new" }));
+  });
+
+  it("super_admin can operate every current store data collection", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s_all"), { ownerUid: "u_other", memberUids: ["u_other"] });
+      await setDoc(doc(c.firestore(), "users/u_all"), { email: "a@x", role: "super_admin" });
+      await setDoc(doc(c.firestore(), "products/p_all"), { storeId: "s_all", name: "Ring" });
+      await setDoc(doc(c.firestore(), "categories/c_all"), { storeId: "s_all", name: "Jewelry" });
+      await setDoc(doc(c.firestore(), "suppliers/s_all"), { storeId: "s_all", name: "Supplier" });
+      await setDoc(doc(c.firestore(), "purchases/p_all"), { storeId: "s_all", status: "draft" });
+    });
+
+    const db = await asUser("u_all");
+    for (const path of [
+      "products/p_all",
+      "categories/c_all",
+      "suppliers/s_all",
+      "purchases/p_all",
+    ]) {
+      await assertSucceeds(getDoc(doc(db, path)));
+    }
+    await assertSucceeds(updateDoc(doc(db, "products/p_all"), { name: "Ring updated" }));
+    await assertSucceeds(updateDoc(doc(db, "categories/c_all"), { name: "Jewelry updated" }));
+    await assertSucceeds(updateDoc(doc(db, "suppliers/s_all"), { name: "Supplier updated" }));
+    await assertSucceeds(updateDoc(doc(db, "purchases/p_all"), { status: "ordered" }));
   });
   it("super_admin can read adminStores (control plane)", async () => {
     await env.withSecurityRulesDisabled(async (c) => {
@@ -220,26 +247,23 @@ describe("G-P02 store without adminStores control-plane doc is unreadable", () =
   });
 });
 
-// Reproduce the super_admin "permission-denied" bug: the client subscribes to a
-// BARE products collection (no where()) for super_admin, but the products rule
-// is `read: if isMember(resource.data.storeId)` — a resource.data-dependent rule.
-// Firestore ("rules are not filters") cannot validate a bare query against such
-// a rule and rejects the whole query. This pins the bug before the fix.
-describe("G-P02 super_admin bare-collection query on resource.data rule (bug repro)", () => {
-  it("super_admin who IS a member: bare collection(products) query is DENIED (the bug)", async () => {
+// A super_admin's role is independent of resource.data, so the full collection
+// query used by the cloud adapter is valid even when the store is not theirs.
+describe("G-P02 super_admin bare-collection query", () => {
+  it("super_admin can query products from stores they do not own", async () => {
     await env.withSecurityRulesDisabled(async (c) => {
       await setDoc(doc(c.firestore(), "adminStores/s_x"), {
         storeId: "s_x",
-        ownerUid: "u_admin",
-        memberUids: ["u_admin"],
+        ownerUid: "u_other",
+        memberUids: ["u_other"],
         name: "X",
       });
       await setDoc(doc(c.firestore(), "users/u_admin"), { email: "a@x", role: "super_admin" });
       await setDoc(doc(c.firestore(), "products/p1"), { storeId: "s_x", name: "Ring" });
     });
     const db = await asUser("u_admin");
-    // Bare query (no where) — this is what subscribeCloudState does for super_admin.
-    await assertFails(getDocs(collection(db, "products")));
+    // Bare query (no where) — this is what the super_admin cloud adapter uses.
+    await assertSucceeds(getDocs(collection(db, "products")));
   });
 
   it("same super_admin: query WITH where(storeId in [...]) on a member store is ALLOWED", async () => {
@@ -330,7 +354,20 @@ describe("reliable invitations — users anti-spoofing", () => {
     const db = await asUserWithClaims("u_me", VERIFIED);
     await assertFails(updateDoc(doc(db, "users/u_me"), { email: "other@x.com" }));
     await assertFails(updateDoc(doc(db, "users/u_me"), { emailVerified: false }));
+    await assertFails(updateDoc(doc(db, "users/u_me"), { role: "super_admin" }));
     await assertSucceeds(updateDoc(doc(db, "users/u_me"), { displayName: "Ana" }));
+  });
+  it("allowlisted verified admin can recover the super_admin role", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_recover"), {
+        email: "admin@store.os",
+        emailNormalized: "admin@store.os",
+        emailVerified: true,
+        role: "member",
+      });
+    });
+    const db = await asUserWithClaims("u_recover", { email: "admin@store.os", email_verified: true });
+    await assertSucceeds(updateDoc(doc(db, "users/u_recover"), { role: "super_admin" }));
   });
   it("admin cross-user update: role change ok, identity change denied", async () => {
     await env.withSecurityRulesDisabled(async (c) => {

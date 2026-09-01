@@ -5,8 +5,10 @@ import {
   addToCart,
   setCartQty,
   removeCartLine,
+  refreshCart,
   pruneCartLines,
   cartPieces,
+  cartItemFromPublicProduct,
   type CartLine,
 } from "./cart";
 
@@ -22,6 +24,22 @@ beforeEach(() => {
 });
 
 describe("cart persistence por tienda", () => {
+  it("normaliza la misma línea para resumen público y detalle", () => {
+    expect(cartItemFromPublicProduct({
+      productSlug: "p1",
+      name: "Anillo",
+      prices: { t_retail: 140 },
+      stockSignal: "agotado",
+    })).toEqual({
+      productSlug: "p1",
+      name: "Anillo",
+      sku: "p1",
+      image: undefined,
+      unitPrices: { t_retail: 140 },
+      inquire: true,
+    });
+  });
+
   it("guarda y carga por slug; otra tienda no ve el carrito", () => {
     saveCart("olivia", [line("p1", "Anillo Blossom", 2)]);
     expect(loadCart("olivia")).toEqual([line("p1", "Anillo Blossom", 2)]);
@@ -66,6 +84,22 @@ describe("cart mutations", () => {
   it("removeCartLine quita solo esa línea", () => {
     saveCart("olivia", [line("p1", "A", 1), line("p2", "B", 2), line("p3", "C", 3)]);
     expect(removeCartLine("olivia", "p2").map((l) => l.productSlug)).toEqual(["p1", "p3"]);
+  });
+
+  it("actualiza precios públicos de un carrito persistido sin cambiar cantidades", () => {
+    saveCart("olivia", [line("p1", "Nombre anterior", 3)]);
+    const refreshed = refreshCart("olivia", [{
+      productSlug: "p1",
+      name: "Anillo Blossom",
+      sku: "SKU-p1",
+      unitPrices: { t_retail: 140, t_wholesale: 105, t_reseller: 55 },
+    }]);
+    expect(refreshed[0]).toMatchObject({
+      name: "Anillo Blossom",
+      qty: 3,
+      unitPrices: { t_retail: 140, t_wholesale: 105, t_reseller: 55 },
+    });
+    expect(loadCart("olivia")[0].qty).toBe(3);
   });
 });
 

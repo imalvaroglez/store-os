@@ -115,6 +115,12 @@ work on refresh) and long-cache headers for `/assets/*`.
 The very first account created on the deployed app becomes the **super_admin**
 (you). Sign up, then invite store owners by email from each store's settings.
 
+`super_admin` is the platform operator: the role can open and edit any store,
+including its catalog, inventory, customers, orders, purchases, suppliers,
+costs, photos and WhatsApp configuration. Store members remain restricted to
+the stores where they are members. This is an intentional product policy, not
+an accidental bypass; see [ADR 0003](adr/0003-platform-super-admin-access.md).
+
 ## 7. Olivia storefront setup
 
 Olivia is a regular Store OS store (slug `olivia`) with a richer public
@@ -126,7 +132,7 @@ storefront at `/catalogo/olivia`. There is no separate project or repo.
    globally; rename it later only via store settings, which re-publishes).
 2. Transfer ownership to Fer: invite her by email from the store's settings.
    Once she accepts, she is a `member` with full catalog + storefront-content
-   access. (Super-admin retains god-view.) To make her the explicit `ownerUid`,
+   access. (Super-admin retains global operating access.) To make her the explicit `ownerUid`,
    an admin updates the store doc's `ownerUid` field in the Firebase console —
    owner vs. member only gates the settings/delete UI today.
 3. Fer fills the storefront content in **Store settings → Editar sitio público**

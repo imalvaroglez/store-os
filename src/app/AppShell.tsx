@@ -21,6 +21,7 @@ import { CategoriesScreen } from "../features/catalog/CategoriesScreen";
 import { OrdersScreen } from "../features/orders/OrdersScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
 import { PurchasesScreen } from "../features/inventory/PurchasesScreen";
+import { StoreSettingsScreen } from "../features/stores/StoreSettingsScreen";
 
 const TAB_FOR_PATH: Record<string, Tab> = {
   "": "inicio",
@@ -34,6 +35,7 @@ export function AppShell() {
   const { user, enabled: authEnabled, signOut } = useAuth();
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [storeSettingsOpen, setStoreSettingsOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
 
   const seg = route.name === "admin" ? route.params.tab ?? "" : "";
@@ -156,11 +158,34 @@ export function AppShell() {
             </div>
           )}
 
+          {(user?.role === "super_admin" || activeStore.ownerUid === user?.uid) && (
+            <div className="space-y-3">
+              <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Tienda</h3>
+              <Button
+                variant="secondary"
+                full
+                onClick={() => {
+                  setSettingsOpen(false);
+                  setStoreSettingsOpen(true);
+                }}
+              >
+                Administrar tienda
+              </Button>
+            </div>
+          )}
+
           <div className="space-y-3">
             <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Datos</h3>
             <p className="text-sm text-ink-soft">Tus datos viven en la nube y se sincronizan entre dispositivos.</p>
           </div>
         </div>
+      </Sheet>
+
+      <Sheet open={storeSettingsOpen} onClose={() => setStoreSettingsOpen(false)} title="Administrar tienda">
+        <StoreSettingsScreen
+          storeId={activeStore.id}
+          onDone={() => setStoreSettingsOpen(false)}
+        />
       </Sheet>
 
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} />

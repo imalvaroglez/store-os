@@ -65,6 +65,12 @@ const oliviaStorefront = {
   },
 };
 
+const oliviaPriceTiers = [
+  { id: "t_retail", label: "Regular", order: 0 },
+  { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
+  { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
+];
+
 const store = {
   id: STORE_ID,
   name: "Olivia",
@@ -73,6 +79,8 @@ const store = {
   whatsappPhone: "5215512345678",
   skuPrefix: "OLIV",
   storefront: oliviaStorefront,
+  priceTiers: oliviaPriceTiers,
+  defaultTierId: "t_retail",
   createdAt: now,
   updatedAt: now,
   // Cloud membership — set AFTER admin uid is resolved (see run()).
@@ -108,7 +116,7 @@ const baseProducts = [
     isNew: true,
     canInquire: true,
     cost: 300,
-    prices: { retail: 800, wholesale: 600, reseller: 500 },
+    prices: { t_retail: 800, t_girly: 600, t_iconic: 500 },
     quantityOnHand: 5,
     lowStockAt: 2,
     createdAt: now,
@@ -133,7 +141,7 @@ const baseProducts = [
     isNew: true,
     canInquire: true,
     cost: 400,
-    prices: { retail: 950, wholesale: 700, reseller: 600 },
+    prices: { t_retail: 950, t_girly: 700, t_iconic: 600 },
     quantityOnHand: 2,
     lowStockAt: 3,
     createdAt: now,
@@ -150,7 +158,7 @@ const baseProducts = [
     privateNotes: "Anillo con grabado personalizado, costo variable.",
     status: "draft",
     cost: 350,
-    prices: { retail: 900, wholesale: 650, reseller: 550 },
+    prices: { t_retail: 900, t_girly: 650, t_iconic: 550 },
     quantityOnHand: 4,
     lowStockAt: 2,
     createdAt: now,
@@ -175,7 +183,7 @@ const orders = [
     price: 800,
     deposit: 800,
     status: "delivered",
-    priceTier: "retail",
+    priceTier: "t_retail",
     createdAt: now,
     updatedAt: now,
   },
@@ -210,7 +218,23 @@ function projectPublicStore(s) {
     type: s.type,
     whatsappPhone: s.whatsappPhone ?? null,
     storefront: s.storefront ?? null,
+    priceTiers: (s.priceTiers ?? []).filter((tier) => !tier.hidden).map((tier) => ({
+      id: tier.id,
+      label: tier.label,
+      order: tier.order,
+      ...(tier.minPieces != null ? { minPieces: tier.minPieces } : {}),
+      ...(tier.minAmount != null ? { minAmount: tier.minAmount } : {}),
+    })),
+    defaultTierId: s.defaultTierId ?? null,
   };
+}
+
+function publicPrices(product) {
+  if (!product.prices) return undefined;
+  const entries = oliviaPriceTiers
+    .map((tier) => [tier.id, product.prices[tier.id]])
+    .filter(([, price]) => typeof price === "number");
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function projectPublicProductSummary(product, storeSlug) {
@@ -228,10 +252,10 @@ function projectPublicProductSummary(product, storeSlug) {
     categoryIds: product.categoryIds ?? [],
     sortOrder: product.sortOrder ?? 0,
   };
-  if (typeof product.price === "number") summary.price = product.price;
-  if (product.prices && typeof product.prices.retail === "number") {
-    summary.prices = { retail: product.prices.retail };
-  }
+  const resolved = typeof product.price === "number" ? product.price : product.prices?.t_retail;
+  if (typeof resolved === "number") summary.price = resolved;
+  const prices = publicPrices(product);
+  if (prices) summary.prices = prices;
   return summary;
 }
 
@@ -264,10 +288,10 @@ function projectPublicProductDetail(product, storeSlug, cats) {
     isNew: product.isNew ?? false,
     categories: named,
   };
-  if (typeof product.price === "number") detail.price = product.price;
-  if (product.prices && typeof product.prices.retail === "number") {
-    detail.prices = { retail: product.prices.retail };
-  }
+  const resolved = typeof product.price === "number" ? product.price : product.prices?.t_retail;
+  if (typeof resolved === "number") detail.price = resolved;
+  const prices = publicPrices(product);
+  if (prices) detail.prices = prices;
   return detail;
 }
 
@@ -431,6 +455,9 @@ async function run() {
   try {
     const userRecord = await auth.getUserByEmail(ADMIN_EMAIL);
     adminUid = userRecord.uid;
+    // This isolated dev fixture must remain usable even when the account was
+    // created after another user or has not received an email to verify.
+    await auth.updateUser(adminUid, { emailVerified: true });
   } catch (e) {
     console.error("");
     console.error(`\x1b[31m[seed-dev] No existe el usuario ${ADMIN_EMAIL} en ${DEV_PROJECT_ID}.\x1b[0m`);
@@ -445,6 +472,16 @@ async function run() {
     ownerUid: adminUid,
     memberUids: [adminUid],
   };
+
+  // Keep the known dev operator's profile aligned with the Auth account and
+  // the rules allowlist. Admin SDK is safe here because the script is guarded
+  // above to the isolated store-os-dev project.
+  await db.collection("users").doc(adminUid).set({
+    email: ADMIN_EMAIL,
+    emailNormalized: ADMIN_EMAIL,
+    emailVerified: true,
+    role: "super_admin",
+  }, { merge: true });
 
   // Control-plane doc (Espec 1, G-P02): adminStores/{storeId} is the CANONICAL
   // source of membership/ownership. stores/{id}.get requires isMember(), which

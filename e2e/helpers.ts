@@ -64,7 +64,8 @@ export async function mintUserToken(email = ADMIN_EMAIL, password = "password123
   let data = await post("signUp");
   if (!data.idToken) data = await post("signInWithPassword");
   if (!data.idToken || !data.localId) throw new Error(`Could not mint token for ${email}: ${JSON.stringify(data)}`);
-  return { token: data.idToken, uid: data.localId };
+  await verifyEmulatorEmail(email, password);
+  return adminToken(email, password);
 }
 
 // Explicit test-only fixture. Production code intentionally never auto-seeds a
@@ -197,39 +198,38 @@ export async function ensureSignedOut(page: Page) {
   await gotoClean(page);
 }
 
-// Emulator-only: complete the REAL email verification round-trip via REST
-// (sendOobCode with returnOobLink is an emulator-privileged admin call, then
-// accounts:update consumes the oobCode). Password signups in the emulator are
-// unverified — the app's central guard correctly holds the profile back until
-// the email is verified, so tests must verify before expecting a profile.
+// Emulator-only: complete the real email verification round-trip via the
+// emulator's documented OOB-code endpoint. Password signups start unverified,
+// so tests must verify before Firestore accepts their identity token.
 export async function verifyEmulatorEmail(email: string, password: string) {
   const base = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
-  const idToken = await fetch(`${base}/accounts:signInWithPassword?key=fake`, {
+  const signedIn = await fetch(`${base}/accounts:signInWithPassword?key=fake`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, returnSecureToken: true }),
-  })
-    .then((r) => r.json())
-    .then((v: { idToken?: string }) => {
-      if (!v.idToken) throw new Error(`verifyEmulatorEmail: cannot sign in ${email}`);
-      return v.idToken;
-    });
-  const oobCode = await fetch(`${base}/accounts:sendOobCode?key=fake`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer owner" },
-    body: JSON.stringify({ requestType: "VERIFY_EMAIL", idToken, returnOobLink: true }),
-  })
-    .then((r) => r.json())
-    .then((v: { oobCode?: string }) => {
-      if (!v.oobCode) throw new Error(`verifyEmulatorEmail: no oobCode for ${email}`);
-      return v.oobCode;
-    });
-  const done = await fetch(`${base}/accounts:update?key=fake`, {
+  }).then((r) => r.json() as Promise<{ idToken?: string; error?: unknown }>);
+  if (!signedIn.idToken) throw new Error(`verifyEmulatorEmail: cannot sign in ${email}: ${JSON.stringify(signedIn)}`);
+
+  const lookup = await fetch(`${base}/accounts:lookup?key=fake`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ oobCode }),
-  }).then((r) => r.json());
-  if (done.emailVerified !== true) throw new Error(`verifyEmulatorEmail: not verified for ${email}`);
+    body: JSON.stringify({ idToken: signedIn.idToken }),
+  }).then((r) => r.json() as Promise<{ users?: { emailVerified?: boolean }[] }>);
+  if (lookup.users?.[0]?.emailVerified) return;
+
+  await fetch(`${base}/accounts:sendOobCode?key=fake`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requestType: "VERIFY_EMAIL", idToken: signedIn.idToken }),
+  });
+  const codes = await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${PROJECT}/oobCodes`)
+    .then((r) => r.json() as Promise<{ oobCodes?: { email: string; requestType: string; oobLink: string }[] }>);
+  const verification = [...(codes.oobCodes ?? [])]
+    .reverse()
+    .find((code) => code.email === email && code.requestType === "VERIFY_EMAIL");
+  if (!verification) throw new Error(`verifyEmulatorEmail: no verification code for ${email}`);
+  const done = await fetch(verification.oobLink);
+  if (!done.ok) throw new Error(`verifyEmulatorEmail: verification failed for ${email}: ${done.status}`);
 }
 
 export async function signUp(page: Page, email: string, password: string) {
@@ -257,7 +257,6 @@ async function signUpInUi(page: Page, email: string, password: string) {
   const existing = page.getByText("Ese correo ya está registrado. Intenta entrar.");
   if (await expect(existing).toBeVisible({ timeout: 5000 }).then(() => true).catch(() => false)) {
     await page.getByRole("button", { name: /Ya tienes cuenta\? Entrar/ }).click();
-    await page.getByRole("button", { name: "Entrar", exact: true }).click();
   }
   // Wait for the auth sheet to close.
   await expect(page.getByRole("heading", { name: "Crear cuenta" })).toHaveCount(0, {
@@ -343,7 +342,7 @@ export async function switchToStore(page: Page, name: string) {
 // that re-assert Santi's data keep working. Detects the active store from the
 // switcher button (present on every admin screen), not the home text — after a
 // reload the route may be a deep tab, not Inicio.
-export async function ensureSantiActive(page: Page) {
+export async function ensureStoreActive(page: Page, name: string) {
   // Wait for the shell (store switcher) to mount — it carries the active store's
   // initial in its avatar + name.
   const switcher = page
@@ -352,7 +351,11 @@ export async function ensureSantiActive(page: Page) {
     .filter({ visible: true })
     .first();
   await expect(switcher).toBeVisible({ timeout: 20000 });
-  if ((await switcher.textContent())?.includes("Santi") !== true) {
-    await switchToStore(page, "Santi");
+  if ((await switcher.textContent())?.includes(name) !== true) {
+    await switchToStore(page, name);
   }
+}
+
+export async function ensureSantiActive(page: Page) {
+  await ensureStoreActive(page, "Santi");
 }

@@ -17,7 +17,7 @@ import type {
   Supplier,
   Purchase,
 } from "../types";
-import { loadState, saveState } from "../lib/storage";
+import { loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
@@ -43,8 +43,8 @@ import {
 import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
 
-// Actions: every mutation flows through here. storeId is carried on entity-level
-// actions and selectors enforce isolation, so a screen can't touch another store.
+// Actions: every mutation flows through here. The active store scopes normal UI
+// work; membership and super_admin access are enforced by Firebase rules.
 type Action =
   | { type: "ADD_STORE"; store: Store }
   | { type: "UPDATE_STORE"; store: Store }
@@ -206,7 +206,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const cloud = isFirebaseConfigured() && !!user;
 
-  const [state, dispatch] = useReducer(reducer, undefined, loadState);
+  const [state, dispatch] = useReducer(reducer, undefined, () => {
+    const initial = loadState();
+    return initial.activeStoreId ? initial : { ...initial, activeStoreId: loadPreferredStoreId() };
+  });
   // Track whether the current dispatch originated from a cloud sync so we don't
   // echo it back to Firestore (write loops).
   const fromCloud = useRef(false);
@@ -235,7 +238,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           for (const store of migrated.stores) {
             const before = s.stores.find((x) => x.id === store.id);
             if (before !== store) {
-              writes.push(saveEntity(user, "stores", storeWithMembership(store, user)));
+              // The cloud loader already returned the canonical owner/member
+              // fields, including for a super_admin operating another store.
+              writes.push(saveEntity(user, "stores", store));
               migratedStores.push(store);
             }
           }
@@ -300,7 +305,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (normalized.length === invites.length && invites.every((e, i) => e === normalized[i])) continue;
       const updated = { ...store, pendingInvites: normalized, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      void saveEntity(user, "stores", storeWithMembership(updated, user)).catch(() => {});
+      void saveEntity(user, "stores", updated).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid, state.stores]);
@@ -443,7 +448,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         state.categories.filter((c) => c.storeId === storeId)
       );
     },
-    setActiveStore: (storeId) => dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" }),
+    setActiveStore: (storeId) => {
+      savePreferredStoreId(storeId);
+      dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" });
+    },
     upsertProduct: async (product) => {
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
       await persistEntity("products", product);
@@ -648,7 +656,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
-// A cloud store doc carries ownerUid + memberUids (the signed-in user is owner+member).
+// New cloud stores carry ownerUid + memberUids for the signed-in creator.
 function storeWithMembership(store: Store, user: AppUser | null): Store & { ownerUid?: string; memberUids?: string[] } {
   if (!user) return store;
   return { ...store, ownerUid: user.uid, memberUids: [user.uid] };

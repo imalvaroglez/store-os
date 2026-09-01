@@ -17,7 +17,7 @@ src/
 
 ## Modelo de datos (`src/types/index.ts`)
 
-- **`Store`** — `id`, `name`, `slug`, `type: "on_demand" | "inventory_tiered"`, `whatsappPhone?`, timestamps.
+- **`Store`** — `id`, `name`, `slug`, `type: "on_demand" | "inventory_tiered"`, `whatsappPhone?`, timestamps. El `super_admin` puede leer y editar el documento completo de cualquier tienda; los miembros sólo el de sus tiendas.
 - **`Product`** — `storeId`, `name`, `category`, `imageUrl?`, `isPublic`, y según el tipo de tienda:
   - on-demand: `price?` (precio único) + `cost?`.
   - inventory-tiered: `prices?: { retail?, wholesale?, reseller? }` + `quantityOnHand?` + `lowStockAt?`.
@@ -42,6 +42,14 @@ tap → dispatch(action) → reducer (StoreProvider) → nuevo AppState
 - **Ningún componente llama a `localStorage` directamente** — solo `src/lib/storage.ts`, invocado por el provider. Esto aísla la persistencia para poder cambiarla (ej. Firebase) sin tocar la UI.
 - **Aislamiento entre tiendas:** las pantallas nunca filtran `state.products` directo; usan selectores (`productsForStore`, `ordersForStore`, etc. en `src/lib/selectors.ts`) que filtran por `storeId`.
 - **Seed:** en la primera carga (sin `store_os_state_v1` en `localStorage`) se siembran dos tiendas demo (Santi on-demand, Joyería inventory-tiered) con productos/clientes/pedidos.
+
+### Acceso de plataforma y aislamiento
+
+- `super_admin` es un rol privilegiado de plataforma con acceso operativo global a las tiendas actuales y a sus datos de operación: productos, categorías, proveedores, compras, clientes, pedidos, inventario, costos, fotos y configuración de WhatsApp.
+- `member` opera sólo las tiendas incluidas en `memberUids`; `ownerUid` conserva los controles específicos de dueña, como miembros, transferencia y eliminación.
+- `adminStores` sigue siendo la fuente canónica para membresía y propiedad. No es una vista limitada del superadmin: es el plano de control que las reglas consultan, mientras `stores` contiene el documento de negocio que el superadmin necesita para operar.
+- El acceso privado global del superadmin no cambia la proyección pública: `publicStores`, `publicCatalogs` y `publicProducts` siguen usando allow-lists y nunca exponen costos, notas privadas, inventario exacto ni membresías.
+- La decisión completa y sus límites están en [`ADR 0003`](adr/0003-platform-super-admin-access.md).
 
 ## Sistema de diseño (`src/design-system/`)
 

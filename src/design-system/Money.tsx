@@ -36,8 +36,8 @@ export function StatRow({
       ? "font-semibold text-success"
       : "font-bold text-on-surface";
   return (
-    <div>
-      <span className="text-on-surface-soft text-[11px] uppercase tracking-wide block">
+    <div className="min-w-0">
+      <span className="text-on-surface-soft text-[11px] uppercase tracking-wide leading-tight break-words block">
         {label}
       </span>
       <span className={`serif-display tnum ${valueColor}`}>{children}</span>
