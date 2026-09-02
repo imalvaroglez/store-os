@@ -20,6 +20,10 @@ export function Dialog({
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const lastFocused = useRef<HTMLElement | null>(null);
+  // onClose lives in a ref so inline (unstable) handlers don't tear the effect
+  // down on every parent render — focus restore and scroll lock stay solid.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -32,7 +36,7 @@ export function Dialog({
     first?.focus();
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") return onClose();
+      if (e.key === "Escape") return onCloseRef.current();
       if (e.key !== "Tab") return;
       const items = focusables();
       if (items.length === 0) return;
@@ -55,10 +59,9 @@ export function Dialog({
       document.body.style.overflow = "";
       lastFocused.current?.focus();
     };
-    // `onClose` is in deps: callers should pass a stable handler (useCallback or
-    // a module-level fn) so opening the dialog doesn't tear down and re-run this
-    // effect on every parent render (which would flicker focus).
-  }, [open, onClose]);
+    // Only `open` in deps: onClose is read through onCloseRef, so re-renders
+    // while open (typing in the form) never re-run the trap.
+  }, [open]);
 
   if (!open) return null;
 
