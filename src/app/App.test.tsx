@@ -7,6 +7,7 @@ import { HomeScreen } from "../features/home/HomeScreen";
 import { fixtureState } from "../lib/testFixtures";
 import type { AppState } from "../types";
 import { saveState } from "../lib/storage";
+import { ToastProvider } from "../design-system";
 
 // Runtime mount smoke: catches render-time crashes curl/static checks can't.
 // AuthProvider is in pure-local mode here (no VITE_FIREBASE_* in the test env),
@@ -15,7 +16,9 @@ function withState(state: AppState) {
   saveState(state); // so the provider loads this exact state, not a fresh seed
   return ({ children }: { children: React.ReactNode }) => (
     <AuthProvider>
-      <StoreProvider>{children}</StoreProvider>
+      <StoreProvider>
+        <ToastProvider>{children}</ToastProvider>
+      </StoreProvider>
     </AuthProvider>
   );
 }

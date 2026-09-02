@@ -32,7 +32,7 @@ export function matchRoute(pathname: string): RouteMatch {
   // Admin shell. Capture an optional second segment so /productos/categorias
   // resolves (the productos parent expands into Categorías / Compras sub-routes).
   // Fallback after the public /catalogo/:slug family above.
-  const adminMatch = pathname.match(/^\/?([a-z-]+)(?:\/([a-z-]+))?\/?$/);
+  const adminMatch = pathname.match(/^\/?([a-z-]+)(?:\/([^/]+))?\/?$/);
   const tab = adminMatch?.[1] || "";
   const sub = adminMatch?.[2] || "";
   // Legacy URLs from before the unified Productos nav (unified-products spec):
