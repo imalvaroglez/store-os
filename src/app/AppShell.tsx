@@ -19,6 +19,7 @@ import { HomeScreen } from "../features/home/HomeScreen";
 import { CatalogScreen } from "../features/catalog/CatalogScreen";
 import { CategoriesScreen } from "../features/catalog/CategoriesScreen";
 import { OrdersScreen } from "../features/orders/OrdersScreen";
+import { OrderEditorScreen } from "../features/orders/OrderEditorScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
 import { PurchasesScreen } from "../features/inventory/PurchasesScreen";
 import { StoreSettingsScreen } from "../features/stores/StoreSettingsScreen";
@@ -87,7 +88,9 @@ export function AppShell() {
       screen = <PurchasesScreen />;
       break;
     case "pedidos":
-      screen = <OrdersScreen />;
+      // key={sub}: back/forward between two editors must remount the form, or
+      // the frozen useState draft of order A would edit/save over order B.
+      screen = sub ? <OrderEditorScreen key={sub} /> : <OrdersScreen />;
       break;
     case "clientes":
       screen = <CustomersScreen />;

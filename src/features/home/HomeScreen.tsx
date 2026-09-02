@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useStore, newOrder } from "../../app/StoreProvider";
+import { useStore } from "../../app/StoreProvider";
 import {
   AnimatedNumber,
   Badge,
@@ -8,46 +7,66 @@ import {
   Reveal,
   ScreenHeader,
   Screen,
-  Sheet,
   StatRow,
 } from "../../design-system";
-import { OrderForm } from "../orders/OrderForm";
 import { ordersForStore, lowStockProducts } from "../../lib/selectors";
-import { pending, profit } from "../../lib/money";
+import { profit } from "../../lib/money";
+import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { navigate } from "../../lib/router";
+import { useToast } from "../../design-system";
 
 export function HomeScreen() {
   const { state, activeStore, upsertOrder } = useStore();
-  const [creating, setCreating] = useState(false);
-
+  const toast = useToast();
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const orders = ordersForStore(state.orders, activeStore.id);
-  const active = orders.filter((o) => o.status !== "paid");
+  // Inicio keeps every actionable unpaid order visible, including asked/quoted
+  // orders. Completed and cancelled orders belong in the dedicated list only.
+  const active = orders.filter(orderCountsTowardToPay);
 
   const toPay = active.reduce(
-    (sum, o) => sum + pending(o.price * o.quantity, o.deposit),
+    (sum, o) => sum + orderTotals(o).balance,
     0
   );
-  const expectedProfit = active.reduce((sum, o) => {
-    if (o.cost == null) return sum;
-    return sum + (profit(o.price * o.quantity, o.cost * o.quantity) ?? 0);
-  }, 0);
+  // Per-line profit: lines without a known cost contribute 0 instead of
+  // blanking the whole estimate.
+  const expectedProfit = active.reduce(
+    (sum, o) => sum + orderItems(o).reduce((itemSum, item) => itemSum + (profit(item.unitPrice, item.cost, item.quantity) ?? 0), 0),
+    0
+  );
   const lowStock = isTiered ? lowStockProducts(state.products, activeStore.id) : [];
 
-  function advance(orderId: string) {
+  async function advance(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
     if (!o) return;
     const advanced = advanceOrder(o);
-    if (advanced) upsertOrder(advanced);
+    if (!advanced) return;
+    try {
+      await upsertOrder(advanced);
+    } catch {
+      toast.error("No se pudo actualizar el pedido.");
+    }
+  }
+
+  /** One-tap collection from the home row: deposit rises to the total. */
+  async function collect(orderId: string) {
+    const o = orders.find((x) => x.id === orderId);
+    if (!o) return;
+    try {
+      await upsertOrder({ ...o, deposit: orderTotals(o).estimatedTotal, updatedAt: new Date().toISOString() });
+      toast.success("Pedido cobrado");
+    } catch {
+      toast.error("No se pudo registrar el cobro.");
+    }
   }
 
   return (
     <Screen>
       <ScreenHeader title="Inicio" subtitle={`¿Qué necesitas hacer hoy en ${activeStore.name}?`} />
 
-      <Button full size="lg" onClick={() => setCreating(true)} className="mb-4">
+      <Button full size="lg" onClick={() => navigate("/pedidos/nuevo")} className="mb-4">
         + Nuevo pedido
       </Button>
 
@@ -94,23 +113,30 @@ export function HomeScreen() {
         <div className="space-y-2">
           {active.slice(0, 8).map((o) => {
             const customer = state.customers.find((c) => c.id === o.customerId);
-            const verb = nextActionVerb(o.status);
+            const status = effectiveOrderStatus(o);
+            const verb = nextActionVerb(status);
+            const totals = orderTotals(o);
+            const preview = orderItems(o).slice(0, 2).map((item) => item.productName).join(", ");
             return (
               <Card key={o.id}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className="font-semibold text-ink text-sm truncate">
-                      {o.productName}
+                      {preview || "Sin productos"}
                     </p>
                     <p className="text-xs text-ink-soft">
-                      {customer?.name ?? "—"} · {ORDER_STATUS_LABELS[o.status]}
+                      {customer?.name ?? "—"} · {ORDER_STATUS_LABELS[status]}
                     </p>
                   </div>
-                  {verb && (
+                  {verb ? (
                     <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => advance(o.id)}>
                       {verb}
                     </Button>
-                  )}
+                  ) : totals.balance > 0 ? (
+                    <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => collect(o.id)}>
+                      Cobrar
+                    </Button>
+                  ) : null}
                 </div>
               </Card>
             );
@@ -128,9 +154,6 @@ export function HomeScreen() {
         </div>
       )}
 
-      <Sheet open={creating} onClose={() => setCreating(false)} title="Nuevo pedido">
-        <OrderForm order={newOrder(activeStore.id)} onDone={() => setCreating(false)} />
-      </Sheet>
     </Screen>
   );
 }
