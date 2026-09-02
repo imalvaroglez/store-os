@@ -43,7 +43,7 @@ export function OrdersScreen() {
   if (!activeStore) return null;
 
   return (
-    <Screen wide>
+    <Screen>
       <ScreenHeader
         title="Pedidos"
         subtitle={`${orders.length} ${orders.length === 1 ? "pedido" : "pedidos"}`}
@@ -77,7 +77,7 @@ export function OrdersScreen() {
           icon={<div className="text-6xl">🧾</div>}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
           {visibleOrders.map((order) => <OrderCard key={order.id} order={order} onEdit={() => navigate(`/pedidos/${order.id}`)} />)}
         </div>
       )}

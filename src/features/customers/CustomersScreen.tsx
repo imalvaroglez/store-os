@@ -51,7 +51,9 @@ export function CustomersScreen() {
         }
       />
 
-      <TextField label="Buscar clientes" placeholder="Nombre, teléfono o Instagram" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <div className="mb-5">
+        <TextField label="Buscar clientes" placeholder="Nombre, teléfono o Instagram" value={query} onChange={(event) => setQuery(event.target.value)} />
+      </div>
 
       {visibleCustomers.length === 0 ? (
         <EmptyState
@@ -60,7 +62,7 @@ export function CustomersScreen() {
           icon={<div className="text-6xl">👤</div>}
         />
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {visibleCustomers.map((c) => {
             const cOrders = orders.filter((o) => o.customerId === c.id);
             const totalSold = cOrders
@@ -75,7 +77,7 @@ export function CustomersScreen() {
                   <div className="min-w-0">
                     <h3 className="font-semibold text-ink truncate">{c.name}</h3>
                     <p className="text-xs text-ink-soft truncate">
-                      {c.phone ?? "Sin teléfono"} · {cOrders.length} pedidos
+                      {c.phone ?? "Sin teléfono"} · {cOrders.length} {cOrders.length === 1 ? "pedido" : "pedidos"}
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
