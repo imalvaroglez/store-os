@@ -1,4 +1,5 @@
-import type { Product, PurchaseLine, Order, OrderStatus } from "../types";
+import type { Product, PurchaseLine, Order, OrderItem, OrderStatus } from "../types";
+import { effectiveOrderStatus, orderItems, orderStatusIsOpen } from "./orders";
 
 // Inventory math — pure functions used by the StoreProvider (to apply purchases
 // and reserve stock on order changes) and by the inventory UI (committed stock).
@@ -59,13 +60,13 @@ export function applyPurchaseLines(
 }
 
 // Order statuses that are "still open" — the stock is still committed.
-// Once delivered/paid, the stock is no longer committed (it's gone out).
+// Once delivered/cancelled, the stock is no longer committed.
 const OPEN_STATUSES: ReadonlySet<OrderStatus> = new Set([
   "asked",
+  "quoted",
   "confirmed",
-  "to_buy",
-  "bought",
-  "arrived",
+  "preparing",
+  "ready",
 ]);
 
 /**
@@ -78,25 +79,34 @@ export function committedForProduct(
   productId: string
 ): number {
   return orders
-    .filter(
-      (o) =>
-        o.storeId === storeId &&
-        o.productId === productId &&
-        OPEN_STATUSES.has(o.status)
-    )
-    .reduce((sum, o) => sum + o.quantity, 0);
+    .filter((o) => o.storeId === storeId && OPEN_STATUSES.has(effectiveOrderStatus(o)))
+    .reduce((sum, o) => sum + orderItems(o).filter((item) => item.productId === productId).reduce((lineSum, item) => lineSum + item.quantity, 0), 0);
+}
+
+/** Aggregate reservation changes by product across all lines in an order. */
+export function reservationDeltas(oldItems: OrderItem[], newItems: OrderItem[]): Map<string, number> {
+  const deltas = new Map<string, number>();
+  for (const item of oldItems) {
+    if (item.productId) deltas.set(item.productId, (deltas.get(item.productId) ?? 0) + item.quantity);
+  }
+  for (const item of newItems) {
+    if (item.productId) deltas.set(item.productId, (deltas.get(item.productId) ?? 0) - item.quantity);
+  }
+  return new Map([...deltas].filter(([, delta]) => delta !== 0));
 }
 
 /**
- * The stock delta to apply when an order's reserved quantity changes.
- * Returns negative for reserve (more stock held), positive for release.
- * oldQty undefined = new order; newQty undefined = deletion.
+ * Reservation delta for a lifecycle transition, expressed as a contribution
+ * model: open AND delivered orders both hold stock (reserved or consumed —
+ * either way it is out of the shelf); cancelled orders hold none. Cancelling a
+ * delivered sale returns the goods; re-delivering takes them again, so every
+ * cycle nets to exactly one consumption. Stateless — no provenance flag.
  */
-export function reservationDelta(
-  oldQty: number | undefined,
-  newQty: number | undefined
-): number {
-  const oldResolved = oldQty ?? 0;
-  const newResolved = newQty ?? 0;
-  return oldResolved - newResolved; // negative = reserve, positive = release
+export function reservationDeltasForOrderChange(previous: Order | undefined, next: Order): Map<string, number> {
+  const heldItems = (order: Order | undefined): OrderItem[] => {
+    if (!order) return [];
+    const status = effectiveOrderStatus(order);
+    return orderStatusIsOpen(status) || status === "delivered" ? orderItems(order) : [];
+  };
+  return reservationDeltas(heldItems(previous), heldItems(next));
 }

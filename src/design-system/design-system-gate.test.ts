@@ -78,4 +78,25 @@ describe("design-system enforcement gate", () => {
     }
     expect(offenders, `Raw elements found in: ${offenders.join(", ")}`).toEqual([]);
   });
+
+  // Layout consistency (docs/DESIGN.md): Screen owns the width — one width for
+  // every view. The legacy Screen caps must not come back as hand-rolled
+  // max-w-* wrappers in features; forms self-limit via max-w-5xl instead.
+  // The PUBLIC storefront (OliviaStorefront / PublicCatalogScreen) is a separate
+  // customer-facing surface with its own intentional widths — out of scope.
+  it("no admin-panel file reintroduces legacy Screen widths (max-w-3xl / max-w-6xl)", () => {
+    const offenders: string[] = [];
+    for (const file of SCOPED_FILES) {
+      if (isExempt(file)) continue;
+      if (file.includes("OliviaStorefront") || file.includes("PublicCatalogScreen")) continue;
+      const src = readFileSync(file, "utf8");
+      for (const match of src.matchAll(/\bmax-w-(3xl|6xl)\b/g)) {
+        offenders.push(`${file}: max-w-${match[1]}`);
+      }
+    }
+    expect(
+      offenders,
+      `Legacy Screen widths found (see docs/DESIGN.md — forms use max-w-5xl):\n${offenders.join("\n")}`
+    ).toEqual([]);
+  });
 });

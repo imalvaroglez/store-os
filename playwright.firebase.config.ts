@@ -34,7 +34,9 @@ export default defineConfig({
   webServer: {
     command: "VITE_FIREBASE_EMULATOR=true vite --port 5174 --strictPort",
     port: 5174,
-    reuseExistingServer: !process.env.CI,
+    // Never reuse a normal dev server here: it may point at store-os-dev and
+    // would make emulator tests mutate or read the shared backend.
+    reuseExistingServer: false,
     timeout: 30_000,
   },
   projects: [

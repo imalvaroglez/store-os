@@ -17,7 +17,7 @@ export function PurchasesScreen() {
 
   if (editing) {
     return (
-      <Screen wide>
+      <Screen>
         <ScreenHeader
           title={effectivePurchaseStatus(editing) === "received" ? "Compra recibida" : editing.status === undefined ? "Compra" : "Editar compra"}
           subtitle="Revisa, vincula la mercancía y recibe el inventario"

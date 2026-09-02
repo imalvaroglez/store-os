@@ -6,6 +6,12 @@ specPath: docs/superpowers/specs/scalable-pricing-design.md
 ---
 # Precios escalables (nombres mutables + extensibles) y precio sugerido
 
+> **Revisión comercial vigente (2026-09-01):** la implementación pública
+> posterior hace visibles los tiers y sus mínimos. Para Olivia, `t_retail` es
+> Regular, `t_wholesale` es Girly y `t_reseller` es Iconic; Iconic es la meta
+> de $1,000 calculada a precio Iconic. Regular permanece como referencia para
+> ahorros. Ver [ADR 0004](../../adr/0004-iconic-commercial-target.md).
+
 ## Problema / Causa raíz (verificada en código)
 
 Olivia maneja varios precios por producto (menudeo, mayoreo, emprendedora), pero hoy son un enum fijo de 3 valores tildado en el código:

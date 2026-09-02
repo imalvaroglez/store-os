@@ -33,6 +33,7 @@ test("home renders seeded store with primary action", async ({ sharedPage: page 
   await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
   await expect(page.getByText("¿Qué necesitas hacer hoy en Santi?")).toBeVisible();
   await expect(page.getByRole("button", { name: /Nuevo pedido/ })).toBeVisible();
+  await expect(page.getByText("Tenis Jordan 1 Retro")).toBeVisible();
 });
 
 test("store isolation: Santi product never appears on Joyería catalog", async ({ sharedPage: page }) => {
@@ -44,6 +45,13 @@ test("store isolation: Santi product never appears on Joyería catalog", async (
   await page.waitForTimeout(500);
   await expect(page.getByText("Cadena de plata 925").first()).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Tenis Jordan 1 Retro")).toHaveCount(0);
+});
+
+test("store isolation: an order from another store cannot open by deep link", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.goto("/pedidos/order_joyeria_1", { waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Pedido no encontrado")).toBeVisible();
+  await expect(page.getByText("Cadena de plata 925")).toHaveCount(0);
 });
 
 test("create a customer via the sheet form", async ({ sharedPage: page }) => {
@@ -79,14 +87,14 @@ test("create an order and advance its status", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
   await page.getByRole("button", { name: "Pedidos" }).click();
   await page.getByRole("button", { name: "+ Nuevo" }).click();
-  await page.getByRole("combobox", { name: "Cliente" }).selectOption({ index: 1 });
-  await page.getByRole("combobox", { name: "Producto" }).selectOption({ index: 1 });
+  await expect(page.getByRole("heading", { name: "Nuevo pedido" })).toBeVisible();
+  await page.getByLabel("Cliente").fill("María López");
+  await page.getByLabel("Producto").fill("Perfume Baccarat Rouge 540");
   await page.getByRole("button", { name: "Guardar pedido" }).click();
 
-  // The new order lands at "Preguntó"; the next-action button shows the NEXT
-  // status's label (Confirmado / Comprar / Comprado / Llegó / Entregado / Cobrado).
+  // The new order lands at "Preguntó"; the action starts the quoted state.
   const advance = page
-    .getByRole("button", { name: /^(Confirmado|Comprar|Comprado|Llegó|Entregado|Cobrado)$/ })
+    .getByRole("button", { name: /^(Cotizar|Confirmar|Preparar|Marcar listo|Entregar)$/ })
     .first();
   await expect(advance).toBeVisible();
   await advance.click();
@@ -97,6 +105,100 @@ test("create an order and advance its status", async ({ sharedPage: page }) => {
   await page.getByRole("button", { name: "Pedidos" }).click();
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
   await expect(page.locator("h3").first()).toBeVisible();
+});
+
+test("order editor uses styled pickers and strict numeric fields", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.goto("/pedidos/nuevo", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(500);
+
+  const customer = page.getByRole("combobox", { name: "Cliente", exact: true });
+  await customer.click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.getByRole("option", { name: /María López/ }).click();
+  await expect(customer).toHaveValue("María López");
+
+  const product = page.getByRole("combobox", { name: "Producto", exact: true }).first();
+  await product.click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.getByRole("option", { name: /Perfume Baccarat Rouge 540/ }).click();
+  await expect(product).toHaveValue("Perfume Baccarat Rouge 540");
+  await expect(page.locator("datalist")).toHaveCount(0);
+
+  const quantity = page.getByLabel("Cantidad").first();
+  await quantity.fill("2a.5");
+  await expect(quantity).toHaveValue("25");
+  const price = page.getByLabel("Precio unitario").first();
+  await price.fill("175a.2.9");
+  await expect(price).toHaveValue("175.29");
+  const cost = page.getByLabel("Costo (opcional)").first();
+  await cost.fill("44e.13");
+  await expect(cost).toHaveValue("44.13");
+  const deposit = page.getByLabel("Anticipo");
+  await deposit.fill("1000x.5");
+  await expect(deposit).toHaveValue("1000.5");
+});
+
+test("inline customer creation keeps the order draft", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.goto("/pedidos/nuevo", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(500);
+  await page.getByLabel("Producto").first().fill("Tenis Jordan 1 Retro");
+  await page.getByLabel("Cantidad").first().fill("2");
+  await page.getByRole("button", { name: "+ Nuevo cliente" }).click();
+  await expect(page.getByRole("heading", { name: "Nuevo cliente" })).toBeVisible();
+  const name = `Cliente inline ${Date.now()}`;
+  await page.getByLabel("Nombre", { exact: true }).fill(name);
+  await page.getByRole("button", { name: "Guardar cliente" }).click();
+  await expect(page.getByRole("combobox", { name: "Cliente", exact: true })).toHaveValue(name);
+  await expect(page.getByLabel("Cantidad").first()).toHaveValue("2");
+  await expect(page.getByLabel("Producto").first()).toHaveValue("Tenis Jordan 1 Retro");
+  await page.getByRole("button", { name: "Guardar pedido" }).click();
+  await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+});
+
+test("create a multi-line order with live totals", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.goto("/pedidos/nuevo", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(500);
+  await page.getByLabel("Cliente").fill("Carlos Ruiz");
+  await page.getByLabel("Producto").first().fill("Perfume Baccarat Rouge 540");
+
+  for (let index = 1; index <= 10; index++) {
+    await page.getByRole("button", { name: "+ Agregar línea" }).click();
+    const productFields = page.getByLabel("Producto");
+    await productFields.nth(index).fill(`Producto especial ${index}`);
+    await page.getByLabel("Cantidad").nth(index).fill(String(index + 1));
+    await page.getByLabel("Precio unitario").nth(index).fill("100");
+  }
+
+  await expect(page.getByText("Piezas").last()).toBeVisible();
+  await expect(page.getByText("$8,700").last()).toBeVisible();
+  await page.getByLabel("Anticipo").fill("8700");
+  await expect(page.getByText("$0").last()).toBeVisible();
+  await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
+  await page.getByRole("button", { name: "Guardar pedido" }).click();
+  await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+});
+
+test("orders can be searched and filtered by KPI", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.getByRole("button", { name: "Pedidos" }).click();
+  await expect(page.getByRole("button", { name: /Activos/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Pendientes/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Completados/ })).toBeVisible();
+  await page.getByRole("button", { name: /Pendientes/ }).click();
+  // Seed-backed assertion (order_santi_2: Carlos Ruiz, status "asked" →
+  // pending): independent of whether an earlier test created a customer.
+  await expect(page.getByRole("heading", { name: /#SANTI2 · Carlos Ruiz/ })).toBeVisible();
+  await page.getByLabel("Buscar pedidos").fill("Tenis Jordan");
+  await expect(page.getByText(/Tenis Jordan 1 Retro/).first()).toBeVisible();
+
+  const searchBox = await page.getByLabel("Buscar pedidos").boundingBox();
+  const firstTitle = await page.locator("h3").first().boundingBox();
+  expect(searchBox).toBeTruthy();
+  expect(firstTitle).toBeTruthy();
+  expect(firstTitle!.y - (searchBox!.y + searchBox!.height)).toBeGreaterThanOrEqual(16);
 });
 
 test("data persists across a full reload", async ({ sharedPage: page }) => {

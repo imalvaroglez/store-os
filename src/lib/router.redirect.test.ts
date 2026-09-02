@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redirectPath } from "./router";
+import { matchRoute, redirectPath } from "./router";
 
 // Legacy admin URLs must land inside the unified Productos nav
 // (unified-products spec, criterion 9).
@@ -22,5 +22,12 @@ describe("redirectPath (legacy admin URLs)", () => {
     expect(redirectPath("productos", "categorias")).toBeNull();
     expect(redirectPath("pedidos", "")).toBeNull();
     expect(redirectPath("", "")).toBeNull();
+  });
+});
+
+describe("order routes", () => {
+  it("matches the new and edit routes without losing id punctuation", () => {
+    expect(matchRoute("/pedidos/nuevo")).toEqual({ name: "admin", params: { tab: "pedidos", sub: "nuevo" } });
+    expect(matchRoute("/pedidos/order_abc-123")).toEqual({ name: "admin", params: { tab: "pedidos", sub: "order_abc-123" } });
   });
 });

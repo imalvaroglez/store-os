@@ -46,7 +46,7 @@ describe("reducer: stock reservation on order upsert", () => {
 
     expect(next.products[0].quantityOnHand).toBe(7);
     expect(next.orders).toHaveLength(1);
-    expect(next.orders[0].quantity).toBe(3);
+    expect(next.orders[0].quantity!).toBe(3);
   });
 
   it("adjusts by the delta when an existing order's quantity changes", () => {
@@ -125,7 +125,7 @@ describe("reducer: stock release on order delete", () => {
     // Mirrors StoreProvider.deleteOrder: release then delete.
     let next = reducer(reserved, {
       type: "UPDATE_PRODUCT",
-      product: { ...product, quantityOnHand: 6 + order.quantity },
+      product: { ...product, quantityOnHand: 6 + order.quantity! },
     });
     next = reducer(next, { type: "DELETE_ORDER", orderId: order.id });
     expect(next.products[0].quantityOnHand).toBe(10);

@@ -6,6 +6,13 @@
 
 > Complemento de la Espec 2 (Privacidad y ARCO V1). El procedimiento humano ARCO vive allí; aquí sólo invariantes verificables técnicamente. Una sola voz editorial en todo el documento.
 
+> **Nota de vigencia (2026-09-01):** la política de acceso de `super_admin`
+> descrita en §3 y G-P02 fue reemplazada por [ADR 0003](../../adr/0003-platform-super-admin-access.md).
+> `adminStores` sigue siendo la autoridad de membresía y propiedad, pero el
+> `super_admin` tiene acceso operativo global explícito a los datos actuales de
+> las tiendas. G-P01 continúa protegiendo a miembros contra cruces entre
+> tiendas; las proyecciones públicas y sus allow-lists no cambian.
+
 **Frase rectora.** *Esta spec no afirma que Store OS esté libre de vulnerabilidades. Define las propiedades de seguridad que el producto debe mantener y la evidencia mínima que debe existir antes de liberar un cambio.*
 
 **Regla editorial.** Cada decisión sigue la cadena **amenaza → garantía observable → evidencia → autoridad → fallo → límite**, nunca *herramienta → capacidades anunciadas → promesa*. Toda mención concreta de un escáner (Semgrep, Gitleaks, detect-secrets, eslint-plugin-security, npm audit) vive en el **Apéndice (§10)**. Si una frase con nombre de escáner no se puede mover al apéndice sin cambiar lo que Store OS promete, está confundiendo mecanismo con garantía y debe reescribirse.
@@ -70,20 +77,20 @@ Datos privados de tienda (clientes, pedidos, proveedores, compras, costos, inven
 - **Titular de datos** — la clienta cuyos datos se tratan.
 - **Miembro de tienda** (`member`) — acceso operativo a **una tienda concreta** autorizada por `memberUids`; lee/escribe datos privados sólo de esa tienda.
 - **Dueña** (`ownerUid`) — relación por-tienda, **no es un rol**; control total de su tienda (invitar/remover miembros, transferir, eliminar). Figura en `memberUids`.
-- **super_admin** — **plano de CONTROL**: administra cuentas, tiendas, propietarios y configuración de plataforma; lee metadatos operativos mínimos. **No obtiene acceso al plano de datos por su rol** (ver §4 G-P02 y el GAP en §9).
+- **super_admin** — operador privilegiado de plataforma: administra cuentas, tiendas, propietarios y configuración, y puede leer/escribir globalmente los datos operativos actuales de las tiendas (ver [ADR 0003](../../adr/0003-platform-super-admin-access.md)). El acceso global no cambia las allow-lists públicas ni elimina el aislamiento entre miembros.
 - **Store OS (operador, encargado)** — da soporte **sólo entrando como miembro autorizado de una tienda concreta**, concedido y revocado por la dueña (visible, revocable, atribuible a la dueña).
 - **Google/Firebase** — subencargado.
 
 ### Planos (decisión normativa)
 
-- **Plano de CONTROL (super_admin):** administración de la plataforma (usuarios, tiendas, quién es dueña de qué, configuración). **No concede acceso ordinario a los datos privados de las tiendas** (PII de clientas, pedidos, proveedores, compras, notas privadas, ARCO).
-- **Plano de DATOS (miembros autorizados de la tienda):** aquí viven los datos privados. El acceso se concede **por tienda concreta** vía `memberUids`.
+- **Plano de CONTROL (`super_admin`):** administración de la plataforma (usuarios, tiendas, quién es dueña de qué, configuración) y operación global de los datos actuales de las tiendas.
+- **Plano de DATOS (miembros autorizados de la tienda):** aquí viven los datos privados. El acceso de `member` se concede **por tienda concreta** vía `memberUids`; el `super_admin` es la excepción explícita de plataforma documentada en ADR 0003.
 
-**Acceso de soporte:** si Store OS necesita ver datos privados para dar soporte, **entra como miembro autorizado de ESA tienda**, concedido y la dueña puede revocarlo. No es una capacidad de plataforma ni un superpoder de `super_admin`. El acceso a `privacyRequests` sigue reservado a `ownerUid`.
+**Acceso de soporte:** Store OS puede operar con el `super_admin` de plataforma o con un miembro autorizado de esa tienda, según el flujo. La capacidad global del `super_admin` no autoriza finalidades propias sobre los datos. El acceso a `privacyRequests` sigue reservado a `ownerUid` hasta que exista una decisión específica.
 
 **Acceso privilegiado de infraestructura (break-glass):** la consola, IAM y el Admin SDK de Firebase **eluden las Security Rules** por diseño. Se reservan para emergencias, recuperación o exigencias legales, con procedimiento: MFA, sin credenciales compartidas, motivo y alcance registrados, notificación a la responsable, no conservar copias innecesarias.
 
-**Promesa correcta sobre break-glass:** *Store OS no tiene acceso ordinario mediante el producto. El acceso privilegiado de infraestructura se reserva para incidentes, recuperación o requerimientos legales, con motivo documentado y notificación a la responsable.*
+**Promesa correcta sobre break-glass:** *La consola, IAM y Admin SDK no forman parte del acceso operativo normal del producto. El `super_admin` sí tiene acceso operativo global mediante Store OS; el acceso privilegiado de infraestructura se reserva para incidentes, recuperación o requerimientos legales, con motivo documentado y notificación a la responsable.*
 
 ### Datos por clase
 
@@ -118,7 +125,11 @@ Pocas, estables, como **resultados observables**. Cada una: Garantía / Alcance 
 - **Activación:** cambios en auth, `firestore.rules`, membresía (`memberUids`/`ownerUid`), el adaptador de acceso a datos (`firestoreData.ts`) o la estructura de documentos.
 - **Límites:** no cubre credenciales robadas de un miembro legítimo, cuentas comprometidas, ni el plano administrativo de Google/Firebase. No cubre fuga lateral por `memberUids` mal asignados por la dueña (decisión humana).
 
-### G-P02 — super_admin no obtiene acceso al plano de datos por su rol
+### G-P02 — super_admin no obtiene acceso al plano de datos por su rol (histórico)
+
+> Este bloque conserva la garantía original de Espec 1 para trazabilidad, pero
+> ya no es el contrato vigente. La política actual concede acceso operativo
+> global al superadmin y está documentada en [ADR 0003](../../adr/0003-platform-super-admin-access.md).
 
 - **Garantía:** el rol `super_admin` **no da, por sí mismo, acceso de lectura ni escritura a ningún dato del plano de datos de las tiendas**: customers, orders, products, categories, suppliers, purchases, privateNotes, ni solicitudes ARCO. La administración de plataforma y el acceso a PII son **planos separados**. Lo que `super_admin` puede leer es un **conjunto declarado de metadatos de control** — nunca el contenido de negocio ni los datos personales de clientas.
 - **Alcance:** todas las colecciones de datos privados, incluida `categories` (`products`, `categories`, `suppliers`, `purchases`, `customers`, `orders`), `stores` y `privacyRequests`.
@@ -278,8 +289,8 @@ Lo que la spec **promete** vive en §4–§5. Lo que **existe hoy** vive aquí. 
 
 ### 9.2 GAPs (la garantía existe como norma, pero NO se cumple hoy)
 
-- **GAP-G-P01 / G-P02 / G-P04 / G-P06:** **no hay tests de `firestore.rules`** hoy. El aislamiento se prueba sólo en selectores/render/projectors (`selectors.test.ts`, `App.test.tsx`, `firestoreData.test.ts`), nunca contra las reglas. Cerrar este hueco (crear la suite con `@firebase/rules-unit-testing`) es el primer trabajo de implementación.
-- **GAP-G-P02 (el mayor) — RESUELTO en Espec 1:** históricamente `isSuperAdmin()` hacía short-circuit en `isMember`/`isOwner` y el cliente leía la vista-dios, de modo que `super_admin` leía TODA la PII de TODAS las tiendas. La implementación de Espec 1 lo cerró: (a) `adminStores` como documento **canónico** del plano de control con la allow-list declarada, (b) `isMember`/`isOwner` ya no short-circuit en `isSuperAdmin` y leen `adminStores`, (c) `super_admin` lee control sólo vía `adminStores`, y (d) `adminStores`↔`stores` se sincronizan en escritura conjunta atómica — porque Firestore **no puede** ocultar campos en una lectura de `stores`. G-P02 ahora es realidad, no sólo norma.
+- **GAP-G-P01 / G-P02 / G-P06:** la suite de `firestore.rules` ya existe en `src/app/firebase/firestore.rules.test.ts` y se ejecuta con `npm run test:rules`; G-P04 y `privacyRequests` siguen siendo trabajo futuro. El aislamiento y el acceso global vigente se prueban contra el emulador, además de los tests de selectores/render/projectors.
+- **GAP-G-P02 (histórico) — RESUELTO bajo la decisión vigente:** la separación estricta del superadmin respecto al plano de datos fue reemplazada por [ADR 0003](../../adr/0003-platform-super-admin-access.md). Hoy `isSuperAdmin()` autoriza la operación global explícita en las reglas; `adminStores` conserva la autoridad canónica de membresía/propiedad y las proyecciones públicas siguen siendo allow-lists. Las pruebas cubren tanto el acceso global del superadmin como el aislamiento de miembros.
 - **GAP-bootstrap:** `auth.ts:46` asigna `super_admin` al primer signup (colección vacía), pero `firestore.rules:46-48` exige `admin@store.os` verificado. En producción ganan las reglas. Documentar como desviación conocida y cubrirla con prueba.
 - **GAP-G-P06 precisión:** las reglas validan membresía + invariancia de `storeId`, **no** esquema (tipos/claves/longitudes). No prometer validación de esquema en V1.
 - **GAP-invitaciones:** cualquier miembro (`isMember`) puede hacer `get` de `stores/{id}` **completo**, incluido `pendingInvites` con emails (`firestore.rules:54-55`). La afirmación "sólo dueña y super_admin ven los emails de invitación" es **falsa**. Si se desea restringir, es trabajo de implementación (no parte de G-P0x salvo que se añada una garantía).

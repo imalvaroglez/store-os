@@ -29,9 +29,9 @@ export type Store = {
   pricingRule?: { kind: "markup"; percent: number }; // suggested-price assistant
 };
 
-// Control-plane projection of a store (G-P02). Canonical document read by
-// super_admin for platform administration. Carries ONLY control metadata;
-// never business content (whatsappPhone/skuPrefix/storefront) or client PII.
+// Control-plane projection of a store. It remains the canonical source for
+// membership and ownership rules; the platform super_admin separately reads
+// the full stores/{id} business document when operating a store.
 // See src/app/firebase/rules-allowlist.ts ADMIN_STORE_FIELDS.
 export type AdminStore = {
   storeId: string;
@@ -185,6 +185,7 @@ export type Customer = {
   storeId: string;
   name: string;
   phone?: string;
+  instagram?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -192,29 +193,49 @@ export type Customer = {
 
 export type OrderStatus =
   | "asked"
+  | "quoted"
   | "confirmed"
-  | "to_buy"
-  | "bought"
-  | "arrived"
+  | "preparing"
+  | "ready"
   | "delivered"
-  | "paid";
+  | "cancelled";
+
+export type LegacyOrderStatus = "asked" | "confirmed" | "to_buy" | "bought" | "arrived" | "delivered" | "paid";
+export type PaymentStatus = "unpaid" | "partial" | "paid";
+
+export type OrderItem = {
+  productId?: string;
+  productName: string;
+  quantity: number;
+  priceTier?: string;
+  unitPrice: number;
+  subtotal: number;
+  cost?: number;
+};
 
 export type Order = {
   id: string;
   storeId: string;
   customerId: string;
-  productId?: string;
-  productName: string;
-  quantity: number;
-  cost?: number;
-  price: number;
+  items: OrderItem[];
   deposit: number;
-  status: OrderStatus;
+  orderStatus: OrderStatus;
+  paymentStatus: PaymentStatus;
   promisedDate?: string;
   notes?: string;
-  priceTier?: string; // tier id snapshot at order time
+  schemaVersion?: number;
   createdAt: string;
   updatedAt: string;
+
+  // Read-only compatibility for one migration pass and old local fixtures.
+  // New writes never include these fields.
+  productId?: string;
+  productName?: string;
+  quantity?: number;
+  cost?: number;
+  price?: number;
+  priceTier?: string;
+  status?: LegacyOrderStatus;
 };
 
 /** A supplier Fer buys stock from. Per-store, like Category. */
@@ -365,3 +386,4 @@ export type AppState = {
 export const MAX_PRODUCT_IMAGES = 5;
 export const MAX_PRODUCT_CATEGORIES = 3; // 1 primary + up to 2 secondary
 export const CURRENT_PRODUCT_SCHEMA_VERSION = 2;
+export const CURRENT_ORDER_SCHEMA_VERSION = 2;

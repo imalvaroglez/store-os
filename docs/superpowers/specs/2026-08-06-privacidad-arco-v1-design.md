@@ -9,6 +9,13 @@ Delivery-Status: Pending approval
 
 > Complemento de la Espec 1 (Security harness). Los invariantes verificables técnicamente (miembro no lee ARCO, anónimo no escribe privado, ARCO sólo dueña, cliente sin telemetría opcional) viven allí (G-P04, G-P05, G-P08 y §3 egress). Aquí vive el procedimiento humano de tratamiento. Una sola voz editorial.
 
+> **Nota de vigencia (2026-09-01):** la política de acceso operativo de
+> `super_admin` fue modificada por [ADR 0003](../../adr/0003-platform-super-admin-access.md).
+> Este documento conserva el procedimiento de privacidad y ARCO, pero sus
+> párrafos anteriores que describen al superadmin como sólo plano de control
+> quedan supersedidos. La capacidad técnica global debe documentarse en el
+> ATD y no autoriza finalidades propias, publicidad, analítica ni entrenamiento.
+
 **Convención de nombres.** *Olivia* = la tienda o nombre comercial. *Fer* = la persona que la opera y toma las decisiones de tratamiento. La **identidad de la responsable jurídica** (Olivia como persona moral, o Fer como persona física bajo el nombre comercial Olivia) **se confirma antes de publicar el aviso** (§3.2); la LFPDPPP aplica a personas físicas o morales privadas que realizan el tratamiento, y el nombre comercial por sí mismo no resuelve quién es responsable.
 
 ---
@@ -70,26 +77,47 @@ La responsable debe ser el **sujeto jurídico real**, no un nombre comercial:
 
 **Acción (pendiente, no bloquea V1 de producto):** confirmar con Fer la figura jurídica de Olivia antes de publicar el aviso. El aviso debe identificar al sujeto real y su domicilio (arts. 15-16 LFPDPPP).
 
-### 3.3 super_admin: plano de CONTROL, no facultad contratada
+### 3.3 super_admin: acceso global de plataforma
 
-**Decisión normativa única (corrige la contradicción de versiones previas):** `super_admin` **no obtiene acceso al plano de datos por su rol**. La vista-dios actual de `super_admin` (ver Espec 1 §9, GAP-G-P02) es **exclusivamente un GAP de migración**, **no** un riesgo aceptado ni una facultad contratada.
+La decisión vigente es que `super_admin` puede operar globalmente los datos
+actuales de las tiendas. Es una capacidad privilegiada de plataforma, no una
+finalidad propia sobre la PII: Store OS procesa los datos bajo instrucción de
+la tienda responsable y no los usa para publicidad, analítica o entrenamiento.
 
-- En el ATD (§6) **no se legitima** la vista-dios. Store OS se obliga a procesar los datos de clientas **sólo bajo instrucción de Olivia** y a **no conservar ni usar** esa PII para finalidades propias.
-- Si Store OS requiere dar soporte que toque datos privados, lo hace **entrando como miembro autorizado de ESA tienda**, concedido y revocable por la dueña — no por el rol `super_admin`.
-- El acceso privilegiado de infraestructura (consola/IAM/Admin SDK) es break-glass para emergencias con procedimiento (Espec 1 §3).
+- El acceso incluye la configuración, productos, inventario, compras,
+  proveedores, clientes, pedidos, costos y archivos operativos necesarios para
+  soporte y operación.
+- Las personas miembro siguen limitadas por `memberUids`; `ownerUid` conserva
+  los controles de dueña. `adminStores` sigue siendo la autoridad de membresía
+  y propiedad.
+- El acceso a expedientes ARCO futuros permanece sujeto a su propia regla y
+  procedimiento; esta sección no lo abre automáticamente.
+- El acceso privilegiado de infraestructura (consola/IAM/Admin SDK) sigue
+  siendo break-glass para emergencias con procedimiento.
 
 ---
 
 ## 4. Separación de planos (control vs datos)
 
-- **Plano de CONTROL (super_admin):** administra la plataforma (usuarios, tiendas, propietarios, configuración, metadatos operativos mínimos). **No concede acceso ordinario a los datos privados de las tiendas** (PII de clientas, pedidos, proveedores, compras, notas privadas, ARCO).
+- **Plano de CONTROL (super_admin):** administra la plataforma y es la autoridad
+  operativa global sobre las tiendas actuales. `adminStores` mantiene aquí la
+  membresía y propiedad, sin recibir contenido de negocio.
 - **Plano de DATOS (miembros autorizados de la tienda):** acceso por tienda concreta vía `memberUids`.
-- **Acceso de soporte:** miembro autorizado de la tienda, visible, revocable, atribuible a la dueña.
+- **Acceso de soporte:** puede ejercerse por el `super_admin` de plataforma o
+  por un miembro autorizado de la tienda; siempre queda sujeto a las reglas y
+  finalidades del servicio.
 - **Compromiso de finalidades:** Store OS **no** utilizará datos de las tiendas para finalidades propias (analítica comercial, publicidad, entrenamiento de modelos). Procesa únicamente bajo instrucción de la tienda responsable.
 
-> **Promesa correcta:** *Store OS no tiene acceso ordinario mediante el producto. El acceso privilegiado de infraestructura se reserva para incidentes, recuperación o requerimientos legales, con motivo documentado y notificación a la responsable.*
+> **Promesa correcta:** *Store OS puede tener acceso operativo ordinario mediante la cuenta
+> `super_admin` para administrar las tiendas, siempre bajo instrucción de la tienda
+> responsable. El acceso privilegiado de infraestructura se reserva para incidentes,
+> recuperación o requerimientos legales, con motivo documentado y notificación a la
+> responsable.*
 
-**GAP actual (referenciado desde Espec 1):** HOY `isSuperAdmin()` short-circuit (`firestore.rules:14,19`) viola esta separación. La separación es **norma**; alcanzarla es trabajo de implementación (Espec 1 GAP-G-P02). El procedimiento ARCO no depende de ese cambio, pero los permisos de `privacyRequests` sí respetan `ownerUid` desde el diseño.
+La separación vigente no pretende ocultar los datos al `super_admin`; separa la
+autoridad global de plataforma de la membresía ordinaria de cada tienda. El
+procedimiento ARCO no cambia: sus permisos futuros deberán respetar `ownerUid`
+hasta que exista una decisión específica.
 
 ---
 
@@ -101,7 +129,7 @@ Mapa (no lista de campos). Columnas: Categoría | Titular | Finalidad | Base leg
 
 | Categoría | Titular | Finalidad | Base legal | Ubicación | Acceso | Terceros | Retención |
 |---|---|---|---|---|---|---|---|
-| Clientas: nombre, teléfono, notas (texto libre), historial de pedidos | La clienta | Gestión de ventas y pedidos | Consentimiento de la clienta para gestionar la venta; obligaciones derivadas de la relación jurídica y legales/fiscales | Firestore `customers`, `orders` (acotados por `storeId`); **nunca** en proyecciones públicas | Dueña y miembros de Olivia por membresía. **Hoy también `super_admin` (GAP, Espec 1)** | Google/Firebase (subencargado) | Relación comercial + obligaciones legales/fiscales; ARCO cancelación → bloqueo luego supresión |
+| Clientas: nombre, teléfono, notas (texto libre), historial de pedidos | La clienta | Gestión de ventas y pedidos | Consentimiento de la clienta para gestionar la venta; obligaciones derivadas de la relación jurídica y legales/fiscales | Firestore `customers`, `orders` (acotados por `storeId`); **nunca** en proyecciones públicas | Dueña y miembros de Olivia por membresía; `super_admin` por acceso global de plataforma | Google/Firebase (subencargado) | Relación comercial + obligaciones legales/fiscales; ARCO cancelación → bloqueo luego supresión |
 | Cuentas de usuario: email, displayName, rol, createdAt | La persona usuaria | Autenticación y autorización | Consentimiento (crear cuenta) y relación contractual con Store OS | Firebase Auth + Firestore `users` | **Riesgo residual declarado (fuera de V1):** HOY `users/{uid}` permite `read` a **cualquiera autenticado** (`firestore.rules:40-41`) — cualquier usuario lee email/displayName/rol de cualquier otro. Esto **no** está cubierto por una garantía del producto en V1 (Espec 1 §11); protegerlo requeriría una futura G-P09 (directorio mínimo). Se declara abiertamente, no se oculta como mero "GAP" | Google/Firebase | Mientras dure la cuenta; supresión al cerrar |
 | Invitaciones pendientes (`pendingInvites`: emails) | La persona invitada | Gestión de membresía | Consentimiento / relación comercial para integrar al equipo | Firestore `stores.pendingInvites` | **GAP:** cualquier miembro puede leer el doc `stores` completo incluidos los emails (`firestore.rules:54-55`). No afirmar "sólo dueña/super_admin ven los emails" | — | Hasta conversión en miembro o revocación |
 | Proveedores (suppliers: contacto, notas) | El proveedor | Gestión de abastecimiento | Consentimiento / relación comercial | Firestore `suppliers` (membership-gated) | Dueña y miembros de Olivia | Google/Firebase | Relación comercial; supresión al terminar |
@@ -166,7 +194,9 @@ Entre Olivia (responsable) y Store OS (encargado). **Sujeto a validación juríd
 - Qué ocurre al terminar el servicio.
 - Subencargados autorizados (Google/Firebase primero; Vercel como hosting).
 
-> **El ATD NO legitima la vista-dios de `super_admin`.** Store OS se obliga a no conservar ni usar la PII de clientas para finalidades propias (§3.3).
+> **El ATD debe declarar el acceso global operativo de `super_admin`.** Esa
+> capacidad no autoriza a Store OS a conservar ni usar la PII de clientas para
+> finalidades propias (§3.3).
 
 ### 6.4 Base legal en términos LFPDPPP
 
@@ -347,9 +377,14 @@ Los plazos se cuentan desde un **ancla temporal explícita** en el expediente:
 
 ### 11.1 Permisos (plano de datos)
 
+> `privacyRequests` todavía no forma parte de las colecciones operativas
+> actuales. Su regla específica de sólo dueña queda como decisión de privacidad
+> futura y no se modifica automáticamente por el acceso global descrito en ADR
+> 0003.
+
 - `create`, `read`, `update`: **sólo `ownerUid`** de la tienda (la dueña).
 - Miembros ordinarios: **sin acceso**.
-- `super_admin`: **sin acceso global** (la regla de `privacyRequests` no incluye el short-circuit de `super_admin`; para el resto de colecciones ver Espec 1 GAP-G-P02).
+- `super_admin`: **sin acceso global a `privacyRequests` por ahora**; esa colección futura conserva la decisión específica de sólo dueña y no se abre automáticamente por ADR 0003. Para el resto de colecciones operativas aplica el acceso global documentado en ADR 0003.
 - Eliminación: **sólo** bajo §9.2 (`retentionUntil` cumplido y sin `legalHold`).
 - Store OS asiste sólo mediante acceso de soporte autorizado por Olivia (membresía temporal de la tienda). **Esa membresía NO permite abrir `privacyRequests`** — el apoyo de soporte es sobre datos operativos o por acompañamiento a la dueña, nunca acceso directo al expediente ARCO.
 - **Sin `privacyManagerUid`** en V1 (era V2 especulativa; eliminada). La dueña como `ownerUid` basta.

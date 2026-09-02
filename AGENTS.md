@@ -31,8 +31,8 @@ No declares algo "listo" sin evidencia: antes de abrir el PR, `npm run typecheck
 ## Arquitectura (lo esencial)
 
 - **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. Modo demo local (sin sesión) intacto.
-- **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules` (super-admin + miembros por tienda). El adaptador `firestoreData.ts` acota lecturas a las tiendas accesibles.
-- **Estado:** `StoreProvider` (`useReducer`) es el **único** escritor de `localStorage` en modo demo; en modo cloud escribe en Firestore. Aislamiento entre tiendas **solo** vía selectores en `src/lib/selectors.ts`.
+- **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules`: `super_admin` puede operar cualquier tienda; los miembros sólo sus tiendas. El adaptador `firestoreData.ts` carga todos los datos operativos para `super_admin` y acota los de miembros.
+- **Estado:** `StoreProvider` (`useReducer`) es el **único** escritor de `localStorage` en modo demo; en modo cloud escribe en Firestore. La UI normal se mantiene enfocada en la tienda activa; la frontera de seguridad la imponen las reglas, con acceso global explícito para `super_admin`.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
 - **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Gate de cumplimiento: falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos (excepción: `ErrorBoundary`).
 - **Temas:** `src/design-system/theme/`. Cada tema define tokens (color, tipografía, radios, sombras, **movimiento**). `ThemeProvider` los inyecta en `<html data-theme>`. Per-usuario, persiste en `localStorage` → perfil Firestore.
@@ -53,6 +53,7 @@ No declares algo "listo" sin evidencia: antes de abrir el PR, `npm run typecheck
 - **Lenguaje simple, no empresarial.** Evita CRM, SKU, pipeline, fulfillment, gross margin, etc.
 - **Mobile-first.** Tap targets ≥ ~40px, inputs a ≥16px (sin zoom en iOS).
 - **Comportamiento sin sorpresas:** las decisiones visuales van por tokens del sistema de diseño, no por clases hardcodeadas. Si un color no se adapta al tema, lo estás haciendo mal — usa tokens (`bg-surface`, `text-on-surface`, `text-danger`, etc.).
+- **Layout del panel:** un solo ancho — `Screen` sin `max-w`, las vistas fluyen a ancho completo; los formularios se auto-limitan (`max-w-5xl`); el ritmo y las columnas estándar viven en [`docs/DESIGN.md`](docs/DESIGN.md) (referencia: la vista Pedidos). El gate del design system prohíbe los anchos legacy (`max-w-3xl`/`max-w-6xl`) en features.
 - **YAGNI / ponytail:** la solución más simple que funcione. Marca atajos deliberados con un comentario `ponytail:`. No agregues abstracciones no solicitadas.
 - **Comprobación mínima:** toda lógica no trivial deja un test pequeño atrás (las trivialidades no necesitan test).
 

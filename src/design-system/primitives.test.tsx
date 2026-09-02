@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import {
@@ -10,6 +11,7 @@ import {
   CommandPalette,
   ProductImage,
   Reveal,
+  SearchSelect,
   SelectField,
   Sheet,
   Skeleton,
@@ -177,6 +179,50 @@ describe("Dropdown", () => {
       </Dropdown>
     );
     expect(screen.getByText("Editar")).toBeTruthy();
+  });
+});
+
+describe("SearchSelect", () => {
+  it("filters, selects with the keyboard, and closes outside", () => {
+    let selected = "";
+    function Harness() {
+      const [value, setValue] = useState("");
+      return (
+        <SearchSelect
+          label="Cliente"
+          value={value}
+          onChange={setValue}
+          onSelect={(option) => { selected = option.value; setValue(option.label); }}
+          options={[
+            { value: "maria", label: "María López", detail: "5512345678" },
+            { value: "carlos", label: "Carlos Ruiz", detail: "5587654321" },
+          ]}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const input = screen.getByRole("combobox", { name: "Cliente" });
+    fireEvent.focus(input);
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    fireEvent.change(input, { target: { value: "Carlos" } });
+    expect(screen.getByRole("option", { name: /Carlos Ruiz/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /María López/ })).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(selected).toBe("carlos");
+    fireEvent.focus(input);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("shows a styled empty state", () => {
+    function Harness() {
+      const [value, setValue] = useState("Nada");
+      return <SearchSelect label="Producto" value={value} onChange={setValue} onSelect={() => {}} options={[]} />;
+    }
+    render(<Harness />);
+    fireEvent.focus(screen.getByRole("combobox", { name: "Producto" }));
+    expect(screen.getByRole("status")).toHaveTextContent("No hay coincidencias");
   });
 });
 

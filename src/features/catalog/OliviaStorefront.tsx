@@ -12,7 +12,7 @@ import {
 } from "../../app/firebase/publicCatalog";
 import type { RouteMatch } from "../../lib/router";
 import { navigate } from "../../lib/router";
-import { publicPrice, formatMoney } from "../../lib/money";
+import { publicPrice } from "../../lib/money";
 import {
   createStorefrontBuyUrl,
   createStorefrontContactUrl,
@@ -20,8 +20,8 @@ import {
 } from "../../lib/whatsapp";
 import { useSeo } from "./useSeo";
 import { useCart } from "./useCart";
-import { CartDrawer } from "./CartDrawer";
-import { cartPieces, type CartLine } from "../../lib/cart";
+import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
+import { cartItemFromPublicProduct, cartPieces, pruneCartLines, type CartLine } from "../../lib/cart";
 import type { Storefront } from "../../types";
 
 // --- Public cart (context) -------------------------------------------------
@@ -208,7 +208,12 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
     catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"])
   );
   return (
-    <StoreChrome store={store} signalBySlug={signalBySlug} visibleSlugs={new Set(catalog.products.map((p) => p.productSlug))}>
+    <StoreChrome
+      store={store}
+      signalBySlug={signalBySlug}
+      visibleSlugs={new Set(catalog.products.map((p) => p.productSlug))}
+      cartItems={catalog.products.map(cartItemFromPublicProduct)}
+    >
       {/* Hero */}
       <section className="relative">
         {heroImg && (
@@ -357,8 +362,9 @@ function ProductGrid({
 // Card = link (navigation) + sibling add action. The action is never nested
 // inside the link: the link keeps middle-click/copy-link, the button keeps the tap.
 function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
-  const { add } = useCartContext();
+  const { add, lines, setQty, store } = useCartContext();
   const soldOut = p.availability === "sold_out";
+  const quantity = lines.find((line) => line.productSlug === p.productSlug)?.qty ?? 0;
   return (
     <div className="group">
       <StorefrontLink to={`/catalogo/${slug}/producto/${p.productSlug}`} className="block">
@@ -376,25 +382,18 @@ function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
           )}
         </div>
         <h3 className="olv-display font-semibold text-[var(--olv-ink)] mt-2 text-sm leading-snug">{p.name}</h3>
-        <p className="text-sm font-semibold text-[var(--olv-accent)]">{formatMoney(publicPrice(p))}</p>
+        <PublicTierPrices store={store} product={p} />
       </StorefrontLink>
-      <Button
-        variant="secondary"
-        size="sm"
-        className="mt-2 w-full"
-        onClick={() =>
-          add({
-            productSlug: p.productSlug,
-            name: p.name,
-            sku: p.sku ?? p.productSlug,
-            image: p.imageUrl ?? undefined,
-            unitPrices: p.prices,
-            inquire: p.stockSignal === "agotado",
-          })
-        }
-      >
-        Agregar al carrito
-      </Button>
+      <CartProductControl
+        key={`${p.productSlug}-${quantity}`}
+        productSlug={p.productSlug}
+        productName={p.name}
+        quantity={quantity}
+        onAdd={() => add(cartItemFromPublicProduct(p))}
+        onSetQty={setQty}
+        full
+        className="mt-2"
+      />
     </div>
   );
 }
@@ -448,14 +447,22 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 
 function ProductView({ slug, productSlug }: { slug: string; productSlug: string }) {
   const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
-  const [data, setData] = useState<{ product: PublicProductDetail; store: PublicStore } | null>(null);
+  const [data, setData] = useState<{
+    product: PublicProductDetail;
+    store: PublicStore;
+    catalog: PublicCatalog;
+  } | null>(null);
   const [activeImg, setActiveImg] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setStatus("loading");
     setActiveImg(0);
-    loadPublicProduct(slug, productSlug)
+    loadPublicCatalog(slug)
+      .then(async ({ store, catalog }) => ({
+        ...(await loadPublicProduct(slug, productSlug, store)),
+        catalog,
+      }))
       .then((d) => {
         if (cancelled) return;
         setData(d);
@@ -526,12 +533,17 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
     );
   }
 
-  const { product, store } = data;
+  const { product, store, catalog } = data;
+  const signalBySlug = Object.fromEntries(
+    catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"])
+  );
 
   return (
     <StoreChrome
       store={store}
-      signalBySlug={{ [product.productSlug]: product.stockSignal ?? "disponible" }}
+      signalBySlug={signalBySlug}
+      visibleSlugs={new Set(catalog.products.map((p) => p.productSlug))}
+      cartItems={catalog.products.map(cartItemFromPublicProduct)}
     >
       <ProductDetail product={product} store={store} slug={slug} activeImg={activeImg} setActiveImg={setActiveImg} />
     </StoreChrome>
@@ -553,10 +565,11 @@ function ProductDetail({
   activeImg: number;
   setActiveImg: (i: number) => void;
 }) {
-  const { add } = useCartContext();
+  const { add, lines, setQty } = useCartContext();
   const images = product.images ?? [];
   const soldOut = product.availability === "sold_out";
   const canInquire = product.canInquire || !soldOut;
+  const quantity = lines.find((line) => line.productSlug === product.productSlug)?.qty ?? 0;
 
   const buyUrl = useMemo(() => {
     return createStorefrontBuyUrl(store, slug, {
@@ -602,50 +615,7 @@ function ProductDetail({
           {/* Info */}
           <div>
             <h1 className="olv-display text-3xl font-semibold">{product.name}</h1>
-            <p className="text-2xl font-semibold text-[var(--olv-accent)] mt-2">
-              {formatMoney(publicPrice(product))}
-            </p>
-
-            {/* Public tier table (owner decision 2026-08-29): label, price and
-                INFORMATIVE minimum — amounts always at the tier's own price.
-                Falls back to the single price on stale projections. */}
-            {(store.priceTiers ?? []).length > 0 && (
-              <div className="mt-3 rounded-xl bg-white/60 ring-1 ring-[var(--olv-rule)] divide-y divide-[var(--olv-rule)]">
-                {(store.priceTiers ?? []).map((t) => {
-                  const price = product.prices?.[t.id];
-                  if (typeof price !== "number") return null;
-                  const isDefault = t.id === store.defaultTierId;
-                  const min =
-                    t.minPieces != null
-                      ? `desde ${t.minPieces} ${t.minPieces === 1 ? "pieza" : "piezas"}`
-                      : t.minAmount != null
-                        ? `desde ${formatMoney(t.minAmount)} a precio ${t.label}`
-                        : null;
-                  return (
-                    <div
-                      key={t.id}
-                      className={
-                        "flex items-center justify-between gap-2 px-3 py-2 text-sm" +
-                        (isDefault ? " font-semibold" : "")
-                      }
-                    >
-                      <span className="text-[var(--olv-ink)]">
-                        {t.label}
-                        {isDefault && (
-                          <span className="ml-2 rounded-full bg-[var(--olv-accent)] text-white text-[10px] font-semibold px-2 py-0.5 align-middle">
-                            Precio público
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-right">
-                        <b>{formatMoney(price)}</b>
-                        {min && <span className="olv-ink-soft block text-xs">{min}</span>}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <PublicTierPrices store={store} product={product} mode="detail" />
 
             {soldOut && (
               <p className="mt-2 inline-block bg-white/70 px-3 py-1 rounded-full text-sm font-semibold">Agotado</p>
@@ -678,23 +648,20 @@ function ProductDetail({
 
             {/* CTAs: cart, buy/inquire (respects canInquire + sold-out), contact. */}
             <div className="mt-6 flex flex-col gap-2">
-              <Button
+              <CartProductControl
+                key={`${product.productSlug}-${quantity}`}
+                productSlug={product.productSlug}
+                productName={product.name}
+                quantity={quantity}
+                onAdd={() => add(cartItemFromPublicProduct({
+                  ...product,
+                  image: images[0]?.url,
+                  inquire: soldOut,
+                }))}
+                onSetQty={setQty}
                 full
                 size="lg"
-                variant="secondary"
-                onClick={() =>
-                  add({
-                    productSlug: product.productSlug,
-                    name: product.name,
-                    sku: product.sku,
-                    image: images[0]?.url,
-                    unitPrices: product.prices,
-                    inquire: soldOut,
-                  })
-                }
-              >
-                Agregar al carrito
-              </Button>
+              />
               {canInquire && (
                 <a href={buyUrl} target="_blank" rel="noreferrer">
                   <Button full size="lg" variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">
@@ -747,17 +714,26 @@ function StoreChrome({
   store,
   signalBySlug,
   visibleSlugs,
+  cartItems,
   children,
 }: {
   store?: PublicStore;
   signalBySlug?: Record<string, PublicStockSignal>;
   visibleSlugs?: Set<string>;
+  cartItems?: Omit<CartLine, "qty">[];
   children: React.ReactNode;
 }) {
   // Hooks run unconditionally; the cart is inert (empty) without a store.
   const cart = useCart(store?.slug);
   const [cartOpen, setCartOpen] = useState(false);
-  const pieces = cartPieces(cart.lines);
+  useEffect(() => {
+    if (store && visibleSlugs) cart.prune(visibleSlugs);
+  }, [cart.prune, store, visibleSlugs]);
+  useEffect(() => {
+    if (store && cartItems) cart.refresh(cartItems);
+  }, [cart.refresh, cartItems, store]);
+  const visibleLines = visibleSlugs ? pruneCartLines(cart.lines, visibleSlugs) : cart.lines;
+  const pieces = cartPieces(visibleLines);
 
   const body = (
     <>
@@ -788,27 +764,23 @@ function StoreChrome({
 
   return (
     <CartContext.Provider
-      value={{ store, ...cart, signalBySlug, open: cartOpen, setOpen: setCartOpen }}
+      value={{ store, ...cart, lines: visibleLines, signalBySlug, open: cartOpen, setOpen: setCartOpen }}
     >
       <div className="olivia-root min-h-full">
         <BrandStyle />
         {body}
-        {/* Floating cart button: appears once the visit has pieces in the cart. */}
-        {pieces > 0 && !cartOpen && (
-          <Button
-            variant="primary"
-            aria-label="Abrir pedido"
+        {!cartOpen && (
+          <CartFloatingButton
+            pieces={pieces}
             onClick={() => setCartOpen(true)}
-            className="fixed bottom-5 right-5 z-20 rounded-full shadow-lg bg-[var(--olv-accent)] text-white hover:opacity-90 px-5"
-          >
-            🛍 {pieces}
-          </Button>
+            className="rounded-full bg-[var(--olv-accent)] text-white hover:opacity-90 px-5"
+          />
         )}
         <CartDrawer
           open={cartOpen}
           onClose={() => setCartOpen(false)}
           store={store}
-          lines={cart.lines}
+          lines={visibleLines}
           signalBySlug={signalBySlug}
           visibleSlugs={visibleSlugs}
           onSetQty={cart.setQty}

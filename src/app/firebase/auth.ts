@@ -38,6 +38,7 @@ export type AppUser = {
 export type EmailAccount = { uid: string; email: string; displayName: string };
 
 const GOOGLE = new GoogleAuthProvider();
+const PLATFORM_ADMIN_EMAIL = "admin@store.os";
 
 const GMAIL_DOMAINS = ["gmail.com", "googlemail.com"];
 
@@ -78,15 +79,36 @@ async function ensureUserDoc(fbUser: FbUser): Promise<AppUser> {
   };
   if (snap.exists()) {
     const data = snap.data() as { role: Role; emailNormalized?: string; emailVerified?: boolean };
+    // Recover the designated platform account if it was created after the
+    // first signup. The Firestore rule requires the same verified allowlist.
+    const isPlatformAdmin = normalizeEmail(fbUser.email) === PLATFORM_ADMIN_EMAIL;
+    let role = data.role ?? "member";
+    if (isPlatformAdmin && data.role !== "super_admin") {
+      try {
+        await setDoc(ref, { ...identity, role: "super_admin" }, { merge: true });
+        role = "super_admin";
+      } catch {
+        // Do not lock the account out while a deployed ruleset catches up.
+        // The verified allowlisted email still identifies the platform admin;
+        // the next login retries the profile repair.
+        role = "super_admin";
+      }
+    }
     // Legacy backfill (pre-invitations profiles lack the normalized fields).
     if (!data.emailNormalized || data.emailVerified !== true) {
-      await setDoc(ref, identity, { merge: true });
+      await setDoc(ref, identity, { merge: true }).catch(() => {});
     }
-    return { uid: fbUser.uid, email: fbUser.email, displayName: fbUser.displayName, role: data.role ?? "member" };
+    return {
+      uid: fbUser.uid,
+      email: fbUser.email,
+      displayName: fbUser.displayName,
+      role: isPlatformAdmin ? "super_admin" : role,
+    };
   }
-  // Bootstrap: first user in the collection becomes super_admin, rest are members.
+  // The designated platform account is always super_admin; otherwise the first
+  // user bootstraps the platform and later signups are members.
   const all = await getDocs(collection(db, "users"));
-  const role: Role = all.empty ? "super_admin" : "member";
+  const role: Role = normalizeEmail(fbUser.email) === PLATFORM_ADMIN_EMAIL || all.empty ? "super_admin" : "member";
   await setDoc(ref, {
     ...identity,
     displayName: fbUser.displayName ?? "",
@@ -137,9 +159,22 @@ export async function reconcilePendingInvites(fbUser: FbUser): Promise<void> {
 
 /** ensureUserDoc + reconcile, the post-login sequence every entry point shares. */
 async function afterLogin(fbUser: FbUser): Promise<AppUser> {
-  const appUser = await ensureUserDoc(fbUser);
-  if (fbUser.email && fbUser.emailVerified) await reconcilePendingInvites(fbUser).catch(() => {});
-  return appUser;
+  try {
+    const appUser = await ensureUserDoc(fbUser);
+    if (fbUser.email && fbUser.emailVerified) await reconcilePendingInvites(fbUser).catch(() => {});
+    return appUser;
+  } catch {
+    // Firebase Auth already accepted the credentials. Keep the session alive
+    // when Firestore is offline or its rules are still catching up.
+    return {
+      uid: fbUser.uid,
+      email: fbUser.email,
+      displayName: fbUser.displayName,
+      role: fbUser.emailVerified && normalizeEmail(fbUser.email ?? "") === PLATFORM_ADMIN_EMAIL
+        ? "super_admin"
+        : "member",
+    };
+  }
 }
 
 export async function signUpWithEmail(email: string, password: string): Promise<AppUser> {

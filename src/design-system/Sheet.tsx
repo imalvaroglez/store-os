@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { IconButton } from "./Button";
 
 // Bottom-sheet modal. Mobile-first, ESC + backdrop dismissible.
@@ -14,16 +14,21 @@ export function Sheet({
   title: string;
   children: ReactNode;
 }) {
+  // onClose in a ref: inline (unstable) handlers must not re-run the scroll
+  // lock / key listener on every parent render while the sheet is open.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCloseRef.current();
     window.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -33,7 +38,7 @@ export function Sheet({
       {/* grab handle — mobile only */}
       <div className="md:hidden relative mx-auto mb-[-8px] h-1.5 w-10 rounded-full bg-stone-300/80 z-10" />
       <div
-        className="relative bg-paper rounded-t-sheet md:rounded-sheet w-full md:max-w-lg max-h-[92vh] overflow-y-auto shadow-lift"
+        className="relative bg-paper rounded-t-sheet md:rounded-sheet w-full md:w-[min(90vw,64rem)] md:max-w-5xl max-h-[92vh] overflow-y-auto shadow-lift"
         style={{
           paddingBottom: "env(safe-area-inset-bottom)",
           animation: `slideUp var(--motion-base) var(--ease-smooth)`,

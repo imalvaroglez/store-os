@@ -23,7 +23,8 @@ export { Screen } from "./Screen";
 export type { Tab } from "./navItems";
 export { StoreSwitcher } from "./StoreSwitcher";
 export { FormField, TextField, TextArea, CheckboxField, SelectField, fieldBase } from "./FormField";
-export { TONE_BADGE, ORDER_STATUS_TONE, type StatusTone } from "./tokens";
+export { SearchSelect, type SearchSelectOption } from "./SearchSelect";
+export { TONE_BADGE, ORDER_STATUS_TONE, PAYMENT_STATUS_TONE, type StatusTone } from "./tokens";
 
 // Theme system.
 export { ThemeProvider, useTheme, THEMES, ThemePicker } from "./theme";

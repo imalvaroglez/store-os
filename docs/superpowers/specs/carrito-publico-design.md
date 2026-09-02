@@ -5,6 +5,11 @@ specPath: docs/superpowers/specs/carrito-publico-design.md
 ---
 # Carrito público: acumular piezas y pedir varias por WhatsApp
 
+> **Revisión vigente (2026-09-01):** el alcance ya incluye el catálogo
+> genérico además de Olivia y usa Iconic como objetivo comercial. Las reglas
+> actuales del carrito y de precios sustituyen las decisiones preliminares de
+> “sólo Olivia” y de niveles meramente informativos descritas abajo.
+
 ## Problema
 
 El storefront público de Olivia solo permite preguntar por **una pieza a la

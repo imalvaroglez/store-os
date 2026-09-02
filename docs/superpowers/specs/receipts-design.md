@@ -5,6 +5,15 @@ specPath: docs/superpowers/specs/receipts-design.md
 ---
 # Recibos / comprobantes de venta imprimibles y PDF
 
+> **Estado (2026-09-01): paso 1 entregado por separado.** El rediseño de
+> `Order` (§1–§3: multi-línea, migración, form) vive en
+> [`order-v2-design.md`](order-v2-design.md) con dos desviaciones deliberadas
+> (campo `productName/unitPrice/subtotal/priceTier` por línea en vez de
+> `name/price`, y `paymentStatus` derivado en vez de `paymentMethod`). Este
+> spec conserva §4–§5 (recibo imprimible, folio transaccional, reglas, gate)
+> como el paso 2 pendiente; su bloqueo real de inicio sigue siendo el PDF
+> exportado de Canva de Fer.
+
 ## Problema
 
 Fer quiere entregar a sus clientas un comprobante profesional cuando concreta

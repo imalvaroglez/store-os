@@ -10,6 +10,7 @@ import {
   type CartOrderLine,
 } from "./whatsapp";
 import type { Store } from "../types";
+import { calculateOrderPricing } from "./pricing";
 
 const baseStore: Store = {
   id: "s1",
@@ -138,11 +139,29 @@ describe("buildCartOrderUrl — pedido de varias líneas", () => {
     expect(text).toContain("/catalogo/olivia");
   });
 
-  it("nunca incluye precios ni totales", () => {
+  it("conserva el mensaje sin subtotal para tiendas legacy", () => {
     const url = buildCartOrderUrl(sfStore, "olivia", cartLines);
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).not.toContain("$");
-    expect(text).not.toContain("precio");
+    expect(text).not.toContain("Precio aplicable");
+  });
+
+  it("incluye el resumen calculado para una tienda con niveles", () => {
+    const pricing = calculateOrderPricing(
+      [
+        { id: "t_retail", label: "Regular", order: 0 },
+        { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
+        { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
+      ],
+      [{ qty: 12, unitPrices: { t_retail: 140, t_girly: 120, t_iconic: 90 } }]
+    );
+    const url = buildCartOrderUrl(sfStore, "olivia", cartLines, pricing);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Total de piezas: 12");
+    expect(text).toContain("Precio aplicable: Iconic");
+    expect(text).toContain("Subtotal estimado: $1,080 MXN");
+    expect(text).toContain("Envío no incluido");
+    expect(text).toContain("Precio y existencia por confirmar por WhatsApp");
   });
 
   it("usa un intro por defecto cuando la tienda no definió uno", () => {
