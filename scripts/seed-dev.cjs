@@ -525,8 +525,17 @@ async function run() {
   });
   await db.collection("publicStores").doc(STORE_SLUG).set(projectPublicStore(storeWithMembership));
 
-  const published = products.filter((p) => (p.status ? p.status === "published" : p.isPublic));
-  const activeCats = categories
+  // Project from the store's REAL catalog (read back AFTER the fixture upsert),
+  // never from the fixture array alone: a seed run must not clobber the public
+  // projection of products that already exist in dev (the owner's imported
+  // catalog), which is what turned /catalogo/olivia into a 2-product fixture.
+  const storeProductsSnap = await db.collection("products").where("storeId", "==", STORE_ID).get();
+  const allProducts = storeProductsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const storeCatsSnap = await db.collection("categories").where("storeId", "==", STORE_ID).get();
+  const allCategories = storeCatsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  const published = allProducts.filter((p) => (p.status ? p.status === "published" : p.isPublic));
+  const activeCats = allCategories
     .filter((c) => c.active)
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((c) => ({
@@ -547,12 +556,20 @@ async function run() {
   });
 
   const detailBatch = db.batch();
+  const keepIds = new Set();
   for (const p of published) {
     if (!p.slug) continue;
+    keepIds.add(`${STORE_ID}__${p.slug}`);
     detailBatch.set(
       db.collection("publicProducts").doc(`${STORE_ID}__${p.slug}`),
-      projectPublicProductDetail(p, STORE_SLUG, categories)
+      projectPublicProductDetail(p, STORE_SLUG, allCategories)
     );
+  }
+  // Prune stale detail docs (renamed/deleted products), like the app's
+  // projectPublicForStore does — otherwise dead publicProducts linger forever.
+  const publicDetailsSnap = await db.collection("publicProducts").where("storeId", "==", STORE_ID).get();
+  for (const d of publicDetailsSnap.docs) {
+    if (!keepIds.has(d.id)) detailBatch.delete(d.ref);
   }
   await detailBatch.commit();
 
@@ -601,9 +618,10 @@ async function run() {
     await db
       .collection("publicProducts")
       .doc(`${STORE_ID}__${targetProduct.slug}`)
-      .set(projectPublicProductDetail(updatedProduct, STORE_SLUG, categories), { merge: true });
-    // Rebuild the catalog summary so the grid picks up the image URL.
-    const refreshedPublished = products.map((p) => (p.id === targetProduct.id ? updatedProduct : p)).filter((p) => (p.status ? p.status === "published" : p.isPublic));
+      .set(projectPublicProductDetail(updatedProduct, STORE_SLUG, allCategories), { merge: true });
+    // Rebuild the catalog summary so the grid picks up the image URL — from the
+    // SAME read-back published list, never the fixture array (see step 2).
+    const refreshedPublished = published.map((p) => (p.id === targetProduct.id ? updatedProduct : p));
     await db.collection("publicCatalogs").doc(STORE_SLUG).set({
       storeSlug: STORE_SLUG,
       storeId: STORE_ID,
