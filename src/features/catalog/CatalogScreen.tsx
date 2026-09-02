@@ -262,7 +262,7 @@ export function CatalogScreen() {
   };
 
   return (
-    <Screen wide>
+    <Screen>
       <ScreenHeader
         title="Catálogo"
         subtitle={
@@ -286,7 +286,7 @@ export function CatalogScreen() {
       />
 
       {products.length > 0 && (
-        <div className="flex items-end gap-2 overflow-x-auto pb-1">
+        <div className="flex items-end gap-2 overflow-x-auto pb-1 mb-5">
           <div className="w-36 shrink-0">
             <SelectField
               label="Categoría"
@@ -334,7 +334,7 @@ export function CatalogScreen() {
           icon={<div className="text-6xl">🔍</div>}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {sorted.map((p) => (
             <ProductCard
               key={p.id}
