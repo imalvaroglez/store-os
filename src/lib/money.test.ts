@@ -5,7 +5,8 @@ import {
   publicPrice,
   profit,
   parseAmount,
-  pending,
+  sanitizeDecimalInput,
+  sanitizeIntegerInput,
 } from "./money";
 import type { Product } from "../types";
 
@@ -70,12 +71,14 @@ describe("parseAmount", () => {
   });
 });
 
-describe("pending", () => {
-  it("is total minus deposit", () => {
-    expect(pending(1000, 300)).toBe(700);
+describe("numeric form input", () => {  it("keeps only digits for integer fields", () => {
+    expect(sanitizeIntegerInput("1a-2.5")).toBe("125");
+    expect(sanitizeIntegerInput("")).toBe("");
   });
-  it("never goes negative", () => {
-    expect(pending(500, 800)).toBe(0);
+  it("keeps one decimal point and supports an in-progress value", () => {
+    expect(sanitizeDecimalInput("$1a.2.5")).toBe("1.25");
+    expect(sanitizeDecimalInput(".5")).toBe("0.5");
+    expect(sanitizeDecimalInput(".")).toBe("0.");
   });
 });
 

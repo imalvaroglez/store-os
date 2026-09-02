@@ -2,7 +2,7 @@
 // (src/lib/seed.ts): only the entities the tests actually assert on, built with
 // plain literals so no provider/factory import is needed. The full Olivia
 // fixture for the DEV backend lives in scripts/seed-dev.cjs.
-import type { AppState, Customer, Order, Product, Store } from "../types";
+import type { AppState, Customer, Order, OrderStatus, Product, Store } from "../types";
 
 const NOW = "2026-08-17T00:00:00.000Z";
 
@@ -17,8 +17,8 @@ const store = (id: string, name: string, slug: string, type: Store["type"]): Sto
 const product = (id: string, storeId: string, name: string, isPublic: boolean): Product =>
   ({ id, storeId, name, category: "other", isPublic, status: "published", createdAt: NOW, updatedAt: NOW }) as Product;
 
-const order = (id: string, storeId: string, productName: string, status: Order["status"]): Order =>
-  ({ id, storeId, customerId: "", productName, quantity: 1, price: 100, deposit: 0, status, createdAt: NOW, updatedAt: NOW }) as Order;
+const order = (id: string, storeId: string, productName: string, orderStatus: OrderStatus): Order =>
+  ({ id, storeId, customerId: "", items: [{ productName, quantity: 1, unitPrice: 100, subtotal: 100 }], deposit: 0, orderStatus, paymentStatus: "unpaid", schemaVersion: 2, createdAt: NOW, updatedAt: NOW });
 
 /** Olivia active, Santi on-demand, Joyería inventory — the isolation scenarios tests rely on. */
 export function fixtureState(): AppState {

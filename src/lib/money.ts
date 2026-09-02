@@ -56,7 +56,15 @@ export function parseAmount(input: string | number | undefined): number | undefi
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** Pending payment on an order: price*qty - deposit. Never negative. */
-export function pending(total: number, deposit: number): number {
-  return Math.max(0, total - deposit);
+/** Keep a form value as a positive whole-number string while it is edited. */
+export function sanitizeIntegerInput(input: string): string {
+  return input.replace(/\D/g, "");
+}
+
+/** Keep one decimal separator and allow a trailing dot while a value is edited. */
+export function sanitizeDecimalInput(input: string): string {
+  const cleaned = input.replace(/[^\d.]/g, "");
+  const dot = cleaned.indexOf(".");
+  if (dot < 0) return cleaned;
+  return `${cleaned.slice(0, dot) || "0"}.${cleaned.slice(dot + 1).replace(/\./g, "")}`;
 }
