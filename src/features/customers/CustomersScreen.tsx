@@ -14,12 +14,13 @@ import {
   Screen,
   Sheet,
   StatRow,
+  TextField,
   useEntitySheet,
   useToast,
 } from "../../design-system";
 import { CustomerForm } from "./CustomerForm";
 import { customersForStore, ordersForStore } from "../../lib/selectors";
-import { pending } from "../../lib/money";
+import { orderBucket, orderCountsTowardToPay, orderTotals } from "../../lib/orders";
 import type { Customer } from "../../types";
 
 export function CustomersScreen() {
@@ -28,10 +29,15 @@ export function CustomersScreen() {
   const toast = useToast();
   const [deleting, setDeleting] = useState<Customer | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   if (!activeStore) return null;
   const customers = customersForStore(state.customers, activeStore.id);
   const orders = ordersForStore(state.orders, activeStore.id);
+  const visibleCustomers = customers.filter((customer) => {
+    const needle = query.trim().toLocaleLowerCase("es-MX");
+    return !needle || [customer.name, customer.phone, customer.instagram].filter(Boolean).join(" ").toLocaleLowerCase("es-MX").includes(needle);
+  });
 
   return (
     <Screen>
@@ -45,22 +51,24 @@ export function CustomersScreen() {
         }
       />
 
-      {customers.length === 0 ? (
+      <TextField label="Buscar clientes" placeholder="Nombre, teléfono o Instagram" value={query} onChange={(event) => setQuery(event.target.value)} />
+
+      {visibleCustomers.length === 0 ? (
         <EmptyState
-          title="Sin clientes"
-          subtitle="Agrega tu primer cliente para asociarle pedidos."
+          title={customers.length === 0 ? "Sin clientes" : "No hay coincidencias"}
+          subtitle={customers.length === 0 ? "Agrega tu primer cliente para asociarle pedidos." : "Prueba con otra búsqueda."}
           icon={<div className="text-6xl">👤</div>}
         />
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          {customers.map((c) => {
+          {visibleCustomers.map((c) => {
             const cOrders = orders.filter((o) => o.customerId === c.id);
             const totalSold = cOrders
-              .filter((o) => o.status !== "asked")
-              .reduce((sum, o) => sum + o.price * o.quantity, 0);
+              .filter((o) => orderBucket(o) !== "pending" && orderBucket(o) !== "cancelled")
+              .reduce((sum, o) => sum + orderTotals(o).estimatedTotal, 0);
             const due = cOrders
-              .filter((o) => o.status !== "paid" && o.status !== "asked")
-              .reduce((sum, o) => sum + pending(o.price * o.quantity, o.deposit), 0);
+              .filter(orderCountsTowardToPay)
+              .reduce((sum, o) => sum + orderTotals(o).balance, 0);
             return (
               <Card key={c.id} onClick={() => sheet.openEdit(c)}>
                 <div className="flex items-center justify-between gap-3">
