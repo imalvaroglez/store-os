@@ -296,7 +296,10 @@ export function buildSeedState(): AppState {
     },
   ];
 
-  const orders: Order[] = [
+  // v1 FLAT orders, deliberately unmigrated: the app migrates them on load,
+  // so the suite exercises the real legacy→v2 path against Firestore. The cast
+  // makes the v1 shape explicit (the current Order type is v2 multi-line).
+  const orders = [
     {
       id: "order_olivia_1",
       storeId: oliviaId,
@@ -371,7 +374,7 @@ export function buildSeedState(): AppState {
       createdAt: now,
       updatedAt: now,
     },
-  ];
+  ] as unknown as Order[];
 
   return {
     stores,
