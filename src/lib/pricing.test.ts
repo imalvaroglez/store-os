@@ -77,7 +77,7 @@ describe("migrateCatalog — scalable pricing (v2)", () => {
     const p = out.products[0];
     expect(p.schemaVersion).toBe(CURRENT_PRODUCT_SCHEMA_VERSION);
     expect(p.prices).toEqual({ t_retail: 100, t_wholesale: 80 });
-    expect(out.orders[0].priceTier).toBe("t_wholesale");
+    expect(out.orders[0].items[0].priceTier).toBe("t_wholesale");
   });
 
   it("is idempotent and keeps references for unchanged docs", () => {

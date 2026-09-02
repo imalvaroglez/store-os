@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import { CURRENT_PRODUCT_SCHEMA_VERSION } from "../types";
 import { CANONICAL_TIERS, LEGACY_TIER_IDS } from "./pricing";
+import { migrateOrders } from "./orders";
 
 // ponytail: accents/case folding via normalize+regex; no slug lib needed.
 // Strips diacritics, lowercases, keeps a-z0-9 and hyphens, collapses runs.
@@ -178,21 +179,13 @@ export function migrateCatalog(state: AppState): AppState {
       ),
     };
   }
-  const ordersChanged = (next.orders ?? []).some((o) => o.priceTier && LEGACY_TIER_IDS[o.priceTier]);
-  if (ordersChanged) {
-    next = {
-      ...next,
-      orders: next.orders.map((o) =>
-        o.priceTier && LEGACY_TIER_IDS[o.priceTier]
-          ? { ...o, priceTier: LEGACY_TIER_IDS[o.priceTier] }
-          : o
-      ),
-    };
-  }
   const products = next.products;
   const needsMigration = products.some(
     (p) => p.schemaVersion !== CURRENT_PRODUCT_SCHEMA_VERSION
   );
+  const migratedOrders = migrateOrders(next.orders);
+  const ordersChanged = migratedOrders.some((order, index) => order !== next.orders[index]);
+  if (ordersChanged) next = { ...next, orders: migratedOrders };
   if (!needsMigration) return next;
 
   const now = new Date().toISOString();
