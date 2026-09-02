@@ -1,26 +1,32 @@
-import type { Order, OrderStatus } from "../../types";
+import type { Order, OrderStatus, PaymentStatus } from "../../types";
+import { effectiveOrderStatus } from "../../lib/orders";
 
 // Spanish labels for order statuses + the linear next step in the flow.
 // Labels are the product language; the enum stays in English.
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   asked: "Preguntó",
+  quoted: "Cotizado",
   confirmed: "Confirmado",
-  to_buy: "Comprar",
-  bought: "Comprado",
-  arrived: "Llegó",
+  preparing: "Preparando",
+  ready: "Listo",
   delivered: "Entregado",
-  paid: "Cobrado",
+  cancelled: "Cancelado",
+};
+
+export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  unpaid: "Sin anticipo",
+  partial: "Anticipo parcial",
+  paid: "Pagado",
 };
 
 const ORDER_FLOW: OrderStatus[] = [
   "asked",
+  "quoted",
   "confirmed",
-  "to_buy",
-  "bought",
-  "arrived",
+  "preparing",
+  "ready",
   "delivered",
-  "paid",
 ];
 
 // Imperative verbs for the next-action BUTTON (the action to take), keyed by the
@@ -28,13 +34,13 @@ const ORDER_FLOW: OrderStatus[] = [
 // for the status badge). M3: the button said "Confirmado" (state) instead of
 // "Confirmar" (action).
 const ORDER_ACTION_VERBS: Record<OrderStatus, string> = {
-  asked: "Confirmar",
+  asked: "",
+  quoted: "Cotizar",
   confirmed: "Confirmar",
-  to_buy: "Comprar",
-  bought: "Marcar comprado",
-  arrived: "Marcar llegada",
+  preparing: "Preparar",
+  ready: "Marcar listo",
   delivered: "Entregar",
-  paid: "Cobrar",
+  cancelled: "",
 };
 
 export function nextStatus(status: OrderStatus): OrderStatus | null {
@@ -50,8 +56,10 @@ export function nextActionVerb(status: OrderStatus): string | null {
   return ORDER_ACTION_VERBS[next];
 }
 
-/** One order advanced to its next status (new updatedAt), or null when terminal. */
+/** One order advanced to its next status (new updatedAt), or null when terminal.
+ * Derives the effective status itself so legacy orders advance without the
+ * caller pre-normalizing them. */
 export function advanceOrder<T extends Order>(order: T): T | null {
-  const next = nextStatus(order.status);
-  return next ? { ...order, status: next, updatedAt: new Date().toISOString() } : null;
+  const next = nextStatus(effectiveOrderStatus(order));
+  return next ? { ...order, orderStatus: next, updatedAt: new Date().toISOString() } : null;
 }

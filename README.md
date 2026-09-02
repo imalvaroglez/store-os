@@ -12,7 +12,7 @@ Pensado para que cualquiera lo use: un adolescente que vende por primera vez, un
 
 ## Características
 
-- **Multitienda** — crea y administra varias tiendas; cada una con sus datos aislados.
+- **Multitienda** — crea y administra varias tiendas; cada miembro opera sólo las tiendas autorizadas y el `super_admin` de plataforma puede operar cualquiera.
 - **Dos tipos de tienda:**
   - **Bajo pedido** — no guardas inventario (perfumes, tenis, gorras). Un precio por producto.
   - **Inventario y precios** — tienes stock y precios por nivel: **Menudeo, Mayoreo, Emprendedora**.

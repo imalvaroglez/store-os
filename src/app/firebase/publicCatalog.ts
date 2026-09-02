@@ -134,11 +134,16 @@ export async function loadPublicCatalog(slug: string): Promise<{
 
   if (!storeSnap.exists()) throw new PublicCatalogNotFoundError(slug);
   const storeData = storeSnap.data() as Omit<PublicStore, "slug">;
-  const store: PublicStore = { slug, ...storeData };
+  let store: PublicStore = { slug, ...storeData };
 
   let catalog: PublicCatalog = { categories: [], products: [] };
   if (catalogSnap.exists()) {
-    const data = catalogSnap.data() as { categories?: PublicCategory[]; products?: PublicProductSummary[] };
+    const data = catalogSnap.data() as {
+      storeId?: string;
+      categories?: PublicCategory[];
+      products?: PublicProductSummary[];
+    };
+    if (!store.storeId && data.storeId) store = { ...store, storeId: data.storeId };
     catalog = {
       categories: data.categories ?? [],
       products: data.products ?? [],

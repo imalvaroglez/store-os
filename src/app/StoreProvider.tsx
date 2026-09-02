@@ -17,11 +17,13 @@ import type {
   Supplier,
   Purchase,
 } from "../types";
-import { loadState, saveState } from "../lib/storage";
+import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
+import { loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
-import { reservationDelta, applyPurchaseLines } from "../lib/inventory";
+import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
+import { migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
@@ -38,13 +40,14 @@ import {
   rebuildPublicCatalog,
   receivePurchaseTx,
   createDraftProductsForPurchaseTx,
+  saveOrderWithStockTx,
   PurchaseAlreadyReceived,
 } from "./firebase/firestoreData";
 import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
 
-// Actions: every mutation flows through here. storeId is carried on entity-level
-// actions and selectors enforce isolation, so a screen can't touch another store.
+// Actions: every mutation flows through here. The active store scopes normal UI
+// work; membership and super_admin access are enforced by Firebase rules.
 type Action =
   | { type: "ADD_STORE"; store: Store }
   | { type: "UPDATE_STORE"; store: Store }
@@ -194,10 +197,10 @@ type StoreContextValue = {
    * Takes the just-saved snapshot (local) or re-reads canonically in the cloud tx. */
   receivePurchase: (purchase: Purchase) => Promise<"received" | "already">;
   deletePurchase: (purchaseId: string) => void;
-  upsertCustomer: (customer: Customer) => void;
+  upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => void;
-  upsertOrder: (order: Order) => void;
-  deleteOrder: (orderId: string) => void;
+  upsertOrder: (order: Order) => Promise<void>;
+  deleteOrder: (orderId: string) => Promise<void>;
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -206,7 +209,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const cloud = isFirebaseConfigured() && !!user;
 
-  const [state, dispatch] = useReducer(reducer, undefined, loadState);
+  const [state, dispatch] = useReducer(reducer, undefined, () => {
+    const initial = loadState();
+    return initial.activeStoreId ? initial : { ...initial, activeStoreId: loadPreferredStoreId() };
+  });
   // Track whether the current dispatch originated from a cloud sync so we don't
   // echo it back to Firestore (write loops).
   const fromCloud = useRef(false);
@@ -235,7 +241,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           for (const store of migrated.stores) {
             const before = s.stores.find((x) => x.id === store.id);
             if (before !== store) {
-              writes.push(saveEntity(user, "stores", storeWithMembership(store, user)));
+              // The cloud loader already returned the canonical owner/member
+              // fields, including for a super_admin operating another store.
+              writes.push(saveEntity(user, "stores", store));
               migratedStores.push(store);
             }
           }
@@ -300,7 +308,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (normalized.length === invites.length && invites.every((e, i) => e === normalized[i])) continue;
       const updated = { ...store, pendingInvites: normalized, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      void saveEntity(user, "stores", storeWithMembership(updated, user)).catch(() => {});
+      void saveEntity(user, "stores", updated).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid, state.stores]);
@@ -443,7 +451,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         state.categories.filter((c) => c.storeId === storeId)
       );
     },
-    setActiveStore: (storeId) => dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" }),
+    setActiveStore: (storeId) => {
+      savePreferredStoreId(storeId);
+      dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" });
+    },
     upsertProduct: async (product) => {
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
       await persistEntity("products", product);
@@ -603,52 +614,71 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void persistEntity("purchases", { ...purchase, status: "received", receivedAt: at, updatedAt: at }).catch(() => {});
       return "received";
     },
-    upsertCustomer: (customer) => {
+    upsertCustomer: async (customer) => {
       dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
-      void persistEntity("customers", customer).catch(() => {});
+      await persistEntity("customers", customer);
     },
     deleteCustomer: (customerId) => {
       dispatch({ type: "DELETE_CUSTOMER", customerId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "customers", customerId).catch(() => {});
     },
-    upsertOrder: (order) => {
-      // Reserve/release stock: compare the existing order's quantity to the new
-      // one. Negative stock is allowed (back-orders). On-demand stores carry no
-      // quantityOnHand, so reservation is naturally skipped. Dispatch + persist
-      // the product directly rather than via upsertProduct — reservation is a
-      // stock-only change and stock is never in the public projection, so there
-      // is no catalog re-projection to run.
+    upsertOrder: async (order) => {
+      // Canonical v2 snapshot before it touches either store: migration +
+      // paymentStatus derivation in one place for every caller.
+      const nextOrder = {
+        ...migrateOrder(order),
+        paymentStatus: paymentStatusForOrder(order),
+      };
       const prev = state.orders.find((o) => o.id === order.id);
-      const product = order.productId ? state.products.find((p) => p.id === order.productId) : undefined;
-      if (product && typeof product.quantityOnHand === "number") {
-        const delta = reservationDelta(prev?.quantity, order.quantity);
-        if (delta !== 0) {
-          const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
-          dispatch({ type: "UPDATE_PRODUCT", product: updated });
-          void persistEntity("products", updated).catch(() => {});
+      const deltas = reservationDeltasForOrderChange(prev, nextOrder);
+      const stockAt = nowIso();
+      const stockWrites: Product[] = [];
+      for (const [productId, delta] of deltas) {
+        const product = state.products.find((p) => p.id === productId && p.storeId === order.storeId);
+        if (product && typeof product.quantityOnHand === "number") {
+          stockWrites.push({ ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: stockAt });
         }
       }
-      dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order });
-      void persistEntity("orders", order).catch(() => {});
+      // Cloud: ONE atomic batch (order + every stock adjustment). Local state
+      // commits only on success, so a failed save leaves no phantom order and
+      // the retry the toast invites replays the FULL delta set — a partial
+      // N+1 write could double-reserve or strand a reservation forever.
+      if (cloud && user && !fromCloud.current) {
+        await saveOrderWithStockTx(
+          user,
+          nextOrder,
+          stockWrites.map((p) => ({ id: p.id, quantityOnHand: p.quantityOnHand as number, updatedAt: p.updatedAt }))
+        );
+      }
+      for (const updated of stockWrites) dispatch({ type: "UPDATE_PRODUCT", product: updated });
+      dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order: nextOrder });
     },
-    deleteOrder: (orderId) => {
-      // Release the reserved stock before removing the order.
+    deleteOrder: async (orderId) => {
+      // Release the held stock before removing the order (cancelling a
+      // delivered sale also returns the goods — see reservationDeltas*).
       const existing = state.orders.find((o) => o.id === orderId);
-      const product = existing?.productId ? state.products.find((p) => p.id === existing.productId) : undefined;
-      if (existing && product && typeof product.quantityOnHand === "number") {
-        const updated = { ...product, quantityOnHand: product.quantityOnHand + existing.quantity, updatedAt: nowIso() };
-        dispatch({ type: "UPDATE_PRODUCT", product: updated });
-        void persistEntity("products", updated).catch(() => {});
+      const writes: Promise<void>[] = [];
+      if (existing) {
+        const deltas = reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" });
+        for (const [productId, delta] of deltas) {
+          const product = state.products.find((p) => p.id === productId && p.storeId === existing.storeId);
+          if (product && typeof product.quantityOnHand === "number") {
+            const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
+            dispatch({ type: "UPDATE_PRODUCT", product: updated });
+            writes.push(persistEntity("products", updated));
+          }
+        }
       }
       dispatch({ type: "DELETE_ORDER", orderId });
-      if (cloud && user && !fromCloud.current) deleteEntity(user, "orders", orderId).catch(() => {});
+      if (cloud && user && !fromCloud.current) writes.push(deleteEntity(user, "orders", orderId));
+      await Promise.all(writes);
     },
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
-// A cloud store doc carries ownerUid + memberUids (the signed-in user is owner+member).
+// New cloud stores carry ownerUid + memberUids for the signed-in creator.
 function storeWithMembership(store: Store, user: AppUser | null): Store & { ownerUid?: string; memberUids?: string[] } {
   if (!user) return store;
   return { ...store, ownerUid: user.uid, memberUids: [user.uid] };
@@ -684,7 +714,11 @@ export function newCustomer(storeId: string): Customer {
 }
 export function newOrder(storeId: string): Order {
   const now = nowIso();
-  return { id: uid("order"), storeId, customerId: "", productName: "", quantity: 1, price: 0, deposit: 0, status: "asked", createdAt: now, updatedAt: now };
+  return {
+    id: uid("order"), storeId, customerId: "", items: [], deposit: 0,
+    orderStatus: "asked", paymentStatus: "unpaid", schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
+    createdAt: now, updatedAt: now,
+  };
 }
 export function newSupplier(storeId: string): Supplier {
   const now = nowIso();

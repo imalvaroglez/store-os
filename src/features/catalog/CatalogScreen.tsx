@@ -116,8 +116,8 @@ function ProductCard({
     product.quantityOnHand <= product.lowStockAt;
 
   return (
-    <Card onClick={onEdit}>
-      <div className="flex gap-3">
+    <Card onClick={onEdit} className="p-4 sm:p-5">
+      <div className="flex gap-4">
         <ProductImage src={primaryThumb(product)} alt={product.name} size="thumb" />
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
@@ -158,7 +158,7 @@ function ProductCard({
 
           {isTiered ? (
             <>
-              <div className="flex gap-3 mt-1.5 text-xs">
+              <div className="flex gap-3 mt-2 text-xs">
                 <span className="text-ink">
                   {defaultLabel} <b>{formatMoney(product.prices?.[defaultId])}</b>
                 </span>
@@ -173,7 +173,7 @@ function ProductCard({
                   the card. stopPropagation so the buttons don't open the edit
                   sheet (the whole card is clickable). */}
               {typeof product.quantityOnHand === "number" && (
-                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                <div className="mt-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2">
                     <IconButton
                       variant="secondary"
@@ -193,18 +193,11 @@ function ProductCard({
                       <Badge tone="danger">Faltan {Math.abs(product.quantityOnHand)}</Badge>
                     )}
                   </div>
-                  <div className="grid grid-cols-3 gap-2 mt-2">
-                    <StatRow label="Disponible">{product.quantityOnHand}</StatRow>
-                    <StatRow label="Comprometido" tone={committed > 0 ? "danger" : "default"}>
-                      {committed}
-                    </StatRow>
-                    <StatRow label="Físico">{product.quantityOnHand + committed}</StatRow>
-                  </div>
                 </div>
               )}
             </>
           ) : (
-            <div className="flex gap-3 mt-1.5 text-xs">
+            <div className="flex gap-3 mt-2 text-xs">
               <span className="text-ink">
                 Precio <b>{formatMoney(product.price)}</b>
               </span>
@@ -215,6 +208,15 @@ function ProductCard({
           )}
         </div>
       </div>
+      {isTiered && typeof product.quantityOnHand === "number" && (
+        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,.8fr)] gap-x-4 mt-4 min-w-0">
+          <StatRow label="Disponible">{product.quantityOnHand}</StatRow>
+          <StatRow label="Comprometido" tone={committed > 0 ? "danger" : "default"}>
+            {committed}
+          </StatRow>
+          <StatRow label="Físico">{product.quantityOnHand + committed}</StatRow>
+        </div>
+      )}
     </Card>
   );
 }
@@ -260,7 +262,7 @@ export function CatalogScreen() {
   };
 
   return (
-    <Screen wide>
+    <Screen>
       <ScreenHeader
         title="Catálogo"
         subtitle={
@@ -284,7 +286,7 @@ export function CatalogScreen() {
       />
 
       {products.length > 0 && (
-        <div className="flex items-end gap-2 overflow-x-auto pb-1">
+        <div className="flex items-end gap-2 overflow-x-auto pb-1 mb-5">
           <div className="w-36 shrink-0">
             <SelectField
               label="Categoría"
@@ -332,7 +334,7 @@ export function CatalogScreen() {
           icon={<div className="text-6xl">🔍</div>}
         />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {sorted.map((p) => (
             <ProductCard
               key={p.id}

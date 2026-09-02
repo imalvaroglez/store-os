@@ -109,7 +109,7 @@ async function seedStaleOlivia() {
   const staleStore = {
     slug: "olivia", name: "Olivia", type: "inventory_tiered", whatsappPhone: "5213344836691", storefront: null,
     priceTiers: [
-      { id: "t_retail", label: "Menudeo", order: 0 },
+      { id: "t_retail", label: "Regular", order: 0 },
       { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
       { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
     ],
@@ -122,12 +122,12 @@ async function seedStaleOlivia() {
       {
         productSlug: "anillo-blossom", name: "Anillo Blossom", storeSlug: "olivia", imageUrl: null, availability: "available",
         storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0,
-        sku: "AAN1385", price: 140, prices: { t_retail: 140, t_girly: 115, t_iconic: 95 }, stockSignal: "disponible",
+        sku: "AAN1385", price: 140, prices: { t_retail: 140, t_girly: 120, t_iconic: 90 }, stockSignal: "disponible",
       },
       {
         productSlug: "aretes-luna", name: "Aretes Luna", storeSlug: "olivia", imageUrl: null, availability: "available",
         storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0,
-        sku: "OLI-002", price: 120, prices: { t_retail: 120 }, stockSignal: "pocas",
+        sku: "OLI-002", price: 120, prices: { t_retail: 120, t_girly: 100, t_iconic: 80 }, stockSignal: "pocas",
       },
     ],
   };
@@ -173,6 +173,31 @@ test("anonymous visitor sees a cloud store's public catalog", async ({ browser }
   await ctx.close();
 });
 
+test("generic public catalog accumulates pieces and sends one WhatsApp order", async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const anon = await ctx.newPage();
+  await openCatalogAnonymous(anon, "santi");
+
+  await expect(anon.getByRole("heading", { name: "Santi" }).first()).toBeVisible({ timeout: 15000 });
+  const adds = anon.getByRole("button", { name: "Agregar al carrito" });
+  await adds.nth(0).click();
+  // The first card is now a quantity stepper, so the remaining Add button is the second product.
+  await anon.getByRole("button", { name: "Agregar al carrito" }).click();
+
+  const open = anon.getByRole("button", { name: "Abrir pedido" });
+  await expect(open).toContainText("2 piezas");
+  await open.click();
+  await expect(anon.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
+
+  const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
+  const href = (await send.getAttribute("href")) ?? "";
+  expect(href).toContain("wa.me/5215512345678");
+  const text = decodeURIComponent(href.split("text=")[1]);
+  expect(text).toContain("• 1× Perfume Baccarat Rouge 540");
+  expect(text).toContain("• 1× Tenis Jordan 1 Retro");
+  await ctx.close();
+});
+
 test("anonymous visitor never sees private fields", async ({ browser }) => {
   const ctx = await browser.newContext();
   const anon = await ctx.newPage();
@@ -203,6 +228,7 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   await openCatalogAnonymous(anon, "olivia");
 
   await expect(anon.getByRole("heading", { name: "Olivia" }).first()).toBeVisible({ timeout: 15000 });
+  await expect(anon.getByText("desde $1,000 en productos a precio Iconic").first()).toBeVisible();
   await anon.getByRole("link", { name: "Anillo Blossom" }).click();
   await expect(anon).toHaveURL(/\/catalogo\/olivia\/producto\/anillo-blossom$/);
   await expect(anon.getByRole("heading", { name: "Anillo Blossom" })).toBeVisible({ timeout: 15000 });
@@ -219,7 +245,7 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
 
   // Add two different pieces from the grid.
   await anon.getByRole("button", { name: "Agregar al carrito" }).nth(0).click();
-  await anon.getByRole("button", { name: "Agregar al carrito" }).nth(1).click();
+  await anon.getByRole("button", { name: "Agregar al carrito" }).click();
 
   // Floating button shows the piece count and opens the drawer.
   const open = anon.getByRole("button", { name: "Abrir pedido" });
@@ -230,15 +256,16 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   // Coarse stock legend — never an exact count.
   await expect(anon.getByText(/Quedan pocas/)).toBeVisible();
 
-  // ONE wa.me message with both lines, SKUs and the catalog link; no prices.
+  // ONE wa.me message with both lines, SKUs, calculated price and catalog link.
   const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
   const href = (await send.getAttribute("href")) ?? "";
   expect(href).toContain("wa.me/5213344836691");
   const text = decodeURIComponent(href.split("text=")[1]);
   expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
   expect(text).toContain("• 1× Aretes Luna (OLI-002)");
+  expect(text).toContain("Precio aplicable: Regular");
+  expect(text).toContain("Subtotal estimado: $260 MXN");
   expect(text).toContain("/catalogo/olivia");
-  expect(text).not.toContain("$");
 
   // The cart survives a full reload (localStorage per store slug).
   await anon.reload();

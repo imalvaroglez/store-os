@@ -2,6 +2,7 @@ import type { AppState } from "../types";
 import { migrateCatalog } from "./catalog";
 
 export const STORAGE_KEY = "store_os_state_v1";
+export const ACTIVE_STORE_KEY = "store_os_active_store_v1";
 
 // ponytail: whole-state load/save. Simpler than per-entity keys; local-first so size is tiny.
 // When Firebase lands later, swap this adapter; the reducer/UI shape stays.
@@ -36,6 +37,23 @@ export function saveState(state: AppState): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Storage full / unavailable: no-op. Local-first degrades silently.
+  }
+}
+
+export function loadPreferredStoreId(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_STORE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function savePreferredStoreId(storeId: string | null): void {
+  try {
+    if (storeId) localStorage.setItem(ACTIVE_STORE_KEY, storeId);
+    else localStorage.removeItem(ACTIVE_STORE_KEY);
+  } catch {
+    // Storage unavailable: the in-memory selection still works.
   }
 }
 

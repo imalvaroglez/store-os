@@ -644,7 +644,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       ) : (
         /* Sticky footer: total, diferencia y acciones — nothing else. */
         <div className="fixed inset-x-0 z-40 border-t border-edge bg-surface px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-sm bottom-[calc(4.25rem+env(safe-area-inset-bottom))] md:bottom-0">
-          <div className="max-w-3xl mx-auto">
+          <div className="max-w-5xl mx-auto">
             <div className="flex items-baseline justify-between text-sm">
               <span className="text-ink-soft">
                 Total {formatMoneyExact(calculated)}

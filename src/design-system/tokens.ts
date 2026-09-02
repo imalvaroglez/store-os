@@ -23,10 +23,16 @@ export const TONE_BADGE: Record<StatusTone, string> = {
 // Order status -> tone, used by OrderCard / OrderForm status pills.
 export const ORDER_STATUS_TONE: Record<string, StatusTone> = {
   asked: "neutral",
+  quoted: "warning",
   confirmed: "info",
-  to_buy: "warning",
-  bought: "accent",
-  arrived: "accent",
+  preparing: "accent",
+  ready: "accent",
   delivered: "info",
+  cancelled: "danger",
+};
+
+export const PAYMENT_STATUS_TONE: Record<string, StatusTone> = {
+  unpaid: "danger",
+  partial: "warning",
   paid: "success",
 };

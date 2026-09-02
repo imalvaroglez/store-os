@@ -19,7 +19,7 @@ import { SuppliersScreen } from "../inventory/SuppliersScreen";
 import type { StoreType } from "../../types";
 
 // Full management for a single store: rename, change type, WhatsApp, members
-// (invite by email / remove), and delete. Shown as a sheet from the picker.
+// (invite by email / remove), and delete. Shown from the picker or active store.
 export function StoreSettingsScreen({
   storeId,
   onDone,
@@ -67,14 +67,9 @@ export function StoreSettingsScreen({
   // Resolve member uids -> emails (best-effort via the users we can see).
   const memberUids = store.memberUids ?? [];
   const pending = store.pendingInvites ?? [];
-  // G-P02: business-content editing (whatsapp, storefront, members, transfer,
-  // catalog, sku prefix, delete) requires being the store's OWNER — not merely
-  // holding the super_admin role. super_admin is a control-plane role; if the
-  // platform operator needs to operate a store's business content, they must be
-  // added as owner/member of that store. The Firestore rules already deny
-  // non-owner writes to adminStores; this hides the controls so a non-owner
-  // super_admin doesn't see a confusing "No se pudo guardar" on a doomed write.
-  const isOwnerOrAdmin = store.ownerUid === user?.uid;
+  // Owners and platform super_admins can manage the store. Other members keep
+  // the read-only view and cannot submit business-content writes.
+  const isOwnerOrAdmin = user?.role === "super_admin" || store.ownerUid === user?.uid;
 
   async function republish() {
     setCatalogBusy(true);
@@ -258,7 +253,7 @@ export function StoreSettingsScreen({
         />
         <TextField
           label="Teléfono de WhatsApp"
-          hint="Con clave de país, ej. 5215512345678"
+          hint="Se usará para pedidos y contacto. Incluye la clave de país, ej. 5215512345678"
           placeholder="52155..."
           inputMode="tel"
           value={whatsapp}

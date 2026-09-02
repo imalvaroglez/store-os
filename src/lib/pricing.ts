@@ -16,6 +16,9 @@ export const LEGACY_TIER_IDS: Record<string, string> = {
   reseller: "t_reseller",
 };
 
+/** Stable reference tier for the canonical Regular price. */
+export const REGULAR_TIER_ID = "t_retail";
+
 /** Visible tiers of a store, ordered. Falls back to the canonical 3. */
 export function tiersForStore(store: Pick<Store, "priceTiers"> | null | undefined): PriceTierDef[] {
   const tiers = (store?.priceTiers?.length ? store.priceTiers : CANONICAL_TIERS)
@@ -46,6 +49,26 @@ export function suggestedPrice(cost: number | undefined, rule: Store["pricingRul
 /** A cart line reduced to what qualification needs: pieces + per-tier unit prices. */
 export type CartQtyLine = { qty: number; unitPrices: Record<string, number> };
 
+export type CalculatedCartTier = {
+  tier: PriceTierDef;
+  subtotal: number;
+  qualifies: boolean;
+  piecesRemaining: number;
+  amountRemaining: number;
+  savingsVsBase: number;
+  savingsVsActive: number;
+};
+
+export type OrderPricing = {
+  totalQuantity: number;
+  tiers: CalculatedCartTier[];
+  baseTier: CalculatedCartTier;
+  activeTier: CalculatedCartTier;
+  aspirationalTier: CalculatedCartTier;
+  estimatedSubtotal: number;
+  savingsVsBase: number;
+};
+
 /**
  * Does the cart qualify for the tier? `minPieces` counts total pieces;
  * `minAmount` is evaluated at THE TIER'S OWN prices — never at the default
@@ -72,7 +95,7 @@ export function bestTierForCart(tiers: PriceTierDef[], lines: CartQtyLine[]): Pr
     .find((t) => tierQualifies(t, lines));
 }
 
-/** Σ qty × (basePrice − tierPrice): the "ahorras $N frente a menudeo" hint. */
+/** Σ qty × (referencePrice − tierPrice): the savings hint. */
 export function cartSavings(tier: PriceTierDef, baseTierId: string, lines: CartQtyLine[]): number {
   return lines.reduce((sum, l) => {
     const base = l.unitPrices[baseTierId];
@@ -84,38 +107,49 @@ export function cartSavings(tier: PriceTierDef, baseTierId: string, lines: CartQ
 }
 
 /**
- * How far the cart is from qualifying for `next`: whole extra pieces needed,
- * the extra spend at the next tier's price, and that spend's value at the
- * base tier ("por $95 más te llevas $140 de producto"). Null when the tier
- * has no minimums or the cart already qualifies.
+ * Canonical public-order calculation. A tier is usable only when every line
+ * has that tier's price, so stale projections never produce partial totals.
+ * The deepest qualifying tier wins independently of intermediate tiers.
  */
-export function nextTierGap(
-  next: PriceTierDef,
-  baseTierId: string,
+export function calculateOrderPricing(
+  tiers: PriceTierDef[],
   lines: CartQtyLine[]
-): { piecesMore: number; extraSpend: number; extraValueAtBase: number } | null {
-  if (next.minPieces == null && next.minAmount == null) return null;
-  if (tierQualifies(next, lines)) return null;
+): OrderPricing | null {
+  if (lines.length === 0) return null;
 
-  const pieces = lines.reduce((sum, l) => sum + l.qty, 0);
-  const piecesForPieces = next.minPieces != null ? Math.max(0, next.minPieces - pieces) : 0;
+  const ordered = tiers.filter((t) => !t.hidden).sort((a, b) => a.order - b.order);
+  const totalQuantity = lines.reduce((sum, line) => sum + line.qty, 0);
+  const priced = ordered.flatMap((tier) => {
+    if (!lines.every((line) => Number.isFinite(line.unitPrices[tier.id]))) return [];
+    return [{
+      tier,
+      subtotal: lines.reduce((sum, line) => sum + line.unitPrices[tier.id] * line.qty, 0),
+      qualifies: tierQualifies(tier, lines),
+    }];
+  });
 
-  let piecesForAmount = 0;
-  if (next.minAmount != null) {
-    const unitAtNext = lines.find((l) => typeof l.unitPrices[next.id] === "number")?.unitPrices[next.id];
-    if (typeof unitAtNext === "number" && unitAtNext > 0) {
-      // ponytail: single-unit price stands in for the whole extra purchase —
-      // exact for single-line carts (the common case), close enough for mixed ones.
-      const amount = lines.reduce((sum, l) => sum + (l.unitPrices[next.id] ?? 0) * l.qty, 0);
-      piecesForAmount = Math.ceil(Math.max(0, next.minAmount - amount) / unitAtNext);
-    } else if (next.minPieces == null) {
-      return null; // no way to express an amount gap without the tier's price
-    }
-  }
+  // Regular keeps its identity when tiers are reordered. Legacy/custom stores
+  // without the canonical id use the first usable visible tier defensively.
+  const base = priced.find((entry) => entry.tier.id === REGULAR_TIER_ID) ?? priced[0];
+  const active = [...priced].reverse().find((entry) => entry.qualifies);
+  const aspirational = priced.find((entry) => entry.tier.id === ordered[ordered.length - 1]?.id);
+  if (!base || !active || !aspirational) return null;
 
-  const piecesMore = Math.max(piecesForPieces, piecesForAmount);
-  if (piecesMore <= 0) return null;
-  const unitAtNext = lines.find((l) => typeof l.unitPrices[next.id] === "number")?.unitPrices[next.id] ?? 0;
-  const unitAtBase = lines.find((l) => typeof l.unitPrices[baseTierId] === "number")?.unitPrices[baseTierId] ?? 0;
-  return { piecesMore, extraSpend: unitAtNext * piecesMore, extraValueAtBase: unitAtBase * piecesMore };
+  const withProgress: CalculatedCartTier[] = priced.map((entry) => ({
+    ...entry,
+    piecesRemaining: Math.max(0, (entry.tier.minPieces ?? 0) - totalQuantity),
+    amountRemaining: Math.max(0, (entry.tier.minAmount ?? 0) - entry.subtotal),
+    savingsVsBase: Math.max(0, base.subtotal - entry.subtotal),
+    savingsVsActive: Math.max(0, active.subtotal - entry.subtotal),
+  }));
+
+  return {
+    totalQuantity,
+    tiers: withProgress,
+    baseTier: withProgress.find((entry) => entry.tier.id === base.tier.id)!,
+    activeTier: withProgress.find((entry) => entry.tier.id === active.tier.id)!,
+    aspirationalTier: withProgress.find((entry) => entry.tier.id === aspirational.tier.id)!,
+    estimatedSubtotal: active.subtotal,
+    savingsVsBase: Math.max(0, base.subtotal - active.subtotal),
+  };
 }

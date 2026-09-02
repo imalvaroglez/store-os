@@ -5,7 +5,7 @@
       "id": "public-product-detail",
       "title": "Catálogo público: detalle de producto inaccesible (storeId ausente en publicStores estancado)",
       "priority": 1,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/public-product-detail-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -35,7 +35,7 @@
       "id": "carrito-publico",
       "title": "Carrito público: acumular piezas y pedir varias por WhatsApp",
       "priority": 3,
-      "status": "awaiting-approval",
+      "status": "done",
       "specPath": "docs/superpowers/specs/carrito-publico-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -50,7 +50,7 @@
       "id": "store-settings-owner-entry",
       "title": "Acceso del owner a Administrar tienda (gear en selector bloqueado por super_admin)",
       "priority": 4,
-      "status": "needs-spec",
+      "status": "done",
       "specPath": "docs/superpowers/specs/store-settings-owner-entry-design.md",
       "dependsOn": [],
       "previewChecks": [

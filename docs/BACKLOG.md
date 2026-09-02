@@ -742,8 +742,12 @@ como 🟢 ready.
   encargados (Store OS, Google/Firebase, Vercel). Sujeto a validación jurídica.
 - **ARCO V1 asistido por la responsable** (Fer gestiona las solicitudes; la
   página pública solo informa y da canales, no crea documentos).
-- Separación de planos: super_admin = plano de CONTROL, sin PII rutinaria de
-  clientas. (Espec 1 ya implementada y mergeada en PR #11.)
+- Separación de planos: `adminStores` sigue siendo el plano de CONTROL para
+  membresía y propiedad, pero la política vigente permite que `super_admin`
+  opere globalmente los datos de las tiendas. La decisión anterior de excluir
+  PII rutinaria del superadmin quedó supersedida por
+  [`ADR 0003`](adr/0003-platform-super-admin-access.md); las proyecciones
+  públicas siguen siendo allow-list y no exponen esos datos.
 
 ### Lo que falta
 

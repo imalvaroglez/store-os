@@ -1,7 +1,7 @@
 // Public cart (storefront). Persisted per store slug in localStorage — a
 // visitor accumulates pieces across reloads without any backend. Lines carry
-// ONLY public data (id, name, sku); prices never enter the cart — the owner
-// confirms the price in the WhatsApp chat.
+// only public data, including the public tier prices needed for an estimated
+// subtotal; the owner still confirms price and availability in WhatsApp.
 
 export type CartLine = {
   productSlug: string; // stable PUBLIC key (the slug survives renames of the doc id)
@@ -10,10 +10,32 @@ export type CartLine = {
   qty: number;
   image?: string;
   inquire?: boolean; // sold-out piece: ask instead of buy
-  /** Public per-tier unit prices (owner decision: the tier map is public).
-   *  Powers the informative savings hint — totals are never committed. */
+  /** Public per-tier unit prices. Powers the estimated subtotal; never charged. */
   unitPrices?: Record<string, number>;
 };
+
+export type PublicCartItemSource = {
+  productSlug: string;
+  name: string;
+  sku?: string | null;
+  image?: string | null;
+  imageUrl?: string | null;
+  prices?: Record<string, number>;
+  stockSignal?: string;
+  inquire?: boolean;
+};
+
+/** Normalize summary/detail projections into the shared cart shape. */
+export function cartItemFromPublicProduct(product: PublicCartItemSource): Omit<CartLine, "qty"> {
+  return {
+    productSlug: product.productSlug,
+    name: product.name,
+    sku: product.sku ?? product.productSlug,
+    image: product.image ?? product.imageUrl ?? undefined,
+    unitPrices: product.prices,
+    inquire: product.inquire ?? product.stockSignal === "agotado",
+  };
+}
 
 const SCHEMA_VERSION = 1;
 const key = (slug: string) => `store-os:cart:${slug}`;
@@ -63,6 +85,24 @@ export function setCartQty(slug: string, productSlug: string, qty: number): Cart
 
 export function removeCartLine(slug: string, productSlug: string): CartLine[] {
   const next = loadCart(slug).filter((l) => l.productSlug !== productSlug);
+  saveCart(slug, next);
+  return next;
+}
+
+/** Refresh public metadata on persisted lines without changing quantities. */
+export function refreshCartLines(
+  lines: CartLine[],
+  items: Omit<CartLine, "qty">[]
+): CartLine[] {
+  const bySlug = new Map(items.map((item) => [item.productSlug, item]));
+  return lines.map((line) => {
+    const item = bySlug.get(line.productSlug);
+    return item ? { ...line, ...item, qty: line.qty } : line;
+  });
+}
+
+export function refreshCart(slug: string, items: Omit<CartLine, "qty">[]): CartLine[] {
+  const next = refreshCartLines(loadCart(slug), items);
   saveCart(slug, next);
   return next;
 }

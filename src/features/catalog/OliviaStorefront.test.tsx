@@ -10,8 +10,8 @@ import type { RouteMatch } from "../../lib/router";
 
 // The storefront loads its data from the anonymous public-catalog loaders; the
 // tests mock that module (no Firebase in jsdom) with a 3-tier Olivia fixture
-// carrying the owner's numbers: Menudeo $140 / Girly $115 (desde 5) / Iconic
-// $95 (desde $1,000 a precio Iconic).
+// carrying the owner's numbers: Regular $140 / Girly $120 (desde 5) / Iconic
+// $90 (desde $1,000 a precio Iconic).
 const mocks = vi.hoisted(() => ({
   loadPublicCatalog: vi.fn(),
   loadPublicProduct: vi.fn(),
@@ -33,7 +33,7 @@ const store: PublicStore = {
   type: "inventory_tiered",
   whatsappPhone: "5213344836691",
   priceTiers: [
-    { id: "t_retail", label: "Menudeo", order: 0 },
+    { id: "t_retail", label: "Regular", order: 0 },
     { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
     { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
   ],
@@ -43,9 +43,9 @@ const store: PublicStore = {
 const catalog: PublicCatalog = {
   categories: [{ id: "c1", name: "Anillos", slug: "anillos", sortOrder: 0 }],
   products: [
-    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "anillo-blossom", name: "Anillo Blossom", price: 140, prices: { t_retail: 140, t_girly: 115, t_iconic: 95 }, stockSignal: "disponible", sku: "AAN1385" },
-    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "aretes-luna", name: "Aretes Luna", price: 120, prices: { t_retail: 120 }, stockSignal: "pocas", sku: "OLI-002" },
-    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "collar-vega", name: "Collar Vega", price: 200, prices: { t_retail: 200 }, stockSignal: "agotado", sku: "OLI-003" },
+    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "anillo-blossom", name: "Anillo Blossom", price: 140, prices: { t_retail: 140, t_girly: 120, t_iconic: 90 }, stockSignal: "disponible", sku: "AAN1385" },
+    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "aretes-luna", name: "Aretes Luna", price: 120, prices: { t_retail: 120, t_girly: 100, t_iconic: 80 }, stockSignal: "pocas", sku: "OLI-002" },
+    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "collar-vega", name: "Collar Vega", price: 200, prices: { t_retail: 200, t_girly: 170, t_iconic: 150 }, stockSignal: "agotado", sku: "OLI-003" },
   ] as PublicCatalog["products"],
 };
 
@@ -58,7 +58,7 @@ const detail: PublicProductDetail = {
   images: [],
   categories: [],
   price: 140,
-  prices: { t_retail: 140, t_girly: 115, t_iconic: 95 },
+  prices: { t_retail: 140, t_girly: 120, t_iconic: 90 },
   stockSignal: "pocas",
 };
 
@@ -92,10 +92,12 @@ describe("carrito del storefront — acumular y pedir", () => {
     await renderStore();
     const adds = screen.getAllByRole("button", { name: "Agregar al carrito" });
     fireEvent.click(adds[0]);
+    expect(screen.getByRole("group", { name: "Cantidad de Anillo Blossom" })).toHaveTextContent("1");
     fireEvent.click(adds[1]);
 
     const open = screen.getByRole("button", { name: "Abrir pedido" });
     expect(open.textContent).toContain("2");
+    expect(open.textContent).toContain("Ver pedido");
 
     await openDrawer();
     const list = screen.getByRole("list");
@@ -109,8 +111,9 @@ describe("carrito del storefront — acumular y pedir", () => {
     expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
     expect(text).toContain("• 1× Aretes Luna (OLI-002)");
     expect(text).toContain("/catalogo/olivia");
-    // Sin precios ni totales en v1: el precio se cierra en el chat.
-    expect(text).not.toContain("$");
+    expect(text).toContain("Total de piezas: 2");
+    expect(text).toContain("Precio aplicable: Regular");
+    expect(text).toContain("Subtotal estimado: $260 MXN");
   });
 
   it("stepper ± y quitar actualizan líneas y contador", async () => {
@@ -122,7 +125,7 @@ describe("carrito del storefront — acumular y pedir", () => {
     const row = within(list).getByText("Anillo Blossom").closest("li")!;
     fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
     expect(within(row).getByText("2")).toBeTruthy();
-    expect(screen.getByText(/2 piezas en tu pedido/)).toBeTruthy();
+    expect(screen.getByText("2 piezas")).toBeTruthy();
 
     fireEvent.click(within(row).getByRole("button", { name: "Quitar" }));
     expect(screen.getByText("Tu pedido está vacío")).toBeTruthy();
@@ -159,8 +162,27 @@ describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
   });
 });
 
-describe("carrito — hint de ventas por tier", () => {
-  it("muestra el ahorro del mejor tier que califica y la brecha al siguiente", async () => {
+describe("carrito — progreso hacia Iconic", () => {
+  it("mantiene Iconic como meta y Girly como escalón intermedio", async () => {
+    localStorage.setItem(cartKey, JSON.stringify({
+      v: 1,
+      lines: [{
+        productSlug: "anillo-blossom",
+        name: "Anillo Blossom",
+        sku: "AAN1385",
+        qty: 4,
+      }],
+    }));
+    await renderStore();
+    await openDrawer();
+
+    expect(screen.getByText(/Tu meta: precio Iconic/i)).toBeTruthy();
+    expect(screen.getByText(/Te faltan \$640 en productos a precio Iconic/i)).toBeTruthy();
+    expect(screen.getByText(/Te falta 1 pieza para desbloquear Girly/i)).toBeTruthy();
+    expect(screen.queryByText(/Agrega 1 pieza y ahorrarás/i)).toBeNull();
+  });
+
+  it("muestra subtotal Girly, monto exacto faltante y ahorro de la selección actual", async () => {
     localStorage.setItem(
       cartKey,
       JSON.stringify({
@@ -171,7 +193,7 @@ describe("carrito — hint de ventas por tier", () => {
             name: "Anillo Blossom",
             sku: "AAN1385",
             qty: 10,
-            unitPrices: { t_retail: 140, t_girly: 115, t_iconic: 95 },
+            unitPrices: { t_retail: 140, t_girly: 120, t_iconic: 90 },
           },
         ],
       })
@@ -179,26 +201,46 @@ describe("carrito — hint de ventas por tier", () => {
     await renderStore();
     await openDrawer();
 
-    // 10 × (140 − 115) = $250 frente a menudeo, con precio Girly.
-    expect(screen.getByText(/Con precio Girly ahorras \$250 frente a Menudeo/i)).toBeTruthy();
-    // Brecha a Iconic: 1 pieza más ($95) = $140 de producto a precio menudeo.
-    expect(screen.getByText(/A precio Iconic te falta 1 pieza más/)).toBeTruthy();
-    expect(screen.getByText(/por \$95 más te llevas \$140 de producto/)).toBeTruthy();
+    expect(screen.getAllByText(/Precio Girly desbloqueado/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("$1,200 MXN")).toBeTruthy();
+    expect(screen.getByText(/Te faltan \$100 en productos a precio Iconic/i)).toBeTruthy();
+    expect(screen.getByText(/Con Iconic, lo que ya llevas costaría \$300 menos/i)).toBeTruthy();
+    expect(screen.queryByText(/por .* más te llevas/i)).toBeNull();
+  });
+
+  it("celebra Iconic a 12 piezas y deja de mostrar una siguiente meta", async () => {
+    localStorage.setItem(cartKey, JSON.stringify({
+      v: 1,
+      lines: [{
+        productSlug: "anillo-blossom",
+        name: "Anillo Blossom",
+        sku: "AAN1385",
+        qty: 12,
+        unitPrices: { t_retail: 140, t_girly: 120, t_iconic: 90 },
+      }],
+    }));
+    await renderStore();
+    await openDrawer();
+
+    expect(screen.getAllByText(/Precio Iconic desbloqueado/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("$1,080 MXN")).toBeTruthy();
+    expect(screen.getAllByText(/Ahorras \$600 frente a Regular/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Tu meta:/i)).toBeNull();
   });
 });
 
 describe("detalle de producto — precios por tier", () => {
-  it("muestra la tabla de tiers con sus mínimos y el default resaltado", async () => {
+  it("destaca Iconic y explica los tres niveles", async () => {
     render(<OliviaStorefront route={productRoute} />);
     expect(await screen.findByText("Anillo Blossom")).toBeTruthy();
-    expect(screen.getByText("$115")).toBeTruthy();
-    expect(screen.getByText("desde 5 piezas")).toBeTruthy();
-    expect(screen.getByText("desde $1,000 a precio Iconic")).toBeTruthy();
-    // Default resaltado.
-    expect(screen.getByText(/Precio público/)).toBeTruthy();
+    expect(screen.getByText("$90")).toBeTruthy();
+    expect(screen.getByText("Girly").closest("p")).toHaveTextContent("Girly $120 · desde 5 piezas");
+    expect(screen.getByText("desde $1,000 en productos a precio Iconic")).toBeTruthy();
+    expect(screen.getByText("Regular").closest("p")).toHaveTextContent("Regular $140");
     // Agregar al carrito desde el detalle.
     fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
     expect(screen.getByRole("button", { name: "Abrir pedido" }).textContent).toContain("1");
+    expect(screen.getByRole("group", { name: "Cantidad de Anillo Blossom" })).toHaveTextContent("1");
   });
 
   it("cae al precio único cuando la proyección está estancada (sin tiers)", async () => {
@@ -209,5 +251,26 @@ describe("detalle de producto — precios por tier", () => {
     render(<OliviaStorefront route={productRoute} />);
     expect(await screen.findByText("$140")).toBeTruthy();
     expect(screen.queryByText("desde 5 piezas")).toBeNull();
+  });
+
+  it("hidrata y conserva un carrito antiguo de varias líneas al entrar por detalle", async () => {
+    localStorage.setItem(cartKey, JSON.stringify({
+      v: 1,
+      lines: [
+        { productSlug: "anillo-blossom", name: "Anillo Blossom", sku: "AAN1385", qty: 4 },
+        { productSlug: "aretes-luna", name: "Aretes Luna", sku: "OLI-002", qty: 1 },
+      ],
+    }));
+
+    render(<OliviaStorefront route={productRoute} />);
+    expect(await screen.findByText("Anillo Blossom")).toBeTruthy();
+    await openDrawer();
+
+    const list = screen.getByRole("list");
+    expect(within(list).getByText("Anillo Blossom")).toBeTruthy();
+    expect(within(list).getByText("Aretes Luna")).toBeTruthy();
+    expect(screen.getAllByText(/Precio Girly desbloqueado/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("$580 MXN")).toBeTruthy();
+    expect(screen.getByText(/Te faltan \$560 en productos a precio Iconic/i)).toBeTruthy();
   });
 });

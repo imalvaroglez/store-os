@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   bestTierForCart,
+  calculateOrderPricing,
   cartSavings,
-  nextTierGap,
   suggestedPrice,
   tierQualifies,
   defaultTier,
   tiersForStore,
   CANONICAL_TIERS,
+  REGULAR_TIER_ID,
   type CartQtyLine,
 } from "./pricing";
 import type { PriceTierDef } from "../types";
@@ -76,7 +77,7 @@ describe("migrateCatalog — scalable pricing (v2)", () => {
     const p = out.products[0];
     expect(p.schemaVersion).toBe(CURRENT_PRODUCT_SCHEMA_VERSION);
     expect(p.prices).toEqual({ t_retail: 100, t_wholesale: 80 });
-    expect(out.orders[0].priceTier).toBe("t_wholesale");
+    expect(out.orders[0].items[0].priceTier).toBe("t_wholesale");
   });
 
   it("is idempotent and keeps references for unchanged docs", () => {
@@ -90,15 +91,15 @@ describe("migrateCatalog — scalable pricing (v2)", () => {
 });
 
 // --- Carrito público: calificación de tiers (semántica del owner, 2026-08-29).
-// Números del owner: Menudeo $140 / Girly $115 (desde 5 piezas) / Iconic $95
+// Números del owner: Regular $140 / Girly $120 (desde 5 piezas) / Iconic $90
 // (desde $1,000 A PRECIO ICONIC — nunca a precio menudeo).
 const cartTiers: PriceTierDef[] = [
-  { id: "t_retail", label: "Menudeo", order: 0 },
+  { id: "t_retail", label: "Regular", order: 0 },
   { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
   { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
 ];
 const tenPieces: CartQtyLine[] = [
-  { qty: 10, unitPrices: { t_retail: 140, t_girly: 115, t_iconic: 95 } },
+  { qty: 10, unitPrices: { t_retail: 140, t_girly: 120, t_iconic: 90 } },
 ];
 
 describe("tierQualifies — mínimos del carrito", () => {
@@ -110,10 +111,10 @@ describe("tierQualifies — mínimos del carrito", () => {
 
   it("minAmount se evalúa al precio DEL PROPIO tier, no al menudeo", () => {
     const iconic = cartTiers[2];
-    // 10 × $140 (menudeo) = $1,400 NO califican: a precio Iconic son $950.
-    expect(tierQualifies(iconic, tenPieces)).toBe(false);
-    // 11 × $95 = $1,045 sí.
-    expect(tierQualifies(iconic, [{ qty: 11, unitPrices: tenPieces[0].unitPrices }])).toBe(true);
+    // 11 × $140 (Regular) = $1,540 NO califican: a precio Iconic son $990.
+    expect(tierQualifies(iconic, [{ qty: 11, unitPrices: tenPieces[0].unitPrices }])).toBe(false);
+    // 12 × $90 = $1,080 sí.
+    expect(tierQualifies(iconic, [{ qty: 12, unitPrices: tenPieces[0].unitPrices }])).toBe(true);
   });
 
   it("sin precio del tier en la línea no califica minAmount (conservador)", () => {
@@ -129,26 +130,65 @@ describe("tierQualifies — mínimos del carrito", () => {
 describe("bestTierForCart — el mejor tier visible que califica", () => {
   it("devuelve el primero por order que cumpla sus mínimos", () => {
     expect(bestTierForCart(cartTiers, tenPieces)?.id).toBe("t_girly");
-    expect(bestTierForCart(cartTiers, [{ qty: 11, unitPrices: tenPieces[0].unitPrices }])?.id).toBe("t_iconic");
+    expect(bestTierForCart(cartTiers, [{ qty: 12, unitPrices: tenPieces[0].unitPrices }])?.id).toBe("t_iconic");
     expect(bestTierForCart(cartTiers, [{ qty: 2, unitPrices: tenPieces[0].unitPrices }])?.id).toBe("t_retail");
   });
 });
 
 describe("cartSavings — ahorro frente a menudeo", () => {
   it("Σ cantidad × (precio base − precio del tier)", () => {
-    expect(cartSavings(cartTiers[1], "t_retail", tenPieces)).toBe(250); // 10 × (140 − 115)
+    expect(cartSavings(cartTiers[1], "t_retail", tenPieces)).toBe(200); // 10 × (140 − 120)
   });
 });
 
-describe("nextTierGap — cuánto falta para el siguiente tier", () => {
-  it("traduce la brecha en piezas enteras y valor a precio menudeo", () => {
-    const gap = nextTierGap(cartTiers[2], "t_retail", tenPieces);
-    // Faltan $50 a precio Iconic → 1 pieza más ($95 de gasto extra) = $140 de producto a menudeo.
-    expect(gap).toEqual({ piecesMore: 1, extraSpend: 95, extraValueAtBase: 140 });
+describe("calculateOrderPricing — resumen canónico del pedido", () => {
+  it("resuelve Regular, Girly e Iconic con subtotales reales", () => {
+    const one = calculateOrderPricing(cartTiers, [{ qty: 1, unitPrices: tenPieces[0].unitPrices }])!;
+    expect(one.activeTier.tier.id).toBe("t_retail");
+    expect(one.estimatedSubtotal).toBe(140);
+    expect(one.tiers.find((entry) => entry.tier.id === "t_girly")?.piecesRemaining).toBe(4);
+    expect(one.aspirationalTier.amountRemaining).toBe(910);
+
+    const five = calculateOrderPricing(cartTiers, [{ qty: 5, unitPrices: tenPieces[0].unitPrices }])!;
+    expect(five.activeTier.tier.id).toBe("t_girly");
+    expect(five.estimatedSubtotal).toBe(600);
+    expect(five.savingsVsBase).toBe(100);
+
+    const eleven = calculateOrderPricing(cartTiers, [{ qty: 11, unitPrices: tenPieces[0].unitPrices }])!;
+    expect(eleven.activeTier.tier.id).toBe("t_girly");
+    expect(eleven.aspirationalTier.subtotal).toBe(990);
+    expect(eleven.aspirationalTier.amountRemaining).toBe(10);
+
+    const twelve = calculateOrderPricing(cartTiers, [{ qty: 12, unitPrices: tenPieces[0].unitPrices }])!;
+    expect(twelve.activeTier.tier.id).toBe("t_iconic");
+    expect(twelve.estimatedSubtotal).toBe(1080);
+    expect(twelve.savingsVsBase).toBe(600);
   });
 
-  it("devuelve null cuando el tier ya califica o no aplica", () => {
-    expect(nextTierGap(cartTiers[2], "t_retail", [{ qty: 11, unitPrices: tenPieces[0].unitPrices }])).toBeNull();
-    expect(nextTierGap(cartTiers[0], "t_retail", tenPieces)).toBeNull(); // sin mínimos
+  it("Iconic tiene prioridad aunque no se hayan desbloqueado 5 piezas", () => {
+    const expensive = [{ qty: 2, unitPrices: { t_retail: 700, t_girly: 650, t_iconic: 600 } }];
+    expect(calculateOrderPricing(cartTiers, expensive)?.activeTier.tier.id).toBe("t_iconic");
+  });
+
+  it("no calcula un subtotal parcial cuando falta un precio público", () => {
+    expect(calculateOrderPricing(cartTiers, [
+      { qty: 1, unitPrices: { t_retail: 140, t_girly: 120 } },
+    ])).toBeNull();
+  });
+
+  it("usa Regular por id estable aunque el arreglo llegue reordenado", () => {
+    const reordered = [cartTiers[2], cartTiers[0], cartTiers[1]];
+    const pricing = calculateOrderPricing(reordered, [{ qty: 5, unitPrices: tenPieces[0].unitPrices }])!;
+
+    expect(REGULAR_TIER_ID).toBe("t_retail");
+    expect(pricing.baseTier.tier.id).toBe(REGULAR_TIER_ID);
+    expect(pricing.savingsVsBase).toBe(100);
+  });
+
+  it("usa el primer tier visible como fallback para tiendas sin Regular canónico", () => {
+    const customTiers = cartTiers.filter((tier) => tier.id !== REGULAR_TIER_ID);
+    const pricing = calculateOrderPricing(customTiers, [{ qty: 5, unitPrices: tenPieces[0].unitPrices }])!;
+
+    expect(pricing.baseTier.tier.id).toBe("t_girly");
   });
 });

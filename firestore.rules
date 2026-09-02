@@ -10,11 +10,9 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && userRole(request.auth.uid) == 'super_admin';
     }
-    // Canonical control-plane document. adminStores/{storeId} is the ONLY source
-    // of authority for membership/ownership. `stores/{id}` copies are derived.
-    // isSuperAdmin() is intentionally NOT consulted here: a platform super_admin
-    // who is not a member of a store MUST NOT read that store's business content
-    // (G-P02). Super_admin reach is via adminStores (control plane), not stores.
+    // Canonical control-plane document. adminStores/{storeId} remains the source
+    // of authority for membership/ownership. A super_admin is also allowed to
+    // operate any store's business data by explicit platform policy.
     function adminStore(storeId) {
       return get(/databases/$(database)/documents/adminStores/$(storeId)).data;
     }
@@ -27,6 +25,9 @@ service cloud.firestore {
       return isSignedIn()
         && exists(/databases/$(database)/documents/adminStores/$(storeId))
         && adminStore(storeId).ownerUid == request.auth.uid;
+    }
+    function canOperateStore(storeId) {
+      return isSuperAdmin() || isMember(storeId);
     }
     function roleIs(r) { return request.resource.data.role == r; }
     // Verified email from the Firebase Auth JWT. The doc-body email field is
@@ -52,7 +53,7 @@ service cloud.firestore {
     // super-admin (admin@store.os) operates in both dev and prod by design; tenant
     // owners like Olivia are members/owners and do NOT need to be listed here.
     function isAllowlistedSuperAdmin() {
-      return verifiedEmail() in [
+      return verifiedEmail().lower() in [
         'admin@store.os'
       ];
     }
@@ -78,16 +79,18 @@ service cloud.firestore {
             && request.resource.data.email == verifiedEmail()
             && request.resource.data.emailNormalized == canonicalEmail()
             && request.resource.data.emailVerified == true))
-        && (isSuperAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
+        && (isSuperAdmin()
+            || (isSelf(uid) && hasVerifiedEmail() && isAllowlistedSuperAdmin()
+                && request.resource.data.role == 'super_admin')
+            || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
         && (isSelf(uid) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['email', 'emailNormalized', 'emailVerified']));
       allow delete: if isSuperAdmin();
     }
 
     // adminStores/{storeId} — canonical control plane. Carries ONLY control
-    // metadata (storeId, name, ownerUid, memberUids) and never business content,
-    // so super_admin reads of this collection cannot leak tenant PII (G-P02).
+    // metadata (storeId, name, ownerUid, memberUids) and never business content.
     // super_admin reads all (platform administration); members read their own;
-    // only the owner may write. retainedPrivacyRequestCount is a control counter
+    // owners and super_admins may write. retainedPrivacyRequestCount is a control counter
     // (Espec 2) carried here because it is control data, not catalog content.
     // Invitee reconciliation (reliable-member-invitations): a verified user
     // named in pendingInvites may, in ONE write, add exactly their own uid to
@@ -109,93 +112,93 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
-      allow update: if (isOwner(storeId)
+      allow update: if ((isSuperAdmin() || isOwner(storeId))
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
         || inviteeJoinOk();
       allow delete: if false;
     }
 
     match /stores/{id} {
-      allow get: if isMember(id);
+      allow get: if canOperateStore(id);
       allow list: if isSignedIn()
-        && (resource.data.memberUids.hasAny([request.auth.uid])
+        && (isSuperAdmin()
+            || resource.data.memberUids.hasAny([request.auth.uid])
             // Invitee discovery: a verified user may list exactly the stores
             // whose pendingInvites name THEM (canonical email).
             || (hasVerifiedEmail() && resource.data.pendingInvites.hasAny([canonicalEmail()])));
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
-      // Owners can manage members and transfer ownership, but the new owner
-      // must already be a member. Ordinary members cannot alter store settings.
-      allow update: if (isOwner(id)
+      // Owners and super_admins can manage store settings. The new owner must
+      // already be a member. Ordinary members cannot alter store settings.
+      allow update: if ((isSuperAdmin() || isOwner(id))
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
         || inviteeJoinOk();
-      allow delete: if isOwner(id);
+      allow delete: if isSuperAdmin() || isOwner(id);
     }
 
-    // Entities: `get`/write gated by membership; `list` allowed for signed-in users
-    // (the client queries with `where storeId in [<accessible stores>]`, so results
-    // stay within the user's stores).
+    // Entities: `get`/write gated by store access; `list` is used with a
+    // storeId query by the client. Super_admins may operate every store.
     match /products/{id} {
-      allow read: if isMember(resource.data.storeId);
-      allow create: if isMember(request.resource.data.storeId);
-      allow update: if isMember(resource.data.storeId)
-        && isMember(request.resource.data.storeId)
+      allow read: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId);
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isMember(resource.data.storeId);
+      allow delete: if canOperateStore(resource.data.storeId);
     }
     // categories/{id} — per-store category entity. id is `${storeId}__${slug}`,
     // and storeId is also carried on the doc so membership scoping is consistent
     // with products/customers/orders.
     match /categories/{id} {
-      allow read: if isMember(resource.data.storeId);
-      allow create: if isMember(request.resource.data.storeId);
-      allow update: if isMember(resource.data.storeId)
-        && isMember(request.resource.data.storeId)
+      allow read: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId);
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isMember(resource.data.storeId);
+      allow delete: if canOperateStore(resource.data.storeId);
     }
     // suppliers/{id} — per-store supplier entity (private, membership-gated).
     // Mirrors categories: id carries storeId, and the doc also carries storeId
     // so membership scoping stays consistent with products/customers/orders.
     match /suppliers/{id} {
-      allow read: if isMember(resource.data.storeId);
-      allow create: if isMember(request.resource.data.storeId);
-      allow update: if isMember(resource.data.storeId)
-        && isMember(request.resource.data.storeId)
+      allow read: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId);
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isMember(resource.data.storeId);
+      allow delete: if canOperateStore(resource.data.storeId);
     }
     // purchases/{id} — per-store supplier purchase transaction (private). Cost
     // history lives here; never written to the anonymous-readable projections.
     match /purchases/{id} {
-      allow read: if isMember(resource.data.storeId);
-      allow create: if isMember(request.resource.data.storeId);
+      allow read: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId);
       // A received purchase is inventory evidence: stock was already applied,
       // so it must never be mutated or deleted by anyone (the app blocks it
       // in the UI; the rules are the real guarantee against SDK writes).
-      allow update: if isMember(resource.data.storeId)
-        && isMember(request.resource.data.storeId)
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
         && resource.data.status != 'received';
-      allow delete: if isMember(resource.data.storeId)
+      allow delete: if canOperateStore(resource.data.storeId)
         && resource.data.status != 'received';
     }
     match /customers/{id} {
-      allow read: if isMember(resource.data.storeId);
-      allow create: if isMember(request.resource.data.storeId);
-      allow update: if isMember(resource.data.storeId)
-        && isMember(request.resource.data.storeId)
+      allow read: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId);
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isMember(resource.data.storeId);
+      allow delete: if canOperateStore(resource.data.storeId);
     }
     match /orders/{id} {
-      allow read: if isMember(resource.data.storeId);
-      allow create: if isMember(request.resource.data.storeId);
-      allow update: if isMember(resource.data.storeId)
-        && isMember(request.resource.data.storeId)
+      allow read: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId);
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isMember(resource.data.storeId);
+      allow delete: if canOperateStore(resource.data.storeId);
     }
 
     // --- Public catalog (anonymous-readable projections) ---
@@ -208,18 +211,19 @@ service cloud.firestore {
     match /slugs/{slug} {
       allow get: if isSignedIn();
       allow list: if false;
-      allow create: if isSignedIn()
-        && request.resource.data.ownerUid == request.auth.uid;
+      allow create: if isSuperAdmin()
+        || (isSignedIn() && request.resource.data.ownerUid == request.auth.uid);
       allow delete: if isOwner(resource.data.storeId)
+        || isSuperAdmin()
         || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
     }
 
     match /publicStores/{slug} {
       allow read: if true;
-      allow create: if isOwner(request.resource.data.storeId);
-      allow update: if isOwner(resource.data.storeId)
+      allow create: if isSuperAdmin() || isOwner(request.resource.data.storeId);
+      allow update: if (isSuperAdmin() || isOwner(resource.data.storeId))
         && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isOwner(resource.data.storeId);
+      allow delete: if isSuperAdmin() || isOwner(resource.data.storeId);
     }
 
     // publicCatalogs/{slug} — active categories + lightweight product summaries
@@ -227,20 +231,20 @@ service cloud.firestore {
     // anonymously). Anonymous read; signed-in write.
     match /publicCatalogs/{slug} {
       allow read: if true;
-      allow create: if isMember(request.resource.data.storeId);
-      allow update: if isMember(resource.data.storeId)
+      allow create: if canOperateStore(request.resource.data.storeId);
+      allow update: if canOperateStore(resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isMember(resource.data.storeId);
+      allow delete: if canOperateStore(resource.data.storeId);
     }
 
     // publicProducts/{id} — public-only product detail (id = storeId__slug).
     // Anonymous read.
     match /publicProducts/{id} {
       allow read: if true;
-      allow create: if isMember(request.resource.data.storeId);
-      allow update: if isMember(resource.data.storeId)
+      allow create: if canOperateStore(request.resource.data.storeId);
+      allow update: if canOperateStore(resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
-      allow delete: if isMember(resource.data.storeId);
+      allow delete: if canOperateStore(resource.data.storeId);
     }
   }
 }

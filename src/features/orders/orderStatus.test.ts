@@ -12,32 +12,28 @@ import {
 describe("orderStatus", () => {
   it("status labels stay participles (the badge shows current state)", () => {
     expect(ORDER_STATUS_LABELS.confirmed).toBe("Confirmado");
-    expect(ORDER_STATUS_LABELS.bought).toBe("Comprado");
+    expect(ORDER_STATUS_LABELS.quoted).toBe("Cotizado");
+    expect(ORDER_STATUS_LABELS.preparing).toBe("Preparando");
+    expect(ORDER_STATUS_LABELS.ready).toBe("Listo");
     expect(ORDER_STATUS_LABELS.delivered).toBe("Entregado");
-    expect(ORDER_STATUS_LABELS.paid).toBe("Cobrado");
+    expect(ORDER_STATUS_LABELS.cancelled).toBe("Cancelado");
   });
 
   it("nextActionVerb returns imperatives (the action), not participles", () => {
-    // asked -> confirmed: "Confirmar"
-    expect(nextActionVerb("asked")).toBe("Confirmar");
-    // confirmed -> to_buy: "Comprar"
-    expect(nextActionVerb("confirmed")).toBe("Comprar");
-    // to_buy -> bought: "Marcar comprado"
-    expect(nextActionVerb("to_buy")).toBe("Marcar comprado");
-    // bought -> arrived: "Marcar llegada"
-    expect(nextActionVerb("bought")).toBe("Marcar llegada");
-    // arrived -> delivered: "Entregar"
-    expect(nextActionVerb("arrived")).toBe("Entregar");
-    // delivered -> paid: "Cobrar"
-    expect(nextActionVerb("delivered")).toBe("Cobrar");
+    expect(nextActionVerb("asked")).toBe("Cotizar");
+    expect(nextActionVerb("quoted")).toBe("Confirmar");
+    expect(nextActionVerb("confirmed")).toBe("Preparar");
+    expect(nextActionVerb("preparing")).toBe("Marcar listo");
+    expect(nextActionVerb("ready")).toBe("Entregar");
+    expect(nextActionVerb("delivered")).toBeNull();
   });
 
-  it("nextActionVerb returns null at the terminal status (paid)", () => {
-    expect(nextActionVerb("paid")).toBeNull();
+  it("nextActionVerb returns null at terminal statuses", () => {
+    expect(nextActionVerb("cancelled")).toBeNull();
   });
 
   it("nextStatus still flows linearly", () => {
-    expect(nextStatus("asked")).toBe("confirmed");
-    expect(nextStatus("paid")).toBeNull();
+    expect(nextStatus("asked")).toBe("quoted");
+    expect(nextStatus("delivered")).toBeNull();
   });
 });
