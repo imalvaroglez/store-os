@@ -3,6 +3,8 @@ import {
   weightedAverageCost,
   applyPurchaseLines,
   committedForProduct,
+  reservationDeltas,
+  reservationDeltasForOrderChange,
 } from "./inventory";
 import type { Product, PurchaseLine, Order } from "../types";
 
@@ -117,3 +119,42 @@ describe("committedForProduct", () => {
   });
 });
 
+describe("multi-product order reservations", () => {
+  const item = (productId: string, quantity: number) => ({ productId, productName: productId, quantity, unitPrice: 10, subtotal: quantity * 10 });
+  const order = (orderStatus: Order["orderStatus"], items = [item("p1", 2)]): Order => ({
+    id: "o1", storeId: "s1", customerId: "c1", items, deposit: 0,
+    orderStatus, paymentStatus: "unpaid", createdAt: "", updatedAt: "",
+  });
+
+  it("aggregates reserve and release deltas per product", () => {
+    expect(reservationDeltas([item("p1", 2), item("p2", 1)], [item("p1", 5), item("p3", 4)])).toEqual(new Map([["p1", -3], ["p2", 1], ["p3", -4]]));
+  });
+
+  it("releases on cancellation but keeps stock consumed on delivery", () => {
+    const open = order("preparing");
+    expect(reservationDeltasForOrderChange(open, order("cancelled"))).toEqual(new Map([["p1", 2]]));
+    expect(reservationDeltasForOrderChange(open, order("delivered"))).toEqual(new Map());
+    expect(reservationDeltasForOrderChange(open, order("delivered", [item("p1", 3)]))).toEqual(new Map([["p1", -1]]));
+  });
+
+  it("never double-consumes on the delivered→cancelled→delivered cycle", () => {
+    // Contribution model: open and delivered both hold stock, cancelled holds
+    // none. Cancelling a delivered sale returns the goods; re-delivering takes
+    // them again — the cycle nets to a single consumption.
+    const open = order("preparing");
+    const delivered = order("delivered");
+    const cancelled = order("cancelled");
+    expect(reservationDeltasForOrderChange(delivered, cancelled)).toEqual(new Map([["p1", 2]]));
+    expect(reservationDeltasForOrderChange(cancelled, delivered)).toEqual(new Map([["p1", -2]]));
+    expect(reservationDeltasForOrderChange(delivered, order("preparing"))).toEqual(new Map());
+    // Full cycle from creation nets exactly one reservation/consumption.
+    const cycle = [
+      reservationDeltasForOrderChange(undefined, open),
+      reservationDeltasForOrderChange(open, delivered),
+      reservationDeltasForOrderChange(delivered, cancelled),
+      reservationDeltasForOrderChange(cancelled, delivered),
+    ];
+    const net = [...cycle.flatMap((m) => [...m]).reduce((map, [id, delta]) => map.set(id, (map.get(id) ?? 0) + delta), new Map<string, number>())];
+    expect(net).toEqual([["p1", -2]]);
+  });
+});
