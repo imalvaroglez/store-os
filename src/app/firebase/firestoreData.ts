@@ -233,7 +233,9 @@ export async function saveEntity(
     return;
   }
 
-  await setDoc(doc(db, name, id), clean, { merge: true });
+  // Orders are rewritten as canonical snapshots during migration/save. A full
+  // replace removes legacy flat fields that merge writes would leave behind.
+  await setDoc(doc(db, name, id), clean, name === "orders" ? { merge: false } : { merge: true });
 }
 
 /** Delete a single entity doc. */
@@ -244,6 +246,31 @@ export async function deleteEntity(
 ): Promise<void> {
   const { db } = getFirebase();
   await deleteDoc(doc(db, name, id));
+}
+
+/**
+ * Atomically upsert an order AND apply its stock adjustments in ONE writeBatch:
+ * the order doc is written as a canonical snapshot (merge:false drops legacy
+ * flat fields) and each affected product's quantityOnHand is updated. A partial
+ * commit (order saved but stock not, or vice versa) is impossible, so the retry
+ * the error toast invites can never double-apply a reservation.
+ * ponytail: writeBatch, not runTransaction — re-deriving deltas from canonical
+ * docs would hit the missing-doc rules trap on new orders and cost extra reads;
+ * concurrent same-order edits converge via the snapshot reload (as in v1).
+ */
+export async function saveOrderWithStockTx(
+  _user: AppUser,
+  order: Order,
+  stockUpdates: { id: string; quantityOnHand: number; updatedAt: string }[]
+): Promise<void> {
+  const { db } = getFirebase();
+  const batch = writeBatch(db);
+  const { id, ...data } = order;
+  batch.set(doc(db, "orders", id), stripUndefined(data) as Record<string, unknown>, { merge: false });
+  for (const { id: productId, ...stock } of stockUpdates) {
+    batch.update(doc(db, "products", productId), stripUndefined(stock) as Record<string, unknown>);
+  }
+  await batch.commit();
 }
 
 // --- Public catalog projection (3-doc model) ---
