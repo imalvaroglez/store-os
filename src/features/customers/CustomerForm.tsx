@@ -1,26 +1,35 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { Button, TextField, TextArea } from "../../design-system";
+import { Button, TextField, TextArea, useToast } from "../../design-system";
 import type { Customer } from "../../types";
 
 export function CustomerForm({
   customer,
   onDone,
+  onSaved,
 }: {
   customer: Customer;
   onDone: () => void;
+  onSaved?: (customer: Customer) => void;
 }) {
   const { upsertCustomer } = useStore();
+  const toast = useToast();
   const [draft, setDraft] = useState<Customer>(customer);
 
-  function submit() {
+  async function submit() {
     if (!draft.name.trim()) return;
-    upsertCustomer({
+    const saved = {
       ...draft,
       name: draft.name.trim(),
       updatedAt: new Date().toISOString(),
-    });
-    onDone();
+    };
+    try {
+      await upsertCustomer(saved);
+      onSaved?.(saved);
+      onDone();
+    } catch {
+      toast.error("No se pudo guardar el cliente. Intenta de nuevo.");
+    }
   }
 
   return (
@@ -38,6 +47,12 @@ export function CustomerForm({
         placeholder="5512345678"
         value={draft.phone ?? ""}
         onChange={(e) => setDraft({ ...draft, phone: e.target.value || undefined })}
+      />
+      <TextField
+        label="Instagram"
+        placeholder="@usuario"
+        value={draft.instagram ?? ""}
+        onChange={(e) => setDraft({ ...draft, instagram: e.target.value || undefined })}
       />
       <TextArea
         label="Notas"
