@@ -222,11 +222,17 @@ export async function verifyEmulatorEmail(email: string, password: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ requestType: "VERIFY_EMAIL", idToken: signedIn.idToken }),
   });
-  const codes = await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${PROJECT}/oobCodes`)
-    .then((r) => r.json() as Promise<{ oobCodes?: { email: string; requestType: string; oobLink: string }[] }>);
-  const verification = [...(codes.oobCodes ?? [])]
-    .reverse()
-    .find((code) => code.email === email && code.requestType === "VERIFY_EMAIL");
+  // The emulator registers the oobCode asynchronously; a one-shot read lost
+  // this race in CI three runs in a row. Poll briefly before giving up.
+  let verification: { email: string; requestType: string; oobLink: string } | undefined;
+  for (let attempt = 0; attempt < 10 && !verification; attempt++) {
+    const codes = await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${PROJECT}/oobCodes`)
+      .then((r) => r.json() as Promise<{ oobCodes?: { email: string; requestType: string; oobLink: string }[] }>);
+    verification = [...(codes.oobCodes ?? [])]
+      .reverse()
+      .find((code) => code.email === email && code.requestType === "VERIFY_EMAIL");
+    if (!verification) await new Promise((resolve) => setTimeout(resolve, 500));
+  }
   if (!verification) throw new Error(`verifyEmulatorEmail: no verification code for ${email}`);
   const done = await fetch(verification.oobLink);
   if (!done.ok) throw new Error(`verifyEmulatorEmail: verification failed for ${email}: ${done.status}`);
