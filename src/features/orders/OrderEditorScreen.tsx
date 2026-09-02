@@ -26,7 +26,7 @@ export function OrderEditorScreen() {
   }
 
   return (
-    <Screen wide>
+    <Screen>
       <ScreenHeader
         title={sub === "nuevo" ? "Nuevo pedido" : "Editar pedido"}
         action={<Button variant="ghost" onClick={() => navigate("/pedidos")}>← Pedidos</Button>}

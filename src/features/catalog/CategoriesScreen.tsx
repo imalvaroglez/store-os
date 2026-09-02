@@ -49,7 +49,7 @@ export function CategoriesScreen() {
   };
 
   return (
-    <Screen wide>
+    <Screen>
       <ScreenHeader
         title="Categorías"
         subtitle={`${categories.length} ${categories.length === 1 ? "categoría" : "categorías"}`}
