@@ -193,10 +193,28 @@ describe("calculateOrderPricing — resumen canónico del pedido", () => {
     ])!;
     expect(pricing.activeTier.tier.id).toBe("t_retail");
     expect(pricing.estimatedSubtotal).toBe(700); // 5 × Regular, sin fallback
-    // Girly sigue en pantalla como entrada estimada (fallback Iconic).
+    // Girly sigue en pantalla como entrada estimada (fallback Iconic), pero
+    // marcada sin precios propios: el drawer no puede llamarla "desbloqueada".
     const girly = pricing.tiers.find((entry) => entry.tier.id === "t_girly")!;
     expect(girly.qualifies).toBe(true);
+    expect(girly.hasOwnPrices).toBe(false);
     expect(girly.subtotal).toBe(500); // 5 × 100 (estimación con fallback)
+  });
+
+  it("sin precios Regular, el activo es el primer tier con precios propios (etiqueta verdadera)", () => {
+    const pricing = calculateOrderPricing(cartTiers, [
+      { qty: 2, unitPrices: { t_girly: 120, t_iconic: 100 } },
+    ])!;
+    expect(pricing.activeTier.tier.id).toBe("t_girly");
+    expect(pricing.activeTier.hasOwnPrices).toBe(true);
+    expect(pricing.estimatedSubtotal).toBe(240); // 2 × 120, precios propios
+  });
+
+  it("líneas sin ningún precio compartido entre tiers no tienen etiqueta honesta → null", () => {
+    expect(calculateOrderPricing(cartTiers, [
+      { qty: 1, unitPrices: { t_girly: 120 } },
+      { qty: 1, unitPrices: { t_iconic: 100 } },
+    ])).toBeNull();
   });
 
   it("carrito mixto que cruza el mínimo Iconic sigue mostrando subtotal y ahorro", () => {
