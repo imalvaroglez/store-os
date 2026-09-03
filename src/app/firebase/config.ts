@@ -1,19 +1,17 @@
-import { initializeApp, type FirebaseApp } from "firebase/app";
+import { initializeApp, type FirebaseApp, type FirebaseOptions } from "firebase/app";
 import {
   getAuth,
-  connectAuthEmulator,
   type Auth,
 } from "firebase/auth";
 import {
   getFirestore,
-  connectFirestoreEmulator,
   type Firestore,
 } from "firebase/firestore";
 
 // Firebase config. Values come from Vite env vars (prefixed VITE_). The public
 // Firebase config is safe in a client bundle; access is enforced by Security
-// Rules, not by hiding these keys. In dev/tests we point at the local emulator
-// via VITE_FIREBASE_EMULATOR=true. Copy .env.example to .env and fill it in.
+// Rules, not by hiding these keys. Localhost and Preview always use store-os-dev;
+// production uses store-os-f7cf8.
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string | undefined,
@@ -24,45 +22,44 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
 };
 
-// Emulator mode is opt-in and DEV/TEST-only. It must NEVER be active in a
-// production build, even if VITE_FIREBASE_EMULATOR leaked into the build
-// environment — that would silently route Auth + Firestore to localhost and
-// (among other things) trigger Firebase's "Running in emulator mode" banner.
-// Compare against the literal "true": Vite injects .env values as strings, so
-// `!!import.meta.env.X` would treat "false" as truthy and wrongly enable it.
-const EMULATOR =
-  import.meta.env.MODE !== "production" &&
-  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
-
-// In emulator mode we ALWAYS target the local "store-os-demo" namespace,
-// regardless of any VITE_FIREBASE_PROJECT_ID that may be set in .env (the real
-// project id). This keeps the emulator tests deterministic and isolated from
-// the production project.
-const projectId = EMULATOR ? "store-os-demo" : firebaseConfig.projectId;
-
-// Firebase Auth requires a non-empty apiKey even in emulator mode (it's ignored
-// by the emulator but validated on init). Provide a placeholder in pure-emulator mode.
-const apiKey = firebaseConfig.apiKey || (EMULATOR ? "fake-api-key-for-emulator" : undefined);
+const DEV_PROJECT_ID = "store-os-dev";
+const PROD_PROJECT_ID = "store-os-f7cf8";
+const deployment = import.meta.env.VITE_VERCEL_ENV || "development";
+const expectedProjectId = deployment === "production" ? PROD_PROJECT_ID : DEV_PROJECT_ID;
+const requiredConfig = [
+  firebaseConfig.apiKey,
+  firebaseConfig.authDomain,
+  firebaseConfig.projectId,
+  firebaseConfig.storageBucket,
+  firebaseConfig.messagingSenderId,
+  firebaseConfig.appId,
+];
+const configurationError =
+  requiredConfig.some((value) => !value) || firebaseConfig.projectId !== expectedProjectId
+    ? `Firebase está mal configurado para este ambiente. Se esperaba el proyecto ${expectedProjectId}; ` +
+      `revisa las variables VITE_FIREBASE_* en .env.local.`
+    : null;
 
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
-let emulatorsConnected = false;
 
-/** True when Firebase is configured enough to initialize (real OR emulator). */
+/** True when the complete real Firebase configuration is present. */
 export function isFirebaseConfigured(): boolean {
-  return Boolean(projectId && (EMULATOR || firebaseConfig.apiKey));
+  return configurationError === null;
+}
+
+/** Throws a visible configuration error instead of silently switching storage. */
+export function assertFirebaseConfiguration(): void {
+  if (import.meta.env.MODE === "test") return;
+  if (configurationError) throw new Error(configurationError);
 }
 
 export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
-  if (!isFirebaseConfigured()) {
-    throw new Error(
-      "Firebase not configured. Set VITE_FIREBASE_* env vars (see .env.example)."
-    );
-  }
+  assertFirebaseConfiguration();
   if (!app) {
     const initialized = initializeApp(
-      { ...firebaseConfig, apiKey: apiKey!, projectId: projectId! },
+      firebaseConfig as FirebaseOptions,
       "store-os"
     );
     app = initialized;
@@ -71,12 +68,5 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
   }
   const a = auth!;
   const database = db!;
-  if (EMULATOR && !emulatorsConnected) {
-    const authHost = import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST || "127.0.0.1:9099";
-    const fsHost = import.meta.env.VITE_FIREBASE_FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080";
-    connectAuthEmulator(a, `http://${authHost}`);
-    connectFirestoreEmulator(database, fsHost.split(":")[0], Number(fsHost.split(":")[1]));
-    emulatorsConnected = true;
-  }
   return { app: app!, auth: a, db: database };
 }

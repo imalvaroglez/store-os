@@ -68,12 +68,12 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     <Card onClick={onEdit} className="p-4 sm:p-5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="font-semibold text-ink truncate">#{orderReference(order.id)} · {customer?.name ?? "Sin cliente"}</h3>
+          <h3 className="font-semibold text-ink truncate">#{orderReference(order.id)} · {order.requesterName ?? customer?.name ?? "Sin cliente"}</h3>
           <p className="text-xs text-ink-soft truncate">{preview || "Sin productos"}{items.length > 3 && " …"}</p>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           <Badge tone={ORDER_STATUS_TONE[status]}>{ORDER_STATUS_LABELS[status]}</Badge>
-          <Badge tone={PAYMENT_STATUS_TONE[paymentStatus]}>{PAYMENT_STATUS_LABELS[paymentStatus]}</Badge>
+          {status !== "requested" && <Badge tone={PAYMENT_STATUS_TONE[paymentStatus]}>{PAYMENT_STATUS_LABELS[paymentStatus]}</Badge>}
         </div>
       </div>
 
@@ -93,7 +93,11 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       {knownProfit != null && <p className="text-xs text-ink-soft mt-2">Ganancia estimada: <Money amount={knownProfit} /></p>}
       {shortages.length > 0 && <Badge tone="warning">Faltan {shortages.reduce((sum, n) => sum + n, 0)} piezas</Badge>}
 
-      {(verb || totals.balance > 0) && (
+      {status === "requested" ? (
+        <div className="mt-3" onClick={(event) => event.stopPropagation()}>
+          <Button full variant="secondary" onClick={onEdit}>Revisar solicitud</Button>
+        </div>
+      ) : (verb || totals.balance > 0) && (
         <div className="mt-3 flex gap-2" onClick={(event) => event.stopPropagation()}>
           {verb && <Button full onClick={advance}>{verb}</Button>}
           {totals.balance > 0 && (

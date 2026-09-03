@@ -93,9 +93,9 @@
     },
     {
       "id": "remove-client-demo-seed",
-      "title": "Retirar el seed demo del cliente",
+      "title": "Retirar la siembra automática del cliente",
       "priority": 20,
-      "status": "needs-spec",
+      "status": "done",
       "specPath": "docs/superpowers/specs/remove-client-demo-seed-design.md",
       "dependsOn": [],
       "previewChecks": []

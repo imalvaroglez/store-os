@@ -15,6 +15,7 @@ import type { RouteMatch } from "../../lib/router";
 const mocks = vi.hoisted(() => ({
   loadPublicCatalog: vi.fn(),
   loadPublicProduct: vi.fn(),
+  submitPublicOrderRequest: vi.fn(),
 }));
 vi.mock("../../app/firebase/publicCatalog", () => ({
   loadPublicCatalog: mocks.loadPublicCatalog,
@@ -24,6 +25,11 @@ vi.mock("../../app/firebase/publicCatalog", () => ({
       super(`No hay catálogo público para "${slug}".`);
     }
   },
+}));
+vi.mock("../../app/firebase/publicOrders", () => ({
+  publicOrderClientId: () => "00000000-0000-4000-8000-000000000001",
+  newPublicOrderRequestId: () => "00000000-0000-4000-8000-000000000002",
+  submitPublicOrderRequest: mocks.submitPublicOrderRequest,
 }));
 
 const store: PublicStore = {
@@ -43,9 +49,9 @@ const store: PublicStore = {
 const catalog: PublicCatalog = {
   categories: [{ id: "c1", name: "Anillos", slug: "anillos", sortOrder: 0 }],
   products: [
-    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "anillo-blossom", name: "Anillo Blossom", price: 140, prices: { t_retail: 140, t_girly: 120, t_iconic: 90 }, stockSignal: "disponible", sku: "AAN1385" },
-    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "aretes-luna", name: "Aretes Luna", price: 120, prices: { t_retail: 120, t_girly: 100, t_iconic: 80 }, stockSignal: "pocas", sku: "OLI-002" },
-    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "collar-vega", name: "Collar Vega", price: 200, prices: { t_retail: 200, t_girly: 170, t_iconic: 150 }, stockSignal: "agotado", sku: "OLI-003" },
+    { productId: "p-anillo", storeId: "store_olivia", storeSlug: "olivia", productSlug: "anillo-blossom", name: "Anillo Blossom", price: 140, prices: { t_retail: 140, t_girly: 120, t_iconic: 90 }, stockSignal: "disponible", availableQuantity: 20, sku: "AAN1385" },
+    { productId: "p-aretes", storeId: "store_olivia", storeSlug: "olivia", productSlug: "aretes-luna", name: "Aretes Luna", price: 120, prices: { t_retail: 120, t_girly: 100, t_iconic: 80 }, stockSignal: "pocas", availableQuantity: 20, sku: "OLI-002" },
+    { productId: "p-collar", storeId: "store_olivia", storeSlug: "olivia", productSlug: "collar-vega", name: "Collar Vega", price: 200, prices: { t_retail: 200, t_girly: 170, t_iconic: 150 }, stockSignal: "agotado", availableQuantity: 1, sku: "OLI-003" },
   ] as PublicCatalog["products"],
 };
 
@@ -85,6 +91,7 @@ beforeEach(() => {
   localStorage.clear();
   mocks.loadPublicCatalog.mockReset().mockResolvedValue({ store, catalog });
   mocks.loadPublicProduct.mockReset().mockResolvedValue({ product: detail, store });
+  mocks.submitPublicOrderRequest.mockReset().mockResolvedValue({ orderId: "public_1", reference: "ABC123" });
 });
 
 describe("carrito del storefront — acumular y pedir", () => {
@@ -104,16 +111,7 @@ describe("carrito del storefront — acumular y pedir", () => {
     expect(within(list).getByText("Anillo Blossom")).toBeTruthy();
     expect(within(list).getByText("Aretes Luna")).toBeTruthy();
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
-    expect(send.href).toContain("wa.me/5213344836691");
-    const text = decodeURIComponent(send.href.split("text=")[1]);
-    expect(text).toContain("Pedido:");
-    expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
-    expect(text).toContain("• 1× Aretes Luna (OLI-002)");
-    expect(text).toContain("/catalogo/olivia");
-    expect(text).toContain("Total de piezas: 2");
-    expect(text).toContain("Precio aplicable: Regular");
-    expect(text).toContain("Subtotal estimado: $260 MXN");
+    expect(screen.getByRole("button", { name: "Enviar pedido por WhatsApp" })).toBeDisabled();
   });
 
   it("stepper ± y quitar actualizan líneas y contador", async () => {
@@ -155,10 +153,7 @@ describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
     expect(screen.getByText(/Quedan pocas — tu pedido puede reabastecerse/)).toBeTruthy();
     expect(screen.getByText(/Se puede hacer sobre pedido/)).toBeTruthy();
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
-    const text = decodeURIComponent(send.href.split("text=")[1]);
-    expect(text).toContain("• 1× Collar Vega (OLI-003) — sobre pedido");
-    expect(text).toContain("• 1× Aretes Luna (OLI-002)\n");
+    expect(screen.getByRole("button", { name: "Enviar pedido por WhatsApp" })).toBeDisabled();
   });
 });
 

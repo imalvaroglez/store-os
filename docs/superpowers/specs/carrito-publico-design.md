@@ -1,11 +1,11 @@
 ---
 Delivery-ID: carrito-publico
-Delivery-Status: Pending approval
+Delivery-Status: Implemented
 specPath: docs/superpowers/specs/carrito-publico-design.md
 ---
-# Carrito público: acumular piezas y pedir varias por WhatsApp
+# Carrito público: acumular piezas y solicitar varias por WhatsApp
 
-> **Revisión vigente (2026-09-01):** el alcance ya incluye el catálogo
+> **Revisión vigente (2026-09-03):** el alcance ya incluye el catálogo
 > genérico además de Olivia y usa Iconic como objetivo comercial. Las reglas
 > actuales del carrito y de precios sustituyen las decisiones preliminares de
 > “sólo Olivia” y de niveles meramente informativos descritas abajo.
@@ -22,21 +22,23 @@ precio** resuelto al tier default, por diseño
 
 **Decisión del owner (sesión brainstorm 2026-08-29, diseño aprobado):**
 
-1. Carrito **solo en Olivia** (`OliviaStorefront`); `PublicCatalogScreen` no
-   cambia (ni siquiera enlaza productos hoy).
+1. El carrito vive en Olivia y en el catálogo público genérico; el flujo es el
+   mismo para cualquier tienda publicada.
 2. Los 3 precios por tier **se hacen públicos** (con sus mínimos). Se
    actualiza el invariante de proyección — decisión de negocio explícita.
 3. Tiers **solo informativos** en el carrito: sin selección ni totales
    comprometidos en v1; el precio final se cierra en el chat.
 4. Con **cantidades** por pieza (stepper ±).
-5. Leyenda de stock con **señal gruesa**: la proyección expone
-   `"agotado" | "pocas" | "disponible"` (derivada de `quantityOnHand` y
-   `lowStockAt`), **nunca la cifra exacta**.
+5. La proyección expone la señal de stock y, para tiendas de inventario, el
+   número entero `availableQuantity`. Es una decisión pública deliberada para
+   que el cliente no pueda pedir más piezas de las disponibles.
 6. Los tiers ganan **mínimos de calificación**: Regular sin mínimo, Girly
    desde 5 piezas, Iconic desde $1,000 de compra (datos, editables,
    **nunca forzados en cliente** — informativos; el owner confirma en chat).
-7. Persistencia en `localStorage` por tienda; sin backend, sin cuentas,
-   sin sync cross-device (WhatsApp ya vive en un dispositivo).
+7. Persistencia del carrito en `localStorage` por tienda. El envío no es un
+   write anónimo del navegador: una callable valida y crea una `orders/{id}`
+   con estado `requested`; la solicitud no aparta stock hasta que la dueña la
+   acepta.
 
 ## Objetivo
 
@@ -44,8 +46,9 @@ precio** resuelto al tier default, por diseño
    sobrevive recargas, revisa su pedido y lo envía en **un solo mensaje de
    WhatsApp** con todas las líneas.
 2. El catálogo muestra los 3 precios con su nombre y mínimo de calificación.
-3. La leyenda de inventario invita a ordenar aunque supere lo disponible
-   ("podemos reabastecer") sin exponer cifras exactas.
+3. El stepper nunca permite superar `availableQuantity`; el servidor repite la
+   validación. Las solicitudes aceptadas convierten el nombre en una clienta,
+   apartan el inventario y continúan como pedido normal "Por cotizar".
 
 ## Alcance (in)
 
@@ -79,9 +82,10 @@ export type PriceTierDef = {
   `minPieces/minAmount`) y `defaultTierId`. Tipo `PublicStore` (`:45-51`) se
   extiende igual.
 - `projectPublicProductSummary` / `projectPublicProductDetail`:
-  += `prices: Record<string, number>` (solo tiers visibles) y
+  += `prices: Record<string, number>` (solo tiers visibles),
   `stockSignal: "agotado" | "pocas" | "disponible"` (`0` / `<= lowStockAt` /
-  resto). El `price` único se conserva (compatibilidad y orden grid).
+  resto) y, en resúmenes de inventario, `availableQuantity`. El `price` único
+  se conserva (compatibilidad y orden grid).
 - Actualizar el invariante y sus tests (`firestoreData.test.ts:86`, `:239`):
   el tier map es público **por decisión del owner**; `cost` sigue privado.
 - Reglas: sin cambios (los 3 docs públicos ya son de lectura anónima y la
@@ -119,11 +123,12 @@ export type PriceTierDef = {
     se gana por cerrar la brecha; incentiva pedidos más grandes).
   - Informativo: no obliga a nada; el precio lo confirma el owner en el
     chat.
-- **Checkout = WhatsApp:** botón "Enviar pedido por WhatsApp" → nuevo builder
-  `buildCartOrderUrl(store, lines)` en `src/lib/whatsapp.ts`: intro editable
-  como prefijo (convención `:41-44`), cuerpo `Pedido:` + líneas
-  `• 2× Anillo Blossom (AAN1385)` + link al catálogo. Sin precios en v1.
-- Pieza agotada usa el intent "preguntar" existente.
+- **Checkout = solicitud + WhatsApp:** el botón exige nombre y envía ids,
+  cantidades y nombre a `submitPublicOrderRequest` (callable). Al recibir el
+  folio, abre WhatsApp con `buildCartOrderUrl` y la referencia; WhatsApp es el
+  canal de conversación, no la frontera de inventario.
+- El detalle de producto sólo muestra "Agregar al carrito". El contacto
+  general vive en el pie global de la tienda.
 
 ### 5. Estado (`useCart` hook + `src/lib/cart.ts`)
 
@@ -135,11 +140,14 @@ export type PriceTierDef = {
 
 ## Alcance (out)
 
-- Totales, selección de tier por línea, forzado de mínimos en cliente (v1;
-  el precio lo confirma el owner en el chat).
-- Backend de carritos, sync cross-device, cuentas de visitante.
-- `PublicCatalogScreen` (tiendas no-Olivia) y mintear slugs ahí.
+- Totales, selección de tier por línea y forzado de mínimos en cliente (el
+  precio lo confirma la dueña en el chat).
+- Backend de carritos, sync cross-device y cuentas de visitante.
 - Métricas de carritos abandonados.
+- CAPTCHA/App Check y protección DDoS avanzada; V1 usa límites económicos y
+  de abuso: una solicitud por navegador cada 5 minutos, por IP cada minuto,
+  por tienda, y un fusible global de 500 solicitudes UTC/día. Los límites se
+  guardan como hashes en `publicOrderLimits` y se limpian con TTL.
 
 ## Criterios de aceptación
 
@@ -149,14 +157,18 @@ export type PriceTierDef = {
 2. Stepper ± actualiza líneas y contador; quitar elimina la línea.
 3. Detalle muestra los 3 precios con mínimos; con proyección estancada cae
    al precio único sin romper.
-4. Leyenda "pocas"/"agotada" aparece según `stockSignal`, nunca cifras.
+4. El catálogo muestra la señal y el máximo exacto sólo en inventario; el
+   stepper y el servidor rechazan cantidades superiores al máximo.
+5. El nombre es obligatorio; el envío crea una solicitud `requested` y la
+   aceptación de la dueña crea la clienta, aparta stock y deja el pedido "Por
+   cotizar". Rechazar elimina la solicitud sin tocar inventario.
 5. Tests UI primero (patrón `App.test.tsx` / `primitives.test.tsx`), en rojo
    antes de la implementación: agente TESTS no lee la implementación, agente
    CÓDIGO no lee los tests (misma separación anti-bias que
    `public-product-detail`).
-6. Unit para: builder del mensaje (intro-prefijo + líneas + URL), señal de
-   stock, persistencia/corrupción de carrito. e2e: flujo agregar → revisar
-   → `wa.me`.
+6. Unit para: builder del mensaje (intro-prefijo + líneas + folio + URL),
+   señal/cap de stock, persistencia/corrupción de carrito y estado `requested`.
+   El emulador cubre callable, idempotencia y límites.
 7. `npm run typecheck && npm run test && npm run build` verdes; gate de
    design-system pasa (Sheet/TextField, nada crudo).
 8. UI 100% español, mobile-first, sin dependencias nuevas.
@@ -179,5 +191,5 @@ export type PriceTierDef = {
   cruza verde, `verify quick/final`, PR draft con `Delivery-ID`.
 - Tocar `firestoreData.test.ts` exige actualizar los invariantes de proyección
   — es parte del cambio, no una flexibilización accidental.
-- Tras merge: **Republicar catálogo** en el backend correspondiente para
-  refrescar `publicStores`/`publicProducts` existentes.
+- Tras deploy: desplegar `functions:submitPublicOrderRequest` e índices TTL y
+  pulsar **Republicar catálogo** para refrescar proyecciones existentes.

@@ -4,7 +4,7 @@ import { formatMoney } from "./money";
 import { LEGACY_TIER_IDS } from "./pricing";
 
 const ORDER_STATUSES: ReadonlySet<OrderStatus> = new Set([
-  "asked", "quoted", "confirmed", "preparing", "ready", "delivered", "cancelled",
+  "requested", "asked", "quoted", "confirmed", "preparing", "ready", "delivered", "cancelled",
 ]);
 
 function finite(value: unknown, fallback = 0): number {
@@ -81,7 +81,7 @@ export type OrderBucket = "pending" | "active" | "completed" | "cancelled" | "ot
 export function orderBucket(order: Partial<Order> & Record<string, unknown>): OrderBucket {
   const status = effectiveOrderStatus(order);
   if (status === "cancelled") return "cancelled";
-  if (status === "asked" || status === "quoted") return "pending";
+  if (status === "requested" || status === "asked" || status === "quoted") return "pending";
   if (status === "delivered") return orderTotals(order).balance > 0 ? "active" : "completed";
   if (status === "confirmed" || status === "preparing" || status === "ready") return "active";
   return "other";
@@ -90,6 +90,7 @@ export function orderBucket(order: Partial<Order> & Record<string, unknown>): Or
 /** One predicate for "Falta cobrar": every unresolved sale (pending or active)
  * counts, so Home and the customer card can never disagree. */
 export function orderCountsTowardToPay(order: Partial<Order> & Record<string, unknown>): boolean {
+  if (effectiveOrderStatus(order) === "requested") return false;
   const bucket = orderBucket(order);
   return bucket === "pending" || bucket === "active";
 }
@@ -129,6 +130,12 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
     schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,
+    ...(raw.source === "public_catalog" ? { source: "public_catalog" as const } : {}),
+    ...(typeof raw.requesterName === "string" && raw.requesterName.trim()
+      ? { requesterName: raw.requesterName.trim() }
+      : {}),
+    ...(typeof raw.acceptedAt === "string" && raw.acceptedAt ? { acceptedAt: raw.acceptedAt } : {}),
+    ...(typeof raw.acceptedByUid === "string" && raw.acceptedByUid ? { acceptedByUid: raw.acceptedByUid } : {}),
   } satisfies Omit<Order, "paymentStatus"> & { paymentStatus: PaymentStatus };
   const paymentStatus = paymentStatusForOrder(base);
   return { ...base, paymentStatus };

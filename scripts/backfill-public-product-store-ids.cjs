@@ -79,7 +79,7 @@ function isValidStoreId(store) {
 
 /**
  * Pure planning function — the load-bearing safety logic of the backfill,
- * extracted so it is unit-testable without Firestore or an emulator.
+ * extracted so it is unit-testable without a Firestore connection.
  *
  * Inputs:
  *   store: the --store value (already shape-validated by the caller).

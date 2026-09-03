@@ -3,22 +3,23 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "A lightweight operating system for small stores. Local-first PWA.",
+  "description": "A lightweight operating system for small stores. Firebase-first PWA.",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
+    "predev": "node scripts/check-env.cjs",
     "dev": "vite",
     "build": "node scripts/check-env.cjs && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "test": "vitest run --exclude src/app/firebase/firestore.rules.test.ts",
+    "test": "vitest run",
     "test:watch": "vitest",
     "test:rules": "bash scripts/test-rules.sh",
     "e2e": "playwright test",
-    "emulators": "firebase emulators:start --only auth,firestore,storage,functions",
-    "e2e:firebase": "bash scripts/e2e-firebase.sh",
-    "e2e:refresh": "bash scripts/e2e-refresh.sh",
+    "e2e:dev": "playwright test --config=playwright.dev.config.ts",
+    "deploy:dev": "node scripts/deploy-dev.cjs",
+    "seed:dev": "node scripts/seed-dev.cjs",
     "deploy:rules": "firebase deploy --only firestore,storage",
     "check:rules": "node scripts/check-rules-deployed.cjs"
   },
@@ -28,7 +29,6 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@firebase/rules-unit-testing": "^5.0.1",
     "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

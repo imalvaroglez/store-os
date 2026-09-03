@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
+  assertFirebaseConfiguration,
   isFirebaseConfigured,
 } from "./config";
 import {
@@ -8,26 +9,26 @@ import {
   type AppUser,
 } from "./auth";
 
-// App-wide auth state. When `user` is null the app is in local-demo mode; when
-// set, the cloud data layer is active. `authReady` is false during the initial
-// Firebase session check.
+// App-wide auth state. `authReady` is false during the initial Firebase
+// session check. Runtime data always comes from the configured Firebase project.
 
 type AuthContextValue = {
   user: AppUser | null;
   authReady: boolean;
-  enabled: boolean; // false when Firebase isn't configured (pure local app)
+  enabled: boolean;
   signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const enabled = isFirebaseConfigured();
+  assertFirebaseConfiguration();
+  const enabled = import.meta.env.MODE !== "test" && isFirebaseConfigured();
   const [user, setUser] = useState<AppUser | null>(null);
   const [authReady, setAuthReady] = useState(!enabled);
 
   useEffect(() => {
-    if (!enabled) return; // pure local mode: never signed in
+    if (!enabled) return;
     const unsub = subscribeToAuth((u) => {
       setUser(u);
       setAuthReady(true);

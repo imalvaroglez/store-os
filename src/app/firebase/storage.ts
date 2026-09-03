@@ -1,6 +1,5 @@
 import {
   getStorage,
-  connectStorageEmulator,
   ref,
   uploadBytes,
   getDownloadURL,
@@ -15,30 +14,11 @@ import { getFirebase } from "./config";
 // deterministic (products/{storeId}/{productId}.jpg) so a replace overwrites the
 // same object and a product delete removes it — no orphans from replaces.
 
-// Emulator mode mirrors config.ts: same opt-in, DEV/TEST-only, never in prod.
-// String compare (Vite injects .env as strings — `!!` would treat "false" as on).
-const EMULATOR =
-  import.meta.env.MODE !== "production" &&
-  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
-// Explicit emulator bucket — the Web SDK needs a real bucket name, and config.ts
-// forces the "store-os-demo" namespace, so we do the same for Storage.
-const EMULATOR_BUCKET = "store-os-demo.appspot.com";
-
 let storage: FirebaseStorage | null = null;
-let emulatorConnected = false;
 
 export function getStorageInstance(): FirebaseStorage {
   const { app } = getFirebase();
-  if (!storage) {
-    const bucket = EMULATOR ? EMULATOR_BUCKET : undefined;
-    storage = getStorage(app, bucket);
-  }
-  if (EMULATOR && !emulatorConnected) {
-    const host = import.meta.env.VITE_FIREBASE_STORAGE_EMULATOR_HOST || "127.0.0.1:9199";
-    const [hostname, port] = host.split(":");
-    connectStorageEmulator(storage, hostname, Number(port));
-    emulatorConnected = true;
-  }
+  if (!storage) storage = getStorage(app);
   return storage;
 }
 

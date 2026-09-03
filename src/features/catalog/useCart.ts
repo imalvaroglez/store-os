@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { addToCart, loadCart, pruneCartLines, refreshCart, removeCartLine, saveCart, setCartQty, type CartLine } from "../../lib/cart";
+import { addToCart, clearCart, loadCart, pruneCartLines, refreshCart, removeCartLine, saveCart, setCartQty, type CartLine } from "../../lib/cart";
 
-/** Cart state for one public storefront slug. Local-first: localStorage is the
- *  source of truth and every mutation returns the next lines from cart.ts, so
- *  the UI never drifts from what a reload would show. */
+/** Cart state for one public storefront slug. The cart is intentionally local
+ *  to the browser; order submission is validated by the Firebase callable. */
 export function useCart(slug: string | undefined) {
   const [lines, setLines] = useState<CartLine[]>([]);
 
@@ -55,5 +54,11 @@ export function useCart(slug: string | undefined) {
     [slug]
   );
 
-  return { lines, add, setQty, remove, refresh, prune };
+  const clear = useCallback(() => {
+    if (!slug) return;
+    clearCart(slug);
+    setLines([]);
+  }, [slug]);
+
+  return { lines, add, setQty, remove, refresh, prune, clear };
 }

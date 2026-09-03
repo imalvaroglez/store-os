@@ -1,10 +1,15 @@
 ---
 Delivery-ID: remove-client-demo-seed
-Delivery-Status: Pending approval
+Delivery-Status: Completed — superseded by docs/ENVIRONMENTS.md
 specPath: docs/superpowers/specs/remove-client-demo-seed-design.md
 ---
 
-# Retirar el seed demo del cliente
+# Retirar la siembra automática del cliente
+
+> Esta especificación histórica ya fue implementada. El contrato vigente de
+> ambientes está en [`docs/ENVIRONMENTS.md`](../../ENVIRONMENTS.md): no existe
+> modo demo ni backend alterno; los datos de desarrollo se publican de forma
+> explícita en el proyecto Firebase real `store-os-dev`.
 
 ## Problema
 

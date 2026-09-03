@@ -5,9 +5,14 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { PublicCatalogScreen } from "./PublicCatalogScreen";
 import type { PublicCatalog, PublicStore } from "../../app/firebase/publicCatalog";
 
-const mocks = vi.hoisted(() => ({ loadPublicCatalog: vi.fn() }));
+const mocks = vi.hoisted(() => ({ loadPublicCatalog: vi.fn(), submitPublicOrderRequest: vi.fn() }));
 vi.mock("../../app/firebase/publicCatalog", () => ({
   loadPublicCatalog: mocks.loadPublicCatalog,
+}));
+vi.mock("../../app/firebase/publicOrders", () => ({
+  publicOrderClientId: () => "00000000-0000-4000-8000-000000000001",
+  newPublicOrderRequestId: () => "00000000-0000-4000-8000-000000000002",
+  submitPublicOrderRequest: mocks.submitPublicOrderRequest,
 }));
 
 const store: PublicStore = {
@@ -21,14 +26,15 @@ const store: PublicStore = {
 const catalog: PublicCatalog = {
   categories: [],
   products: [
-    { storeId: "store_santi", storeSlug: "santi", productSlug: "perfume", name: "Perfume", sku: "SAN-001", price: 1500 },
-    { storeId: "store_santi", storeSlug: "santi", productSlug: "tenis", name: "Tenis", sku: "SAN-002", price: 3200 },
+    { productId: "p-perfume", storeId: "store_santi", storeSlug: "santi", productSlug: "perfume", name: "Perfume", sku: "SAN-001", price: 1500 },
+    { productId: "p-tenis", storeId: "store_santi", storeSlug: "santi", productSlug: "tenis", name: "Tenis", sku: "SAN-002", price: 3200 },
   ],
 };
 
 beforeEach(() => {
   localStorage.clear();
   mocks.loadPublicCatalog.mockReset().mockResolvedValue({ store, catalog });
+  mocks.submitPublicOrderRequest.mockReset().mockResolvedValue({ orderId: "public_1", reference: "ABC123" });
 });
 
 describe("PublicCatalogScreen carrito", () => {
@@ -50,11 +56,8 @@ describe("PublicCatalogScreen carrito", () => {
     const list = screen.getByRole("list");
     expect(within(list).getByText("Perfume")).toBeTruthy();
     expect(within(list).getByText("Tenis")).toBeTruthy();
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
-    expect(send.href).toContain("wa.me/5215512345678");
-    const text = decodeURIComponent(send.href.split("text=")[1]);
-    expect(text).toContain("• 2× Perfume (SAN-001)");
-    expect(text).toContain("• 1× Tenis (SAN-002)");
+    const send = screen.getByRole("button", { name: "Enviar pedido por WhatsApp" });
+    expect(send).toBeDisabled();
   });
 
   it("limpia piezas que ya no están publicadas", async () => {
@@ -82,6 +85,7 @@ describe("PublicCatalogScreen carrito", () => {
     const tieredCatalog: PublicCatalog = {
       categories: [],
       products: [{
+        productId: "p-anillo",
         storeId: "store_santi",
         storeSlug: "santi",
         productSlug: "anillo",
@@ -89,6 +93,7 @@ describe("PublicCatalogScreen carrito", () => {
         sku: "SAN-003",
         price: 140,
         prices: { t_retail: 140, t_girly: 120, t_iconic: 90 },
+        availableQuantity: 20,
       }],
     };
     localStorage.setItem("store-os:cart:santi", JSON.stringify({
@@ -109,9 +114,6 @@ describe("PublicCatalogScreen carrito", () => {
     fireEvent.click(screen.getByRole("button", { name: "Abrir pedido" }));
     expect(await screen.findByText("$1,080 MXN")).toBeTruthy();
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
-    const text = decodeURIComponent(send.href.split("text=")[1]);
-    expect(text).toContain("Precio aplicable: Iconic");
-    expect(text).toContain("Subtotal estimado: $1,080 MXN");
+    expect(screen.getByRole("button", { name: "Enviar pedido por WhatsApp" })).toBeDisabled();
   });
 });

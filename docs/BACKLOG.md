@@ -160,15 +160,15 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
   quitar puntos de Gmail) al comparar.
   > **Incluida en la feature 'Invitar miembros por correo'** (la normalización
   > va en esa misma entrega). No ejecutar aislado.
-- **Eliminar el seed de datos de ejemplo** — Store OS ya es producto real en
+- **Eliminar la siembra automática del cliente** — Store OS ya es producto real en
   producción (Olivia operando, ventas reales). La opción de cargar datos
-  ejemplo (Olivia/Santi/Joyería ficticios) ya no corresponde: confunde,
-  ensucia el picker de tiendas si se activa, y contradice el cambio de 0.5.0
-  que ya removió el modo demo. Borrar el código de seed del cliente + el
+  de muestra (Olivia/Santi/Joyería ficticios) ya no corresponde: confunde,
+  ensucia el picker de tiendas si se activa, y contradice el contrato Firebase-first.
+  Borrar el código de seed del cliente + el
   script `scripts/seed-dev.cjs` queda **solo para dev/preview** (sembrar
   `store-os-dev`, nunca prod — aborta si `projectId !== 'store-os-dev'`),
   pero no expone nada en la UI de prod.
-  > **Delivery-ID: remove-client-demo-seed.** La cola y una spec aprobada autorizan su implementación. Alcance: eliminar de la app cliente (`src/`) el seed ficticio, conservar `scripts/seed-dev.cjs` sólo para dev/preview y cubrir que una cuenta nueva no reciba datos demo.
+  > **Delivery-ID: remove-client-demo-seed — completado.** La app cliente no siembra datos; `scripts/seed-dev.cjs` publica datos únicamente en el proyecto Firebase real `store-os-dev`.
 
 ---
 

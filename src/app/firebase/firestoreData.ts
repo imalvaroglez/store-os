@@ -10,10 +10,11 @@ import {
   where,
   runTransaction,
   writeBatch,
+  deleteField,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { applyPurchaseLines } from "../../lib/inventory";
+import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
 import { publicPrice } from "../../lib/money";
@@ -259,36 +260,229 @@ export async function deleteEntity(
   await deleteDoc(doc(db, name, id));
 }
 
-/**
- * Atomically upsert an order AND apply its stock adjustments in ONE writeBatch:
- * the order doc is written as a canonical snapshot (merge:false drops legacy
- * flat fields) and each affected product's quantityOnHand is updated. A partial
- * commit (order saved but stock not, or vice versa) is impossible, so the retry
- * the error toast invites can never double-apply a reservation.
- * ponytail: writeBatch, not runTransaction — re-deriving deltas from canonical
- * docs would hit the missing-doc rules trap on new orders and cost extra reads;
- * concurrent same-order edits converge via the snapshot reload (as in v1).
- */
+/** Atomically upsert an order, apply its reservation delta and refresh the
+ * public availability summary. New orders skip the missing-doc read; edits read
+ * the canonical order so concurrent changes cannot lose stock. */
 export async function saveOrderWithStockTx(
   _user: AppUser,
   order: Order,
-  stockUpdates: { id: string; quantityOnHand: number; updatedAt: string }[]
-): Promise<void> {
+  storeSlug: string,
+  previous?: Order
+): Promise<Product[]> {
   const { db } = getFirebase();
-  const batch = writeBatch(db);
-  const { id, ...data } = order;
-  batch.set(doc(db, "orders", id), stripUndefined(data) as Record<string, unknown>, { merge: false });
-  for (const { id: productId, ...stock } of stockUpdates) {
-    batch.update(doc(db, "products", productId), stripUndefined(stock) as Record<string, unknown>);
+  return runTransaction(db, async (tx) => {
+    const orderRef = doc(db, "orders", order.id);
+    const catalogRef = doc(db, "publicCatalogs", storeSlug);
+    const storeRef = doc(db, "stores", order.storeId);
+    const existingSnap = previous ? await tx.get(orderRef) : null;
+    if (previous && !existingSnap?.exists()) throw new Error("No se encontró el pedido anterior.");
+    const catalogSnap = await tx.get(catalogRef);
+    const storeSnap = await tx.get(storeRef);
+    if (!storeSnap.exists()) throw new Error("No se encontró la tienda del pedido.");
+    if (String(storeSnap.data()?.slug ?? "") !== storeSlug) throw new Error("La tienda del pedido no coincide con su catálogo.");
+    const storeType = storeSnap.data()?.type;
+    if (storeType !== "inventory_tiered" && storeType !== "on_demand") throw new Error("La tienda del pedido no tiene un tipo válido.");
+    const previousCanonical = existingSnap?.exists() ? (existingSnap.data() as Order) : previous;
+    if (previousCanonical && previousCanonical.storeId !== order.storeId) throw new Error("El pedido anterior pertenece a otra tienda.");
+    const deltas = reservationDeltasForOrderChange(previousCanonical, order);
+    const productIds = [...deltas.keys()];
+    const productRefs = productIds.map((id) => doc(db, "products", id));
+    // Read every product before any write: Firestore transactions reject a read after a write.
+    const productSnaps = await Promise.all(productRefs.map((ref) => tx.get(ref)));
+    const updatedProducts: Product[] = [];
+    for (let i = 0; i < productRefs.length; i++) {
+      const snap = productSnaps[i];
+      const productId = productIds[i];
+      if (!snap.exists()) throw new Error(`No se encontró el producto "${productId}".`);
+      const product = { id: productId, ...snap.data() } as Product;
+      if (product.storeId !== order.storeId) throw new Error(`El producto "${product.name || productId}" pertenece a otra tienda.`);
+      if (storeType !== "inventory_tiered") continue;
+      if (typeof product.quantityOnHand !== "number" || !Number.isFinite(product.quantityOnHand)) {
+        throw new Error(`El producto "${product.name || productId}" no tiene existencia válida.`);
+      }
+      const quantityOnHand = Math.floor(product.quantityOnHand) + (deltas.get(product.id) ?? 0);
+      if (quantityOnHand < 0) throw new Error(`No hay existencia suficiente de "${product.name || productId}".`);
+      const updated = { ...product, quantityOnHand, updatedAt: new Date().toISOString() };
+      tx.update(productRefs[i], { quantityOnHand, updatedAt: updated.updatedAt });
+      updatedProducts.push(updated);
+    }
+    tx.set(orderRef, stripUndefined(order) as Record<string, unknown>, { merge: false });
+    if (catalogSnap.exists() && updatedProducts.length > 0) {
+      const publicProducts = (catalogSnap.data()?.products ?? []) as Record<string, unknown>[];
+      const products = publicProducts.map((summary) => {
+        const update = updatedProducts.find((candidate) =>
+          String(summary.productId ?? "") === candidate.id || String(summary.productSlug ?? "") === String(candidate.slug ?? "")
+        );
+        return update
+          ? { ...summary, availableQuantity: Math.max(0, Math.floor(update.quantityOnHand ?? 0)), stockSignal: publicStockSignal(update) }
+          : summary;
+      });
+      tx.set(catalogRef, { products }, { merge: true });
+    }
+    return updatedProducts;
+  });
+}
+
+/** Delete an order and release any held inventory in the same transaction. */
+export async function deleteOrderWithStockTx(
+  _user: AppUser,
+  order: Order,
+  storeSlug: string
+): Promise<Product[]> {
+  const { db } = getFirebase();
+  return runTransaction(db, async (tx) => {
+    const orderRef = doc(db, "orders", order.id);
+    const catalogRef = doc(db, "publicCatalogs", storeSlug);
+    const storeRef = doc(db, "stores", order.storeId);
+    const orderSnap = await tx.get(orderRef);
+    const catalogSnap = await tx.get(catalogRef);
+    const storeSnap = await tx.get(storeRef);
+    if (!storeSnap.exists()) throw new Error("No se encontró la tienda del pedido.");
+    if (String(storeSnap.data()?.slug ?? "") !== storeSlug) throw new Error("La tienda del pedido no coincide con su catálogo.");
+    const storeType = storeSnap.data()?.type;
+    if (storeType !== "inventory_tiered" && storeType !== "on_demand") throw new Error("La tienda del pedido no tiene un tipo válido.");
+    if (!orderSnap.exists()) return [];
+    const canonical = orderSnap.data() as Order;
+    if (canonical.storeId !== order.storeId) throw new Error("El pedido pertenece a otra tienda.");
+    const deltas = reservationDeltasForOrderChange(canonical, { ...canonical, orderStatus: "cancelled" });
+    const productIds = [...deltas.keys()];
+    const productRefs = productIds.map((productId) => doc(db, "products", productId));
+    // Read every product before any write: Firestore transactions reject a read after a write.
+    const productSnaps = await Promise.all(productRefs.map((ref) => tx.get(ref)));
+    const products: Product[] = [];
+    for (let i = 0; i < productIds.length; i++) {
+      const productId = productIds[i];
+      const snap = productSnaps[i];
+      if (!snap.exists()) throw new Error(`No se encontró el producto "${productId}".`);
+      const product = { id: productId, ...snap.data() } as Product;
+      if (product.storeId !== order.storeId) throw new Error(`El producto "${product.name || productId}" pertenece a otra tienda.`);
+      if (storeType !== "inventory_tiered") continue;
+      if (typeof product.quantityOnHand !== "number" || !Number.isFinite(product.quantityOnHand)) {
+        throw new Error(`El producto "${product.name || productId}" no tiene existencia válida.`);
+      }
+      const updated = { ...product, quantityOnHand: Math.floor(product.quantityOnHand) + (deltas.get(productId) ?? 0), updatedAt: new Date().toISOString() };
+      products.push(updated);
+    }
+    for (const product of products) {
+      tx.update(doc(db, "products", product.id), { quantityOnHand: product.quantityOnHand, updatedAt: product.updatedAt });
+    }
+    tx.delete(orderRef);
+    if (catalogSnap.exists() && products.length > 0) {
+      const summaries = (catalogSnap.data()?.products ?? []) as Record<string, unknown>[];
+      tx.set(catalogRef, {
+        products: summaries.map((summary) => {
+          const update = products.find((p) => String(summary.productId ?? "") === p.id || String(summary.productSlug ?? "") === String(p.slug ?? ""));
+          return update ? { ...summary, availableQuantity: Math.max(0, Math.floor(update.quantityOnHand ?? 0)), stockSignal: publicStockSignal(update) } : summary;
+        }),
+      }, { merge: true });
+    }
+    return products;
+  });
+}
+
+export class PublicOrderStockConflictError extends Error {
+  constructor(public productName: string, public availableQuantity: number) {
+    super(`La existencia de "${productName}" cambió. Quedan ${availableQuantity}.`);
+    this.name = "PublicOrderStockConflictError";
   }
-  await batch.commit();
+}
+
+/** Accept a public request atomically: customer, order status, stock and the
+ * public max all move together. Requested orders never reserve inventory. */
+export async function acceptPublicOrderRequestTx(
+  orderId: string,
+  storeId: string,
+  storeSlug: string
+): Promise<{ order: Order; customer: Customer; products: Product[] }> {
+  const { db, auth } = getFirebase();
+  const acceptedByUid = auth.currentUser?.uid;
+  if (!acceptedByUid) throw new Error("Debes iniciar sesión.");
+  return runTransaction(db, async (tx) => {
+    const orderRef = doc(db, "orders", orderId);
+    const orderSnap = await tx.get(orderRef);
+    if (!orderSnap.exists()) throw new Error("No se encontró la solicitud.");
+    const raw = orderSnap.data() as Order & Record<string, unknown>;
+    if (raw.storeId !== storeId || raw.source !== "public_catalog" || raw.orderStatus !== "requested") {
+      throw new Error("La solicitud ya fue atendida.");
+    }
+    const items = Array.isArray(raw.items) ? raw.items : [];
+    const productIds = [...new Set(items.map((item) => item?.productId).filter((id): id is string => !!id))];
+    const productRefs = productIds.map((id) => doc(db, "products", id));
+    const catalogRef = doc(db, "publicCatalogs", storeSlug);
+    const [catalogSnap, ...productSnaps] = await Promise.all([
+      tx.get(catalogRef),
+      ...productRefs.map((ref) => tx.get(ref)),
+    ]);
+    const productById = new Map<string, { ref: ReturnType<typeof doc>; product: Product }>();
+    for (let i = 0; i < productIds.length; i++) {
+      const snap = productSnaps[i];
+      if (!snap.exists()) throw new Error("Una pieza de la solicitud ya no existe.");
+      const product = { id: productIds[i], ...snap.data() } as Product;
+      if (product.storeId !== storeId) throw new Error("La solicitud contiene una pieza de otra tienda.");
+      productById.set(product.id, { ref: productRefs[i], product });
+    }
+    const updates = new Map<string, Product>();
+    for (const item of items) {
+      if (!item?.productId) continue;
+      const entry = productById.get(item.productId);
+      if (!entry || typeof entry.product.quantityOnHand !== "number" || !Number.isFinite(entry.product.quantityOnHand)) continue;
+      const quantity = Math.max(0, Math.floor(Number(item.quantity) || 0));
+      const nextQuantity = Math.floor(entry.product.quantityOnHand) - quantity;
+      if (nextQuantity < 0) throw new PublicOrderStockConflictError(entry.product.name, Math.max(0, Math.floor(entry.product.quantityOnHand)));
+      updates.set(item.productId, { ...entry.product, quantityOnHand: nextQuantity, updatedAt: new Date().toISOString() });
+    }
+    const requesterName = typeof raw.requesterName === "string" ? raw.requesterName.trim() : "";
+    if (!requesterName) throw new Error("La solicitud no tiene nombre.");
+    const at = new Date().toISOString();
+    const customer: Customer = {
+      id: `cust_${orderId}`,
+      storeId,
+      name: requesterName,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const order: Order = {
+      ...(raw as Order),
+      customerId: customer.id,
+      orderStatus: "asked",
+      updatedAt: at,
+    };
+    tx.set(doc(db, "customers", customer.id), customer, { merge: true });
+    tx.update(orderRef, {
+      customerId: customer.id,
+      orderStatus: "asked",
+      updatedAt: at,
+      expiresAt: deleteField(),
+      acceptedAt: at,
+      acceptedByUid,
+    });
+    for (const product of updates.values()) {
+      tx.update(doc(db, "products", product.id), { quantityOnHand: product.quantityOnHand, updatedAt: product.updatedAt });
+    }
+    if (catalogSnap.exists() && updates.size > 0) {
+      const publicProducts = (catalogSnap.data()?.products ?? []) as Record<string, unknown>[];
+      const products = publicProducts.map((summary) => {
+        const update = (summary.productId ? updates.get(String(summary.productId)) : undefined)
+          ?? [...updates.values()].find((candidate) => String(summary.productSlug ?? "") === String(candidate.slug ?? ""));
+        if (!update) return summary;
+        return {
+          ...summary,
+          availableQuantity: Math.max(0, Math.floor(update.quantityOnHand ?? 0)),
+          stockSignal: publicStockSignal(update),
+        };
+      });
+      tx.set(catalogRef, { products }, { merge: true });
+    }
+    return { order, customer, products: [...updates.values()] };
+  });
 }
 
 // --- Public catalog projection (3-doc model) ---
 //
 // Anonymous visitors read THREE projection collections, each carrying ONLY
-// public-safe fields (private data — cost, profit, notes, inventory, membership
-// — is never written here, so the model is leak-proof by construction):
+// public-safe fields (private data — cost, profit, notes, membership — is never
+// written here). Inventory stores intentionally publish the available piece
+// count so the cart can enforce a truthful maximum.
 //
 //   publicStores/{slug}    identity + storefront content + contact (1 read)
 //   publicCatalogs/{slug}  active categories + lightweight product summaries
@@ -353,10 +547,10 @@ export class PurchaseAlreadyReceived extends Error {
  * the public-catalog republish that upsertProduct performs, so prices stay
  * untouched (editable later from the product form).
  */
-export async function receivePurchaseTx(purchaseId: string): Promise<void> {
+export async function receivePurchaseTx(purchaseId: string, storeSlug?: string): Promise<void> {
   const { db } = getFirebase();
   // Pre-validate OUTSIDE the transaction: errors thrown inside runTransaction
-  // reach the caller with an emptied message on the emulator, so the UI toast
+  // reach the caller with an emptied message in an integration test, so the UI toast
   // would lose the reason. The transaction re-validates canonically below.
   {
     const snap = await getDoc(doc(db, "purchases", purchaseId));
@@ -389,6 +583,8 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
       throw new PurchaseAlreadyReceived();
     }
     const at = new Date().toISOString();
+    const catalogRef = storeSlug ? doc(db, "publicCatalogs", storeSlug) : null;
+    const catalogSnap = catalogRef ? await tx.get(catalogRef) : null;
     const productRefs = new Map<string, ReturnType<typeof doc>>();
     const productDocs = new Map<string, Product>();
     for (const line of purchase.lines) {
@@ -414,6 +610,19 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
         cost: update.cost,
         updatedAt: at,
       });
+    }
+    if (catalogRef && catalogSnap?.exists() && stockUpdates.size > 0) {
+      const summaries = (catalogSnap.data()?.products ?? []) as Record<string, unknown>[];
+      tx.set(catalogRef, {
+        products: summaries.map((summary) => {
+          const product = productDocs.get(String(summary.productId ?? ""))
+            ?? [...productDocs.values()].find((candidate) => String(summary.productSlug ?? "") === String(candidate.slug ?? ""));
+          const update = product ? stockUpdates.get(product.id) : undefined;
+          return update && product
+            ? { ...summary, availableQuantity: Math.max(0, Math.floor(update.quantityOnHand)), stockSignal: publicStockSignal({ ...product, ...update }) }
+            : summary;
+        }),
+      }, { merge: true });
     }
     tx.update(purchaseRef, { status: "received", receivedAt: at, updatedAt: at });
   });
@@ -458,7 +667,7 @@ function primaryImage(product: Product): string | null {
   return product.imageUrl ?? null;
 }
 
-/** Coarse stock signal for the public catalog: NEVER an exact count. */
+/** Public stock signal for the catalog. Exact quantity is separately allow-listed. */
 export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible" {
   const qty = p.quantityOnHand;
   if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
@@ -484,7 +693,7 @@ function publicPricesByTier(
   return Object.keys(prices).length ? prices : undefined;
 }
 
-type PublicPricingSource = Pick<Store, "priceTiers" | "defaultTierId">;
+type PublicPricingSource = Partial<Pick<Store, "priceTiers" | "defaultTierId" | "type">>;
 
 /** Public storefront projection: identity + storefront content + contact + tiers. */
 export function projectPublicStore(store: Store) {
@@ -516,7 +725,8 @@ export function projectPublicStore(store: Store) {
 /**
  * Lightweight product summary for the grid (lives inside publicCatalogs). No
  * private fields. Exposes a SINGLE resolved `price` (the store's default tier
- * for inventory stores) — never the full tier map or private prices.
+ * for inventory stores) and the exact available quantity for inventory stores
+ * by owner decision. On-demand stores never receive an availability cap.
  */
 export function projectPublicProductSummary(
   product: Product,
@@ -524,6 +734,7 @@ export function projectPublicProductSummary(
   pricing?: PublicPricingSource
 ) {
   const summary: Record<string, unknown> = {
+    productId: product.id,
     storeSlug,
     storeId: product.storeId,
     productSlug: product.slug ?? null,
@@ -539,6 +750,11 @@ export function projectPublicProductSummary(
     sortOrder: product.sortOrder ?? 0,
     stockSignal: publicStockSignal(product),
   };
+  if (pricing?.type === "inventory_tiered") {
+    summary.availableQuantity = typeof product.quantityOnHand === "number" && Number.isFinite(product.quantityOnHand)
+      ? Math.max(0, Math.floor(product.quantityOnHand))
+      : 0;
+  }
   const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") summary.price = resolved;
   const prices = publicPricesByTier(product, pricing);
@@ -563,6 +779,7 @@ export function projectPublicProductDetail(
     .map((c) => ({ id: c.id, name: c.name, slug: c.slug }));
 
   const detail: Record<string, unknown> = {
+    productId: product.id,
     storeId: product.storeId,
     storeSlug,
     productSlug: product.slug ?? null,

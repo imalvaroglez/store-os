@@ -13,7 +13,8 @@ build pointed at the real backend) can **create, edit, or delete her actual
 business data**. A bug, a seed, or a misconfigured env var can affect the
 operation and therefore the business economically.
 
-The local emulator (`store-os-demo` namespace, volatile) is correctly isolated.
+The historical local test namespace is retired. Development and Preview now use
+the real `store-os-dev` project, isolated from production.
 The gap is the **preview ↔ production** boundary, which does not exist today.
 
 ## Outcome

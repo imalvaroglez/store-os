@@ -1,8 +1,8 @@
 # Deployment guide
 
-Store OS is a static SPA (Vite build) + Firebase (Auth + Firestore). Deploy the
-frontend to **Vercel** and point it at a real Firebase project. This guide covers
-both.
+Store OS is a static SPA (Vite build) + Firebase (Auth + Firestore + una callable
+de checkout). Deploy the frontend to **Vercel** and point it at a real Firebase
+project. This guide covers both.
 
 ## 1. Create a Firebase project
 
@@ -31,8 +31,8 @@ enforced by **Security Rules**, not by hiding these keys. In your Vercel project
 | `VITE_FIREBASE_SENDER_ID` | messaging sender id |
 | `VITE_FIREBASE_APP_ID` | app id |
 
-**Do NOT set** `VITE_FIREBASE_EMULATOR` in production — that flag routes Auth +
-Firestore to localhost (it's for local tests only).
+`VITE_FIREBASE_EMULATOR` is not a supported variable. Every environment uses a
+real Firebase project; localhost and Preview use `store-os-dev`.
 
 ## 3. Security rules (firestore.rules + storage.rules)
 
@@ -52,7 +52,7 @@ Manual deploys are for **emergencies/rollbacks only** (console → Firestore →
 Rules → history to restore a previous ruleset, or):
 
 ```bash
-firebase deploy --only firestore:rules,storage --project store-os-f7cf8
+firebase deploy --only firestore:rules,firestore:indexes,storage --project store-os-f7cf8
 ```
 
 After ANY manual/console rules change, verify parity (deployed == repo) with:
@@ -106,10 +106,9 @@ gcloud projects add-iam-policy-binding <projectId> \
 
 **How to tell it's missing:** uploads fail with `storage/unauthorized` but a
 temporary rule of `allow create: if request.auth != null` works. That pinpoints
-the cross-service `firestore.get()` as the failing guard. The Storage emulator
-does **not** reproduce this — it can't evaluate `firestore.get()` at all (see
-`storage.rules.emulator` + `scripts/e2e-firebase.sh`), so membership is only
-verified against the real backend.
+the cross-service `firestore.get()` as the failing guard. Browser integration
+tests run against `store-os-dev`, so this cross-service permission is tested on
+the same backend used during development.
 
 ## 5. Deploy to Vercel
 
@@ -163,8 +162,10 @@ never re-runs. No data is duplicated. If a product predates this schema, simply
 opening the app migrates it; cloud stores migrate on the next cloud sync.
 
 **Security rules:** `firestore.rules` adds `categories/{id}` (membership-gated
-like products) and `publicCatalogs/{slug}` (anonymous read, signed-in write).
-Deploy with `npm run deploy:rules` (or `firebase deploy --only firestore,storage`).
+like products), `publicCatalogs/{slug}` (anonymous read, signed-in write) and
+the server-only `publicOrderLimits/{id}` collection. Deploy with
+`npm run deploy:dev` for the development project, or the guarded CI promotion
+for production.
 
 **Storage:** gallery images live at `products/{storeId}/{productId}/{imgId}.jpg`,
 optimized JPEG ≤1600px q80. The bucket stays in `us-east1` (free-tier region).
@@ -195,31 +196,33 @@ must serve the app on refresh, not a 404.
   in `storage.rules`).
 - Free tier: 50K reads/day, 20K writes/day, 20K deletes/day, 1 GiB stored,
   10 GiB egress/month. Blaze charges overages — set budget alerts in the
-  Firebase console. The public flow has **no persistent forms** (no writes from
-  visitors), so anonymous traffic only consumes reads.
-- Protected contact form / App Check / reCAPTCHA is **deferred** — they have
-  limited free quota and can incur cost when exceeded, so they don't block this
-  launch. Visitors contact via WhatsApp only.
+  Firebase console. A public request uses one callable invocation plus bounded
+  reads and four small writes (order, two rate-limit keys, daily counter).
+  The callable caps all public catalogs at 500 requests per UTC day and serializes work
+  with `maxInstances: 1`, `concurrency: 1`.
+- Deploy the callable and TTL configuration with:
+  `firebase deploy --only functions:submitPublicOrderRequest,firestore:indexes --project store-os-dev`
+  (the existing PDF importer is unchanged). The client opens WhatsApp only
+  after the callable returns its reference.
+- App Check/CAPTCHA and a managed WAF are deferred. The limits reduce abusive
+  database growth but are not volumetric DDoS protection; add those controls
+  when real traffic or abuse justifies their operational/cost trade-off.
 
 **Out of scope for this MVP:** custom domains (Olivia lives at
 `/catalogo/olivia`), per-product WhatsApp preview cards (need SSR), payments,
-cart, customer accounts.
+customer accounts, and cross-device carts.
 
 ## Ambientes (dev vs prod)
 
 Store OS runs on **two Firebase projects** so development/testing cannot touch
 production data. The boundary between them is the Firebase project itself —
-Auth UIDs, Firestore, and Storage are all per-project, and Security Rules have
-no notion of "environment". Pointing each Vercel target at the right project is
-what isolates Olivia's real data.
+Auth UIDs, Firestore, Storage and Functions are all per-project. See the
+canonical contract in [`docs/ENVIRONMENTS.md`](ENVIRONMENTS.md).
 
 | Project | Firebase project id | Purpose | Who writes |
 |---|---|---|---|
 | Production | `store-os-f7cf8` | Olivia's real business | Only the platform super-admin (`admin@store.os`) and the tenant owners she invites |
-| Development | `store-os-dev` | Dev/testing against realistic-but-fake data | Development only |
-
-The local emulator (`store-os-demo` namespace, volatile) is a third target that
-never touches either real project — see "Local development / testing" below.
+| Development | `store-os-dev` | Desarrollo y pruebas contra datos controlados | Development only |
 
 ### Vercel environment variables (per target)
 
@@ -228,11 +231,11 @@ the values of the matching project. **No variable may use the "All Environments"
 scope** — that is the dominant risk: a Preview deploy inheriting prod's values
 would write to Olivia's real data.
 
-| Vercel target | Firebase project | `VITE_FIREBASE_PROJECT_ID` | `VITE_FIREBASE_EMULATOR` |
+| Vercel target | Firebase project | `VITE_FIREBASE_PROJECT_ID` |
 |---|---|---|---|
-| **Production** | `store-os-f7cf8` | `store-os-f7cf8` | (unset) |
-| **Preview** | `store-os-dev` | `store-os-dev` | (unset) |
-| **Development** (local/`vercel dev`) | `store-os-dev` | `store-os-dev` | (unset) |
+| **Production** | `store-os-f7cf8` | `store-os-f7cf8` |
+| **Preview** | `store-os-dev` | `store-os-dev` |
+| **Development** (local/`vercel dev`) | `store-os-dev` | `store-os-dev` |
 
 The remaining four (`API_KEY`, `AUTH_DOMAIN`, `STORAGE_BUCKET`, `SENDER_ID`,
 `APP_ID`) take that project's Web App config values. Set each group scoped to
@@ -242,11 +245,12 @@ its target only.
 
 A build-time tripwire (defense-in-depth, **not** primary security) runs before
 `tsc`/`vite` on every `npm run build`. It reads `VITE_VERCEL_ENV` (auto-injected
-by Vercel) and `VITE_FIREBASE_PROJECT_ID`, and **aborts the build** (exit 1) on:
+by Vercel) and `VITE_FIREBASE_PROJECT_ID`, and **aborts the process** (exit 1) on:
 
-- `preview` + `store-os-f7cf8` (a Preview deploy pointing at prod), or
-- `preview` + empty/missing project id (a mis-scoped variable), or
-- `production` + anything other than `store-os-f7cf8`.
+- localhost/Preview + anything other than `store-os-dev`, or
+- production + anything other than `store-os-f7cf8`, or
+- any missing `VITE_FIREBASE_*` variable, or
+- any emulator flag.
 
 This catches the "All Environments" accident at build time. It is not primary
 isolation — a determined actor with prod's public config can still instantiate
@@ -261,7 +265,11 @@ the SDK — that's by Firebase design (access is enforced by Security Rules).
 5. Project settings → Your apps → add a Web App → copy the six config values into the Vercel **Preview** + **Development** groups.
 6. Set a **$0.01 budget alert** in Google Cloud Console → Billing → Budgets (notification only; it does not stop charges).
 7. Apply the **IAM grant** `roles/datastore.user` to the Storage service agent of `store-os-dev` (same as §4b for prod), or product-photo uploads fail with 403.
-8. Deploy the rules to dev: `firebase deploy --only firestore,storage --project dev` (the `dev` alias is in `.firebaserc`; rules are identical to prod — do not loosen them, or dev stops reflecting prod).
+8. Deploy rules, TTL indexes and the callable to dev:
+   `npm run deploy:dev`
+   (the command is hard-coded to `store-os-dev`; rules are identical to prod —
+   do not loosen them, or dev stops reflecting prod; it deploys all callable
+   functions from the same commit).
 
 ### Lock production (one-time, console)
 
@@ -316,19 +324,25 @@ The build guard exists precisely so this is caught at build time, not after.
 
 ## Local development / testing
 
-- **Demo mode (no backend):** `npm run dev` — runs fully on `localStorage` with
-  seeded demo data.
-- **With emulator:** `npm run emulators` (Auth + Firestore on localhost), then
-  `npm run dev` with `VITE_FIREBASE_EMULATOR=true` in `.env`, or
-  `npm run e2e:firebase` for the emulator test suite.
+1. Copy `.env.example` to `.env.local` and fill in the six Web App values from
+   `store-os-dev`.
+2. Deploy the current structure and callable to dev with `npm run deploy:dev`.
+3. Seed or republish the dev catalog with `npm run seed:dev` when fixtures are
+   needed.
+4. Run `npm run dev` and test against the real dev backend.
+
+`npm run test:rules` and `npm run e2e:dev` also use `store-os-dev`. They require
+Google ADC (`gcloud auth application-default login`) or the external CI secret
+`FIREBASE_DEV_SERVICE_ACCOUNT_JSON`; they create and remove deterministic test
+data in dev and never use a second backend.
 
 ## Notes
 
-- **Public catalog for cloud stores:** implemented. The app writes a public
+- **Public catalog:** implemented. The app writes a public
   projection (`publicStores`/`publicProducts`) on store create/rename and on
   every product save, and `firestore.rules` allows anonymous read on those
-  collections — so `/catalogo/:slug` works for both local demo and cloud
-  stores. Owners get the public URL + "Copiar enlace" / "Compartir por
+  collections — so `/catalogo/:slug` works on localhost, Preview and
+  production against their assigned Firebase project. Owners get the public URL + "Copiar enlace" / "Compartir por
   WhatsApp" buttons in store settings, and "Republicar catálogo" to rebuild
   the projection on demand.
 - **Member invites:** invitees who don't have an account yet receive a Firebase

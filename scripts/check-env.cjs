@@ -1,34 +1,30 @@
 #!/usr/bin/env node
 /**
- * Build-time guard against cross-environment Firebase misconfiguration.
+ * Hard guard against cross-environment Firebase configuration.
  *
- * ponytail: this is DEFENSE-IN-DEPTH, not primary security. The real isolation
- * between dev (store-os-dev) and production (store-os-f7cf8) comes from each
- * Vercel target pointing at a DIFFERENT Firebase project via scoped env vars,
- * plus Firestore Security Rules. A determined actor with prod's public config
- * can still instantiate the SDK and write — that's by Firebase design (access
- * is enforced by rules, not by hiding keys). This check only catches the
- * common accident: a Preview deployment that inherited prod's env vars and
- * would silently write to Olivia's real data.
- *
- * Rules:
- *   VITE_VERCEL_ENV === 'preview'     + projectId === PROD  => FAIL (preview must not touch prod)
- *   VITE_VERCEL_ENV === 'production'  + projectId !== PROD  => FAIL (prod must point at prod)
- *   (no VITE_VERCEL_ENV, i.e. local dev)                   => PASS (warns)
- *
- * VITE_VERCEL_ENV is injected automatically by Vercel per deployment target.
+ * Localhost and Preview must use the real development project. Production must
+ * use the production project. There is no local data fallback.
  */
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
+const DEV_PROJECT_ID = "store-os-dev";
 const PROD_PROJECT_ID = "store-os-f7cf8";
+const REQUIRED_VARS = [
+  "VITE_FIREBASE_API_KEY",
+  "VITE_FIREBASE_AUTH_DOMAIN",
+  "VITE_FIREBASE_PROJECT_ID",
+  "VITE_FIREBASE_STORAGE_BUCKET",
+  "VITE_FIREBASE_SENDER_ID",
+  "VITE_FIREBASE_APP_ID",
+];
 
 function fail(msg) {
   console.error(`\x1b[31m[check-env] BLOQUEADO:\x1b[0m ${msg}`);
   console.error(
-    "[check-env] Revisa las Environment Variables en Vercel (Settings → Environment Variables)."
-  );
-  console.error(
-    "[check-env] Production → store-os-f7cf8. Preview → store-os-dev. Ninguna con scope 'All Environments'."
+    "[check-env] Local/Preview → store-os-dev. Production → store-os-f7cf8."
   );
   process.exit(1);
 }
@@ -37,157 +33,115 @@ function pass(msg) {
   console.log(`\x1b[32m[check-env] OK:\x1b[0m ${msg}`);
 }
 
+function parseEnvFile(file) {
+  if (!fs.existsSync(file)) return {};
+  const values = {};
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match) continue;
+    let value = match[2];
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    values[match[1]] = value;
+  }
+  return values;
+}
+
+function loadEnv(mode = "production") {
+  const root = path.resolve(__dirname, "..");
+  return {
+    ...parseEnvFile(path.join(root, ".env")),
+    ...parseEnvFile(path.join(root, ".env.local")),
+    ...parseEnvFile(path.join(root, `.env.${mode}`)),
+    ...parseEnvFile(path.join(root, `.env.${mode}.local`)),
+    ...process.env,
+  };
+}
+
 /**
  * @param {string|null|undefined} vercelEnv
  * @param {string|null|undefined} projectId
+ * @param {{ emulator?: string, required?: boolean, values?: Record<string,string|undefined> }} [options]
  */
-function check(vercelEnv, projectId) {
-  // Local builds (no VITE_VERCEL_ENV): no guard, but log what we'd target.
-  if (!vercelEnv) {
-    const note = projectId
-      ? `build local sin VITE_VERCEL_ENV; projectId detectado = ${projectId}`
-      : "build local sin VITE_VERCEL_ENV ni projectId (modo demo/emulador)";
-    console.log(`[check-env] ${note}`);
-    return;
+function check(vercelEnv, projectId, options = {}) {
+  if (options.emulator === "true") {
+    fail("VITE_FIREBASE_EMULATOR ya no es válido: todas las pruebas usan Firebase real.");
+  }
+  if (vercelEnv && !["development", "preview", "production"].includes(vercelEnv)) {
+    fail(`VITE_VERCEL_ENV desconocido: '${vercelEnv}'. Usa development, preview o production.`);
   }
 
-  if (vercelEnv === "preview") {
-    // Preview MUST point at the dev project: anything else is a misconfiguration.
-    // The empty/undefined case is the spec's dominant-risk scenario (a Vercel env
-    // var missing or mis-scoped), so we block it rather than pass silently.
-    if (!projectId || projectId === PROD_PROJECT_ID) {
-      fail(
-        `deploy de Preview con projectId '${projectId}' (vacío o producción). ` +
-          "Preview debe apuntar a store-os-dev con VITE_FIREBASE_PROJECT_ID definido."
-      );
-    }
-    pass(`Preview → projectId ${projectId} (correcto: no es prod).`);
-    return;
+  const target = vercelEnv === "production" ? PROD_PROJECT_ID : DEV_PROJECT_ID;
+  if (projectId !== target) {
+    const label = vercelEnv === "production" ? "Production" : vercelEnv === "preview" ? "Preview" : "desarrollo local";
+    fail(`${label} debe apuntar a ${target}; recibió '${projectId || "(vacío)"}'.`);
   }
 
-  if (vercelEnv === "production") {
-    if (projectId !== PROD_PROJECT_ID) {
-      fail(
-        `deploy de Production apunta a projectId '${projectId}', no a producción (${PROD_PROJECT_ID}).`
-      );
-    }
-    pass(`Production → projectId ${projectId} (correcto).`);
-    return;
+  if (options.required) {
+    const missing = REQUIRED_VARS.filter((name) => !options.values?.[name]);
+    if (missing.length) fail(`faltan variables Firebase obligatorias: ${missing.join(", ")}.`);
   }
 
-  // Any other VITE_VERCEL_ENV value (e.g. 'development'): permissive.
-  console.log(`[check-env] VITE_VERCEL_ENV='${vercelEnv}'; sin regla de bloqueo.`);
+  pass(`${vercelEnv === "production" ? "Production" : vercelEnv === "preview" ? "Preview" : "Localhost"} → ${target}.`);
 }
 
-// --- Entry point ---
 if (require.main === module) {
   if (process.argv.includes("--test")) {
     runSelfTest();
   } else {
-    check(process.env.VITE_VERCEL_ENV, process.env.VITE_FIREBASE_PROJECT_ID);
+    const mode = process.env.VITE_VERCEL_ENV === "production" ? "production" : "development";
+    const env = loadEnv(mode);
+    check(env.VITE_VERCEL_ENV, env.VITE_FIREBASE_PROJECT_ID, {
+      emulator: env.VITE_FIREBASE_EMULATOR,
+      required: true,
+      values: env,
+    });
   }
 }
 
-// --- Self-test: `node scripts/check-env.cjs --test` runs assertions. ---
-// ponytail: no test framework for scripts/; embed the smallest runnable check
-// instead of adding CommonJS test infra. Fails the process if any case is wrong.
 function runSelfTest() {
-  const assert = require("assert");
+  const assert = require("node:assert");
   let exitCode = 0;
-
-  /** @param {string} name @param {()=>void} fn */
   const it = (name, fn) => {
     try {
       fn();
       console.log(`  \x1b[32m✓\x1b[0m ${name}`);
-    } catch (e) {
-      console.error(`  \x1b[31m✗\x1b[0m ${name}: ${e.message}`);
+    } catch (error) {
+      console.error(`  \x1b[31m✗\x1b[0m ${name}: ${error.message}`);
       exitCode = 1;
     }
   };
-
-  // check() never returns on FAIL (it calls process.exit(1)). We stub it to
-  // throw so the assertion can catch the "would-block" case.
-  const origExit = process.exit;
+  const originalExit = process.exit;
   let blocked = false;
   process.exit = (code) => {
     blocked = code !== 0;
     throw new Error("__BLOCKED__");
   };
-
-  it("preview + prod projectId => blocked", () => {
+  const expectBlocked = (name, fn) => it(name, () => {
     blocked = false;
-    try {
-      check("preview", PROD_PROJECT_ID);
-    } catch (e) {
-      /* expected */
-    }
+    try { fn(); } catch { /* expected */ }
     assert.ok(blocked, "debería bloquear");
   });
-
-  it("preview + dev projectId => not blocked", () => {
+  const expectAllowed = (name, fn) => it(name, () => {
     blocked = false;
-    try {
-      check("preview", "store-os-dev");
-    } catch (e) {
-      /* expected */
-    }
-    assert.ok(!blocked, "NO debería bloquear");
+    try { fn(); } catch { /* expected */ }
+    assert.ok(!blocked, "no debería bloquear");
   });
 
-  it("preview + empty projectId => blocked (dominant-risk case)", () => {
-    blocked = false;
-    try {
-      check("preview", "");
-    } catch (e) {
-      /* expected */
-    }
-    assert.ok(blocked, "projectId vacío en preview debe bloquear");
-    blocked = false;
-    try {
-      check("preview", undefined);
-    } catch (e) {
-      /* expected */
-    }
-    assert.ok(blocked, "projectId undefined en preview debe bloquear");
-  });
+  expectAllowed("localhost + dev", () => check(undefined, DEV_PROJECT_ID));
+  expectBlocked("localhost + prod", () => check(undefined, PROD_PROJECT_ID));
+  expectBlocked("localhost sin proyecto", () => check(undefined, undefined));
+  expectAllowed("preview + dev", () => check("preview", DEV_PROJECT_ID));
+  expectBlocked("preview + prod", () => check("preview", PROD_PROJECT_ID));
+  expectBlocked("production + dev", () => check("production", DEV_PROJECT_ID));
+  expectAllowed("production + prod", () => check("production", PROD_PROJECT_ID));
+  expectBlocked("ambiente desconocido", () => check("staging", DEV_PROJECT_ID));
+  expectBlocked("emulator flag", () => check(undefined, DEV_PROJECT_ID, { emulator: "true" }));
 
-  it("production + dev projectId => blocked", () => {
-    blocked = false;
-    try {
-      check("production", "store-os-dev");
-    } catch (e) {
-      /* expected */
-    }
-    assert.ok(blocked, "debería bloquear");
-  });
-
-  it("production + prod projectId => not blocked", () => {
-    blocked = false;
-    try {
-      check("production", PROD_PROJECT_ID);
-    } catch (e) {
-      /* expected */
-    }
-    assert.ok(!blocked, "NO debería bloquear");
-  });
-
-  it("no vercelEnv (local) => not blocked", () => {
-    blocked = false;
-    try {
-      check(undefined, PROD_PROJECT_ID);
-    } catch (e) {
-      /* expected */
-    }
-    assert.ok(!blocked, "build local nunca se bloquea");
-  });
-
-  process.exit = origExit;
-  if (exitCode !== 0) {
-    console.error("\x1b[31mself-test FALLÓ\x1b[0m");
-    origExit(1);
-  }
+  process.exit = originalExit;
+  if (exitCode) originalExit(1);
   console.log("\x1b[32mself-test OK\x1b[0m");
 }
 
-module.exports = { check, PROD_PROJECT_ID, runSelfTest };
+module.exports = { check, loadEnv, DEV_PROJECT_ID, PROD_PROJECT_ID };
