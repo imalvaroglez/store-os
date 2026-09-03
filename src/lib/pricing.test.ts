@@ -170,10 +170,36 @@ describe("calculateOrderPricing — resumen canónico del pedido", () => {
     expect(calculateOrderPricing(cartTiers, expensive)?.activeTier.tier.id).toBe("t_iconic");
   });
 
-  it("no calcula un subtotal parcial cuando falta un precio público", () => {
-    expect(calculateOrderPricing(cartTiers, [
+  it("un precio faltante cae al más profundo disponible — el cálculo nunca desaparece", () => {
+    const pricing = calculateOrderPricing(cartTiers, [
       { qty: 1, unitPrices: { t_retail: 140, t_girly: 120 } },
-    ])).toBeNull();
+    ])!;
+    expect(pricing).not.toBeNull();
+    // Iconic se estima con el precio más profundo que la línea sí tiene.
+    expect(pricing.aspirationalTier.tier.id).toBe("t_iconic");
+    expect(pricing.aspirationalTier.subtotal).toBe(120);
+    // Sin todos los precios propios del tier, la REGLA no califica (estricta).
+    expect(pricing.aspirationalTier.qualifies).toBe(false);
+    expect(pricing.activeTier.tier.id).toBe("t_retail");
+    expect(pricing.estimatedSubtotal).toBe(140);
+  });
+
+  it("carrito mixto que cruza el mínimo Iconic sigue mostrando subtotal y ahorro", () => {
+    // El escenario reportado: varias piezas superan el umbral pero alguna
+    // pieza no carga precio Iconic — antes todo el bloque se evaporaba.
+    const mixed: CartQtyLine[] = [
+      { qty: 5, unitPrices: { t_retail: 140, t_girly: 120, t_iconic: 100 } },
+      { qty: 2, unitPrices: { t_retail: 200, t_girly: 180 } },
+    ];
+    const pricing = calculateOrderPricing(cartTiers, mixed)!;
+    expect(pricing).not.toBeNull();
+    // t_girly califica (5 piezas) y todas las líneas tienen su precio propio.
+    expect(pricing.activeTier.tier.id).toBe("t_girly");
+    expect(pricing.estimatedSubtotal).toBe(5 * 120 + 2 * 180);
+    expect(pricing.savingsVsBase).toBe(5 * (140 - 120) + 2 * (200 - 180));
+    // Iconic no califica (la línea 2 no puede probar el mínimo) pero sigue visible.
+    expect(pricing.aspirationalTier.qualifies).toBe(false);
+    expect(pricing.aspirationalTier.subtotal).toBe(5 * 100 + 2 * 180);
   });
 
   it("usa Regular por id estable aunque el arreglo llegue reordenado", () => {
