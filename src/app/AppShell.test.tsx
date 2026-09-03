@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { AppShell } from "./AppShell";
 import { StoreProvider } from "./StoreProvider";
@@ -31,8 +31,12 @@ beforeEach(() => {
   saveState(state);
 });
 
+afterEach(() => {
+  authState.user = { uid: "uid_fer", email: "fer@olivia.mx", role: "member" };
+});
+
 describe("AppShell configuración de tienda", () => {
-  it("abre Administrar tienda desde Opciones y muestra WhatsApp", () => {
+  it("abre Administrar tienda como vista propia y deja Opciones para cuenta/tema", () => {
     render(
       <ThemeProvider>
         <ToastProvider>
@@ -43,11 +47,14 @@ describe("AppShell configuración de tienda", () => {
       </ThemeProvider>
     );
 
-    fireEvent.click(screen.getByLabelText("Opciones"));
-    fireEvent.click(screen.getByRole("button", { name: "Administrar tienda" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Tienda" })[0]);
 
     expect(screen.getByRole("heading", { name: "Administrar tienda" })).toBeTruthy();
     expect(screen.getByText("Teléfono de WhatsApp")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Opciones"));
+    expect(screen.queryByRole("button", { name: "Administrar tienda" })).toBeNull();
+    expect(screen.getByText("Tema")).toBeTruthy();
   });
 
   it("también permite administrar cualquier tienda a un superadministrador", () => {
@@ -66,9 +73,26 @@ describe("AppShell configuración de tienda", () => {
       </ThemeProvider>
     );
 
-    fireEvent.click(screen.getByLabelText("Opciones"));
-    fireEvent.click(screen.getByRole("button", { name: "Administrar tienda" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Tienda" })[0]);
 
     expect(screen.getByText("Teléfono de WhatsApp")).toBeTruthy();
+  });
+
+  it("bloquea la ruta directa a un member que no es dueño", () => {
+    authState.user = { uid: "uid_mar", email: "mar@olivia.mx", role: "member" };
+    window.history.replaceState({}, "", "/tienda/configuracion");
+
+    render(
+      <ThemeProvider>
+        <ToastProvider>
+          <StoreProvider>
+            <AppShell />
+          </StoreProvider>
+        </ToastProvider>
+      </ThemeProvider>
+    );
+
+    expect(screen.getByRole("heading", { name: "No tienes permiso" })).toBeTruthy();
+    expect(screen.queryByText("Teléfono de WhatsApp")).toBeNull();
   });
 });

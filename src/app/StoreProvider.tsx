@@ -42,6 +42,7 @@ import {
   createDraftProductsForPurchaseTx,
   saveOrderWithStockTx,
   PurchaseAlreadyReceived,
+  PublicCatalogProjectionError,
 } from "./firebase/firestoreData";
 import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
@@ -332,13 +333,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Claim the slug first (throws SlugTakenError on global collision) so we
       // don't create a store whose catalog can't be published.
       if (cloud) await claimSlug(store.slug, store.id);
-      dispatch({ type: "ADD_STORE", store });
-      // persistEntity re-throws on Firestore rejection; callers surface a toast.
-      await persistEntity("stores", storeWithMembership(store, user));
+      const privateStore = storeWithMembership(store, user);
+      // Persist before exposing the store locally: a rejected private write
+      // must not leave the frontend ahead of Firestore.
+      await persistEntity("stores", privateStore);
       if (cloud) {
-        await projectPublicForStore(store, state.products, state.categories).catch(() => {});
+        try {
+          await projectPublicForStore(store, state.products, state.categories);
+        } catch (error) {
+          throw new PublicCatalogProjectionError(error);
+        }
       }
-      return store;
+      dispatch({ type: "ADD_STORE", store: privateStore });
+      return privateStore;
     },
     updateStore: async (patch) => {
       const existing = state.stores.find((s) => s.id === patch.id);
@@ -351,8 +358,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // half-renamed.
         await claimSlug(store.slug, store.id);
       }
-      dispatch({ type: "UPDATE_STORE", store });
       await persistEntity("stores", store);
+      // Cloud state follows the private write. This prevents a rejected write
+      // from leaving the UI ahead of Firestore; a later public projection error
+      // still leaves the private store visible so the user can repair publishing.
+      dispatch({ type: "UPDATE_STORE", store });
       if (cloud) {
         if (slugChanged) {
           // Remove the OLD public projection (storefront + products carrying the
@@ -367,7 +377,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // must SEE it — a private write that "succeeds" while the public price
         // stays stale is a false success. Repair paths: save again, or
         // "Republicar catálogo" (projection only, no private writes).
-        await projectPublicForStore(store, state.products, state.categories);
+        try {
+          await projectPublicForStore(store, state.products, state.categories);
+        } catch (error) {
+          throw new PublicCatalogProjectionError(error);
+        }
       }
     },
     deleteStore: (storeId) => {
@@ -445,11 +459,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const store = state.stores.find((s) => s.id === storeId);
       if (!store || !cloud) return;
       await claimSlug(store.slug, store.id).catch(() => {});
-      await projectPublicForStore(
-        store,
-        state.products.filter((p) => p.storeId === storeId),
-        state.categories.filter((c) => c.storeId === storeId)
-      );
+      try {
+        await projectPublicForStore(
+          store,
+          state.products.filter((p) => p.storeId === storeId),
+          state.categories.filter((c) => c.storeId === storeId)
+        );
+      } catch (error) {
+        throw new PublicCatalogProjectionError(error);
+      }
     },
     setActiveStore: (storeId) => {
       savePreferredStoreId(storeId);

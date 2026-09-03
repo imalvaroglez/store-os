@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { Button, FormField, TextField, Card } from "../../design-system";
-import { SlugTakenError } from "../../app/firebase/firestoreData";
+import { PublicCatalogProjectionError, SlugTakenError } from "../../app/firebase/firestoreData";
 import { slugify } from "../../lib/catalog";
 import type { StoreType } from "../../types";
 
@@ -32,7 +32,13 @@ export function StoreForm({ onDone }: { onDone: () => void }) {
       });
       onDone();
     } catch (err) {
-      setError(err instanceof SlugTakenError ? err.message : "No se pudo crear la tienda. Intenta de nuevo.");
+      setError(
+        err instanceof SlugTakenError
+          ? err.message
+          : err instanceof PublicCatalogProjectionError
+            ? "La tienda se creó, pero no se pudo actualizar el catálogo público. Revisa los permisos de Firestore."
+            : "No se pudo crear la tienda. Intenta de nuevo."
+      );
     } finally {
       setBusy(false);
     }
