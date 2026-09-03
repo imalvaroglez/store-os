@@ -31,3 +31,9 @@ describe("order routes", () => {
     expect(matchRoute("/pedidos/order_abc-123")).toEqual({ name: "admin", params: { tab: "pedidos", sub: "order_abc-123" } });
   });
 });
+
+describe("store management routes", () => {
+  it("matches the store management screen", () => {
+    expect(matchRoute("/tienda/configuracion")).toEqual({ name: "admin", params: { tab: "tienda", sub: "configuracion" } });
+  });
+});

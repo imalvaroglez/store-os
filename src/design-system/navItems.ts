@@ -11,7 +11,8 @@ export type Tab =
   | "productos_categorias"
   | "productos_compras"
   | "pedidos"
-  | "clientes";
+  | "clientes"
+  | "tienda";
 
 export type NavItem = { id: Tab; label: string; path: string; children?: NavItem[] };
 
