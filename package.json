@@ -19,7 +19,8 @@
     "emulators": "firebase emulators:start --only auth,firestore,storage,functions",
     "e2e:firebase": "bash scripts/e2e-firebase.sh",
     "e2e:refresh": "bash scripts/e2e-refresh.sh",
-    "deploy:rules": "firebase deploy --only firestore,storage"
+    "deploy:rules": "firebase deploy --only firestore,storage",
+    "check:rules": "node scripts/check-rules-deployed.cjs"
   },
   "dependencies": {
     "firebase": "^12.15.0",

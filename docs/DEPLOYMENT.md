@@ -34,20 +34,36 @@ enforced by **Security Rules**, not by hiding these keys. In your Vercel project
 **Do NOT set** `VITE_FIREBASE_EMULATOR` in production — that flag routes Auth +
 Firestore to localhost (it's for local tests only).
 
-## 3. Deploy the security rules
+## 3. Security rules (firestore.rules + storage.rules)
 
 The repo ships `firestore.rules` (data) and `storage.rules` (product photos).
-Deploy them once (and on rule changes):
+**CI deploys them automatically**: on every push to `main`, the `deploy-rules`
+job ships both files to `store-os-f7cf8` **and** `store-os-dev` (after
+build-test + rules-and-e2e + the Vercel deploy), then re-runs the deploy as a
+parity check — a second pass that still releases something fails the build.
+This closes the drift class where prod ran three-week-old rules while the repo
+evolved (2026-08 incident: silently-denied public-catalog writes).
+
+One-time setup: create a repo-level `FIREBASE_TOKEN` secret
+(`firebase login:ci` → GitHub Settings → Secrets and variables → Actions).
+Without it the `deploy-rules` job fails loudly.
+
+Manual deploys are for **emergencies/rollbacks only** (console → Firestore →
+Rules → history to restore a previous ruleset, or):
 
 ```bash
-npm install -g firebase-tools
-firebase login
-firebase deploy --only firestore,storage
+firebase deploy --only firestore:rules,storage --project store-os-f7cf8
 ```
 
-(Or `npm run deploy:rules`, which runs the same.) The Storage rules allow public
-read (the anonymous catalog loads photos) and require store membership to
-write/delete, verified via a cross-service Firestore lookup.
+After ANY manual/console rules change, verify parity (deployed == repo) with:
+
+```bash
+npm run check:rules
+```
+
+The Storage rules allow public read (the anonymous catalog loads photos) and
+require store membership to write/delete, verified via a cross-service
+Firestore lookup.
 
 ## 4. Configure Storage CORS (required for browser uploads)
 
