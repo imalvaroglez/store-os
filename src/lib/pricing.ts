@@ -53,6 +53,9 @@ export type CalculatedCartTier = {
   tier: PriceTierDef;
   subtotal: number;
   qualifies: boolean;
+  /** Every line carries THIS tier's own price (no fallback) — the honest
+   *  precondition for advertising the tier as active/unlocked. */
+  hasOwnPrices: boolean;
   piecesRemaining: number;
   amountRemaining: number;
   savingsVsBase: number;
@@ -107,9 +110,10 @@ export function cartSavings(tier: PriceTierDef, baseTierId: string, lines: CartQ
 }
 
 /**
- * Canonical public-order calculation. A tier is usable only when every line
- * has that tier's price, so stale projections never produce partial totals.
- * The deepest qualifying tier wins independently of intermediate tiers.
+ * Canonical public-order calculation. A missing tier price falls back to the
+ * deepest price the line DOES have — the estimate stays on screen instead of
+ * vanishing; qualification (tierQualifies) stays strict on the tier's own
+ * prices. The deepest qualifying tier wins independently of intermediate tiers.
  */
 export function calculateOrderPricing(
   tiers: PriceTierDef[],
@@ -119,11 +123,23 @@ export function calculateOrderPricing(
 
   const ordered = tiers.filter((t) => !t.hidden).sort((a, b) => a.order - b.order);
   const totalQuantity = lines.reduce((sum, line) => sum + line.qty, 0);
+  // Estimation-only helper: a line's unit price at `tier` is the tier's own
+  // price, else the deepest price that line carries.
+  const deepestPrice = (line: CartQtyLine): number | undefined => {
+    for (let i = ordered.length - 1; i >= 0; i--) {
+      const value = line.unitPrices[ordered[i].id];
+      if (Number.isFinite(value)) return value;
+    }
+    return undefined;
+  };
+  const estimated = (tier: PriceTierDef, line: CartQtyLine): number | undefined =>
+    Number.isFinite(line.unitPrices[tier.id]) ? line.unitPrices[tier.id] : deepestPrice(line);
+
   const priced = ordered.flatMap((tier) => {
-    if (!lines.every((line) => Number.isFinite(line.unitPrices[tier.id]))) return [];
+    if (!lines.every((line) => Number.isFinite(estimated(tier, line)))) return [];
     return [{
       tier,
-      subtotal: lines.reduce((sum, line) => sum + line.unitPrices[tier.id] * line.qty, 0),
+      subtotal: lines.reduce((sum, line) => sum + (estimated(tier, line) as number) * line.qty, 0),
       qualifies: tierQualifies(tier, lines),
     }];
   });
@@ -131,12 +147,25 @@ export function calculateOrderPricing(
   // Regular keeps its identity when tiers are reordered. Legacy/custom stores
   // without the canonical id use the first usable visible tier defensively.
   const base = priced.find((entry) => entry.tier.id === REGULAR_TIER_ID) ?? priced[0];
-  const active = [...priced].reverse().find((entry) => entry.qualifies);
-  const aspirational = priced.find((entry) => entry.tier.id === ordered[ordered.length - 1]?.id);
+  // An entry backed by its OWN price on every line. Fallback prices may
+  // ESTIMATE a tier, but only own-priced tiers can be advertised — a label
+  // like "Precio Regular" over fallback numbers would mislead.
+  const hasOwn = (entry: { tier: PriceTierDef }) =>
+    lines.every((l) => Number.isFinite(l.unitPrices[entry.tier.id]));
+  const active = [...priced].reverse().find((entry) => entry.qualifies && hasOwn(entry))
+    // Nothing qualifies with own prices: fall to the shallowest own-priced
+    // tier (its label is what the lines actually cost). Never a fallback-only
+    // estimate — if no tier owns every line, there is no honest label at all.
+    ?? priced.find(hasOwn);
+  // The aspirational goal is the deepest VISIBLE tier — it must stay on screen
+  // even when some lines only have a fallback estimate for it.
+  const aspirational = priced.find((entry) => entry.tier.id === ordered[ordered.length - 1]?.id)
+    ?? priced[priced.length - 1];
   if (!base || !active || !aspirational) return null;
 
   const withProgress: CalculatedCartTier[] = priced.map((entry) => ({
     ...entry,
+    hasOwnPrices: hasOwn(entry),
     piecesRemaining: Math.max(0, (entry.tier.minPieces ?? 0) - totalQuantity),
     amountRemaining: Math.max(0, (entry.tier.minAmount ?? 0) - entry.subtotal),
     savingsVsBase: Math.max(0, base.subtotal - entry.subtotal),

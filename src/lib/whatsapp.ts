@@ -106,15 +106,22 @@ export function buildCartOrderUrl(
   store: StorefrontWhatsAppTarget,
   storeSlug: string,
   lines: CartOrderLine[],
-  pricing?: OrderPricing | null
+  pricing?: OrderPricing | null,
+  customerName?: string
 ): string {
-  const intro = store.storefront?.whatsappBuyIntro?.trim() || "Hola, quiero hacer un pedido:";
+  const name = customerName?.trim();
+  const intro =
+    store.storefront?.whatsappBuyIntro?.trim() || (name ? `Hola, soy ${name}, quiero hacer un pedido:` : "Hola, quiero hacer un pedido:");
   const body = lines
     .map((l) => `• ${l.qty}× ${l.name} (${l.sku})${l.inquire ? " — sobre pedido" : ""}`)
     .join("\n");
+  // Suppress the identity line only when the intro already carries OUR exact
+  // identity phrase ("…soy {name},…") — a bare substring match would let an
+  // intro like "Hola, Mar:" swallow the visitor's name.
+  const who = name && !intro.includes(`soy ${name},`) ? `\nSoy ${name}.` : "";
   const summary = pricing
     ? `\nTotal de piezas: ${pricing.totalQuantity}\nPrecio aplicable: ${pricing.activeTier.tier.label}\nSubtotal estimado: ${formatMoney(pricing.estimatedSubtotal)} MXN\nEnvío no incluido.\nPrecio y existencia por confirmar por WhatsApp.`
     : "";
-  const text = `${intro}\nPedido:\n${body}${summary}\n${productUrl(storeSlug)}`;
+  const text = `${intro}\nPedido:\n${body}${summary}${who}\n${productUrl(storeSlug)}`;
   return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }

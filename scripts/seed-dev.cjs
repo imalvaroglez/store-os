@@ -226,15 +226,25 @@ function projectPublicStore(s) {
   };
 }
 
-function publicPrices(product) {
+function publicPrices(product, tiers) {
   if (!product.prices) return undefined;
-  const entries = oliviaPriceTiers
+  const entries = tiers
+    .filter((tier) => !tier.hidden) // a hidden tier's price is private — never public
     .map((tier) => [tier.id, product.prices[tier.id]])
     .filter(([, price]) => typeof price === "number");
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function projectPublicProductSummary(product, storeSlug) {
+// Mirrors publicPrice() in src/lib/money.ts: flat price → store's default tier
+// → legacy retail. Never the cheapest tier — that could leak a private price.
+function resolvedPublicPrice(product, defaultTierId) {
+  if (typeof product.price === "number") return product.price;
+  if (defaultTierId && typeof product.prices?.[defaultTierId] === "number") return product.prices[defaultTierId];
+  if (typeof product.prices?.retail === "number") return product.prices.retail;
+  return undefined;
+}
+
+function projectPublicProductSummary(product, storeSlug, tiers, defaultTierId) {
   const summary = {
     storeSlug,
     storeId: product.storeId,
@@ -249,14 +259,14 @@ function projectPublicProductSummary(product, storeSlug) {
     categoryIds: product.categoryIds ?? [],
     sortOrder: product.sortOrder ?? 0,
   };
-  const resolved = typeof product.price === "number" ? product.price : product.prices?.t_retail;
+  const resolved = resolvedPublicPrice(product, defaultTierId);
   if (typeof resolved === "number") summary.price = resolved;
-  const prices = publicPrices(product);
+  const prices = publicPrices(product, tiers);
   if (prices) summary.prices = prices;
   return summary;
 }
 
-function projectPublicProductDetail(product, storeSlug, cats) {
+function projectPublicProductDetail(product, storeSlug, cats, tiers, defaultTierId) {
   const named = (product.categoryIds ?? [])
     .map((id) => cats.find((c) => c.id === id))
     .filter((c) => !!c)
@@ -285,9 +295,9 @@ function projectPublicProductDetail(product, storeSlug, cats) {
     isNew: product.isNew ?? false,
     categories: named,
   };
-  const resolved = typeof product.price === "number" ? product.price : product.prices?.t_retail;
+  const resolved = resolvedPublicPrice(product, defaultTierId);
   if (typeof resolved === "number") detail.price = resolved;
-  const prices = publicPrices(product);
+  const prices = publicPrices(product, tiers);
   if (prices) detail.prices = prices;
   return detail;
 }
@@ -299,6 +309,30 @@ function primaryImage(product) {
     return primary.url ?? null;
   }
   return product.imageUrl ?? null;
+}
+
+/**
+ * Realign fixture price maps with the store's VISIBLE tiers: fixture level i
+ * (ordered by the fixture's own tiers) maps to visible tier i, ids that
+ * already match keep their value, and extra visible tiers reuse the deepest
+ * level. Identical config is a no-op — the owner's real products are never
+ * touched, only the fixed demo docs the seed rewrites anyway.
+ */
+function alignFixturePrices(products, visibleTiers) {
+  if (!visibleTiers.length) return products;
+  const fixtureOrder = oliviaPriceTiers.filter((t) => !t.hidden);
+  return products.map((p) => {
+    if (!p.prices) return p;
+    const levels = fixtureOrder.map((t) => p.prices[t.id]).filter((v) => typeof v === "number");
+    if (levels.length === 0) return p;
+    const prices = {};
+    visibleTiers.forEach((tier, i) => {
+      prices[tier.id] = typeof p.prices[tier.id] === "number"
+        ? p.prices[tier.id]
+        : levels[Math.min(i, levels.length - 1)];
+    });
+    return { ...p, prices };
+  });
 }
 
 // --- Minimal valid JPEG (solid color), built in-code — no binary asset ---
@@ -380,6 +414,46 @@ function runSelfTest() {
     assert.strictEqual(s.storeId, "s1");
     assert.strictEqual(s.slug, "o");
     assert.ok(!("cost" in s) && !("memberUids" in s));
+  });
+
+  it("projectPublicProductSummary prices follow the PASSED tier config", () => {
+    const product = { prices: { t_retail: 100, t_custom: 80, t_hidden_from_store: 1 } };
+    const summary = projectPublicProductSummary(product, "o",
+      [{ id: "t_retail", label: "Regular", order: 0 }, { id: "t_custom", label: "Amiga", order: 1 }],
+      "t_custom");
+    assert.deepStrictEqual(summary.prices, { t_retail: 100, t_custom: 80 });
+    assert.strictEqual(summary.price, 80); // the store's default tier, not hardcoded t_retail
+  });
+
+  it("a hidden tier's price never reaches the public projection", () => {
+    const product = { prices: { t_retail: 100, t_secret: 40 } };
+    const summary = projectPublicProductSummary(product, "o",
+      [{ id: "t_retail", label: "Regular", order: 0 }, { id: "t_secret", label: "Privado", order: 1, hidden: true }],
+      "t_retail");
+    assert.deepStrictEqual(summary.prices, { t_retail: 100 });
+    assert.ok(!("t_secret" in (summary.prices ?? {})));
+  });
+
+  it("alignFixturePrices maps fixture levels onto the store's visible tiers", () => {
+    const fixture = [{ prices: { t_retail: 800, t_girly: 600, t_iconic: 500 } }];
+    // Identical config: no-op.
+    assert.deepStrictEqual(
+      alignFixturePrices(fixture, oliviaPriceTiers)[0].prices,
+      { t_retail: 800, t_girly: 600, t_iconic: 500 }
+    );
+    // Owner added a 4th tier: matching ids keep values, the extra gets a level.
+    const four = [
+      { id: "t_retail", label: "R", order: 0 },
+      { id: "t_girly", label: "G", order: 1 },
+      { id: "t_iconic", label: "I", order: 2 },
+      { id: "t_amiga", label: "A", order: 3 },
+    ];
+    assert.deepStrictEqual(alignFixturePrices(fixture, four)[0].prices, {
+      t_retail: 800, t_girly: 600, t_iconic: 500, t_amiga: 500, // deepest level reused
+    });
+    // Custom ids only: positional levels.
+    const custom = [{ id: "a", label: "A", order: 0 }, { id: "b", label: "B", order: 1 }];
+    assert.deepStrictEqual(alignFixturePrices(fixture, custom)[0].prices, { a: 800, b: 600 });
   });
 
   if (exitCode !== 0) {
@@ -470,6 +544,19 @@ async function run() {
     memberUids: [adminUid],
   };
 
+  // Preserve owner-customized business fields on re-runs: the fixture defines
+  // them only when CREATING the store. Blindly re-writing the whole doc is how
+  // a seed run erased the owner's WhatsApp, tier rules and storefront.
+  const existingStoreSnap = await db.collection("stores").doc(STORE_ID).get();
+  const existingStore = existingStoreSnap.exists ? existingStoreSnap.data() : null;
+  const OWNER_OWNED_FIELDS = ["whatsappPhone", "priceTiers", "defaultTierId", "storefront", "pricingRule"];
+  const storeToWrite = { ...storeWithMembership };
+  if (existingStore) {
+    for (const field of OWNER_OWNED_FIELDS) {
+      if (existingStore[field] !== undefined) storeToWrite[field] = existingStore[field];
+    }
+  }
+
   // Keep the known dev operator's profile aligned with the Auth account and
   // the rules allowlist. Admin SDK is safe here because the script is guarded
   // above to the isolated store-os-dev project.
@@ -499,7 +586,16 @@ async function run() {
     memberUids: [adminUid],
   };
 
-  const products = enrichProducts(baseProducts);
+  // Visible tiers of the store being written (possibly the owner's preserved
+  // config). Computed BEFORE the product batch so the fixture products align
+  // to it, and reused by the public projections in step 2.
+  const seedTiers = (storeToWrite.priceTiers ?? oliviaPriceTiers).filter((t) => !t.hidden);
+  const seedDefaultTierId =
+    seedTiers.find((t) => t.id === storeToWrite.defaultTierId)?.id ?? seedTiers[0]?.id;
+
+  // The fixture ships fixture-tier price ids; when the store declares other
+  // tiers the demo pieces must still carry a price for every advertised tier.
+  const products = alignFixturePrices(enrichProducts(baseProducts), seedTiers);
 
   // 1. Write Olivia store (data plane) + adminStores (control plane) + categories
   //    + products + customers + orders. adminStores and stores are written in the
@@ -508,7 +604,7 @@ async function run() {
   console.log("[seed-dev] Escribiendo tienda, adminStores, categorías, productos, clientes, órdenes...");
   const batch = db.batch();
   batch.set(db.collection("adminStores").doc(STORE_ID), adminStore);
-  batch.set(db.collection("stores").doc(STORE_ID), storeWithMembership);
+  batch.set(db.collection("stores").doc(STORE_ID), storeToWrite);
   for (const c of categories) batch.set(db.collection("categories").doc(c.id), c);
   for (const p of products) batch.set(db.collection("products").doc(p.id), p);
   for (const cu of customers) batch.set(db.collection("customers").doc(cu.id), cu);
@@ -523,7 +619,12 @@ async function run() {
     ownerUid: adminUid,
     claimedAt: Date.now(),
   });
-  await db.collection("publicStores").doc(STORE_SLUG).set(projectPublicStore(storeWithMembership));
+  await db.collection("publicStores").doc(STORE_SLUG).set(projectPublicStore(storeToWrite));
+
+  // Product projections reuse seedTiers/seedDefaultTierId (defined before the
+  // batch): the SAME visible pricing config the publicStores doc advertises —
+  // hardcoded fixture tiers would let the store promise tiers whose prices the
+  // products never carry.
 
   // Project from the store's REAL catalog (read back AFTER the fixture upsert),
   // never from the fixture array alone: a seed run must not clobber the public
@@ -552,7 +653,7 @@ async function run() {
     categories: activeCats,
     products: published
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-      .map((p) => projectPublicProductSummary(p, STORE_SLUG)),
+      .map((p) => projectPublicProductSummary(p, STORE_SLUG, seedTiers, seedDefaultTierId)),
   });
 
   const detailBatch = db.batch();
@@ -562,7 +663,7 @@ async function run() {
     keepIds.add(`${STORE_ID}__${p.slug}`);
     detailBatch.set(
       db.collection("publicProducts").doc(`${STORE_ID}__${p.slug}`),
-      projectPublicProductDetail(p, STORE_SLUG, allCategories)
+      projectPublicProductDetail(p, STORE_SLUG, allCategories, seedTiers, seedDefaultTierId)
     );
   }
   // Prune stale detail docs (renamed/deleted products), like the app's
@@ -618,7 +719,7 @@ async function run() {
     await db
       .collection("publicProducts")
       .doc(`${STORE_ID}__${targetProduct.slug}`)
-      .set(projectPublicProductDetail(updatedProduct, STORE_SLUG, allCategories), { merge: true });
+      .set(projectPublicProductDetail(updatedProduct, STORE_SLUG, allCategories, seedTiers, seedDefaultTierId), { merge: true });
     // Rebuild the catalog summary so the grid picks up the image URL — from the
     // SAME read-back published list, never the fixture array (see step 2).
     const refreshedPublished = published.map((p) => (p.id === targetProduct.id ? updatedProduct : p));
@@ -628,7 +729,7 @@ async function run() {
       categories: activeCats,
       products: refreshedPublished
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-        .map((p) => projectPublicProductSummary(p, STORE_SLUG)),
+        .map((p) => projectPublicProductSummary(p, STORE_SLUG, seedTiers, seedDefaultTierId)),
     });
   }
 
