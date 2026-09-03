@@ -263,20 +263,26 @@ jobs:
               --token "$FIREBASE_TOKEN" --non-interactive
           done
       - name: Parity check (second pass must be a no-op)
-        # firebase-tools compares the computed ruleset against the last release.
-        # A second deploy that still RELEASES anything means the deployed
-        # ruleset is not the repo's (e.g. someone edited rules in the console
-        # in between) — exactly the drift this job exists to catch.
+        # This firebase-tools version prints "released rules …" even on a no-op
+        # deploy, so "released" is NOT a drift signal. The reliable one is the
+        # inverse: an actual change always UPLOADS ("uploading rules …"), while
+        # an up-to-date deploy prints "already up to date, skipping upload". If
+        # the second pass uploads anything, the first pass didn't stick (or
+        # something rewrote the release in between) — that's the drift we fail on.
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
           status=0
           for P in store-os-f7cf8 store-os-dev; do
+            code=0
             OUT="$(firebase deploy --only firestore:rules,storage --project "$P" \
-              --token "$FIREBASE_TOKEN" --non-interactive 2>&1)"
+              --token "$FIREBASE_TOKEN" --non-interactive 2>&1)" || code=$?
             echo "$OUT"
-            if grep -qi "released" <<<"$OUT"; then
-              echo "::error::$P no quedó en paridad con firestore.rules/storage.rules"
+            if [ "$code" -ne 0 ]; then
+              echo "::error::$P: parity pass failed (exit $code)"
+              status=1
+            elif grep -qi "uploading rules" <<<"$OUT"; then
+              echo "::error::$P: not in parity — the second pass still uploaded rules"
               status=1
             fi
           done
