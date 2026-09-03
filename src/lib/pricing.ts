@@ -144,7 +144,13 @@ export function calculateOrderPricing(
   // Regular keeps its identity when tiers are reordered. Legacy/custom stores
   // without the canonical id use the first usable visible tier defensively.
   const base = priced.find((entry) => entry.tier.id === REGULAR_TIER_ID) ?? priced[0];
-  const active = [...priced].reverse().find((entry) => entry.qualifies);
+  // The ACTIVE tier must carry its OWN price on every line: fallback prices may
+  // estimate a tier, but advertising "Precio Girly" while charging Iconic
+  // fallbacks would mislead. A minPieces-only tier qualifies without prices, so
+  // the own-price guard lives HERE, not in tierQualifies.
+  const active = [...priced].reverse()
+    .find((entry) => entry.qualifies && lines.every((l) => Number.isFinite(l.unitPrices[entry.tier.id])))
+    ?? base;
   // The aspirational goal is the deepest VISIBLE tier — it must stay on screen
   // even when some lines only have a fallback estimate for it.
   const aspirational = priced.find((entry) => entry.tier.id === ordered[ordered.length - 1]?.id)
