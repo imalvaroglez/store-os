@@ -202,18 +202,18 @@ export function stripUndefined(value: unknown): unknown {
 }
 
 export function projectAdminStore(store: { id: string } & Record<string, unknown>) {
-  return {
-    storeId: store.id,
-    name: store.name,
-    slug: store.slug,
-    type: store.type,
-    ownerUid: store.ownerUid,
-    memberUids: store.memberUids,
-    pendingInvites: store.pendingInvites ?? [],
-    createdAt: store.createdAt,
-    updatedAt: store.updatedAt,
-    retainedPrivacyRequestCount: store.retainedPrivacyRequestCount ?? 0,
-  };
+  const out: Record<string, unknown> = { storeId: store.id };
+  for (const key of ["name", "slug", "type", "ownerUid", "memberUids", "createdAt", "updatedAt"] as const) {
+    if (store[key] !== undefined) out[key] = store[key];
+  }
+  // Defaults only when the caller passed membership (a full store object):
+  // updateStore persists PATCHES now, and a partial patch must never reset the
+  // control doc's invites or counters (Firestore merge keeps the stored values).
+  if (store.pendingInvites !== undefined) out.pendingInvites = store.pendingInvites;
+  else if (store.memberUids !== undefined) out.pendingInvites = [];
+  if (store.retainedPrivacyRequestCount !== undefined) out.retainedPrivacyRequestCount = store.retainedPrivacyRequestCount;
+  else if (store.memberUids !== undefined) out.retainedPrivacyRequestCount = 0;
+  return out;
 }
 
 /** Upsert a single entity doc. */
