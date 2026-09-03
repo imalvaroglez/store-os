@@ -470,6 +470,19 @@ async function run() {
     memberUids: [adminUid],
   };
 
+  // Preserve owner-customized business fields on re-runs: the fixture defines
+  // them only when CREATING the store. Blindly re-writing the whole doc is how
+  // a seed run erased the owner's WhatsApp, tier rules and storefront.
+  const existingStoreSnap = await db.collection("stores").doc(STORE_ID).get();
+  const existingStore = existingStoreSnap.exists ? existingStoreSnap.data() : null;
+  const OWNER_OWNED_FIELDS = ["whatsappPhone", "priceTiers", "defaultTierId", "storefront", "pricingRule"];
+  const storeToWrite = { ...storeWithMembership };
+  if (existingStore) {
+    for (const field of OWNER_OWNED_FIELDS) {
+      if (existingStore[field] !== undefined) storeToWrite[field] = existingStore[field];
+    }
+  }
+
   // Keep the known dev operator's profile aligned with the Auth account and
   // the rules allowlist. Admin SDK is safe here because the script is guarded
   // above to the isolated store-os-dev project.
@@ -508,7 +521,7 @@ async function run() {
   console.log("[seed-dev] Escribiendo tienda, adminStores, categorías, productos, clientes, órdenes...");
   const batch = db.batch();
   batch.set(db.collection("adminStores").doc(STORE_ID), adminStore);
-  batch.set(db.collection("stores").doc(STORE_ID), storeWithMembership);
+  batch.set(db.collection("stores").doc(STORE_ID), storeToWrite);
   for (const c of categories) batch.set(db.collection("categories").doc(c.id), c);
   for (const p of products) batch.set(db.collection("products").doc(p.id), p);
   for (const cu of customers) batch.set(db.collection("customers").doc(cu.id), cu);
@@ -523,7 +536,7 @@ async function run() {
     ownerUid: adminUid,
     claimedAt: Date.now(),
   });
-  await db.collection("publicStores").doc(STORE_SLUG).set(projectPublicStore(storeWithMembership));
+  await db.collection("publicStores").doc(STORE_SLUG).set(projectPublicStore(storeToWrite));
 
   // Project from the store's REAL catalog (read back AFTER the fixture upsert),
   // never from the fixture array alone: a seed run must not clobber the public
