@@ -193,4 +193,17 @@ describe("buildCartOrderUrl — pedido de varias líneas", () => {
     expect(text).toContain("Soy Mar.");
     expect(text.match(/Soy Mar/g)).toHaveLength(1);
   });
+
+  it("un intro que menciona el nombre como saludo no suprime la línea de identidad", () => {
+    // "Hola, Mar:" contiene "Mar" como substring — antes se comía el "Soy Mar."
+    const url = buildCartOrderUrl(
+      { whatsappPhone: "5215512345678", storefront: { whatsappBuyIntro: "Hola, Mar: qué gusto" } },
+      "olivia",
+      cartLines,
+      undefined,
+      "Mar"
+    );
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Soy Mar.");
+  });
 });

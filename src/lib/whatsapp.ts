@@ -115,7 +115,10 @@ export function buildCartOrderUrl(
   const body = lines
     .map((l) => `• ${l.qty}× ${l.name} (${l.sku})${l.inquire ? " — sobre pedido" : ""}`)
     .join("\n");
-  const who = name && !intro.includes(name) ? `\nSoy ${name}.` : "";
+  // Suppress the identity line only when the intro already carries OUR exact
+  // identity phrase ("…soy {name},…") — a bare substring match would let an
+  // intro like "Hola, Mar:" swallow the visitor's name.
+  const who = name && !intro.includes(`soy ${name},`) ? `\nSoy ${name}.` : "";
   const summary = pricing
     ? `\nTotal de piezas: ${pricing.totalQuantity}\nPrecio aplicable: ${pricing.activeTier.tier.label}\nSubtotal estimado: ${formatMoney(pricing.estimatedSubtotal)} MXN\nEnvío no incluido.\nPrecio y existencia por confirmar por WhatsApp.`
     : "";
