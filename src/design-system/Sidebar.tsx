@@ -9,11 +9,13 @@ export function Sidebar({
   active,
   storeType,
   onOpenSettings,
+  onOpenStoreSettings,
   onChangeStore,
 }: {
   active: Tab;
   storeType: StoreType;
   onOpenSettings: () => void;
+  onOpenStoreSettings?: () => void;
   onChangeStore?: () => void;
 }) {
   const tabs = visibleNavItems(storeType);
@@ -111,6 +113,18 @@ export function Sidebar({
       </nav>
 
       <div className="p-3 border-t border-edge/60">
+        {onOpenStoreSettings && (
+          <button
+            onClick={onOpenStoreSettings}
+            className={`w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold transition-colors ${
+              active === "tienda"
+                ? "bg-terracotta text-on-accent"
+                : "text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
+            }`}
+          >
+            Tienda
+          </button>
+        )}
         <button
           onClick={onOpenSettings}
           className="w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold text-on-surface-soft hover:bg-surface-2 hover:text-on-surface transition-colors"

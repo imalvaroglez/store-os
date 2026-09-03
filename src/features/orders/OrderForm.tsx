@@ -292,6 +292,7 @@ export function OrderForm({
                 />
                 <TextField
                   label="Precio unitario"
+                  hint="Puedes ajustarlo para este pedido."
                   type="text"
                   inputMode="decimal"
                   pattern="[0-9]*[.]?[0-9]*"
@@ -305,6 +306,7 @@ export function OrderForm({
                   <div className="col-span-2 md:col-span-1">
                     <SelectField
                       label="Nivel de precio"
+                      hint="Se guarda en este pedido y no cambia el catálogo."
                       value={line.priceTier ?? defaultPriceTier ?? ""}
                       onChange={(value) => changeTier(line, value)}
                       options={tiers.map((tier) => ({ value: tier.id, label: tier.label }))}
