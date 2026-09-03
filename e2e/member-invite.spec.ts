@@ -17,7 +17,7 @@ test("invite by email reconciles on the invitee's login", async ({ browser }) =>
   const pageA = await ctxA.newPage();
   await loginAsFirstAdmin(pageA);
 
-  // Invite B from the store settings sheet (picker → Administrar Santi).
+  // Invite B from the store management view (picker → Administrar Santi).
   await pageA.getByRole("button", { name: /Cambiar tienda/ }).first().click();
   await expect(pageA.getByText("¿Quién opera hoy?")).toBeVisible({ timeout: 15_000 });
   await pageA.getByRole("button", { name: "Administrar Santi" }).click();

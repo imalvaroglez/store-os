@@ -4,7 +4,7 @@ import { useAuth } from "../../app/firebase/AuthProvider";
 import { findAccountByEmail, type EmailAccount } from "../../app/firebase/auth";
 import { Button, TextField, SelectField, Dialog, Sheet, useToast } from "../../design-system";
 import { STORE_TYPE_LABELS } from "../../lib/labels";
-import { SlugTakenError } from "../../app/firebase/firestoreData";
+import { PublicCatalogProjectionError, SlugTakenError } from "../../app/firebase/firestoreData";
 import { createWhatsAppShareCatalogUrl } from "../../lib/whatsapp";
 import { slugify } from "../../lib/catalog";
 import { StorefrontEditor } from "../catalog/StorefrontEditor";
@@ -18,14 +18,15 @@ import { productsForStore } from "../../lib/selectors";
 import { SuppliersScreen } from "../inventory/SuppliersScreen";
 import type { StoreType } from "../../types";
 
-// Full management for a single store: rename, change type, WhatsApp, members
-// (invite by email / remove), and delete. Shown from the picker or active store.
+// Full management for the active store: rename, change type, WhatsApp, members
+// (invite by email / remove), and delete. Public-site and supplier editors stay
+// as nested sheets because they are focused sub-editors.
 export function StoreSettingsScreen({
   storeId,
-  onDone,
+  onDeleted,
 }: {
   storeId: string;
-  onDone: () => void;
+  onDeleted?: () => void;
 }) {
   const { state, updateStore, deleteStore, inviteMember, removeMember, transferStoreOwnership, republishCatalog } = useStore();
   const { user } = useAuth();
@@ -77,8 +78,12 @@ export function StoreSettingsScreen({
     try {
       await republishCatalog(store!.id);
       setCatalogMsg("Catálogo publicado. Visible en /catalogo/" + store!.slug);
-    } catch {
-      setCatalogMsg("No se pudo publicar. Intenta de nuevo.");
+    } catch (error) {
+      setCatalogMsg(
+        error instanceof PublicCatalogProjectionError
+          ? "No se pudo actualizar el catálogo público. La configuración privada no cambió. Revisa los permisos de Firestore."
+          : "No se pudo publicar. Intenta de nuevo."
+      );
     } finally {
       setCatalogBusy(false);
     }
@@ -116,14 +121,28 @@ export function StoreSettingsScreen({
     if (slugify(newName) !== store!.slug) patch.slug = slugify(newName);
     try {
       await updateStore(patch);
-      onDone();
     } catch (err) {
-      setSaveError(err instanceof SlugTakenError ? err.message : "No se pudo guardar. Intenta de nuevo.");
+      setSaveError(
+        err instanceof SlugTakenError
+          ? err.message
+          : err instanceof PublicCatalogProjectionError
+            ? "La tienda se guardó, pero no se pudo actualizar el catálogo público. Revisa los permisos de Firestore."
+            : "No se pudo guardar. Intenta de nuevo."
+      );
     }
   }
 
-  function changeType(type: StoreType) {
-    void updateStore({ id: store!.id, type });
+  async function changeType(type: StoreType) {
+    setSaveError(null);
+    try {
+      await updateStore({ id: store!.id, type });
+    } catch (error) {
+      setSaveError(
+        error instanceof PublicCatalogProjectionError
+          ? "El tipo de tienda se guardó, pero no se pudo actualizar el catálogo público. Revisa los permisos de Firestore."
+          : "No se pudo guardar. Intenta de nuevo."
+      );
+    }
   }
 
   // Save the SKU prefix. If the store already has products, changing the prefix
@@ -135,8 +154,16 @@ export function StoreSettingsScreen({
       return;
     }
     setConfirmSkuPrefix(false);
-    await updateStore({ id: store!.id, skuPrefix: skuPrefix.trim() || undefined });
-    toast.success("Prefijo de SKU guardado");
+    try {
+      await updateStore({ id: store!.id, skuPrefix: skuPrefix.trim() || undefined });
+      toast.success("Prefijo de SKU guardado");
+    } catch (error) {
+      toast.error(
+        error instanceof PublicCatalogProjectionError
+          ? "El prefijo se guardó, pero no se pudo actualizar el catálogo público."
+          : "No se pudo guardar el prefijo. Intenta de nuevo."
+      );
+    }
   }
 
   // Save the tier editor. Blocks: zero visible tiers, or a default tier that is
@@ -173,8 +200,12 @@ export function StoreSettingsScreen({
           : { pricingRule: undefined }),
       });
       toast.success("Niveles de precio guardados");
-    } catch {
-      setTierError("No se pudo guardar (¿catálogo público?). Vuelve a intentar o usa \"Republicar catálogo\".");
+    } catch (error) {
+      setTierError(
+        error instanceof PublicCatalogProjectionError
+          ? "Los niveles se guardaron, pero no se pudo actualizar el catálogo público. Revisa los permisos de Firestore y vuelve a publicar."
+          : "No se pudo guardar. Intenta de nuevo."
+      );
     }
   }
 
@@ -245,7 +276,7 @@ export function StoreSettingsScreen({
         <SelectField
           label="Tipo de tienda"
           value={store.type}
-          onChange={(t) => changeType(t as StoreType)}
+          onChange={(t) => void changeType(t as StoreType)}
           options={[
             { value: "on_demand" as StoreType, label: STORE_TYPE_LABELS.on_demand },
             { value: "inventory_tiered" as StoreType, label: STORE_TYPE_LABELS.inventory_tiered },
@@ -507,7 +538,7 @@ export function StoreSettingsScreen({
         footer={
           <>
             <Button variant="ghost" onClick={() => setConfirmDelete(false)}>Cancelar</Button>
-            <Button variant="danger" onClick={() => { deleteStore(store!.id); onDone(); }}>Eliminar</Button>
+            <Button variant="danger" onClick={() => { deleteStore(store!.id); onDeleted?.(); }}>Eliminar</Button>
           </>
         }
       >

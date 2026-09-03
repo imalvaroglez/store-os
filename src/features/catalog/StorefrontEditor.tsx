@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
+import { PublicCatalogProjectionError } from "../../app/firebase/firestoreData";
 import {
   Button,
   TextField,
@@ -45,8 +46,12 @@ export function StorefrontEditor({
       await updateStore({ id: store.id, storefront: sf });
       toast.success("Sitio público actualizado");
       onDone();
-    } catch {
-      toast.error("No se pudo guardar. Intenta de nuevo.");
+    } catch (error) {
+      toast.error(
+        error instanceof PublicCatalogProjectionError
+          ? "El sitio se guardó, pero no se pudo actualizar el catálogo público. Revisa los permisos de Firestore."
+          : "No se pudo guardar. Intenta de nuevo."
+      );
     } finally {
       setBusy(false);
     }

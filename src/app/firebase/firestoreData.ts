@@ -19,6 +19,17 @@ import type { AppState, Store, Product, Customer, Order, Category, Supplier, Pur
 import { publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
+/** Private writes may succeed before this public projection is denied/fails. */
+export class PublicCatalogProjectionError extends Error {
+  readonly originalError?: unknown;
+
+  constructor(cause?: unknown) {
+    super("No se pudo actualizar el catálogo público.");
+    this.name = "PublicCatalogProjectionError";
+    this.originalError = cause;
+  }
+}
+
 // Cloud data adapter. The cloud analog of lib/storage.ts: the StoreProvider talks
 // to this when signed in. Reads are scoped to the user (super_admin sees all
 // stores; a member sees only stores whose memberUids include them). Writes go to

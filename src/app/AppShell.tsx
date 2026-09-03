@@ -11,6 +11,9 @@ import {
   IconButton,
   ThemePicker,
   CommandPalette,
+  EmptyState,
+  Screen,
+  ScreenHeader,
   type CommandGroup,
   type Tab,
 } from "../design-system";
@@ -36,16 +39,18 @@ export function AppShell() {
   const { user, enabled: authEnabled, signOut } = useAuth();
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [storeSettingsOpen, setStoreSettingsOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
 
   const seg = route.name === "admin" ? route.params.tab ?? "" : "";
   const sub = route.name === "admin" ? route.params.sub ?? "" : "";
+  const storeSettingsRoute = seg === "tienda" && sub === "configuracion";
   // The productos parent renders the list by default and resolves to a child
   // tab when a sub-route is present (/productos/categorias). Legacy
   // /catalogo-admin and /inventario URLs never reach here (router redirects).
   let tab: Tab;
-  if (seg === "productos") {
+  if (storeSettingsRoute) {
+    tab = "tienda";
+  } else if (seg === "productos") {
     tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : "productos";
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
@@ -64,6 +69,20 @@ export function AppShell() {
   }, []);
 
   if (!activeStore) return null;
+
+  const canManageStore = user?.role === "super_admin" || activeStore.ownerUid === user?.uid;
+
+  if (storeSettingsRoute && !canManageStore) {
+    return (
+      <Screen>
+        <EmptyState
+          title="No tienes permiso"
+          subtitle="Solo la persona dueña o la administración pueden administrar esta tienda."
+          action={<Button variant="secondary" onClick={() => navigate("/")}>Volver al inicio</Button>}
+        />
+      </Screen>
+    );
+  }
 
   const commands: CommandGroup[] = [
     {
@@ -95,6 +114,20 @@ export function AppShell() {
     case "clientes":
       screen = <CustomersScreen />;
       break;
+    case "tienda":
+      screen = (
+        <Screen>
+          <ScreenHeader
+            title="Administrar tienda"
+            subtitle={activeStore.name}
+            action={<Button variant="ghost" onClick={() => navigate("/")}>← Inicio</Button>}
+          />
+          <div className="mx-auto max-w-5xl">
+            <StoreSettingsScreen storeId={activeStore.id} onDeleted={() => navigate("/")} />
+          </div>
+        </Screen>
+      );
+      break;
     default:
       screen = <HomeScreen />;
   }
@@ -106,6 +139,7 @@ export function AppShell() {
         active={tab}
         storeType={activeStore.type}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenStoreSettings={canManageStore ? () => navigate("/tienda/configuracion") : undefined}
         onChangeStore={user ? () => setActiveStore(null) : undefined}
       />
 
@@ -117,14 +151,21 @@ export function AppShell() {
           style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
         >
           <StoreSwitcher />
-          <IconButton
-            variant="ghost"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Opciones"
-            className="text-xl"
-          >
-            ⚙️
-          </IconButton>
+          <div className="flex items-center gap-2">
+            {canManageStore && (
+              <Button variant="ghost" size="sm" onClick={() => navigate("/tienda/configuracion")}>
+                Tienda
+              </Button>
+            )}
+            <IconButton
+              variant="ghost"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Opciones"
+              className="text-xl"
+            >
+              ⚙️
+            </IconButton>
+          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto pb-24 md:pb-8">{screen}</main>
@@ -161,34 +202,7 @@ export function AppShell() {
             </div>
           )}
 
-          {(user?.role === "super_admin" || activeStore.ownerUid === user?.uid) && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Tienda</h3>
-              <Button
-                variant="secondary"
-                full
-                onClick={() => {
-                  setSettingsOpen(false);
-                  setStoreSettingsOpen(true);
-                }}
-              >
-                Administrar tienda
-              </Button>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Datos</h3>
-            <p className="text-sm text-ink-soft">Tus datos viven en la nube y se sincronizan entre dispositivos.</p>
-          </div>
         </div>
-      </Sheet>
-
-      <Sheet open={storeSettingsOpen} onClose={() => setStoreSettingsOpen(false)} title="Administrar tienda">
-        <StoreSettingsScreen
-          storeId={activeStore.id}
-          onDone={() => setStoreSettingsOpen(false)}
-        />
       </Sheet>
 
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} />

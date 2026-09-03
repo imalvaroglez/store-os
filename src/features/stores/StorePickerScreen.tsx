@@ -3,8 +3,8 @@ import { useStore } from "../../app/StoreProvider";
 import { useAuth } from "../../app/firebase/AuthProvider";
 import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { Button, Card, IconButton, ScreenHeader, Sheet } from "../../design-system";
+import { navigate } from "../../lib/router";
 import { StoreForm } from "./StoreForm";
-import { StoreSettingsScreen } from "./StoreSettingsScreen";
 
 // "¿Quién opera hoy?" — Netflix-style store picker (compact list layout).
 // Shown right after sign-in when there's no active store. Also reachable via
@@ -13,7 +13,6 @@ export function StorePickerScreen() {
   const { state, setActiveStore } = useStore();
   const { user } = useAuth();
   const [creating, setCreating] = useState(false);
-  const [managing, setManaging] = useState<string | null>(null);
 
   return (
     <div className="min-h-full">
@@ -44,7 +43,10 @@ export function StorePickerScreen() {
                 <IconButton
                   variant="ghost"
                   aria-label={`Administrar ${s.name}`}
-                  onClick={() => setManaging(s.id)}
+                  onClick={() => {
+                    setActiveStore(s.id);
+                    navigate("/tienda/configuracion");
+                  }}
                 >
                   ⚙
                 </IconButton>
@@ -69,11 +71,6 @@ export function StorePickerScreen() {
         <StoreForm onDone={() => setCreating(false)} />
       </Sheet>
 
-      {managing && (
-        <Sheet open onClose={() => setManaging(null)} title="Administrar tienda">
-          <StoreSettingsScreen storeId={managing} onDone={() => setManaging(null)} />
-        </Sheet>
-      )}
     </div>
   );
 }
