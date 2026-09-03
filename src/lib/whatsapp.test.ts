@@ -173,4 +173,24 @@ describe("buildCartOrderUrl — pedido de varias líneas", () => {
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Hola, quiero hacer un pedido:");
   });
+
+  it("incluye el nombre de la clienta en el intro por defecto", () => {
+    const url = buildCartOrderUrl(
+      { whatsappPhone: "5215512345678", storefront: { whatsappBuyIntro: "" } },
+      "olivia",
+      cartLines,
+      undefined,
+      "Mar"
+    );
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Hola, soy Mar, quiero hacer un pedido:");
+  });
+
+  it("con intro editable, el nombre viaja como línea propia sin duplicarse", () => {
+    const url = buildCartOrderUrl(sfStore, "olivia", cartLines, undefined, "Mar");
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Hola, me interesa esta pieza:"); // intro editable intacto
+    expect(text).toContain("Soy Mar.");
+    expect(text.match(/Soy Mar/g)).toHaveLength(1);
+  });
 });

@@ -1,4 +1,5 @@
-import { Button, EmptyState, IconButton, ProductImage, Sheet } from "../../design-system";
+import { useState } from "react";
+import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
 import { formatMoney, publicPrice } from "../../lib/money";
 import { buildCartOrderUrl, type CartOrderLine } from "../../lib/whatsapp";
@@ -6,7 +7,7 @@ import {
   calculateOrderPricing,
   type CartQtyLine,
 } from "../../lib/pricing";
-import { pruneCartLines, type CartLine } from "../../lib/cart";
+import { loadCartName, pruneCartLines, saveCartName, type CartLine } from "../../lib/cart";
 
 // Public cart drawer. Informative only: minimums are shown as invitations,
 // never enforced — the owner confirms prices and qualification in the chat.
@@ -178,6 +179,7 @@ export function CartDrawer({
   onRemove: (productSlug: string) => void;
 }) {
   const shown = visibleSlugs ? pruneCartLines(lines, visibleSlugs) : lines;
+  const [customerName, setCustomerName] = useState(() => loadCartName(store.slug));
 
   const tiers: PublicPriceTier[] = store.priceTiers ?? [];
   const qtyLines: CartQtyLine[] = shown.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
@@ -340,7 +342,16 @@ export function CartDrawer({
               </div>
             )}
 
-            <a href={buildCartOrderUrl(store, store.slug, orderLines, pricing)} target="_blank" rel="noreferrer">
+            <TextField
+              label="Tu nombre"
+              placeholder="Para que sepa quién pide"
+              value={customerName}
+              onChange={(event) => {
+                setCustomerName(event.target.value);
+                saveCartName(store.slug, event.target.value);
+              }}
+            />
+            <a href={buildCartOrderUrl(store, store.slug, orderLines, pricing, customerName)} target="_blank" rel="noreferrer">
               <Button full size="lg" variant="primary" className="bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90">
                 Enviar pedido por WhatsApp
               </Button>
