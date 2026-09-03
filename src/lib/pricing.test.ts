@@ -184,6 +184,21 @@ describe("calculateOrderPricing — resumen canónico del pedido", () => {
     expect(pricing.estimatedSubtotal).toBe(140);
   });
 
+  it("un tier sin precios propios nunca es el activo aunque califique por piezas", () => {
+    // 5 piezas de una pieza con Regular+Iconic pero SIN Girly: Girly califica
+    // por minPieces (las reglas no exigen precios sin minAmount), pero anunciar
+    // "Precio Girly" cobrando el fallback Iconic engañaría — el activo es Regular.
+    const pricing = calculateOrderPricing(cartTiers, [
+      { qty: 5, unitPrices: { t_retail: 140, t_iconic: 100 } },
+    ])!;
+    expect(pricing.activeTier.tier.id).toBe("t_retail");
+    expect(pricing.estimatedSubtotal).toBe(700); // 5 × Regular, sin fallback
+    // Girly sigue en pantalla como entrada estimada (fallback Iconic).
+    const girly = pricing.tiers.find((entry) => entry.tier.id === "t_girly")!;
+    expect(girly.qualifies).toBe(true);
+    expect(girly.subtotal).toBe(500); // 5 × 100 (estimación con fallback)
+  });
+
   it("carrito mixto que cruza el mínimo Iconic sigue mostrando subtotal y ahorro", () => {
     // El escenario reportado: varias piezas superan el umbral pero alguna
     // pieza no carga precio Iconic — antes todo el bloque se evaporaba.
