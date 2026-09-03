@@ -230,6 +230,58 @@ jobs:
           echo "Deployed to: $URL"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
+  # ───────────────────── deploy-rules (anti-drift) ─────────────────────
+  # Born from the 2026-08-11 incident: prod ran three-week-old Firestore rules
+  # while the repo evolved (rules deploys were a manual DEPLOYMENT.md step and
+  # nothing compared deployed vs repo), surfacing as silently-denied
+  # public-catalog writes. This job is now the ONLY regular path to a rules
+  # deployment: every push to main ships firestore.rules + storage.rules to
+  # BOTH backends, then verifies parity with a second no-op pass.
+  deploy-rules:
+    needs: [env-select, build-test, rules-and-e2e, deploy]
+    # Main only, after the frontend deploy. Dev is a shared backend for all
+    # previews, so per-PR rule deploys would mutate it mid-review for other
+    # testers; PR rules are already validated against the EMULATOR in
+    # rules-and-e2e.
+    if: github.event_name == 'push' && github.ref_name == 'main' && needs.env-select.outputs.app-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Firebase CLI
+        run: npm i -g firebase-tools
+      - name: Deploy rules (prod + dev)
+        # FIREBASE_TOKEN: repo-level secret created with `firebase login:ci`
+        # (repo Settings → Secrets and variables → Actions).
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          for P in store-os-f7cf8 store-os-dev; do
+            echo "── deploying firestore+storage rules → $P"
+            firebase deploy --only firestore:rules,storage --project "$P" \
+              --token "$FIREBASE_TOKEN" --non-interactive
+          done
+      - name: Parity check (second pass must be a no-op)
+        # firebase-tools compares the computed ruleset against the last release.
+        # A second deploy that still RELEASES anything means the deployed
+        # ruleset is not the repo's (e.g. someone edited rules in the console
+        # in between) — exactly the drift this job exists to catch.
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          status=0
+          for P in store-os-f7cf8 store-os-dev; do
+            OUT="$(firebase deploy --only firestore:rules,storage --project "$P" \
+              --token "$FIREBASE_TOKEN" --non-interactive 2>&1)"
+            echo "$OUT"
+            if grep -qi "released" <<<"$OUT"; then
+              echo "::error::$P no quedó en paridad con firestore.rules/storage.rules"
+              status=1
+            fi
+          done
+          exit $status
+
   # Post the preview URL as a comment on the PR (preview only). CLI deploys
   # don't generate branch-alias URLs like the Git integration does, so we
   # surface the deployment URL manually.
