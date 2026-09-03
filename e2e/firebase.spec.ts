@@ -45,7 +45,7 @@ test("first signup becomes super_admin and test fixtures stay in the emulator", 
   await openSettings(page);
   await expect(page.getByText(/administrador/)).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Tema", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Cerrar" }).click();
+  await page.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByRole("button", { name: "Tienda", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Administrar tienda" })).toBeVisible();
   await gotoClean(page);
