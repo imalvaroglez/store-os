@@ -226,15 +226,24 @@ function projectPublicStore(s) {
   };
 }
 
-function publicPrices(product) {
+function publicPrices(product, tiers) {
   if (!product.prices) return undefined;
-  const entries = oliviaPriceTiers
+  const entries = tiers
     .map((tier) => [tier.id, product.prices[tier.id]])
     .filter(([, price]) => typeof price === "number");
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function projectPublicProductSummary(product, storeSlug) {
+// Mirrors publicPrice() in src/lib/money.ts: flat price → store's default tier
+// → legacy retail. Never the cheapest tier — that could leak a private price.
+function resolvedPublicPrice(product, defaultTierId) {
+  if (typeof product.price === "number") return product.price;
+  if (defaultTierId && typeof product.prices?.[defaultTierId] === "number") return product.prices[defaultTierId];
+  if (typeof product.prices?.retail === "number") return product.prices.retail;
+  return undefined;
+}
+
+function projectPublicProductSummary(product, storeSlug, tiers, defaultTierId) {
   const summary = {
     storeSlug,
     storeId: product.storeId,
@@ -249,14 +258,14 @@ function projectPublicProductSummary(product, storeSlug) {
     categoryIds: product.categoryIds ?? [],
     sortOrder: product.sortOrder ?? 0,
   };
-  const resolved = typeof product.price === "number" ? product.price : product.prices?.t_retail;
+  const resolved = resolvedPublicPrice(product, defaultTierId);
   if (typeof resolved === "number") summary.price = resolved;
-  const prices = publicPrices(product);
+  const prices = publicPrices(product, tiers);
   if (prices) summary.prices = prices;
   return summary;
 }
 
-function projectPublicProductDetail(product, storeSlug, cats) {
+function projectPublicProductDetail(product, storeSlug, cats, tiers, defaultTierId) {
   const named = (product.categoryIds ?? [])
     .map((id) => cats.find((c) => c.id === id))
     .filter((c) => !!c)
@@ -285,9 +294,9 @@ function projectPublicProductDetail(product, storeSlug, cats) {
     isNew: product.isNew ?? false,
     categories: named,
   };
-  const resolved = typeof product.price === "number" ? product.price : product.prices?.t_retail;
+  const resolved = resolvedPublicPrice(product, defaultTierId);
   if (typeof resolved === "number") detail.price = resolved;
-  const prices = publicPrices(product);
+  const prices = publicPrices(product, tiers);
   if (prices) detail.prices = prices;
   return detail;
 }
@@ -380,6 +389,15 @@ function runSelfTest() {
     assert.strictEqual(s.storeId, "s1");
     assert.strictEqual(s.slug, "o");
     assert.ok(!("cost" in s) && !("memberUids" in s));
+  });
+
+  it("projectPublicProductSummary prices follow the PASSED tier config", () => {
+    const product = { prices: { t_retail: 100, t_custom: 80, t_hidden_from_store: 1 } };
+    const summary = projectPublicProductSummary(product, "o",
+      [{ id: "t_retail", label: "Regular", order: 0 }, { id: "t_custom", label: "Amiga", order: 1 }],
+      "t_custom");
+    assert.deepStrictEqual(summary.prices, { t_retail: 100, t_custom: 80 });
+    assert.strictEqual(summary.price, 80); // the store's default tier, not hardcoded t_retail
   });
 
   if (exitCode !== 0) {
@@ -538,6 +556,12 @@ async function run() {
   });
   await db.collection("publicStores").doc(STORE_SLUG).set(projectPublicStore(storeToWrite));
 
+  // Product projections use the SAME (possibly owner-preserved) pricing config
+  // the publicStores doc advertises — hardcoded fixture tiers would let the
+  // store promise tiers whose prices the products never carry.
+  const seedTiers = storeToWrite.priceTiers ?? oliviaPriceTiers;
+  const seedDefaultTierId = storeToWrite.defaultTierId ?? seedTiers[0]?.id;
+
   // Project from the store's REAL catalog (read back AFTER the fixture upsert),
   // never from the fixture array alone: a seed run must not clobber the public
   // projection of products that already exist in dev (the owner's imported
@@ -565,7 +589,7 @@ async function run() {
     categories: activeCats,
     products: published
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-      .map((p) => projectPublicProductSummary(p, STORE_SLUG)),
+      .map((p) => projectPublicProductSummary(p, STORE_SLUG, seedTiers, seedDefaultTierId)),
   });
 
   const detailBatch = db.batch();
@@ -575,7 +599,7 @@ async function run() {
     keepIds.add(`${STORE_ID}__${p.slug}`);
     detailBatch.set(
       db.collection("publicProducts").doc(`${STORE_ID}__${p.slug}`),
-      projectPublicProductDetail(p, STORE_SLUG, allCategories)
+      projectPublicProductDetail(p, STORE_SLUG, allCategories, seedTiers, seedDefaultTierId)
     );
   }
   // Prune stale detail docs (renamed/deleted products), like the app's
@@ -631,7 +655,7 @@ async function run() {
     await db
       .collection("publicProducts")
       .doc(`${STORE_ID}__${targetProduct.slug}`)
-      .set(projectPublicProductDetail(updatedProduct, STORE_SLUG, allCategories), { merge: true });
+      .set(projectPublicProductDetail(updatedProduct, STORE_SLUG, allCategories, seedTiers, seedDefaultTierId), { merge: true });
     // Rebuild the catalog summary so the grid picks up the image URL — from the
     // SAME read-back published list, never the fixture array (see step 2).
     const refreshedPublished = published.map((p) => (p.id === targetProduct.id ? updatedProduct : p));
@@ -641,7 +665,7 @@ async function run() {
       categories: activeCats,
       products: refreshedPublished
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-        .map((p) => projectPublicProductSummary(p, STORE_SLUG)),
+        .map((p) => projectPublicProductSummary(p, STORE_SLUG, seedTiers, seedDefaultTierId)),
     });
   }
 
