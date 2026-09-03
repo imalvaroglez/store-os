@@ -43,6 +43,7 @@ import {
   saveOrderWithStockTx,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
+  stripUndefined,
 } from "./firebase/firestoreData";
 import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 import { isFirebaseConfigured } from "./firebase/config";
@@ -358,7 +359,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // half-renamed.
         await claimSlug(store.slug, store.id);
       }
-      await persistEntity("stores", store);
+      // Persist ONLY the patch. A full-object write replays every field of the
+      // LOCAL state, so a stale tab could clobber remote edits field by field
+      // (the 2026-08 whatsapp + storefront overwrite). Merged `store` above is
+      // still what drives claimSlug, the dispatch and the public projection;
+      // demo mode is unaffected (the reducer owns localStorage).
+      const persisted = stripUndefined({ ...patch, updatedAt: nowIso() }) as { id: string } & Record<string, unknown>;
+      await persistEntity("stores", persisted);
       // Cloud state follows the private write. This prevents a rejected write
       // from leaving the UI ahead of Firestore; a later public projection error
       // still leaves the private store visible so the user can repair publishing.

@@ -417,6 +417,20 @@ describe("projectAdminStore control-plane projection (G-P02)", () => {
     expect(out.pendingInvites).toEqual([]);
   });
 
+  it("partial patch input emits only present keys — never resets defaults", () => {
+    // updateStore persists patches (anti last-writer-wins): the control-plane
+    // projection must not re-seed pendingInvites/retainedPrivacyRequestCount
+    // from a patch that doesn't carry them.
+    const out = projectAdminStore({ id: "s1", name: "Olivia", updatedAt: "t2" }) as Record<string, unknown>;
+    expect(out).toEqual({ storeId: "s1", name: "Olivia", updatedAt: "t2" });
+  });
+
+  it("membership-carrying patch still seeds the control defaults", () => {
+    const out = projectAdminStore({ id: "s1", memberUids: ["u1"], updatedAt: "t" }) as Record<string, unknown>;
+    expect(out.pendingInvites).toEqual([]);
+    expect(out.retainedPrivacyRequestCount).toBe(0);
+  });
+
   it("adding a private field to the source does not change the control output", () => {
     const base = {
       id: "s1",
