@@ -39,6 +39,25 @@ export function cartItemFromPublicProduct(product: PublicCartItemSource): Omit<C
 
 const SCHEMA_VERSION = 1;
 const key = (slug: string) => `store-os:cart:${slug}`;
+const nameKey = (slug: string) => `store-os:cart-name:${slug}`;
+
+/** Visitor's name for the WhatsApp order, persisted next to the cart. */
+export function loadCartName(slug: string): string {
+  try {
+    return localStorage.getItem(nameKey(slug)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveCartName(slug: string, name: string): void {
+  try {
+    if (name.trim()) localStorage.setItem(nameKey(slug), name.trim());
+    else localStorage.removeItem(nameKey(slug));
+  } catch {
+    /* storage unavailable: the name just won't persist */
+  }
+}
 
 export function loadCart(slug: string): CartLine[] {
   try {
