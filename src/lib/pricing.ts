@@ -53,6 +53,9 @@ export type CalculatedCartTier = {
   tier: PriceTierDef;
   subtotal: number;
   qualifies: boolean;
+  /** Every line carries THIS tier's own price (no fallback) — the honest
+   *  precondition for advertising the tier as active/unlocked. */
+  hasOwnPrices: boolean;
   piecesRemaining: number;
   amountRemaining: number;
   savingsVsBase: number;
@@ -144,13 +147,16 @@ export function calculateOrderPricing(
   // Regular keeps its identity when tiers are reordered. Legacy/custom stores
   // without the canonical id use the first usable visible tier defensively.
   const base = priced.find((entry) => entry.tier.id === REGULAR_TIER_ID) ?? priced[0];
-  // The ACTIVE tier must carry its OWN price on every line: fallback prices may
-  // estimate a tier, but advertising "Precio Girly" while charging Iconic
-  // fallbacks would mislead. A minPieces-only tier qualifies without prices, so
-  // the own-price guard lives HERE, not in tierQualifies.
-  const active = [...priced].reverse()
-    .find((entry) => entry.qualifies && lines.every((l) => Number.isFinite(l.unitPrices[entry.tier.id])))
-    ?? base;
+  // An entry backed by its OWN price on every line. Fallback prices may
+  // ESTIMATE a tier, but only own-priced tiers can be advertised — a label
+  // like "Precio Regular" over fallback numbers would mislead.
+  const hasOwn = (entry: { tier: PriceTierDef }) =>
+    lines.every((l) => Number.isFinite(l.unitPrices[entry.tier.id]));
+  const active = [...priced].reverse().find((entry) => entry.qualifies && hasOwn(entry))
+    // Nothing qualifies with own prices: fall to the shallowest own-priced
+    // tier (its label is what the lines actually cost). Never a fallback-only
+    // estimate — if no tier owns every line, there is no honest label at all.
+    ?? priced.find(hasOwn);
   // The aspirational goal is the deepest VISIBLE tier — it must stay on screen
   // even when some lines only have a fallback estimate for it.
   const aspirational = priced.find((entry) => entry.tier.id === ordered[ordered.length - 1]?.id)
@@ -159,6 +165,7 @@ export function calculateOrderPricing(
 
   const withProgress: CalculatedCartTier[] = priced.map((entry) => ({
     ...entry,
+    hasOwnPrices: hasOwn(entry),
     piecesRemaining: Math.max(0, (entry.tier.minPieces ?? 0) - totalQuantity),
     amountRemaining: Math.max(0, (entry.tier.minAmount ?? 0) - entry.subtotal),
     savingsVsBase: Math.max(0, base.subtotal - entry.subtotal),

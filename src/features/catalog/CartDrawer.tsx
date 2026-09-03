@@ -286,7 +286,7 @@ export function CartDrawer({
               {aspiration && (
                 <div className="rounded-xl ring-2 ring-[var(--olv-accent,var(--terracotta))] bg-white/70 p-4">
                   <p className="font-extrabold text-[var(--olv-ink,var(--ink))]">
-                    {aspiration.qualifies
+                    {aspiration.qualifies && aspiration.hasOwnPrices
                       ? `✨ Precio ${aspiration.tier.label} desbloqueado`
                       : `Tu meta: precio ${aspiration.tier.label}`}
                   </p>
@@ -306,7 +306,7 @@ export function CartDrawer({
                       Con {aspiration.tier.label}, lo que ya llevas costaría {formatMoney(aspiration.savingsVsActive)} menos.
                     </p>
                   )}
-                  {aspiration.qualifies && aspiration.savingsVsBase > 0 && (
+                  {aspiration.qualifies && aspiration.hasOwnPrices && aspiration.savingsVsBase > 0 && (
                     <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-1">
                       Ahorras {formatMoney(aspiration.savingsVsBase)} frente a {pricing.baseTier.tier.label}.
                     </p>
@@ -316,7 +316,7 @@ export function CartDrawer({
 
               {intermediate && (
                 <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
-                  {intermediate.qualifies ? (
+                  {intermediate.qualifies && intermediate.hasOwnPrices ? (
                     <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
                       ✨ Precio {intermediate.tier.label} desbloqueado
                     </p>
