@@ -229,6 +229,7 @@ function projectPublicStore(s) {
 function publicPrices(product, tiers) {
   if (!product.prices) return undefined;
   const entries = tiers
+    .filter((tier) => !tier.hidden) // a hidden tier's price is private — never public
     .map((tier) => [tier.id, product.prices[tier.id]])
     .filter(([, price]) => typeof price === "number");
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
@@ -308,6 +309,30 @@ function primaryImage(product) {
     return primary.url ?? null;
   }
   return product.imageUrl ?? null;
+}
+
+/**
+ * Realign fixture price maps with the store's VISIBLE tiers: fixture level i
+ * (ordered by the fixture's own tiers) maps to visible tier i, ids that
+ * already match keep their value, and extra visible tiers reuse the deepest
+ * level. Identical config is a no-op — the owner's real products are never
+ * touched, only the fixed demo docs the seed rewrites anyway.
+ */
+function alignFixturePrices(products, visibleTiers) {
+  if (!visibleTiers.length) return products;
+  const fixtureOrder = oliviaPriceTiers.filter((t) => !t.hidden);
+  return products.map((p) => {
+    if (!p.prices) return p;
+    const levels = fixtureOrder.map((t) => p.prices[t.id]).filter((v) => typeof v === "number");
+    if (levels.length === 0) return p;
+    const prices = {};
+    visibleTiers.forEach((tier, i) => {
+      prices[tier.id] = typeof p.prices[tier.id] === "number"
+        ? p.prices[tier.id]
+        : levels[Math.min(i, levels.length - 1)];
+    });
+    return { ...p, prices };
+  });
 }
 
 // --- Minimal valid JPEG (solid color), built in-code — no binary asset ---
@@ -398,6 +423,37 @@ function runSelfTest() {
       "t_custom");
     assert.deepStrictEqual(summary.prices, { t_retail: 100, t_custom: 80 });
     assert.strictEqual(summary.price, 80); // the store's default tier, not hardcoded t_retail
+  });
+
+  it("a hidden tier's price never reaches the public projection", () => {
+    const product = { prices: { t_retail: 100, t_secret: 40 } };
+    const summary = projectPublicProductSummary(product, "o",
+      [{ id: "t_retail", label: "Regular", order: 0 }, { id: "t_secret", label: "Privado", order: 1, hidden: true }],
+      "t_retail");
+    assert.deepStrictEqual(summary.prices, { t_retail: 100 });
+    assert.ok(!("t_secret" in (summary.prices ?? {})));
+  });
+
+  it("alignFixturePrices maps fixture levels onto the store's visible tiers", () => {
+    const fixture = [{ prices: { t_retail: 800, t_girly: 600, t_iconic: 500 } }];
+    // Identical config: no-op.
+    assert.deepStrictEqual(
+      alignFixturePrices(fixture, oliviaPriceTiers)[0].prices,
+      { t_retail: 800, t_girly: 600, t_iconic: 500 }
+    );
+    // Owner added a 4th tier: matching ids keep values, the extra gets a level.
+    const four = [
+      { id: "t_retail", label: "R", order: 0 },
+      { id: "t_girly", label: "G", order: 1 },
+      { id: "t_iconic", label: "I", order: 2 },
+      { id: "t_amiga", label: "A", order: 3 },
+    ];
+    assert.deepStrictEqual(alignFixturePrices(fixture, four)[0].prices, {
+      t_retail: 800, t_girly: 600, t_iconic: 500, t_amiga: 500, // deepest level reused
+    });
+    // Custom ids only: positional levels.
+    const custom = [{ id: "a", label: "A", order: 0 }, { id: "b", label: "B", order: 1 }];
+    assert.deepStrictEqual(alignFixturePrices(fixture, custom)[0].prices, { a: 800, b: 600 });
   });
 
   if (exitCode !== 0) {
@@ -530,7 +586,16 @@ async function run() {
     memberUids: [adminUid],
   };
 
-  const products = enrichProducts(baseProducts);
+  // Visible tiers of the store being written (possibly the owner's preserved
+  // config). Computed BEFORE the product batch so the fixture products align
+  // to it, and reused by the public projections in step 2.
+  const seedTiers = (storeToWrite.priceTiers ?? oliviaPriceTiers).filter((t) => !t.hidden);
+  const seedDefaultTierId =
+    seedTiers.find((t) => t.id === storeToWrite.defaultTierId)?.id ?? seedTiers[0]?.id;
+
+  // The fixture ships fixture-tier price ids; when the store declares other
+  // tiers the demo pieces must still carry a price for every advertised tier.
+  const products = alignFixturePrices(enrichProducts(baseProducts), seedTiers);
 
   // 1. Write Olivia store (data plane) + adminStores (control plane) + categories
   //    + products + customers + orders. adminStores and stores are written in the
@@ -556,11 +621,10 @@ async function run() {
   });
   await db.collection("publicStores").doc(STORE_SLUG).set(projectPublicStore(storeToWrite));
 
-  // Product projections use the SAME (possibly owner-preserved) pricing config
-  // the publicStores doc advertises — hardcoded fixture tiers would let the
-  // store promise tiers whose prices the products never carry.
-  const seedTiers = storeToWrite.priceTiers ?? oliviaPriceTiers;
-  const seedDefaultTierId = storeToWrite.defaultTierId ?? seedTiers[0]?.id;
+  // Product projections reuse seedTiers/seedDefaultTierId (defined before the
+  // batch): the SAME visible pricing config the publicStores doc advertises —
+  // hardcoded fixture tiers would let the store promise tiers whose prices the
+  // products never carry.
 
   // Project from the store's REAL catalog (read back AFTER the fixture upsert),
   // never from the fixture array alone: a seed run must not clobber the public
