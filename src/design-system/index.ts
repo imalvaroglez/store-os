@@ -1,6 +1,6 @@
 // Barrel: the single import surface for the design system.
 // All feature/app UI imports from here. No feature file reaches into a primitive file directly.
-export { Button, IconButton } from "./Button";
+export { Button, ButtonLink, IconButton } from "./Button";
 export { Card } from "./Card";
 export { Badge } from "./Badge";
 export { Money, StatRow } from "./Money";

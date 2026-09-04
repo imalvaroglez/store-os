@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
+# Firestore rules integration against the real store-os-dev project.
 set -euo pipefail
-# Run the Firestore rules test suite against the emulator, then tear down.
-firebase emulators:exec --config firebase.emulator.json --only firestore \
-  'npx vitest run src/app/firebase/firestore.rules.test.ts'
+node scripts/test-rules-dev.cjs

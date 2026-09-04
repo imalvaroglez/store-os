@@ -18,7 +18,7 @@ import type {
   Purchase,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
-import { loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
+import { emptyState, loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
@@ -41,6 +41,9 @@ import {
   receivePurchaseTx,
   createDraftProductsForPurchaseTx,
   saveOrderWithStockTx,
+  deleteOrderWithStockTx,
+  acceptPublicOrderRequestTx,
+  PublicOrderStockConflictError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
   stripUndefined,
@@ -202,6 +205,7 @@ type StoreContextValue = {
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => void;
   upsertOrder: (order: Order) => Promise<void>;
+  acceptPublicOrderRequest: (orderId: string) => Promise<void>;
   deleteOrder: (orderId: string) => Promise<void>;
 };
 
@@ -209,11 +213,14 @@ const StoreContext = createContext<StoreContextValue | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const cloud = isFirebaseConfigured() && !!user;
+  const testMode = import.meta.env.MODE === "test";
+  const cloud = !testMode && isFirebaseConfigured() && !!user;
 
   const [state, dispatch] = useReducer(reducer, undefined, () => {
-    const initial = loadState();
-    return initial.activeStoreId ? initial : { ...initial, activeStoreId: loadPreferredStoreId() };
+    const initial = testMode ? loadState() : emptyState();
+    return initial.activeStoreId || !testMode
+      ? initial
+      : { ...initial, activeStoreId: loadPreferredStoreId() };
   });
   // Track whether the current dispatch originated from a cloud sync so we don't
   // echo it back to Firestore (write loops).
@@ -281,8 +288,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "REPLACE_STATE", state: migrateCatalog(s) });
         fromCloud.current = false;
       });
-    } else if (!cloud) {
-      // Local mode: seed-backed localStorage.
+    } else if (testMode) {
+      // Unit tests use a small local adapter; real development never does.
       fromCloud.current = true;
       dispatch({ type: "REPLACE_STATE", state: loadState() });
       fromCloud.current = false;
@@ -291,13 +298,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid]);
 
-  // Local mode persists every change to localStorage. Cloud mode writes through
-  // to Firestore per-action (below); REPLACE_STATE from sync doesn't write back.
+  // Only the test adapter persists whole-state fixtures. Runtime writes go to
+  // Firestore; REPLACE_STATE from sync never writes back.
   useEffect(() => {
-    if (cloud) return;
+    if (cloud || !testMode) return;
     if (fromCloud.current) return;
     saveState(state);
-  }, [state, cloud]);
+  }, [state, cloud, testMode]);
 
   // Cloud: backfill legacy pendingInvites to their canonical form (one batched
   // write per store, only when something actually changes) so invitations
@@ -363,7 +370,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // LOCAL state, so a stale tab could clobber remote edits field by field
       // (the 2026-08 whatsapp + storefront overwrite). Merged `store` above is
       // still what drives claimSlug, the dispatch and the public projection;
-      // demo mode is unaffected (the reducer owns localStorage).
+      // The test adapter is unaffected (the reducer owns its fixture storage).
       const persisted = stripUndefined({ ...patch, updatedAt: nowIso() }) as { id: string } & Record<string, unknown>;
       await persistEntity("stores", persisted);
       // Cloud state follows the private write. This prevents a rejected write
@@ -600,7 +607,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // Transactional in Firestore: stock + purchase in ONE commit, with the
         // legacy/receivedAt guards re-checked inside.
         try {
-          await receivePurchaseTx(purchase.id);
+          const store = state.stores.find((candidate) => candidate.id === purchase.storeId);
+          await receivePurchaseTx(purchase.id, store?.slug);
         } catch (e) {
           if (e instanceof PurchaseAlreadyReceived) return "already";
           throw e;
@@ -617,8 +625,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
         return "received";
       }
-      // Demo local: same effect, guarded by the check above. A stale or
-      // corrupt localStorage must never mix stores: every linked product must
+      // Test adapter: same effect, guarded by the check above. A stale or
+      // corrupt fixture must never mix stores: every linked product must
       // exist and belong to this purchase's store before stock moves.
       for (const line of purchase.lines) {
         if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
@@ -669,19 +677,66 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // the retry the toast invites replays the FULL delta set — a partial
       // N+1 write could double-reserve or strand a reservation forever.
       if (cloud && user && !fromCloud.current) {
-        await saveOrderWithStockTx(
-          user,
-          nextOrder,
-          stockWrites.map((p) => ({ id: p.id, quantityOnHand: p.quantityOnHand as number, updatedAt: p.updatedAt }))
-        );
+        const store = state.stores.find((candidate) => candidate.id === order.storeId);
+        if (!store) throw new Error("No se encontró la tienda del pedido.");
+        const committed = await saveOrderWithStockTx(user, nextOrder, store.slug, prev);
+        for (const updated of committed) dispatch({ type: "UPDATE_PRODUCT", product: updated });
+        dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order: nextOrder });
+        return;
       }
       for (const updated of stockWrites) dispatch({ type: "UPDATE_PRODUCT", product: updated });
       dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order: nextOrder });
+    },
+    acceptPublicOrderRequest: async (orderId) => {
+      const request = state.orders.find((order) => order.id === orderId);
+      if (!request || request.orderStatus !== "requested") throw new Error("La solicitud ya fue atendida.");
+      const store = state.stores.find((candidate) => candidate.id === request.storeId);
+      if (!store) throw new Error("No se encontró la tienda.");
+      if (cloud && user && !fromCloud.current) {
+        const result = await acceptPublicOrderRequestTx(orderId, store.id, store.slug);
+        dispatch({ type: "ADD_CUSTOMER", customer: result.customer });
+        for (const product of result.products) dispatch({ type: "UPDATE_PRODUCT", product });
+        dispatch({ type: "UPDATE_ORDER", order: result.order });
+        return;
+      }
+      const items = migrateOrder(request).items;
+      for (const item of items) {
+        if (!item.productId) continue;
+        const product = state.products.find((candidate) => candidate.id === item.productId && candidate.storeId === store.id);
+        if (!product) throw new Error(`No se encontró el producto "${item.productName}".`);
+        if (typeof product.quantityOnHand === "number" && product.quantityOnHand - item.quantity < 0) {
+          throw new PublicOrderStockConflictError(product.name, Math.max(0, Math.floor(product.quantityOnHand)));
+        }
+      }
+      const at = nowIso();
+      const customer = newCustomer(store.id);
+      customer.name = request.requesterName?.trim() || "Cliente de catálogo";
+      customer.createdAt = request.createdAt || at;
+      customer.updatedAt = at;
+      const accepted = { ...request, customerId: customer.id, orderStatus: "asked" as const, updatedAt: at };
+      dispatch({ type: "ADD_CUSTOMER", customer });
+      for (const item of items) {
+        if (!item.productId) continue;
+        const product = state.products.find((candidate) => candidate.id === item.productId && candidate.storeId === store.id);
+        if (product && typeof product.quantityOnHand === "number") {
+          const updated = { ...product, quantityOnHand: product.quantityOnHand - item.quantity, updatedAt: at };
+          dispatch({ type: "UPDATE_PRODUCT", product: updated });
+        }
+      }
+      dispatch({ type: "UPDATE_ORDER", order: accepted });
     },
     deleteOrder: async (orderId) => {
       // Release the held stock before removing the order (cancelling a
       // delivered sale also returns the goods — see reservationDeltas*).
       const existing = state.orders.find((o) => o.id === orderId);
+      if (cloud && user && !fromCloud.current && existing) {
+        const store = state.stores.find((candidate) => candidate.id === existing.storeId);
+        if (!store) throw new Error("No se encontró la tienda del pedido.");
+        const committed = await deleteOrderWithStockTx(user, existing, store.slug);
+        for (const updated of committed) dispatch({ type: "UPDATE_PRODUCT", product: updated });
+        dispatch({ type: "DELETE_ORDER", orderId });
+        return;
+      }
       const writes: Promise<void>[] = [];
       if (existing) {
         const deltas = reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" });
@@ -695,7 +750,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
       dispatch({ type: "DELETE_ORDER", orderId });
-      if (cloud && user && !fromCloud.current) writes.push(deleteEntity(user, "orders", orderId));
       await Promise.all(writes);
     },
   };

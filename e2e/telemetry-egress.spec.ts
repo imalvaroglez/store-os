@@ -4,7 +4,7 @@ import { FORBIDDEN_TELEMETRY_ROUTES } from "../src/app/firebase/rules-allowlist"
 // G-P08 runtime gate: no egress to telemetry routes/hosts. The static gate
 // (security-allowlist.gate.test.ts) catches telemetry SDKs/imports; this spec
 // catches the sendBeacon/fetch the static gate cannot see. It runs against the
-// production preview build (DEV=false, no Firebase emulator) so any reintroduced
+// production preview build (DEV=false) so any reintroduced
 // @vercel/analytics / @vercel/speed-insights call would fire its same-origin
 // /_vercel/insights request here.
 //

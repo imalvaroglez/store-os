@@ -5,6 +5,8 @@
 
 export type CartLine = {
   productSlug: string; // stable PUBLIC key (the slug survives renames of the doc id)
+  /** Private product id carried only to the trusted request endpoint. */
+  productId?: string;
   name: string;
   sku: string;
   qty: number;
@@ -12,9 +14,12 @@ export type CartLine = {
   inquire?: boolean; // sold-out piece: ask instead of buy
   /** Public per-tier unit prices. Powers the estimated subtotal; never charged. */
   unitPrices?: Record<string, number>;
+  /** Exact public cap for inventory stores; absent means unlimited/on-demand. */
+  availableQuantity?: number;
 };
 
 export type PublicCartItemSource = {
+  productId?: string;
   productSlug: string;
   name: string;
   sku?: string | null;
@@ -22,42 +27,37 @@ export type PublicCartItemSource = {
   imageUrl?: string | null;
   prices?: Record<string, number>;
   stockSignal?: string;
+  availableQuantity?: number;
   inquire?: boolean;
 };
+
+/** Inventory catalogs fail closed when an old projection lacks its cap. */
+export function publicQuantityCap(
+  storeType: "on_demand" | "inventory_tiered",
+  value?: number
+): number | undefined {
+  if (storeType !== "inventory_tiered") return value;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : 0;
+}
 
 /** Normalize summary/detail projections into the shared cart shape. */
 export function cartItemFromPublicProduct(product: PublicCartItemSource): Omit<CartLine, "qty"> {
   return {
+    ...(product.productId ? { productId: product.productId } : {}),
     productSlug: product.productSlug,
     name: product.name,
     sku: product.sku ?? product.productSlug,
     image: product.image ?? product.imageUrl ?? undefined,
     unitPrices: product.prices,
     inquire: product.inquire ?? product.stockSignal === "agotado",
+    ...(typeof product.availableQuantity === "number" ? { availableQuantity: product.availableQuantity } : {}),
   };
 }
 
 const SCHEMA_VERSION = 1;
 const key = (slug: string) => `store-os:cart:${slug}`;
-const nameKey = (slug: string) => `store-os:cart-name:${slug}`;
-
-/** Visitor's name for the WhatsApp order, persisted next to the cart. */
-export function loadCartName(slug: string): string {
-  try {
-    return localStorage.getItem(nameKey(slug)) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-export function saveCartName(slug: string, name: string): void {
-  try {
-    if (name.trim()) localStorage.setItem(nameKey(slug), name.trim());
-    else localStorage.removeItem(nameKey(slug));
-  } catch {
-    /* storage unavailable: the name just won't persist */
-  }
-}
 
 export function loadCart(slug: string): CartLine[] {
   try {
@@ -77,16 +77,26 @@ export function saveCart(slug: string, lines: CartLine[]): void {
   localStorage.setItem(key(slug), JSON.stringify({ v: SCHEMA_VERSION, lines }));
 }
 
+export function clearCart(slug: string): void {
+  try { localStorage.removeItem(key(slug)); } catch { /* storage unavailable */ }
+}
+
 export function addToCart(
   slug: string,
   item: Omit<CartLine, "qty">,
   qty = 1
 ): CartLine[] {
   const lines = loadCart(slug);
+  const max = finiteAvailable(item.availableQuantity);
+  if (max === 0) return lines;
+  const amount = clampQuantity(qty, max);
+  if (amount <= 0) return lines;
   const existing = lines.find((l) => l.productSlug === item.productSlug);
   const next = existing
-    ? lines.map((l) => (l.productSlug === item.productSlug ? { ...l, qty: l.qty + qty } : l))
-    : [...lines, { ...item, qty }];
+    ? lines.map((l) => l.productSlug === item.productSlug
+      ? { ...l, ...item, qty: clampQuantity(l.qty + amount, max) }
+      : l)
+    : [...lines, { ...item, qty: amount }];
   saveCart(slug, next);
   return next;
 }
@@ -94,10 +104,13 @@ export function addToCart(
 /** Set a quantity; 0 or less removes the line. */
 export function setCartQty(slug: string, productSlug: string, qty: number): CartLine[] {
   const current = loadCart(slug);
+  const line = current.find((l) => l.productSlug === productSlug);
+  const max = finiteAvailable(line?.availableQuantity);
+  const nextQty = clampQuantity(qty, max);
   const next =
-    qty <= 0
+    nextQty <= 0
       ? current.filter((l) => l.productSlug !== productSlug)
-      : current.map((l) => (l.productSlug === productSlug ? { ...l, qty } : l));
+      : current.map((l) => (l.productSlug === productSlug ? { ...l, qty: nextQty } : l));
   saveCart(slug, next);
   return next;
 }
@@ -116,8 +129,11 @@ export function refreshCartLines(
   const bySlug = new Map(items.map((item) => [item.productSlug, item]));
   return lines.map((line) => {
     const item = bySlug.get(line.productSlug);
-    return item ? { ...line, ...item, qty: line.qty } : line;
-  });
+    if (!item) return line;
+    const max = finiteAvailable(item.availableQuantity);
+    const qty = clampQuantity(line.qty, max);
+    return { ...line, ...item, qty };
+  }).filter((line) => line.qty > 0);
 }
 
 export function refreshCart(slug: string, items: Omit<CartLine, "qty">[]): CartLine[] {
@@ -133,4 +149,13 @@ export function pruneCartLines(lines: CartLine[], knownProductSlugs: Set<string>
 
 export function cartPieces(lines: { qty: number }[]): number {
   return lines.reduce((sum, l) => sum + l.qty, 0);
+}
+
+function finiteAvailable(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : undefined;
+}
+
+function clampQuantity(value: number, max?: number): number {
+  const quantity = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  return max == null ? quantity : Math.min(quantity, max);
 }

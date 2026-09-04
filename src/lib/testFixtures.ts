@@ -1,4 +1,5 @@
-// Minimal three-store fixture for unit tests. Replaces the deleted demo seed
+// Minimal three-store fixture for unit tests. Runtime data is seeded in Firebase
+// development and never through the client.
 // (src/lib/seed.ts): only the entities the tests actually assert on, built with
 // plain literals so no provider/factory import is needed. The full Olivia
 // fixture for the DEV backend lives in scripts/seed-dev.cjs.

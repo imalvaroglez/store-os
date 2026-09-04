@@ -5,6 +5,7 @@ import {
   migrateOrder,
   migrateOrders,
   orderBucket,
+  orderCountsTowardToPay,
   orderReference,
   orderTotals,
   paymentStatusForOrder,
@@ -92,5 +93,12 @@ describe("order domain helpers", () => {
     expect(tierWarning({ quantity: 1, subtotal: 200 }, { id: "t", label: "Iconic", order: 1, minAmount: 1000 })).toContain("$1,000");
     expect(orderReference("order_abc-123")).toBe("ABC123");
   });
-});
 
+  it("keeps public requests pending without counting them as money due", () => {
+    const request = base({ orderStatus: "requested", customerId: "", deposit: 0, source: "public_catalog", requesterName: "Ana" });
+    expect(orderBucket(request)).toBe("pending");
+    expect(paymentStatusForOrder(request)).toBe("unpaid");
+    expect(orderCountsTowardToPay(request)).toBe(false);
+    expect(migrateOrder(request).requesterName).toBe("Ana");
+  });
+});

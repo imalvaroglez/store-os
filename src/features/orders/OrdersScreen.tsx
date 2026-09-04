@@ -35,6 +35,7 @@ export function OrdersScreen() {
     const customer = state.customers.find((item) => item.id === order.customerId);
     const haystack = [
       orderReference(order.id), customer?.name, customer?.phone,
+      order.requesterName,
       ...orderItems(order).map((item) => item.productName),
     ].filter(Boolean).join(" ").toLocaleLowerCase("es-MX");
     return haystack.includes(query.trim().toLocaleLowerCase("es-MX"));

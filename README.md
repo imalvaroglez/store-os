@@ -2,7 +2,7 @@
 
 > Un sistema operativo ligero para pequeñas tiendas.
 
-Store OS es una PWA **local-first**, **mobile-first** y **100% en español (México)** para llevar tiendas pequeñas que venden por WhatsApp, Instagram o catálogo público.
+Store OS es una PWA **Firebase-first**, **mobile-first** y **100% en español (México)** para llevar tiendas pequeñas que venden por WhatsApp, Instagram o catálogo público. El desarrollo local y Preview usan el proyecto Firebase real `store-os-dev`; producción usa `store-os-f7cf8`.
 
 No es un ERP, ni un POS, ni un CRM, ni un sistema de contabilidad. Es un **cuaderno moderno** para administrar tu tienda: catálogo, clientes, pedidos, inventario y ganancia.
 
@@ -23,7 +23,8 @@ Pensado para que cualquiera lo use: un adolescente que vende por primera vez, un
 - **Tres temas** intercambiables: **Paper Ledger**, **Maximalista** y **Lujo** — cada uno con su propia personalidad (color, tipografía, movimiento).
 - **Responsive** — funciona en móvil (bottom nav) y escritorio (sidebar).
 - **PWA** instalable y con soporte offline.
-- **Local-first** — todo se guarda en el navegador (`localStorage`). Sin nube… todavía.
+- **Firebase-first** — los datos operativos viven en Firebase; localhost y
+  Preview usan `store-os-dev` y producción usa `store-os-f7cf8`.
 
 ## Empezar
 
@@ -41,10 +42,11 @@ npm run preview   # previsualiza el build de producción
 ```bash
 npm run typecheck   # tsc --noEmit
 npm run test        # vitest (unit + design-system gate)
-npm run e2e         # playwright (mobile + desktop)
+npm run e2e         # smoke del build local
+npm run e2e:dev     # Playwright contra Firebase real de store-os-dev
 ```
 
-Los datos de ejemplo (dos tiendas: **Santi** y **Joyería**) se cargan automáticamente en el primer uso. Puedes reiniciarlos desde **Opciones → Reiniciar con datos de ejemplo**.
+Para cargar datos de prueba en el backend real de desarrollo usa `npm run seed:dev`. No se cargan datos automáticamente ni existe un backend alterno.
 
 ## Estructura del proyecto
 
@@ -53,7 +55,7 @@ src/
   app/            # App, AppShell (responsive), StoreProvider (estado), router
   design-system/  # sistema de diseño (tokens, primitivos, gate) + theme/
   features/       # pantallas por dominio: stores, home, catalog, customers, orders, inventory
-  lib/            # ids, money, dates, storage, selectors, whatsapp, seed, labels, router
+  lib/            # ids, money, dates, storage, selectors, whatsapp, labels, router
   types/          # modelo de datos (Store, Product, Customer, Order)
 docs/
   ARCHITECTURE.md
@@ -84,9 +86,11 @@ App lista para producción (Vercel + Firebase). Ver la guía completa en
 4. Importar el repo en Vercel (framework Vite auto-detectado). El primer usuario
    que se registra se vuelve super-admin.
 
-Para desarrollo local sin backend: `npm run dev` (modo demostración en
-`localStorage`). Para pruebas con emulador: `npm run emulators` +
-`npm run e2e:firebase`.
+Para desarrollo local: copia [`.env.example`](.env.example) a `.env.local`,
+configura las seis variables del Web App de `store-os-dev` y ejecuta `npm run
+dev`. Las pruebas de Firebase se ejecutan contra ese mismo backend con
+`npm run test:rules` y `npm run e2e:dev`. Consulta el contrato completo en
+[`docs/ENVIRONMENTS.md`](docs/ENVIRONMENTS.md).
 
 ## Decisiones de diseño
 

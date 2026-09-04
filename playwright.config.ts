@@ -1,17 +1,13 @@
 import { defineConfig } from "@playwright/test";
 
-// Fast build smoke + runtime telemetry-egress gate: boots the production
-// preview build (DEV=false) and verifies the app boots to the AuthScreen when
-// signed out, and that no request hits a forbidden telemetry route/host. The
-// full frontend suite (smoke + responsive + theme) runs against the Firebase
-// emulator via `npm run e2e:firebase` (see playwright.firebase.config.ts).
+// Fast build smoke + runtime telemetry-egress gate. Backend integration runs
+// separately with `npm run e2e:dev` against the real store-os-dev project.
 export default defineConfig({
   testDir: "./e2e",
   // build-smoke boots the app; telemetry-egress watches runtime egress on the
   // Olivia storefront (no auth/Firestore needed). Both run against the prod build.
   testMatch: /(^|\/)(build-smoke|telemetry-egress)\.spec\.ts$/,
-  // The emulator-only specs are excluded; they run via playwright.firebase.config.ts.
-  testIgnore: /(^|\/)(firebase|public-catalog|smoke|responsive|theme)\.spec\.ts$/,
+  testIgnore: /(^|\/)(dev-backend)\.spec\.ts$/,
   timeout: 30_000,
   retries: 0,
   use: {

@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-// Fast build smoke for `npm run e2e` (no emulator). Boots the production preview
+// Fast build smoke for `npm run e2e`. Boots the production preview
 // build (DEV=false) and confirms the app forces the AuthScreen when signed out
 // (the built app requires authentication before anything else). This is the only
-// spec in the default config; the full suite runs against the emulator via
-// `npm run e2e:firebase`.
+// spec in the default config; backend integration runs against store-os-dev via
+// `npm run e2e:dev`.
 
 test("prod build forces AuthScreen when signed out", async ({ page }) => {
   await page.goto("/");

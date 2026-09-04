@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
-import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
+import { ButtonLink, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
+import { createStorefrontContactUrl } from "../../lib/whatsapp";
 import {
   loadPublicCatalog,
   type PublicCatalog,
   type PublicStore,
   type PublicStockSignal,
 } from "../../app/firebase/publicCatalog";
-import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
+import { cartItemFromPublicProduct, cartPieces, pruneCartLines, publicQuantityCap } from "../../lib/cart";
 import { useCart } from "./useCart";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
 
@@ -34,7 +34,10 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   useEffect(() => {
     if (!data) return;
     cart.prune(new Set(data.catalog.products.map((product) => product.productSlug)));
-    cart.refresh(data.catalog.products.map(cartItemFromPublicProduct));
+    cart.refresh(data.catalog.products.map((product) => cartItemFromPublicProduct({
+      ...product,
+      availableQuantity: publicQuantityCap(data.store.type, product.availableQuantity),
+    })));
   }, [cart.prune, cart.refresh, data]);
 
   if (!data && !failed) {
@@ -57,7 +60,6 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         <div className="mx-auto max-w-6xl">
           <p className="text-xs uppercase tracking-widest text-terracotta-soft">Catálogo</p>
           <h1 className="serif-display text-3xl font-semibold mt-1">{store.name}</h1>
-          <a href={createWhatsAppStoreUrl(store as never)} target="_blank" rel="noreferrer" className="inline-block mt-5"><Button variant="success">Preguntar por WhatsApp</Button></a>
         </div>
       </header>
       <main className="p-4 md:p-8"><div className="mx-auto max-w-6xl">
@@ -75,6 +77,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                   quantity={quantityBySlug.get(product.productSlug) ?? 0}
                   onAdd={() => cart.add(cartItemFromPublicProduct(product))}
                   onSetQty={cart.setQty}
+                  availableQuantity={publicQuantityCap(store.type, product.availableQuantity)}
                   full
                   className="mt-2"
                 />
@@ -94,7 +97,11 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         visibleSlugs={visibleSlugs}
         onSetQty={cart.setQty}
         onRemove={cart.remove}
+        onClear={cart.clear}
       />
+      <footer className="border-t border-rule mt-8 py-6 text-center text-sm text-ink-soft">
+        <ButtonLink href={createStorefrontContactUrl(store, slug)} target="_blank" rel="noreferrer" variant="secondary">Contacto por WhatsApp</ButtonLink>
+      </footer>
     </div>
   );
 }

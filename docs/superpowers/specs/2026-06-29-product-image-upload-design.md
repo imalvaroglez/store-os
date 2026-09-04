@@ -34,7 +34,7 @@ anonymous catalog to load them.
 | Storage read rule | Public (`allow read: if true`) — required by the anonymous catalog |
 | Storage write/delete rule | `super_admin` OR store membership, verified in the rule via `firestore.get()`; size/type on `create, update`; separate `delete` |
 | Filename rule | `match /products/{storeId}/{fileName}` with `fileName.matches('.*\\.jpg')` (don't bet on `{productId}.jpg` partial capture) |
-| Emulator bucket | Explicit `store-os-demo.appspot.com` + `connectStorageEmulator(host, 9199)` — not an empty `.env` |
+| Development bucket | The real `store-os-dev` Storage bucket, selected by the environment contract |
 | Demo access | Already strict (commit `bf5c10d` forces AuthScreen for signed-out visitors) |
 
 ## Strictness note (why public read is correct)
@@ -183,8 +183,8 @@ Auth + Firestore are wired today; Storage joins them:
 - `e2e/firebase-global-setup.ts`: Storage is intentionally **not** wiped — the
   emulator has no bulk-reset endpoint, and `emulators:exec` starts a fresh
   instance each run, so Storage starts empty deterministically.
-- Emulator bucket is **explicit** (`store-os-demo.appspot.com`), not derived from
-  an empty `.env`, mirroring how `config.ts` forces the `store-os-demo` namespace.
+- The development bucket is **explicit** (`store-os-dev`), not derived from an
+  empty `.env`, mirroring the environment guard in `config.ts`.
 
 ### Emulator rules limitation + swap script (verified during implementation)
 

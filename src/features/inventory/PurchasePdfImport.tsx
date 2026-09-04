@@ -34,7 +34,7 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
   const [busy, setBusy] = useState(false);
   const [duplicate, setDuplicate] = useState(false);
 
-  if (!cloud) return null; // demo local: manual capture only (spec, fuera de alcance)
+  if (!cloud) return null; // Requires an authenticated Firebase development/production project.
 
   async function onFile(file: File, skipDuplicateCheck = false) {
     if (!activeStore) return;

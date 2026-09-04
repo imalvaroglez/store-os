@@ -1,6 +1,5 @@
 import {
   getFunctions,
-  connectFunctionsEmulator,
   httpsCallable,
   type Functions,
 } from "firebase/functions";
@@ -10,12 +9,7 @@ import { getStorageInstance } from "./storage";
 
 // PDF import transport (purchase-pdf-import): upload the supplier PDF to
 // Storage, then call importPurchasePdf (OCR) and get the parsed lines back.
-// Demo/local mode (no Firebase) is handled by the caller — this module is
-// only used when cloud is available.
-
-const EMULATOR =
-  import.meta.env.MODE !== "production" &&
-  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
+// This module is available only with an authenticated Firebase project.
 
 export type ParsedPdfLine = {
   name: string;
@@ -40,16 +34,9 @@ export type ParsedPdfOrder = {
 };
 
 let fns: Functions | null = null;
-let fnsConnected = false;
 function functionsInstance(): Functions {
   const { app } = getFirebase();
   if (!fns) fns = getFunctions(app, "us-east1"); // region, never a project id
-  if (EMULATOR && !fnsConnected) {
-    const host = import.meta.env.VITE_FIREBASE_FUNCTIONS_EMULATOR_HOST || "127.0.0.1:5001";
-    const [hostname, port] = host.split(":");
-    connectFunctionsEmulator(fns, hostname, Number(port));
-    fnsConnected = true;
-  }
   return fns;
 }
 

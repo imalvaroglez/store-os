@@ -13,10 +13,10 @@
  * (a browser login; no password, no committed secret, no `.env.seed-dev`). If
  * ADC is absent the script prints the gcloud command and exits.
  *
- * This script is now the ONLY owner of the Olivia fixture: the client demo
- * seed (src/lib/seed.ts) was removed (delivery remove-client-demo-seed). What
- * stays is a self-contained CommonJS object with deterministic fixed ids for
- * idempotent re-run — evolve the DEV fixture here, not in the client.
+ * This script is now the ONLY owner of the Olivia development data: the client
+ * seed (src/lib/seed.ts) was removed. What stays is a self-contained CommonJS
+ * object with deterministic fixed ids for idempotent re-run — evolve the
+ * development dataset here, not in the client.
  *
  * LOAD-BEARING GUARD: this script aborts unless projectId === 'store-os-dev'.
  * The Admin SDK bypasses BOTH Firestore and Storage Security Rules entirely, so
@@ -30,7 +30,7 @@ const ADMIN_EMAIL = "admin@store.os";
 const STORE_ID = "store_olivia";
 const STORE_SLUG = "olivia";
 
-// --- Olivia seed data (self-contained; this script owns the DEV fixture) ---
+// --- Olivia seed data (self-contained; this script owns the dev dataset) ---
 // Deterministic fixed ids => idempotent re-runs overwrite, never duplicate.
 const now = new Date().toISOString();
 
@@ -244,8 +244,9 @@ function resolvedPublicPrice(product, defaultTierId) {
   return undefined;
 }
 
-function projectPublicProductSummary(product, storeSlug, tiers, defaultTierId) {
+function projectPublicProductSummary(product, storeSlug, tiers, defaultTierId, storeType) {
   const summary = {
+    productId: product.id,
     storeSlug,
     storeId: product.storeId,
     productSlug: product.slug ?? null,
@@ -259,6 +260,9 @@ function projectPublicProductSummary(product, storeSlug, tiers, defaultTierId) {
     categoryIds: product.categoryIds ?? [],
     sortOrder: product.sortOrder ?? 0,
   };
+  if (storeType === "inventory_tiered" && typeof product.quantityOnHand === "number" && Number.isFinite(product.quantityOnHand)) {
+    summary.availableQuantity = Math.max(0, Math.floor(product.quantityOnHand));
+  }
   const resolved = resolvedPublicPrice(product, defaultTierId);
   if (typeof resolved === "number") summary.price = resolved;
   const prices = publicPrices(product, tiers);
@@ -272,6 +276,7 @@ function projectPublicProductDetail(product, storeSlug, cats, tiers, defaultTier
     .filter((c) => !!c)
     .map((c) => ({ id: c.id, name: c.name, slug: c.slug }));
   const detail = {
+    productId: product.id,
     storeId: product.storeId,
     storeSlug,
     productSlug: product.slug ?? null,
@@ -316,7 +321,7 @@ function primaryImage(product) {
  * (ordered by the fixture's own tiers) maps to visible tier i, ids that
  * already match keep their value, and extra visible tiers reuse the deepest
  * level. Identical config is a no-op — the owner's real products are never
- * touched, only the fixed demo docs the seed rewrites anyway.
+ * touched, only the fixed development docs this script owns.
  */
 function alignFixturePrices(products, visibleTiers) {
   if (!visibleTiers.length) return products;
@@ -474,11 +479,11 @@ async function run() {
     // firebase-admin v10+ uses modular subpath imports: the bare
     // `require("firebase-admin")` only exposes initializeApp/getApp, NOT
     // firestore/storage/auth. Pull each service from its subpath.
-    const { initializeApp, getApps } = require("firebase-admin/app");
+    const { initializeApp, getApps, cert, applicationDefault } = require("firebase-admin/app");
     const { getFirestore } = require("firebase-admin/firestore");
     const { getAuth } = require("firebase-admin/auth");
     const { getStorage } = require("firebase-admin/storage");
-    admin = { initializeApp, getApps, getFirestore, getAuth, getStorage };
+    admin = { initializeApp, getApps, cert, applicationDefault, getFirestore, getAuth, getStorage };
   } catch (e) {
     fail(
       "No se encontró 'firebase-admin'. Es una devDependency — ejecuta `npm install` y vuelve a intentar."
@@ -489,11 +494,12 @@ async function run() {
   // user's gcloud config. If absent, CredentialNotFound is thrown on init.
   // We detect it explicitly and print the exact remedy.
   const credentialEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  const hasAdc = credentialEnv || hasGcloudAdc();
+  const serviceAccountJson = process.env.FIREBASE_DEV_SERVICE_ACCOUNT_JSON;
+  const hasAdc = credentialEnv || serviceAccountJson || hasGcloudAdc();
   if (!hasAdc) {
     console.error("");
     console.error("\x1b[31m[seed-dev] Faltan las credenciales (ADC).\x1b[0m");
-    console.error("[seed-dev] Autentica una vez con gcloud (login por navegador, sin contraseña, sin secreto en el repo):");
+    console.error("[seed-dev] Autentica una vez con gcloud (login por navegador) o configura FIREBASE_DEV_SERVICE_ACCOUNT_JSON fuera del repo:");
     console.error("");
     console.error("    gcloud auth application-default login");
     console.error("");
@@ -508,8 +514,22 @@ async function run() {
     fail(`projectId interno inesperado: '${DEV_PROJECT_ID}'`);
   }
   const existing = admin.getApps().find((a) => a.name === "seed-dev");
+  let credential;
+  try {
+    if (serviceAccountJson) {
+      const serviceAccount = JSON.parse(serviceAccountJson);
+      if (serviceAccount.project_id && serviceAccount.project_id !== DEV_PROJECT_ID) {
+        fail(`La cuenta de servicio apunta a ${serviceAccount.project_id}, no a ${DEV_PROJECT_ID}.`);
+      }
+      credential = admin.cert(serviceAccount);
+    } else {
+      credential = admin.applicationDefault();
+    }
+  } catch (error) {
+    fail(`FIREBASE_DEV_SERVICE_ACCOUNT_JSON inválido: ${error.message}`);
+  }
   const app = existing || admin.initializeApp(
-    { projectId: DEV_PROJECT_ID, storageBucket: "store-os-dev.firebasestorage.app" },
+    { projectId: DEV_PROJECT_ID, storageBucket: "store-os-dev.firebasestorage.app", credential },
     "seed-dev"
   );
   const db = admin.getFirestore(app);
@@ -593,8 +613,8 @@ async function run() {
   const seedDefaultTierId =
     seedTiers.find((t) => t.id === storeToWrite.defaultTierId)?.id ?? seedTiers[0]?.id;
 
-  // The fixture ships fixture-tier price ids; when the store declares other
-  // tiers the demo pieces must still carry a price for every advertised tier.
+  // The development data ships fixed-tier price ids; when the store declares
+  // other tiers the pieces must still carry a price for every advertised tier.
   const products = alignFixturePrices(enrichProducts(baseProducts), seedTiers);
 
   // 1. Write Olivia store (data plane) + adminStores (control plane) + categories
@@ -653,7 +673,7 @@ async function run() {
     categories: activeCats,
     products: published
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-      .map((p) => projectPublicProductSummary(p, STORE_SLUG, seedTiers, seedDefaultTierId)),
+      .map((p) => projectPublicProductSummary(p, STORE_SLUG, seedTiers, seedDefaultTierId, storeToWrite.type)),
   });
 
   const detailBatch = db.batch();
@@ -729,7 +749,7 @@ async function run() {
       categories: activeCats,
       products: refreshedPublished
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-        .map((p) => projectPublicProductSummary(p, STORE_SLUG, seedTiers, seedDefaultTierId)),
+        .map((p) => projectPublicProductSummary(p, STORE_SLUG, seedTiers, seedDefaultTierId, storeToWrite.type)),
     });
   }
 

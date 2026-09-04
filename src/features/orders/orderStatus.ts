@@ -5,7 +5,8 @@ import { effectiveOrderStatus } from "../../lib/orders";
 // Labels are the product language; the enum stays in English.
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
-  asked: "Preguntó",
+  requested: "Solicitud",
+  asked: "Por cotizar",
   quoted: "Cotizado",
   confirmed: "Confirmado",
   preparing: "Preparando",
@@ -34,6 +35,7 @@ const ORDER_FLOW: OrderStatus[] = [
 // for the status badge). M3: the button said "Confirmado" (state) instead of
 // "Confirmar" (action).
 const ORDER_ACTION_VERBS: Record<OrderStatus, string> = {
+  requested: "",
   asked: "",
   quoted: "Cotizar",
   confirmed: "Confirmar",

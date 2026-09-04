@@ -10,8 +10,8 @@ import { saveState } from "../lib/storage";
 import { ToastProvider } from "../design-system";
 
 // Runtime mount smoke: catches render-time crashes curl/static checks can't.
-// AuthProvider is in pure-local mode here (no VITE_FIREBASE_* in the test env),
-// so StoreProvider stays on the localStorage path these tests expect.
+// AuthProvider uses the isolated unit-test adapter here; backend behavior is
+// covered by the real-dev integration suite.
 function withState(state: AppState) {
   saveState(state); // so the provider loads this exact state, not a fresh seed
   return ({ children }: { children: React.ReactNode }) => (
@@ -23,9 +23,8 @@ function withState(state: AppState) {
   );
 }
 
-// PublicCatalogScreen is now Firestore-backed (anonymous public projection),
-// so its render behavior is covered by the emulator e2e suite
-// (e2e/public-catalog.spec.ts), not this pure-local unit test.
+// PublicCatalogScreen is Firestore-backed (anonymous public projection); its
+// backend behavior is covered by the real-dev integration suite.
 
 describe("HomeScreen store isolation render", () => {
   it("renders the active store's data and primary action", () => {
@@ -64,13 +63,13 @@ describe("HomeScreen store isolation render", () => {
 });
 
 describe("Root signed-out routing (production)", () => {
-  it("shows AuthScreen, not the demo, when DEV is false and there is no session", () => {
+  it("shows AuthScreen when there is no session", () => {
     const original = import.meta.env.DEV;
     (import.meta.env as { DEV: boolean }).DEV = false;
-    localStorage.clear(); // cold visitor: no demo seed in a built deployment
+    localStorage.clear(); // cold visitor: no persisted unit-test state
     try {
       // No session, no active store -> in a built deployment this must be AuthScreen.
-      // AuthProvider is in pure-local mode (no VITE_FIREBASE_* here), so user stays null.
+      // The unit-test adapter has no Firebase session, so user stays null.
       render(
         <AuthProvider>
           <StoreProvider>
@@ -80,7 +79,7 @@ describe("Root signed-out routing (production)", () => {
       );
       // AuthScreen renders its header subtitle.
       expect(screen.getByText("Sincroniza tus tiendas en la nube")).toBeTruthy();
-      // The demo store must NOT appear.
+      // Fixture stores must NOT appear without a session.
       expect(screen.queryByText("Joyería")).toBeNull();
     } finally {
       (import.meta.env as { DEV: boolean }).DEV = original;

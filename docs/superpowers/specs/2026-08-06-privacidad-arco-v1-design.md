@@ -129,7 +129,7 @@ Mapa (no lista de campos). Columnas: Categoría | Titular | Finalidad | Base leg
 
 | Categoría | Titular | Finalidad | Base legal | Ubicación | Acceso | Terceros | Retención |
 |---|---|---|---|---|---|---|---|
-| Clientas: nombre, teléfono, notas (texto libre), historial de pedidos | La clienta | Gestión de ventas y pedidos | Consentimiento de la clienta para gestionar la venta; obligaciones derivadas de la relación jurídica y legales/fiscales | Firestore `customers`, `orders` (acotados por `storeId`); **nunca** en proyecciones públicas | Dueña y miembros de Olivia por membresía; `super_admin` por acceso global de plataforma | Google/Firebase (subencargado) | Relación comercial + obligaciones legales/fiscales; ARCO cancelación → bloqueo luego supresión |
+| Clientas: nombre, teléfono, notas (texto libre), historial de pedidos | La clienta | Gestión de ventas y pedidos | Consentimiento de la clienta para gestionar la venta; obligaciones derivadas de la relación jurídica y legales/fiscales | Firestore `customers`, `orders` (acotados por `storeId`); **nunca** en proyecciones públicas. Un pedido público entra como `requested` con nombre y líneas, y sólo al aceptarlo la dueña se crea/actualiza la clienta y se aparta inventario | Dueña y miembros de Olivia por membresía; `super_admin` por acceso global de plataforma | Google/Firebase (subencargado) | Solicitud pública pendiente: máximo 24 h mediante TTL; relación comercial aceptada + obligaciones legales/fiscales; ARCO cancelación → bloqueo luego supresión |
 | Cuentas de usuario: email, displayName, rol, createdAt | La persona usuaria | Autenticación y autorización | Consentimiento (crear cuenta) y relación contractual con Store OS | Firebase Auth + Firestore `users` | **Riesgo residual declarado (fuera de V1):** HOY `users/{uid}` permite `read` a **cualquiera autenticado** (`firestore.rules:40-41`) — cualquier usuario lee email/displayName/rol de cualquier otro. Esto **no** está cubierto por una garantía del producto en V1 (Espec 1 §11); protegerlo requeriría una futura G-P09 (directorio mínimo). Se declara abiertamente, no se oculta como mero "GAP" | Google/Firebase | Mientras dure la cuenta; supresión al cerrar |
 | Invitaciones pendientes (`pendingInvites`: emails) | La persona invitada | Gestión de membresía | Consentimiento / relación comercial para integrar al equipo | Firestore `stores.pendingInvites` | **GAP:** cualquier miembro puede leer el doc `stores` completo incluidos los emails (`firestore.rules:54-55`). No afirmar "sólo dueña/super_admin ven los emails" | — | Hasta conversión en miembro o revocación |
 | Proveedores (suppliers: contacto, notas) | El proveedor | Gestión de abastecimiento | Consentimiento / relación comercial | Firestore `suppliers` (membership-gated) | Dueña y miembros de Olivia | Google/Firebase | Relación comercial; supresión al terminar |
@@ -139,6 +139,7 @@ Mapa (no lista de campos). Columnas: Categoría | Titular | Finalidad | Base leg
 | localStorage (modo demo) | — | Demo local | — | Navegador | El usuario del navegador | — | NUNCA debe contener PII real de clientas en cloud; modo demo sólo datos ficticios sembrados |
 | WhatsApp (`wa.me`) | La clienta (canal) | Contacto y respuesta | Iniciado por la persona | Dispositivo/app de WhatsApp de Olivia (fuera del producto) | Olivia | — | **Riesgo de gobernanza:** Olivia NO debe conservar conversaciones como expediente; la retención vive en su WhatsApp, fuera de nuestra jurisdicción |
 | Vercel (hosting) | Visitantes y usuarias | Servir la aplicación | Necesario para prestar el servicio | Infraestructura Vercel | Personal autorizado de Vercel | Vercel | Metadatos técnicos (IP, user-agent, ruta, logs para servir); ver §5.3 |
+| Límites antifraude del catálogo | Visitante anónima | Evitar duplicados y crecimiento abusivo de registros | Seguridad del servicio | Firestore `publicOrderLimits` (sólo Admin SDK; nunca legible por el cliente) | No accesible desde la app | Google/Firebase | Hashes de navegador/IP y contadores diarios; TTL de 2 días |
 
 ### 5.2 Egress autorizado V1 (corrige "wa.me es el único egress")
 
@@ -206,7 +207,7 @@ La columna "base legal" del mapa usa terminología de la LFPDPPP: **consentimien
 
 ## 7. Procedimiento ARCO V1 (asistido por la responsable)
 
-**Decisión clave V1:** **sin formulario anónimo que escriba en Firestore.** La página pública (`/privacidad/:slug`) es informativa y de contacto: muestra aviso, requisitos ARCO y canales (WhatsApp y correo de privacidad de Olivia; botón "Iniciar solicitud por WhatsApp" con texto genérico **sin PII en la URL**; opción de atención presencial). La página **no crea documentos, no recibe identificaciones, no acepta archivos**.
+**Decisión clave V1:** la página pública de privacidad sigue sin formulario ARCO ni archivos. El único write anónimo indirecto es el checkout del catálogo: el navegador llama a una callable validada que crea una solicitud comercial mínima (`orders/{id}`, estado `requested`) con nombre obligatorio y líneas elegidas. La callable vuelve a leer tienda/productos, calcula precios, aplica límites y nunca confía en el precio o existencia enviados por el cliente. La solicitud no reserva stock hasta la aceptación de la dueña.
 
 ### 7.1 Flujo (7 etapas)
 
@@ -403,14 +404,12 @@ Copias de identificación; conversaciones completas de WhatsApp; datos de pedido
 
 ## 12. Prevención de abuso
 
-- **Cero escrituras anónimas a Firestore** (la página pública no crea documentos).
-- WhatsApp/correo absorben el spam **antes** de llegar a Store OS.
-- La dueña registra toda solicitud reconocible, aunque finalmente no proceda.
-- Duplicados se vinculan al mismo expediente.
-- Validación de longitud en el campo libre de detalle del expediente (a nivel de UI/cliente, como saneamiento; **no** como garantía de seguridad — la Espec 1 G-P06 declara la validación de esquema fuera de V1).
-- Sin archivos adjuntos en Store OS V1.
-- Sin API pagada de WhatsApp, **sin CAPTCHA, sin Cloud Functions, sin servicio adicional** (respeta CERO COSTOS).
-- La **acreditación de identidad** (§7.3) es la barrera real contra suplantación.
+- El checkout público sólo acepta nombre, ids de producto y cantidades; la callable valida forma, publicación, tienda e inventario antes de escribir.
+- Idempotencia por `requestId` y huella; una solicitud por navegador cada 5 minutos y por IP cada minuto, siempre acotado a la tienda.
+- Fusible global de 500 solicitudes por día UTC. Los identificadores de navegador/IP se guardan como hashes en `publicOrderLimits`; no se conserva la IP cruda y el acceso está bloqueado por reglas.
+- Las solicitudes pendientes expiran en 24 horas y los límites en 2 días mediante TTL; la aceptación de la dueña elimina la expiración y continúa el pedido normal.
+- No se usan CAPTCHA/App Check ni una API pagada de WhatsApp en V1. Este límite económico es una defensa contra abuso de registros, no una promesa de mitigación DDoS volumétrica.
+- La **acreditación de identidad** (§7.3) sigue siendo la barrera contra suplantación en solicitudes ARCO.
 
 ---
 
@@ -421,6 +420,7 @@ Copias de identificación; conversaciones completas de WhatsApp; datos de pedido
 - Cumplimiento GDPR formal (sólo principios inspirados).
 - Datos fuera del producto (WhatsApp del dispositivo de Olivia, copias locales) **no** se gobiernan sin acción de la dueña (riesgo de gobernanza, §5).
 - Cobertura de procedimientos para representantes/menores más allá del trámite manual V1.
+- Ataques distribuidos que superen el límite por tienda: el fusible y la serialización de la callable reducen el crecimiento accidental de Firestore, pero no sustituyen un WAF/CDN, App Check o protección DDoS administrada si el tráfico real lo exige.
 - **Eliminación a tiempo de expedientes vencidos:** la regla **autoriza** el `delete` pero no lo ejecuta (no hay job automático en V1 por cero costos). Un expediente puede permanecer más allá de `retentionUntil` si la dueña no lo borra manualmente. El producto lo hace **observable** (§9.2), pero no lo garantiza a tiempo.
 
 > La spec define el tratamiento y el procedimiento; la **responsabilidad legal de ejecutarlo correctamente es de la responsable** (Olivia, operada por Fer), con Store OS como encargado que organiza y asiste.

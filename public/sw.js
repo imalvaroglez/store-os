@@ -1,6 +1,7 @@
 // Minimal offline service worker: cache-first for app shell.
 // ponytail: no versioning strategy beyond CACHE name bump; app shell is small and
-// local-first, so stale UI is acceptable. Upgrade path: Workbox when caching grows.
+// Firebase-first; stale UI is acceptable while offline. Upgrade path: Workbox
+// when caching grows.
 const CACHE = "store-os-v1";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 

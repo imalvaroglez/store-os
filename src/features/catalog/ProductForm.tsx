@@ -222,7 +222,7 @@ export function ProductForm({
       : uniqueProductSlug(state.products, store.id, product.id, slugify(draft.name));
 
     // SKU: source-of-truth at save. Auto mode → re-resolve against the final set
-    // (the only authoritative uniqueness check in this local-first model; there's
+    // (the only client-side uniqueness check before the backend write; there's
     // no backend sku transaction). Manual mode → respect Fer's value but reject a
     // collision with another product in this store.
     let sku = draft.sku?.trim() ?? "";

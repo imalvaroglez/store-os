@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "success";
 type Size = "sm" | "md" | "lg";
@@ -19,6 +19,9 @@ const SIZES: Record<Size, string> = {
   lg: "px-5 py-3.5 text-base",
 };
 
+const buttonClass = (variant: Variant, size: Size, full: boolean, className: string) =>
+  `rounded-xl font-semibold tracking-tight transition-all active:translate-y-px active:scale-[0.98] ${VARIANTS[variant]} ${SIZES[size]} ${full ? "w-full" : ""} ${className}`;
+
 type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant;
   size?: Size;
@@ -36,12 +39,29 @@ export function Button({
 }: Props) {
   return (
     <button
-      className={`rounded-xl font-semibold tracking-tight transition-all active:translate-y-px active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 disabled:active:translate-y-0 ${VARIANTS[variant]} ${SIZES[size]} ${full ? "w-full" : ""} ${className}`}
+      className={`${buttonClass(variant, size, full, className)} disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 disabled:active:translate-y-0`}
       {...rest}
     >
       {children}
     </button>
   );
+}
+
+/** Design-system anchor with Button visuals; avoids nesting a button in a link. */
+export function ButtonLink({
+  variant = "primary",
+  size = "md",
+  full = false,
+  className = "",
+  children,
+  ...rest
+}: AnchorHTMLAttributes<HTMLAnchorElement> & {
+  variant?: Variant;
+  size?: Size;
+  full?: boolean;
+  children: ReactNode;
+}) {
+  return <a className={`inline-flex items-center justify-center ${buttonClass(variant, size, full, className)}`} {...rest}>{children}</a>;
 }
 
 // Square icon-only button (inventory ±1, nav, close). Replaces raw icon buttons.

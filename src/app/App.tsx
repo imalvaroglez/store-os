@@ -43,11 +43,9 @@ function Root() {
     );
   }
 
-  // SECURITY GATE: every non-public route requires an authenticated user. There
-  // is NO local demo and NO anonymous access to the admin panel — a visitor who
-  // lands on the root URL (or any private route) without a session sees ONLY the
-  // authentication screen. This also closes the hole where a stale demo
-  // activeStore in localStorage could render AppShell without a login.
+  // SECURITY GATE: every non-public route requires an authenticated user. A
+  // visitor who lands on the root URL (or any private route) without a session
+  // sees ONLY the authentication screen.
   if (!user) {
     return (
       <div className="min-h-full flex items-center justify-center p-4">

@@ -2,7 +2,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { getFirebase } from "./config";
 import type { StoreType, Storefront } from "../../types";
 
-/** Coarse stock signal — never an exact count. */
+/** Public stock signal. Inventory stores also publish the exact max quantity. */
 export type PublicStockSignal = "agotado" | "pocas" | "disponible";
 
 /** Public tier as seen by visitors: label, order and informative minimums. */
@@ -31,6 +31,8 @@ export type PublicCategory = {
 };
 
 export type PublicProductSummary = {
+  /** Canonical private product id, exposed so public requests can be validated server-side. */
+  productId?: string;
   storeId: string;
   productSlug: string;
   storeSlug: string;
@@ -43,6 +45,8 @@ export type PublicProductSummary = {
   /** Prices per visible tier (owner decision 2026-08-29). Absent on stale docs. */
   prices?: Record<string, number>;
   stockSignal?: PublicStockSignal;
+  /** Exact available pieces for inventory stores; absent for on-demand stores. */
+  availableQuantity?: number;
   availability?: string;
   isFeatured?: boolean;
   isNew?: boolean;
@@ -77,6 +81,8 @@ export type PublicCatalog = {
 };
 
 export type PublicProductDetail = {
+  /** Canonical private product id, exposed so public requests can be validated server-side. */
+  productId?: string;
   storeId: string;
   storeSlug: string;
   productSlug: string;

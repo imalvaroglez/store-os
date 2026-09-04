@@ -194,16 +194,39 @@ service cloud.firestore {
     }
     match /orders/{id} {
       allow read: if canOperateStore(resource.data.storeId);
-      allow create: if canOperateStore(request.resource.data.storeId);
+      // `expiresAt` is reserved for Admin SDK-created public requests. The
+      // callable bypasses rules; signed-in clients must never be able to add
+      // or change it, otherwise the collection-wide TTL could delete a normal
+      // order later.
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && !request.resource.data.keys().hasAny(['expiresAt']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
-        && resource.data.storeId == request.resource.data.storeId;
+        && resource.data.storeId == request.resource.data.storeId
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['expiresAt'])
+          || (
+            resource.data.source == 'public_catalog'
+            && resource.data.orderStatus == 'requested'
+            && request.resource.data.source == 'public_catalog'
+            && request.resource.data.orderStatus != 'requested'
+            && !request.resource.data.keys().hasAny(['expiresAt'])
+          )
+        );
       allow delete: if canOperateStore(resource.data.storeId);
+    }
+
+    // Anti-abuse counters are written only by the Admin SDK callable. Keeping
+    // the match explicit prevents a future broad rule from exposing hashed
+    // browser/IP limits or the daily fuse to anonymous clients.
+    match /publicOrderLimits/{id} {
+      allow read, write: if false;
     }
 
     // --- Public catalog (anonymous-readable projections) ---
     // Private fields are NEVER written here, so anonymous reads physically cannot
-    // see cost, profit, privateNotes, inventory, or membership data.
+    // see cost, profit, privateNotes, or membership data. Inventory stores may
+    // expose the allow-listed availableQuantity needed to cap public orders.
 
     // slugs/{slug} — global slug reservation. Doc existence IS the lock. `get` is
     // allowed for signed-in clients (the claim transaction reads-then-creates to

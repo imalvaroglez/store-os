@@ -26,8 +26,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             Algo salió mal
           </h1>
           <p className="text-sm text-ink-soft max-w-sm mb-6">
-            Store OS tuvo un problema. Recarga la página; si persiste, revisa tu
-            conexión o contáctanos.
+            {this.state.error.message ||
+              "Store OS tuvo un problema. Recarga la página; si persiste, revisa tu conexión o contáctanos."}
           </p>
           <button
             onClick={() => {

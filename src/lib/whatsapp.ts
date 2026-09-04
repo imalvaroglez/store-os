@@ -107,7 +107,8 @@ export function buildCartOrderUrl(
   storeSlug: string,
   lines: CartOrderLine[],
   pricing?: OrderPricing | null,
-  customerName?: string
+  customerName?: string,
+  requestReference?: string
 ): string {
   const name = customerName?.trim();
   const intro =
@@ -122,6 +123,7 @@ export function buildCartOrderUrl(
   const summary = pricing
     ? `\nTotal de piezas: ${pricing.totalQuantity}\nPrecio aplicable: ${pricing.activeTier.tier.label}\nSubtotal estimado: ${formatMoney(pricing.estimatedSubtotal)} MXN\nEnvío no incluido.\nPrecio y existencia por confirmar por WhatsApp.`
     : "";
-  const text = `${intro}\nPedido:\n${body}${summary}${who}\n${productUrl(storeSlug)}`;
+  const reference = requestReference ? `\nSolicitud: ${requestReference}` : "";
+  const text = `${intro}\nPedido:${reference}\n${body}${summary}${who}\n${productUrl(storeSlug)}`;
   return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }

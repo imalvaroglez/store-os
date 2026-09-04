@@ -4,14 +4,14 @@ Documento de referencia para entender cómo está construido Store OS. Para proc
 
 ## Visión general
 
-App de una sola página (SPA) **local-first**, renderizada con React + TypeScript + Vite, estilada con Tailwind sobre un sistema de tokens. Todo el estado vive en el navegador (`localStorage`); no hay backend todavía.
+App de una sola página (SPA) **Firebase-first**, renderizada con React + TypeScript + Vite, estilada con Tailwind sobre un sistema de tokens. Los datos operativos viven en Firebase. `localStorage` se reserva para preferencias, carrito y el adaptador de estado usado por pruebas unitarias; nunca es un respaldo de datos de negocio en ejecución.
 
 ```
 src/
   app/            # raíz: App, AppShell (responsive), StoreProvider (estado), router
   design-system/  # sistema de diseño (tokens + primitivos + gate) y theme/
   features/       # pantallas por dominio
-  lib/            # utilidades puras (ids, money, dates, storage, selectors, whatsapp, seed, labels, router)
+  lib/            # utilidades puras (ids, money, dates, storage, selectors, whatsapp, labels, router)
   types/          # modelo de datos
 ```
 
@@ -24,7 +24,7 @@ src/
   - Además: `publicDescription?`, `privateNotes?`.
 - **`Customer`** — `storeId`, `name`, `phone?`, `notes?`.
 - **`Order`** — `storeId`, `customerId`, `productName` (+ `productId?`), `quantity`, `price`, `deposit`, `status` (7 valores), `cost?`, `priceTier?`, `promisedDate?`, `notes?`.
-- **`AppState`** — `{ stores, activeStoreId, products, customers, orders }`. Es lo que se persiste entero.
+- **`AppState`** — `{ stores, activeStoreId, products, customers, orders }`. En ejecución se sincroniza con las colecciones de Firebase; el adaptador completo de `localStorage` sólo existe para pruebas unitarias.
 
 **Reglas:**
 - `price` es para tiendas on-demand; `prices` para inventory-tiered. No se fuerzan campos según el tipo.
@@ -33,15 +33,14 @@ src/
 ## Flujo de estado y persistencia
 
 ```
-tap → dispatch(action) → reducer (StoreProvider) → nuevo AppState
-    → effect: storage.saveState(state)   ← único escritor de localStorage
-    → React re-renderiza
+tap → dispatch(action) → reducer (StoreProvider) → Firebase
+    → React re-renderiza con el estado sincronizado
 ```
 
-- **`StoreProvider`** (`src/app/StoreProvider.tsx`) mantiene todo en un `useReducer`. Expone `useStore()` con acciones (`addStore`, `upsertProduct`, `upsertOrder`, `advanceStatus`, `adjustInventory`, `resetDemo`, etc.).
-- **Ningún componente llama a `localStorage` directamente** — solo `src/lib/storage.ts`, invocado por el provider. Esto aísla la persistencia para poder cambiarla (ej. Firebase) sin tocar la UI.
+- **`StoreProvider`** (`src/app/StoreProvider.tsx`) mantiene el estado de UI en un `useReducer` y delega las escrituras operativas a Firebase cuando hay sesión. Expone `useStore()` con acciones (`addStore`, `upsertProduct`, `upsertOrder`, `advanceStatus`, `adjustInventory`, etc.).
+- **Ningún componente llama a `localStorage` directamente**. `src/lib/storage.ts` conserva únicamente preferencias/carrito y el adaptador completo para pruebas unitarias.
 - **Aislamiento entre tiendas:** las pantallas nunca filtran `state.products` directo; usan selectores (`productsForStore`, `ordersForStore`, etc. en `src/lib/selectors.ts`) que filtran por `storeId`.
-- **Seed:** en la primera carga (sin `store_os_state_v1` en `localStorage`) se siembran dos tiendas demo (Santi on-demand, Joyería inventory-tiered) con productos/clientes/pedidos.
+- **Datos de prueba:** `npm run seed:dev` publica datos explícitamente en el proyecto Firebase real `store-os-dev`. La aplicación no siembra ni restaura datos por su cuenta.
 
 ### Acceso de plataforma y aislamiento
 
@@ -81,13 +80,15 @@ Router de historia mínimo y sin dependencias (`src/lib/router.ts` + hook `useRo
 - `navItems.ts` es la fuente única de navegación, compartida por `BottomNav` y `Sidebar`.
 - `Sheet` es responsive: bottom-sheet en móvil, modal centrado en escritorio.
 
-## Pruebas
+## Ambientes y pruebas
 
-- **Unit (`vitest`):** `lib/money` (formato, profit, parseo), `lib/selectors` (aislamiento por tienda, filtrado del catálogo público), render de primitivos, inyección de temas, y el **gate** del sistema de diseño.
-- **E2E (`playwright`), dos proyectos:** móvil (390×844) y escritorio (1280×800). Cubren el flujo completo (crear tienda/producto/cliente/pedido, avanzar estatus, persistencia, catálogo público) + responsividad + cambio de temas.
+- **Unit (`vitest`):** funciones puras, reducer, selectores, render de primitivos, inyección de temas y el **gate** del sistema de diseño. No prueban Firebase.
+- **Integración/reglas (`npm run test:rules`):** usa el SDK Admin sólo para preparar y limpiar datos temporales reales en `store-os-dev`; las comprobaciones pasan por el SDK cliente y las reglas desplegadas en ese mismo proyecto.
+- **E2E (`npm run e2e:dev`):** levanta la aplicación local y llama al backend real de `store-os-dev` (incluidas callable functions). Usa un tenant de pruebas dedicado y elimina sus documentos al terminar.
+- No hay emuladores ni un modo demo. Consulta [`ENVIRONMENTS.md`](ENVIRONMENTS.md) para el contrato obligatorio y la promoción a producción.
 
 ## Diseñado para cambiar
 
-- **Persistencia:** cambiar `src/lib/storage.ts` por un adaptador async (Firestore) no afecta al reducer ni a la UI.
+- **Persistencia:** Firebase ya es el adaptador operativo; `src/lib/storage.ts` no debe convertirse en un fallback de negocio.
 - **Auth/roles:** `StoreProvider` es el lugar natural para leer el usuario y filtrar tiendas por membresía.
 - **Temas:** agregar un tema es un nuevo archivo en `theme/` que exporte el mismo `Theme`.

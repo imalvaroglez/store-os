@@ -34,7 +34,8 @@ type DraftLine = OrderItem & {
 
 const STATUS_OPTIONS: { value: OrderStatus; label: string }[] = (
   Object.keys(ORDER_STATUS_LABELS) as OrderStatus[]
-).map((status) => ({ value: status, label: ORDER_STATUS_LABELS[status] }));
+).filter((status) => status !== "requested")
+  .map((status) => ({ value: status, label: ORDER_STATUS_LABELS[status] }));
 
 function lineFromItem(item?: OrderItem): DraftLine {
   const quantity = item?.quantity ?? 1;
@@ -198,6 +199,8 @@ export function OrderForm({
       paymentStatus: paymentStatusForOrder({ ...order, items: normalizedItems, deposit: paid }),
       ...(promisedDate ? { promisedDate } : {}),
       ...(notes.trim() ? { notes: notes.trim() } : {}),
+      ...(order.source ? { source: order.source } : {}),
+      ...(order.requesterName ? { requesterName: order.requesterName } : {}),
       schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
       createdAt: order.createdAt,
       updatedAt: new Date().toISOString(),

@@ -7,10 +7,15 @@ import {
   calculateOrderPricing,
   type CartQtyLine,
 } from "../../lib/pricing";
-import { loadCartName, pruneCartLines, saveCartName, type CartLine } from "../../lib/cart";
+import { publicQuantityCap, pruneCartLines, type CartLine } from "../../lib/cart";
+import {
+  newPublicOrderRequestId,
+  publicOrderClientId,
+  submitPublicOrderRequest,
+} from "../../app/firebase/publicOrders";
 
-// Public cart drawer. Informative only: minimums are shown as invitations,
-// never enforced — the owner confirms prices and qualification in the chat.
+// Public cart drawer. Tier minimums are informative only; inventory caps are
+// enforced locally for UX and again by the callable at the trust boundary.
 
 const STOCK_LEGENDS: Record<PublicStockSignal, string | null> = {
   pocas: "Quedan pocas — tu pedido puede reabastecerse y entregarse completo 💛",
@@ -90,6 +95,7 @@ export function CartProductControl({
   onSetQty,
   full = false,
   size = "sm",
+  availableQuantity,
   className = "",
 }: {
   productSlug: string;
@@ -99,8 +105,16 @@ export function CartProductControl({
   onSetQty: (productSlug: string, quantity: number) => void;
   full?: boolean;
   size?: "sm" | "md" | "lg";
+  availableQuantity?: number;
   className?: string;
 }) {
+  if (availableQuantity === 0) {
+    return (
+      <Button full={full} size={size} variant="secondary" disabled className={className}>
+        Agotado
+      </Button>
+    );
+  }
   if (quantity <= 0) {
     return (
       <Button full={full} size={size} variant="secondary" onClick={onAdd} className={className}>
@@ -129,6 +143,7 @@ export function CartProductControl({
       <IconButton
         variant="primary"
         aria-label={`Sumar una pieza de ${productName}`}
+        disabled={availableQuantity != null && quantity >= availableQuantity}
         onClick={() => onSetQty(productSlug, quantity + 1)}
       >
         +
@@ -165,6 +180,7 @@ export function CartDrawer({
   visibleSlugs,
   onSetQty,
   onRemove,
+  onClear,
 }: {
   open: boolean;
   onClose: () => void;
@@ -177,9 +193,12 @@ export function CartDrawer({
   visibleSlugs?: Set<string>;
   onSetQty: (productSlug: string, qty: number) => void;
   onRemove: (productSlug: string) => void;
+  onClear: () => void;
 }) {
   const shown = visibleSlugs ? pruneCartLines(lines, visibleSlugs) : lines;
-  const [customerName, setCustomerName] = useState(() => loadCartName(store.slug));
+  const [customerName, setCustomerName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const tiers: PublicPriceTier[] = store.priceTiers ?? [];
   const qtyLines: CartQtyLine[] = shown.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
@@ -198,6 +217,47 @@ export function CartDrawer({
     qty: l.qty,
     inquire: l.inquire || signalBySlug?.[l.productSlug] === "agotado",
   }));
+
+  async function submit() {
+    const name = customerName.trim();
+    if (!name) {
+      setSubmitError("Escribe tu nombre para enviar el pedido.");
+      return;
+    }
+    if (store.type === "inventory_tiered" && shown.some((line) => typeof line.availableQuantity !== "number")) {
+      setSubmitError("Este catálogo está actualizándose. Intenta de nuevo en un momento.");
+      return;
+    }
+    if (shown.some((line) => !line.productId)) {
+      setSubmitError("Este catálogo está actualizándose. Intenta de nuevo en un momento.");
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      const result = await submitPublicOrderRequest({
+        requestId: newPublicOrderRequestId(),
+        clientId: publicOrderClientId(),
+        storeSlug: store.slug,
+        customerName: name,
+        lines: shown.map((line) => ({
+          productId: line.productId!,
+          productSlug: line.productSlug,
+          quantity: line.qty,
+        })),
+      });
+      onClear();
+      window.location.assign(buildCartOrderUrl(store, store.slug, orderLines, pricing, name, result.reference));
+    } catch (error) {
+      const code = (error as { code?: string })?.code ?? "";
+      setSubmitError(code.includes("resource-exhausted")
+        ? "Ya recibimos una solicitud reciente. Intenta de nuevo más tarde."
+        : code.includes("failed-precondition")
+          ? "La existencia cambió. Revisa las cantidades e intenta de nuevo."
+          : "No se pudo enviar el pedido. Intenta de nuevo.");
+      setSubmitting(false);
+    }
+  }
 
   return (
     <Sheet open={open} onClose={onClose} title="Tu pedido">
@@ -242,12 +302,14 @@ export function CartDrawer({
                       <IconButton
                         variant="secondary"
                         aria-label="Sumar una pieza"
+                        disabled={l.qty >= (publicQuantityCap(store.type, l.availableQuantity) ?? Infinity)}
                         onClick={() => onSetQty(l.productSlug, l.qty + 1)}
                       >
                         +
                       </IconButton>
                       <span className="text-[var(--olv-ink-soft,var(--ink-soft))] text-xs ml-1">{l.qty === 1 ? "pieza" : "piezas"}</span>
                     </div>
+                    {store.type === "inventory_tiered" && <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">Máximo disponible: {publicQuantityCap(store.type, l.availableQuantity)}</p>}
                   </div>
                 </li>
               );
@@ -344,18 +406,26 @@ export function CartDrawer({
 
             <TextField
               label="Tu nombre"
-              placeholder="Para que sepa quién pide"
+              placeholder="Para que sepan quién pide"
+              required
+              maxLength={80}
               value={customerName}
               onChange={(event) => {
                 setCustomerName(event.target.value);
-                saveCartName(store.slug, event.target.value);
+                setSubmitError("");
               }}
             />
-            <a href={buildCartOrderUrl(store, store.slug, orderLines, pricing, customerName)} target="_blank" rel="noreferrer">
-              <Button full size="lg" variant="primary" className="bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90">
-                Enviar pedido por WhatsApp
-              </Button>
-            </a>
+            <Button
+              full
+              size="lg"
+              variant="primary"
+              disabled={submitting || !customerName.trim()}
+              onClick={submit}
+              className="bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90"
+            >
+              {submitting ? "Enviando…" : "Enviar pedido por WhatsApp"}
+            </Button>
+            {submitError && <p role="alert" className="text-danger text-xs text-center">{submitError}</p>}
             <p className="text-[var(--olv-ink-soft,var(--ink-soft))] text-xs text-center">
               Precio y existencia por confirmar por WhatsApp.
             </p>

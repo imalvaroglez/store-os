@@ -10,21 +10,20 @@ Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentr
 
 ## Qué es Store OS
 
-PWA **local-first**, **mobile-first** y **100% en español (México)** para administrar tiendas pequeñas. Multitienda, dos tipos de tienda (Bajo pedido / Inventario y precios). Ver [`README.md`](README.md) y [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+PWA **Firebase-first**, **mobile-first** y **100% en español (México)** para administrar tiendas pequeñas. Multitienda, dos tipos de tienda (Bajo pedido / Inventario y precios). Ver [`README.md`](README.md), [`docs/ENVIRONMENTS.md`](docs/ENVIRONMENTS.md) y [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-Stack: **React 18 + TypeScript + Vite + Tailwind**, `localStorage` (próximamente Firebase), PWA. Sin dependencias de UI externas — el sistema de diseño es propio.
+Stack: **React 18 + TypeScript + Vite + Tailwind**, Firebase (Auth, Firestore, Storage y Functions), PWA. Sin dependencias de UI externas — el sistema de diseño es propio.
 
 ## Comandos
 
 ```bash
-npm run dev            # desarrollo (5173) — modo demo local sin backend
+npm run dev            # desarrollo (5173) — Firebase real en store-os-dev
 npm run build          # tsc --noEmit + vite build
 npm run typecheck      # tsc --noEmit
 npm run test           # vitest (unit + design-system gate)
-npm run test:rules     # pruebas de firestore.rules contra el emulador (G-P01/G-P02/G-P05/G-P06)
-npm run e2e            # playwright frontend (smoke + responsive + theme, móvil + escritorio)
-npm run e2e:firebase   # pruebas contra el emulador Firebase (requiere `npm run emulators`)
-npm run emulators      # Firebase Auth + Firestore emuladores en localhost
+npm run test:rules     # pruebas de reglas contra Firestore real en store-os-dev
+npm run e2e            # Playwright smoke del build local
+npm run e2e:dev        # Playwright contra Firebase real en store-os-dev
 npm run preview        # build de producción
 ```
 
@@ -32,13 +31,13 @@ No declares algo "listo" sin evidencia: antes de abrir el PR, `npm run typecheck
 
 ## Arquitectura (lo esencial)
 
-- **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. Modo demo local (sin sesión) intacto.
+- **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. El runtime siempre requiere Firebase configurado.
 - **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules` (super-admin + miembros por tienda). El adaptador `firestoreData.ts` acota lecturas a las tiendas accesibles.
-- **Estado:** `StoreProvider` (`useReducer`) es el **único** escritor de `localStorage` en modo demo; en modo cloud escribe en Firestore. Aislamiento entre tiendas **solo** vía selectores en `src/lib/selectors.ts`.
+- **Estado:** `StoreProvider` (`useReducer`) escribe datos operativos en Firestore. `localStorage` queda para preferencias, carrito público y fixtures unitarias; nunca es fuente de datos del runtime. Aislamiento entre tiendas **solo** vía selectores en `src/lib/selectors.ts`.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
 - **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Gate de cumplimiento: falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos (excepción: `ErrorBoundary`).
 - **Temas:** `src/design-system/theme/`. Cada tema define tokens (color, tipografía, radios, sombras, **movimiento**). `ThemeProvider` los inyecta en `<html data-theme>`. Per-usuario, persiste en `localStorage` → perfil Firestore.
-- **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. Ruta pública `/catalogo/:slug` (funciona en local demo y en cloud: la proyección `publicStores`/`publicProducts` se escribe al crear/renombrar tienda y al guardar productos, con lectura anónima).
+- **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. Ruta pública `/catalogo/:slug` (funciona en localhost/Preview contra `store-os-dev` y en producción contra `store-os-f7cf8`).
 - **Datos:** tipos en `src/types/index.ts`. Coerción numérica siempre vía `parseAmount` (`src/lib/money.ts`) — nunca escribas `NaN` al estado.
 
 ## Convenciones (importantes)
@@ -70,7 +69,7 @@ No declares algo "listo" sin evidencia: antes de abrir el PR, `npm run typecheck
 
 ## Out of scope (todavía)
 
-Sin pagos/checkout/carrito, sin facturas, sin códigos de barras (la Clave/SKU de producto ya existe; proveedores y compras ya están implementados), sin ledger de inventario, sin analítica. El catálogo público cloud **ya está implementado** (`publicStores`/`publicProducts` en `firestore.rules`, lectura anónima; la proyección se mantiene al crear/editar tienda y productos, y con el botón "Republicar catálogo"). La subida de imágenes funciona pero requiere el grant IAM `roles/datastore.user` al Storage service agent (ver `docs/DEPLOYMENT.md` §4b) o las fotos fallan con 403.
+Sin pagos con cobro, facturas, códigos de barras (la Clave/SKU de producto ya existe; proveedores y compras ya están implementados), ledger de inventario ni analítica. El catálogo público y las solicitudes de pedido por WhatsApp ya están implementados; la callable valida nombre, existencia, idempotencia y límites anti-abuso. La subida de imágenes funciona pero requiere el grant IAM `roles/datastore.user` al Storage service agent (ver `docs/DEPLOYMENT.md` §4b) o las fotos fallan con 403.
 
 ## Estado del roadmap
 
@@ -94,4 +93,5 @@ Tres ambientes, dos backends Firebase. **Local y Preview comparten backend**; **
 
 `scripts/check-env.cjs` hace cumplir el contrato en CI: un deploy de **Preview** que apunte a prod (o sin projectId) **falla el build**; un deploy de **Production** que no apunte a prod **falla el build**. Los datos de prueba viven en `store-os-dev` y se siembran con `node scripts/seed-dev.cjs` (Olivia + admin@store.os); **nunca** se siembra ni toca prod.
 
+El contrato de ambientes vive en [`docs/ENVIRONMENTS.md`](docs/ENVIRONMENTS.md).
 Los diseños detallados viven en `docs/superpowers/specs/`.

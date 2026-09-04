@@ -9,6 +9,7 @@ import {
   pruneCartLines,
   cartPieces,
   cartItemFromPublicProduct,
+  publicQuantityCap,
   type CartLine,
 } from "./cart";
 
@@ -64,6 +65,12 @@ describe("cart persistence por tienda", () => {
 });
 
 describe("cart mutations", () => {
+  it("cierra el inventario si falta el límite en una proyección vieja", () => {
+    expect(publicQuantityCap("inventory_tiered", undefined)).toBe(0);
+    expect(publicQuantityCap("inventory_tiered", 3.8)).toBe(3);
+    expect(publicQuantityCap("on_demand", undefined)).toBeUndefined();
+  });
+
   it("addToCart acumula cantidad en la línea existente y conserva el orden", () => {
     let lines = addToCart("olivia", { productSlug: "p1", name: "Anillo Blossom", sku: "SKU-p1" });
     lines = addToCart("olivia", { productSlug: "p2", name: "Aretes Luna", sku: "SKU-p2" });
@@ -79,6 +86,20 @@ describe("cart mutations", () => {
     const after = setCartQty("olivia", "p2", 0);
     expect(after.map((l) => l.productSlug)).toEqual(["p1"]);
     expect(loadCart("olivia").map((l) => l.productSlug)).toEqual(["p1"]);
+  });
+
+  it("limita agregar y cambiar cantidad a la existencia pública", () => {
+    const item = { productId: "p1", productSlug: "p1", name: "Anillo", sku: "A", availableQuantity: 2 };
+    expect(addToCart("olivia", item, 5).find((line) => line.productSlug === "p1")?.qty).toBe(2);
+    expect(setCartQty("olivia", "p1", 8).find((line) => line.productSlug === "p1")?.qty).toBe(2);
+    expect(setCartQty("olivia", "p1", 0)).toEqual([]);
+  });
+
+  it("no agrega una pieza agotada y refrescar elimina cantidades que ya no existen", () => {
+    const item = { productSlug: "p1", name: "Anillo", sku: "A", availableQuantity: 0 };
+    expect(addToCart("olivia", item)).toEqual([]);
+    saveCart("olivia", [{ ...item, availableQuantity: 4, qty: 4 }]);
+    expect(refreshCart("olivia", [{ ...item, availableQuantity: 2 }])[0]?.qty).toBe(2);
   });
 
   it("removeCartLine quita solo esa línea", () => {

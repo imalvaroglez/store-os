@@ -70,15 +70,17 @@ describe("projectPublicStore", () => {
 });
 
 describe("projectPublicProductSummary", () => {
-  it("on-demand: copies price, omits cost/notes/inventory", () => {
+  it("on-demand: copies price, omits cost/notes and exact inventory", () => {
     const projected = projectPublicProductSummary(
       baseProduct({ price: 1500, cost: 900, privateNotes: "secreto", quantityOnHand: 5 }),
-      "santi"
+      "santi",
+      store
     );
     expect(projected.price).toBe(1500);
     expect("cost" in projected).toBe(false);
     expect("privateNotes" in projected).toBe(false);
     expect("quantityOnHand" in projected).toBe(false);
+    expect("availableQuantity" in projected).toBe(false);
     expect(projected.storeSlug).toBe("santi");
     expect(projected.productSlug).toBe("perfume");
   });
@@ -217,7 +219,7 @@ describe("projectPublicStore — niveles públicos (carrito)", () => {
   });
 });
 
-describe("stockSignal — señal gruesa de inventario (nunca cifras)", () => {
+describe("stockSignal y existencia pública", () => {
   it("0 → agotado, <= lowStockAt → pocas, resto → disponible", () => {
     expect(projectPublicProductSummary(baseProduct({ quantityOnHand: 0, lowStockAt: 2 }), "santi").stockSignal).toBe("agotado");
     expect(projectPublicProductSummary(baseProduct({ quantityOnHand: 1, lowStockAt: 2 }), "santi").stockSignal).toBe("pocas");
@@ -229,7 +231,17 @@ describe("stockSignal — señal gruesa de inventario (nunca cifras)", () => {
     expect(projectPublicProductSummary(baseProduct({}), "santi").stockSignal).toBe("disponible");
   });
 
-  it("la señal vive también en el detalle y jamás incluye la cifra", () => {
+  it("publica el máximo exacto sólo cuando el producto trae inventario", () => {
+    expect(projectPublicProductSummary(baseProduct({ quantityOnHand: 2 }), "santi", store).availableQuantity).toBeUndefined();
+    expect(projectPublicProductSummary(
+      baseProduct({ quantityOnHand: 2 }),
+      "olivia",
+      { type: "inventory_tiered" }
+    ).availableQuantity).toBe(2);
+    expect(projectPublicProductSummary(baseProduct({}), "santi", store).availableQuantity).toBeUndefined();
+  });
+
+  it("la señal vive también en el detalle y la cifra sólo vive en el resumen", () => {
     const projected = projectPublicProductDetail(
       baseProduct({ quantityOnHand: 1, lowStockAt: 3 }),
       "santi",

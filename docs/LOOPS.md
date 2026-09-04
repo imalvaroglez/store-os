@@ -31,17 +31,16 @@ Five loops nest. Know which one you're running.
 npm install       # one-time, then after dependency changes
 npm run build     # tsc --noEmit + vite build — typecheck AND bundle
 npm run test      # vitest (unit + design-system gate)
-npm run e2e       # playwright (smoke + responsive + theme)
+npm run e2e       # Playwright (build smoke + telemetry)
 npm run verify    # NOT A SCRIPT — see note below
-npm run dev       # local dev server on 5173 (demo mode, no backend)
+npm run dev       # local dev server on 5173 (Firebase real: store-os-dev)
 ```
 
 Extra, used when relevant:
 
 ```bash
 npm run typecheck        # tsc --noEmit only
-npm run e2e:firebase     # Firebase emulator suite (needs `npm run emulators`)
-npm run emulators        # Auth + Firestore + Storage emulators on localhost
+npm run e2e:dev          # Playwright against Firebase real: store-os-dev
 npm run deploy:rules     # human-only production operation; agents never execute it
 ```
 
@@ -57,7 +56,7 @@ A draft PR is reviewable only when CI (`build-test` + `rules-and-e2e`) is green 
 - App runs locally (`npm run dev`)
 - **No release blockers** (see §5)
 - Admin flows work (stores, products, customers, orders)
-- Public catalog works (`/catalogo`, `/catalogo/:slug` in demo)
+- Public catalog works (`/catalogo`, `/catalogo/:slug` against store-os-dev)
 - Store isolation works (no cross-store leak)
 - No secrets committed (no keys, tokens, service accounts in the diff)
 - Env requirements documented (which vars Vercel needs)

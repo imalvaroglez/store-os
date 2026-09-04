@@ -15,7 +15,8 @@ export type Store = {
   skuPrefix?: string;
   createdAt: string;
   updatedAt: string;
-  // Cloud-only membership fields (absent in local demo mode):
+  // Membership fields are required for persisted Firebase stores and optional
+  // only in unit-test fixtures.
   ownerUid?: string;
   memberUids?: string[];
   pendingInvites?: string[]; // emails invited but not yet signed up
@@ -192,6 +193,7 @@ export type Customer = {
 };
 
 export type OrderStatus =
+  | "requested"
   | "asked"
   | "quoted"
   | "confirmed"
@@ -226,6 +228,11 @@ export type Order = {
   schemaVersion?: number;
   createdAt: string;
   updatedAt: string;
+  /** Public storefront submissions keep this marker through acceptance. */
+  source?: "public_catalog";
+  requesterName?: string;
+  acceptedAt?: string;
+  acceptedByUid?: string;
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
@@ -370,7 +377,7 @@ export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
   return "ready";
 }
 
-// Whole app state persisted to localStorage.
+// Whole app state shape used by the test fixture adapter.
 export type AppState = {
   stores: Store[];
   activeStoreId: string | null;

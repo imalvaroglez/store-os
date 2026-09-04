@@ -137,6 +137,13 @@ describe("multi-product order reservations", () => {
     expect(reservationDeltasForOrderChange(open, order("delivered", [item("p1", 3)]))).toEqual(new Map([["p1", -1]]));
   });
 
+  it("does not reserve a public request until the owner accepts it", () => {
+    const request = order("requested");
+    expect(reservationDeltasForOrderChange(undefined, request)).toEqual(new Map());
+    expect(reservationDeltasForOrderChange(request, order("asked"))).toEqual(new Map([["p1", -2]]));
+    expect(reservationDeltasForOrderChange(order("asked"), order("cancelled"))).toEqual(new Map([["p1", 2]]));
+  });
+
   it("never double-consumes on the delivered→cancelled→delivered cycle", () => {
     // Contribution model: open and delivered both hold stock, cancelled holds
     // none. Cancelling a delivered sale returns the goods; re-delivering takes

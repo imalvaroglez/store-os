@@ -6,7 +6,7 @@
 
 > Complemento de la Espec 2 (Privacidad y ARCO V1). El procedimiento humano ARCO vive allí; aquí sólo invariantes verificables técnicamente. Una sola voz editorial en todo el documento.
 
-> **Nota de vigencia (2026-09-01):** la política de acceso de `super_admin`
+> **Nota de vigencia (2026-09-03):** la política de acceso de `super_admin`
 > descrita en §3 y G-P02 fue reemplazada por [ADR 0003](../../adr/0003-platform-super-admin-access.md).
 > `adminStores` sigue siendo la autoridad de membresía y propiedad, pero el
 > `super_admin` tiene acceso operativo global explícito a los datos actuales de
@@ -94,7 +94,7 @@ Datos privados de tienda (clientes, pedidos, proveedores, compras, costos, inven
 
 ### Datos por clase
 
-- **Públicos:** exclusivamente las proyecciones `publicStores`, `publicCatalogs`, `publicProducts`. Cada una enumera una **allow-list explícita** de campos; no esparce el objeto fuente. Campos privados (`cost`, `privateNotes`, `quantityOnHand`, `prices.wholesale`, `prices.reseller`, `ownerUid`, `memberUids`) no se proyectan.
+- **Públicos:** exclusivamente las proyecciones `publicStores`, `publicCatalogs`, `publicProducts`. Cada una enumera una **allow-list explícita** de campos; no esparce el objeto fuente. Campos privados (`cost`, `privateNotes`, `quantityOnHand`, `prices.wholesale`, `prices.reseller`, `ownerUid`, `memberUids`) no se proyectan; `availableQuantity` es la única cifra de inventario pública y está publicada deliberadamente para limitar pedidos.
 - **Privados:** colecciones internas restringidas por membresía (`stores`, `products`, `categories`, `suppliers`, `purchases`, `customers`, `orders`, `slugs`, `privacyRequests`).
 - **Administrativos:** `slugs`, membresía. (**`users` — riesgo residual §11:** no membership-gated; legible entre autenticados. No entra en las garantías G-P de V1.)
 
@@ -206,7 +206,14 @@ Pocas, estables, como **resultados observables**. Cada una: Garantía / Alcance 
 - **Estado (implementado en Espec 1):** la garantía **se cumple**. Históricamente `@vercel/analytics` y `@vercel/speed-insights` estaban montados globalmente en `src/main.tsx:3-4` (en TODAS las rutas); la implementación de Espec 1 los retiró por completo, añadió una compuerta estática (ausencia de paquetes/imports/rutas) y una prueba runtime de egress en Playwright (ver Espec 2 §5.2-5.3 y la memoria de decisión).
 - **Límites:** no cubre metadatos técnicos de petición que el hosting (Vercel) procesa por necesidad para servir la app (eso no es telemetría de producto; ver Espec 2 §5.3). La allow-list de destinos es la fuente normativa; añadirla es una nueva decisión (§3).
 
-> **PII de cuentas de usuario — fuera de alcance en V1 (declarado, no resuelto).** La colección `users/{uid}` permite `read` a **cualquiera autenticado** (`firestore.rules:40-41`): email, displayName y rol de cualquier usuario son legibles por cualquier sesion. **No existe una garantía G-P que lo impida en V1.** Se declara explícitamente como **riesgo residual (ver §11)**, no como GAP oculto. Si se desea proteger (probablemente con un directorio mínimo separado análogo a `adminStores`), sería una nueva garantía **G-P09** en una versión posterior; no entra en V1.
+### G-P09 — Las solicitudes públicas no pueden inflar pedidos ni saltarse el inventario
+
+- **Garantía:** el navegador sólo puede solicitar productos publicados de esa tienda, con nombre obligatorio y cantidades enteras dentro de los límites. La callable recalcula precios y escribe una orden `requested`; no reserva inventario hasta la aceptación de la dueña.
+- **Controles:** idempotencia por solicitud, límite por navegador (5 min), por IP (1 min) y fusible global de 500 solicitudes por día UTC. `publicOrderLimits` contiene sólo hashes y tiene TTL; las reglas niegan todo acceso de cliente.
+- **Evidencia obligatoria:** prueba contra el emulador de una solicitud válida, reintento idempotente, exceso de inventario, publicación/tienda inválida y bloqueo de límites; prueba de reglas que niega lectura/escritura anónima en `publicOrderLimits`.
+- **Límites:** son controles de abuso y crecimiento de registros, no una defensa DDoS volumétrica ni sustituyen WAF/CDN o App Check si el tráfico lo exige.
+
+> **PII de cuentas de usuario — fuera de alcance en V1 (declarado, no resuelto).** La colección `users/{uid}` permite `read` a **cualquiera autenticado** (`firestore.rules:40-41`): email, displayName y rol de cualquier usuario son legibles por cualquier sesion. **No existe una garantía G-P que lo impida en V1.** Se declara explícitamente como **riesgo residual (ver §11)**, no como GAP oculto. Si se desea proteger (probablemente con un directorio mínimo separado análogo a `adminStores`), sería una nueva garantía **G-P10** en una versión posterior; no entra en V1.
 
 > **No se incluye "cero code smells" como garantía** — no es una garantía de seguridad del producto.
 
@@ -227,7 +234,7 @@ Un hook local nunca puede ser autoridad: `git commit --no-verify` lo evita y eso
 
 ### G-H05 — Excepciones, pero no sobre las garantías del producto
 **Distinción obligatoria:**
-- **Garantías del producto (G-P01–G-P08): no renunciables.** La falta de evidencia de una de ellas **bloquea producción, sin excepción administrativa**. No se puede aceptar el riesgo de aislamiento roto, PII pública, `super_admin` con acceso a datos, o telemetría no autorizada.
+- **Garantías del producto (G-P01–G-P09): no renunciables.** La falta de evidencia de una de ellas **bloquea producción, sin excepción administrativa**. No se puede aceptar el riesgo de aislamiento roto, PII pública, `super_admin` con acceso a datos, telemetría no autorizada o crecimiento abusivo de pedidos.
 - **Mecanismo de evidencia sustituible:** puede reemplazarse por evidencia equivalente (ej. otro test que produzca la misma matriz de acceso) — esto no es una excepción a la garantía, es cambiar la herramienta.
 - **Advertencias (hallazgos bajos/medios, code smells, deuda):** pueden documentarse temporalmente con vencimiento.
 - Una excepción documentada (sólo sobre advertencias, nunca sobre G-P0x) indica **alcance, motivo, responsable y vencimiento**. "Cero bypass silencioso o permanente" — no "cero bypass".
@@ -251,6 +258,7 @@ Reproducible.
 | G-P06 | Prueba de reglas: update que cambia storeId denegado; sin membresía denegado; invariante storeId+membresía permitido | CI | Cambios en reglas de escritura |
 | G-P07 | Inspección de repo + build: sin service-account ni credenciales admin; sólo VITE_FIREBASE_* públicas | CI | Todos los cambios |
 | G-P08 | (a) Ausencia estática de `@vercel/analytics`/`@vercel/speed-insights`; (b) prueba **runtime** en Playwright (rutas pública y autenticada) con todo destino en la allow-list y **negación explícita** de `/__vercel/insights/**`, `/_vercel/insights/**` y hosts ajenos | CI | Cambios en dependencias, main.tsx, routing, hosting, o llamadas de red nuevas |
+| G-P09 | Pruebas de callable contra emulador: validación de nombre/ids/cantidades, publicación/tienda, inventario, idempotencia, ventanas navegador/IP y fusible diario; reglas niegan `publicOrderLimits` al cliente | CI/emulador | Cambios en checkout público, callable, reglas, inventario o índices TTL |
 
 > Una marca verde significa **que existe evidencia aceptable** para esa garantía en ese cambio; nunca "cumplimiento garantizado por la herramienta".
 
@@ -269,7 +277,7 @@ Cada superficie tiene un conjunto de verificaciones aplicables (definidas por la
 - **Bloquea:** un must_pass que falla; evidencia ausente/desconocida; un hallazgo de severidad crítica/alta explotable confirmado; **siempre** la falta de evidencia de una garantía G-P0x (no renunciable).
 - **Advierte:** hallazgos bajos/medios; code smells; deuda técnica — se reportan, no bloquean (YAGNI aplica).
 - **Herramienta que no puede ejecutarse:** la garantía asociada **falla cerrada** si no hay evidencia equivalente. Una herramienta caída nunca convierte "no se pudo verificar" en "aprobado".
-- **Aceptar riesgo:** un humano (Product Owner / responsable). El agente nunca auto-aprueba. Y **sólo sobre advertencias**, nunca sobre G-P01–G-P08.
+- **Aceptar riesgo:** un humano (Product Owner / responsable). El agente nunca auto-aprueba. Y **sólo sobre advertencias**, nunca sobre G-P01–G-P09.
 - **Excepción:** tiene vencimiento; al vencer, la garantía vuelve a exigirse. Exige control compensatorio mientras vive.
 - **Lenguaje:** "cero bypass silencioso o permanente" (no "cero bypass" ni "imposible de evadir").
 
@@ -337,6 +345,6 @@ El harness NO demuestra:
 - Cumplimiento de procedimientos humanos (que la dueña siga el ARCO correctamente).
 - Detección de TODAS las filtraciones semánticas (tests y revisión atrapan lo conocido; no son exhaustivos).
 - Validez indefinida de las bases de vulnerabilidades (CVEs nuevos aparecen).
-- **PII de cuentas de usuario entre usuarios autenticados:** `users/{uid}` es legible por cualquier sesion (`firestore.rules:40-41`). V1 no lo protege; sería G-P09 futura.
+- **PII de cuentas de usuario entre usuarios autenticados:** `users/{uid}` es legible por cualquier sesion (`firestore.rules:40-41`). V1 no lo protege; sería G-P10 futura.
 
 El harness **eleva el piso de confianza y hace observable la evidencia**; no garantiza perfección.

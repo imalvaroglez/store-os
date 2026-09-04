@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Button, EmptyState, SkeletonCard, ProductImage, OLIVIA_BRAND } from "../../design-system";
+import { createContext, useContext, useEffect, useState } from "react";
+import { Button, ButtonLink, EmptyState, SkeletonCard, ProductImage, OLIVIA_BRAND } from "../../design-system";
 import {
   loadPublicCatalog,
   loadPublicProduct,
@@ -13,15 +13,11 @@ import {
 import type { RouteMatch } from "../../lib/router";
 import { navigate } from "../../lib/router";
 import { publicPrice } from "../../lib/money";
-import {
-  createStorefrontBuyUrl,
-  createStorefrontContactUrl,
-  createStorefrontResaleUrl,
-} from "../../lib/whatsapp";
+import { createStorefrontContactUrl, createStorefrontResaleUrl } from "../../lib/whatsapp";
 import { useSeo } from "./useSeo";
 import { useCart } from "./useCart";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
-import { cartItemFromPublicProduct, cartPieces, pruneCartLines, type CartLine } from "../../lib/cart";
+import { cartItemFromPublicProduct, cartPieces, pruneCartLines, publicQuantityCap, type CartLine } from "../../lib/cart";
 import type { Storefront } from "../../types";
 
 // --- Public cart (context) -------------------------------------------------
@@ -39,6 +35,7 @@ type CartContextValue = {
   add: (item: Omit<CartLine, "qty">, qty?: number) => void;
   setQty: (productSlug: string, qty: number) => void;
   remove: (productSlug: string) => void;
+  clear: () => void;
 };
 
 const CartContext = createContext<CartContextValue | null>(null);
@@ -87,17 +84,6 @@ function BrandStyle() {
         font-family: var(--olv-display);
       }
     `}</style>
-  );
-}
-
-function ContactFallback({ store }: { store: PublicStore }) {
-  // If WhatsApp can't open (no phone), show the raw number so contact is still
-  // possible. Never promise a reservation.
-  if (!store.whatsappPhone) return null;
-  return (
-    <p className="olv-ink-soft text-sm mt-2">
-      Escríbeme al <span className="olv-ink font-semibold">{store.whatsappPhone}</span>
-    </p>
   );
 }
 
@@ -212,7 +198,10 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
       store={store}
       signalBySlug={signalBySlug}
       visibleSlugs={new Set(catalog.products.map((p) => p.productSlug))}
-      cartItems={catalog.products.map(cartItemFromPublicProduct)}
+      cartItems={catalog.products.map((product) => cartItemFromPublicProduct({
+        ...product,
+        availableQuantity: publicQuantityCap(store.type, product.availableQuantity),
+      }))}
     >
       {/* Hero */}
       <section className="relative">
@@ -232,13 +221,8 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
             </ul>
           )}
           <div className="mt-7 flex flex-wrap justify-center gap-3">
-            <a href={createStorefrontContactUrl(store, slug)} target="_blank" rel="noreferrer">
-              <Button variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">Contactar</Button>
-            </a>
             {sf.resale && (
-              <a href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer">
-                <Button variant="secondary">Vende con nosotros</Button>
-              </a>
+              <ButtonLink href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer" variant="secondary">Vende con nosotros</ButtonLink>
             )}
           </div>
         </div>
@@ -308,11 +292,9 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
         {sf.resale?.body && !activeCategory && (
           <Section title={sf.resale.heading || "Vende con nosotros"}>
             <p className="olv-ink-soft max-w-2xl whitespace-pre-line">{sf.resale.body}</p>
-            <a href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer" className="inline-block mt-3">
-              <Button variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">
-                Quiero revender
-              </Button>
-            </a>
+            <ButtonLink href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer" className="inline-block mt-3" variant="primary">
+              Quiero revender
+            </ButtonLink>
           </Section>
         )}
 
@@ -333,10 +315,6 @@ function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: stri
             {(sf.payments ?? []).length > 0 && <p className="olv-ink-soft">Pagos: {sf.payments!.join(", ")}</p>}
             {sf.instagram && <p className="olv-ink-soft">Instagram: {sf.instagram}</p>}
           </div>
-          <a href={createStorefrontContactUrl(store, slug)} target="_blank" rel="noreferrer" className="inline-block mt-3">
-            <Button variant="success">Escríbeme por WhatsApp</Button>
-          </a>
-          <ContactFallback store={store} />
         </Section>
       </div>
     </StoreChrome>
@@ -363,7 +341,7 @@ function ProductGrid({
 // inside the link: the link keeps middle-click/copy-link, the button keeps the tap.
 function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
   const { add, lines, setQty, store } = useCartContext();
-  const soldOut = p.availability === "sold_out";
+  const soldOut = p.availability === "sold_out" || p.availableQuantity === 0;
   const quantity = lines.find((line) => line.productSlug === p.productSlug)?.qty ?? 0;
   return (
     <div className="group">
@@ -391,6 +369,7 @@ function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
         quantity={quantity}
         onAdd={() => add(cartItemFromPublicProduct(p))}
         onSetQty={setQty}
+        availableQuantity={publicQuantityCap(store.type, p.availableQuantity)}
         full
         className="mt-2"
       />
@@ -534,6 +513,9 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
   }
 
   const { product, store, catalog } = data;
+  const summary = catalog.products.find((item) =>
+    item.productSlug === product.productSlug || (product.productId && item.productId === product.productId)
+  );
   const signalBySlug = Object.fromEntries(
     catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"])
   );
@@ -543,9 +525,12 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
       store={store}
       signalBySlug={signalBySlug}
       visibleSlugs={new Set(catalog.products.map((p) => p.productSlug))}
-      cartItems={catalog.products.map(cartItemFromPublicProduct)}
+      cartItems={catalog.products.map((product) => cartItemFromPublicProduct({
+        ...product,
+        availableQuantity: publicQuantityCap(store.type, product.availableQuantity),
+      }))}
     >
-      <ProductDetail product={product} store={store} slug={slug} activeImg={activeImg} setActiveImg={setActiveImg} />
+      <ProductDetail product={product} summary={summary} store={store} slug={slug} activeImg={activeImg} setActiveImg={setActiveImg} />
     </StoreChrome>
   );
 }
@@ -554,12 +539,14 @@ function ProductView({ slug, productSlug }: { slug: string; productSlug: string 
 // floating button share state.
 function ProductDetail({
   product,
+  summary,
   store,
   slug,
   activeImg,
   setActiveImg,
 }: {
   product: PublicProductDetail;
+  summary?: PublicProductSummary;
   store: PublicStore;
   slug: string;
   activeImg: number;
@@ -567,18 +554,8 @@ function ProductDetail({
 }) {
   const { add, lines, setQty } = useCartContext();
   const images = product.images ?? [];
-  const soldOut = product.availability === "sold_out";
-  const canInquire = product.canInquire || !soldOut;
+  const soldOut = product.availability === "sold_out" || summary?.availableQuantity === 0;
   const quantity = lines.find((line) => line.productSlug === product.productSlug)?.qty ?? 0;
-
-  const buyUrl = useMemo(() => {
-    return createStorefrontBuyUrl(store, slug, {
-      name: product.name,
-      sku: product.sku,
-      productSlug: product.productSlug,
-      intent: soldOut ? "inquire" : "buy",
-    });
-  }, [store, slug, product, soldOut]);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
@@ -646,7 +623,7 @@ function ProductDetail({
               </div>
             )}
 
-            {/* CTAs: cart, buy/inquire (respects canInquire + sold-out), contact. */}
+            {/* Purchase starts in the cart; WhatsApp is sent only from checkout. */}
             <div className="mt-6 flex flex-col gap-2">
               <CartProductControl
                 key={`${product.productSlug}-${quantity}`}
@@ -655,27 +632,15 @@ function ProductDetail({
                 quantity={quantity}
                 onAdd={() => add(cartItemFromPublicProduct({
                   ...product,
+                  ...summary,
                   image: images[0]?.url,
-                  inquire: soldOut,
+                  inquire: false,
                 }))}
                 onSetQty={setQty}
+                availableQuantity={publicQuantityCap(store.type, summary?.availableQuantity ?? (soldOut ? 0 : undefined))}
                 full
                 size="lg"
               />
-              {canInquire && (
-                <a href={buyUrl} target="_blank" rel="noreferrer">
-                  <Button full size="lg" variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">
-                    {soldOut ? "Preguntar por esta pieza" : "Comprar por WhatsApp"}
-                  </Button>
-                </a>
-              )}
-              <a href={createStorefrontContactUrl(store, slug)} target="_blank" rel="noreferrer">
-                <Button full variant="secondary">Contacto general</Button>
-              </a>
-              <ContactFallback store={store} />
-              <p className="olv-ink-soft text-xs mt-1">
-                Iniciar una conversación no reserva la pieza.
-              </p>
             </div>
           </div>
         </div>
@@ -748,7 +713,10 @@ function StoreChrome({
       )}
       {children}
       <footer className="border-t border-[var(--olv-rule)] mt-8 py-6 text-center text-xs">
-        <p className="olv-ink-soft">© {store?.name}</p>
+        {store && (
+          <ButtonLink href={createStorefrontContactUrl(store, store.slug)} target="_blank" rel="noreferrer" variant="secondary">Contacto por WhatsApp</ButtonLink>
+        )}
+        <p className="olv-ink-soft mt-1">© {store?.name}</p>
       </footer>
     </>
   );
@@ -785,6 +753,7 @@ function StoreChrome({
           visibleSlugs={visibleSlugs}
           onSetQty={cart.setQty}
           onRemove={cart.remove}
+          onClear={cart.clear}
         />
       </div>
     </CartContext.Provider>
