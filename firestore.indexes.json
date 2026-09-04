@@ -4,12 +4,14 @@
     {
       "collectionGroup": "publicOrderLimits",
       "fieldPath": "expiresAt",
-      "ttl": true
+      "ttl": true,
+      "indexes": []
     },
     {
       "collectionGroup": "orders",
       "fieldPath": "expiresAt",
-      "ttl": true
+      "ttl": true,
+      "indexes": []
     }
   ]
 }
