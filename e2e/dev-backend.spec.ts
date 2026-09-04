@@ -50,7 +50,7 @@ test("callable real valida nombre, inventario, idempotencia y límite", async ({
   expect(first.status()).toBe(200);
   const retry = await callPublicOrder(request, body);
   expect(retry.status()).toBe(200);
-  expect((await retry.json()).data?.idempotent).toBe(true);
+  expect((await retry.json()).result?.idempotent).toBe(true);
 
   const limited = await callPublicOrder(request, {
     requestId: uuid("104"), clientId: uuid("204"), storeSlug: ids.catalog, customerName: "Otra persona", lines: [line],
