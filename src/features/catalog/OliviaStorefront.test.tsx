@@ -234,8 +234,9 @@ describe("detalle de producto — precios por tier", () => {
     render(<OliviaStorefront route={productRoute} />);
     expect(await screen.findByText("Anillo Blossom")).toBeTruthy();
     expect(screen.getByText("$90")).toBeTruthy();
-    expect(screen.getByText("Girly").closest("p")).toHaveTextContent("Girly $120 · desde 5 piezas");
-    expect(screen.getByText("desde $1,000 en productos a precio Iconic")).toBeTruthy();
+    expect(screen.getByText("Girly").closest("p")).toHaveTextContent("Girly $120");
+    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toHaveAttribute("title", "desde 5 piezas");
+    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "desde $1,000 en productos a precio Iconic");
     expect(screen.getByText("Regular").closest("p")).toHaveTextContent("Regular $140");
     // Agregar al carrito desde el detalle.
     fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));

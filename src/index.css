@@ -80,6 +80,48 @@ body {
   font-feature-settings: "tnum";
 }
 
+/* Compact price explanations stay available on hover, focus and touch. */
+.price-help-wrap {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+.price-help {
+  width: 1.5rem;
+  height: 1.5rem;
+  min-height: 1.5rem !important;
+  padding: 0 !important;
+  border-radius: 999px !important;
+  font-size: 0.75rem !important;
+  line-height: 1;
+}
+.price-help-tooltip {
+  position: absolute;
+  z-index: 40;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  width: min(15rem, calc(100vw - 2rem));
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-sm);
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: var(--shadow-lift);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, 0.25rem);
+  transition: opacity var(--motion-fast) var(--ease-smooth), transform var(--motion-fast) var(--ease-smooth), visibility var(--motion-fast);
+}
+.price-help-wrap:hover .price-help-tooltip,
+.price-help-wrap:focus-within .price-help-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+}
+
 /* Hairline divider between sections — uses the theme rule color. */
 .rule {
   background-image: linear-gradient(to right, transparent, var(--rule) 8%, var(--rule) 92%, transparent);

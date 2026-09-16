@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
 import { formatMoney, publicPrice } from "../../lib/money";
@@ -31,6 +31,27 @@ function tierRequirement(tier: PublicPriceTier): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+function PriceRequirement({ tier }: { tier: PublicPriceTier }) {
+  const requirement = tierRequirement(tier);
+  const tooltipId = useId();
+  if (!requirement) return null;
+  return (
+    <span className="price-help-wrap">
+      <IconButton
+        type="button"
+        variant="ghost"
+        className="price-help"
+        aria-label={`Cómo se obtiene el precio ${tier.label}`}
+        aria-describedby={tooltipId}
+        title={requirement}
+      >
+        ?
+      </IconButton>
+      <span id={tooltipId} role="tooltip" className="price-help-tooltip">{requirement}</span>
+    </span>
+  );
+}
+
 /** Shared public price hierarchy: deepest tier is the commercial aspiration. */
 export function PublicTierPrices({
   store,
@@ -54,7 +75,6 @@ export function PublicTierPrices({
   }
 
   const aspirational = tiers[tiers.length - 1];
-  const requirement = tierRequirement(aspirational);
   return (
     <div className={mode === "detail" ? "mt-3 rounded-xl bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] p-4" : "mt-2"}>
       <div className="flex flex-wrap items-baseline gap-x-2">
@@ -62,10 +82,8 @@ export function PublicTierPrices({
           {formatMoney(product.prices?.[aspirational.id])}
         </span>
         <span className="font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
+        <PriceRequirement tier={aspirational} />
       </div>
-      {requirement && (
-        <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">{requirement}</p>
-      )}
       <div className={`${mode === "detail" ? "mt-3 pt-3 border-t border-[var(--olv-rule,var(--rule))]" : "mt-2"} space-y-1 text-xs`}>
         {tiers.slice(0, -1).map((tier) => {
           const minimum = tierRequirement(tier);
@@ -73,7 +91,7 @@ export function PublicTierPrices({
             <p key={tier.id} className="text-[var(--olv-ink-soft,var(--ink-soft))]">
               <span className="font-semibold text-[var(--olv-ink,var(--ink))]">{tier.label}</span>{" "}
               {formatMoney(product.prices?.[tier.id])}
-              {minimum ? ` · ${minimum}` : ""}
+              {minimum && <> <PriceRequirement tier={tier} /></>}
             </p>
           );
         })}

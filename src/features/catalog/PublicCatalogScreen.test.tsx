@@ -105,7 +105,7 @@ describe("PublicCatalogScreen carrito", () => {
 
     render(<PublicCatalogScreen slug="santi" />);
     expect(await screen.findByText("$90")).toBeTruthy();
-    expect(screen.getByText("desde $1,000 en productos a precio Iconic")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "desde $1,000 en productos a precio Iconic");
     fireEvent.click(screen.getByRole("button", { name: "Abrir pedido" }));
     expect(await screen.findByText("$1,080 MXN")).toBeTruthy();
 
