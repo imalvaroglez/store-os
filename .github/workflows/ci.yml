@@ -177,7 +177,10 @@ jobs:
           cat .vercel/project.json
       - run: npm ci
       - name: Install Vercel CLI
-        run: npm i -g vercel@latest
+        # Pin the CLI: 59.11.2 pulled this project successfully on 2026-09-03;
+        # latest (59.18.0) now fails before build with "Could not retrieve
+        # Project Settings" for the same project and GitHub secrets.
+        run: npm i -g vercel@59.11.2
       - name: Resolve Vercel target
         id: target
         run: |
