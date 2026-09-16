@@ -274,3 +274,50 @@ describe("detalle de producto — precios por tier", () => {
     expect(screen.getByText(/Te faltan \$560 en productos a precio Iconic/i)).toBeTruthy();
   });
 });
+
+describe("editorial catalog", () => {
+  it("searches names/keys, sorts, and never duplicates featured/new products", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: catalog.products.map((p) => ({ ...p, price: undefined, isFeatured: true, isNew: true })) } });
+    await renderStore();
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "aan1385" } });
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByRole("article")).toHaveAccessibleName("Anillo Blossom");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no existe" } });
+    expect(screen.getByText("No encontramos esa pieza")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar búsqueda" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "price-asc" } });
+    expect(screen.getAllByRole("article")[0]).toHaveAccessibleName("Aretes Luna");
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it("changes card photos by arrows/swipe without navigating or adding, then reuses the loaded catalog for detail", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [{ ...catalog.products[0], images: [{ url: "/one.jpg" }, { url: "/two.jpg" }] }] } });
+    const view = render(<OliviaStorefront route={storeRoute} />);
+    const next = await screen.findByRole("button", { name: "Foto siguiente de Anillo Blossom" });
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/one.jpg");
+    fireEvent.click(next);
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/two.jpg");
+    const photo = screen.getByRole("img", { name: "Anillo Blossom" }).closest(".olv-photo")!;
+    fireEvent.touchStart(photo, { touches: [{ clientX: 200, clientY: 100 }] });
+    fireEvent.touchEnd(photo, { changedTouches: [{ clientX: 100, clientY: 105 }] });
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/one.jpg");
+    expect(screen.queryByRole("button", { name: "Abrir pedido" })).toBeNull();
+    expect(mocks.loadPublicProduct).not.toHaveBeenCalled();
+    view.rerender(<OliviaStorefront route={productRoute} />);
+    await screen.findByRole("heading", { name: "Anillo Blossom" });
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPublicProduct).toHaveBeenCalledWith("olivia", "anillo-blossom", store);
+  });
+
+  it("keeps legacy images and hides the home banner on category routes", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, storefront: { hero: { imageUrl: "/banner.jpg", mobileImageUrl: "/mobile.jpg", imageAlt: "Temporada Olivia" } } }, catalog: { ...catalog, products: [{ ...catalog.products[0], imageUrl: "/legacy.jpg", categoryIds: ["c1"] }] } });
+    const view = render(<OliviaStorefront route={storeRoute} />);
+    expect(await screen.findByRole("img", { name: "Temporada Olivia" })).toHaveAttribute("src", "/banner.jpg");
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/legacy.jpg");
+    view.rerender(<OliviaStorefront route={{ name: "public_category", params: { slug: "olivia", categorySlug: "anillos" } }} />);
+    expect(screen.queryByRole("img", { name: "Temporada Olivia" })).toBeNull();
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
+  });
+});

@@ -357,7 +357,7 @@ export function CartDrawer({
               </Button>
             </a>
             <p className="text-[var(--olv-ink-soft,var(--ink-soft))] text-xs text-center">
-              Precio y existencia por confirmar por WhatsApp.
+              Precio y existencia por confirmar por WhatsApp. Enviar tu selección no confirma ni reserva el pedido.
             </p>
           </div>
         </div>
