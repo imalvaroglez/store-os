@@ -32,6 +32,10 @@ No declares algo "listo" sin evidencia: antes de abrir el PR, `npm run typecheck
 
 Para validar la interfaz, las rutas y el flujo público usa el build de producción local: `npm run build` y después `npm run preview` en localhost. Para esta PWA estática de Vite, ese servidor local es la referencia de Preview; no detengas una entrega esperando una Preview externa de Vercel. Si Vercel falla por credenciales o configuración, repórtalo aparte de la validación funcional.
 
+## Promoción de Preview a producción
+
+`store-os-dev` es el backend de validación y `store-os-f7cf8` es el backend de producción. Todo cambio de código validado en Preview debe llegar a producción mediante el mismo commit revisado en su PR y la rama `main`; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, prepara el equivalente dirigido para producción y ejecútalo solo al liberar, verificando antes el alcance y después el resultado. Nunca copies el seed ni datos sintéticos de dev a producción.
+
 ## Arquitectura (lo esencial)
 
 - **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. Modo demo local (sin sesión) intacto.
