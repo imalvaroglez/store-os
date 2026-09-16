@@ -35,34 +35,15 @@ const STORE_SLUG = "olivia";
 const now = new Date().toISOString();
 
 const oliviaStorefront = {
-  hero: {
-    heading: "Olivia",
-    body: "Joyería hecha a mano, piezas únicas para cada ocasión.",
-  },
-  benefits: ["Envíos a todo el país", "Plata 925 y materiales de calidad", "Cada pieza es única"],
-  story: {
-    heading: "Nuestra historia",
-    body: "Cuenta aquí la historia de Olivia. (Texto provisional — edítalo en Sitio público.)",
-  },
-  resale: {
-    heading: "Vende con Olivia",
-    body: "¿Quieres formar parte del programa de reventa? Escríbeme por WhatsApp.",
-  },
+  hero: { heading: "Joyería para hacer tuyo cada día", body: "Encuentra esa pieza que va contigo. Elige tus favoritas y prepara tu pedido por WhatsApp." },
+  story: { heading: "Sobre Olivia", body: "En Olivia puedes explorar joyería, reunir tus piezas favoritas y enviar tu selección por WhatsApp. Fer te ayuda a confirmar los detalles de tu pedido." },
+  shipping: "Consulta por WhatsApp las opciones, el costo y el tiempo de entrega para tu pedido.",
   faq: [
-    { q: "¿Hacen envíos?", a: "Sí, a todo el país. (Texto provisional.)" },
-    { q: "¿Cómo cuido mis piezas?", a: "Evita el contacto con agua y perfumes. (Provisional.)" },
+    { q: "¿Cómo hago un pedido?", a: "Elige tus piezas, revisa tu lista y envíanosla por WhatsApp." },
+    { q: "¿Mi selección reserva las piezas?", a: "No. Fer confirma contigo el precio y la disponibilidad por WhatsApp antes de completar tu pedido." },
   ],
-  shipping: "Envíos a todo el país. (Provisional.)",
-  payments: ["Transferencia", "Efectivo"],
-  policies: "Devoluciones dentro de 7 días. (Provisional.)",
-  hours: "Lunes a sábado, 10:00–18:00. (Provisional.)",
-  whatsappBuyIntro: "Hola, me interesa esta pieza:",
-  whatsappResaleIntro: "Hola, quiero información sobre el programa de reventa.",
   showSoldOut: true,
-  seo: {
-    title: "Olivia — Joyería hecha a mano",
-    description: "Joyería hecha a mano, piezas únicas para cada ocasión.",
-  },
+  seo: { title: "Olivia — Joyería para hacer tuyo cada día", description: "Explora la joyería de Olivia y prepara tu pedido por WhatsApp." },
 };
 
 const oliviaPriceTiers = [
@@ -252,6 +233,9 @@ function projectPublicProductSummary(product, storeSlug, tiers, defaultTierId) {
     name: product.name,
     publicDescription: product.publicDescription ?? null,
     imageUrl: primaryImage(product),
+    images: [...(product.images ?? [])]
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.order - b.order)
+      .slice(0, 5).map(({ url, alt }) => ({ url, alt: alt ?? null })),
     availability: product.availability ?? "available",
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
