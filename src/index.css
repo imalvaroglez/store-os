@@ -85,15 +85,38 @@ body {
   position: relative;
   display: inline-flex;
   vertical-align: middle;
+  margin-inline-start: 0.125rem;
 }
 .price-help {
-  width: 1.5rem;
-  height: 1.5rem;
-  min-height: 1.5rem !important;
+  width: 2.5rem;
+  height: 2.5rem;
+  min-height: 2.5rem !important;
   padding: 0 !important;
+  border: 0;
   border-radius: 999px !important;
-  font-size: 0.75rem !important;
+  background: transparent !important;
+  color: var(--olv-accent, var(--terracotta)) !important;
+  font-family: var(--font-body);
+  font-size: inherit !important;
   line-height: 1;
+}
+.price-help-icon {
+  display: inline-flex;
+  width: 1.25rem;
+  height: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--olv-rule, var(--rule));
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  transition: background-color var(--motion-fast) var(--ease-smooth), border-color var(--motion-fast) var(--ease-smooth);
+}
+.price-help:hover .price-help-icon,
+.price-help:focus-visible .price-help-icon {
+  border-color: var(--olv-accent, var(--terracotta));
+  background: var(--olv-accent-soft, var(--paper-2));
 }
 .price-help-tooltip {
   position: absolute;
