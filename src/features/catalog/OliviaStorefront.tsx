@@ -1,796 +1,218 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Button, EmptyState, SkeletonCard, ProductImage, OLIVIA_BRAND } from "../../design-system";
-import {
-  loadPublicCatalog,
-  loadPublicProduct,
-  PublicCatalogNotFoundError,
-  type PublicStore,
-  type PublicCatalog,
-  type PublicProductSummary,
-  type PublicProductDetail,
-  type PublicStockSignal,
-} from "../../app/firebase/publicCatalog";
-import type { RouteMatch } from "../../lib/router";
-import { navigate } from "../../lib/router";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
+import { loadPublicCatalog, loadPublicProduct, PublicCatalogNotFoundError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
+import { navigate, type RouteMatch } from "../../lib/router";
 import { publicPrice } from "../../lib/money";
-import {
-  createStorefrontBuyUrl,
-  createStorefrontContactUrl,
-  createStorefrontResaleUrl,
-} from "../../lib/whatsapp";
+import { createStorefrontBuyUrl, createStorefrontContactUrl, createStorefrontResaleUrl } from "../../lib/whatsapp";
+import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
 import { useSeo } from "./useSeo";
 import { useCart } from "./useCart";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
-import { cartItemFromPublicProduct, cartPieces, pruneCartLines, type CartLine } from "../../lib/cart";
-import type { Storefront } from "../../types";
+import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 
-// --- Public cart (context) -------------------------------------------------
-//
-// One cart per storefront visit, scoped to the store slug and persisted in
-// localStorage (src/lib/cart.ts). StoreChrome owns the state so the floating
-// button, the grid's add buttons and the detail's CTA all stay in sync.
-
-type CartContextValue = {
-  store: PublicStore;
-  lines: CartLine[];
-  signalBySlug?: Record<string, PublicStockSignal>;
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  add: (item: Omit<CartLine, "qty">, qty?: number) => void;
-  setQty: (productSlug: string, qty: number) => void;
-  remove: (productSlug: string) => void;
-};
-
+type CatalogData = { store: PublicStore; catalog: PublicCatalog };
+type CartContextValue = ReturnType<typeof useCart> & { store: PublicStore };
 const CartContext = createContext<CartContextValue | null>(null);
+function useCartContext() { return useContext(CartContext)!; }
 
-function useCartContext(): CartContextValue {
-  const ctx = useContext(CartContext);
-  if (!ctx) throw new Error("El carrito solo vive dentro de StoreChrome con tienda cargada.");
-  return ctx;
-}
-
-// Olivia's public storefront. Handles all three public sub-routes (store home,
-// category, product) in one component so they share the brand chrome, the store
-// + catalog load, and the WhatsApp helpers. Anonymous-readable; never shows
-// private fields.
+// Keep the catalog alive across category/product routes: two reads per visit,
+// then only the detail document when opening a piece. No global/stale cache.
 export function OliviaStorefront({ route }: { route: RouteMatch }) {
-  if (route.name === "public_product") {
-    return <ProductView slug={route.params.slug} productSlug={route.params.productSlug} />;
-  }
-  if (route.name === "public_category") {
-    return <StoreView slug={route.params.slug} focusCategory={route.params.categorySlug} />;
-  }
-  return <StoreView slug={(route.params as { slug: string }).slug} />;
-}
-
-// --- Brand chrome ---------------------------------------------------------
-
-function BrandStyle() {
-  // Scoped CSS variables for Olivia's fixed brand. Applied to the storefront
-  // root only; the admin panel keeps the regular app theme.
-  return (
-    <style>{`
-      .olivia-root {
-        --olv-bg: ${OLIVIA_BRAND.bg};
-        --olv-ink: ${OLIVIA_BRAND.ink};
-        --olv-ink-soft: ${OLIVIA_BRAND.inkSoft};
-        --olv-accent: ${OLIVIA_BRAND.accent};
-        --olv-accent-soft: ${OLIVIA_BRAND.accentSoft};
-        --olv-rule: ${OLIVIA_BRAND.rule};
-        --olv-display: ${OLIVIA_BRAND.fontDisplay};
-        --olv-body: ${OLIVIA_BRAND.fontBody};
-        background: var(--olv-bg);
-        color: var(--olv-ink);
-        font-family: var(--olv-body);
-      }
-      .olivia-root h1, .olivia-root h2, .olivia-root .olv-display {
-        font-family: var(--olv-display);
-      }
-    `}</style>
-  );
-}
-
-function ContactFallback({ store }: { store: PublicStore }) {
-  // If WhatsApp can't open (no phone), show the raw number so contact is still
-  // possible. Never promise a reservation.
-  if (!store.whatsappPhone) return null;
-  return (
-    <p className="olv-ink-soft text-sm mt-2">
-      Escríbeme al <span className="olv-ink font-semibold">{store.whatsappPhone}</span>
-    </p>
-  );
-}
-
-// --- Store home + category view -------------------------------------------
-
-function StoreView({ slug, focusCategory }: { slug: string; focusCategory?: string }) {
-  const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
-  const [store, setStore] = useState<PublicStore | null>(null);
-  const [catalog, setCatalog] = useState<PublicCatalog | null>(null);
-
+  const slug = "slug" in route.params ? route.params.slug : "";
+  const [data, setData] = useState<CatalogData | null>(null);
+  const [error, setError] = useState<"missing" | "failed" | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
-    loadPublicCatalog(slug)
-      .then((data) => {
-        if (cancelled) return;
-        setStore(data.store);
-        setCatalog(data.catalog);
-        setStatus("ready");
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setStatus(err instanceof PublicCatalogNotFoundError ? "notfound" : "error");
-      });
-    return () => {
-      cancelled = true;
-    };
+    setData(null); setError(null);
+    loadPublicCatalog(slug).then((next) => { if (!cancelled) setData(next); })
+      .catch((err) => { if (!cancelled) setError(err instanceof PublicCatalogNotFoundError ? "missing" : "failed"); });
+    return () => { cancelled = true; };
   }, [slug]);
+  useEffect(() => { document.documentElement.scrollTop = 0; }, [route]);
+  const current = data?.store.slug === slug ? data : null;
+  return <StoreChrome data={current}>
+    {error ? <div className="olv-container olv-empty"><EmptyState title={error === "missing" ? "Tienda no encontrada" : "No se pudo cargar"} subtitle={error === "missing" ? "Este catálogo no existe o no está disponible." : "Revisa tu conexión e intenta de nuevo."} /></div>
+      : !current ? <div className="olv-container olv-grid olv-loading">{Array.from({ length: 8 }, (_, i) => <SkeletonCard key={i} />)}</div>
+      : route.name === "public_product" ? <ProductView key={`${slug}/${route.params.productSlug}`} data={current} productSlug={route.params.productSlug} />
+      : <StoreView key={slug} data={current} focusCategory={route.name === "public_category" ? route.params.categorySlug : undefined} />}
+  </StoreChrome>;
+}
 
-  // SEO must be an unconditional hook call (before early returns). Derive from
-  // possibly-null store/catalog; no-op metadata when not ready.
-  const sfForSeo = (store?.storefront ?? {}) as Storefront;
-  const activeCategoryForSeo = focusCategory
-    ? catalog?.categories.find((c) => c.slug === focusCategory)
-    : undefined;
+function StoreView({ data: { store, catalog }, focusCategory }: { data: CatalogData; focusCategory?: string }) {
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState("featured");
+  const sf = store.storefront ?? {};
+  const slug = store.slug;
+  const priceLabel = store.priceTiers?.find((tier) => tier.id === store.defaultTierId)?.label || "Precio";
+  const category = catalog.categories.find((item) => item.slug === focusCategory);
+  useEffect(() => { setQuery(""); }, [focusCategory]);
   useSeo({
-    title: activeCategoryForSeo
-      ? `${activeCategoryForSeo.name} · ${store?.name ?? ""}`
-      : sfForSeo.seo?.title ?? store?.name ?? "Store OS",
-    description: sfForSeo.seo?.description ?? sfForSeo.hero?.body,
-    canonicalPath: activeCategoryForSeo
-      ? `/catalogo/${slug}/categoria/${activeCategoryForSeo.slug}`
-      : `/catalogo/${slug}`,
-    ogImageUrl: sfForSeo.seo?.ogImageUrl ?? sfForSeo.hero?.imageUrl,
-    jsonLd: store
-      ? {
-          "@context": "https://schema.org",
-          "@type": "Store",
-          name: store.name,
-          description: sfForSeo.seo?.description ?? sfForSeo.hero?.body,
-          image: sfForSeo.seo?.ogImageUrl ?? sfForSeo.hero?.imageUrl,
-          url: `${window.location.origin}/catalogo/${slug}`,
-        }
-      : undefined,
+    title: category ? `${category.name} · ${store.name}` : sf.seo?.title || `${store.name} — Joyería`,
+    description: sf.seo?.description || sf.hero?.body || OLIVIA_CONTENT.hero?.body,
+    canonicalPath: category ? `/catalogo/${slug}/categoria/${category.slug}` : `/catalogo/${slug}`,
+    ogImageUrl: sf.seo?.ogImageUrl || sf.hero?.imageUrl,
+    jsonLd: { "@context": "https://schema.org", "@type": "Store", name: store.name, url: `${window.location.origin}/catalogo/${slug}` },
   });
-
-  if (status === "loading") {
-    return (
-      <StoreChrome>
-        <div className="mx-auto max-w-6xl grid grid-cols-2 sm:grid-cols-3 gap-4 p-4">
-          {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
-        </div>
-      </StoreChrome>
-    );
-  }
-  if (status === "error") {
-    return (
-      <StoreChrome>
-        <Centered>
-          <EmptyState title="No se pudo cargar" subtitle="Revisa tu conexión e intenta de nuevo." />
-        </Centered>
-      </StoreChrome>
-    );
-  }
-  if (status === "notfound" || !store || !catalog) {
-    return (
-      <StoreChrome>
-        <Centered>
-          <EmptyState title="Tienda no encontrada" subtitle="Este catálogo no existe o no está disponible." />
-        </Centered>
-      </StoreChrome>
-    );
-  }
-
-  const sf = (store.storefront ?? {}) as Storefront;
-  const showSoldOut = sf.showSoldOut ?? true;
-
-  // Visible products: hide sold-out unless the store allows them; never show
-  // drafts/archived (already excluded by the projection).
-  const visibleProducts = catalog.products.filter(
-    (p) => showSoldOut || p.availability !== "sold_out"
-  );
-
-  // Category-filtered view vs. full home.
-  const activeCategory = focusCategory
-    ? catalog.categories.find((c) => c.slug === focusCategory)
-    : undefined;
-  const productsInScope = activeCategory
-    ? visibleProducts.filter((p) => p.categoryIds?.includes(activeCategory.id))
-    : visibleProducts;
-
-  const featured = visibleProducts.filter((p) => p.isFeatured).slice(0, 6);
-  const isNew = visibleProducts.filter((p) => p.isNew).slice(0, 6);
-
-  const heroImg = sf.hero?.imageUrl;
-
-  const signalBySlug = Object.fromEntries(
-    catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"])
-  );
-  return (
-    <StoreChrome
-      store={store}
-      signalBySlug={signalBySlug}
-      visibleSlugs={new Set(catalog.products.map((p) => p.productSlug))}
-      cartItems={catalog.products.map(cartItemFromPublicProduct)}
-    >
-      {/* Hero */}
-      <section className="relative">
-        {heroImg && (
-          <div className="absolute inset-0 overflow-hidden">
-            <img src={heroImg} alt="" className="w-full h-full object-cover opacity-30" />
-          </div>
-        )}
-        <div className="relative mx-auto max-w-3xl px-5 py-16 text-center">
-          <h1 className="olv-display text-4xl md:text-5xl font-semibold">{sf.hero?.heading || store.name}</h1>
-          {sf.hero?.body && <p className="olv-ink-soft mt-3 text-lg">{sf.hero.body}</p>}
-          {(sf.benefits ?? []).length > 0 && (
-            <ul className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-5 text-sm">
-              {sf.benefits!.map((b, i) => (
-                <li key={i} className="olv-ink-soft">· {b}</li>
-              ))}
-            </ul>
-          )}
-          <div className="mt-7 flex flex-wrap justify-center gap-3">
-            <a href={createStorefrontContactUrl(store, slug)} target="_blank" rel="noreferrer">
-              <Button variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">Contactar</Button>
-            </a>
-            {sf.resale && (
-              <a href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer">
-                <Button variant="secondary">Vende con nosotros</Button>
-              </a>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {sf.notice && (
-        <div className="bg-[var(--olv-accent-soft)] text-center text-sm py-2 px-4">
-          {sf.notice}
-        </div>
-      )}
-
-      <div className="mx-auto max-w-6xl px-4 py-8 space-y-12">
-        {/* Category nav (anchor scroll on home; route on category pages) */}
-        {catalog.categories.length > 0 && (
-          <nav aria-label="Categorías" className="flex flex-wrap justify-center gap-2">
-            <CatChip active={!focusCategory} href={`/catalogo/${slug}`}>Todo</CatChip>
-            {catalog.categories.map((c) => (
-              <CatChip
-                key={c.id}
-                active={focusCategory === c.slug}
-                href={`/catalogo/${slug}/categoria/${c.slug}`}
-              >
-                {c.name}
-              </CatChip>
-            ))}
-          </nav>
-        )}
-
-        {activeCategory && (
-          <section>
-            <h2 className="olv-display text-2xl font-semibold">{activeCategory.name}</h2>
-            {activeCategory.description && <p className="olv-ink-soft mt-1">{activeCategory.description}</p>}
-          </section>
-        )}
-
-        {/* Featured (home only) */}
-        {!activeCategory && featured.length > 0 && (
-          <Section title="Destacados">
-            <ProductGrid products={featured} slug={slug} />
-          </Section>
-        )}
-
-        {/* New (home only) */}
-        {!activeCategory && isNew.length > 0 && (
-          <Section title="Novedades">
-            <ProductGrid products={isNew} slug={slug} />
-          </Section>
-        )}
-
-        {/* Full catalog / category scope */}
-        <Section title={activeCategory ? undefined : "Catálogo"}>
-          {productsInScope.length === 0 ? (
-            <EmptyState title="Sin piezas aquí" subtitle={activeCategory ? "Prueba otra categoría." : "Vuelve pronto."} />
-          ) : (
-            <ProductGrid products={productsInScope} slug={slug} />
-          )}
-        </Section>
-
-        {/* Story */}
-        {sf.story?.body && !activeCategory && (
-          <Section title={sf.story.heading || "Nuestra historia"}>
-            <p className="olv-ink-soft max-w-2xl whitespace-pre-line">{sf.story.body}</p>
-          </Section>
-        )}
-
-        {/* Resale */}
-        {sf.resale?.body && !activeCategory && (
-          <Section title={sf.resale.heading || "Vende con nosotros"}>
-            <p className="olv-ink-soft max-w-2xl whitespace-pre-line">{sf.resale.body}</p>
-            <a href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer" className="inline-block mt-3">
-              <Button variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">
-                Quiero revender
-              </Button>
-            </a>
-          </Section>
-        )}
-
-        {/* FAQ */}
-        {(sf.faq ?? []).length > 0 && !activeCategory && (
-          <Section title="Preguntas frecuentes">
-            <div className="space-y-2 max-w-2xl">
-              {sf.faq!.map((item, i) => <FaqItem key={i} q={item.q} a={item.a} />)}
-            </div>
-          </Section>
-        )}
-
-        {/* Contact + info */}
-        <Section title="Contacto">
-          <div className="space-y-1 text-sm">
-            {sf.hours && <p className="olv-ink-soft">Horarios: {sf.hours}</p>}
-            {sf.shipping && <p className="olv-ink-soft">Envíos: {sf.shipping}</p>}
-            {(sf.payments ?? []).length > 0 && <p className="olv-ink-soft">Pagos: {sf.payments!.join(", ")}</p>}
-            {sf.instagram && <p className="olv-ink-soft">Instagram: {sf.instagram}</p>}
-          </div>
-          <a href={createStorefrontContactUrl(store, slug)} target="_blank" rel="noreferrer" className="inline-block mt-3">
-            <Button variant="success">Escríbeme por WhatsApp</Button>
-          </a>
-          <ContactFallback store={store} />
-        </Section>
-      </div>
-    </StoreChrome>
-  );
-}
-
-function ProductGrid({
-  products,
-  slug,
-}: {
-  products: PublicProductSummary[];
-  slug: string;
-}) {
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-      {products.map((p) => (
-        <ProductCard key={p.productSlug} p={p} slug={slug} />
-      ))}
-    </div>
-  );
-}
-
-// Card = link (navigation) + sibling add action. The action is never nested
-// inside the link: the link keeps middle-click/copy-link, the button keeps the tap.
-function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
-  const { add, lines, setQty, store } = useCartContext();
-  const soldOut = p.availability === "sold_out";
-  const quantity = lines.find((line) => line.productSlug === p.productSlug)?.qty ?? 0;
-  return (
-    <div className="group">
-      <StorefrontLink to={`/catalogo/${slug}/producto/${p.productSlug}`} className="block">
-        <div className="relative aspect-square rounded-xl overflow-hidden bg-[var(--olv-rule)]">
-          <ProductImage src={p.imageUrl ?? undefined} alt={p.name} size="full" />
-          {soldOut && (
-            <span className="absolute top-2 left-2 bg-white/80 text-[var(--olv-ink)] text-[10px] font-semibold px-2 py-0.5 rounded-full">
-              Agotado
-            </span>
-          )}
-          {p.isNew && !soldOut && (
-            <span className="absolute top-2 left-2 bg-[var(--olv-accent)] text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
-              Nuevo
-            </span>
-          )}
-        </div>
-        <h3 className="olv-display font-semibold text-[var(--olv-ink)] mt-2 text-sm leading-snug">{p.name}</h3>
-        <PublicTierPrices store={store} product={p} />
-      </StorefrontLink>
-      <CartProductControl
-        key={`${p.productSlug}-${quantity}`}
-        productSlug={p.productSlug}
-        productName={p.name}
-        quantity={quantity}
-        onAdd={() => add(cartItemFromPublicProduct(p))}
-        onSetQty={setQty}
-        full
-        className="mt-2"
-      />
-    </div>
-  );
-}
-
-function Section({ title, children }: { title?: string; children: React.ReactNode }) {
-  return (
-    <section>
-      {title && <h2 className="olv-display text-2xl font-semibold mb-4">{title}</h2>}
-      {children}
-    </section>
-  );
-}
-
-function CatChip({
-  active,
-  href,
-  children,
-}: {
-  active: boolean;
-  href: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <a
-      href={href}
-      className={
-        "rounded-full px-4 py-2.5 text-sm font-semibold transition-colors min-h-10 inline-flex items-center " +
-        (active
-          ? "bg-[var(--olv-accent)] text-white"
-          : "bg-white/60 text-[var(--olv-ink)] hover:bg-white")
+  const products = useMemo(() => {
+    const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const needle = normalize(query.trim());
+    return catalog.products.filter((p) =>
+      ((sf.showSoldOut ?? true) || p.availability !== "sold_out") &&
+      (!category || p.categoryIds?.includes(category.id)) &&
+      normalize(`${p.name} ${p.sku ?? ""}`).includes(needle)
+    ).sort((a, b) => {
+      if (sort === "price-asc" || sort === "price-desc") {
+        const ap = publicPrice(a, store.defaultTierId ?? undefined), bp = publicPrice(b, store.defaultTierId ?? undefined);
+        if (ap === undefined) return bp === undefined ? 0 : 1;
+        if (bp === undefined) return -1;
+        return sort === "price-asc" ? ap - bp : bp - ap;
       }
-    >
-      {children}
-    </a>
-  );
+      const flag = sort === "new" ? "isNew" : "isFeatured";
+      return Number(Boolean(b[flag])) - Number(Boolean(a[flag])) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    });
+  }, [catalog, category, query, sort, sf.showSoldOut, store.defaultTierId]);
+
+  if (focusCategory && !category) return <div className="olv-container olv-empty"><EmptyState title="Categoría no encontrada" subtitle="Explora las demás piezas de Olivia." /><StorefrontLink to={`/catalogo/${slug}`} className="olv-link-button">Ver catálogo</StorefrontLink></div>;
+  return <>
+    {!focusCategory && <section className="olv-hero">
+      {(sf.hero?.imageUrl || sf.hero?.mobileImageUrl) ? <picture className="olv-banner">
+        {sf.hero.mobileImageUrl && <source media="(max-width: 639px)" srcSet={sf.hero.mobileImageUrl} />}
+        <ProductImage src={sf.hero.imageUrl || sf.hero.mobileImageUrl} alt={sf.hero.imageAlt || `Colección de ${store.name}`} size="full" natural loading="eager" />
+      </picture> : null}
+      <div className="olv-container olv-hero-copy">
+        <p className="olv-eyebrow">Pequeños detalles. Muy tú.</p>
+        <h1>{sf.hero?.heading || OLIVIA_CONTENT.hero!.heading}</h1>
+        <p className="olv-intro">{sf.hero?.body || OLIVIA_CONTENT.hero!.body}</p>
+        <a href="#piezas" className="olv-link-button">Explorar piezas <span aria-hidden="true">↗</span></a>
+        {!!sf.benefits?.length && <div className="olv-benefits">{sf.benefits.map((item) => <span key={item}>{item}</span>)}</div>}
+      </div>
+    </section>}
+    <main id="piezas" className="olv-container olv-main">
+      <div className="olv-section-heading"><div><p className="olv-eyebrow">Elige lo que va contigo</p><h2>{category?.name || "Encuentra tus favoritas"}</h2></div><p className="olv-muted">{products.length} {products.length === 1 ? "pieza" : "piezas"}</p></div>
+      {category?.description && <p className="olv-muted">{category.description}</p>}
+      <nav aria-label="Categorías" className="olv-categories">
+        <StorefrontLink to={`/catalogo/${slug}`} current={!focusCategory}>Todas las piezas</StorefrontLink>
+        {catalog.categories.map((c) => <StorefrontLink key={c.id} to={`/catalogo/${slug}/categoria/${c.slug}`} current={c.slug === focusCategory}>{c.name}</StorefrontLink>)}
+      </nav>
+      <div className="olv-tools">
+        <TextField label="Buscar una pieza" type="search" placeholder="Nombre o clave de la pieza" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <SelectField label="Ordenar por" value={sort} onChange={setSort} options={[{ value: "featured", label: "Destacados" }, { value: "new", label: "Novedades" }, { value: "price-asc", label: `${priceLabel}: menor a mayor` }, { value: "price-desc", label: `${priceLabel}: mayor a menor` }]} />
+      </div>
+      {products.length ? <div className="olv-grid">{products.map((p) => <ProductCard key={p.productSlug} p={p} slug={slug} />)}</div>
+        : <div className="olv-empty"><EmptyState title={query ? "No encontramos esa pieza" : "Sin piezas aquí"} subtitle={query ? "Prueba otro nombre o clave." : "Vuelve pronto o explora otra categoría."} />{query && <Button variant="secondary" onClick={() => setQuery("")}>Limpiar búsqueda</Button>}</div>}
+      <section className="olv-how" aria-labelledby="how-title"><div><p className="olv-eyebrow">Así de sencillo</p><h2 id="how-title">De tu lista a WhatsApp.</h2></div><div className="olv-steps"><p><span>01</span> Elige tus piezas</p><p><span>02</span> Revisa tu lista</p><p><span>03</span> Envíala por WhatsApp</p></div><p className="olv-muted">Fer confirma contigo el precio y la disponibilidad. Tu selección no reserva las piezas.</p></section>
+      {!focusCategory && <div className="olv-about-grid">
+        <section><p className="olv-eyebrow">Un poquito de nosotros</p><h2>{sf.story?.heading || OLIVIA_CONTENT.story!.heading}</h2><p className="olv-body-copy">{sf.story?.body || OLIVIA_CONTENT.story!.body}</p>
+          {sf.resale?.body && <div className="olv-resale"><h3>{sf.resale.heading || "Vende con Olivia"}</h3><p className="olv-body-copy">{sf.resale.body}</p><a className="olv-text-link" href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer">Quiero revender ↗</a></div>}
+        </section>
+        <section><h2>Antes de elegir</h2><div className="olv-faq">{(sf.faq ?? OLIVIA_CONTENT.faq!).map((item, i) => <details key={i}><summary>{item.q}<span aria-hidden="true">+</span></summary><p>{item.a}</p></details>)}</div></section>
+      </div>}
+    </main>
+  </>;
 }
 
-function FaqItem({ q, a }: { q: string; a: string }) {
-  return (
-    <details className="rounded-lg bg-white/50 ring-1 ring-[var(--olv-rule)]">
-      <summary className="flex items-center justify-between w-full px-4 py-3 text-left cursor-pointer">
-        <span className="font-semibold text-[var(--olv-ink)]">{q}</span>
-        <span className="olv-ink-soft">+</span>
-      </summary>
-      <p className="olv-ink-soft px-4 pb-3 text-sm whitespace-pre-line">{a}</p>
-    </details>
-  );
+function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
+  const { store, lines, add, setQty } = useCartContext();
+  const quantity = lines.find((line) => line.productSlug === p.productSlug)?.qty ?? 0;
+  const href = `/catalogo/${slug}/producto/${p.productSlug}`;
+  const images = p.images?.length ? p.images : p.imageUrl ? [{ url: p.imageUrl }] : [];
+  return <article className="olv-product" aria-label={p.name}>
+    <ProductGallery images={images} name={p.name} href={href} onNavigate={() => navigate(href)} />
+    <div className="olv-product-info">
+      <div className="olv-product-labels">{p.availability === "sold_out" ? <Badge tone="neutral">Agotado</Badge> : p.isNew ? <Badge>Nuevo</Badge> : p.isFeatured ? <span>Selección Olivia</span> : null}</div>
+      <h3><StorefrontLink to={href}>{p.name}</StorefrontLink></h3>
+      <PublicTierPrices store={store} product={p} />
+    </div>
+    <CartProductControl key={`${p.productSlug}-${quantity}`} productSlug={p.productSlug} productName={p.name} quantity={quantity} onAdd={() => add(cartItemFromPublicProduct(p))} onSetQty={setQty} full />
+  </article>;
 }
 
-// --- Product detail view --------------------------------------------------
-
-function ProductView({ slug, productSlug }: { slug: string; productSlug: string }) {
-  const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
-  const [data, setData] = useState<{
-    product: PublicProductDetail;
-    store: PublicStore;
-    catalog: PublicCatalog;
-  } | null>(null);
-  const [activeImg, setActiveImg] = useState(0);
-
+function ProductView({ data, productSlug }: { data: CatalogData; productSlug: string }) {
+  const [product, setProduct] = useState<PublicProductDetail | null>(null);
+  const [store, setStore] = useState(data.store);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
-    setActiveImg(0);
-    loadPublicCatalog(slug)
-      .then(async ({ store, catalog }) => ({
-        ...(await loadPublicProduct(slug, productSlug, store)),
-        catalog,
-      }))
-      .then((d) => {
-        if (cancelled) return;
-        setData(d);
-        setStatus("ready");
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setStatus(err instanceof PublicCatalogNotFoundError || /producto/i.test(err.message) ? "notfound" : "error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [slug, productSlug]);
-
-  // SEO: unconditional, derived from possibly-null data.
-  const seoProduct = data?.product;
-  const seoImages = seoProduct?.images ?? [];
+    loadPublicProduct(data.store.slug, productSlug, data.store).then((next) => {
+      if (!cancelled) { setProduct(next.product); setStore(next.store); }
+    }).catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [data.store, productSlug]);
   useSeo({
-    title: seoProduct ? `${seoProduct.name} · ${data!.store.name}` : "Store OS",
-    description: seoProduct?.publicDescription ?? undefined,
-    canonicalPath: `/catalogo/${slug}/producto/${productSlug}`,
-    ogImageUrl: seoImages[0]?.url ?? undefined,
-    jsonLd: seoProduct
-      ? {
-          "@context": "https://schema.org",
-          "@type": "Product",
-          name: seoProduct.name,
-          description: seoProduct.publicDescription ?? undefined,
-          image: seoImages.map((i) => i.url),
-          url: `${window.location.origin}/catalogo/${slug}/producto/${productSlug}`,
-          ...(typeof publicPrice(seoProduct) === "number"
-            ? {
-                offers: {
-                  "@type": "Offer",
-                  price: String(publicPrice(seoProduct)),
-                  priceCurrency: "MXN",
-                  availability:
-                    seoProduct.availability === "sold_out"
-                      ? "https://schema.org/OutOfStock"
-                      : "https://schema.org/InStock",
-                },
-              }
-            : {}),
-        }
-      : undefined,
+    title: product ? `${product.name} · ${store.name}` : store.name,
+    description: product?.publicDescription ?? undefined,
+    canonicalPath: `/catalogo/${store.slug}/producto/${productSlug}`,
+    ogImageUrl: product?.images[0]?.url,
+    jsonLd: product ? { "@context": "https://schema.org", "@type": "Product", name: product.name, description: product.publicDescription, image: product.images.map((i) => i.url), url: `${window.location.origin}/catalogo/${store.slug}/producto/${productSlug}`, ...(typeof publicPrice(product) === "number" ? { offers: { "@type": "Offer", price: String(publicPrice(product)), priceCurrency: "MXN", availability: product.availability === "sold_out" ? "https://schema.org/OutOfStock" : "https://schema.org/InStock" } } : {}) } : undefined,
   });
-
-  if (status === "loading") {
-    return (
-      <StoreChrome>
-        <div className="mx-auto max-w-4xl p-4">
-          <SkeletonCard />
-        </div>
-      </StoreChrome>
-    );
-  }
-  if (status !== "ready" || !data) {
-    return (
-      <StoreChrome>
-        <Centered>
-          <EmptyState
-            title="Pieza no encontrada"
-            subtitle="Tal vez se retiró del catálogo."
-            action={<Button variant="secondary" onClick={() => navigate(`/catalogo/${slug}`)}>Volver al catálogo</Button>}
-          />
-        </Centered>
-      </StoreChrome>
-    );
-  }
-
-  const { product, store, catalog } = data;
-  const signalBySlug = Object.fromEntries(
-    catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"])
-  );
-
-  return (
-    <StoreChrome
-      store={store}
-      signalBySlug={signalBySlug}
-      visibleSlugs={new Set(catalog.products.map((p) => p.productSlug))}
-      cartItems={catalog.products.map(cartItemFromPublicProduct)}
-    >
-      <ProductDetail product={product} store={store} slug={slug} activeImg={activeImg} setActiveImg={setActiveImg} />
-    </StoreChrome>
-  );
+  if (failed) return <div className="olv-container olv-empty"><EmptyState title="No se pudo abrir la pieza" subtitle="Puede que ya no esté disponible. Revisa tu conexión o vuelve al catálogo." /><StorefrontLink to={`/catalogo/${store.slug}`} className="olv-link-button">Volver al catálogo</StorefrontLink></div>;
+  if (!product) return <div className="olv-container olv-loading"><SkeletonCard /></div>;
+  return <ProductDetail product={product} store={store} />;
 }
 
-// Detail content lives under the chrome's cart provider so "Agregar" and the
-// floating button share state.
-function ProductDetail({
-  product,
-  store,
-  slug,
-  activeImg,
-  setActiveImg,
-}: {
-  product: PublicProductDetail;
-  store: PublicStore;
-  slug: string;
-  activeImg: number;
-  setActiveImg: (i: number) => void;
-}) {
+function ProductDetail({ product, store }: { product: PublicProductDetail; store: PublicStore }) {
   const { add, lines, setQty } = useCartContext();
-  const images = product.images ?? [];
-  const soldOut = product.availability === "sold_out";
-  const canInquire = product.canInquire || !soldOut;
   const quantity = lines.find((line) => line.productSlug === product.productSlug)?.qty ?? 0;
-
-  const buyUrl = useMemo(() => {
-    return createStorefrontBuyUrl(store, slug, {
-      name: product.name,
-      sku: product.sku,
-      productSlug: product.productSlug,
-      intent: soldOut ? "inquire" : "buy",
-    });
-  }, [store, slug, product, soldOut]);
-
-  return (
-    <div className="mx-auto max-w-4xl px-4 py-6">
-        <Button variant="ghost" onClick={() => navigate(`/catalogo/${slug}`)} className="olv-ink-soft text-sm p-0 min-h-10">
-          ← Volver al catálogo
-        </Button>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
-          {/* Gallery */}
-          <div>
-            <div className="aspect-square rounded-xl overflow-hidden bg-[var(--olv-rule)]">
-              <ProductImage src={images[activeImg]?.url} alt={images[activeImg]?.alt || product.name} size="full" />
-            </div>
-            {images.length > 1 && (
-              <div className="flex gap-2 mt-2">
-                {images.map((img, i) => (
-                  <Button
-                    key={i}
-                    onClick={() => setActiveImg(i)}
-                    aria-label={`Ver foto ${i + 1}`}
-                    variant="ghost"
-                    className={
-                      "w-16 h-16 p-0 rounded-lg overflow-hidden ring-2 " +
-                      (i === activeImg ? "ring-[var(--olv-accent)]" : "ring-transparent")
-                    }
-                  >
-                    <ProductImage src={img.url} alt={img.alt || ""} size="thumb" />
-                  </Button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Info */}
-          <div>
-            <h1 className="olv-display text-3xl font-semibold">{product.name}</h1>
-            <PublicTierPrices store={store} product={product} mode="detail" />
-
-            {soldOut && (
-              <p className="mt-2 inline-block bg-white/70 px-3 py-1 rounded-full text-sm font-semibold">Agotado</p>
-            )}
-
-            {product.publicDescription && (
-              <p className="olv-ink-soft mt-4 whitespace-pre-line">{product.publicDescription}</p>
-            )}
-
-            <dl className="mt-4 space-y-1 text-sm">
-              {product.material && <Detail label="Material" value={product.material} />}
-              {product.finish && <Detail label="Acabado" value={product.finish} />}
-              {product.dimensions && <Detail label="Medidas" value={product.dimensions} />}
-              {product.care && <Detail label="Cuidados" value={product.care} />}
-            </dl>
-
-            {product.categories.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {product.categories.map((c) => (
-                  <StorefrontLink
-                    key={c.id}
-                    to={`/catalogo/${slug}/categoria/${c.slug}`}
-                    className="text-xs rounded-full bg-white/60 px-3 py-1 text-[var(--olv-ink)]"
-                  >
-                    {c.name}
-                  </StorefrontLink>
-                ))}
-              </div>
-            )}
-
-            {/* CTAs: cart, buy/inquire (respects canInquire + sold-out), contact. */}
-            <div className="mt-6 flex flex-col gap-2">
-              <CartProductControl
-                key={`${product.productSlug}-${quantity}`}
-                productSlug={product.productSlug}
-                productName={product.name}
-                quantity={quantity}
-                onAdd={() => add(cartItemFromPublicProduct({
-                  ...product,
-                  image: images[0]?.url,
-                  inquire: soldOut,
-                }))}
-                onSetQty={setQty}
-                full
-                size="lg"
-              />
-              {canInquire && (
-                <a href={buyUrl} target="_blank" rel="noreferrer">
-                  <Button full size="lg" variant="primary" className="bg-[var(--olv-accent)] text-white hover:opacity-90">
-                    {soldOut ? "Preguntar por esta pieza" : "Comprar por WhatsApp"}
-                  </Button>
-                </a>
-              )}
-              <a href={createStorefrontContactUrl(store, slug)} target="_blank" rel="noreferrer">
-                <Button full variant="secondary">Contacto general</Button>
-              </a>
-              <ContactFallback store={store} />
-              <p className="olv-ink-soft text-xs mt-1">
-                Iniciar una conversación no reserva la pieza.
-              </p>
-            </div>
-          </div>
+  const soldOut = product.availability === "sold_out";
+  const images = [...product.images].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+  return <main className="olv-container olv-detail">
+    <StorefrontLink className="olv-back" to={`/catalogo/${store.slug}`}>← Volver al catálogo</StorefrontLink>
+    <div className="olv-detail-grid">
+      <ProductGallery images={images} name={product.name} thumbnails />
+      <div className="olv-detail-info"><p className="olv-eyebrow">Una pieza. Tu manera de llevarla.</p><h1>{product.name}</h1>
+        <PublicTierPrices store={store} product={product} mode="detail" />
+        {soldOut && <Badge tone="neutral">Agotado</Badge>}
+        {product.publicDescription && <p className="olv-body-copy">{product.publicDescription}</p>}
+        <dl className="olv-specs">{([["Material", product.material], ["Acabado", product.finish], ["Medidas", product.dimensions], ["Cuidados", product.care]] as const).filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+        <div className="olv-detail-actions"><CartProductControl key={`${product.productSlug}-${quantity}`} productSlug={product.productSlug} productName={product.name} quantity={quantity} onAdd={() => add(cartItemFromPublicProduct({ ...product, image: images[0]?.url, inquire: soldOut }))} onSetQty={setQty} full size="lg" />
+          {(product.canInquire || !soldOut) && <a className="olv-text-link" target="_blank" rel="noreferrer" href={createStorefrontBuyUrl(store, store.slug, { name: product.name, sku: product.sku, productSlug: product.productSlug, intent: soldOut ? "inquire" : "buy" })}>{soldOut ? "Preguntar por esta pieza" : "Comprar por WhatsApp"} ↗</a>}
+          <p className="olv-muted text-sm">Enviar tu selección no confirma ni reserva el pedido.</p>
         </div>
+        <details className="olv-delivery" open><summary>Entregas y envíos</summary><p>{store.storefront?.shipping || OLIVIA_CONTENT.shipping}</p></details>
+        {!!product.categories.length && <nav className="olv-categories" aria-label="Categorías de la pieza">{product.categories.map((c) => <StorefrontLink key={c.id} to={`/catalogo/${store.slug}/categoria/${c.slug}`}>{c.name}</StorefrontLink>)}</nav>}
       </div>
-  );
-}
-
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex gap-2">
-      <dt className="olv-ink-soft w-20 shrink-0">{label}</dt>
-      <dd className="text-[var(--olv-ink)]">{value}</dd>
     </div>
-  );
+  </main>;
 }
 
-// --- Shared chrome --------------------------------------------------------
-
-// Anchor that keeps its href (middle-click, copy link) while navigating in-app.
-function StorefrontLink({ to, className, children }: { to: string; className?: string; children: React.ReactNode }) {
-  return (
-    <a
-      href={to}
-      onClick={(e) => {
-        e.preventDefault();
-        navigate(to);
-      }}
-      className={className}
-    >
-      {children}
-    </a>
-  );
+function StorefrontLink({ to, className, children, current }: { to: string; className?: string; children: ReactNode; current?: boolean }) {
+  return <a href={to} className={className} aria-current={current ? "page" : undefined} onClick={(event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault(); navigate(to);
+  }}>{children}</a>;
 }
 
-function StoreChrome({
-  store,
-  signalBySlug,
-  visibleSlugs,
-  cartItems,
-  children,
-}: {
-  store?: PublicStore;
-  signalBySlug?: Record<string, PublicStockSignal>;
-  visibleSlugs?: Set<string>;
-  cartItems?: Omit<CartLine, "qty">[];
-  children: React.ReactNode;
-}) {
-  // Hooks run unconditionally; the cart is inert (empty) without a store.
-  const cart = useCart(store?.slug);
-  const [cartOpen, setCartOpen] = useState(false);
+function StoreChrome({ data, children }: { data: CatalogData | null; children: ReactNode }) {
+  const cart = useCart(data?.store.slug);
+  const [open, setOpen] = useState(false);
   useEffect(() => {
-    if (store && visibleSlugs) cart.prune(visibleSlugs);
-  }, [cart.prune, store, visibleSlugs]);
-  useEffect(() => {
-    if (store && cartItems) cart.refresh(cartItems);
-  }, [cart.refresh, cartItems, store]);
-  const visibleLines = visibleSlugs ? pruneCartLines(cart.lines, visibleSlugs) : cart.lines;
-  const pieces = cartPieces(visibleLines);
-
-  const body = (
-    <>
-      {store && (
-        <header className="sticky top-0 z-10 backdrop-blur bg-[var(--olv-bg)]/85 border-b border-[var(--olv-rule)]">
-          <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
-            <StorefrontLink to={`/catalogo/${store.slug}`} className="olv-display text-xl font-semibold">
-              {store.name}
-            </StorefrontLink>
-          </div>
-        </header>
-      )}
-      {children}
-      <footer className="border-t border-[var(--olv-rule)] mt-8 py-6 text-center text-xs">
-        <p className="olv-ink-soft">© {store?.name}</p>
-      </footer>
-    </>
-  );
-
-  if (!store) {
-    return (
-      <div className="olivia-root min-h-full">
-        <BrandStyle />
-        {body}
-      </div>
-    );
-  }
-
-  return (
-    <CartContext.Provider
-      value={{ store, ...cart, lines: visibleLines, signalBySlug, open: cartOpen, setOpen: setCartOpen }}
-    >
-      <div className="olivia-root min-h-full">
-        <BrandStyle />
-        {body}
-        {!cartOpen && (
-          <CartFloatingButton
-            pieces={pieces}
-            onClick={() => setCartOpen(true)}
-            className="rounded-full bg-[var(--olv-accent)] text-white hover:opacity-90 px-5"
-          />
-        )}
-        <CartDrawer
-          open={cartOpen}
-          onClose={() => setCartOpen(false)}
-          store={store}
-          lines={visibleLines}
-          signalBySlug={signalBySlug}
-          visibleSlugs={visibleSlugs}
-          onSetQty={cart.setQty}
-          onRemove={cart.remove}
-        />
-      </div>
-    </CartContext.Provider>
-  );
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="min-h-[60vh] flex items-center justify-center p-6">{children}</div>;
+    if (!data) return;
+    cart.prune(new Set(data.catalog.products.map((p) => p.productSlug)));
+    cart.refresh(data.catalog.products.map(cartItemFromPublicProduct));
+  }, [cart.prune, cart.refresh, data]);
+  const visibleSlugs = useMemo(() => data ? new Set(data.catalog.products.map((p) => p.productSlug)) : undefined, [data]);
+  const lines = visibleSlugs ? pruneCartLines(cart.lines, visibleSlugs) : cart.lines;
+  const pieces = cartPieces(lines);
+  const store = data?.store;
+  const sf = store?.storefront ?? {};
+  const style = Object.fromEntries(Object.entries(OLIVIA_BRAND).filter(([key]) => !key.startsWith("font")).map(([key, value]) => [`--olv-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, value]));
+  const body = <div className="olivia-root" style={style}>
+    {store && <>
+      <div className="olv-notice">{sf.notice || "Tu próxima pieza favorita empieza aquí"}</div>
+      <header className="olv-header"><div className="olv-container olv-header-inner">
+        <StorefrontLink to={`/catalogo/${store.slug}`} className="olv-wordmark">{sf.logoUrl ? <ProductImage src={sf.logoUrl} alt={store.name} size="full" natural loading="eager" /> : store.name}</StorefrontLink>
+        <nav aria-label="Principal"><StorefrontLink to={`/catalogo/${store.slug}`} className="olv-header-catalog">Catálogo</StorefrontLink><Button variant="ghost" aria-label="Ver mi selección" onClick={() => setOpen(true)}>Mi pedido <span className="olv-count">{pieces}</span></Button></nav>
+      </div></header>
+    </>}
+    {children}
+    {store && <footer className="olv-footer"><div className="olv-container olv-footer-grid">
+      <div><p className="olv-footer-brand">{store.name}</p><p>Pequeños detalles para hacerlos tuyos.</p><a className="olv-text-link" href={createStorefrontContactUrl(store, store.slug)} target="_blank" rel="noreferrer">Hablemos por WhatsApp ↗</a></div>
+      <div><h2>Entregas y atención</h2><p>{sf.shipping || OLIVIA_CONTENT.shipping}</p>{sf.hours && <p>Horarios: {sf.hours}</p>}{!!sf.payments?.length && <p>Pagos: {sf.payments.join(", ")}</p>}{sf.instagram && <p>Instagram: {sf.instagram}</p>}</div>
+    </div><div className="olv-container olv-footer-bottom">© {store.name}<span>Elige. Combina. Hazlo tuyo.</span></div></footer>}
+    {store && <>
+      <CartFloatingButton pieces={pieces} onClick={() => setOpen(true)} className={`olv-floating ${open ? "hidden" : ""}`} />
+      <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(data!.catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} onRemove={cart.remove} />
+    </>}
+  </div>;
+  return store ? <CartContext.Provider value={{ ...cart, lines, store }}>{body}</CartContext.Provider> : body;
 }
