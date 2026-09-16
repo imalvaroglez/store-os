@@ -28,6 +28,10 @@ npm run preview        # build de producción
 
 No declares algo "listo" sin evidencia: antes de abrir el PR, `npm run typecheck && npm run test && npm run build` en verde, y e2e cuando el diff lo amerite.
 
+## Validación de Preview
+
+Para validar la interfaz, las rutas y el flujo público usa el build de producción local: `npm run build` y después `npm run preview` en localhost. Para esta PWA estática de Vite, ese servidor local es la referencia de Preview; no detengas una entrega esperando una Preview externa de Vercel. Si Vercel falla por credenciales o configuración, repórtalo aparte de la validación funcional.
+
 ## Arquitectura (lo esencial)
 
 - **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. Modo demo local (sin sesión) intacto.
