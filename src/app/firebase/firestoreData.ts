@@ -531,6 +531,10 @@ export function projectPublicProductSummary(
     sku: product.sku ?? null, // public (Clave); the cart line needs it for the WhatsApp order
     publicDescription: product.publicDescription ?? null,
     imageUrl: primaryImage(product),
+    images: [...(product.images ?? [])]
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.order - b.order)
+      .slice(0, 5)
+      .map(({ url, alt }) => ({ url, alt: alt ?? null })),
     availability: product.availability ?? "available",
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
