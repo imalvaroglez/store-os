@@ -45,7 +45,7 @@ function PriceRequirement({ tier }: { tier: PublicPriceTier }) {
         aria-describedby={tooltipId}
         title={requirement}
       >
-        ?
+        <span aria-hidden="true" className="price-help-icon">?</span>
       </IconButton>
       <span id={tooltipId} role="tooltip" className="price-help-tooltip">{requirement}</span>
     </span>
