@@ -1,7 +1,7 @@
 /* Olivia's editorial surface is scoped; administration keeps its selected theme. */
 .olivia-root {
   --olv-bg: #faf7f2; --olv-ink: #332923; --olv-ink-soft: #716258;
-  --olv-accent: #805348; --olv-accent-soft: #eeded6; --olv-rule: #ded2c6;
+  --olv-accent: #c97b86; --olv-accent-soft: #e7c9ce; --olv-rule: #ded2c6;
   --olv-surface: #fffdf9; --olv-radius: 6px;
   --paper: var(--olv-bg); --paper-2: var(--olv-accent-soft); --ink: var(--olv-ink); --ink-soft: var(--olv-ink-soft);
   --surface: var(--olv-surface); --on-surface: var(--olv-ink); --on-surface-soft: var(--olv-ink-soft);
