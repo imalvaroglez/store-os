@@ -224,7 +224,6 @@ export function CartDrawer({
   signalBySlug,
   visibleSlugs,
   onSetQty,
-  onRemove,
 }: {
   open: boolean;
   onClose: () => void;
@@ -236,7 +235,6 @@ export function CartDrawer({
    *  pieces no longer projected are dropped silently. */
   visibleSlugs?: Set<string>;
   onSetQty: (productSlug: string, qty: number) => void;
-  onRemove: (productSlug: string) => void;
 }) {
   const shown = visibleSlugs ? pruneCartLines(lines, visibleSlugs) : lines;
   const [customerName, setCustomerName] = useState(() => loadCartName(store.slug));
@@ -254,59 +252,66 @@ export function CartDrawer({
 
   const orderLines: CartOrderLine[] = shown.map((l) => ({
     name: l.name,
-    sku: l.sku,
     qty: l.qty,
     inquire: l.inquire || signalBySlug?.[l.productSlug] === "agotado",
   }));
 
   return (
-    <Sheet open={open} onClose={onClose} title="Tu pedido">
+    <Sheet open={open} onClose={onClose} title="Tu pedido" className="olv-cart-sheet" contentClassName="olv-cart-sheet-content">
       {shown.length === 0 ? (
         <EmptyState
           title="Tu pedido está vacío"
           subtitle="Agrega piezas del catálogo y envíalas en un solo mensaje."
         />
       ) : (
-        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
+        <div className="olv-cart-layout grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
           <ul className="divide-y divide-[var(--olv-rule,var(--rule))] md:pr-2">
-            {shown.map((l) => {
+            {shown.map((l, index) => {
               const signal = signalBySlug?.[l.productSlug];
               const legend = signal ? STOCK_LEGENDS[signal] : null;
+              const linePricing = pricing?.lineBreakdown[index];
+              const unitPrice = linePricing?.unitPrice ?? l.unitPrice;
+              const lineSubtotal = linePricing?.subtotal ?? (typeof unitPrice === "number" ? unitPrice * l.qty : undefined);
               return (
-                <li key={l.productSlug} className="flex gap-3 py-3">
+                <li key={l.productSlug} className="olv-cart-line flex gap-3 py-3">
                   <ProductImage src={l.image} alt={l.name} size="thumb" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="font-semibold text-[var(--olv-ink,var(--ink))] truncate">{l.name}</p>
-                        <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))]">{l.sku}</p>
                       </div>
-                      <IconButton
-                        variant="ghost"
-                        aria-label="Quitar"
-                        onClick={() => onRemove(l.productSlug)}
-                      >
-                        ✕
-                      </IconButton>
                     </div>
                     {legend && <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">{legend}</p>}
-                    <div className="flex items-center gap-2 mt-2">
-                      <IconButton
-                        variant="secondary"
-                        aria-label="Restar una pieza"
-                        onClick={() => onSetQty(l.productSlug, l.qty - 1)}
-                      >
-                        −
-                      </IconButton>
-                      <span className="w-8 text-center font-extrabold text-[var(--olv-ink,var(--ink))]">{l.qty}</span>
-                      <IconButton
-                        variant="secondary"
-                        aria-label="Sumar una pieza"
-                        onClick={() => onSetQty(l.productSlug, l.qty + 1)}
-                      >
-                        +
-                      </IconButton>
-                      <span className="text-[var(--olv-ink-soft,var(--ink-soft))] text-xs ml-1">{l.qty === 1 ? "pieza" : "piezas"}</span>
+                    <div className="olv-cart-line-summary">
+                      <div className="olv-cart-line-quantity">
+                        <div className="flex items-center gap-2">
+                          <IconButton
+                            variant="secondary"
+                            aria-label="Restar una pieza"
+                            onClick={() => onSetQty(l.productSlug, l.qty - 1)}
+                          >
+                            −
+                          </IconButton>
+                          <span className="w-8 text-center font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums" aria-live="polite">{l.qty}</span>
+                          <IconButton
+                            variant="secondary"
+                            aria-label="Sumar una pieza"
+                            onClick={() => onSetQty(l.productSlug, l.qty + 1)}
+                          >
+                            +
+                          </IconButton>
+                        </div>
+                      </div>
+                      <dl className="olv-cart-line-prices">
+                        <div>
+                          <dt>Precio por pieza</dt>
+                          <dd>{typeof unitPrice === "number" ? formatMoney(unitPrice) : "Por confirmar"}</dd>
+                        </div>
+                        <div>
+                          <dt>Subtotal</dt>
+                          <dd>{typeof lineSubtotal === "number" ? formatMoney(lineSubtotal) : "Por confirmar"}</dd>
+                        </div>
+                      </dl>
                     </div>
                   </div>
                 </li>
@@ -314,15 +319,14 @@ export function CartDrawer({
             })}
           </ul>
 
-          <div className="flex flex-col gap-3">
+          <div className="olv-cart-summary flex flex-col gap-3">
             {pricing ? (
               <>
               <div className="rounded-xl bg-[var(--olv-accent-soft,var(--paper-2))] ring-1 ring-[var(--olv-rule,var(--rule))] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
-                      Precio {pricing.activeTier.tier.label}
-                      {pricing.activeTier.tier.id !== pricing.baseTier.tier.id ? " desbloqueado" : ""}
+                      Precio {pricing.activeTier.tier.label} aplicado
                     </p>
                     <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
                       {pricing.totalQuantity} {pricing.totalQuantity === 1 ? "pieza" : "piezas"}
@@ -335,6 +339,11 @@ export function CartDrawer({
                     </p>
                   </div>
                 </div>
+                {pricing.activeTier.tier.id !== pricing.baseTier.tier.id && (
+                  <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2">
+                    Este precio ya está aplicado a cada pieza de tu pedido.
+                  </p>
+                )}
                 {pricing.savingsVsBase > 0 && (
                   <p className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] mt-2">
                     Ahorras {formatMoney(pricing.savingsVsBase)} frente a {pricing.baseTier.tier.label}.

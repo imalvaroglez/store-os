@@ -62,6 +62,11 @@ export type CalculatedCartTier = {
   savingsVsActive: number;
 };
 
+export type OrderLinePricing = {
+  unitPrice: number;
+  subtotal: number;
+};
+
 export type OrderPricing = {
   totalQuantity: number;
   tiers: CalculatedCartTier[];
@@ -70,6 +75,7 @@ export type OrderPricing = {
   aspirationalTier: CalculatedCartTier;
   estimatedSubtotal: number;
   savingsVsBase: number;
+  lineBreakdown: OrderLinePricing[];
 };
 
 /**
@@ -180,5 +186,9 @@ export function calculateOrderPricing(
     aspirationalTier: withProgress.find((entry) => entry.tier.id === aspirational.tier.id)!,
     estimatedSubtotal: active.subtotal,
     savingsVsBase: Math.max(0, base.subtotal - active.subtotal),
+    lineBreakdown: lines.map((line) => {
+      const unitPrice = estimated(active.tier, line)!;
+      return { unitPrice, subtotal: unitPrice * line.qty };
+    }),
   };
 }
