@@ -9,6 +9,9 @@ export function ProductImage({
   natural = false,
   loading = "lazy",
   placeholder,
+  width,
+  height,
+  fetchPriority,
 }: {
   src?: string;
   alt: string;
@@ -17,6 +20,11 @@ export function ProductImage({
   natural?: boolean;
   placeholder?: string;
   loading?: "eager" | "lazy";
+  // Intrinsic size when known (uploaded images persist it): width/height
+  // attributes let the browser reserve the box — no layout guesswork.
+  width?: number;
+  height?: number;
+  fetchPriority?: "high" | "low" | "auto";
 }) {
   const [failedSrc, setFailedSrc] = useState<string>();
   const dims = size === "full" ? (natural ? "w-full h-auto" : "w-full aspect-square") : "h-16 w-16";
@@ -27,6 +35,9 @@ export function ProductImage({
         alt={alt}
         loading={loading}
         decoding="async"
+        width={width}
+        height={height}
+        fetchPriority={fetchPriority}
         onError={() => setFailedSrc(src)}
         className={`${dims} ${size === "full" ? "" : "rounded-xl"} ${natural ? "object-contain" : "object-cover bg-paper-2 ring-1 ring-rule/70"} shrink-0 ${className}`}
       />

@@ -30,15 +30,18 @@ export function StorefrontEditor({
   const [sf, setSf] = useState<Storefront>(store.storefront ?? {});
   const [busy, setBusy] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [pending, setPending] = useState<Partial<Record<ImageSlot, Blob>>>({});
+  const [pending, setPending] = useState<Partial<Record<ImageSlot, { blob: Blob; width: number; height: number }>>>({});
   const previews = useRef<string[]>([]);
   const previousImages = useRef(imageUrls(store.storefront ?? {}));
   useEffect(() => () => previews.current.forEach(URL.revokeObjectURL), []);
 
-  function setImage(content: Storefront, slot: ImageSlot, url: string): Storefront {
-    return slot === "logo" ? { ...content, logoUrl: url } : {
-      ...content, hero: { ...content.hero, [slot === "desktop" ? "imageUrl" : "mobileImageUrl"]: url },
-    };
+  function setImage(content: Storefront, slot: ImageSlot, url: string, dims?: { width: number; height: number }): Storefront {
+    if (slot === "logo") return { ...content, logoUrl: url };
+    const hero = { ...content.hero, [slot === "desktop" ? "imageUrl" : "mobileImageUrl"]: url };
+    // Persist intrinsic size so the public hero reserves its box pre-load.
+    if (dims && slot === "desktop") return { ...content, hero: { ...hero, imageWidth: dims.width, imageHeight: dims.height } };
+    if (dims) return { ...content, hero: { ...hero, mobileImageWidth: dims.width, mobileImageHeight: dims.height } };
+    return { ...content, hero };
   }
   async function selectImage(slot: ImageSlot, file: File) {
     setProcessing(true);
@@ -46,11 +49,11 @@ export function StorefrontEditor({
       if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10 * 1024 * 1024) {
         throw new Error("Elige una imagen JPG, PNG o WebP de hasta 10 MB.");
       }
-      const blob = await resizeImageFile(file, { transparent: slot === "logo", maxEdge: slot === "logo" ? 600 : 1600 });
+      const { blob, width, height } = await resizeImageFile(file, { transparent: slot === "logo", maxEdge: slot === "logo" ? 600 : 1600 });
       if (blob.size > 500 * 1024) throw new Error("La imagen tiene demasiado detalle. Prueba una versión más ligera (hasta 500 KB después de optimizar).");
       const url = URL.createObjectURL(blob);
       previews.current.push(url);
-      setPending((previous) => ({ ...previous, [slot]: blob }));
+      setPending((previous) => ({ ...previous, [slot]: { blob, width, height } }));
       setSf((previous) => setImage(previous, slot, url));
     } catch (error) { toast.error((error as Error).message); }
     finally { setProcessing(false); }
@@ -79,15 +82,15 @@ export function StorefrontEditor({
     let next = sf;
     const uploaded: string[] = [];
     try {
-      for (const [slot, blob] of Object.entries(pending) as [ImageSlot, Blob][]) {
-        const url = cloud ? await uploadStorefrontImage(store.id, blob) : await new Promise<string>((resolve, reject) => {
+      for (const [slot, staged] of Object.entries(pending) as [ImageSlot, { blob: Blob; width: number; height: number } ][]) {
+        const url = cloud ? await uploadStorefrontImage(store.id, staged.blob) : await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result));
           reader.onerror = () => reject(new Error("No se pudo guardar la imagen."));
-          reader.readAsDataURL(blob);
+          reader.readAsDataURL(staged.blob);
         });
         uploaded.push(url);
-        next = setImage(next, slot, url);
+        next = setImage(next, slot, url, { width: staged.width, height: staged.height });
       }
     } catch {
       if (cloud) await Promise.allSettled(uploaded.map((url) => deleteStorefrontImage(store.id, url)));

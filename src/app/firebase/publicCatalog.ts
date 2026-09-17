@@ -39,7 +39,7 @@ export type PublicProductSummary = {
   sku?: string | null;
   publicDescription?: string | null;
   imageUrl?: string | null;
-  images?: Pick<PublicProductImage, "url" | "alt">[];
+  images?: Pick<PublicProductImage, "url" | "alt" | "width" | "height">[];
   price?: number;
   /** Prices per visible tier (owner decision 2026-08-29). Absent on stale docs. */
   prices?: Record<string, number>;

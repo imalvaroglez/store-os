@@ -85,7 +85,7 @@ function StoreView({ data: { store, catalog }, focusCategory }: { data: CatalogD
     {!focusCategory && <section className="olv-hero">
       {(sf.hero?.imageUrl || sf.hero?.mobileImageUrl) ? <picture className="olv-banner">
         {sf.hero.mobileImageUrl && <source media="(max-width: 639px)" srcSet={sf.hero.mobileImageUrl} />}
-        <ProductImage src={sf.hero.imageUrl || sf.hero.mobileImageUrl} alt={sf.hero.imageAlt || `Colección de ${store.name}`} size="full" natural loading="eager" />
+        <ProductImage src={sf.hero.imageUrl || sf.hero.mobileImageUrl} alt={sf.hero.imageAlt || `Colección de ${store.name}`} size="full" natural loading="eager" fetchPriority="high" width={sf.hero.imageWidth} height={sf.hero.imageHeight} />
       </picture> : null}
       <div className="olv-container olv-hero-copy">
         <p className="olv-eyebrow">Pequeños detalles. Muy tú.</p>
