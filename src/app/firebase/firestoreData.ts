@@ -534,7 +534,7 @@ export function projectPublicProductSummary(
     images: [...(product.images ?? [])]
       .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.order - b.order)
       .slice(0, 5)
-      .map(({ url, alt }) => ({ url, alt: alt ?? null })),
+      .map(({ url, alt, width, height }) => ({ url, alt: alt ?? null, width: width ?? null, height: height ?? null })),
     availability: product.availability ?? "available",
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,

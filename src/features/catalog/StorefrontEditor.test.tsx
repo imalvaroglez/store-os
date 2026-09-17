@@ -13,7 +13,7 @@ const store = { id: "s1", slug: "olivia", name: "Olivia", type: "inventory_tiere
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.resize.mockResolvedValue(new Blob(["image"], { type: "image/png" }));
+  mocks.resize.mockResolvedValue({ blob: new Blob(["image"], { type: "image/png" }), width: 600, height: 300 });
   mocks.upload.mockResolvedValue("https://example.com/new.png");
   mocks.updateStore.mockResolvedValue(undefined);
   mocks.remove.mockResolvedValue(undefined);
