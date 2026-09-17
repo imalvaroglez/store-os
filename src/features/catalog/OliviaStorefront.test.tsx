@@ -90,8 +90,12 @@ beforeEach(() => {
 describe("carrito del storefront — acumular y pedir", () => {
   it("agrega desde el grid, muestra el contador y arma UN mensaje con todas las líneas", async () => {
     await renderStore();
+    expect(screen.getByRole("img", { name: "Logo de Olivia" })).toHaveAttribute("src", "/images/olivia-logo.png");
+    expect(screen.getByText("Quedan pocas")).toBeTruthy();
+    expect(screen.getByText("Agotado")).toBeTruthy();
     const adds = screen.getAllByRole("button", { name: "Agregar al carrito" });
     fireEvent.click(adds[0]);
+    expect(screen.getByRole("status")).toHaveTextContent("Agregado a tu pedido");
     expect(screen.getByRole("group", { name: "Cantidad de Anillo Blossom" })).toHaveTextContent("1");
     fireEvent.click(adds[1]);
 
