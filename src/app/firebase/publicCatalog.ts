@@ -1,5 +1,3 @@
-import { doc, getDoc } from "firebase/firestore";
-import { getFirebase } from "./config";
 import type { StoreType, Storefront } from "../../types";
 
 /** Coarse stock signal — never an exact count. */
@@ -14,10 +12,12 @@ export type PublicPriceTier = {
   minAmount?: number;
 };
 
-// Anonymous public-catalog loader. A visitor at /catalogo/:slug has NO session;
-// they read the three public projection collections, which carry only public-safe
-// fields. Errors propagate to the caller — this is a user-facing path and silent
-// failures are wrong.
+// Anonymous public-catalog loader over the Firestore REST API — the public
+// storefront entry must not ship the Firebase SDK (the admin entry keeps it).
+// A visitor at /catalogo/:slug has NO session; they read the three public
+// projection collections, which carry only public-safe fields. Errors
+// propagate to the caller — this is a user-facing path and silent failures
+// are wrong.
 //
 // Read budget per visit: storefront + catalog = 2 reads. Opening a product = +1.
 
@@ -94,7 +94,7 @@ export type PublicProductDetail = {
   isFeatured?: boolean;
   isNew?: boolean;
   price?: number;
-  /** Prices per visible tier. Absent on stale docs. */
+  /** Prices per visible tier. Absent on stale projections. */
   prices?: Record<string, number>;
   stockSignal?: PublicStockSignal;
   categories: { id: string; name: string; slug: string }[];
@@ -116,6 +116,62 @@ export class PublicProductNotFoundError extends Error {
   }
 }
 
+// Mirror of src/app/firebase/config.ts's environment detection: emulator mode
+// is opt-in and DEV/TEST-only, and it always targets the store-os-demo
+// namespace so emulator tests stay isolated from the real projects.
+const EMULATOR =
+  import.meta.env.MODE !== "production" &&
+  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
+
+const PROJECT_ID = EMULATOR
+  ? "store-os-demo"
+  : (import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined);
+
+const DOCS_BASE = EMULATOR
+  ? `http://127.0.0.1:8080/v1/projects/${PROJECT_ID}/databases/(default)/documents`
+  : `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+
+type RestValue = { [key: string]: unknown };
+
+/** One anonymous REST document read. Mirrors getDoc's contract: an exists
+ *  flag, decoded data, and thrown errors for anything that is not a clean 404
+ *  (rules denial, network failure, etc.). */
+async function getDocRest(path: string): Promise<{ exists: boolean; data?: Record<string, unknown> }> {
+  const key = EMULATOR ? "" : `?key=${import.meta.env.VITE_FIREBASE_API_KEY as string}`;
+  const res = await fetch(`${DOCS_BASE}/${path}${key}`, { headers: { accept: "application/json" } });
+  if (res.status === 404) return { exists: false };
+  if (!res.ok) throw new Error(`Firestore REST ${res.status} al leer "${path}"`);
+  const json = (await res.json()) as { fields?: Record<string, RestValue> };
+  return { exists: true, data: decodeFields(json.fields ?? {}) };
+}
+
+// REST wire format → client values. Gotchas pinned by tests: integerValue
+// arrives as a JSON STRING (prices!), timestamps as ISO strings (the public
+// types carry no dates, so they pass through). Unknown shapes throw loudly
+// instead of silently dropping fields.
+function decodeValue(value: RestValue): unknown {
+  if ("nullValue" in value) return null;
+  if ("stringValue" in value) return value.stringValue;
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return value.doubleValue;
+  if ("timestampValue" in value) return value.timestampValue;
+  if ("arrayValue" in value) {
+    const values = (value.arrayValue as { values?: RestValue[] }).values ?? [];
+    return values.map((item) => decodeValue(item));
+  }
+  if ("mapValue" in value) {
+    return decodeFields((value.mapValue as { fields?: Record<string, RestValue> }).fields ?? {});
+  }
+  throw new Error(`Valor REST de Firestore no soportado: ${Object.keys(value).join(", ")}`);
+}
+
+function decodeFields(fields: Record<string, RestValue>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) out[key] = decodeValue(value);
+  return out;
+}
+
 /**
  * Load a store's public storefront + catalog (categories + product summaries).
  * Anonymous. 2 reads. Throws PublicCatalogNotFoundError if the store isn't
@@ -126,20 +182,18 @@ export async function loadPublicCatalog(slug: string): Promise<{
   store: PublicStore;
   catalog: PublicCatalog;
 }> {
-  const { db } = getFirebase();
-
   const [storeSnap, catalogSnap] = await Promise.all([
-    getDoc(doc(db, "publicStores", slug)),
-    getDoc(doc(db, "publicCatalogs", slug)),
+    getDocRest(`publicStores/${slug}`),
+    getDocRest(`publicCatalogs/${slug}`),
   ]);
 
-  if (!storeSnap.exists()) throw new PublicCatalogNotFoundError(slug);
-  const storeData = storeSnap.data() as Omit<PublicStore, "slug">;
+  if (!storeSnap.exists) throw new PublicCatalogNotFoundError(slug);
+  const storeData = storeSnap.data as Omit<PublicStore, "slug">;
   let store: PublicStore = { slug, ...storeData };
 
   let catalog: PublicCatalog = { categories: [], products: [] };
-  if (catalogSnap.exists()) {
-    const data = catalogSnap.data() as {
+  if (catalogSnap.exists) {
+    const data = catalogSnap.data as {
       storeId?: string;
       categories?: PublicCategory[];
       products?: PublicProductSummary[];
@@ -170,28 +224,26 @@ export async function loadPublicProduct(
   productSlug: string,
   knownStore?: PublicStore
 ): Promise<{ product: PublicProductDetail; store: PublicStore }> {
-  const { db } = getFirebase();
-
   let store = knownStore;
   if (!store) {
-    const storeSnap = await getDoc(doc(db, "publicStores", storeSlug));
-    if (!storeSnap.exists()) throw new PublicCatalogNotFoundError(storeSlug);
-    store = { slug: storeSlug, ...(storeSnap.data() as Omit<PublicStore, "slug">) };
+    const storeSnap = await getDocRest(`publicStores/${storeSlug}`);
+    if (!storeSnap.exists) throw new PublicCatalogNotFoundError(storeSlug);
+    store = { slug: storeSlug, ...(storeSnap.data as Omit<PublicStore, "slug">) };
   }
   if (!store.storeId) {
     // publicStores anterior a 390e76a no trae storeId; publicCatalogs siempre
     // lo trajo (+1 lectura sólo en el caso estancado).
-    const catSnap = await getDoc(doc(db, "publicCatalogs", storeSlug));
-    const catStoreId = catSnap.exists()
-      ? (catSnap.data() as { storeId?: string }).storeId
+    const catSnap = await getDocRest(`publicCatalogs/${storeSlug}`);
+    const catStoreId = catSnap.exists
+      ? (catSnap.data as { storeId?: string }).storeId
       : undefined;
     if (!catStoreId) throw new PublicCatalogNotFoundError(storeSlug);
     store = { ...store, storeId: catStoreId };
   }
-  const productSnap = await getDoc(doc(db, "publicProducts", `${store.storeId}__${productSlug}`));
+  const productSnap = await getDocRest(`publicProducts/${store.storeId}__${productSlug}`);
 
-  if (!productSnap.exists()) throw new PublicProductNotFoundError(productSlug);
-  const product = productSnap.data() as PublicProductDetail;
+  if (!productSnap.exists) throw new PublicProductNotFoundError(productSlug);
+  const product = productSnap.data as PublicProductDetail;
 
   return { product, store };
 }
