@@ -91,6 +91,37 @@ beforeEach(() => {
   mocks.loadPublicProduct.mockReset().mockResolvedValue({ product: detail, store });
 });
 
+describe("tarjetas — jerarquía de precios", () => {
+  it("destaca Iconic, compacta los otros niveles y comunica el ahorro posible", async () => {
+    await renderStore();
+    const card = screen.getByRole("article", { name: "Anillo Blossom" });
+
+    expect(within(card).getByText("Mejor precio")).toBeTruthy();
+    expect(within(card).getByText("$90")).toBeTruthy();
+    expect(within(card).getByText("Hasta $50 menos por pieza al desbloquear Iconic")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toBeTruthy();
+
+    const compare = Array.from(card.querySelectorAll(".olv-price-compare-item"))
+      .map((item) => `${item.querySelector(".olv-price-compare-label")?.textContent} ${item.querySelector(".olv-price-compare-amount")?.textContent}`);
+    expect(compare[0]).toBe("Regular $140");
+    expect(compare[1]).toBe("Girly $120");
+  });
+
+  it("oculta el ahorro cuando Iconic no es menor que Regular", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: {
+        ...catalog,
+        products: [{ ...catalog.products[0], prices: { t_retail: 140, t_girly: 140, t_iconic: 140 } }],
+      },
+    });
+    await renderStore();
+    const card = screen.getByRole("article", { name: "Anillo Blossom" });
+    expect(within(card).queryByText(/Hasta .* al desbloquear Iconic/)).toBeNull();
+  });
+});
+
 describe("carrito del storefront — acumular y pedir", () => {
   it("agrega desde el grid, muestra el contador y arma UN mensaje con todas las líneas", async () => {
     await renderStore();
@@ -184,9 +215,11 @@ describe("carrito — progreso hacia Iconic", () => {
     await renderStore();
     await openDrawer();
 
-    expect(screen.getByText(/Tu meta: precio Iconic/i)).toBeTruthy();
+    expect(screen.getByText(/Meta final: precio Iconic/i)).toBeTruthy();
     expect(screen.getByText(/Te faltan \$640 en productos a precio Iconic/i)).toBeTruthy();
-    expect(screen.getByText(/Te falta 1 pieza para desbloquear Girly/i)).toBeTruthy();
+    const next = screen.getByText(/Te falta 1 pieza para desbloquear Girly/i);
+    const goal = screen.getByText(/Meta final: precio Iconic/i);
+    expect(next.compareDocumentPosition(goal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText(/Agrega 1 pieza y ahorrarás/i)).toBeNull();
   });
 
@@ -241,11 +274,15 @@ describe("detalle de producto — precios por tier", () => {
   it("destaca Iconic y explica los tres niveles", async () => {
     render(<OliviaStorefront route={productRoute} />);
     expect(await screen.findByText("Anillo Blossom")).toBeTruthy();
-    expect(screen.getByText("$90")).toBeTruthy();
-    expect(screen.getByText("Girly").closest("p")).toHaveTextContent("Girly $120");
+    const prices = screen.getByRole("region", { name: "Precios por pieza" });
+    expect(screen.getByText("Precio por pieza")).toBeTruthy();
+    expect(within(prices).getByText("$90")).toBeTruthy();
+    expect(within(prices).getByText("Girly").closest("div")).toHaveTextContent(/Girly\s*\$120/);
     expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toHaveAttribute("title", "desde 5 piezas");
     expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "desde $1,000 en productos a precio Iconic");
-    expect(screen.getByText("Regular").closest("p")).toHaveTextContent("Regular $140");
+    expect(within(prices).getByText("Regular").closest("div")).toHaveTextContent(/Regular\s*\$140/);
+    expect(Array.from(prices.querySelectorAll(".olv-price-row dt")).map((row) => row.textContent?.replace("Mejor precio", "").trim())).toEqual(["Regular", "Girly", "Iconic"]);
+    expect(prices.querySelector(".olv-price-row--featured")).toHaveTextContent("Iconic");
     // Agregar al carrito desde el detalle.
     fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
     expect(screen.getByRole("button", { name: "Abrir pedido" }).textContent).toContain("1");
