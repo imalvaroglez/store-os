@@ -1,5 +1,6 @@
 import { defineConfig, type Connect, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 
@@ -41,7 +42,20 @@ function publicEntryRewrite(): Plugin {
   const rewrite = (middlewares: Connect.Server) => {
     middlewares.use((req, _res, next) => {
       const pathname = (req.url ?? "").split("?")[0];
-      if (/^\/catalogo\/[^/]+/.test(pathname)) req.url = "/public.html";
+      if (!/^\/catalogo\/[^/]+/.test(pathname)) {
+        next();
+        return;
+      }
+      // Prerendered pages (scripts/prerender-public.mjs) win over the SPA
+      // shell in preview, exactly like Vercel's filesystem-over-rewrite rule.
+      const staticPath = pathname.endsWith("/")
+        ? `${pathname}index.html`
+        : `${pathname}/index.html`;
+      if (existsSync(resolve(__dirname, "dist", `.${staticPath}`))) {
+        req.url = staticPath;
+      } else {
+        req.url = "/public.html";
+      }
       next();
     });
   };
