@@ -173,41 +173,53 @@ function decodeFields(fields: Record<string, RestValue>): Record<string, unknown
 }
 
 /**
+ * Load just the store's public storefront identity (1 read, a tiny doc). The
+ * hero paints from this alone while the (much larger) catalog doc is still in
+ * flight — progressive rendering for the public critical path.
+ */
+export async function loadPublicStore(slug: string): Promise<PublicStore> {
+  const storeSnap = await getDocRest(`publicStores/${slug}`);
+  if (!storeSnap.exists) throw new PublicCatalogNotFoundError(slug);
+  return { slug, ...(storeSnap.data as Omit<PublicStore, "slug">) };
+}
+
+/** Load the catalog projection alone (categories + product summaries). 1 read.
+ *  Pair with loadPublicStore for progressive rendering. */
+export async function loadPublicCatalogSummary(slug: string): Promise<PublicCatalog> {
+  return (await loadPublicCatalogDoc(slug)).catalog;
+}
+
+async function loadPublicCatalogDoc(slug: string): Promise<{ catalog: PublicCatalog; storeId?: string }> {
+  const catalogSnap = await getDocRest(`publicCatalogs/${slug}`);
+  if (!catalogSnap.exists) throw new Error(`El catálogo de "${slug}" aún no está publicado.`);
+  const data = catalogSnap.data as {
+    storeId?: string;
+    categories?: PublicCategory[];
+    products?: PublicProductSummary[];
+  };
+  return {
+    catalog: { categories: data.categories ?? [], products: data.products ?? [] },
+    storeId: data.storeId,
+  };
+}
+
+/**
  * Load a store's public storefront + catalog (categories + product summaries).
  * Anonymous. 2 reads. Throws PublicCatalogNotFoundError if the store isn't
  * published, or a plain Error if the storefront exists but its catalog
- * projection hasn't been written yet.
+ * projection hasn't been written yet. Screens that want progressive rendering
+ * (hero from the small store doc, grid from the big catalog doc) call
+ * loadPublicStore + their own catalog read instead.
  */
 export async function loadPublicCatalog(slug: string): Promise<{
   store: PublicStore;
   catalog: PublicCatalog;
 }> {
-  const [storeSnap, catalogSnap] = await Promise.all([
-    getDocRest(`publicStores/${slug}`),
-    getDocRest(`publicCatalogs/${slug}`),
-  ]);
-
-  if (!storeSnap.exists) throw new PublicCatalogNotFoundError(slug);
-  const storeData = storeSnap.data as Omit<PublicStore, "slug">;
-  let store: PublicStore = { slug, ...storeData };
-
-  let catalog: PublicCatalog = { categories: [], products: [] };
-  if (catalogSnap.exists) {
-    const data = catalogSnap.data as {
-      storeId?: string;
-      categories?: PublicCategory[];
-      products?: PublicProductSummary[];
-    };
-    if (!store.storeId && data.storeId) store = { ...store, storeId: data.storeId };
-    catalog = {
-      categories: data.categories ?? [],
-      products: data.products ?? [],
-    };
-  } else {
-    throw new Error(`El catálogo de "${slug}" aún no está publicado.`);
+  const [store, doc] = await Promise.all([loadPublicStore(slug), loadPublicCatalogDoc(slug)]);
+  if (!store.storeId && doc.storeId) {
+    return { store: { ...store, storeId: doc.storeId }, catalog: doc.catalog };
   }
-
-  return { store, catalog };
+  return { store, catalog: doc.catalog };
 }
 
 /**
