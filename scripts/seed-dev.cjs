@@ -36,6 +36,7 @@ const now = new Date().toISOString();
 
 const oliviaStorefront = {
   hero: { heading: "Joyería para hacer tuyo cada día", body: "Encuentra esa pieza que va contigo. Elige tus favoritas y prepara tu pedido por WhatsApp." },
+  benefits: ["Envíos a todo el país", "Acero 304 y materiales de calidad", "Cada pieza es única"],
   story: { heading: "Sobre Olivia", body: "En Olivia puedes explorar joyería, reunir tus piezas favoritas y enviar tu selección por WhatsApp. Fer te ayuda a confirmar los detalles de tu pedido." },
   shipping: "Consulta por WhatsApp las opciones, el costo y el tiempo de entrega para tu pedido.",
   faq: [
