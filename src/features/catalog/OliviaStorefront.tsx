@@ -1,4 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+
+// Scoped editorial styles travel with the storefront chunk, not the shared barrel.
+import "../../design-system/olivia.css";
 import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
 import { loadPublicCatalog, loadPublicProduct, PublicCatalogNotFoundError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
 import { navigate, type RouteMatch } from "../../lib/router";
