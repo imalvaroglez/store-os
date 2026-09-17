@@ -122,7 +122,7 @@ body {
   position: absolute;
   z-index: 40;
   bottom: calc(100% + 0.5rem);
-  left: 50%;
+  right: 0;
   width: min(15rem, calc(100vw - 2rem));
   padding: 0.5rem 0.625rem;
   border-radius: var(--radius-sm);
@@ -135,14 +135,14 @@ body {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translate(-50%, 0.25rem);
+  transform: translateY(0.25rem);
   transition: opacity var(--motion-fast) var(--ease-smooth), transform var(--motion-fast) var(--ease-smooth), visibility var(--motion-fast);
 }
 .price-help-wrap:hover .price-help-tooltip,
 .price-help-wrap:focus-within .price-help-tooltip {
   opacity: 1;
   visibility: visible;
-  transform: translate(-50%, 0);
+  transform: translateY(0);
 }
 
 /* Hairline divider between sections — uses the theme rule color. */

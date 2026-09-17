@@ -176,8 +176,12 @@
 }
 @media (max-width: 639px) {
   .olv-header-inner--home { min-height: 145px; }
-  .olv-header--home .olv-wordmark img { max-width: min(300px, calc(100vw - 140px)); max-height: 96px; }
+  .olv-header-inner--home { grid-template-rows: auto auto; row-gap: 8px; padding-block: 10px; }
+  .olv-header-inner--home nav { grid-column: 1 / -1; grid-row: 2; }
+  .olv-header--home .olv-wordmark img { max-width: min(300px, calc(100vw - 40px)); max-height: 96px; }
   .olv-header--compact .olv-header-inner--home { min-height: 76px; }
+  .olv-header--compact .olv-header-inner--home { grid-template-rows: 1fr; row-gap: 0; padding-block: 0; }
+  .olv-header--compact .olv-header-inner--home nav { grid-column: 3; grid-row: 1; }
   .olv-header--compact .olv-header-inner--home .olv-wordmark img { max-width: 96px; max-height: 44px; }
   .olv-header-inner { column-gap: 4px; }
   .olv-header-inner .olv-wordmark img { max-width: 96px; }
