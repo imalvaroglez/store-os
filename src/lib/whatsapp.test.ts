@@ -49,7 +49,7 @@ describe("createWhatsAppShareCatalogUrl", () => {
   });
 });
 
-// Storefront messages: immutable context (name, SKU, URL, intent) is always
+// Storefront messages: immutable context (name, URL, intent) is always
 // appended so Fer's editable intro can't strip identifying info.
 
 const sfStore: StorefrontWhatsAppTarget = {
@@ -61,17 +61,16 @@ const sfStore: StorefrontWhatsAppTarget = {
 };
 const sfProduct: StorefrontProductRef = {
   name: "Anillo de plata",
-  sku: "OLI-001",
   productSlug: "anillo-de-plata",
 };
 
 describe("createStorefrontBuyUrl", () => {
-  it("includes the editable intro, name, SKU, and product URL", () => {
+  it("includes the editable intro, name, and product URL without internal data", () => {
     const url = createStorefrontBuyUrl(sfStore, "olivia", sfProduct);
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Hola, me interesa esta pieza:");
     expect(text).toContain("Anillo de plata");
-    expect(text).toContain("Clave: OLI-001");
+    expect(text).not.toContain("Clave:");
     expect(text).toContain(`/catalogo/olivia/producto/anillo-de-plata`);
     expect(url).toContain("wa.me/5215512345678");
   });
@@ -86,12 +85,12 @@ describe("createStorefrontBuyUrl", () => {
     expect(text.startsWith("Hola, me interesa esta pieza:")).toBe(true);
   });
 
-  it("still includes name + URL even without a SKU", () => {
-    const url = createStorefrontBuyUrl(sfStore, "olivia", { name: "Collar", sku: "OLV-001", productSlug: "collar" });
+  it("includes name + URL without requiring a SKU", () => {
+    const url = createStorefrontBuyUrl(sfStore, "olivia", { name: "Collar", productSlug: "collar" });
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Collar");
     expect(text).toContain("/catalogo/olivia/producto/collar");
-    expect(text).not.toContain("SKU");
+    expect(text).not.toContain("Clave:");
   });
 });
 
@@ -124,8 +123,8 @@ describe("createStorefrontResaleUrl", () => {
 
 describe("buildCartOrderUrl — pedido de varias líneas", () => {
   const cartLines: CartOrderLine[] = [
-    { name: "Anillo Blossom", sku: "AAN1385", qty: 2 },
-    { name: "Aretes Luna", sku: "OLI-002", qty: 1, inquire: true },
+    { name: "Anillo Blossom", qty: 2 },
+    { name: "Aretes Luna", qty: 1, inquire: true },
   ];
 
   it("arma un solo mensaje con intro, Pedido:, las líneas y el link al catálogo", () => {
@@ -134,8 +133,10 @@ describe("buildCartOrderUrl — pedido de varias líneas", () => {
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Hola, me interesa esta pieza:"); // intro editable como prefijo
     expect(text).toContain("Pedido:");
-    expect(text).toContain("• 2× Anillo Blossom (AAN1385)");
-    expect(text).toContain("• 1× Aretes Luna (OLI-002) — sobre pedido");
+    expect(text).toContain("• 2× Anillo Blossom");
+    expect(text).toContain("• 1× Aretes Luna — sobre pedido");
+    expect(text).not.toContain("AAN1385");
+    expect(text).not.toContain("OLI-002");
     expect(text).toContain("/catalogo/olivia");
   });
 

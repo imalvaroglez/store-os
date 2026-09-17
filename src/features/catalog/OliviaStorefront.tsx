@@ -171,7 +171,7 @@ function ProductDetail({ product, store }: { product: PublicProductDetail; store
         {product.publicDescription && <p className="olv-body-copy">{product.publicDescription}</p>}
         <dl className="olv-specs">{([["Material", product.material], ["Acabado", product.finish], ["Medidas", product.dimensions], ["Cuidados", product.care]] as const).filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
         <div className="olv-detail-actions"><CartProductControl key={`${product.productSlug}-${quantity}`} productSlug={product.productSlug} productName={product.name} quantity={quantity} onAdd={() => { add(cartItemFromPublicProduct({ ...product, image: images[0]?.url, inquire: soldOut })); notifyAdded(product.name); }} onSetQty={setQty} full size="lg" />
-          {(product.canInquire || !soldOut) && <a className="olv-text-link" target="_blank" rel="noreferrer" href={createStorefrontBuyUrl(store, store.slug, { name: product.name, sku: product.sku, productSlug: product.productSlug, intent: soldOut ? "inquire" : "buy" })}>{soldOut ? "Preguntar por esta pieza" : "Comprar por WhatsApp"} ↗</a>}
+          {(product.canInquire || !soldOut) && <a className="olv-text-link" target="_blank" rel="noreferrer" href={createStorefrontBuyUrl(store, store.slug, { name: product.name, productSlug: product.productSlug, intent: soldOut ? "inquire" : "buy" })}>{soldOut ? "Preguntar por esta pieza" : "Comprar por WhatsApp"} ↗</a>}
           <p className="olv-muted text-sm">Enviar tu selección no confirma ni reserva el pedido.</p>
         </div>
         <details className="olv-delivery" open><summary>Entregas y envíos</summary><p>{store.storefront?.shipping || OLIVIA_CONTENT.shipping}</p></details>
@@ -192,6 +192,21 @@ function StoreChrome({ data, children, isHomeRoute }: { data: CatalogData | null
   const cart = useCart(data?.store.slug);
   const [open, setOpen] = useState(false);
   const [addedName, setAddedName] = useState<string | null>(null);
+  const [homeHeaderCompact, setHomeHeaderCompact] = useState(false);
+  useEffect(() => {
+    if (!isHomeRoute) {
+      setHomeHeaderCompact(false);
+      return;
+    }
+    const onScroll = () => setHomeHeaderCompact((compact) => {
+      if (window.scrollY <= 4) return false;
+      if (window.scrollY >= 96) return true;
+      return compact;
+    });
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [isHomeRoute]);
   useEffect(() => {
     if (!data) return;
     cart.prune(new Set(data.catalog.products.map((p) => p.productSlug)));
@@ -209,7 +224,7 @@ function StoreChrome({ data, children, isHomeRoute }: { data: CatalogData | null
   const body = <div className="olivia-root" style={style}>
     {store && <>
       <div className="olv-notice">{sf.notice || "Tu próxima pieza favorita empieza aquí"}</div>
-      <header className="olv-header"><div className={`olv-container olv-header-inner ${isHomeRoute ? "olv-header-inner--home" : ""}`}>
+      <header className={`olv-header${isHomeRoute ? " olv-header--home" : ""}${homeHeaderCompact ? " olv-header--compact" : ""}`}><div className={`olv-container olv-header-inner ${isHomeRoute ? "olv-header-inner--home" : ""}`}>
         <StorefrontLink to={`/catalogo/${store.slug}`} className="olv-wordmark">{sf.logoUrl ? <ProductImage src={sf.logoUrl} alt={`Logo de ${store.name}`} size="full" natural loading="eager" /> : <ProductImage src={OLIVIA_LOGO_URL} alt={`Logo de ${store.name}`} size="full" natural loading="eager" />}</StorefrontLink>
         <nav aria-label="Principal"><StorefrontLink to={`/catalogo/${store.slug}`} className="olv-header-catalog">Catálogo</StorefrontLink><Button variant="ghost" aria-label="Ver mi selección" onClick={openCart}>Mi pedido <span className="olv-count">{pieces}</span></Button></nav>
       </div></header>
@@ -223,7 +238,7 @@ function StoreChrome({ data, children, isHomeRoute }: { data: CatalogData | null
     {store && <>
       {addedName && !open && <div className="olv-added-status" role="status" aria-live="polite"><span><strong>Agregado a tu pedido</strong><span className="olv-added-name">{addedName}</span></span><Button variant="primary" onClick={openCart}>Ver mi pedido</Button></div>}
       <CartFloatingButton pieces={pieces} onClick={openCart} className={`olv-floating ${open ? "hidden" : ""}`} />
-      <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(data!.catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} onRemove={cart.remove} />
+      <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(data!.catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} />
     </>}
   </div>;
   return store ? <CartContext.Provider value={{ ...cart, lines, store, notifyAdded }}>{body}</CartContext.Provider> : body;

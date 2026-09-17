@@ -8,11 +8,15 @@ export function Sheet({
   onClose,
   title,
   children,
+  className = "",
+  contentClassName = "",
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
+  className?: string;
+  contentClassName?: string;
 }) {
   // onClose in a ref: inline (unstable) handlers must not re-run the scroll
   // lock / key listener on every parent render while the sheet is open.
@@ -59,7 +63,7 @@ export function Sheet({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className="relative bg-paper rounded-t-sheet md:rounded-sheet w-full md:w-[min(90vw,64rem)] md:max-w-5xl max-h-[92vh] overflow-y-auto shadow-lift"
+        className={`relative bg-paper rounded-t-sheet md:rounded-sheet w-full md:w-[min(90vw,64rem)] md:max-w-5xl max-h-[92vh] overflow-y-auto shadow-lift ${className}`}
         style={{
           paddingBottom: "env(safe-area-inset-bottom)",
           animation: `slideUp var(--motion-base) var(--ease-smooth)`,
@@ -71,7 +75,7 @@ export function Sheet({
             ×
           </IconButton>
         </div>
-        <div className="px-5 pb-6 pt-3">{children}</div>
+        <div className={`px-5 pb-6 pt-3 ${contentClassName}`}>{children}</div>
       </div>
     </div>
   );

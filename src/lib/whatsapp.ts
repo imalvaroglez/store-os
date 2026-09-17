@@ -30,7 +30,7 @@ export function createWhatsAppShareCatalogUrl(store: Store, catalogUrl: string):
 
 // --- Olivia storefront messages ---
 //
-// Every storefront WhatsApp message appends immutable context (name, SKU, URL,
+// Every storefront WhatsApp message appends immutable context (name, URL,
 // intent) so Fer's editable "intro" can never accidentally strip the info needed
 // to identify the piece. The intro is a prefix only.
 
@@ -44,7 +44,6 @@ export type StorefrontWhatsAppTarget = {
 
 export type StorefrontProductRef = {
   name: string;
-  sku: string;
   productSlug?: string;
   intent?: "buy" | "inquire";
 };
@@ -58,7 +57,7 @@ function productUrl(storeSlug: string, productSlug?: string): string {
   return `${origin}/catalogo/${storeSlug}/producto/${productSlug}`;
 }
 
-/** Buy/inquire about a specific product. Intro (editable) + name + SKU + URL. */
+/** Buy/inquire about a specific product. Intro (editable) + name + URL. */
 export function createStorefrontBuyUrl(
   store: StorefrontWhatsAppTarget,
   storeSlug: string,
@@ -66,7 +65,7 @@ export function createStorefrontBuyUrl(
 ): string {
   const intro = store.storefront?.whatsappBuyIntro?.trim() || "Hola, me interesa esta pieza:";
   const intent = product.intent === "inquire" ? "Quiero preguntar por esta pieza." : "Quiero comprar esta pieza.";
-  const text = `${intro}\n${intent}\nProducto: ${product.name}\nClave: ${product.sku}\n${productUrl(storeSlug, product.productSlug)}`;
+  const text = `${intro}\n${intent}\nProducto: ${product.name}\n${productUrl(storeSlug, product.productSlug)}`;
   return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }
 
@@ -91,7 +90,6 @@ export function createStorefrontResaleUrl(
 
 export type CartOrderLine = {
   name: string;
-  sku: string;
   qty: number;
   inquire?: boolean; // sold-out piece → asked, not bought
 };
@@ -99,7 +97,7 @@ export type CartOrderLine = {
 /**
  * Multi-line cart order in ONE message. Same intro convention as
  * createStorefrontBuyUrl: the editable intro is a PREFIX, each line carries
- * name + SKU, and the catalog URL is appended. A canonical pricing result is
+ * name + quantity, and the catalog URL is appended. A canonical pricing result is
  * optional so legacy single-price stores keep their existing message.
  */
 export function buildCartOrderUrl(
@@ -113,7 +111,7 @@ export function buildCartOrderUrl(
   const intro =
     store.storefront?.whatsappBuyIntro?.trim() || (name ? `Hola, soy ${name}, quiero hacer un pedido:` : "Hola, quiero hacer un pedido:");
   const body = lines
-    .map((l) => `• ${l.qty}× ${l.name} (${l.sku})${l.inquire ? " — sobre pedido" : ""}`)
+    .map((l) => `• ${l.qty}× ${l.name}${l.inquire ? " — sobre pedido" : ""}`)
     .join("\n");
   // Suppress the identity line only when the intro already carries OUR exact
   // identity phrase ("…soy {name},…") — a bare substring match would let an

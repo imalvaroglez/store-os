@@ -144,20 +144,26 @@ describe("carrito del storefront — acumular y pedir", () => {
     const list = screen.getByRole("list");
     expect(within(list).getByText("Anillo Blossom")).toBeTruthy();
     expect(within(list).getByText("Aretes Luna")).toBeTruthy();
+    expect(within(list).getAllByText("Precio por pieza")).toHaveLength(2);
+    expect(within(list).getAllByText("Subtotal")).toHaveLength(2);
+    expect(within(list).getAllByText("$140")).toHaveLength(2);
+    expect(within(list).getAllByText("$120")).toHaveLength(2);
 
     const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
     expect(send.href).toContain("wa.me/5213344836691");
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("Pedido:");
-    expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
-    expect(text).toContain("• 1× Aretes Luna (OLI-002)");
+    expect(text).toContain("• 1× Anillo Blossom");
+    expect(text).toContain("• 1× Aretes Luna");
+    expect(text).not.toContain("AAN1385");
+    expect(text).not.toContain("OLI-002");
     expect(text).toContain("/catalogo/olivia");
     expect(text).toContain("Total de piezas: 2");
     expect(text).toContain("Precio aplicable: Regular");
     expect(text).toContain("Subtotal estimado: $260 MXN");
   });
 
-  it("stepper ± y quitar actualizan líneas y contador", async () => {
+  it("stepper ± actualiza líneas y reduce a cero para quitar", async () => {
     await renderStore();
     fireEvent.click(screen.getAllByRole("button", { name: "Agregar al carrito" })[0]);
     await openDrawer();
@@ -167,8 +173,10 @@ describe("carrito del storefront — acumular y pedir", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
     expect(within(row).getByText("2")).toBeTruthy();
     expect(screen.getByText("2 piezas")).toBeTruthy();
+    expect(within(row).queryByRole("button", { name: "Quitar" })).toBeNull();
 
-    fireEvent.click(within(row).getByRole("button", { name: "Quitar" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
     expect(screen.getByText("Tu pedido está vacío")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Abrir pedido" })).toBeNull();
   });
@@ -198,8 +206,10 @@ describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
 
     const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
-    expect(text).toContain("• 1× Collar Vega (OLI-003) — sobre pedido");
-    expect(text).toContain("• 1× Aretes Luna (OLI-002)\n");
+    expect(text).toContain("• 1× Collar Vega — sobre pedido");
+    expect(text).toContain("• 1× Aretes Luna\n");
+    expect(text).not.toContain("OLI-003");
+    expect(text).not.toContain("OLI-002");
   });
 });
 
@@ -223,6 +233,13 @@ describe("carrito — progreso hacia Iconic", () => {
     const goal = screen.getByText(/Meta final: precio Iconic/i);
     expect(next.compareDocumentPosition(goal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText(/Agrega 1 pieza y ahorrarás/i)).toBeNull();
+
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
+    expect(screen.getByText("Precio Girly aplicado")).toBeTruthy();
+    expect(screen.getByText("Este precio ya está aplicado a cada pieza de tu pedido.")).toBeTruthy();
+    expect(within(row).getByText("Precio por pieza")).toBeTruthy();
+    expect(within(row).getByText("$600")).toBeTruthy();
   });
 
   it("muestra subtotal Girly, monto exacto faltante y ahorro de la selección actual", async () => {
@@ -245,6 +262,10 @@ describe("carrito — progreso hacia Iconic", () => {
     await openDrawer();
 
     expect(screen.getAllByText(/Precio Girly desbloqueado/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Precio Girly aplicado")).toBeTruthy();
+    expect(screen.getByText("Este precio ya está aplicado a cada pieza de tu pedido.")).toBeTruthy();
+    expect(within(screen.getByRole("list")).getByText("Precio por pieza")).toBeTruthy();
+    expect(within(screen.getByRole("list")).getByText("$1,200")).toBeTruthy();
     expect(screen.getByText("$1,200 MXN")).toBeTruthy();
     expect(screen.getByText(/Te faltan \$100 en productos a precio Iconic/i)).toBeTruthy();
     expect(screen.getByText(/Con Iconic, lo que ya llevas costaría \$300 menos/i)).toBeTruthy();
@@ -347,6 +368,28 @@ describe("editorial catalog", () => {
     });
     await renderStore();
     expect(screen.getByRole("heading", { name: "Nueva colección" })).toBeTruthy();
+  });
+
+  it("reduce el logo de portada al desplazarse y lo vuelve a ampliar al regresar arriba", async () => {
+    const view = render(<OliviaStorefront route={storeRoute} />);
+    await screen.findAllByRole("button", { name: "Agregar al carrito" });
+    const header = screen.getByRole("img", { name: "Logo de Olivia" }).closest("header")!;
+    expect(header).not.toHaveClass("olv-header--compact");
+
+    const scrollY = vi.spyOn(window, "scrollY", "get");
+    scrollY.mockReturnValue(120);
+    fireEvent.scroll(window);
+    expect(header).toHaveClass("olv-header--compact");
+
+    scrollY.mockReturnValue(80);
+    fireEvent.scroll(window);
+    expect(header).toHaveClass("olv-header--compact");
+
+    scrollY.mockReturnValue(0);
+    fireEvent.scroll(window);
+    expect(header).not.toHaveClass("olv-header--compact");
+    scrollY.mockRestore();
+    view.unmount();
   });
 
   it("searches names/keys, sorts, and never duplicates featured/new products", async () => {
