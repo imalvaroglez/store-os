@@ -117,8 +117,10 @@ export function PublicTierPrices({
           <span className="olv-price-card-amount text-2xl font-extrabold text-[var(--olv-accent,var(--terracotta))]">
             {formatMoney(product.prices?.[aspirational.id])}
           </span>
-          <span className="olv-price-card-tier font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
-          <span className="olv-price-badge">Mejor precio</span>
+          <span className="olv-price-card-tier-group">
+            <span className="olv-price-card-tier font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
+            <span className="olv-price-badge">Mejor precio</span>
+          </span>
         </div>
         <PriceRequirement tier={aspirational} />
       </div>
