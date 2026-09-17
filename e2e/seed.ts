@@ -1,3 +1,4 @@
+import { OLIVIA_CONTENT } from "../src/lib/oliviaContent";
 import type { AppState, Store, Product, Customer, Order, Category, Storefront } from "../src/types";
 
 // E2E-only fixture (moved from src/lib/seed.ts): the client demo seed was
@@ -18,38 +19,7 @@ export function buildSeedState(): AppState {
   const santiId = "store_santi";
   const joyeriaId = "store_joyeria";
 
-  // Olivia's storefront content — clearly provisional copy Fer replaces in
-  // Ajustes → Editar sitio público.
-  const oliviaStorefront: Storefront = {
-    hero: {
-      heading: "Olivia",
-      body: "Joyería hecha a mano, piezas únicas para cada ocasión.",
-    },
-    benefits: ["Envíos a todo el país", "Plata 925 y materiales de calidad", "Cada pieza es única"],
-    story: {
-      heading: "Nuestra historia",
-      body: "Cuenta aquí la historia de Olivia. (Texto provisional — edítalo en Sitio público.)",
-    },
-    resale: {
-      heading: "Vende con Olivia",
-      body: "¿Quieres formar parte del programa de reventa? Escríbeme por WhatsApp.",
-    },
-    faq: [
-      { q: "¿Hacen envíos?", a: "Sí, a todo el país. (Texto provisional.)" },
-      { q: "¿Cómo cuido mis piezas?", a: "Evita el contacto con agua y perfumes. (Provisional.)" },
-    ],
-    shipping: "Envíos a todo el país. (Provisional.)",
-    payments: ["Transferencia", "Efectivo"],
-    policies: "Devoluciones dentro de 7 días. (Provisional.)",
-    hours: "Lunes a sábado, 10:00–18:00. (Provisional.)",
-    whatsappBuyIntro: "Hola, me interesa esta pieza:",
-    whatsappResaleIntro: "Hola, quiero información sobre el programa de reventa.",
-    showSoldOut: true,
-    seo: {
-      title: "Olivia — Joyería hecha a mano",
-      description: "Joyería hecha a mano, piezas únicas para cada ocasión.",
-    },
-  };
+  const oliviaStorefront: Storefront = { ...OLIVIA_CONTENT, showSoldOut: true };
 
   const stores: Store[] = [
     {

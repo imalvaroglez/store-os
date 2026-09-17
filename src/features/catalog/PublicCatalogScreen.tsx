@@ -93,7 +93,6 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         signalBySlug={signalBySlug}
         visibleSlugs={visibleSlugs}
         onSetQty={cart.setQty}
-        onRemove={cart.remove}
       />
     </div>
   );

@@ -12,6 +12,8 @@ export type CartLine = {
   inquire?: boolean; // sold-out piece: ask instead of buy
   /** Public per-tier unit prices. Powers the estimated subtotal; never charged. */
   unitPrices?: Record<string, number>;
+  /** Legacy single public price, kept for catalogs without tier pricing. */
+  unitPrice?: number;
 };
 
 export type PublicCartItemSource = {
@@ -20,6 +22,7 @@ export type PublicCartItemSource = {
   sku?: string | null;
   image?: string | null;
   imageUrl?: string | null;
+  price?: number;
   prices?: Record<string, number>;
   stockSignal?: string;
   inquire?: boolean;
@@ -33,6 +36,7 @@ export function cartItemFromPublicProduct(product: PublicCartItemSource): Omit<C
     sku: product.sku ?? product.productSlug,
     image: product.image ?? product.imageUrl ?? undefined,
     unitPrices: product.prices,
+    ...(typeof product.price === "number" ? { unitPrice: product.price } : {}),
     inquire: product.inquire ?? product.stockSignal === "agotado",
   };
 }

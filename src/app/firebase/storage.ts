@@ -49,9 +49,9 @@ const MAX_EDGE = 1600; // longest edge after resize, in px (storefront detail)
  * Never upscales. DOM-only (canvas) — caller is the browser; verified by e2e.
  * Throws on a non-decodable file so the caller can show an inline error.
  */
-export async function resizeImageFile(file: File): Promise<Blob> {
+export async function resizeImageFile(file: File, options: { transparent?: boolean; maxEdge?: number } = {}): Promise<Blob> {
   const bitmap = await loadImageBitmap(file);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const scale = Math.min(1, (options.maxEdge ?? MAX_EDGE) / Math.max(bitmap.width, bitmap.height));
   const w = Math.round(bitmap.width * scale);
   const h = Math.round(bitmap.height * scale);
 
@@ -63,7 +63,7 @@ export async function resizeImageFile(file: File): Promise<Blob> {
   ctx.drawImage(bitmap, 0, 0, w, h);
 
   const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, "image/jpeg", 0.8)
+    canvas.toBlob(resolve, options.transparent ? "image/png" : "image/jpeg", 0.8)
   );
   if (!blob) throw new Error("No se pudo procesar la imagen.");
   return blob;
@@ -143,5 +143,24 @@ export async function deleteProductImage(
   } catch (err) {
     const code = (err as { code?: string }).code ?? "";
     if (!code.includes("object-not-found")) throw err;
+  }
+}
+
+/** Unique names prevent an unpublished replacement from overwriting the live image. */
+export async function uploadStorefrontImage(storeId: string, blob: Blob): Promise<string> {
+  const target = ref(getStorageInstance(), `storefront/${storeId}/brand-${crypto.randomUUID()}.jpg`);
+  await uploadBytes(target, blob, { contentType: blob.type });
+  return getDownloadURL(target);
+}
+
+/** Delete only images managed by this editor, in this store and this bucket. */
+export async function deleteStorefrontImage(storeId: string, url: string): Promise<void> {
+  const storage = getStorageInstance();
+  let target;
+  try { target = ref(storage, url); } catch { return; }
+  if (target.bucket !== ref(storage).bucket || !target.fullPath.startsWith(`storefront/${storeId}/brand-`)) return;
+  try { await deleteObject(target); }
+  catch (error) {
+    if ((error as { code?: string }).code !== "storage/object-not-found") throw error;
   }
 }

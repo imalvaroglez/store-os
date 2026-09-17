@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { ADMIN_EMAIL, FIRESTORE_REST as FS, gotoClean, mintUserToken, toFields } from "./helpers";
+import { ADMIN_EMAIL, FIRESTORE_REST as FS, gotoClean, mintUserToken, toFields, seedEmulatorFixtures, signIn, ensureStoreActive } from "./helpers";
 
 // End-to-end for the PUBLIC CLOUD CATALOG (/catalogo/:slug) against the
 // Firebase Emulator. An anonymous visitor (no session) reads the public
@@ -103,6 +103,9 @@ async function seedPublicProjection() {
 // bypasses security rules: the current rules REQUIRE storeId on publicStores
 // creates, so no ordinary authenticated write could produce the stale shape that
 // production still carries (that doc predates the rule).
+// Synthetic image fixture: never used as a product/brand asset outside tests.
+const galleryPhoto = (color: string) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500"><rect width="500" height="500" fill="#eee5dc"/><circle cx="250" cy="250" r="95" fill="none" stroke="${color}" stroke-width="18"/></svg>`)}`;
+
 async function seedStaleOlivia() {
   const auth = { "Content-Type": "application/json", Authorization: "Bearer owner" };
 
@@ -122,11 +125,13 @@ async function seedStaleOlivia() {
       {
         productSlug: "anillo-blossom", name: "Anillo Blossom", storeSlug: "olivia", imageUrl: null, availability: "available",
         storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0,
+        images: [{ url: galleryPhoto("#b99860"), alt: "Anillo de prueba, frente" }, { url: galleryPhoto("#8c795a"), alt: "Anillo de prueba, reverso" }],
         sku: "AAN1385", price: 140, prices: { t_retail: 140, t_girly: 120, t_iconic: 90 }, stockSignal: "disponible",
       },
       {
-        productSlug: "aretes-luna", name: "Aretes Luna", storeSlug: "olivia", imageUrl: null, availability: "available",
+        productSlug: "aretes-luna", name: "Aretes Luna", storeSlug: "olivia", availability: "available",
         storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0,
+        imageUrl: galleryPhoto("#b99860"),
         sku: "OLI-002", price: 120, prices: { t_retail: 120, t_girly: 100, t_iconic: 80 }, stockSignal: "pocas",
       },
     ],
@@ -227,9 +232,11 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   const anon = await ctx.newPage();
   await openCatalogAnonymous(anon, "olivia");
 
-  await expect(anon.getByRole("heading", { name: "Olivia" }).first()).toBeVisible({ timeout: 15000 });
-  await expect(anon.getByText("desde $1,000 en productos a precio Iconic").first()).toBeVisible();
-  await anon.getByRole("link", { name: "Anillo Blossom" }).click();
+  await expect(anon.getByRole("heading", { name: "Joyería para hacer tuyo cada día" }).first()).toBeVisible({ timeout: 15000 });
+  const iconicHelp = anon.getByRole("button", { name: "Cómo se obtiene el precio Iconic" }).first();
+  await iconicHelp.hover();
+  await expect(anon.getByText(/desde \$1,000 en productos a precio Iconic/).first()).toBeVisible();
+  await anon.getByRole("link", { name: "Anillo Blossom", exact: true }).click();
   await expect(anon).toHaveURL(/\/catalogo\/olivia\/producto\/anillo-blossom$/);
   await expect(anon.getByRole("heading", { name: "Anillo Blossom" })).toBeVisible({ timeout: 15000 });
   await expect(anon.getByText("Pieza no encontrada")).toHaveCount(0);
@@ -241,7 +248,7 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   const anon = await ctx.newPage();
   await openCatalogAnonymous(anon, "olivia");
 
-  await expect(anon.getByRole("heading", { name: "Olivia" }).first()).toBeVisible({ timeout: 15000 });
+  await expect(anon.getByRole("heading", { name: "Joyería para hacer tuyo cada día" }).first()).toBeVisible({ timeout: 15000 });
 
   // Add two different pieces from the grid.
   await anon.getByRole("button", { name: "Agregar al carrito" }).nth(0).click();
@@ -252,17 +259,20 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   await expect(open).toContainText("2");
   await open.click();
 
-  await expect(anon.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
+  const dialog = anon.getByRole("dialog", { name: "Tu pedido" });
+  await expect(dialog.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
   // Coarse stock legend — never an exact count.
-  await expect(anon.getByText(/Quedan pocas/)).toBeVisible();
+  await expect(dialog.getByText(/Quedan pocas/)).toBeVisible();
 
-  // ONE wa.me message with both lines, SKUs, calculated price and catalog link.
+  // ONE wa.me message with both lines, calculated price and catalog link.
   const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
   const href = (await send.getAttribute("href")) ?? "";
   expect(href).toContain("wa.me/5213344836691");
   const text = decodeURIComponent(href.split("text=")[1]);
-  expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
-  expect(text).toContain("• 1× Aretes Luna (OLI-002)");
+  expect(text).toContain("• 1× Anillo Blossom");
+  expect(text).toContain("• 1× Aretes Luna");
+  expect(text).not.toContain("AAN1385");
+  expect(text).not.toContain("OLI-002");
   expect(text).toContain("Precio aplicable: Regular");
   expect(text).toContain("Subtotal estimado: $260 MXN");
   expect(text).toContain("/catalogo/olivia");
@@ -271,4 +281,109 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   await anon.reload();
   await expect(anon.getByRole("button", { name: "Abrir pedido" })).toContainText("2", { timeout: 15000 });
   await ctx.close();
+});
+
+for (const width of [390, 1280]) {
+  test(`Olivia editorial browsing and keyboard order at ${width}px`, async ({ browser }, testInfo) => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: true });
+    const page = await context.newPage();
+    await openCatalogAnonymous(page, "olivia");
+    await expect(page.getByRole("heading", { name: "Joyería para hacer tuyo cada día" })).toBeVisible();
+    await page.getByRole("link", { name: "Explorar piezas" }).click();
+    await expect(page.getByRole("searchbox")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(await page.locator(".olv-grid").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length)).toBe(width < 640 ? 2 : 4);
+    const card = page.getByRole("article", { name: "Anillo Blossom" });
+    await expect(card.getByRole("img")).toHaveAccessibleName("Anillo de prueba, frente");
+    await card.getByRole("button", { name: "Foto siguiente de Anillo Blossom" }).click();
+    await expect(card.getByRole("img")).toHaveAccessibleName("Anillo de prueba, reverso");
+    await card.locator(".olv-photo").evaluate((target) => {
+      target.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, touches: [new Touch({ identifier: 0, target, clientX: 180, clientY: 100 })] }));
+      target.dispatchEvent(new TouchEvent("touchend", { bubbles: true, changedTouches: [new Touch({ identifier: 0, target, clientX: 70, clientY: 103 })] }));
+    });
+    await expect(card.getByRole("img")).toHaveAccessibleName("Anillo de prueba, frente");
+    await expect(page).toHaveURL(/\/catalogo\/olivia#piezas$/);
+    await expect(page.getByRole("button", { name: "Ver mi selección" })).toContainText("0");
+    await page.getByRole("searchbox").fill("aan1385");
+    await expect(page.getByRole("article")).toHaveCount(1);
+    await page.getByRole("searchbox").fill("");
+    await page.getByRole("combobox").selectOption("price-asc");
+    await expect(page.getByRole("article").first()).toHaveAccessibleName("Aretes Luna");
+    await page.getByRole("button", { name: "Agregar al carrito" }).first().click();
+    await page.getByRole("button", { name: "Ver mi selección" }).click();
+    const dialog = page.getByRole("dialog", { name: "Tu pedido" });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Tab");
+    expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press("Shift+Tab");
+    expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "Ver mi selección" })).toBeFocused();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath(`olivia-${width}.png`), fullPage: true });
+    await context.close();
+  });
+}
+
+
+test("owner uploads brand images, publishes, and removes only the replaced logo", async ({ browser }, testInfo) => {
+  await seedEmulatorFixtures();
+  // The legacy fixture above deliberately lacks storeId and cannot be updated
+  // under current rules. This owner test starts with an unpublished storefront.
+  await fetch(`${FS}/publicStores/olivia`, { method: "DELETE", headers: { Authorization: "Bearer owner" } });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await signIn(page, ADMIN_EMAIL, "password123");
+  await ensureStoreActive(page, "Olivia");
+  await page.getByRole("button", { name: "Tienda", exact: true }).click();
+  await page.getByRole("button", { name: "Editar sitio público" }).click();
+  const editor = page.getByRole("dialog", { name: "Sitio público", exact: true });
+  const images = await page.evaluate(() => [
+    { width: 1000, height: 250, text: "Olivia", fill: null },
+    { width: 1600, height: 600, text: "Portada de prueba", fill: "#eeded6" },
+    { width: 600, height: 450, text: "Portada de celular", fill: "#eeded6" },
+  ].map(({ width, height, text, fill }) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext("2d")!;
+    if (fill) { ctx.fillStyle = fill; ctx.fillRect(0, 0, width, height); }
+    ctx.fillStyle = "#332923"; ctx.font = "60px Georgia";
+    ctx.fillText(text, 40, 120);
+    return canvas.toDataURL("image/png").split(",")[1];
+  }));
+  for (let i = 0; i < images.length; i++) {
+    await editor.locator('input[type="file"]').nth(i).setInputFiles({ name: `brand-${i}.png`, mimeType: "image/png", buffer: Buffer.from(images[i], "base64") });
+    await expect(editor.getByRole("button", { name: "Guardar sitio público" })).toBeEnabled();
+  }
+  await editor.getByLabel("Descripción de la portada").fill("Colección de prueba");
+  await editor.getByRole("img", { name: "Vista previa: Portada de celular" }).evaluate(async (img: HTMLImageElement) => { await img.decode(); });
+  await editor.evaluate((el) => { el.scrollTop = 0; });
+  await page.screenshot({ path: testInfo.outputPath("olivia-editor.png") });
+  await editor.getByRole("button", { name: "Guardar sitio público" }).click();
+  await expect(editor).not.toBeVisible({ timeout: 15000 });
+  const anon = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const catalog = await anon.newPage();
+  await catalog.goto("/catalogo/olivia");
+  const logo = catalog.getByRole("img", { name: "Logo de Olivia", exact: true });
+  await expect(logo).toBeVisible();
+  const oldLogo = (await logo.getAttribute("src"))!;
+  await expect(catalog.getByRole("img", { name: "Colección de prueba" })).toBeVisible();
+  const dimensions = await logo.evaluate(async (image: HTMLImageElement) => {
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  });
+  expect(dimensions).toEqual({ width: 600, height: 150 });
+  expect((await catalog.request.get(oldLogo)).headers()["content-type"]).toContain("image/png");
+  await page.getByRole("button", { name: "Editar sitio público" }).click();
+  await editor.getByRole("button", { name: "Quitar logo" }).click();
+  await editor.getByRole("button", { name: "Guardar sitio público" }).click();
+  await expect(editor).not.toBeVisible({ timeout: 15000 });
+  await catalog.reload();
+  await expect(catalog.getByRole("heading", { name: "Joyería para hacer tuyo cada día" })).toBeVisible();
+  const defaultLogo = catalog.getByRole("img", { name: "Logo de Olivia", exact: true });
+  await expect(defaultLogo).toHaveAttribute("src", /\/images\/olivia-logo\.png$/);
+  await expect(catalog.getByRole("img", { name: "Colección de prueba" })).toBeVisible();
+  expect((await catalog.request.get(oldLogo)).status()).toBe(404);
+  await anon.close(); await context.close();
 });

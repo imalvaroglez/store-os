@@ -1,12 +1,12 @@
 // Fixed storefront token preset. It stays in the design system so the public
 // experience uses the same token contract as the rest of Store OS.
 export const OLIVIA_BRAND = {
-  bg: "#F7F2EC",
-  ink: "#2B2724",
-  inkSoft: "#6B6258",
+  bg: "#FAF7F2",
+  ink: "#332923",
+  inkSoft: "#716258",
   accent: "#C97B86",
   accentSoft: "#E7C9CE",
-  rule: "#E2D8CC",
+  rule: "#DED2C6",
   fontDisplay: '"Playfair Display", Georgia, serif',
   fontBody: '"Plus Jakarta Sans", system-ui, sans-serif',
 } as const;

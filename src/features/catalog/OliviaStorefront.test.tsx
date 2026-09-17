@@ -67,6 +67,10 @@ const productRoute: RouteMatch = {
   name: "public_product",
   params: { slug: "olivia", productSlug: "anillo-blossom" },
 };
+const categoryRoute: RouteMatch = {
+  name: "public_category",
+  params: { slug: "olivia", categorySlug: "anillos" },
+};
 
 const cartKey = "store-os:cart:olivia";
 
@@ -87,11 +91,48 @@ beforeEach(() => {
   mocks.loadPublicProduct.mockReset().mockResolvedValue({ product: detail, store });
 });
 
+describe("tarjetas — jerarquía de precios", () => {
+  it("destaca Iconic, compacta los otros niveles y comunica el ahorro posible", async () => {
+    await renderStore();
+    const card = screen.getByRole("article", { name: "Anillo Blossom" });
+
+    expect(within(card).queryByText("Mejor precio")).toBeNull();
+    expect(within(card).getByText("$90")).toBeTruthy();
+    expect(within(card).getByText("Iconic")).toBeTruthy();
+    expect(within(card).getByText("Hasta $50 menos por pieza al desbloquear Iconic")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
+    expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toBeTruthy();
+
+    const compare = Array.from(card.querySelectorAll(".olv-price-compare-item"))
+      .map((item) => `${item.querySelector(".olv-price-compare-label")?.textContent} ${item.querySelector(".olv-price-compare-amount")?.textContent}`);
+    expect(compare[0]).toBe("Regular $140");
+    expect(compare[1]).toBe("Girly $120");
+  });
+
+  it("oculta el ahorro cuando Iconic no es menor que Regular", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: {
+        ...catalog,
+        products: [{ ...catalog.products[0], prices: { t_retail: 140, t_girly: 140, t_iconic: 140 } }],
+      },
+    });
+    await renderStore();
+    const card = screen.getByRole("article", { name: "Anillo Blossom" });
+    expect(within(card).queryByText(/Hasta .* al desbloquear Iconic/)).toBeNull();
+    expect(card.querySelector(".olv-price-savings--empty")).toBeTruthy();
+  });
+});
+
 describe("carrito del storefront — acumular y pedir", () => {
   it("agrega desde el grid, muestra el contador y arma UN mensaje con todas las líneas", async () => {
     await renderStore();
+    expect(screen.getByRole("img", { name: "Logo de Olivia" })).toHaveAttribute("src", "/images/olivia-logo.png");
+    expect(screen.getByText("Quedan pocas")).toBeTruthy();
+    expect(screen.getByText("Agotado")).toBeTruthy();
     const adds = screen.getAllByRole("button", { name: "Agregar al carrito" });
     fireEvent.click(adds[0]);
+    expect(screen.getByRole("status")).toHaveTextContent("Agregado a tu pedido");
     expect(screen.getByRole("group", { name: "Cantidad de Anillo Blossom" })).toHaveTextContent("1");
     fireEvent.click(adds[1]);
 
@@ -103,20 +144,26 @@ describe("carrito del storefront — acumular y pedir", () => {
     const list = screen.getByRole("list");
     expect(within(list).getByText("Anillo Blossom")).toBeTruthy();
     expect(within(list).getByText("Aretes Luna")).toBeTruthy();
+    expect(within(list).getAllByText("Precio por pieza")).toHaveLength(2);
+    expect(within(list).getAllByText("Subtotal")).toHaveLength(2);
+    expect(within(list).getAllByText("$140")).toHaveLength(2);
+    expect(within(list).getAllByText("$120")).toHaveLength(2);
 
     const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
     expect(send.href).toContain("wa.me/5213344836691");
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("Pedido:");
-    expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
-    expect(text).toContain("• 1× Aretes Luna (OLI-002)");
+    expect(text).toContain("• 1× Anillo Blossom");
+    expect(text).toContain("• 1× Aretes Luna");
+    expect(text).not.toContain("AAN1385");
+    expect(text).not.toContain("OLI-002");
     expect(text).toContain("/catalogo/olivia");
     expect(text).toContain("Total de piezas: 2");
     expect(text).toContain("Precio aplicable: Regular");
     expect(text).toContain("Subtotal estimado: $260 MXN");
   });
 
-  it("stepper ± y quitar actualizan líneas y contador", async () => {
+  it("stepper ± actualiza líneas y reduce a cero para quitar", async () => {
     await renderStore();
     fireEvent.click(screen.getAllByRole("button", { name: "Agregar al carrito" })[0]);
     await openDrawer();
@@ -126,8 +173,10 @@ describe("carrito del storefront — acumular y pedir", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
     expect(within(row).getByText("2")).toBeTruthy();
     expect(screen.getByText("2 piezas")).toBeTruthy();
+    expect(within(row).queryByRole("button", { name: "Quitar" })).toBeNull();
 
-    fireEvent.click(within(row).getByRole("button", { name: "Quitar" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
     expect(screen.getByText("Tu pedido está vacío")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Abrir pedido" })).toBeNull();
   });
@@ -157,8 +206,10 @@ describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
 
     const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
-    expect(text).toContain("• 1× Collar Vega (OLI-003) — sobre pedido");
-    expect(text).toContain("• 1× Aretes Luna (OLI-002)\n");
+    expect(text).toContain("• 1× Collar Vega — sobre pedido");
+    expect(text).toContain("• 1× Aretes Luna\n");
+    expect(text).not.toContain("OLI-003");
+    expect(text).not.toContain("OLI-002");
   });
 });
 
@@ -176,10 +227,19 @@ describe("carrito — progreso hacia Iconic", () => {
     await renderStore();
     await openDrawer();
 
-    expect(screen.getByText(/Tu meta: precio Iconic/i)).toBeTruthy();
+    expect(screen.getByText(/Meta final: precio Iconic/i)).toBeTruthy();
     expect(screen.getByText(/Te faltan \$640 en productos a precio Iconic/i)).toBeTruthy();
-    expect(screen.getByText(/Te falta 1 pieza para desbloquear Girly/i)).toBeTruthy();
+    const next = screen.getByText(/Te falta 1 pieza para desbloquear Girly/i);
+    const goal = screen.getByText(/Meta final: precio Iconic/i);
+    expect(next.compareDocumentPosition(goal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText(/Agrega 1 pieza y ahorrarás/i)).toBeNull();
+
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
+    expect(screen.getByText("Precio Girly aplicado")).toBeTruthy();
+    expect(screen.getByText("Este precio ya está aplicado a cada pieza de tu pedido.")).toBeTruthy();
+    expect(within(row).getByText("Precio por pieza")).toBeTruthy();
+    expect(within(row).getByText("$600")).toBeTruthy();
   });
 
   it("muestra subtotal Girly, monto exacto faltante y ahorro de la selección actual", async () => {
@@ -202,6 +262,10 @@ describe("carrito — progreso hacia Iconic", () => {
     await openDrawer();
 
     expect(screen.getAllByText(/Precio Girly desbloqueado/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Precio Girly aplicado")).toBeTruthy();
+    expect(screen.getByText("Este precio ya está aplicado a cada pieza de tu pedido.")).toBeTruthy();
+    expect(within(screen.getByRole("list")).getByText("Precio por pieza")).toBeTruthy();
+    expect(within(screen.getByRole("list")).getByText("$1,200")).toBeTruthy();
     expect(screen.getByText("$1,200 MXN")).toBeTruthy();
     expect(screen.getByText(/Te faltan \$100 en productos a precio Iconic/i)).toBeTruthy();
     expect(screen.getByText(/Con Iconic, lo que ya llevas costaría \$300 menos/i)).toBeTruthy();
@@ -233,10 +297,15 @@ describe("detalle de producto — precios por tier", () => {
   it("destaca Iconic y explica los tres niveles", async () => {
     render(<OliviaStorefront route={productRoute} />);
     expect(await screen.findByText("Anillo Blossom")).toBeTruthy();
-    expect(screen.getByText("$90")).toBeTruthy();
-    expect(screen.getByText("Girly").closest("p")).toHaveTextContent("Girly $120 · desde 5 piezas");
-    expect(screen.getByText("desde $1,000 en productos a precio Iconic")).toBeTruthy();
-    expect(screen.getByText("Regular").closest("p")).toHaveTextContent("Regular $140");
+    const prices = screen.getByRole("region", { name: "Precios por pieza" });
+    expect(screen.getByText("Precio por pieza")).toBeTruthy();
+    expect(within(prices).getByText("$90")).toBeTruthy();
+    expect(within(prices).getByText("Girly").closest("div")).toHaveTextContent(/Girly\s*\$120/);
+    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toHaveAttribute("title", "desde 5 piezas");
+    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
+    expect(within(prices).getByText("Regular").closest("div")).toHaveTextContent(/Regular\s*\$140/);
+    expect(Array.from(prices.querySelectorAll(".olv-price-row dt")).map((row) => row.textContent?.trim())).toEqual(["Regular", "Girly", "Iconic"]);
+    expect(prices.querySelector(".olv-price-row--featured")).toHaveTextContent("Iconic");
     // Agregar al carrito desde el detalle.
     fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
     expect(screen.getByRole("button", { name: "Abrir pedido" }).textContent).toContain("1");
@@ -272,5 +341,100 @@ describe("detalle de producto — precios por tier", () => {
     expect(screen.getAllByText(/Precio Girly desbloqueado/i).length).toBeGreaterThan(0);
     expect(screen.getByText("$580 MXN")).toBeTruthy();
     expect(screen.getByText(/Te faltan \$560 en productos a precio Iconic/i)).toBeTruthy();
+  });
+});
+
+describe("editorial catalog", () => {
+  it("centra el logo en portada y reemplaza solo el título de marca duplicado", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { hero: { heading: "Olivia", body: "Una selección para ti." } } },
+      catalog,
+    });
+    const view = render(<OliviaStorefront route={storeRoute} />);
+    await screen.findAllByRole("button", { name: "Agregar al carrito" });
+
+    expect(screen.getByRole("heading", { name: "Joyería para hacer tuyo cada día" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Olivia" })).toBeNull();
+    expect(screen.getByRole("img", { name: "Logo de Olivia" }).closest(".olv-header-inner")).toHaveClass("olv-header-inner--home");
+
+    view.rerender(<OliviaStorefront route={categoryRoute} />);
+    expect(screen.getByRole("img", { name: "Logo de Olivia" }).closest(".olv-header-inner")).not.toHaveClass("olv-header-inner--home");
+  });
+
+  it("conserva el título personalizado del editor", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { hero: { heading: "Nueva colección", body: "Una selección para ti." } } },
+      catalog,
+    });
+    await renderStore();
+    expect(screen.getByRole("heading", { name: "Nueva colección" })).toBeTruthy();
+  });
+
+  it("reduce el logo de portada al desplazarse y lo vuelve a ampliar al regresar arriba", async () => {
+    const view = render(<OliviaStorefront route={storeRoute} />);
+    await screen.findAllByRole("button", { name: "Agregar al carrito" });
+    const header = screen.getByRole("img", { name: "Logo de Olivia" }).closest("header")!;
+    expect(header).not.toHaveClass("olv-header--compact");
+
+    const scrollY = vi.spyOn(window, "scrollY", "get");
+    scrollY.mockReturnValue(120);
+    fireEvent.scroll(window);
+    expect(header).toHaveClass("olv-header--compact");
+
+    scrollY.mockReturnValue(80);
+    fireEvent.scroll(window);
+    expect(header).toHaveClass("olv-header--compact");
+
+    scrollY.mockReturnValue(0);
+    fireEvent.scroll(window);
+    expect(header).not.toHaveClass("olv-header--compact");
+    scrollY.mockRestore();
+    view.unmount();
+  });
+
+  it("searches names/keys, sorts, and never duplicates featured/new products", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: catalog.products.map((p) => ({ ...p, price: undefined, isFeatured: true, isNew: true })) } });
+    await renderStore();
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "aan1385" } });
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByRole("article")).toHaveAccessibleName("Anillo Blossom");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no existe" } });
+    expect(screen.getByText("No encontramos esa pieza")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar búsqueda" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "price-asc" } });
+    expect(screen.getAllByRole("article")[0]).toHaveAccessibleName("Aretes Luna");
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it("changes card photos by arrows/swipe without navigating or adding, then reuses the loaded catalog for detail", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [{ ...catalog.products[0], images: [{ url: "/one.jpg" }, { url: "/two.jpg" }] }] } });
+    const view = render(<OliviaStorefront route={storeRoute} />);
+    const next = await screen.findByRole("button", { name: "Foto siguiente de Anillo Blossom" });
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/one.jpg");
+    fireEvent.click(next);
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/two.jpg");
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveClass("olv-photo-image");
+    const photo = screen.getByRole("img", { name: "Anillo Blossom" }).closest(".olv-photo")!;
+    fireEvent.touchStart(photo, { touches: [{ clientX: 200, clientY: 100 }] });
+    fireEvent.touchEnd(photo, { changedTouches: [{ clientX: 100, clientY: 105 }] });
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/one.jpg");
+    expect(screen.queryByRole("button", { name: "Abrir pedido" })).toBeNull();
+    expect(mocks.loadPublicProduct).not.toHaveBeenCalled();
+    view.rerender(<OliviaStorefront route={productRoute} />);
+    await screen.findByRole("heading", { name: "Anillo Blossom" });
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPublicProduct).toHaveBeenCalledWith("olivia", "anillo-blossom", store);
+  });
+
+  it("keeps legacy images and hides the home banner on category routes", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, storefront: { hero: { imageUrl: "/banner.jpg", mobileImageUrl: "/mobile.jpg", imageAlt: "Temporada Olivia" } } }, catalog: { ...catalog, products: [{ ...catalog.products[0], imageUrl: "/legacy.jpg", categoryIds: ["c1"] }] } });
+    const view = render(<OliviaStorefront route={storeRoute} />);
+    expect(await screen.findByRole("img", { name: "Temporada Olivia" })).toHaveAttribute("src", "/banner.jpg");
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/legacy.jpg");
+    view.rerender(<OliviaStorefront route={{ name: "public_category", params: { slug: "olivia", categorySlug: "anillos" } }} />);
+    expect(screen.queryByRole("img", { name: "Temporada Olivia" })).toBeNull();
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
   });
 });

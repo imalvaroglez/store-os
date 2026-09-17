@@ -146,6 +146,7 @@ describe("calculateOrderPricing — resumen canónico del pedido", () => {
     const one = calculateOrderPricing(cartTiers, [{ qty: 1, unitPrices: tenPieces[0].unitPrices }])!;
     expect(one.activeTier.tier.id).toBe("t_retail");
     expect(one.estimatedSubtotal).toBe(140);
+    expect(one.lineBreakdown).toEqual([{ unitPrice: 140, subtotal: 140 }]);
     expect(one.tiers.find((entry) => entry.tier.id === "t_girly")?.piecesRemaining).toBe(4);
     expect(one.aspirationalTier.amountRemaining).toBe(910);
 
@@ -153,6 +154,7 @@ describe("calculateOrderPricing — resumen canónico del pedido", () => {
     expect(five.activeTier.tier.id).toBe("t_girly");
     expect(five.estimatedSubtotal).toBe(600);
     expect(five.savingsVsBase).toBe(100);
+    expect(five.lineBreakdown).toEqual([{ unitPrice: 120, subtotal: 600 }]);
 
     const eleven = calculateOrderPricing(cartTiers, [{ qty: 11, unitPrices: tenPieces[0].unitPrices }])!;
     expect(eleven.activeTier.tier.id).toBe("t_girly");
@@ -163,6 +165,7 @@ describe("calculateOrderPricing — resumen canónico del pedido", () => {
     expect(twelve.activeTier.tier.id).toBe("t_iconic");
     expect(twelve.estimatedSubtotal).toBe(1080);
     expect(twelve.savingsVsBase).toBe(600);
+    expect(twelve.lineBreakdown).toEqual([{ unitPrice: 90, subtotal: 1080 }]);
   });
 
   it("Iconic tiene prioridad aunque no se hayan desbloqueado 5 piezas", () => {
@@ -230,6 +233,10 @@ describe("calculateOrderPricing — resumen canónico del pedido", () => {
     expect(pricing.activeTier.tier.id).toBe("t_girly");
     expect(pricing.estimatedSubtotal).toBe(5 * 120 + 2 * 180);
     expect(pricing.savingsVsBase).toBe(5 * (140 - 120) + 2 * (200 - 180));
+    expect(pricing.lineBreakdown).toEqual([
+      { unitPrice: 120, subtotal: 600 },
+      { unitPrice: 180, subtotal: 360 },
+    ]);
     // Iconic no califica (la línea 2 no puede probar el mínimo) pero sigue visible.
     expect(pricing.aspirationalTier.qualifies).toBe(false);
     expect(pricing.aspirationalTier.subtotal).toBe(5 * 100 + 2 * 180);
