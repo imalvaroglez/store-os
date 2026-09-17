@@ -37,5 +37,8 @@ export default defineConfig({
   },
   preview: {
     port: 4319,
+    // Cloudflare quick tunnels (cloudflared tunnel --url) get a random
+    // <name>.trycloudflare.com host per run; allow the whole domain.
+    allowedHosts: [".trycloudflare.com"],
   },
 });
