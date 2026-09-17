@@ -1,19 +1,23 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { navigate, visibleNavItems, parentActive, type Tab } from "./navItems";
-import { StoreSwitcher } from "./StoreSwitcher";
 import type { StoreType } from "../types";
 
 // Desktop navigation: a fixed left rail. Mobile uses BottomNav instead.
 // Terracotta active indicator is a left bar (mirrors the top bar in BottomNav).
+// The store switcher arrives as a slot (switcher prop): the design system must
+// not import app state — that chain would drag the Firebase SDK into every
+// barrel consumer, including the public storefront entry.
 export function Sidebar({
   active,
   storeType,
+  switcher,
   onOpenSettings,
   onOpenStoreSettings,
   onChangeStore,
 }: {
   active: Tab;
   storeType: StoreType;
+  switcher?: ReactNode;
   onOpenSettings: () => void;
   onOpenStoreSettings?: () => void;
   onChangeStore?: () => void;
@@ -35,7 +39,7 @@ export function Sidebar({
       </div>
 
       <div className="px-3 pb-2 space-y-1">
-        <StoreSwitcher />
+        {switcher}
         {onChangeStore && (
           <button
             onClick={onChangeStore}

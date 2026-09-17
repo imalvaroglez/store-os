@@ -1,12 +1,21 @@
 import { useState } from "react";
-import { useStore } from "../app/StoreProvider";
 import { STORE_TYPE_LABELS } from "../lib/labels";
+import type { Store } from "../types";
 
-export function StoreSwitcher() {
-  const { state, activeStore, setActiveStore } = useStore();
+// Presentational store picker for the admin rails. Data arrives via props:
+// the design system never imports app state — that chain would drag the
+// Firebase SDK into every barrel consumer, including the public storefront
+// entry (see scripts/check-public-bundle.mjs).
+export function StoreSwitcher({
+  stores,
+  activeStore,
+  onSelect,
+}: {
+  stores: Store[];
+  activeStore: Store;
+  onSelect: (storeId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
-
-  if (!activeStore) return null;
 
   return (
     <div className="relative">
@@ -34,11 +43,11 @@ export function StoreSwitcher() {
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div className="absolute z-30 mt-2 w-60 bg-surface text-on-surface rounded-2xl ring-1 ring-edge shadow-lift overflow-hidden p-1.5">
-            {state.stores.map((s) => (
+            {stores.map((s) => (
               <button
                 key={s.id}
                 onClick={() => {
-                  setActiveStore(s.id);
+                  onSelect(s.id);
                   setOpen(false);
                 }}
                 className={`w-full flex items-center gap-2.5 text-left px-2.5 py-2 rounded-xl transition-colors ${
