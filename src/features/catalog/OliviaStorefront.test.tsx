@@ -369,6 +369,7 @@ describe("editorial catalog", () => {
     expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/one.jpg");
     fireEvent.click(next);
     expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveAttribute("src", "/two.jpg");
+    expect(screen.getByRole("img", { name: "Anillo Blossom" })).toHaveClass("olv-photo-image");
     const photo = screen.getByRole("img", { name: "Anillo Blossom" }).closest(".olv-photo")!;
     fireEvent.touchStart(photo, { touches: [{ clientX: 200, clientY: 100 }] });
     fireEvent.touchEnd(photo, { changedTouches: [{ clientX: 100, clientY: 105 }] });

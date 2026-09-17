@@ -15,7 +15,7 @@ export function ProductGallery({ images, name, href, onNavigate, thumbnails = fa
   const swiped = useRef(false);
   const index = Math.min(active, Math.max(0, images.length - 1));
   const move = (delta: number) => setActive((index + delta + images.length) % images.length);
-  const photo = <ProductImage src={images[index]?.url} alt={images[index]?.alt || name} size="full" placeholder="Imagen no disponible" />;
+  const photo = <ProductImage key={`${images[index]?.url ?? "placeholder"}-${index}`} className="olv-photo-image" src={images[index]?.url} alt={images[index]?.alt || name} size="full" placeholder="Imagen no disponible" />;
   return (
     <div className="olv-gallery">
       <div className="olv-photo" style={{ touchAction: "pan-y" }}
