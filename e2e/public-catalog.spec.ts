@@ -233,7 +233,9 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   await openCatalogAnonymous(anon, "olivia");
 
   await expect(anon.getByRole("heading", { name: "Joyería para hacer tuyo cada día" }).first()).toBeVisible({ timeout: 15000 });
-  await expect(anon.getByText("desde $1,000 en productos a precio Iconic").first()).toBeVisible();
+  const iconicHelp = anon.getByRole("button", { name: "Cómo se obtiene el precio Iconic" }).first();
+  await iconicHelp.hover();
+  await expect(anon.getByText(/desde \$1,000 en productos a precio Iconic/).first()).toBeVisible();
   await anon.getByRole("link", { name: "Anillo Blossom", exact: true }).click();
   await expect(anon).toHaveURL(/\/catalogo\/olivia\/producto\/anillo-blossom$/);
   await expect(anon.getByRole("heading", { name: "Anillo Blossom" })).toBeVisible({ timeout: 15000 });
@@ -257,17 +259,20 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   await expect(open).toContainText("2");
   await open.click();
 
-  await expect(anon.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
+  const dialog = anon.getByRole("dialog", { name: "Tu pedido" });
+  await expect(dialog.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
   // Coarse stock legend — never an exact count.
-  await expect(anon.getByText(/Quedan pocas/)).toBeVisible();
+  await expect(dialog.getByText(/Quedan pocas/)).toBeVisible();
 
-  // ONE wa.me message with both lines, SKUs, calculated price and catalog link.
+  // ONE wa.me message with both lines, calculated price and catalog link.
   const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
   const href = (await send.getAttribute("href")) ?? "";
   expect(href).toContain("wa.me/5213344836691");
   const text = decodeURIComponent(href.split("text=")[1]);
-  expect(text).toContain("• 1× Anillo Blossom (AAN1385)");
-  expect(text).toContain("• 1× Aretes Luna (OLI-002)");
+  expect(text).toContain("• 1× Anillo Blossom");
+  expect(text).toContain("• 1× Aretes Luna");
+  expect(text).not.toContain("AAN1385");
+  expect(text).not.toContain("OLI-002");
   expect(text).toContain("Precio aplicable: Regular");
   expect(text).toContain("Subtotal estimado: $260 MXN");
   expect(text).toContain("/catalogo/olivia");
@@ -360,7 +365,7 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
   const anon = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const catalog = await anon.newPage();
   await catalog.goto("/catalogo/olivia");
-  const logo = catalog.getByRole("img", { name: "Olivia", exact: true });
+  const logo = catalog.getByRole("img", { name: "Logo de Olivia", exact: true });
   await expect(logo).toBeVisible();
   const oldLogo = (await logo.getAttribute("src"))!;
   await expect(catalog.getByRole("img", { name: "Colección de prueba" })).toBeVisible();
@@ -376,7 +381,8 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
   await expect(editor).not.toBeVisible({ timeout: 15000 });
   await catalog.reload();
   await expect(catalog.getByRole("heading", { name: "Joyería para hacer tuyo cada día" })).toBeVisible();
-  await expect(catalog.getByRole("img", { name: "Olivia", exact: true })).toHaveCount(0);
+  const defaultLogo = catalog.getByRole("img", { name: "Logo de Olivia", exact: true });
+  await expect(defaultLogo).toHaveAttribute("src", /\/images\/olivia-logo\.png$/);
   await expect(catalog.getByRole("img", { name: "Colección de prueba" })).toBeVisible();
   expect((await catalog.request.get(oldLogo)).status()).toBe(404);
   await anon.close(); await context.close();
