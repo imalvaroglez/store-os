@@ -1,0 +1,8 @@
+/* Public storefront entry stylesheet: shared tokens + Tailwind, NO admin
+   Google Fonts import (fonts are self-hosted and declared in public.html).
+   Only src/public-main.tsx may import this file — a shared module importing
+   it would drag it back into the admin entry. */
+@import "./tokens.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
