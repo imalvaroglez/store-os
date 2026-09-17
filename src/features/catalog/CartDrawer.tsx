@@ -35,6 +35,7 @@ function PriceRequirement({ tier }: { tier: PublicPriceTier }) {
   const requirement = tierRequirement(tier);
   const tooltipId = useId();
   if (!requirement) return null;
+  const description = tier.minAmount != null ? `Obtén el mejor precio al comprar ${requirement}` : requirement;
   return (
     <span className="price-help-wrap">
       <IconButton
@@ -43,11 +44,11 @@ function PriceRequirement({ tier }: { tier: PublicPriceTier }) {
         className="price-help"
         aria-label={`Cómo se obtiene el precio ${tier.label}`}
         aria-describedby={tooltipId}
-        title={requirement}
+        title={description}
       >
         <span aria-hidden="true" className="price-help-icon">?</span>
       </IconButton>
-      <span id={tooltipId} role="tooltip" className="price-help-tooltip">{requirement}</span>
+      <span id={tooltipId} role="tooltip" className="price-help-tooltip">{description}</span>
     </span>
   );
 }
@@ -93,7 +94,6 @@ export function PublicTierPrices({
               <div key={tier.id} className={`olv-price-row${featured ? " olv-price-row--featured" : ""}`}>
                 <dt className="olv-price-row-label">
                   {tier.label}
-                  {featured && <span className="olv-price-badge">Mejor precio</span>}
                 </dt>
                 <dd className="olv-price-row-value">
                   <span className="olv-price-row-amount">{formatMoney(product.prices?.[tier.id])}</span>
@@ -117,10 +117,7 @@ export function PublicTierPrices({
           <span className="olv-price-card-amount text-2xl font-extrabold text-[var(--olv-accent,var(--terracotta))]">
             {formatMoney(product.prices?.[aspirational.id])}
           </span>
-          <span className="olv-price-card-tier-group">
-            <span className="olv-price-card-tier font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
-            <span className="olv-price-badge">Mejor precio</span>
-          </span>
+          <span className="olv-price-card-tier font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
         </div>
         <PriceRequirement tier={aspirational} />
       </div>

@@ -96,11 +96,11 @@ describe("tarjetas — jerarquía de precios", () => {
     await renderStore();
     const card = screen.getByRole("article", { name: "Anillo Blossom" });
 
-    expect(within(card).getByText("Mejor precio")).toBeTruthy();
+    expect(within(card).queryByText("Mejor precio")).toBeNull();
     expect(within(card).getByText("$90")).toBeTruthy();
-    expect(within(card).getByText("Iconic").closest(".olv-price-card-tier-group")).toHaveTextContent("IconicMejor precio");
+    expect(within(card).getByText("Iconic")).toBeTruthy();
     expect(within(card).getByText("Hasta $50 menos por pieza al desbloquear Iconic")).toBeTruthy();
-    expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
     expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toBeTruthy();
 
     const compare = Array.from(card.querySelectorAll(".olv-price-compare-item"))
@@ -281,9 +281,9 @@ describe("detalle de producto — precios por tier", () => {
     expect(within(prices).getByText("$90")).toBeTruthy();
     expect(within(prices).getByText("Girly").closest("div")).toHaveTextContent(/Girly\s*\$120/);
     expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toHaveAttribute("title", "desde 5 piezas");
-    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "desde $1,000 en productos a precio Iconic");
+    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
     expect(within(prices).getByText("Regular").closest("div")).toHaveTextContent(/Regular\s*\$140/);
-    expect(Array.from(prices.querySelectorAll(".olv-price-row dt")).map((row) => row.textContent?.replace("Mejor precio", "").trim())).toEqual(["Regular", "Girly", "Iconic"]);
+    expect(Array.from(prices.querySelectorAll(".olv-price-row dt")).map((row) => row.textContent?.trim())).toEqual(["Regular", "Girly", "Iconic"]);
     expect(prices.querySelector(".olv-price-row--featured")).toHaveTextContent("Iconic");
     // Agregar al carrito desde el detalle.
     fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
