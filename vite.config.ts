@@ -21,7 +21,14 @@ function buildMarker(): Plugin {
   return {
     name: "store-os-build-marker",
     transformIndexHtml(html) {
-      return html.replace(/<head>/i, `<head><meta name="x-build" content="${sha}">`);
+      // Preview deployments must never be indexed. VITE_VERCEL_ENV is set by
+      // the deploy job (and validated by scripts/check-env.cjs); production
+      // builds don't set it to "preview", so they stay indexable.
+      const noindex =
+        process.env.VITE_VERCEL_ENV === "preview"
+          ? `<meta name="robots" content="noindex, nofollow">`
+          : "";
+      return html.replace(/<head>/i, `<head><meta name="x-build" content="${sha}">${noindex}`);
     },
   };
 }
