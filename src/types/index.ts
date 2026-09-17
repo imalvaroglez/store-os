@@ -52,6 +52,8 @@ export type StorefrontSection = {
   heading?: string;
   body?: string;
   imageUrl?: string;
+  mobileImageUrl?: string;
+  imageAlt?: string;
 };
 
 export type FAQItem = { q: string; a: string };

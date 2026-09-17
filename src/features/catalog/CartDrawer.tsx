@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
 import { formatMoney, publicPrice } from "../../lib/money";
@@ -31,6 +31,28 @@ function tierRequirement(tier: PublicPriceTier): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+function PriceRequirement({ tier }: { tier: PublicPriceTier }) {
+  const requirement = tierRequirement(tier);
+  const tooltipId = useId();
+  if (!requirement) return null;
+  const description = tier.minAmount != null ? `Obtén el mejor precio al comprar ${requirement}` : requirement;
+  return (
+    <span className="price-help-wrap">
+      <IconButton
+        type="button"
+        variant="ghost"
+        className="price-help"
+        aria-label={`Cómo se obtiene el precio ${tier.label}`}
+        aria-describedby={tooltipId}
+        title={description}
+      >
+        <span aria-hidden="true" className="price-help-icon">?</span>
+      </IconButton>
+      <span id={tooltipId} role="tooltip" className="price-help-tooltip">{description}</span>
+    </span>
+  );
+}
+
 /** Shared public price hierarchy: deepest tier is the commercial aspiration. */
 export function PublicTierPrices({
   store,
@@ -47,34 +69,72 @@ export function PublicTierPrices({
 
   if (tiers.length < 2) {
     return (
-      <p className={`${mode === "detail" ? "text-2xl" : "text-xl"} font-semibold text-[var(--olv-accent,var(--terracotta))] mt-2`}>
+      <p className={`olv-price-single ${mode === "detail" ? "text-2xl" : "text-xl"} font-semibold text-[var(--olv-accent,var(--terracotta))] mt-2`}>
         {formatMoney(publicPrice(product, store.defaultTierId ?? undefined))}
       </p>
     );
   }
 
+  const base = tiers[0];
   const aspirational = tiers[tiers.length - 1];
-  const requirement = tierRequirement(aspirational);
+  const basePrice = product.prices?.[base.id];
+  const aspirationalPrice = product.prices?.[aspirational.id];
+  const savings = typeof basePrice === "number" && typeof aspirationalPrice === "number" && basePrice > aspirationalPrice
+    ? basePrice - aspirationalPrice
+    : null;
+
+  if (mode === "detail") {
+    return (
+      <section className="olv-price-block olv-price-detail mt-3" aria-label="Precios por pieza">
+        <p className="olv-price-caption">Precio por pieza</p>
+        <dl className="olv-price-ladder">
+          {tiers.map((tier) => {
+            const featured = tier.id === aspirational.id;
+            return (
+              <div key={tier.id} className={`olv-price-row${featured ? " olv-price-row--featured" : ""}`}>
+                <dt className="olv-price-row-label">
+                  {tier.label}
+                </dt>
+                <dd className="olv-price-row-value">
+                  <span className="olv-price-row-amount">{formatMoney(product.prices?.[tier.id])}</span>
+                  <PriceRequirement tier={tier} />
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+        {savings !== null && (
+          <p className="olv-price-savings">Hasta {formatMoney(savings)} menos por pieza al desbloquear {aspirational.label}</p>
+        )}
+      </section>
+    );
+  }
+
   return (
-    <div className={mode === "detail" ? "mt-3 rounded-xl bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] p-4" : "mt-2"}>
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className={`${mode === "detail" ? "text-3xl" : "text-2xl"} font-extrabold text-[var(--olv-accent,var(--terracotta))]`}>
-          {formatMoney(product.prices?.[aspirational.id])}
-        </span>
-        <span className="font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
+    <div className="olv-price-block olv-price-card mt-2">
+      <div className="olv-price-card-main">
+        <div className="olv-price-card-primary">
+          <span className="olv-price-card-amount text-2xl font-extrabold text-[var(--olv-accent,var(--terracotta))]">
+            {formatMoney(product.prices?.[aspirational.id])}
+          </span>
+          <span className="olv-price-card-tier font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
+        </div>
+        <PriceRequirement tier={aspirational} />
       </div>
-      {requirement && (
-        <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">{requirement}</p>
-      )}
-      <div className={`${mode === "detail" ? "mt-3 pt-3 border-t border-[var(--olv-rule,var(--rule))]" : "mt-2"} space-y-1 text-xs`}>
+      <p className={`olv-price-savings${savings === null ? " olv-price-savings--empty" : ""}`} aria-hidden={savings === null}>
+        {savings !== null ? `Hasta ${formatMoney(savings)} menos por pieza al desbloquear ${aspirational.label}` : null}
+      </p>
+      <div className="olv-price-compare">
         {tiers.slice(0, -1).map((tier) => {
           const minimum = tierRequirement(tier);
           return (
-            <p key={tier.id} className="text-[var(--olv-ink-soft,var(--ink-soft))]">
-              <span className="font-semibold text-[var(--olv-ink,var(--ink))]">{tier.label}</span>{" "}
-              {formatMoney(product.prices?.[tier.id])}
-              {minimum ? ` · ${minimum}` : ""}
-            </p>
+            <span key={tier.id} className="olv-price-compare-item text-[var(--olv-ink-soft,var(--ink-soft))]">
+              <span className="olv-price-compare-detail">
+                <span className="olv-price-compare-label font-semibold text-[var(--olv-ink,var(--ink))]">{tier.label}</span>
+                <span className="olv-price-compare-amount">{formatMoney(product.prices?.[tier.id])}</span>
+              </span>
+              {minimum && <PriceRequirement tier={tier} />}
+            </span>
           );
         })}
       </div>
@@ -164,7 +224,6 @@ export function CartDrawer({
   signalBySlug,
   visibleSlugs,
   onSetQty,
-  onRemove,
 }: {
   open: boolean;
   onClose: () => void;
@@ -176,7 +235,6 @@ export function CartDrawer({
    *  pieces no longer projected are dropped silently. */
   visibleSlugs?: Set<string>;
   onSetQty: (productSlug: string, qty: number) => void;
-  onRemove: (productSlug: string) => void;
 }) {
   const shown = visibleSlugs ? pruneCartLines(lines, visibleSlugs) : lines;
   const [customerName, setCustomerName] = useState(() => loadCartName(store.slug));
@@ -194,59 +252,66 @@ export function CartDrawer({
 
   const orderLines: CartOrderLine[] = shown.map((l) => ({
     name: l.name,
-    sku: l.sku,
     qty: l.qty,
     inquire: l.inquire || signalBySlug?.[l.productSlug] === "agotado",
   }));
 
   return (
-    <Sheet open={open} onClose={onClose} title="Tu pedido">
+    <Sheet open={open} onClose={onClose} title="Tu pedido" className="olv-cart-sheet" contentClassName="olv-cart-sheet-content">
       {shown.length === 0 ? (
         <EmptyState
           title="Tu pedido está vacío"
           subtitle="Agrega piezas del catálogo y envíalas en un solo mensaje."
         />
       ) : (
-        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
+        <div className="olv-cart-layout grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
           <ul className="divide-y divide-[var(--olv-rule,var(--rule))] md:pr-2">
-            {shown.map((l) => {
+            {shown.map((l, index) => {
               const signal = signalBySlug?.[l.productSlug];
               const legend = signal ? STOCK_LEGENDS[signal] : null;
+              const linePricing = pricing?.lineBreakdown[index];
+              const unitPrice = linePricing?.unitPrice ?? l.unitPrice;
+              const lineSubtotal = linePricing?.subtotal ?? (typeof unitPrice === "number" ? unitPrice * l.qty : undefined);
               return (
-                <li key={l.productSlug} className="flex gap-3 py-3">
+                <li key={l.productSlug} className="olv-cart-line flex gap-3 py-3">
                   <ProductImage src={l.image} alt={l.name} size="thumb" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="font-semibold text-[var(--olv-ink,var(--ink))] truncate">{l.name}</p>
-                        <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))]">{l.sku}</p>
                       </div>
-                      <IconButton
-                        variant="ghost"
-                        aria-label="Quitar"
-                        onClick={() => onRemove(l.productSlug)}
-                      >
-                        ✕
-                      </IconButton>
                     </div>
                     {legend && <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">{legend}</p>}
-                    <div className="flex items-center gap-2 mt-2">
-                      <IconButton
-                        variant="secondary"
-                        aria-label="Restar una pieza"
-                        onClick={() => onSetQty(l.productSlug, l.qty - 1)}
-                      >
-                        −
-                      </IconButton>
-                      <span className="w-8 text-center font-extrabold text-[var(--olv-ink,var(--ink))]">{l.qty}</span>
-                      <IconButton
-                        variant="secondary"
-                        aria-label="Sumar una pieza"
-                        onClick={() => onSetQty(l.productSlug, l.qty + 1)}
-                      >
-                        +
-                      </IconButton>
-                      <span className="text-[var(--olv-ink-soft,var(--ink-soft))] text-xs ml-1">{l.qty === 1 ? "pieza" : "piezas"}</span>
+                    <div className="olv-cart-line-summary">
+                      <div className="olv-cart-line-quantity">
+                        <div className="flex items-center gap-2">
+                          <IconButton
+                            variant="secondary"
+                            aria-label="Restar una pieza"
+                            onClick={() => onSetQty(l.productSlug, l.qty - 1)}
+                          >
+                            −
+                          </IconButton>
+                          <span className="w-8 text-center font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums" aria-live="polite">{l.qty}</span>
+                          <IconButton
+                            variant="secondary"
+                            aria-label="Sumar una pieza"
+                            onClick={() => onSetQty(l.productSlug, l.qty + 1)}
+                          >
+                            +
+                          </IconButton>
+                        </div>
+                      </div>
+                      <dl className="olv-cart-line-prices">
+                        <div>
+                          <dt>Precio por pieza</dt>
+                          <dd>{typeof unitPrice === "number" ? formatMoney(unitPrice) : "Por confirmar"}</dd>
+                        </div>
+                        <div>
+                          <dt>Subtotal</dt>
+                          <dd>{typeof lineSubtotal === "number" ? formatMoney(lineSubtotal) : "Por confirmar"}</dd>
+                        </div>
+                      </dl>
                     </div>
                   </div>
                 </li>
@@ -254,15 +319,14 @@ export function CartDrawer({
             })}
           </ul>
 
-          <div className="flex flex-col gap-3">
+          <div className="olv-cart-summary flex flex-col gap-3">
             {pricing ? (
               <>
               <div className="rounded-xl bg-[var(--olv-accent-soft,var(--paper-2))] ring-1 ring-[var(--olv-rule,var(--rule))] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
-                      Precio {pricing.activeTier.tier.label}
-                      {pricing.activeTier.tier.id !== pricing.baseTier.tier.id ? " desbloqueado" : ""}
+                      Precio {pricing.activeTier.tier.label} aplicado
                     </p>
                     <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
                       {pricing.totalQuantity} {pricing.totalQuantity === 1 ? "pieza" : "piezas"}
@@ -275,6 +339,11 @@ export function CartDrawer({
                     </p>
                   </div>
                 </div>
+                {pricing.activeTier.tier.id !== pricing.baseTier.tier.id && (
+                  <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2">
+                    Este precio ya está aplicado a cada pieza de tu pedido.
+                  </p>
+                )}
                 {pricing.savingsVsBase > 0 && (
                   <p className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] mt-2">
                     Ahorras {formatMoney(pricing.savingsVsBase)} frente a {pricing.baseTier.tier.label}.
@@ -283,12 +352,32 @@ export function CartDrawer({
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-2">Envío no incluido.</p>
               </div>
 
+              {intermediate && (
+                <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
+                  {intermediate.qualifies && intermediate.hasOwnPrices ? (
+                    <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
+                      ✨ Precio {intermediate.tier.label} desbloqueado
+                    </p>
+                  ) : intermediate.piecesRemaining > 0 ? (
+                    <p className="text-[var(--olv-ink,var(--ink))]">
+                      Te {intermediate.piecesRemaining === 1 ? "falta" : "faltan"} {intermediate.piecesRemaining}{" "}
+                      {intermediate.piecesRemaining === 1 ? "pieza" : "piezas"} para desbloquear {intermediate.tier.label}.
+                    </p>
+                  ) : null}
+                  {!intermediate.qualifies && intermediate.savingsVsActive > 0 && (
+                    <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">
+                      Con {intermediate.tier.label}, lo que ya llevas costaría {formatMoney(intermediate.savingsVsActive)} menos.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {aspiration && (
                 <div className="rounded-xl ring-2 ring-[var(--olv-accent,var(--terracotta))] bg-white/70 p-4">
                   <p className="font-extrabold text-[var(--olv-ink,var(--ink))]">
                     {aspiration.qualifies && aspiration.hasOwnPrices
                       ? `✨ Precio ${aspiration.tier.label} desbloqueado`
-                      : `Tu meta: precio ${aspiration.tier.label}`}
+                      : `Meta final: precio ${aspiration.tier.label}`}
                   </p>
                   {!aspiration.qualifies && aspiration.amountRemaining > 0 && (
                     <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-1">
@@ -309,26 +398,6 @@ export function CartDrawer({
                   {aspiration.qualifies && aspiration.hasOwnPrices && aspiration.savingsVsBase > 0 && (
                     <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-1">
                       Ahorras {formatMoney(aspiration.savingsVsBase)} frente a {pricing.baseTier.tier.label}.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {intermediate && (
-                <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
-                  {intermediate.qualifies && intermediate.hasOwnPrices ? (
-                    <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
-                      ✨ Precio {intermediate.tier.label} desbloqueado
-                    </p>
-                  ) : intermediate.piecesRemaining > 0 ? (
-                    <p className="text-[var(--olv-ink,var(--ink))]">
-                      Te {intermediate.piecesRemaining === 1 ? "falta" : "faltan"} {intermediate.piecesRemaining}{" "}
-                      {intermediate.piecesRemaining === 1 ? "pieza" : "piezas"} para desbloquear {intermediate.tier.label}.
-                    </p>
-                  ) : null}
-                  {!intermediate.qualifies && intermediate.savingsVsActive > 0 && (
-                    <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">
-                      Con {intermediate.tier.label}, lo que ya llevas costaría {formatMoney(intermediate.savingsVsActive)} menos.
                     </p>
                   )}
                 </div>
@@ -357,7 +426,7 @@ export function CartDrawer({
               </Button>
             </a>
             <p className="text-[var(--olv-ink-soft,var(--ink-soft))] text-xs text-center">
-              Precio y existencia por confirmar por WhatsApp.
+              Precio y existencia por confirmar por WhatsApp. Enviar tu selección no confirma ni reserva el pedido.
             </p>
           </div>
         </div>

@@ -4,7 +4,7 @@ name: CI
 # (configured in the Vercel dashboard, not in this repo), so Vercel NEVER builds
 # on Git push. The ONLY path to a Vercel deployment is the `deploy` job below,
 # which runs exclusively after build-test AND rules-and-e2e pass.
-#   - Push to a non-main branch → Preview deploy (points at the dev Firebase).
+#   - Push to a non-main branch → local Preview validation (points at the dev Firebase).
 #   - Push to main (merge)        → Production deploy (points at prod Firebase).
 # If Vercel ever starts auto-deploying again (new deployments you didn't trigger
 # from this workflow), the Ignored Build Step regressed — re-set it to `exit 0`.
@@ -147,10 +147,9 @@ jobs:
   # Vercel's Git auto-deploy is OFF, so without this job nothing publishes.
   deploy:
     needs: [env-select, build-test, rules-and-e2e]
-    # Only deploy on push events (a push to a branch, or a merge to main).
-    # PR-only synthetic events would double-deploy; the underlying push already
-    # triggers this.
-    if: github.event_name == 'push' && needs.env-select.outputs.app-changed == 'true'
+    # Only deploy after a push to main. Feature branches validate the production
+    # build on localhost; an external Preview is not required for this PWA.
+    if: github.event_name == 'push' && github.ref_name == 'main' && needs.env-select.outputs.app-changed == 'true'
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
     # The Vercel CLI reads ORG/PROJECT id from .vercel/project.json OR these env
@@ -177,7 +176,10 @@ jobs:
           cat .vercel/project.json
       - run: npm ci
       - name: Install Vercel CLI
-        run: npm i -g vercel@latest
+        # Pin the CLI: 59.11.2 pulled this project successfully on 2026-09-03;
+        # latest (59.18.0) now fails before build with "Could not retrieve
+        # Project Settings" for the same project and GitHub secrets.
+        run: npm i -g vercel@59.11.2
       - name: Resolve Vercel target
         id: target
         run: |
@@ -287,46 +289,3 @@ jobs:
             fi
           done
           exit $status
-
-  # Post the preview URL as a comment on the PR (preview only). CLI deploys
-  # don't generate branch-alias URLs like the Git integration does, so we
-  # surface the deployment URL manually.
-  comment-preview-url:
-    needs: [env-select, deploy]
-    if: needs.env-select.outputs.env-name != 'Production' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    # The repo's workflow-permission default is "read and write" (set in
-    # repo Settings → Actions → General → Workflow permissions). We still scope
-    # this job to the minimum it needs, so the token can't do more than read
-    # code + write PR comments even though the repo default is broader.
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Find and comment on the PR for this branch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          URL: ${{ needs.deploy.outputs.deployment-url }}
-        run: |
-          set +e
-          # gh pr list --head is unreliable in Actions with the auto GITHUB_TOKEN
-          # (cli/cli#1314, #4902): it often returns empty even for an open PR.
-          # Use the search API, which respects pull-requests:read consistently.
-          PR_NUMBER=$(gh api graphql -f query='
-            query($headRefName: String!) {
-              repository(owner: "${{ github.repository_owner }}", name: "${{ github.event.repository.name }}") {
-                pullRequests(headRefName: $headRefName, states: OPEN, first: 1) {
-                  nodes { number }
-                }
-              }
-            }' -F headRefName='${{ github.ref_name }}' -q '.data.repository.pullRequests.nodes[0].number')
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No open PR for branch ${{ github.ref_name }}; skipping comment."
-            exit 0
-          fi
-          BODY=$(printf '🚀 **Preview deploy** para `%s` (CI verde): %s\nApunta al backend de **dev** (store-os-dev). Generado por GitHub Actions tras pasar build-test + rules-and-e2e.' "${{ github.sha }}" "$URL")
-          # -R is required because this job has no checkout (no .git for gh to
-          # infer the repo from); without it gh pr comment fails with
-          # "fatal: not a git repository".
-          gh pr comment "$PR_NUMBER" -R "${{ github.repository }}" --body "$BODY" || echo "comment failed (non-fatal)"
-          exit 0
