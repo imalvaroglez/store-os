@@ -35,7 +35,7 @@ export function OliviaStorefront({ route }: { route: RouteMatch }) {
   }, [slug]);
   useEffect(() => { document.documentElement.scrollTop = 0; }, [route]);
   const current = data?.store.slug === slug ? data : null;
-  return <StoreChrome data={current}>
+  return <StoreChrome data={current} isHomeRoute={route.name === "public_store"}>
     {error ? <div className="olv-container olv-empty"><EmptyState title={error === "missing" ? "Tienda no encontrada" : "No se pudo cargar"} subtitle={error === "missing" ? "Este catálogo no existe o no está disponible." : "Revisa tu conexión e intenta de nuevo."} /></div>
       : !current ? <div className="olv-container olv-grid olv-loading">{Array.from({ length: 8 }, (_, i) => <SkeletonCard key={i} />)}</div>
       : route.name === "public_product" ? <ProductView key={`${slug}/${route.params.productSlug}`} data={current} productSlug={route.params.productSlug} />
@@ -86,7 +86,7 @@ function StoreView({ data: { store, catalog }, focusCategory }: { data: CatalogD
       </picture> : null}
       <div className="olv-container olv-hero-copy">
         <p className="olv-eyebrow">Pequeños detalles. Muy tú.</p>
-        <h1>{sf.hero?.heading || OLIVIA_CONTENT.hero!.heading}</h1>
+        <h1>{sf.hero?.heading?.trim().toLocaleLowerCase() === store.name.trim().toLocaleLowerCase() ? OLIVIA_CONTENT.hero!.heading : sf.hero?.heading || OLIVIA_CONTENT.hero!.heading}</h1>
         <p className="olv-intro">{sf.hero?.body || OLIVIA_CONTENT.hero!.body}</p>
         <a href="#piezas" className="olv-link-button">Explorar piezas <span aria-hidden="true">↗</span></a>
         {!!sf.benefits?.length && <div className="olv-benefits">{sf.benefits.map((item) => <span key={item}>{item}</span>)}</div>}
@@ -188,7 +188,7 @@ function StorefrontLink({ to, className, children, current }: { to: string; clas
   }}>{children}</a>;
 }
 
-function StoreChrome({ data, children }: { data: CatalogData | null; children: ReactNode }) {
+function StoreChrome({ data, children, isHomeRoute }: { data: CatalogData | null; children: ReactNode; isHomeRoute: boolean }) {
   const cart = useCart(data?.store.slug);
   const [open, setOpen] = useState(false);
   const [addedName, setAddedName] = useState<string | null>(null);
@@ -209,7 +209,7 @@ function StoreChrome({ data, children }: { data: CatalogData | null; children: R
   const body = <div className="olivia-root" style={style}>
     {store && <>
       <div className="olv-notice">{sf.notice || "Tu próxima pieza favorita empieza aquí"}</div>
-      <header className="olv-header"><div className="olv-container olv-header-inner">
+      <header className="olv-header"><div className={`olv-container olv-header-inner ${isHomeRoute ? "olv-header-inner--home" : ""}`}>
         <StorefrontLink to={`/catalogo/${store.slug}`} className="olv-wordmark">{sf.logoUrl ? <ProductImage src={sf.logoUrl} alt={`Logo de ${store.name}`} size="full" natural loading="eager" /> : <ProductImage src={OLIVIA_LOGO_URL} alt={`Logo de ${store.name}`} size="full" natural loading="eager" />}</StorefrontLink>
         <nav aria-label="Principal"><StorefrontLink to={`/catalogo/${store.slug}`} className="olv-header-catalog">Catálogo</StorefrontLink><Button variant="ghost" aria-label="Ver mi selección" onClick={openCart}>Mi pedido <span className="olv-count">{pieces}</span></Button></nav>
       </div></header>

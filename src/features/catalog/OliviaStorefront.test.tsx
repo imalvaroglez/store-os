@@ -67,6 +67,10 @@ const productRoute: RouteMatch = {
   name: "public_product",
   params: { slug: "olivia", productSlug: "anillo-blossom" },
 };
+const categoryRoute: RouteMatch = {
+  name: "public_category",
+  params: { slug: "olivia", categorySlug: "anillos" },
+};
 
 const cartKey = "store-os:cart:olivia";
 
@@ -281,6 +285,31 @@ describe("detalle de producto — precios por tier", () => {
 });
 
 describe("editorial catalog", () => {
+  it("centra el logo en portada y reemplaza solo el título de marca duplicado", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { hero: { heading: "Olivia", body: "Una selección para ti." } } },
+      catalog,
+    });
+    const view = render(<OliviaStorefront route={storeRoute} />);
+    await screen.findAllByRole("button", { name: "Agregar al carrito" });
+
+    expect(screen.getByRole("heading", { name: "Joyería para hacer tuyo cada día" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Olivia" })).toBeNull();
+    expect(screen.getByRole("img", { name: "Logo de Olivia" }).closest(".olv-header-inner")).toHaveClass("olv-header-inner--home");
+
+    view.rerender(<OliviaStorefront route={categoryRoute} />);
+    expect(screen.getByRole("img", { name: "Logo de Olivia" }).closest(".olv-header-inner")).not.toHaveClass("olv-header-inner--home");
+  });
+
+  it("conserva el título personalizado del editor", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { hero: { heading: "Nueva colección", body: "Una selección para ti." } } },
+      catalog,
+    });
+    await renderStore();
+    expect(screen.getByRole("heading", { name: "Nueva colección" })).toBeTruthy();
+  });
+
   it("searches names/keys, sorts, and never duplicates featured/new products", async () => {
     mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: catalog.products.map((p) => ({ ...p, price: undefined, isFeatured: true, isNew: true })) } });
     await renderStore();
