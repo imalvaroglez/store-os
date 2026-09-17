@@ -98,6 +98,7 @@ describe("tarjetas — jerarquía de precios", () => {
 
     expect(within(card).getByText("Mejor precio")).toBeTruthy();
     expect(within(card).getByText("$90")).toBeTruthy();
+    expect(within(card).getByText("Iconic").closest(".olv-price-card-tier-group")).toHaveTextContent("IconicMejor precio");
     expect(within(card).getByText("Hasta $50 menos por pieza al desbloquear Iconic")).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toBeTruthy();
