@@ -21,7 +21,9 @@
 .olv-container { width: min(100% - 40px, 1280px); margin-inline: auto; }
 .olv-notice { padding: 9px 20px; text-align: center; font-size: 11px; letter-spacing: .06em; background: var(--olv-accent-soft); }
 .olv-header { position: sticky; top: 0; z-index: 20; background: var(--olv-bg); border-bottom: 1px solid var(--olv-rule); }
-.olv-header-inner { display: flex; align-items: center; justify-content: space-between; min-height: 76px; gap: 16px; }
+.olv-header-inner { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; min-height: 76px; gap: 16px; }
+.olv-header-inner .olv-wordmark { grid-column: 2; grid-row: 1; justify-self: center; }
+.olv-header-inner nav { grid-column: 3; grid-row: 1; justify-self: end; }
 .olv-header-inner--home { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
 .olv-header-inner--home .olv-wordmark { grid-column: 2; grid-row: 1; justify-self: center; }
 .olv-header-inner--home nav { grid-column: 3; grid-row: 1; justify-self: end; }
@@ -153,11 +155,11 @@
   .olv-added-status { left: auto; right: 1.25rem; width: min(360px, calc(100% - 2.5rem)); }
 }
 @media (max-width: 639px) {
-  .olv-header-inner--home { column-gap: 4px; }
-  .olv-header-inner--home .olv-wordmark img { max-width: 96px; }
-  .olv-header-inner--home nav { gap: 4px; font-size: 10px; }
-  .olv-header-inner--home nav > button { padding-inline: 2px; font-size: 10px; white-space: nowrap; }
-  .olv-header-inner--home .olv-count { width: 20px; min-width: 20px; height: 20px; margin-left: 2px; }
+  .olv-header-inner { column-gap: 4px; }
+  .olv-header-inner .olv-wordmark img { max-width: 96px; }
+  .olv-header-inner nav { gap: 4px; font-size: 10px; }
+  .olv-header-inner nav > button { padding-inline: 2px; font-size: 10px; white-space: nowrap; }
+  .olv-header-inner .olv-count { width: 20px; min-width: 20px; height: 20px; margin-left: 2px; }
 }
 @media (max-width: 380px) { .olv-header nav { gap: 4px; } .olv-wordmark { font-size: 30px; } .olv-wordmark img { max-width: 118px; } .olv-container { width: calc(100% - 28px); } }
 @media (prefers-reduced-motion: reduce) { .olivia-root *, .olivia-root *::before, .olivia-root *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
