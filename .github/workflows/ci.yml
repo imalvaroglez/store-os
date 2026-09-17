@@ -206,6 +206,9 @@ jobs:
           # VITE_VERCEL_ENV is NOT auto-injected when building outside Vercel,
           # so we set it explicitly so the cross-env guard runs correctly.
           VITE_VERCEL_ENV: ${{ steps.target.outputs.vercel_env }}
+          # Absolute origin for the prerendered canonical/og/sitemap (public
+          # info, not a secret). scripts/prerender-public.mjs skips without it.
+          PUBLIC_SITE_URL: https://store-os-alpha.vercel.app
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
