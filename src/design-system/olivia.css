@@ -69,15 +69,12 @@
 .olv-product > button { background: transparent; color: var(--olv-ink); border: 1px solid var(--olv-rule); box-shadow: none; font-size: 12px; }
 .olv-product > button:hover { background: var(--olv-accent-soft); }
 .olv-price-block { color: var(--olv-ink); }
-.olv-price-card-main { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; gap: 8px; min-height: 54px; }
+.olv-price-card-main { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; min-height: 44px; }
 .olv-price-card-primary { min-width: 0; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 8px; }
 .olv-price-card-primary > span { white-space: nowrap; }
 .olv-price-card-main > .price-help-wrap { flex: 0 0 auto; justify-self: end; }
 .olv-price-card-amount { line-height: 1; }
-.olv-price-card-tier-group { display: grid; justify-items: start; align-content: center; gap: 4px; min-width: 0; }
 .olv-price-card-tier { line-height: 1.2; }
-.olv-price-badge { display: inline-flex; align-items: center; min-height: 22px; padding: 3px 7px; border-radius: 999px; background: var(--olv-accent-soft); color: var(--olv-ink); font-size: 10px; font-weight: 700; letter-spacing: .02em; line-height: 1; }
-.olv-price-card-primary .olv-price-badge { justify-self: start; }
 .olv-price-savings { display: flex; align-items: flex-start; min-height: 2.8em; margin-top: 6px; color: var(--olv-accent); font-size: 11px; font-weight: 700; line-height: 1.4; }
 .olv-price-savings--empty { visibility: hidden; }
 .olv-price-compare { display: grid; grid-template-columns: minmax(0,1fr); gap: 0; margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--olv-rule); }
