@@ -113,11 +113,13 @@ export function PublicTierPrices({
   return (
     <div className="olv-price-block olv-price-card mt-2">
       <div className="olv-price-card-main">
-        <span className="olv-price-card-amount text-2xl font-extrabold text-[var(--olv-accent,var(--terracotta))]">
-          {formatMoney(product.prices?.[aspirational.id])}
-        </span>
-        <span className="olv-price-card-tier font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
-        <span className="olv-price-badge">Mejor precio</span>
+        <div className="olv-price-card-primary">
+          <span className="olv-price-card-amount text-2xl font-extrabold text-[var(--olv-accent,var(--terracotta))]">
+            {formatMoney(product.prices?.[aspirational.id])}
+          </span>
+          <span className="olv-price-card-tier font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
+          <span className="olv-price-badge">Mejor precio</span>
+        </div>
         <PriceRequirement tier={aspirational} />
       </div>
       {savings !== null && (
@@ -128,9 +130,11 @@ export function PublicTierPrices({
           const minimum = tierRequirement(tier);
           return (
             <span key={tier.id} className="olv-price-compare-item text-[var(--olv-ink-soft,var(--ink-soft))]">
-              <span className="olv-price-compare-label font-semibold text-[var(--olv-ink,var(--ink))]">{tier.label}</span>
-              <span className="olv-price-compare-amount">{formatMoney(product.prices?.[tier.id])}</span>
-              {minimum && <> <PriceRequirement tier={tier} /></>}
+              <span className="olv-price-compare-detail">
+                <span className="olv-price-compare-label font-semibold text-[var(--olv-ink,var(--ink))]">{tier.label}</span>
+                <span className="olv-price-compare-amount">{formatMoney(product.prices?.[tier.id])}</span>
+              </span>
+              {minimum && <PriceRequirement tier={tier} />}
             </span>
           );
         })}
