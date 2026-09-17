@@ -1,11 +1,11 @@
 /* Olivia's editorial surface is scoped; administration keeps its selected theme. */
 .olivia-root {
-  --olv-bg: #faf7f2; --olv-ink: #332923; --olv-ink-soft: #716258;
-  --olv-accent: #c97b86; --olv-accent-soft: #e7c9ce; --olv-rule: #ded2c6;
+  --olv-bg: #faf7f2; --olv-ink: #332923; --olv-ink-soft: #5e5148;
+  --olv-accent: #8c4550; --olv-accent-soft: #f2dbdf; --olv-rule: #ded2c6;
   --olv-surface: #fffdf9; --olv-radius: 6px;
   --paper: var(--olv-bg); --paper-2: var(--olv-accent-soft); --ink: var(--olv-ink); --ink-soft: var(--olv-ink-soft);
   --surface: var(--olv-surface); --on-surface: var(--olv-ink); --on-surface-soft: var(--olv-ink-soft);
-  --border: var(--olv-rule); --rule: var(--olv-rule); --terracotta: var(--olv-accent);
+  --border: var(--olv-rule); --rule: var(--olv-rule); --terracotta: var(--olv-accent); --terracotta-soft: var(--olv-accent-soft);
   --on-accent: var(--olv-surface); --forest: var(--olv-accent);
   --font-body: 'Plus Jakarta Sans', sans-serif; --font-display: 'Playfair Display', Georgia, serif;
   --motion-fast: 120ms; --motion-base: 180ms; --motion-slow: 360ms; --ease-smooth: cubic-bezier(.22,1,.36,1);
