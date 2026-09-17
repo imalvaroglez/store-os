@@ -54,6 +54,7 @@
 .olv-photo { position: relative; aspect-ratio: 1; background: var(--olv-accent-soft); overflow: hidden; border-radius: var(--olv-radius); }
 .olv-photo > a > div, .olv-photo > div[role=img] { box-shadow: none; border-radius: 0; }
 .olv-photo img { box-shadow: none; border-radius: 0; }
+.olv-photo-image { animation: olv-photo-enter var(--motion-base) var(--ease-smooth) both; }
 .olv-photo > a { display: block; }
 .olv-gallery-controls { position: absolute; bottom: 6px; left: 6px; right: 6px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
 .olv-gallery-controls button { pointer-events: auto; border-radius: 50%; background: var(--olv-surface); box-shadow: none; color: var(--olv-ink); }
@@ -124,6 +125,7 @@
 .olv-thumbnails button { padding: 0; flex-shrink: 0; }
 .olv-thumbnails button[aria-pressed=true] { outline: 2px solid var(--olv-accent); outline-offset: 3px; }
 .olv-thumbnails img { width: 64px; height: 64px; border-radius: var(--olv-radius); }
+@keyframes olv-photo-enter { from { opacity: .72; transform: scale(1.012); } to { opacity: 1; transform: scale(1); } }
 @media (min-width: 640px) {
   .olv-container { width: min(100% - 80px, 1280px); }
   .olv-hero-copy { padding-block: 80px 88px; }
