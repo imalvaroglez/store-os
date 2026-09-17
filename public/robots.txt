@@ -1,0 +1,6 @@
+# Store OS: los catálogos públicos son indexables; el panel de administración no.
+User-agent: *
+Allow: /catalogo/
+Disallow: /
+
+Sitemap: https://store-os-alpha.vercel.app/sitemap.xml
