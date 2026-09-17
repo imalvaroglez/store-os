@@ -122,9 +122,9 @@ export function PublicTierPrices({
         </div>
         <PriceRequirement tier={aspirational} />
       </div>
-      {savings !== null && (
-        <p className="olv-price-savings">Hasta {formatMoney(savings)} menos por pieza al desbloquear {aspirational.label}</p>
-      )}
+      <p className={`olv-price-savings${savings === null ? " olv-price-savings--empty" : ""}`} aria-hidden={savings === null}>
+        {savings !== null ? `Hasta ${formatMoney(savings)} menos por pieza al desbloquear ${aspirational.label}` : null}
+      </p>
       <div className="olv-price-compare">
         {tiers.slice(0, -1).map((tier) => {
           const minimum = tierRequirement(tier);

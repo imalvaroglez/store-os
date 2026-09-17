@@ -119,6 +119,7 @@ describe("tarjetas — jerarquía de precios", () => {
     await renderStore();
     const card = screen.getByRole("article", { name: "Anillo Blossom" });
     expect(within(card).queryByText(/Hasta .* al desbloquear Iconic/)).toBeNull();
+    expect(card.querySelector(".olv-price-savings--empty")).toBeTruthy();
   });
 });
 
