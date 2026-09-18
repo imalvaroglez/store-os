@@ -37,6 +37,30 @@ describe("G-P05 anonymous cannot write private collections", () => {
     await assertSucceeds(getDoc(doc(db, "publicStores/olivia")));
     await assertFails(setDoc(doc(db, "publicStores/olivia"), { storeId: "s1" }));
   });
+
+  // No enumeration: the apiKey is public in the bundle, so an anonymous LIST
+  // would hand out the whole tenant directory and bulk-dump every catalog in
+  // one request. Only gets-by-slug/id are public; the deploy-time prerender
+  // lists via a rules-bypassing service account.
+  it("anonymous cannot LIST the public collections (tenant enumeration)", async () => {
+    const db = env.unauthenticatedContext().firestore();
+    await assertFails(getDocs(collection(db, "publicStores")));
+    await assertFails(getDocs(collection(db, "publicCatalogs")));
+    await assertFails(getDocs(collection(db, "publicProducts")));
+  });
+
+  it("anonymous GET still works on every public collection", async () => {
+    const db = env.unauthenticatedContext().firestore();
+    await env.withSecurityRulesDisabled(async (c) => {
+      const fs = c.firestore();
+      await setDoc(doc(fs, "publicStores/olivia"), { storeId: "s1" });
+      await setDoc(doc(fs, "publicCatalogs/olivia"), { storeId: "s1", categories: [], products: [] });
+      await setDoc(doc(fs, "publicProducts/s1__pieza"), { storeId: "s1", name: "Pieza" });
+    });
+    await assertSucceeds(getDoc(doc(db, "publicStores/olivia")));
+    await assertSucceeds(getDoc(doc(db, "publicCatalogs/olivia")));
+    await assertSucceeds(getDoc(doc(db, "publicProducts/s1__pieza")));
+  });
 });
 
 describe("G-P06 storeId invariance on update", () => {
