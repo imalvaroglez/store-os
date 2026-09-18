@@ -1,6 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+
+// Scoped editorial styles travel with the storefront chunk, not the shared barrel.
+import "../../design-system/olivia.css";
 import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
-import { loadPublicCatalog, loadPublicProduct, PublicCatalogNotFoundError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
+import { loadPublicStore, loadPublicCatalogSummary, loadPublicProduct, PublicCatalogNotFoundError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
 import { navigate, type RouteMatch } from "../../lib/router";
 import { publicPrice } from "../../lib/money";
 import { createStorefrontBuyUrl, createStorefrontContactUrl, createStorefrontResaleUrl } from "../../lib/whatsapp";
@@ -10,7 +13,6 @@ import { useCart } from "./useCart";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
 import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 
-type CatalogData = { store: PublicStore; catalog: PublicCatalog };
 type CartContextValue = ReturnType<typeof useCart> & { store: PublicStore; notifyAdded: (name: string) => void };
 const CartContext = createContext<CartContextValue | null>(null);
 function useCartContext() { return useContext(CartContext)!; }
@@ -24,32 +26,40 @@ function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSi
 // then only the detail document when opening a piece. No global/stale cache.
 export function OliviaStorefront({ route }: { route: RouteMatch }) {
   const slug = "slug" in route.params ? route.params.slug : "";
-  const [data, setData] = useState<CatalogData | null>(null);
+  const [store, setStore] = useState<PublicStore | null>(null);
+  const [catalog, setCatalog] = useState<PublicCatalog | null>(null);
   const [error, setError] = useState<"missing" | "failed" | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setData(null); setError(null);
-    loadPublicCatalog(slug).then((next) => { if (!cancelled) setData(next); })
+    setStore(null); setCatalog(null); setError(null);
+    // Progressive load: the hero paints from the tiny store doc while the big
+    // catalog doc (every product summary) is still in flight — the page's
+    // largest element never waits for the grid's data.
+    loadPublicStore(slug)
+      .then((next) => { if (!cancelled) setStore(next); })
       .catch((err) => { if (!cancelled) setError(err instanceof PublicCatalogNotFoundError ? "missing" : "failed"); });
+    loadPublicCatalogSummary(slug)
+      .then((next) => { if (!cancelled) setCatalog(next); })
+      .catch(() => { if (!cancelled) setError("failed"); });
     return () => { cancelled = true; };
   }, [slug]);
   useEffect(() => { document.documentElement.scrollTop = 0; }, [route]);
-  const current = data?.store.slug === slug ? data : null;
-  return <StoreChrome data={current} isHomeRoute={route.name === "public_store"}>
+  const current = store?.slug === slug ? store : null;
+  return <StoreChrome store={current} catalog={catalog} isHomeRoute={route.name === "public_store"}>
     {error ? <div className="olv-container olv-empty"><EmptyState title={error === "missing" ? "Tienda no encontrada" : "No se pudo cargar"} subtitle={error === "missing" ? "Este catálogo no existe o no está disponible." : "Revisa tu conexión e intenta de nuevo."} /></div>
       : !current ? <div className="olv-container olv-grid olv-loading">{Array.from({ length: 8 }, (_, i) => <SkeletonCard key={i} />)}</div>
-      : route.name === "public_product" ? <ProductView key={`${slug}/${route.params.productSlug}`} data={current} productSlug={route.params.productSlug} />
-      : <StoreView key={slug} data={current} focusCategory={route.name === "public_category" ? route.params.categorySlug : undefined} />}
+      : route.name === "public_product" ? <ProductView key={`${slug}/${route.params.productSlug}`} initialStore={current} productSlug={route.params.productSlug} />
+      : <StoreView key={slug} store={current} catalog={catalog} focusCategory={route.name === "public_category" ? route.params.categorySlug : undefined} />}
   </StoreChrome>;
 }
 
-function StoreView({ data: { store, catalog }, focusCategory }: { data: CatalogData; focusCategory?: string }) {
+function StoreView({ store, catalog, focusCategory }: { store: PublicStore; catalog: PublicCatalog | null; focusCategory?: string }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("featured");
   const sf = store.storefront ?? {};
   const slug = store.slug;
   const priceLabel = store.priceTiers?.find((tier) => tier.id === store.defaultTierId)?.label || "Precio";
-  const category = catalog.categories.find((item) => item.slug === focusCategory);
+  const category = catalog?.categories.find((item) => item.slug === focusCategory);
   useEffect(() => { setQuery(""); }, [focusCategory]);
   useSeo({
     title: category ? `${category.name} · ${store.name}` : sf.seo?.title || `${store.name} — Joyería`,
@@ -61,7 +71,7 @@ function StoreView({ data: { store, catalog }, focusCategory }: { data: CatalogD
   const products = useMemo(() => {
     const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     const needle = normalize(query.trim());
-    return catalog.products.filter((p) =>
+    return (catalog?.products ?? []).filter((p) =>
       ((sf.showSoldOut ?? true) || !isSoldOut(p)) &&
       (!category || p.categoryIds?.includes(category.id)) &&
       normalize(`${p.name} ${p.sku ?? ""}`).includes(needle)
@@ -77,12 +87,12 @@ function StoreView({ data: { store, catalog }, focusCategory }: { data: CatalogD
     });
   }, [catalog, category, query, sort, sf.showSoldOut, store.defaultTierId]);
 
-  if (focusCategory && !category) return <div className="olv-container olv-empty"><EmptyState title="Categoría no encontrada" subtitle="Explora las demás piezas de Olivia." /><StorefrontLink to={`/catalogo/${slug}`} className="olv-link-button">Ver catálogo</StorefrontLink></div>;
+  if (focusCategory && catalog && !category) return <div className="olv-container olv-empty"><EmptyState title="Categoría no encontrada" subtitle="Explora las demás piezas de Olivia." /><StorefrontLink to={`/catalogo/${slug}`} className="olv-link-button">Ver catálogo</StorefrontLink></div>;
   return <>
     {!focusCategory && <section className="olv-hero">
       {(sf.hero?.imageUrl || sf.hero?.mobileImageUrl) ? <picture className="olv-banner">
         {sf.hero.mobileImageUrl && <source media="(max-width: 639px)" srcSet={sf.hero.mobileImageUrl} />}
-        <ProductImage src={sf.hero.imageUrl || sf.hero.mobileImageUrl} alt={sf.hero.imageAlt || `Colección de ${store.name}`} size="full" natural loading="eager" />
+        <ProductImage src={sf.hero.imageUrl || sf.hero.mobileImageUrl} alt={sf.hero.imageAlt || `Colección de ${store.name}`} size="full" natural loading="eager" fetchPriority="high" width={sf.hero.imageWidth} height={sf.hero.imageHeight} />
       </picture> : null}
       <div className="olv-container olv-hero-copy">
         <p className="olv-eyebrow">Pequeños detalles. Muy tú.</p>
@@ -97,7 +107,7 @@ function StoreView({ data: { store, catalog }, focusCategory }: { data: CatalogD
       {category?.description && <p className="olv-muted">{category.description}</p>}
       <nav aria-label="Categorías" className="olv-categories">
         <StorefrontLink to={`/catalogo/${slug}`} current={!focusCategory}>Todas las piezas</StorefrontLink>
-        {catalog.categories.map((c) => <StorefrontLink key={c.id} to={`/catalogo/${slug}/categoria/${c.slug}`} current={c.slug === focusCategory}>{c.name}</StorefrontLink>)}
+        {(catalog?.categories ?? []).map((c) => <StorefrontLink key={c.id} to={`/catalogo/${slug}/categoria/${c.slug}`} current={c.slug === focusCategory}>{c.name}</StorefrontLink>)}
       </nav>
       <div className="olv-tools">
         <TextField label="Buscar una pieza" type="search" placeholder="Nombre o clave de la pieza" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -133,17 +143,17 @@ function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
   </article>;
 }
 
-function ProductView({ data, productSlug }: { data: CatalogData; productSlug: string }) {
+function ProductView({ initialStore, productSlug }: { initialStore: PublicStore; productSlug: string }) {
   const [product, setProduct] = useState<PublicProductDetail | null>(null);
-  const [store, setStore] = useState(data.store);
+  const [store, setStore] = useState(initialStore);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    loadPublicProduct(data.store.slug, productSlug, data.store).then((next) => {
+    loadPublicProduct(initialStore.slug, productSlug, initialStore).then((next) => {
       if (!cancelled) { setProduct(next.product); setStore(next.store); }
     }).catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [data.store, productSlug]);
+  }, [initialStore, productSlug]);
   useSeo({
     title: product ? `${product.name} · ${store.name}` : store.name,
     description: product?.publicDescription ?? undefined,
@@ -188,8 +198,8 @@ function StorefrontLink({ to, className, children, current }: { to: string; clas
   }}>{children}</a>;
 }
 
-function StoreChrome({ data, children, isHomeRoute }: { data: CatalogData | null; children: ReactNode; isHomeRoute: boolean }) {
-  const cart = useCart(data?.store.slug);
+function StoreChrome({ store, catalog, children, isHomeRoute }: { store: PublicStore | null; catalog: PublicCatalog | null; children: ReactNode; isHomeRoute: boolean }) {
+  const cart = useCart(store?.slug);
   const [open, setOpen] = useState(false);
   const [addedName, setAddedName] = useState<string | null>(null);
   const [homeHeaderCompact, setHomeHeaderCompact] = useState(false);
@@ -208,16 +218,15 @@ function StoreChrome({ data, children, isHomeRoute }: { data: CatalogData | null
     return () => window.removeEventListener("scroll", onScroll);
   }, [isHomeRoute]);
   useEffect(() => {
-    if (!data) return;
-    cart.prune(new Set(data.catalog.products.map((p) => p.productSlug)));
-    cart.refresh(data.catalog.products.map(cartItemFromPublicProduct));
-  }, [cart.prune, cart.refresh, data]);
-  const visibleSlugs = useMemo(() => data ? new Set(data.catalog.products.map((p) => p.productSlug)) : undefined, [data]);
+    if (!store || !catalog) return;
+    cart.prune(new Set(catalog.products.map((p) => p.productSlug)));
+    cart.refresh(catalog.products.map(cartItemFromPublicProduct));
+  }, [cart.prune, cart.refresh, store, catalog]);
+  const visibleSlugs = useMemo(() => catalog ? new Set(catalog.products.map((p) => p.productSlug)) : undefined, [catalog]);
   const lines = visibleSlugs ? pruneCartLines(cart.lines, visibleSlugs) : cart.lines;
   const pieces = cartPieces(lines);
-  const store = data?.store;
   const sf = store?.storefront ?? {};
-  const categories = data?.catalog.categories ?? [];
+  const categories = catalog?.categories ?? [];
   const openCart = () => { setAddedName(null); setOpen(true); };
   const notifyAdded = (name: string) => setAddedName(name);
   const style = Object.fromEntries(Object.entries(OLIVIA_BRAND).filter(([key]) => !key.startsWith("font")).map(([key, value]) => [`--olv-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, value]));
@@ -238,7 +247,7 @@ function StoreChrome({ data, children, isHomeRoute }: { data: CatalogData | null
     {store && <>
       {addedName && !open && <div className="olv-added-status" role="status" aria-live="polite"><span><strong>Agregado a tu pedido</strong><span className="olv-added-name">{addedName}</span></span><Button variant="primary" onClick={openCart}>Ver mi pedido</Button></div>}
       <CartFloatingButton pieces={pieces} onClick={openCart} className={`olv-floating ${open ? "hidden" : ""}`} />
-      <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(data!.catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} />
+      {catalog && <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} />}
     </>}
   </div>;
   return store ? <CartContext.Provider value={{ ...cart, lines, store, notifyAdded }}>{body}</CartContext.Provider> : body;

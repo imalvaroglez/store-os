@@ -27,7 +27,7 @@ import {
 
 // Staged gallery image: a resized Blob chosen but not yet uploaded. Upload
 // happens on submit so cancelling leaves no orphan in Storage.
-type StagedImage = { id: string; blob: Blob; previewUrl: string };
+type StagedImage = { id: string; blob: Blob; width: number; height: number; previewUrl: string };
 
 export function ProductForm({
   product,
@@ -103,9 +103,9 @@ export function ProductForm({
     setPhotoError(null);
     setBusyId("resize");
     try {
-      const blob = await resizeImageFile(file);
+      const { blob, width, height } = await resizeImageFile(file);
       const id = uid("img");
-      setStaged((prev) => [...prev, { id, blob, previewUrl: URL.createObjectURL(blob) }]);
+      setStaged((prev) => [...prev, { id, blob, width, height, previewUrl: URL.createObjectURL(blob) }]);
     } catch {
       setPhotoError("No pudimos leer esa imagen, intenta con otra.");
     } finally {
@@ -185,6 +185,8 @@ export function ProductForm({
               id: s.id,
               url,
               storagePath,
+              width: s.width,
+              height: s.height,
               order: savedImages.length + idx,
               isPrimary: false,
             };

@@ -219,7 +219,13 @@ service cloud.firestore {
     }
 
     match /publicStores/{slug} {
-      allow read: if true;
+      // get is public (the storefront + prerender read by slug); list requires a
+      // signed-in platform user so the public apiKey alone cannot enumerate the
+      // tenant directory or bulk-dump every store. (Fully denying list broke the
+      // client's stale-projection prune, which queries publicProducts — caught
+      // by CI e2e.) The deploy-time prerender lists via firebase-admin.
+      allow get: if true;
+      allow list: if isSignedIn();
       allow create: if isSuperAdmin() || isOwner(request.resource.data.storeId);
       allow update: if (isSuperAdmin() || isOwner(resource.data.storeId))
         && resource.data.storeId == request.resource.data.storeId;
@@ -230,7 +236,8 @@ service cloud.firestore {
     // for the grid, plus storeId (used to resolve publicProducts doc ids
     // anonymously). Anonymous read; signed-in write.
     match /publicCatalogs/{slug} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if isSignedIn();
       allow create: if canOperateStore(request.resource.data.storeId);
       allow update: if canOperateStore(resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
@@ -240,7 +247,10 @@ service cloud.firestore {
     // publicProducts/{id} — public-only product detail (id = storeId__slug).
     // Anonymous read.
     match /publicProducts/{id} {
-      allow read: if true;
+      // list is signed-in-only: the client prune query
+      // (where storeSlug ==) runs as the store owner.
+      allow get: if true;
+      allow list: if isSignedIn();
       allow create: if canOperateStore(request.resource.data.storeId);
       allow update: if canOperateStore(resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;

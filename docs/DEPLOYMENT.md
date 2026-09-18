@@ -48,6 +48,22 @@ One-time setup: create a repo-level `FIREBASE_TOKEN` secret
 (`firebase login:ci` → GitHub Settings → Secrets and variables → Actions).
 Without it the `deploy-rules` job fails loudly.
 
+One-time setup: create a repo-level `FIREBASE_PROD_SERVICE_ACCOUNT_JSON`
+secret for the build-time storefront prerender. `scripts/prerender-public.mjs`
+lists `publicStores` via firebase-admin (security rules deny anonymous LIST —
+no tenant enumeration — so the prerender authenticates as a service account):
+
+```bash
+gcloud iam service-accounts create ci-prerender --project store-os-f7cf8   --display-name "CI prerender (Store OS)"
+gcloud projects add-iam-policy-binding store-os-f7cf8   --member "serviceAccount:ci-prerender@store-os-f7cf8.iam.gserviceaccount.com"   --role "roles/datastore.viewer"  # read-only; the prerender only reads
+gcloud iam service-accounts keys create ~/ci-prerender-prod.json   --iam-account ci-prerender@store-os-f7cf8.iam.gserviceaccount.com   --project store-os-f7cf8
+gh secret set FIREBASE_PROD_SERVICE_ACCOUNT_JSON < ~/ci-prerender-prod.json
+```
+
+Without the secret the deploy still succeeds — the prerender skips with a
+loud warning and the static `public/sitemap.xml` ships instead (the SPA
+serves every route; only per-store SEO metadata and social previews degrade).
+
 Manual deploys are for **emergencies/rollbacks only** (console → Firestore →
 Rules → history to restore a previous ruleset, or):
 

@@ -4,7 +4,7 @@ import { ProductImage } from "./ProductImage";
 
 /** Only the selected full image loads. Swiping never triggers the product link. */
 export function ProductGallery({ images, name, href, onNavigate, thumbnails = false }: {
-  images: { url: string; alt?: string | null }[];
+  images: { url: string; alt?: string | null; width?: number | null; height?: number | null }[];
   name: string;
   href?: string;
   onNavigate?: () => void;
@@ -15,7 +15,7 @@ export function ProductGallery({ images, name, href, onNavigate, thumbnails = fa
   const swiped = useRef(false);
   const index = Math.min(active, Math.max(0, images.length - 1));
   const move = (delta: number) => setActive((index + delta + images.length) % images.length);
-  const photo = <ProductImage className={`olv-photo-image ${index % 2 === 0 ? "olv-photo-image--a" : "olv-photo-image--b"}`} src={images[index]?.url} alt={images[index]?.alt || name} size="full" placeholder="Imagen no disponible" />;
+  const photo = <ProductImage className={`olv-photo-image ${index % 2 === 0 ? "olv-photo-image--a" : "olv-photo-image--b"}`} src={images[index]?.url} alt={images[index]?.alt || name} width={images[index]?.width ?? undefined} height={images[index]?.height ?? undefined} size="full" placeholder="Imagen no disponible" />;
   return (
     <div className="olv-gallery">
       <div className="olv-photo" style={{ touchAction: "pan-y" }}

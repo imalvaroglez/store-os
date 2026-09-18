@@ -3,8 +3,8 @@ import { useStore } from "./StoreProvider";
 import { useAuth } from "./firebase/AuthProvider";
 import { useRoute } from "./router";
 import {
-  StoreSwitcher,
   BottomNav,
+  StoreSwitcher,
   Sidebar,
   Sheet,
   Button,
@@ -35,7 +35,7 @@ const TAB_FOR_PATH: Record<string, Tab> = {
 };
 
 export function AppShell() {
-  const { activeStore, setActiveStore } = useStore();
+  const { state, activeStore, setActiveStore } = useStore();
   const { user, enabled: authEnabled, signOut } = useAuth();
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -138,6 +138,7 @@ export function AppShell() {
       <Sidebar
         active={tab}
         storeType={activeStore.type}
+        switcher={<StoreSwitcher stores={state.stores} activeStore={activeStore} onSelect={setActiveStore} />}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenStoreSettings={canManageStore ? () => navigate("/tienda/configuracion") : undefined}
         onChangeStore={user ? () => setActiveStore(null) : undefined}
@@ -150,7 +151,7 @@ export function AppShell() {
           className="md:hidden sticky top-0 z-20 bg-paper/90 backdrop-blur px-4 py-3 flex items-center justify-between border-b border-rule/60"
           style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
         >
-          <StoreSwitcher />
+          <StoreSwitcher stores={state.stores} activeStore={activeStore} onSelect={setActiveStore} />
           <div className="flex items-center gap-2">
             {canManageStore && (
               <Button variant="ghost" size="sm" onClick={() => navigate("/tienda/configuracion")}>

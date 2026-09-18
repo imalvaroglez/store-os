@@ -9,6 +9,7 @@ import {
 } from "../../app/firebase/publicCatalog";
 import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 import { useCart } from "./useCart";
+import { useSeo } from "./useSeo";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
 
 // Generic public catalog for every store except Olivia. It deliberately keeps
@@ -36,6 +37,19 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
     cart.prune(new Set(data.catalog.products.map((product) => product.productSlug)));
     cart.refresh(data.catalog.products.map(cartItemFromPublicProduct));
   }, [cart.prune, cart.refresh, data]);
+
+  // Same per-route SEO contract as the Olivia storefront: title/canonical/og
+  // for crawlers that execute JS. Social previews read the prerendered HTML
+  // (scripts/prerender-public.mjs rewrites these tags per store at deploy).
+  useSeo({
+    title: data ? `${data.store.name} — Catálogo` : "Catálogo",
+    description: data?.store.storefront?.seo?.description ?? data?.store.storefront?.hero?.body ?? "Explora el catálogo, elige tus piezas y prepara tu pedido por WhatsApp.",
+    canonicalPath: `/catalogo/${slug}`,
+    ogImageUrl: data?.store.storefront?.seo?.ogImageUrl ?? data?.store.storefront?.hero?.imageUrl,
+    jsonLd: data
+      ? { "@context": "https://schema.org", "@type": "Store", name: data.store.name, url: `${window.location.origin}/catalogo/${slug}` }
+      : undefined,
+  });
 
   if (!data && !failed) {
     return <div className="min-h-full bg-paper p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}</div>;

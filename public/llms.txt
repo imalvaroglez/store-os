@@ -1,0 +1,7 @@
+# Store OS
+
+Catálogos públicos de tiendas administradas con Store OS. Cada tienda publica
+sus piezas con fotos, precios por nivel y un canal de pedido por WhatsApp;
+no hay carrito con pago en línea.
+
+- [Olivia — Joyería](https://store-os-alpha.vercel.app/catalogo/olivia): joyería para hacer tuyo cada día. Explora las piezas, arma tu lista y envíala por WhatsApp para confirmar precio y disponibilidad.

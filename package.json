@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-env.cjs && tsc --noEmit && vite build",
+    "build": "node scripts/check-env.cjs && tsc --noEmit && vite build && node scripts/check-public-bundle.mjs && node scripts/prerender-public.mjs",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run --exclude src/app/firebase/firestore.rules.test.ts",
