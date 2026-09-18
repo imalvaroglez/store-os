@@ -1,7 +1,7 @@
 // Minimal offline service worker: cache-first for app shell.
 // ponytail: no versioning strategy beyond CACHE name bump; app shell is small and
 // local-first, so stale UI is acceptable. Upgrade path: Workbox when caching grows.
-const CACHE = "store-os-v1";
+const CACHE = "store-os-v2";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -29,6 +29,10 @@ self.addEventListener("fetch", (event) => {
   // installing (defends against "the new SW never arrived"). Belt: addAll in
   // install. Suspenders: this cache.put on every online nav.
   if (req.mode === "navigate") {
+    // Cache each navigation under ITS OWN path — one shared "/index.html" key
+    // would store whatever page loaded last and serve it offline for every
+    // route (v1 served the storefront HTML under the admin shell's key).
+    const cacheKey = new URL(req.url).pathname;
     event.respondWith(
       fetch(req)
         .then((res) => {
@@ -37,11 +41,11 @@ self.addEventListener("fetch", (event) => {
           // it the browser may terminate the worker mid-put and silently drop
           // the rotation.
           event.waitUntil(
-            caches.open(CACHE).then((cache) => cache.put("/index.html", copy)).catch(() => {})
+            caches.open(CACHE).then((cache) => cache.put(cacheKey, copy)).catch(() => {})
           );
           return res;
         })
-        .catch(() => caches.match("/index.html"))
+        .catch(() => caches.match(cacheKey).then((hit) => hit || caches.match("/index.html")))
     );
     return;
   }

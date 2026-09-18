@@ -54,6 +54,12 @@ export type StorefrontSection = {
   imageUrl?: string;
   mobileImageUrl?: string;
   imageAlt?: string;
+  // Intrinsic size of each uploaded image (px) so the public hero reserves
+  // its box before the bytes arrive.
+  imageWidth?: number;
+  imageHeight?: number;
+  mobileImageWidth?: number;
+  mobileImageHeight?: number;
 };
 
 export type FAQItem = { q: string; a: string };

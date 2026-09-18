@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../../app/firebase/publicCatalog", () => ({
   loadPublicCatalog: mocks.loadPublicCatalog,
+  // The storefront progressively loads store + catalog; derive both from the
+  // same fixture so every existing mockResolvedValue keeps working.
+  loadPublicStore: vi.fn(async () => (await mocks.loadPublicCatalog()).store),
+  loadPublicCatalogSummary: vi.fn(async () => (await mocks.loadPublicCatalog()).catalog),
   loadPublicProduct: mocks.loadPublicProduct,
   PublicCatalogNotFoundError: class PublicCatalogNotFoundError extends Error {
     constructor(public slug: string) {
@@ -404,7 +408,8 @@ describe("editorial catalog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Limpiar búsqueda" }));
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "price-asc" } });
     expect(screen.getAllByRole("article")[0]).toHaveAccessibleName("Aretes Luna");
-    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
+    // Progressive load: one store read + one catalog read (the mock backs both).
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(2);
   });
 
   it("changes card photos by arrows/swipe without navigating or adding, then reuses the loaded catalog for detail", async () => {
@@ -423,7 +428,8 @@ describe("editorial catalog", () => {
     expect(mocks.loadPublicProduct).not.toHaveBeenCalled();
     view.rerender(<OliviaStorefront route={productRoute} />);
     await screen.findByRole("heading", { name: "Anillo Blossom" });
-    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
+    // Progressive load: one store read + one catalog read (the mock backs both).
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(2);
     expect(mocks.loadPublicProduct).toHaveBeenCalledWith("olivia", "anillo-blossom", store);
   });
 
@@ -435,6 +441,7 @@ describe("editorial catalog", () => {
     view.rerender(<OliviaStorefront route={{ name: "public_category", params: { slug: "olivia", categorySlug: "anillos" } }} />);
     expect(screen.queryByRole("img", { name: "Temporada Olivia" })).toBeNull();
     expect(screen.getAllByRole("article")).toHaveLength(1);
-    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(1);
+    // Progressive load: one store read + one catalog read (the mock backs both).
+    expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(2);
   });
 });

@@ -3,9 +3,9 @@
 export const OLIVIA_BRAND = {
   bg: "#FAF7F2",
   ink: "#332923",
-  inkSoft: "#716258",
-  accent: "#C97B86",
-  accentSoft: "#E7C9CE",
+  inkSoft: "#5E5148",
+  accent: "#8C4550",
+  accentSoft: "#F2DBDF",
   rule: "#DED2C6",
   fontDisplay: '"Playfair Display", Georgia, serif',
   fontBody: '"Plus Jakarta Sans", system-ui, sans-serif',

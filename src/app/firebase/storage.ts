@@ -49,7 +49,7 @@ const MAX_EDGE = 1600; // longest edge after resize, in px (storefront detail)
  * Never upscales. DOM-only (canvas) — caller is the browser; verified by e2e.
  * Throws on a non-decodable file so the caller can show an inline error.
  */
-export async function resizeImageFile(file: File, options: { transparent?: boolean; maxEdge?: number } = {}): Promise<Blob> {
+export async function resizeImageFile(file: File, options: { transparent?: boolean; maxEdge?: number } = {}): Promise<{ blob: Blob; width: number; height: number }> {
   const bitmap = await loadImageBitmap(file);
   const scale = Math.min(1, (options.maxEdge ?? MAX_EDGE) / Math.max(bitmap.width, bitmap.height));
   const w = Math.round(bitmap.width * scale);
@@ -66,7 +66,9 @@ export async function resizeImageFile(file: File, options: { transparent?: boole
     canvas.toBlob(resolve, options.transparent ? "image/png" : "image/jpeg", 0.8)
   );
   if (!blob) throw new Error("No se pudo procesar la imagen.");
-  return blob;
+  // Dimensions ride along so callers can persist them — the public projection
+  // renders width/height attributes and the layout never guesses.
+  return { blob, width: w, height: h };
 }
 
 // createImageBitmap is the modern path; fall back to HTMLImageElement on Safari

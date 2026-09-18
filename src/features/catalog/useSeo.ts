@@ -1,10 +1,10 @@
 import { useEffect } from "react";
 
 // Per-route SEO: sets <title>, canonical, Open Graph, Twitter Card, and an
-// optional JSON-LD block. Pure DOM effects — no SSR. WhatsApp's link preview
-// reads the static index.html OG tags (set in index.html) for the general
-// storefront card; per-product cards would need SSR and are out of scope for
-// this MVP. This hook still updates the live document for in-app navigation and
+// optional JSON-LD block. Pure DOM effects — no SSR. Social previews (WhatsApp
+// et al.) do NOT run JS: they read the static HTML — the public entry ships
+// generic tags and scripts/prerender-public.mjs rewrites them per store at
+// deploy time. This hook refines the live document for in-app navigation and
 // for crawlers that execute JS.
 
 type SeoInput = {

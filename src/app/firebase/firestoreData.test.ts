@@ -476,7 +476,7 @@ describe("public card gallery", () => {
   it("projects at most five photos, primary first, without storage/private metadata", () => {
     const images = Array.from({ length: 7 }, (_, i) => ({ id: String(i), url: `https://example.com/${i}.jpg`, alt: `Foto ${i}`, order: i, isPrimary: i === 3, storagePath: `private/${i}` }));
     const result = projectPublicProductSummary(baseProduct({ images }), "olivia");
-    expect(result.images).toEqual([3, 0, 1, 2, 4].map((i) => ({ url: images[i].url, alt: images[i].alt })));
+    expect(result.images).toEqual([3, 0, 1, 2, 4].map((i) => ({ url: images[i].url, alt: images[i].alt, width: null, height: null })));
     expect(result.imageUrl).toBe(images[3].url);
     expect(JSON.stringify(result.images)).not.toContain("storagePath");
     expect(images[0].id).toBe("0");
