@@ -92,7 +92,10 @@ function renderShell(template, slug, store) {
     `<meta property="og:description" content="${escapeHtml(meta.description)}" />`,
     `<meta property="og:url" content="${url}" />`,
     ...(meta.ogImage ? [`<meta property="og:image" content="${escapeHtml(meta.ogImage)}" />`] : []),
-    `<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "Store", name: store.name, url })}</script>`,
+    // Tenant content is untrusted on a multi-tenant platform: escape "<" so a
+    // store name like "</script><script>…" can never break out of the JSON-LD
+    // block and execute in a visitor's browser. (\u003c is JSON-safe.)
+    `<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "Store", name: store.name, url }).replace(/</g, "\\u003c")}</script>`,
   ].join("\n    ");
   return template
     .replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(meta.title)}</title>`)
@@ -100,8 +103,33 @@ function renderShell(template, slug, store) {
     .replace("</head>", `    ${tags}\n  </head>`);
 }
 
-const listing = await getJson(`${DOCS}/publicStores?key=${API_KEY}&pageSize=200`);
-const slugs = (listing.documents ?? []).map((doc) => doc.name.split("/").pop());
+// The listing needs credentials: firestore.rules denies anonymous LIST on the
+// public collections (no tenant enumeration with the public apiKey). In CI the
+// deploy job provides a service account via GOOGLE_APPLICATION_CREDENTIALS and
+// firebase-admin reads it (admin access bypasses rules). Without credentials
+// the prerender degrades loudly to the static public/sitemap.xml — it never
+// blocks a deploy and never silently ships a wrong sitemap.
+async function listPublicStoreSlugs() {
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) return null;
+  const { initializeApp, applicationDefault } = await import("firebase-admin/app");
+  const { getFirestore, collection, getDocs } = await import("firebase-admin/firestore");
+  const app = initializeApp({ projectId: PROJECT_ID, credential: applicationDefault() }, "prerender-public");
+  const snap = await getDocs(collection(getFirestore(app), "publicStores"));
+  return snap.docs.map((d) => d.id);
+}
+
+let slugs = null;
+try {
+  slugs = await listPublicStoreSlugs();
+} catch (error) {
+  console.warn(`[prerender-public] falló el listing autenticado: ${error.message}`);
+}
+if (!slugs) {
+  console.warn(
+    "[prerender-public] sin credenciales de servicio — se conserva el sitemap estático de public/ y NO se prerendera (el SPA sirve todas las rutas). Deploy continúa.",
+  );
+  process.exit(0);
+}
 
 if (!slugs.length) {
   console.log("[prerender-public] sin tiendas publicadas — nada que prerender.");
