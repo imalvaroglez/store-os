@@ -49,6 +49,18 @@ describe("G-P05 anonymous cannot write private collections", () => {
     await assertFails(getDocs(collection(db, "publicProducts")));
   });
 
+  // The client's projection prune queries publicProducts (where storeSlug ==)
+  // as the signed-in owner — a fully denied list broke the storefront editor's
+  // save (CI e2e caught it). Pin both sides of the contract.
+  it("signed-in users CAN list publicProducts (client prune query)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1"] });
+      await setDoc(doc(c.firestore(), "publicProducts/s1__pieza"), { storeId: "s1", storeSlug: "olivia", name: "Pieza" });
+    });
+    const db = await asUser("u1");
+    await assertSucceeds(getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", "olivia"))));
+  });
+
   it("anonymous GET still works on every public collection", async () => {
     const db = env.unauthenticatedContext().firestore();
     await env.withSecurityRulesDisabled(async (c) => {
