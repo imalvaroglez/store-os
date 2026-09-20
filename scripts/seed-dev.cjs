@@ -35,7 +35,7 @@ const STORE_SLUG = "olivia";
 const now = new Date().toISOString();
 
 const oliviaStorefront = {
-  hero: { heading: "Joyería para hacer tuyo cada día", body: "Encuentra esa pieza que va contigo. Elige tus favoritas y prepara tu pedido por WhatsApp." },
+  hero: { heading: "Tu nueva pieza favorita está aquí", body: "" },
   benefits: ["Envíos a todo el país", "Acero 304 y materiales de calidad", "Cada pieza es única"],
   story: { heading: "Sobre Olivia", body: "En Olivia puedes explorar joyería, reunir tus piezas favoritas y enviar tu selección por WhatsApp. Fer te ayuda a confirmar los detalles de tu pedido." },
   shipping: "Consulta por WhatsApp las opciones, el costo y el tiempo de entrega para tu pedido.",
@@ -44,7 +44,7 @@ const oliviaStorefront = {
     { q: "¿Mi selección reserva las piezas?", a: "No. Fer confirma contigo el precio y la disponibilidad por WhatsApp antes de completar tu pedido." },
   ],
   showSoldOut: true,
-  seo: { title: "Olivia — Joyería para hacer tuyo cada día", description: "Explora la joyería de Olivia y prepara tu pedido por WhatsApp." },
+  seo: { title: "Olivia — Tu nueva pieza favorita está aquí", description: "Explora la joyería de Olivia y prepara tu pedido por WhatsApp." },
 };
 
 const oliviaPriceTiers = [

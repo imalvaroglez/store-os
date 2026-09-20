@@ -70,7 +70,7 @@ describe("storefront images", () => {
     render(<StorefrontEditor store={store} onDone={() => {}} />);
     expect(screen.getByLabelText("Título principal")).toHaveValue("Mi texto");
     fireEvent.click(screen.getByRole("button", { name: "Usar textos sugeridos" }));
-    expect(screen.getByLabelText("Título principal")).toHaveValue("Joyería para hacer tuyo cada día");
+    expect(screen.getByLabelText("Título principal")).toHaveValue("Tu nueva pieza favorita está aquí");
     expect(screen.getByRole("img", { name: "Vista previa: Portada de escritorio" })).toHaveAttribute("src", "https://example.com/banner.jpg");
     expect(mocks.updateStore).not.toHaveBeenCalled();
   });
