@@ -45,7 +45,7 @@ const STORE_DOC = restDoc({
   type: "on_demand",
   whatsappPhone: "5215512345678",
   defaultTierId: "t_retail",
-  storefront: { hero: { heading: "Joyería para hacer tuyo cada día" }, seo: {} },
+  storefront: { hero: { heading: "Tu nueva pieza favorita está aquí" }, seo: {} },
   priceTiers: [{ id: "t_retail", label: "Precio", order: 1, minPieces: null }],
 });
 

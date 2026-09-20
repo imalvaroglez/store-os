@@ -232,7 +232,7 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   const anon = await ctx.newPage();
   await openCatalogAnonymous(anon, "olivia");
 
-  await expect(anon.getByRole("heading", { name: "Joyería para hacer tuyo cada día" }).first()).toBeVisible({ timeout: 15000 });
+  await expect(anon.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" }).first()).toBeVisible({ timeout: 15000 });
   const iconicHelp = anon.getByRole("button", { name: "Cómo se obtiene el precio Iconic" }).first();
   await iconicHelp.hover();
   await expect(anon.getByText(/desde \$1,000 en productos a precio Iconic/).first()).toBeVisible();
@@ -248,7 +248,7 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   const anon = await ctx.newPage();
   await openCatalogAnonymous(anon, "olivia");
 
-  await expect(anon.getByRole("heading", { name: "Joyería para hacer tuyo cada día" }).first()).toBeVisible({ timeout: 15000 });
+  await expect(anon.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" }).first()).toBeVisible({ timeout: 15000 });
 
   // Add two different pieces from the grid.
   await anon.getByRole("button", { name: "Agregar al carrito" }).nth(0).click();
@@ -288,7 +288,7 @@ for (const width of [390, 1280]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: true });
     const page = await context.newPage();
     await openCatalogAnonymous(page, "olivia");
-    await expect(page.getByRole("heading", { name: "Joyería para hacer tuyo cada día" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" })).toBeVisible();
     await page.getByRole("link", { name: "Explorar piezas" }).click();
     await expect(page.getByRole("searchbox")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -341,8 +341,8 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
   const editor = page.getByRole("dialog", { name: "Sitio público", exact: true });
   const images = await page.evaluate(() => [
     { width: 1000, height: 250, text: "Olivia", fill: null },
-    { width: 1600, height: 600, text: "Portada de prueba", fill: "#eeded6" },
-    { width: 600, height: 450, text: "Portada de celular", fill: "#eeded6" },
+    { width: 1280, height: 1600, text: "Portada de prueba", fill: "#eeded6" },
+    { width: 600, height: 750, text: "Portada de celular", fill: "#eeded6" },
   ].map(({ width, height, text, fill }) => {
     const canvas = document.createElement("canvas");
     canvas.width = width; canvas.height = height;
@@ -357,6 +357,8 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
     await expect(editor.getByRole("button", { name: "Guardar sitio público" })).toBeEnabled();
   }
   await editor.getByLabel("Descripción de la portada").fill("Colección de prueba");
+  await editor.getByLabel("Título principal").fill("Tu nueva pieza favorita está aquí");
+  await editor.getByLabel("Mensaje principal").fill("");
   await editor.getByRole("img", { name: "Vista previa: Portada de celular" }).evaluate(async (img: HTMLImageElement) => { await img.decode(); });
   await editor.evaluate((el) => { el.scrollTop = 0; });
   await page.screenshot({ path: testInfo.outputPath("olivia-editor.png") });
@@ -369,6 +371,17 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
   await expect(logo).toBeVisible();
   const oldLogo = (await logo.getAttribute("src"))!;
   await expect(catalog.getByRole("img", { name: "Colección de prueba" })).toBeVisible();
+  for (const width of [390, 1280]) {
+    await catalog.setViewportSize({ width, height: 844 });
+    await expect(catalog.locator(".olv-intro")).toHaveCount(0);
+    const banner = catalog.getByRole("img", { name: "Colección de prueba" });
+    await banner.evaluate(async (image: HTMLImageElement) => { await image.decode(); });
+    const bannerBox = (await banner.boundingBox())!;
+    const headingBox = (await catalog.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" }).boundingBox())!;
+    expect(bannerBox.y + bannerBox.height).toBeLessThan(headingBox.y);
+    await expect(catalog.locator(".olv-hero-copy .olv-link-button")).toHaveCSS("margin-top", "26px");
+    await catalog.screenshot({ path: testInfo.outputPath(`olivia-banner-${width}.png`), fullPage: true });
+  }
   const dimensions = await logo.evaluate(async (image: HTMLImageElement) => {
     await image.decode();
     return { width: image.naturalWidth, height: image.naturalHeight };
@@ -380,7 +393,7 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
   await editor.getByRole("button", { name: "Guardar sitio público" }).click();
   await expect(editor).not.toBeVisible({ timeout: 15000 });
   await catalog.reload();
-  await expect(catalog.getByRole("heading", { name: "Joyería para hacer tuyo cada día" })).toBeVisible();
+  await expect(catalog.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" })).toBeVisible();
   const defaultLogo = catalog.getByRole("img", { name: "Logo de Olivia", exact: true });
   await expect(defaultLogo).toHaveAttribute("src", /\/images\/olivia-logo\.png$/);
   await expect(catalog.getByRole("img", { name: "Colección de prueba" })).toBeVisible();
