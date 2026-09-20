@@ -112,9 +112,13 @@ function renderShell(template, slug, store) {
 async function listPublicStoreSlugs() {
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) return null;
   const { initializeApp, applicationDefault } = await import("firebase-admin/app");
-  const { getFirestore, collection, getDocs } = await import("firebase-admin/firestore");
+  const { getFirestore } = await import("firebase-admin/firestore");
   const app = initializeApp({ projectId: PROJECT_ID, credential: applicationDefault() }, "prerender-public");
-  const snap = await getDocs(collection(getFirestore(app), "publicStores"));
+  // Namespaced API: firebase-admin/firestore does NOT export the modular
+  // collection()/getDocs() helpers (those live in the client SDK) — the first
+  // production run failed with "collection is not a function" and degraded
+  // to the static sitemap fallback.
+  const snap = await getFirestore(app).collection("publicStores").get();
   return snap.docs.map((d) => d.id);
 }
 
