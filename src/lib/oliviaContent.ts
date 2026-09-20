@@ -3,7 +3,7 @@ import type { Storefront } from "../types";
 // Editorial suggestions, not claims about materials, delivery areas or hours.
 export const OLIVIA_CONTENT: Storefront = {
   hero: {
-    heading: "Joyería para hacer tuyo cada día",
+    heading: "Tu nueva pieza favorita está aquí",
     body: "Encuentra esa pieza que va contigo. Elige tus favoritas y prepara tu pedido por WhatsApp.",
   },
   story: {
@@ -17,7 +17,7 @@ export const OLIVIA_CONTENT: Storefront = {
     { q: "¿Cómo recibo mi pedido?", a: "Consulta por WhatsApp las opciones, el costo y el tiempo de entrega para tu pedido." },
   ],
   seo: {
-    title: "Olivia — Joyería para hacer tuyo cada día",
+    title: "Olivia — Tu nueva pieza favorita está aquí",
     description: "Explora la joyería de Olivia, elige tus piezas favoritas y prepara tu pedido por WhatsApp.",
   },
 };

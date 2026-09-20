@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import { OliviaStorefront } from "./OliviaStorefront";
+import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
 import type {
   PublicStore,
   PublicCatalog,
@@ -349,6 +350,18 @@ describe("detalle de producto — precios por tier", () => {
 });
 
 describe("editorial catalog", () => {
+  it.each(["", undefined])("respects an explicitly empty hero body (%s) while retaining SEO fallback", async (body) => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { hero: { body } } },
+      catalog,
+    });
+    await renderStore();
+    const intro = document.querySelector(".olv-intro");
+    if (body === "") expect(intro).toBeNull();
+    else expect(intro).toHaveTextContent(OLIVIA_CONTENT.hero!.body!);
+    expect(document.querySelector('meta[name="description"]')).toHaveAttribute("content", OLIVIA_CONTENT.hero!.body);
+  });
+
   it("centra el logo en portada y reemplaza solo el título de marca duplicado", async () => {
     mocks.loadPublicCatalog.mockResolvedValue({
       store: { ...store, storefront: { hero: { heading: "Olivia", body: "Una selección para ti." } } },
@@ -357,7 +370,7 @@ describe("editorial catalog", () => {
     const view = render(<OliviaStorefront route={storeRoute} />);
     await screen.findAllByRole("button", { name: "Agregar al carrito" });
 
-    expect(screen.getByRole("heading", { name: "Joyería para hacer tuyo cada día" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Olivia" })).toBeNull();
     expect(screen.getByRole("img", { name: "Logo de Olivia" }).closest(".olv-header-inner")).toHaveClass("olv-header-inner--home");
 

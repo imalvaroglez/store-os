@@ -42,7 +42,8 @@
 .olv-hero-copy { text-align: center; padding-block: 56px 64px; }
 .olv-eyebrow { color: var(--olv-accent); font-size: 10px; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; margin-bottom: 16px; }
 .olv-hero h1 { font-size: clamp(2.65rem, 6vw, 5.4rem); line-height: 1.08; letter-spacing: -.04em; max-width: 850px; margin: 0 auto; text-wrap: balance; }
-.olv-intro { max-width: 430px; margin: 22px auto 26px; font-size: 14px; line-height: 1.8; color: var(--olv-ink-soft); }
+.olv-intro { max-width: 430px; margin: 22px auto 0; font-size: 14px; line-height: 1.8; color: var(--olv-ink-soft); }
+.olv-hero-copy .olv-link-button { margin-top: 26px; }
 .olv-link-button { display: inline-flex; align-items: center; justify-content: center; gap: 32px; padding: 15px 24px; background: var(--olv-ink); color: var(--olv-surface); border-radius: var(--olv-radius); min-height: 48px; font-size: 13px; font-weight: 600; }
 .olv-benefits { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 24px; margin-top: 28px; font-size: 12px; color: var(--olv-ink-soft); }
 .olv-main { padding-top: 40px; scroll-margin-top: 100px; }
