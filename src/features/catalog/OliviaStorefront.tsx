@@ -57,6 +57,7 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("featured");
   const sf = store.storefront ?? {};
+  const heroBody = sf.hero?.body ?? OLIVIA_CONTENT.hero!.body;
   const slug = store.slug;
   const priceLabel = store.priceTiers?.find((tier) => tier.id === store.defaultTierId)?.label || "Precio";
   const category = catalog?.categories.find((item) => item.slug === focusCategory);
@@ -97,7 +98,7 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
       <div className="olv-container olv-hero-copy">
         <p className="olv-eyebrow">Pequeños detalles. Muy tú.</p>
         <h1>{sf.hero?.heading?.trim().toLocaleLowerCase() === store.name.trim().toLocaleLowerCase() ? OLIVIA_CONTENT.hero!.heading : sf.hero?.heading || OLIVIA_CONTENT.hero!.heading}</h1>
-        <p className="olv-intro">{sf.hero?.body || OLIVIA_CONTENT.hero!.body}</p>
+        {heroBody ? <p className="olv-intro">{heroBody}</p> : null}
         <a href="#piezas" className="olv-link-button">Explorar piezas <span aria-hidden="true">↗</span></a>
         {!!sf.benefits?.length && <div className="olv-benefits">{sf.benefits.map((item) => <span key={item}>{item}</span>)}</div>}
       </div>
