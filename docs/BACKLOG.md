@@ -1,5 +1,16 @@
 # Backlog
 
+## Ciclo actual: entrevista con Fer, 28 de octubre de 2026
+
+El [backlog de Olivia](fer-backlog-2026-10-28.md) consolida 16 candidatos,
+criterios de resultado, decisiones pendientes y una secuencia propuesta de
+entregas. Es la referencia de descubrimiento para este ciclo; las prioridades
+requieren acuerdo con Álvaro y las reglas abiertas requieren diseño.
+
+Los estados y referencias al harness de las secciones históricas de este archivo
+no son evidencia del estado actual del producto. El flujo vigente es `LOOPS.md`;
+se debe contrastar cada antecedente con código y validación antes de retomarlo.
+
 Lista viva de capacidades candidatas para Store OS. Cada entrada describe el
 **problema** (qué necesita la usuaria), el **alcance propuesto** (no es spec
 aprobado — es un punto de partida), las **decisiones pendientes** que hay que
