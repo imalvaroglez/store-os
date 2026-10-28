@@ -2,6 +2,12 @@
 
 ## Ciclo actual: entrevista con Fer, 28 de octubre de 2026
 
+El [diagnóstico técnico y plan incremental](olivia-technical-diagnostic-2026-10-28.md)
+contrasta las 39 historias OLI del backlog funcional externo con el código actual,
+propone arquitectura y entregas, y conserva las decisiones abiertas para revisión.
+Los IDs FER siguen como trazabilidad de la entrevista; no son una segunda cola
+de implementación. La revisión del diagnóstico precede los cambios sustanciales.
+
 El [backlog de Olivia](fer-backlog-2026-10-28.md) consolida 17 candidatos,
 criterios de resultado, decisiones pendientes y una secuencia propuesta de
 entregas. El [análisis del Excel de Fer](fer-excel-analysis-2026-10-28.md)

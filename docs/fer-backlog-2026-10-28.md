@@ -8,6 +8,12 @@ de acordar con Álvaro. Este documento no aprueba reglas pendientes ni autoriza
 implementar todas las capacidades. Diseñaremos cada entrega antes de que Claude
 Code implemente, con supervisión y revisión de Codex.
 
+El [diagnóstico técnico posterior](olivia-technical-diagnostic-2026-10-28.md)
+incorpora el backlog funcional externo de 39 historias OLI, el cruce con estos
+17 candidatos y la propuesta de arquitectura/entregas. Es la referencia para
+la revisión técnica previa a implementación; conserva abiertas las reglas que
+todavía no se han validado.
+
 ## Insumo recibido: Excel de ventas
 
 El archivo ya se recibió y se analizó. El [análisis del Excel](fer-excel-analysis-2026-10-28.md)
