@@ -4,7 +4,8 @@
 
 El [backlog de Olivia](fer-backlog-2026-10-28.md) consolida 17 candidatos,
 criterios de resultado, decisiones pendientes y una secuencia propuesta de
-entregas. Es la referencia de descubrimiento para este ciclo; las prioridades
+entregas. El [análisis del Excel de Fer](fer-excel-analysis-2026-10-28.md)
+complementa las reglas de costos, reparto y corte mensual. Es la referencia de descubrimiento para este ciclo; las prioridades
 requieren acuerdo con Álvaro y las reglas abiertas requieren diseño.
 
 Los estados y referencias al harness de las secciones históricas de este archivo

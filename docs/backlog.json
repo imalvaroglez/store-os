@@ -203,7 +203,8 @@
       "previewChecks": [],
       "discoveryId": "FER-08",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
-      "proposedPriority": "P1"
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "scalable-pricing",
@@ -258,7 +259,8 @@
       "proposedPriority": "P1",
       "relatedItems": [
         "purchase-ux2-fast-receive"
-      ]
+      ],
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "fer-cost-allocation",
@@ -269,7 +271,8 @@
       "previewChecks": [],
       "discoveryId": "FER-02",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
-      "proposedPriority": "P1"
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "fer-sale-profit",
@@ -280,7 +283,8 @@
       "previewChecks": [],
       "discoveryId": "FER-03",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
-      "proposedPriority": "P1"
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "fer-customer-price-tier",
@@ -294,7 +298,8 @@
       "proposedPriority": "P1",
       "relatedItems": [
         "scalable-pricing"
-      ]
+      ],
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "fer-iconic-renewal",
@@ -305,7 +310,8 @@
       "previewChecks": [],
       "discoveryId": "FER-05",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
-      "proposedPriority": "P2"
+      "proposedPriority": "P2",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "fer-order-prepend",
@@ -410,7 +416,8 @@
       "previewChecks": [],
       "discoveryId": "FER-15",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
-      "proposedPriority": "P1"
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "fer-monthly-close",
@@ -421,7 +428,8 @@
       "previewChecks": [],
       "discoveryId": "FER-16",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
-      "proposedPriority": "P1"
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "fer-monthly-reseller-ranking",
@@ -437,7 +445,8 @@
         "fer-customer-price-tier",
         "fer-iconic-renewal",
         "fer-monthly-close"
-      ]
+      ],
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     }
   ]
 }
