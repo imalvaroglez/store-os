@@ -8,6 +8,14 @@ de acordar con Álvaro. Este documento no aprueba reglas pendientes ni autoriza
 implementar todas las capacidades. Diseñaremos cada entrega antes de que Claude
 Code implemente, con supervisión y revisión de Codex.
 
+## Insumo recibido: Excel de ventas
+
+El archivo ya se recibió y se analizó. El [análisis del Excel](fer-excel-analysis-2026-10-28.md)
+documenta las fórmulas, diferencias entre hojas y decisiones que siguen abiertas.
+El nombre observado es **Girly**. En ventas el reparto es **20% inversión, 50% Fer,
+30% Olivia**; en inventario es **15/50/35**, por lo que aún debemos confirmar la
+regla vigente. La recepción del archivo no aprueba automáticamente sus fórmulas.
+
 ## Qué cambió en el negocio
 
 Olivia pasó de 2–3 emprendedoras algo activas a 7 bastante activas. Hay pedidos
@@ -31,8 +39,8 @@ debe funcionar bien en celular y computadora.
   las 30; falta acordar el manejo de los centavos sobrantes.
 - El ejemplo confirmado de compra es $44 de transporte / 100 piezas = $0.44
   extra por pieza. La regla general de reparto aún requiere definición.
-- Los tipos de precio mencionados son Regular, Gibly e Iconic. Confirmar la
-  escritura de Gibly antes de cambiar etiquetas.
+- Los tipos de precio son Regular, Girly e Iconic. El Excel recibido después
+  confirma Girly y corrige la transcripción inicial “Gibly”.
 - Un primer pedido que supere $1,000 da acceso a Iconic en ese mismo pedido.
   En la ampliación final se acordó mantenerlo con otro pedido dentro de los
   siguientes **30 días**, renovable por otros 30 días. Esto sustituye la
@@ -45,7 +53,8 @@ debe funcionar bien en celular y computadora.
 - Para existencias bajas, Fer sí prefiere WhatsApp. Una o cero piezas fueron
   ejemplos, no un umbral universal aprobado.
 - El Excel descuenta costos y divide la ganancia entre Fer, Olivia y el
-  inversionista con porcentajes existentes que todavía no conocemos.
+  inversionista. El Excel muestra 20/50/30 en ventas y 15/50/35 en inventario;
+  falta confirmar cuál rige y desde cuándo.
 - Los cortes abarcan del primero al último día de cada mes. Una venta del
   primero de octubre no pertenece a septiembre.
 
@@ -78,7 +87,7 @@ antecedentes para revisar, no dependencias obligatorias de implementación.
 | --- | --- | --- | --- | --- |
 | FER-01 | P1 | Capturar el ticket de compra con productos, cantidades y gastos de surtido. | Fer registra la compra y sus gastos juntos, con desglose y total verificables. | Ampliar Compras; distinguir envío, traslado para surtir y entrega a clienta. No implica leer fotos o implementar OCR. |
 | FER-02 | P1 | Distribuir gastos compartidos y empaques entre las piezas. | El reparto conserva exactamente el gasto original; soporta el ejemplo de $44 / 100 piezas y la bolsa de $1 / 30 piezas. | FER-01; definir base de reparto, precisión, sobrantes, gastos tardíos y nivel compra/pedido/entrega. Evitar contar el mismo gasto dos veces. |
-| FER-03 | P1 | Ver costo completo y ganancia de una venta. | Un desglose permite reconstruir venta menos producto y gastos asignados, con resultado contrastable con Excel. | FER-02 y revisión del Excel; distinguir ganancia de efectivo cobrado, costos de compra y costos de entrega. Definir devoluciones y costo histórico. |
+| FER-03 | P1 | Ver costo completo y ganancia de una venta. | Un desglose permite reconstruir venta menos producto y gastos asignados, con resultado contrastable con Excel. | FER-02 y análisis del Excel recibido; distinguir ganancia de efectivo cobrado, costos de compra y costos de entrega. Definir devoluciones y costo histórico. |
 | FER-04 | P1 | Identificar clientas regulares/emprendedoras y guardar su tipo de precio para el pedido. | Al elegir a Sofía con Iconic, las líneas toman su precio Iconic sin seleccionarlo una por una. | Distinguir tipo de clienta, tipo de precio y vigencia; reutilizar tipos por tienda; definir cambio de clienta con líneas existentes, precios faltantes y ajustes manuales. Separado de la renovación automática. |
 | FER-05 | P2 | Obtener y renovar Iconic; avisar antes de vencer. | Con reglas acordadas, el pedido que cumple el umbral recibe Iconic y Fer ve la vigencia de 30 días y próximo vencimiento; el aviso llega sin abrir la app. | FER-04; definir umbral, evento, inicio de renovación de los 30 días, pérdida y recuperación. Estudio del canal externo y costo cero antes de comprometer la notificación. Se puede dividir reglas y avisos en entregas distintas. |
 | FER-06 | P1 | Insertar nuevas líneas arriba al capturar pedidos. | En un pedido de 50 piezas, Agregar deja la nueva línea visible arriba; las anteriores conservan sus datos y totales. | Cambio pequeño independiente; revisar ubicación del botón, foco y teclado en móvil. |
@@ -90,7 +99,7 @@ antecedentes para revisar, no dependencias obligatorias de implementación.
 | FER-12 | P3 | Mostrar variantes de un diseño en dorado y plateado. | La clienta cambia de opción, reconoce su foto y disponibilidad y solicita la variante correcta. | Definir diseño vs producto, existencia y precio por variante; evitar fusionar inventario sin reglas. |
 | FER-13 | P2 | Unificar la experiencia visual del catálogo. | Portada, categorías, búsqueda, bolsa y navegación se sienten coherentes en móvil y escritorio. | Diseñar junto a FER-10/11; tokens y componentes propios, presupuesto de imágenes y rendimiento. No requiere un editor visual in-place. |
 | FER-14 | P2 | Recibir la selección pública como solicitud interna revisable. | Fer recibe el detalle sin recaptura, confirma precio/disponibilidad y lo convierte en pedido una sola vez. | El carrito de WhatsApp ya existe; revisar si hay antecedente específico en backlog. Definir identidad, duplicados, permisos, abuso y cuándo se afecta stock. Sin checkout ni cobro en línea. |
-| FER-15 | P1 | Calcular el reparto de ganancia entre Fer, Olivia e inversionista. | Los importes coinciden con un ejemplo validado del Excel y suman exactamente la ganancia distribuible. | FER-03 y Excel; conocer porcentajes, vigencia, préstamo, pérdidas y redondeo. Es registro/cálculo, no transferencia de dinero. |
+| FER-15 | P1 | Calcular el reparto de ganancia entre Fer, Olivia e inversionista. | Los importes coinciden con un ejemplo validado del Excel y suman exactamente la ganancia distribuible. | FER-03 y Excel analizado; confirmar 20/50/30 de ventas vs 15/50/35 de inventario, vigencia, préstamo, pérdidas y redondeo. Es registro/cálculo, no transferencia de dinero. |
 | FER-16 | P1 | Consultar y hacer el corte de cada mes por separado. | Agosto, septiembre y octubre se consultan sin mezclar ventas; detalle, totales y reparto son trazables y cuadran. | FER-03/15; definir fecha de atribución, zona horaria del negocio, pagos parciales, correcciones y cierre/reapertura. Una pestaña es una sugerencia de interfaz, no un requisito técnico. |
 | FER-17 | P2 | Evaluación mensual y top 3 de emprendedoras para incentivos. | Fer consulta las tres emprendedoras con mayor importe del mes, con posiciones, importes y operaciones de respaldo; recibe el aviso acordado para premiarlas en la primera semana del mes siguiente. Un avance previo al cierre se distingue del resultado definitivo. | FER-04 para identificar emprendedoras y alineación de periodo con FER-16; definir compras a Olivia vs reventas, pedidos que cuentan, empates, devoluciones, meses con menos de tres participantes y fecha/canal del aviso. Los premios los decide y entrega Fer; no se automatizan. |
 
@@ -100,7 +109,7 @@ antecedentes para revisar, no dependencias obligatorias de implementación.
    después FER-08 y FER-07, definiendo cómo conviven agrupación y orden de captura.
    Un ticket en texto es una alternativa inicial para discutir, no una decisión
    tomada. No bloquear precios por clienta con todo el motor de renovación Iconic.
-2. **Reemplazar los cálculos manuales:** recibir y estudiar el Excel; avanzar
+2. **Reemplazar los cálculos manuales:** confirmar las reglas observadas en el Excel; avanzar
    FER-01 → FER-02 → FER-03 → FER-15 → FER-16. Entregas independientes y números
    de ejemplo acordados antes de sustituir el control actual.
 3. **Seguimiento de emprendedoras y reposición:** definir FER-05, FER-09 y
@@ -118,9 +127,10 @@ alcance y las dependencias de cada entrega.
 
 ## Preguntas que debemos cerrar primero
 
-1. **Excel:** compartir el archivo y explicar un mes representativo, con una
-   compra, una venta, todos sus gastos y el reparto. Revisar fórmulas, valores
-   manuales, excepciones y redondeos. No asumir que importarlo o migrar todo su
+1. **Excel recibido y analizado:** validar con Fer un mes representativo, con
+   una compra, una venta, todos sus gastos y el reparto. Confirmar la diferencia
+   entre 20/50/30 en ventas y 15/50/35 en inventario, qué incluye Packing y cómo
+   tratar operaciones no pagadas. Revisar excepciones y redondeos. No asumir que importarlo o migrar todo su
    histórico ya está solicitado.
 2. **Costos:** ¿se reparte por piezas o valor? ¿Cómo se asignan gastos de una
    compra a ventas de distintas clientas y meses? ¿Qué pasa con viajes que
@@ -130,7 +140,7 @@ alcance y las dependencias de cada entrega.
    ¿Cuenta capturar, pagar o entregar? ¿Qué mínimo renueva? Con los 30 días ya
    acordados, ¿la nueva vigencia inicia
    en la compra que renueva o en el vencimiento anterior? ¿Cómo tratar la hora
-   límite, cancelaciones, gracia y asignación manual? ¿Qué regla aplica a Gibly?
+   límite, cancelaciones, gracia y asignación manual? ¿Qué regla aplica a Girly?
 4. **Cortes:** ¿venta del mes por qué fecha? ¿Cuándo hay ganancia repartible?
    ¿Cómo se registran abonos, devoluciones, pérdidas y gastos posteriores?
    ¿Se congela un corte o se recalcula? ¿Cómo se registra el pago al inversionista?
@@ -194,6 +204,6 @@ los flujos afectados; no se afirmó que continúen fallando hoy.
 ## Siguiente sesión de definición
 
 Propuesta: acordar el primer grupo de entregas, resolver las decisiones de
-FER-04/06/08 y recibir el Excel para trabajar en paralelo las reglas de costos
-y corte mensual. Medir con Fer tiempo de captura de un pedido representativo,
+FER-04/06/08 y usar el análisis del Excel para cerrar en paralelo las reglas
+de costos y corte mensual. Medir con Fer tiempo de captura de un pedido representativo,
 correcciones de precio y diferencias del corte para comparar el antes/después.
