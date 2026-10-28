@@ -2,7 +2,7 @@
 
 ## Ciclo actual: entrevista con Fer, 28 de octubre de 2026
 
-El [backlog de Olivia](fer-backlog-2026-10-28.md) consolida 16 candidatos,
+El [backlog de Olivia](fer-backlog-2026-10-28.md) consolida 17 candidatos,
 criterios de resultado, decisiones pendientes y una secuencia propuesta de
 entregas. Es la referencia de descubrimiento para este ciclo; las prioridades
 requieren acuerdo con Álvaro y las reglas abiertas requieren diseño.
