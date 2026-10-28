@@ -197,10 +197,14 @@
       "id": "receipts",
       "title": "Recibos",
       "priority": 100,
-      "status": "awaiting-approval",
+      "status": "needs-spec",
       "specPath": "docs/superpowers/specs/receipts-design.md",
       "dependsOn": [],
-      "previewChecks": []
+      "previewChecks": [],
+      "discoveryId": "FER-08",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
       "id": "scalable-pricing",
@@ -242,6 +246,207 @@
       "specPath": "docs/superpowers/specs/member-roles-design.md",
       "dependsOn": [],
       "previewChecks": []
+    },
+    {
+      "id": "fer-purchase-expenses",
+      "title": "Compra con gastos de surtido",
+      "priority": 200,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-01",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1",
+      "relatedItems": [
+        "purchase-ux2-fast-receive"
+      ],
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
+    },
+    {
+      "id": "fer-cost-allocation",
+      "title": "Reparto de gastos y empaques por pieza",
+      "priority": 210,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-02",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
+    },
+    {
+      "id": "fer-sale-profit",
+      "title": "Costo completo y ganancia por venta",
+      "priority": 220,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-03",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
+    },
+    {
+      "id": "fer-customer-price-tier",
+      "title": "Tipo de clienta y precio aplicado al pedido",
+      "priority": 230,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-04",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1",
+      "relatedItems": [
+        "scalable-pricing"
+      ],
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
+    },
+    {
+      "id": "fer-iconic-renewal",
+      "title": "Beneficio Iconic renovable cada 30 días y aviso previo",
+      "priority": 240,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-05",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P2",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
+    },
+    {
+      "id": "fer-order-prepend",
+      "title": "Nuevas líneas de pedido al principio",
+      "priority": 250,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-06",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1"
+    },
+    {
+      "id": "fer-order-category-groups",
+      "title": "Revisión del pedido agrupada por categoría",
+      "priority": 260,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-07",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1"
+    },
+    {
+      "id": "fer-low-stock-alerts",
+      "title": "Alertas de existencias bajas o agotadas",
+      "priority": 280,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-09",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P2"
+    },
+    {
+      "id": "fer-catalog-visual-home",
+      "title": "Portada fotográfica y categorías visuales",
+      "priority": 290,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-10",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P2"
+    },
+    {
+      "id": "fer-catalog-subcategories",
+      "title": "Subcategorías y disponibilidad clara",
+      "priority": 300,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-11",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P2"
+    },
+    {
+      "id": "fer-product-variants",
+      "title": "Variantes de un diseño con foto y disponibilidad",
+      "priority": 310,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-12",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P3"
+    },
+    {
+      "id": "fer-catalog-cohesion",
+      "title": "Experiencia visual integrada del catálogo",
+      "priority": 320,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-13",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P2",
+      "relatedItems": [
+        "wysiwyg-catalog"
+      ]
+    },
+    {
+      "id": "fer-catalog-order-request",
+      "title": "Solicitud del catálogo como pedido interno revisable",
+      "priority": 330,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-14",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P2",
+      "relatedItems": [
+        "carrito-publico"
+      ]
+    },
+    {
+      "id": "fer-profit-distribution",
+      "title": "Reparto de ganancia entre Fer, Olivia e inversionista",
+      "priority": 340,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-15",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
+    },
+    {
+      "id": "fer-monthly-close",
+      "title": "Corte mensual de ventas y reparto",
+      "priority": 350,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-16",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P1",
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
+    },
+    {
+      "id": "fer-monthly-reseller-ranking",
+      "title": "Top 3 mensual de emprendedoras y aviso para incentivos",
+      "priority": 360,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryId": "FER-17",
+      "discoveryPath": "docs/fer-backlog-2026-10-28.md",
+      "proposedPriority": "P2",
+      "relatedItems": [
+        "fer-customer-price-tier",
+        "fer-iconic-renewal",
+        "fer-monthly-close"
+      ],
+      "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     }
   ]
 }

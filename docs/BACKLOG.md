@@ -1,5 +1,23 @@
 # Backlog
 
+## Ciclo actual: entrevista con Fer, 28 de octubre de 2026
+
+El [diagnóstico técnico y plan incremental](olivia-technical-diagnostic-2026-10-28.md)
+contrasta las 39 historias OLI del backlog funcional externo con el código actual,
+propone arquitectura y entregas, y conserva las decisiones abiertas para revisión.
+Los IDs FER siguen como trazabilidad de la entrevista; no son una segunda cola
+de implementación. La revisión del diagnóstico precede los cambios sustanciales.
+
+El [backlog de Olivia](fer-backlog-2026-10-28.md) consolida 17 candidatos,
+criterios de resultado, decisiones pendientes y una secuencia propuesta de
+entregas. El [análisis del Excel de Fer](fer-excel-analysis-2026-10-28.md)
+complementa las reglas de costos, reparto y corte mensual. Es la referencia de descubrimiento para este ciclo; las prioridades
+requieren acuerdo con Álvaro y las reglas abiertas requieren diseño.
+
+Los estados y referencias al harness de las secciones históricas de este archivo
+no son evidencia del estado actual del producto. El flujo vigente es `LOOPS.md`;
+se debe contrastar cada antecedente con código y validación antes de retomarlo.
+
 Lista viva de capacidades candidatas para Store OS. Cada entrada describe el
 **problema** (qué necesita la usuaria), el **alcance propuesto** (no es spec
 aprobado — es un punto de partida), las **decisiones pendientes** que hay que
