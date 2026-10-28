@@ -9,6 +9,19 @@ Describe lo que hace el archivo; no convierte automáticamente sus fórmulas en
 reglas aprobadas para Store OS. No se incorpora el libro ni la lista de clientas
 al repositorio.
 
+## Confirmación posterior de Álvaro
+
+El 28 de octubre de 2026 Álvaro confirmó la regla vigente sobre la ganancia:
+**20% para el inversionista, como pago de la inversión recibida; 50% para Fer;
+30% para Olivia**. El reparto 15/50/35 de Inventario se conserva como hallazgo
+del archivo, no como alternativa para la nueva implementación. No se confirmó
+una fecha retroactiva ni se autorizó modificar los cortes o el Excel.
+
+Las definiciones restantes se revisarán con Fer al trabajar en cada entrega.
+Los errores de fórmulas quedan documentados para evitar reproducirlos en Store
+OS; el archivo fuente permanece sin cambios. Álvaro autorizó compartir este
+análisis en el PR #88 sin adjuntar el libro ni los nombres de las clientas.
+
 ## Estructura y significado
 
 | Hoja | Evidencia | Lectura para el diseño |
@@ -49,10 +62,10 @@ a sus propias clientas ni para determinar quién participa en FER-17.
    50%, fondo de marca/recompra 30%. Evidencia: `Ventas Ago - Sep!K3:M3` y
    `Ventas Oct!M5:O5`. Es reparto sobre ganancia, no sobre el ingreso completo.
 5. **Inventario usa otro reparto:** inversión 15%, salario 50%, fondo 35%,
-   por ejemplo `Inventario!M5:U5`. Falta confirmar si es una regla anterior,
-   una simulación o una inconsistencia; no elegir un reparto global por inferencia.
-   El diseño debe contemplar si los porcentajes cambian por fecha y conservar
-   el significado de los cortes anteriores.
+   por ejemplo `Inventario!M5:U5`. La confirmación posterior establece que rige
+   20/50/30. Queda por aclarar si la diferencia del archivo es histórica, una
+   simulación o una inconsistencia, y cómo conservar el significado de cortes
+   anteriores sin recalcularlos silenciosamente.
 6. **Ganancia calculada no significa dinero cobrado:** en `Ventas Oct!P22:P25`
    aparece NO PAGADO y en L22:O25 se calculan ganancia y reparto igualmente.
    No hay condición de pago en esas fórmulas. Falta acordar cuándo ese importe
@@ -91,7 +104,7 @@ a sus propias clientas ni para determinar quién participa en FER-17.
 | FER-01/02/03 | Compra por cantidad, costo de línea y costo unitario son conceptos distintos; Packing puede estar incluido en el costo. Octubre separa gastos adicionales. | Composición de $2.83, gasto de surtido vs entrega, base de reparto, conservación de costo histórico y excepciones. |
 | FER-04/05 | Etiqueta Girly confirmada en el archivo. Los tres precios ya se usan en ventas. | Clasificación de emprendedora, umbral y evento que activa/renueva Iconic cada 30 días. |
 | FER-08 | Las ventas ya se agrupan manualmente por clienta/fecha; el ticket debe expresar cantidad, precio unitario y subtotal sin ambigüedad. | Formato de entrega, identificación del pedido y saldo/abonos. |
-| FER-15 | El reparto de ventas observado es 20/50/30 sobre ganancia. | Confirmar vigencia y diferencia con 15/50/35, préstamo, pérdidas, redondeo y disponibilidad de efectivo. |
+| FER-15 | Regla vigente confirmada: 20% pago de inversión, 50% Fer, 30% Olivia, sobre ganancia. | Tratamiento histórico del 15/50/35, préstamo, pérdidas, redondeo y disponibilidad de efectivo. |
 | FER-16 | El archivo permite estudiar la lógica del corte; el agrupamiento agosto–septiembre difiere de la nueva petición. | Fecha de atribución, pagos parciales, ajustes, cierre y reapertura. |
 | FER-17 | Hay compras de clientas a Olivia, no registros de sus reventas. | Base y participantes del ranking, empates, operaciones pendientes y canal/fecha del aviso. |
 
@@ -110,8 +123,10 @@ deben presentarse como un cierre definitivo ni como un ranking de ganadoras.
 
 ## Próximas definiciones con Álvaro y Fer
 
-Confirmar primero: (1) si rige 20/50/30 y desde cuándo; (2) qué integra Packing
-de $2.83 y qué representa Envío; (3) si el corte reparte ganancia de ventas
-registradas o de cobros efectivos; (4) cómo interpretar líneas de varias piezas;
-(5) si el top 3 compara compras a Olivia. Con esas respuestas podemos diseñar
-los cálculos con ejemplos reproducibles sin arrastrar errores del libro.
+El reparto vigente 20/50/30 ya está confirmado. Al trabajar cada entrega,
+revisar con Fer qué integra Packing de $2.83 y qué representa Envío; si el corte
+reparte ganancia de ventas registradas o de cobros efectivos; cómo interpretar
+líneas de varias piezas; y si el top 3 compara compras a Olivia. La fecha de
+aplicación histórica y el tratamiento de fórmulas anteriores siguen abiertos.
+Con esas respuestas podemos diseñar cálculos con ejemplos reproducibles sin
+arrastrar errores del libro.

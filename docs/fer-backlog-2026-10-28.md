@@ -13,8 +13,10 @@ Code implemente, con supervisión y revisión de Codex.
 El archivo ya se recibió y se analizó. El [análisis del Excel](fer-excel-analysis-2026-10-28.md)
 documenta las fórmulas, diferencias entre hojas y decisiones que siguen abiertas.
 El nombre observado es **Girly**. En ventas el reparto es **20% inversión, 50% Fer,
-30% Olivia**; en inventario es **15/50/35**, por lo que aún debemos confirmar la
-regla vigente. La recepción del archivo no aprueba automáticamente sus fórmulas.
+30% Olivia**. Álvaro confirmó que esta es la regla vigente: el 20% es pago de
+la inversión recibida. El **15/50/35** observado en inventario no rige el nuevo
+diseño; su tratamiento histórico queda por definir. Las demás reglas abiertas
+se revisarán con Fer al trabajar en la entrega correspondiente.
 
 ## Qué cambió en el negocio
 
@@ -53,8 +55,9 @@ debe funcionar bien en celular y computadora.
 - Para existencias bajas, Fer sí prefiere WhatsApp. Una o cero piezas fueron
   ejemplos, no un umbral universal aprobado.
 - El Excel descuenta costos y divide la ganancia entre Fer, Olivia y el
-  inversionista. El Excel muestra 20/50/30 en ventas y 15/50/35 en inventario;
-  falta confirmar cuál rige y desde cuándo.
+  inversionista. Regla vigente confirmada por Álvaro: 20% para pagar la inversión
+  recibida, 50% para Fer y 30% para Olivia, sobre la ganancia. No se ha definido
+  una fecha retroactiva ni un cambio de cortes históricos.
 - Los cortes abarcan del primero al último día de cada mes. Una venta del
   primero de octubre no pertenece a septiembre.
 
@@ -99,7 +102,7 @@ antecedentes para revisar, no dependencias obligatorias de implementación.
 | FER-12 | P3 | Mostrar variantes de un diseño en dorado y plateado. | La clienta cambia de opción, reconoce su foto y disponibilidad y solicita la variante correcta. | Definir diseño vs producto, existencia y precio por variante; evitar fusionar inventario sin reglas. |
 | FER-13 | P2 | Unificar la experiencia visual del catálogo. | Portada, categorías, búsqueda, bolsa y navegación se sienten coherentes en móvil y escritorio. | Diseñar junto a FER-10/11; tokens y componentes propios, presupuesto de imágenes y rendimiento. No requiere un editor visual in-place. |
 | FER-14 | P2 | Recibir la selección pública como solicitud interna revisable. | Fer recibe el detalle sin recaptura, confirma precio/disponibilidad y lo convierte en pedido una sola vez. | El carrito de WhatsApp ya existe; revisar si hay antecedente específico en backlog. Definir identidad, duplicados, permisos, abuso y cuándo se afecta stock. Sin checkout ni cobro en línea. |
-| FER-15 | P1 | Calcular el reparto de ganancia entre Fer, Olivia e inversionista. | Los importes coinciden con un ejemplo validado del Excel y suman exactamente la ganancia distribuible. | FER-03 y Excel analizado; confirmar 20/50/30 de ventas vs 15/50/35 de inventario, vigencia, préstamo, pérdidas y redondeo. Es registro/cálculo, no transferencia de dinero. |
+| FER-15 | P1 | Calcular el reparto de ganancia entre Fer, Olivia e inversionista. | Los importes coinciden con un ejemplo validado del Excel y suman exactamente la ganancia distribuible. | FER-03 y Excel analizado; aplicar 20% al pago de inversión, 50% a Fer y 30% a Olivia; definir tratamiento histórico, préstamo, pérdidas y redondeo. Es registro/cálculo, no transferencia de dinero. |
 | FER-16 | P1 | Consultar y hacer el corte de cada mes por separado. | Agosto, septiembre y octubre se consultan sin mezclar ventas; detalle, totales y reparto son trazables y cuadran. | FER-03/15; definir fecha de atribución, zona horaria del negocio, pagos parciales, correcciones y cierre/reapertura. Una pestaña es una sugerencia de interfaz, no un requisito técnico. |
 | FER-17 | P2 | Evaluación mensual y top 3 de emprendedoras para incentivos. | Fer consulta las tres emprendedoras con mayor importe del mes, con posiciones, importes y operaciones de respaldo; recibe el aviso acordado para premiarlas en la primera semana del mes siguiente. Un avance previo al cierre se distingue del resultado definitivo. | FER-04 para identificar emprendedoras y alineación de periodo con FER-16; definir compras a Olivia vs reventas, pedidos que cuentan, empates, devoluciones, meses con menos de tres participantes y fecha/canal del aviso. Los premios los decide y entrega Fer; no se automatizan. |
 
@@ -128,9 +131,9 @@ alcance y las dependencias de cada entrega.
 ## Preguntas que debemos cerrar primero
 
 1. **Excel recibido y analizado:** validar con Fer un mes representativo, con
-   una compra, una venta, todos sus gastos y el reparto. Confirmar la diferencia
-   entre 20/50/30 en ventas y 15/50/35 en inventario, qué incluye Packing y cómo
-   tratar operaciones no pagadas. Revisar excepciones y redondeos. No asumir que importarlo o migrar todo su
+   una compra, una venta, todos sus gastos y el reparto. El reparto vigente
+   20/50/30 está confirmado. Definir qué incluye Packing, cómo tratar operaciones
+   no pagadas y cómo manejar el histórico con otras fórmulas. Revisar excepciones y redondeos. No asumir que importarlo o migrar todo su
    histórico ya está solicitado.
 2. **Costos:** ¿se reparte por piezas o valor? ¿Cómo se asignan gastos de una
    compra a ventas de distintas clientas y meses? ¿Qué pasa con viajes que
