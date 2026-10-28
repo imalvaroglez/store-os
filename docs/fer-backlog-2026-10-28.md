@@ -34,11 +34,14 @@ debe funcionar bien en celular y computadora.
 - Los tipos de precio mencionados son Regular, Gibly e Iconic. Confirmar la
   escritura de Gibly antes de cambiar etiquetas.
 - Un primer pedido que supere $1,000 da acceso a Iconic en ese mismo pedido.
-  El beneficio se mantiene con un pedido mensual. Falta precisar la base del
-  umbral y qué evento cuenta como compra.
+  En la ampliación final se acordó mantenerlo con otro pedido dentro de los
+  siguientes **30 días**, renovable por otros 30 días. Esto sustituye la
+  referencia inicial a un mes calendario. Falta precisar la base del umbral,
+  qué evento cuenta como compra y desde cuándo inicia cada renovación.
 - Fer pide un aviso una semana antes del vencimiento Iconic, en su celular,
-  sin abrir la aplicación. Ejemplo: compra el 28 de septiembre, renovación el
-  28 de octubre, aviso el 21 de octubre. El canal de este aviso no se confirmó.
+  sin abrir la aplicación. El aviso se calcula siete días antes del vencimiento
+  de los 30 días; el ejemplo inicial de fechas por mes calendario queda
+  sustituido por esta regla. El canal de este aviso no se confirmó.
 - Para existencias bajas, Fer sí prefiere WhatsApp. Una o cero piezas fueron
   ejemplos, no un umbral universal aprobado.
 - El Excel descuenta costos y divide la ganancia entre Fer, Olivia y el
@@ -46,14 +49,24 @@ debe funcionar bien en celular y computadora.
 - Los cortes abarcan del primero al último día de cada mes. Una venta del
   primero de octubre no pertenece a septiembre.
 
+- Fer quiere identificar a las clientas regulares y a las emprendedoras. Esta
+  clasificación debe distinguirse del tipo de precio y de la vigencia Iconic;
+  perder el beneficio no implica dejar de ser emprendedora automáticamente.
+- Fer quiere evaluar a las emprendedoras por mes y conocer el top 3 por importe
+  para premiarlas en la primera semana del mes siguiente. Mencionó un aviso
+  una semana antes de terminar el mes o al cierre; la fecha y el canal quedan
+  por definir. Un ranking previo al cierre es provisional, no el resultado
+  definitivo. “Sofía vendió $5,000” es un ejemplo; falta confirmar si significa
+  compras a Olivia o reventas a sus propias clientas.
+
 ## Backlog consolidado
 
-Los 16 candidatos de la conversación se conservan con IDs estables. P1 significa
+Los 17 candidatos de la conversación se conservan con IDs estables. P1 significa
 primera prioridad propuesta; P2, siguiente grupo; P3, evolución posterior.
 No son fechas comprometidas. Los criterios describen resultados para revisar;
 las decisiones abiertas se resuelven en diseño antes de implementar.
 
-En `docs/backlog.json`, `discoveryId` vincula cada entrada con FER-01–16 y
+En `docs/backlog.json`, `discoveryId` vincula cada entrada con FER-01–17 y
 `proposedPriority` conserva P1/P2/P3. La prioridad numérica histórica no se
 reordenó globalmente: las nuevas entradas se anexan a esa lista. Todas las
 entradas de este ciclo quedan en `needs-spec`. Se reutiliza `receipts` para
@@ -66,8 +79,8 @@ antecedentes para revisar, no dependencias obligatorias de implementación.
 | FER-01 | P1 | Capturar el ticket de compra con productos, cantidades y gastos de surtido. | Fer registra la compra y sus gastos juntos, con desglose y total verificables. | Ampliar Compras; distinguir envío, traslado para surtir y entrega a clienta. No implica leer fotos o implementar OCR. |
 | FER-02 | P1 | Distribuir gastos compartidos y empaques entre las piezas. | El reparto conserva exactamente el gasto original; soporta el ejemplo de $44 / 100 piezas y la bolsa de $1 / 30 piezas. | FER-01; definir base de reparto, precisión, sobrantes, gastos tardíos y nivel compra/pedido/entrega. Evitar contar el mismo gasto dos veces. |
 | FER-03 | P1 | Ver costo completo y ganancia de una venta. | Un desglose permite reconstruir venta menos producto y gastos asignados, con resultado contrastable con Excel. | FER-02 y revisión del Excel; distinguir ganancia de efectivo cobrado, costos de compra y costos de entrega. Definir devoluciones y costo histórico. |
-| FER-04 | P1 | Guardar el tipo de precio de la clienta y aplicarlo al pedido. | Al elegir a Sofía con Iconic, las líneas toman su precio Iconic sin seleccionarlo una por una. | Reutilizar tipos por tienda; definir cambio de clienta con líneas existentes, precios faltantes y ajustes manuales. Separado de la renovación automática. |
-| FER-05 | P2 | Obtener y renovar Iconic; avisar antes de vencer. | Con reglas acordadas, el pedido que cumple el umbral recibe Iconic y Fer ve vigencia y próximo vencimiento; el aviso llega sin abrir la app. | FER-04; definir umbral, evento, vigencia, pérdida y recuperación. Estudio del canal externo y costo cero antes de comprometer la notificación. Se puede dividir reglas y avisos en entregas distintas. |
+| FER-04 | P1 | Identificar clientas regulares/emprendedoras y guardar su tipo de precio para el pedido. | Al elegir a Sofía con Iconic, las líneas toman su precio Iconic sin seleccionarlo una por una. | Distinguir tipo de clienta, tipo de precio y vigencia; reutilizar tipos por tienda; definir cambio de clienta con líneas existentes, precios faltantes y ajustes manuales. Separado de la renovación automática. |
+| FER-05 | P2 | Obtener y renovar Iconic; avisar antes de vencer. | Con reglas acordadas, el pedido que cumple el umbral recibe Iconic y Fer ve la vigencia de 30 días y próximo vencimiento; el aviso llega sin abrir la app. | FER-04; definir umbral, evento, inicio de renovación de los 30 días, pérdida y recuperación. Estudio del canal externo y costo cero antes de comprometer la notificación. Se puede dividir reglas y avisos en entregas distintas. |
 | FER-06 | P1 | Insertar nuevas líneas arriba al capturar pedidos. | En un pedido de 50 piezas, Agregar deja la nueva línea visible arriba; las anteriores conservan sus datos y totales. | Cambio pequeño independiente; revisar ubicación del botón, foco y teclado en móvil. |
 | FER-07 | P1 | Agrupar las líneas del pedido por categoría. | Fer compara anillos, pulseras y otras categorías con la solicitud y detecta faltantes sin recorrer una lista mezclada. | Acordar convivencia con FER-06: captura reciente y revisión por categoría; productos sin categoría o con varias. No imponer una solución todavía. |
 | FER-08 | P1 | Generar un ticket digital del pedido para compartir. | Cantidad, producto, precio unitario, subtotal y total coinciden con el pedido; el desglose está agrupado por categoría y Fer puede enviarlo sin reescribirlo. | Reutiliza `receipts`; elegir texto, PDF o etapas. Definir cotización vs recibo de pago, saldo, edición y categoría histórica. Envío manual por Fer, sin mensajería automática implícita. |
@@ -79,6 +92,7 @@ antecedentes para revisar, no dependencias obligatorias de implementación.
 | FER-14 | P2 | Recibir la selección pública como solicitud interna revisable. | Fer recibe el detalle sin recaptura, confirma precio/disponibilidad y lo convierte en pedido una sola vez. | El carrito de WhatsApp ya existe; revisar si hay antecedente específico en backlog. Definir identidad, duplicados, permisos, abuso y cuándo se afecta stock. Sin checkout ni cobro en línea. |
 | FER-15 | P1 | Calcular el reparto de ganancia entre Fer, Olivia e inversionista. | Los importes coinciden con un ejemplo validado del Excel y suman exactamente la ganancia distribuible. | FER-03 y Excel; conocer porcentajes, vigencia, préstamo, pérdidas y redondeo. Es registro/cálculo, no transferencia de dinero. |
 | FER-16 | P1 | Consultar y hacer el corte de cada mes por separado. | Agosto, septiembre y octubre se consultan sin mezclar ventas; detalle, totales y reparto son trazables y cuadran. | FER-03/15; definir fecha de atribución, zona horaria del negocio, pagos parciales, correcciones y cierre/reapertura. Una pestaña es una sugerencia de interfaz, no un requisito técnico. |
+| FER-17 | P2 | Evaluación mensual y top 3 de emprendedoras para incentivos. | Fer consulta las tres emprendedoras con mayor importe del mes, con posiciones, importes y operaciones de respaldo; recibe el aviso acordado para premiarlas en la primera semana del mes siguiente. Un avance previo al cierre se distingue del resultado definitivo. | FER-04 para identificar emprendedoras y alineación de periodo con FER-16; definir compras a Olivia vs reventas, pedidos que cuentan, empates, devoluciones, meses con menos de tres participantes y fecha/canal del aviso. Los premios los decide y entrega Fer; no se automatizan. |
 
 ## Propuesta de entregas pequeñas
 
@@ -89,7 +103,8 @@ antecedentes para revisar, no dependencias obligatorias de implementación.
 2. **Reemplazar los cálculos manuales:** recibir y estudiar el Excel; avanzar
    FER-01 → FER-02 → FER-03 → FER-15 → FER-16. Entregas independientes y números
    de ejemplo acordados antes de sustituir el control actual.
-3. **Seguimiento de emprendedoras y reposición:** definir FER-05 y FER-09.
+3. **Seguimiento de emprendedoras y reposición:** definir FER-05, FER-09 y
+   FER-17, este último alineado con el corte mensual.
    Separar reglas/estado de los avisos externos. Investigar canal y costos en
    paralelo al primer grupo, sin prometer WhatsApp automático.
 4. **Mejorar el catálogo:** diseñar FER-10/11/13 como experiencia conjunta y
@@ -112,8 +127,10 @@ alcance y las dependencias de cada entrega.
    combinan entregas y pendientes personales? ¿Cuándo se registra el empaque?
 3. **Iconic:** ¿más de $1,000 o desde $1,000? La entrevista dijo “superar”.
    ¿Con precio Regular o Iconic, antes o después de descuentos y gastos?
-   ¿Cuenta capturar, pagar o entregar? ¿Qué mínimo renueva? ¿Cómo tratar días
-   29–31, cancelaciones, gracia y asignación manual? ¿Qué regla aplica a Gibly?
+   ¿Cuenta capturar, pagar o entregar? ¿Qué mínimo renueva? Con los 30 días ya
+   acordados, ¿la nueva vigencia inicia
+   en la compra que renueva o en el vencimiento anterior? ¿Cómo tratar la hora
+   límite, cancelaciones, gracia y asignación manual? ¿Qué regla aplica a Gibly?
 4. **Cortes:** ¿venta del mes por qué fecha? ¿Cuándo hay ganancia repartible?
    ¿Cómo se registran abonos, devoluciones, pérdidas y gastos posteriores?
    ¿Se congela un corte o se recalcula? ¿Cómo se registra el pago al inversionista?
@@ -122,6 +139,12 @@ alcance y las dependencias de cada entrega.
    alternativa que conserve el objetivo, sin sustituirlo silenciosamente.
 6. **Catálogo:** confirmar subcategorías reales, relación entre acabados y
    variantes, fotos disponibles y comportamiento esperado de piezas agotadas.
+
+7. **Top 3:** ¿se mide lo comprado a Olivia o las reventas de cada emprendedora?
+   ¿Importe pedido, pagado o entregado, con qué ajustes? ¿Quién participa y cómo
+   se resuelven empates? ¿Avisar antes del cierre, al cierre o ambos? ¿Por qué
+   canal? El periodo de evaluación es el mes calendario; no la vigencia móvil
+   de 30 días de Iconic. No asumir que Store OS conoce las reventas externas.
 
 ## Cruce con lo existente
 
