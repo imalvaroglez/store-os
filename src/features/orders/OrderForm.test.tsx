@@ -136,3 +136,17 @@ describe("retrying a new order after an interruption", () => {
     again.unmount();
   });
 });
+
+describe("acknowledged order drafts", () => {
+  it("clears a draft if its operation was already committed", async () => {
+    const { saveOrderDraft, orderDraftKey } = await import("./orderDraft");
+    const order = { id: "ack-order", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, revision: 2, lastMutationId: "ack-op", createdAt: "2026-01-01", updatedAt: "2026-02-01" };
+    const key = orderDraftKey(order.storeId, order.id, false);
+    saveOrderDraft(key, { orderUpdatedAt: "2026-01-01", expectedRevision: 1, mutationId: "ack-op", savedAt: order.updatedAt, customerId: "customer_1", customerQuery: "Cliente Olivia", lines: [{ key: "saved", productName: "Anillo", productQuery: "Anillo", quantity: 1, quantityText: "1", unitPrice: 50, unitPriceText: "50", costText: "", subtotal: 50 }], deposit: "0", promisedDate: "", orderStatus: "asked", notes: "" });
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    await waitFor(() => expect(localStorage.getItem(key)).toBeNull());
+    expect(screen.queryByText(/captura anterior basada/)).toBeNull();
+    expect(screen.queryByText("Borrador recuperado")).toBeNull();
+    rendered.unmount();
+  });
+});
