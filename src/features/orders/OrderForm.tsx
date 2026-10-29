@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStore, newCustomer } from "../../app/StoreProvider";
 import {
   Badge,
@@ -19,6 +19,7 @@ import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { uid } from "../../lib/ids";
+import { groupOrderLines } from "./orderGrouping";
 import { ORDER_STATUS_LABELS } from "./orderStatus";
 import { CustomerForm } from "../customers/CustomerForm";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../../types";
@@ -41,6 +42,7 @@ function lineFromItem(item?: OrderItem): DraftLine {
   const unitPrice = item?.unitPrice ?? 0;
   return {
     key: uid("line"),
+    categorySnapshot: item?.categorySnapshot,
     productId: item?.productId,
     productName: item?.productName ?? "",
     productQuery: item?.productName ?? "",
@@ -86,6 +88,16 @@ export function OrderForm({
   const [orderStatus, setOrderStatus] = useState<OrderStatus>(effectiveOrderStatus(order));
   const [notes, setNotes] = useState(order.notes ?? "");
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [focusLine, setFocusLine] = useState<string | null>(null);
+  const productInputs = useRef<Record<string, HTMLInputElement | null>>({});
+  useLayoutEffect(() => {
+    if (reviewing || !focusLine) return;
+    const input = productInputs.current[focusLine];
+    input?.focus({ preventScroll: true });
+    input?.scrollIntoView?.({ block: "center", behavior: "auto" });
+    setFocusLine(null);
+  }, [reviewing, focusLine]);
 
   const customerOptions = customers.map((customer) => ({
     value: customer.id,
@@ -131,8 +143,11 @@ export function OrderForm({
     // A product whose default tier has no price keeps the line's current price
     // instead of silently dropping to $0 (mirrors changeTier's fallback).
     const unitPrice = (isTiered ? product.prices?.[priceTier ?? ""] : product.price) ?? numberFromText(line.unitPriceText);
+    const category = state.categories.find((item) => item.storeId === order.storeId && item.id === product.categoryIds?.[0]);
+    const categorySnapshot = line.productId === product.id ? line.categorySnapshot : category ? { id: category.id, name: category.name } : undefined;
     updateLine(line.key, {
       productId: product.id,
+      categorySnapshot,
       productName: product.name,
       productQuery: product.name,
       priceTier: isTiered ? priceTier : undefined,
@@ -146,7 +161,7 @@ export function OrderForm({
   function changeProductQuery(line: DraftLine, value: string) {
     const product = products.find((candidate) => candidate.name === value || candidate.id === value);
     if (product) selectProduct(line, product);
-    else updateLine(line.key, { productId: undefined, productName: value, productQuery: value });
+    else updateLine(line.key, { productId: undefined, categorySnapshot: undefined, productName: value, productQuery: value });
   }
 
   function changeTier(line: DraftLine, value: string) {
@@ -179,6 +194,7 @@ export function OrderForm({
       const tier = isTiered ? line.priceTier ?? defaultPriceTier : undefined;
       normalizedItems.push({
         ...(line.productId ? { productId: line.productId } : {}),
+        ...(line.categorySnapshot ? { categorySnapshot: line.categorySnapshot } : {}),
         productName,
         quantity,
         ...(tier ? { priceTier: tier } : {}),
@@ -237,7 +253,25 @@ export function OrderForm({
         <Button variant="ghost" size="sm" onClick={() => setNewCustomerOpen(true)}>+ Nuevo cliente</Button>
       </div>
 
-      <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <Button variant={reviewing ? "secondary" : "primary"} aria-pressed={!reviewing} onClick={() => setReviewing(false)}>Capturar</Button>
+        <Button variant={reviewing ? "primary" : "secondary"} aria-pressed={reviewing} onClick={() => setReviewing(true)}>Revisar por categoría</Button>
+      </div>
+      {reviewing ? (
+        <div className="space-y-4">
+          {groupOrderLines(lines).map((group, index) => (
+            <Card key={`${group.name}-${index}`} className="space-y-3 p-4">
+              <h2 className="font-semibold text-on-surface">{group.name}</h2>
+              {group.lines.map((line) => (
+                <div key={line.key} className="flex items-center justify-between gap-3">
+                  <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
+                  <Button variant="ghost" size="sm" aria-label={`Editar ${line.productName || "producto sin nombre"}`} onClick={() => { setFocusLine(line.key); setReviewing(false); }}>Editar</Button>
+                </div>
+              ))}
+            </Card>
+          ))}
+        </div>
+      ) : <div className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="serif-display text-lg font-semibold text-ink">Productos</h2>
@@ -266,6 +300,7 @@ export function OrderForm({
                 )}
               </div>
               <SearchSelect
+                inputRef={(input) => { productInputs.current[line.key] = input; }}
                 label="Producto"
                 placeholder="Busca o escribe un producto"
                 value={line.productQuery}
@@ -335,7 +370,7 @@ export function OrderForm({
             </Card>
           );
         })}
-      </div>
+      </div>}
 
       <div className="grid grid-cols-2 gap-2">
         <TextField

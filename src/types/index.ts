@@ -212,6 +212,7 @@ export type LegacyOrderStatus = "asked" | "confirmed" | "to_buy" | "bought" | "a
 export type PaymentStatus = "unpaid" | "partial" | "paid";
 
 export type OrderItem = {
+  categorySnapshot?: { id: string; name: string };
   productId?: string;
   productName: string;
   quantity: number;
