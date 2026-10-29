@@ -110,6 +110,13 @@ describe("lineId — identidad estable de línea (E1)", () => {
     updatedAt: "2026-01-02",
   };
 
+  it("normaliza pedidos v2 existentes sin identidad de línea", () => {
+    const order = { ...migrateOrder(legacy), items: [{ ...legacy.items[0] }] };
+    const [normalized] = migrateOrders([order]);
+    expect(normalized.items[0].lineId).toBe("o1_L0");
+    expect(migrateOrders([normalized])[0]).toBe(normalized);
+  });
+
   it("asigna lineId determinista orderId_Lindex en la primera migración", () => {
     const migrated = migrateOrder(legacy);
     expect(migrated.items[0].lineId).toBe("o1_L0");
