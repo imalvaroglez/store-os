@@ -52,7 +52,7 @@ describe("order domain helpers", () => {
       updatedAt: "2026-01-02",
     };
     const migrated = migrateOrder(legacy);
-    expect(migrated.items).toEqual([{ productId: "p1", productName: "A", quantity: 3, priceTier: "t_wholesale", unitPrice: 80, subtotal: 240, cost: 40 }]);
+    expect(migrated.items).toEqual([{ lineId: "order_old_L0", productId: "p1", productName: "A", quantity: 3, priceTier: "t_wholesale", unitPrice: 80, subtotal: 240, cost: 40 }]);
     expect(migrated.orderStatus).toBe("delivered");
     // 'paid' raises deposit to the items total: no phantom balance (see the
     // dedicated test below for the v1 short-deposit case).
@@ -94,3 +94,38 @@ describe("order domain helpers", () => {
   });
 });
 
+
+describe("lineId — identidad estable de línea (E1)", () => {
+  const legacy = {
+    id: "o1",
+    storeId: "s1",
+    customerId: "c1",
+    items: [
+      { productId: "p1", productName: "Anillo", quantity: 2, unitPrice: 50, subtotal: 100 },
+      { productId: "p2", productName: "Aretes", quantity: 1, unitPrice: 30, subtotal: 30 },
+    ],
+    deposit: 0,
+    orderStatus: "asked" as const,
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-02",
+  };
+
+  it("asigna lineId determinista orderId_Lindex en la primera migración", () => {
+    const migrated = migrateOrder(legacy);
+    expect(migrated.items[0].lineId).toBe("o1_L0");
+    expect(migrated.items[1].lineId).toBe("o1_L1");
+  });
+
+  it("es estable: re-migrar conserva los lineIds ya asignados", () => {
+    const once = migrateOrder(legacy);
+    // Simulate a persisted edit: first line renamed, order kept in v2 shape.
+    const edited = { ...once, items: [...once.items.slice(1), once.items[0]] };
+    const again = migrateOrder(edited);
+    expect(again.items.map((i) => i.lineId)).toEqual(["o1_L1", "o1_L0"]);
+  });
+
+  it("conserva el lineId que traía la línea (ediciones v2)", () => {
+    const withIds = migrateOrder({ ...legacy, items: [{ ...legacy.items[0], lineId: "custom_9" }, legacy.items[1]] });
+    expect(withIds.items[0].lineId).toBe("custom_9");
+  });
+});
