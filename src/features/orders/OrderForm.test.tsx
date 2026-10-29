@@ -86,3 +86,42 @@ describe("OrderForm price override", () => {
     });
   });
 });
+
+
+describe("order amount limits", () => {
+  it("keeps the form usable and blocks an unsafe amount", () => {
+    const order = { id: "large", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText(/Precio unitario/), { target: { value: "900719925474099100" } });
+    expect(screen.getByText(/importes o cantidades demasiado grandes/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeDisabled();
+    rendered.unmount();
+  });
+});
+
+describe("saved order snapshots", () => {
+  it("preserves the saved customer and category when the order is edited", async () => {
+    mockUpsertOrder.mockClear();
+    const order = { id: "snapshot-order", storeId: "store_olivia", customerId: "customer_1", customerName: "Nombre original", items: [{ productName: "Anillo", quantity: 1, unitPrice: 1.25, subtotal: 1.25, categorySnapshot: { id: "rings", name: "Anillos" } }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    expect(mockUpsertOrder.mock.calls[0][0].customerName).toBe("Nombre original");
+    expect(mockUpsertOrder.mock.calls[0][0].items[0].categorySnapshot).toEqual({ id: "rings", name: "Anillos" });
+    rendered.unmount();
+  });
+});
+
+describe("cent precision when saving", () => {
+  it("saves rounded line totals and advances consistently", async () => {
+    mockUpsertOrder.mockClear();
+    const order = { id: "cents-order", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 3, unitPrice: 0.335, subtotal: 1.005 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Anticipo"), { target: { value: "0.335" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    expect(mockUpsertOrder.mock.calls[0][0].items[0].subtotal).toBe(1.01);
+    expect(mockUpsertOrder.mock.calls[0][0].deposit).toBe(0.34);
+    rendered.unmount();
+  });
+});
