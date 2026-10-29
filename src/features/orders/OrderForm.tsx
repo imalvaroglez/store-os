@@ -18,6 +18,7 @@ import { customersForStore } from "../../lib/selectors";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
+import { orderAmountCents } from "../../lib/orderMoney";
 import { uid } from "../../lib/ids";
 import { ORDER_STATUS_LABELS } from "./orderStatus";
 import { CustomerForm } from "../customers/CustomerForm";
@@ -41,6 +42,7 @@ function lineFromItem(item?: OrderItem): DraftLine {
   const unitPrice = item?.unitPrice ?? 0;
   return {
     key: uid("line"),
+    categorySnapshot: item?.categorySnapshot,
     productId: item?.productId,
     productName: item?.productName ?? "",
     productQuery: item?.productName ?? "",
@@ -105,18 +107,25 @@ export function OrderForm({
       keywords: [product.sku, product.category].filter(Boolean).join(" "),
     };
   });
-  const totals = useMemo(() => orderTotals({
-    items: lines.map((line) => ({
-      productId: line.productId,
-      productName: line.productName,
-      quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
-      priceTier: line.priceTier,
-      unitPrice: numberFromText(line.unitPriceText),
-      subtotal: Math.max(0, Math.round(numberFromText(line.quantityText))) * numberFromText(line.unitPriceText),
-      cost: line.cost,
-    })),
-    deposit: numberFromText(deposit),
-  }), [deposit, lines]);
+  const totals = useMemo(() => {
+    try {
+      return orderTotals({
+        items: lines.map((line) => ({
+          productId: line.productId,
+          productName: line.productName,
+          quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
+          priceTier: line.priceTier,
+          unitPrice: numberFromText(line.unitPriceText),
+          subtotal: orderAmountCents(numberFromText(line.unitPriceText), Math.max(0, Math.round(numberFromText(line.quantityText)))) / 100,
+          cost: line.cost,
+        })),
+        deposit: numberFromText(deposit),
+      });
+    } catch (error) {
+      if (error instanceof RangeError) return null;
+      throw error;
+    }
+  }, [deposit, lines]);
 
   function updateLine(key: string, patch: Partial<DraftLine>) {
     setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -133,6 +142,7 @@ export function OrderForm({
     const unitPrice = (isTiered ? product.prices?.[priceTier ?? ""] : product.price) ?? numberFromText(line.unitPriceText);
     updateLine(line.key, {
       productId: product.id,
+      categorySnapshot: line.productId === product.id ? line.categorySnapshot : undefined,
       productName: product.name,
       productQuery: product.name,
       priceTier: isTiered ? priceTier : undefined,
@@ -146,7 +156,7 @@ export function OrderForm({
   function changeProductQuery(line: DraftLine, value: string) {
     const product = products.find((candidate) => candidate.name === value || candidate.id === value);
     if (product) selectProduct(line, product);
-    else updateLine(line.key, { productId: undefined, productName: value, productQuery: value });
+    else updateLine(line.key, { productId: undefined, categorySnapshot: undefined, productName: value, productQuery: value });
   }
 
   function changeTier(line: DraftLine, value: string) {
@@ -156,6 +166,7 @@ export function OrderForm({
   }
 
   async function submit() {
+    if (!totals) { toast.error("Revisa los importes o cantidades demasiado grandes."); return; }
     if (!customerId) {
       toast.error("Elige un cliente para guardar el pedido.");
       return;
@@ -165,7 +176,7 @@ export function OrderForm({
       const productName = line.productName.trim();
       const quantity = parseAmount(line.quantityText);
       const unitPrice = parseAmount(line.unitPriceText);
-      if (!productName || !quantity || !Number.isInteger(quantity) || quantity <= 0) {
+      if (!productName || !quantity || !Number.isSafeInteger(quantity) || quantity <= 0) {
         toast.error("Cada línea necesita un nombre y una cantidad entera positiva.");
         return;
       }
@@ -179,19 +190,28 @@ export function OrderForm({
       const tier = isTiered ? line.priceTier ?? defaultPriceTier : undefined;
       normalizedItems.push({
         ...(line.productId ? { productId: line.productId } : {}),
+        ...(line.categorySnapshot ? { categorySnapshot: line.categorySnapshot } : {}),
         productName,
         quantity,
         ...(tier ? { priceTier: tier } : {}),
         unitPrice,
-        subtotal: quantity * unitPrice,
+        subtotal: orderAmountCents(unitPrice, quantity) / 100,
         ...(cost != null ? { cost } : {}),
       });
     }
-    const paid = numberFromText(deposit);
+    if (deposit.trim() && parseAmount(deposit) == null) {
+      toast.error("Revisa el anticipo.");
+      return;
+    }
+    const paid = orderAmountCents(numberFromText(deposit)) / 100;
+    const customerName = customerId === order.customerId && order.customerName
+      ? order.customerName
+      : customers.find((customer) => customer.id === customerId)?.name;
     const next: Order = {
       id: order.id,
       storeId: order.storeId,
       customerId,
+      ...(customerName ? { customerName } : {}),
       items: normalizedItems,
       deposit: paid,
       orderStatus,
@@ -248,8 +268,14 @@ export function OrderForm({
         {lines.map((line, index) => {
           const currentQuantity = Math.max(0, Math.round(numberFromText(line.quantityText)));
           const currentPrice = numberFromText(line.unitPriceText);
+          let lineSubtotal: number | null;
+          try { lineSubtotal = orderAmountCents(currentPrice, currentQuantity) / 100; }
+          catch (error) {
+            if (!(error instanceof RangeError)) throw error;
+            lineSubtotal = null;
+          }
           const selectedTier = tiers.find((tier) => tier.id === line.priceTier);
-          const warning = selectedTier ? tierWarning({ quantity: currentQuantity, subtotal: currentQuantity * currentPrice }, selectedTier) : null;
+          const warning = selectedTier ? tierWarning({ quantity: currentQuantity, subtotal: lineSubtotal ?? 0 }, selectedTier) : null;
           return (
             <Card key={line.key} className="space-y-4 p-4 md:p-5 shadow-none">
               <div className="flex items-center justify-between gap-2">
@@ -328,7 +354,7 @@ export function OrderForm({
                   }}
                 />
                 <div className="rounded-md bg-surface-muted px-3 py-2.5 min-h-[3.25rem] flex items-center">
-                  <StatRow label="Subtotal"><Money amount={currentQuantity * currentPrice} /></StatRow>
+                  <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
                 </div>
               </div>
               {warning && <Badge tone="warning">{warning}</Badge>}
@@ -353,14 +379,15 @@ export function OrderForm({
 
       <div className="sticky bottom-3 z-10 rounded-xl border border-edge bg-paper/95 p-4 shadow-lift backdrop-blur">
         <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
-          <StatRow label="Piezas">{totals.pieces}</StatRow>
-          <StatRow label="Total"><Money amount={totals.estimatedTotal} /></StatRow>
-          <StatRow label="Anticipo"><Money amount={totals.paid} /></StatRow>
-          <StatRow label="Saldo" tone={totals.balance > 0 ? "danger" : "success"}><Money amount={totals.balance} /></StatRow>
+          <StatRow label="Piezas">{totals?.pieces ?? "—"}</StatRow>
+          <StatRow label="Total">{totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</StatRow>
+          <StatRow label="Anticipo">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
+          <StatRow label="Saldo" tone={totals && totals.balance > 0 ? "danger" : "success"}>{totals ? <Money exact amount={totals.balance} /> : "—"}</StatRow>
         </div>
+        {!totals && <p className="text-danger">Revisa los importes o cantidades demasiado grandes.</p>}
         <div className="flex gap-2 mt-4">
           {onCancel && <Button variant="ghost" full onClick={onCancel}>Cancelar</Button>}
-          <Button full size="lg" onClick={submit} disabled={!customerId || lines.length === 0}>Guardar pedido</Button>
+          <Button full size="lg" onClick={submit} disabled={!customerId || lines.length === 0 || !totals}>Guardar pedido</Button>
         </div>
       </div>
 
