@@ -32,7 +32,12 @@ export function OrderEditorScreen() {
         action={<Button variant="ghost" onClick={() => navigate("/pedidos")}>← Pedidos</Button>}
       />
       <div className="mx-auto max-w-5xl">
-        <OrderForm order={order} onDone={() => navigate("/pedidos")} onCancel={() => navigate("/pedidos")} />
+        <OrderForm
+          order={order}
+          isNew={sub === "nuevo"}
+          onDone={() => navigate("/pedidos")}
+          onCancel={() => navigate("/pedidos")}
+        />
       </div>
     </Screen>
   );
