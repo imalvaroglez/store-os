@@ -41,6 +41,7 @@ import {
   receivePurchaseTx,
   createDraftProductsForPurchaseTx,
   saveOrderWithStockTx,
+  deleteOrderWithStockTx,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
   stripUndefined,
@@ -664,38 +665,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           stockWrites.push({ ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: stockAt });
         }
       }
-      // Cloud: ONE atomic batch (order + every stock adjustment). Local state
+      // Cloud: ONE transaction (order + every stock delta). Deltas are applied
+      // RELATIVE to the canonical quantities re-read inside the transaction, so
+      // concurrent orders on another device can't be silently overwritten; a
+      // stale edit of THIS order aborts with StaleOrderError. Local state
       // commits only on success, so a failed save leaves no phantom order and
-      // the retry the toast invites replays the FULL delta set — a partial
-      // N+1 write could double-reserve or strand a reservation forever.
+      // the retry the toast invites replays the FULL delta set.
       if (cloud && user && !fromCloud.current) {
-        await saveOrderWithStockTx(
-          user,
-          nextOrder,
-          stockWrites.map((p) => ({ id: p.id, quantityOnHand: p.quantityOnHand as number, updatedAt: p.updatedAt }))
-        );
+        await saveOrderWithStockTx(user, nextOrder, deltas, prev?.updatedAt);
       }
       for (const updated of stockWrites) dispatch({ type: "UPDATE_PRODUCT", product: updated });
       dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order: nextOrder });
     },
     deleteOrder: async (orderId) => {
-      // Release the held stock before removing the order (cancelling a
+      // Release the held stock and remove the order atomically (cancelling a
       // delivered sale also returns the goods — see reservationDeltas*).
       const existing = state.orders.find((o) => o.id === orderId);
-      const writes: Promise<void>[] = [];
-      if (existing) {
-        const deltas = reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" });
+      const deltas = existing
+        ? reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" })
+        : new Map<string, number>();
+      if (cloud && user && !fromCloud.current) {
+        await deleteOrderWithStockTx(user, orderId, deltas);
+        // Mirror the released stock locally (canonical deltas, same as the tx).
         for (const [productId, delta] of deltas) {
-          const product = state.products.find((p) => p.id === productId && p.storeId === existing.storeId);
+          const product = state.products.find((p) => p.id === productId && p.storeId === existing?.storeId);
           if (product && typeof product.quantityOnHand === "number") {
-            const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
-            dispatch({ type: "UPDATE_PRODUCT", product: updated });
-            writes.push(persistEntity("products", updated));
+            dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() } });
           }
+        }
+        dispatch({ type: "DELETE_ORDER", orderId });
+        return;
+      }
+      const writes: Promise<void>[] = [];
+      for (const [productId, delta] of deltas) {
+        const product = state.products.find((p) => p.id === productId && p.storeId === existing?.storeId);
+        if (product && typeof product.quantityOnHand === "number") {
+          const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
+          dispatch({ type: "UPDATE_PRODUCT", product: updated });
+          writes.push(persistEntity("products", updated));
         }
       }
       dispatch({ type: "DELETE_ORDER", orderId });
-      if (cloud && user && !fromCloud.current) writes.push(deleteEntity(user, "orders", orderId));
       await Promise.all(writes);
     },
   };
