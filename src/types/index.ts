@@ -212,6 +212,7 @@ export type LegacyOrderStatus = "asked" | "confirmed" | "to_buy" | "bought" | "a
 export type PaymentStatus = "unpaid" | "partial" | "paid";
 
 export type OrderItem = {
+  categorySnapshot?: { id: string; name: string };
   productId?: string;
   productName: string;
   quantity: number;
@@ -225,6 +226,7 @@ export type Order = {
   id: string;
   storeId: string;
   customerId: string;
+  customerName?: string;
   items: OrderItem[];
   deposit: number;
   orderStatus: OrderStatus;
