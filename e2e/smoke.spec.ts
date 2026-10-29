@@ -235,3 +235,31 @@ test("mobile viewport: no horizontal scroll, primary button on-screen", async ({
   expect(box).toBeTruthy();
   expect(box!.x + box!.width).toBeLessThanOrEqual(392);
 });
+
+test("customer price level applies to new order lines", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.locator("header button, aside button").filter({ hasText: "▾" }).filter({ visible: true }).first().click();
+  await page.getByText("Joyería", { exact: true }).first().click();
+  await page.getByRole("button", { name: "Clientes" }).click();
+  const name = `Precio cliente ${Date.now()}`;
+  await page.getByRole("button", { name: "+ Agregar" }).click();
+  await page.getByLabel("Nombre", { exact: true }).fill(name);
+  await page.getByLabel("Tipo de cliente").selectOption("entrepreneur");
+  await page.getByRole("combobox", { name: "Nivel de precio", exact: true }).selectOption("t_wholesale");
+  await page.getByRole("button", { name: "Guardar cliente" }).click();
+  await expect(page.getByText(name)).toBeVisible();
+  await page.getByRole("button", { name: "Pedidos" }).click();
+  await page.getByRole("button", { name: "+ Nuevo" }).click();
+  await page.getByLabel("Cliente").fill(name);
+  await page.getByLabel("Producto").fill("Cadena de plata 925");
+  await expect(page.getByLabel("Precio unitario")).toHaveValue("700");
+  await page.getByLabel("Precio unitario").fill("650");
+  await page.getByLabel("Cliente").fill("Ana Torres");
+  const confirmation = page.getByRole("dialog", { name: "Cambiar cliente" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "Aplicar precios de Ana Torres" }).click();
+  await expect(page.getByLabel("Precio unitario")).toHaveValue("650");
+  await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
+  await page.getByRole("button", { name: "Guardar pedido" }).click();
+  await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+});
