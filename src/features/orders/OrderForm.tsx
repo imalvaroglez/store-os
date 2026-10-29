@@ -85,10 +85,17 @@ export function OrderForm({
   // an accidental close — clearly labeled, discardable, and never restored over
   // a newer save from another device.
   const draftKey = useMemo(() => orderDraftKey(order.storeId, order.id, isNew, draftOwnerId), [order.storeId, order.id, isNew, draftOwnerId]);
-  const restoredDraft = useMemo(() => loadOrderDraft(draftKey, order, isNew), [draftKey]); // once per editor mount
+  const draftCandidate = useMemo(() => loadOrderDraft(draftKey, order, true), [draftKey]);
+  const completedDraft = !isNew && !!draftCandidate?.mutationId && draftCandidate.mutationId === order.lastMutationId;
+  const restoredDraft = useMemo(() => completedDraft ? null : loadOrderDraft(draftKey, order, isNew), [draftKey]); // once per editor mount
   const [conflictingDraft, setConflictingDraft] = useState(() =>
-    !isNew && !restoredDraft ? loadOrderDraft(draftKey, order, true) : null
+    !isNew && !restoredDraft && !completedDraft ? draftCandidate : null
   );
+  useEffect(() => {
+    if (completedDraft && !clearOrderDraft(draftKey)) toast.error("No se pudo borrar el borrador de este dispositivo.");
+    // The candidate is evaluated once, when the editor opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
   const [draftRestored, setDraftRestored] = useState(!!restoredDraft);
   const [lines, setLines] = useState<DraftLine[]>(() =>
     restoredDraft?.lines as DraftLine[] ?? (initialItems.length ? initialItems.map(lineFromItem) : [lineFromItem()])
