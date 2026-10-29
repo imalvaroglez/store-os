@@ -17,7 +17,7 @@ import { customersForStore } from "../../lib/selectors";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { uid } from "../../lib/ids";
 import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
@@ -73,7 +73,7 @@ export function OrderForm({
   onDone: () => void;
   onCancel?: () => void;
 }) {
-  const { state, activeStore, upsertOrder } = useStore();
+  const { state, activeStore, upsertOrder, draftOwnerId } = useStore();
   const toast = useToast();
   const isTiered = activeStore?.type === "inventory_tiered";
   const tiers = tiersForStore(activeStore);
@@ -84,8 +84,11 @@ export function OrderForm({
   // Offline draft (E1): restore a capture interrupted by a lost connection or
   // an accidental close — clearly labeled, discardable, and never restored over
   // a newer save from another device.
-  const draftKey = useMemo(() => orderDraftKey(order.storeId, order.id, isNew), [order.storeId, order.id, isNew]);
+  const draftKey = useMemo(() => orderDraftKey(order.storeId, order.id, isNew, draftOwnerId), [order.storeId, order.id, isNew, draftOwnerId]);
   const restoredDraft = useMemo(() => loadOrderDraft(draftKey, order, isNew), [draftKey]); // once per editor mount
+  const [conflictingDraft, setConflictingDraft] = useState(() =>
+    !isNew && !restoredDraft ? loadOrderDraft(draftKey, order, true) : null
+  );
   const [draftRestored, setDraftRestored] = useState(!!restoredDraft);
   const [lines, setLines] = useState<DraftLine[]>(() =>
     restoredDraft?.lines as DraftLine[] ?? (initialItems.length ? initialItems.map(lineFromItem) : [lineFromItem()])
@@ -101,25 +104,43 @@ export function OrderForm({
   );
   const [notes, setNotes] = useState(restoredDraft?.notes ?? order.notes ?? "");
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const expectedRevision = useRef(restoredDraft?.expectedRevision !== undefined ? restoredDraft.expectedRevision : isNew ? null : (order.revision ?? 0));
+  const mutationId = useRef(restoredDraft?.mutationId ?? uid("mutation"));
+  const mutationPayload = useRef(restoredDraft?.mutationPayload ?? "");
+  const draftSaved = useRef(!!restoredDraft);
+  const loadedUpdatedAt = useRef(restoredDraft?.orderUpdatedAt ?? order.updatedAt);
 
   // Persist the draft on every real change. The first-render snapshot doubles
   // as the baseline: an untouched editor never (re)writes a draft, so simply
   // opening an order never raises the "recovered draft" banner next time.
   const snapshotDraft = () =>
-    JSON.stringify({ orderUpdatedAt: order.updatedAt, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes });
-  const [baselineSnapshot] = useState(snapshotDraft);
+    JSON.stringify({ orderUpdatedAt: loadedUpdatedAt.current, orderId: restoredDraft?.orderId ?? order.id, orderCreatedAt: restoredDraft?.orderCreatedAt ?? order.createdAt, expectedRevision: expectedRevision.current, mutationId: mutationId.current, mutationPayload: mutationPayload.current, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes });
+  const baselineSnapshot = useRef(snapshotDraft());
+  const discardedDraft = useRef(false);
   useEffect(() => {
     const current = snapshotDraft();
-    if (current === baselineSnapshot) return; // untouched
-    saveOrderDraft(draftKey, {
+    if (conflictingDraft) return;
+    if (discardedDraft.current) {
+      discardedDraft.current = false;
+      baselineSnapshot.current = current;
+      return;
+    }
+    if (current === baselineSnapshot.current) return; // untouched
+    draftSaved.current = saveOrderDraft(draftKey, {
       ...(JSON.parse(current) as Omit<OrderDraftSnapshot, "savedAt">),
       savedAt: new Date().toISOString(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes]);
+  }, [draftKey, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes, conflictingDraft]);
 
   function discardDraft() {
-    clearOrderDraft(draftKey);
+    if (!clearOrderDraft(draftKey)) {
+      toast.error("No se pudo descartar el borrador en este dispositivo.");
+      return;
+    }
+    discardedDraft.current = true;
     setDraftRestored(false);
     setLines(initialItems.length ? initialItems.map(lineFromItem) : [lineFromItem()]);
     setCustomerId(order.customerId);
@@ -199,6 +220,7 @@ export function OrderForm({
   }
 
   async function submit() {
+    if (savingRef.current || conflictingDraft) return;
     if (!customerId) {
       toast.error("Elige un cliente para guardar el pedido.");
       return;
@@ -235,7 +257,7 @@ export function OrderForm({
     }
     const paid = numberFromText(deposit);
     const next: Order = {
-      id: order.id,
+      id: restoredDraft?.orderId ?? order.id,
       storeId: order.storeId,
       customerId,
       items: normalizedItems,
@@ -245,13 +267,23 @@ export function OrderForm({
       ...(promisedDate ? { promisedDate } : {}),
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
-      createdAt: order.createdAt,
+      createdAt: restoredDraft?.orderCreatedAt ?? order.createdAt,
       updatedAt: new Date().toISOString(),
     };
+    const payload = JSON.stringify({ ...next, updatedAt: "" });
+    if (mutationPayload.current !== payload) mutationId.current = uid("mutation");
+    mutationPayload.current = payload;
+    draftSaved.current = saveOrderDraft(draftKey, {
+      ...(JSON.parse(snapshotDraft()) as Omit<OrderDraftSnapshot, "savedAt">),
+      savedAt: new Date().toISOString(),
+    });
     try {
-      await upsertOrder(next);
-      clearOrderDraft(draftKey);
+      savingRef.current = true;
+      setSaving(true);
+      await upsertOrder(next, { expectedRevision: expectedRevision.current, mutationId: mutationId.current });
+      const cleared = clearOrderDraft(draftKey);
       toast.success("Pedido guardado");
+      if (!cleared) toast.error("No se pudo borrar el borrador de este dispositivo.");
       onDone();
     } catch (error) {
       if (error instanceof StaleOrderError) {
@@ -260,12 +292,30 @@ export function OrderForm({
       }
       // The capture is NOT lost: it lives on as a local draft (persisted by the
       // effect above) and will be offered again on the next visit.
-      toast.error("No se pudo guardar el pedido (¿sin conexión?). Tu captura quedó como borrador en este dispositivo.");
+      toast.error(draftSaved.current ? "No se pudo guardar el pedido. Tu captura quedó como borrador en este dispositivo." : "No se pudo guardar el pedido ni conservar el borrador. Mantén esta pantalla abierta y vuelve a intentar.");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }
 
   return (
     <div className="space-y-6 pb-8">
+      <fieldset disabled={saving} className="space-y-6">
+      {conflictingDraft && (
+        <div className="rounded-lg bg-warning/10 p-3 space-y-3">
+          <p>Hay una captura anterior basada en una versión distinta del pedido. Revísala antes de descartarla.</p>
+          <details>
+            <summary>Ver captura anterior</summary>
+            <p>Cliente: {conflictingDraft.customerQuery || "Sin cliente"}</p>
+            <ul>{(conflictingDraft.lines as DraftLine[]).map((line) => (
+              <li key={line.key}>{line.quantityText} × {line.productName || "Producto sin nombre"} · ${line.unitPriceText}</li>
+            ))}</ul>
+            {conflictingDraft.notes && <p>Notas: {conflictingDraft.notes}</p>}
+          </details>
+          <Button variant="ghost" onClick={() => { if (clearOrderDraft(draftKey)) setConflictingDraft(null); else toast.error("No se pudo descartar el borrador en este dispositivo."); }}>Descartar captura anterior</Button>
+        </div>
+      )}
       {draftRestored && (
         <div className="flex items-center justify-between gap-3 rounded-lg bg-warning/10 p-3">
           <p className="text-sm text-on-surface">
@@ -422,7 +472,7 @@ export function OrderForm({
         </div>
         <div className="flex gap-2 mt-4">
           {onCancel && <Button variant="ghost" full onClick={onCancel}>Cancelar</Button>}
-          <Button full size="lg" onClick={submit} disabled={!customerId || lines.length === 0}>Guardar pedido</Button>
+          <Button full size="lg" onClick={submit} disabled={saving || !!conflictingDraft || !customerId || lines.length === 0}>Guardar pedido</Button>
         </div>
       </div>
 
@@ -436,6 +486,7 @@ export function OrderForm({
           }}
         />
       </Dialog>
+      </fieldset>
     </div>
   );
 }
