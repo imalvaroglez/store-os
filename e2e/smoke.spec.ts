@@ -235,3 +235,24 @@ test("mobile viewport: no horizontal scroll, primary button on-screen", async ({
   expect(box).toBeTruthy();
   expect(box!.x + box!.width).toBeLessThanOrEqual(392);
 });
+
+test("reload restores the selected store and its order draft", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.locator("header button, aside button").filter({ hasText: "▾" }).filter({ visible: true }).first().click();
+  await page.getByText("Joyería", { exact: true }).first().click();
+  await page.getByRole("button", { name: "Pedidos" }).click();
+  await page.getByRole("button", { name: "+ Nuevo" }).click();
+  await page.getByLabel("Cliente").fill("Ana Torres");
+  await page.getByLabel("Producto").first().fill("Cadena de plata 925");
+  await page.getByLabel("Cantidad").first().fill("2");
+  await expect.poll(() => page.evaluate(() => {
+    const key = Object.keys(localStorage).find((item) => item.startsWith("store_os_order_draft_v3::") && item.endsWith("::store_joyeria::new"));
+    if (!key) return false;
+    return JSON.parse(localStorage.getItem(key) || "{}").lines?.[0]?.quantityText === "2";
+  })).toBe(true);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Borrador recuperado")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator("header button, aside button").filter({ hasText: "Joyería" }).filter({ visible: true }).first()).toBeVisible();
+  await expect(page.getByLabel("Producto").first()).toHaveValue("Cadena de plata 925");
+  await expect(page.getByLabel("Cantidad").first()).toHaveValue("2");
+});

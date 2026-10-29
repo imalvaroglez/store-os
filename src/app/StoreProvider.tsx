@@ -260,6 +260,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // is idempotent, so a failed background write just re-migrates on the
           // next load.
           fromCloud.current = true;
+          // Restore the latest explicitly selected store after auth hydration.
+          // Read at dispatch time so a switch made while loading wins.
+          const preferred = loadPreferredStoreId();
+          if (preferred && migrated.stores.some((store) => store.id === preferred)) {
+            dispatch({ type: "SET_ACTIVE_STORE", storeId: preferred });
+          }
           dispatch({ type: "REPLACE_STATE", state: migrated });
           fromCloud.current = false;
           void (async () => {
