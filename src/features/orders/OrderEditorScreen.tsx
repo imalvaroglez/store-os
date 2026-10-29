@@ -6,7 +6,7 @@ import { useRoute } from "../../app/router";
 import { OrderForm } from "./OrderForm";
 
 export function OrderEditorScreen() {
-  const { state, activeStore } = useStore();
+  const { state, activeStore, draftOwnerId } = useStore();
   const route = useRoute();
   const sub = route.name === "admin" ? route.params.sub ?? "" : "";
   const [draft] = useState(() => newOrder(activeStore?.id ?? ""));
@@ -33,6 +33,7 @@ export function OrderEditorScreen() {
       />
       <div className="mx-auto max-w-5xl">
         <OrderForm
+          key={`${draftOwnerId}::${activeStore.id}::${sub}`}
           order={order}
           isNew={sub === "nuevo"}
           onDone={() => navigate("/pedidos")}
