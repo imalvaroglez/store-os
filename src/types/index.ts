@@ -189,6 +189,8 @@ export type Product = {
 };
 
 export type Customer = {
+  segment?: "regular" | "entrepreneur";
+  assignedPriceTierId?: string;
   id: string;
   storeId: string;
   name: string;
@@ -212,6 +214,7 @@ export type LegacyOrderStatus = "asked" | "confirmed" | "to_buy" | "bought" | "a
 export type PaymentStatus = "unpaid" | "partial" | "paid";
 
 export type OrderItem = {
+  priceSource?: "automatic" | "manual";
   productId?: string;
   productName: string;
   quantity: number;

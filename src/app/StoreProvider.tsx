@@ -640,8 +640,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return "received";
     },
     upsertCustomer: async (customer) => {
-      dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
       await persistEntity("customers", customer);
+      dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
     },
     deleteCustomer: (customerId) => {
       dispatch({ type: "DELETE_CUSTOMER", customerId });
