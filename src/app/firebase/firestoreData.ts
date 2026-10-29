@@ -259,29 +259,121 @@ export async function deleteEntity(
   await deleteDoc(doc(db, name, id));
 }
 
+/** The order changed on another device after this editor loaded it. */
+export class StaleOrderError extends Error {
+  constructor() {
+    super("El pedido cambió en otro dispositivo. Vuelve a entrar para ver la versión reciente.");
+    this.name = "StaleOrderError";
+  }
+}
+
+export type StockAdjustment = { productId: string; quantityOnHand: number };
+
 /**
- * Atomically upsert an order AND apply its stock adjustments in ONE writeBatch:
- * the order doc is written as a canonical snapshot (merge:false drops legacy
- * flat fields) and each affected product's quantityOnHand is updated. A partial
- * commit (order saved but stock not, or vice versa) is impossible, so the retry
- * the error toast invites can never double-apply a reservation.
- * ponytail: writeBatch, not runTransaction — re-deriving deltas from canonical
- * docs would hit the missing-doc rules trap on new orders and cost extra reads;
- * concurrent same-order edits converge via the snapshot reload (as in v1).
+ * Pure: apply RELATIVE deltas to the canonical quantities read inside the
+ * transaction. Products missing from `canonical` (deleted concurrently, or
+ * without a quantity) are skipped and reported — same tolerance the local
+ * reducer has for products deleted while an order still references them.
+ */
+export function applyRelativeDeltas(
+  canonical: Map<string, number | undefined>,
+  deltas: Map<string, number>
+): { updates: StockAdjustment[]; skipped: string[] } {
+  const updates: StockAdjustment[] = [];
+  const skipped: string[] = [];
+  for (const [productId, delta] of deltas) {
+    const current = canonical.get(productId);
+    if (typeof current !== "number") {
+      skipped.push(productId);
+      continue;
+    }
+    updates.push({ productId, quantityOnHand: current + delta });
+  }
+  return { updates, skipped };
+}
+
+/**
+ * Atomically upsert an order AND apply its stock deltas in ONE transaction.
+ *
+ * Concurrency contract (E1, replaces the absolute-value writeBatch):
+ * - Product quantities are RE-READ inside the transaction and the client's
+ *   RELATIVE deltas are applied on top, so two devices saving different orders
+ *   that touch the same product can no longer silently drop each other's
+ *   reservations (writeBatch wrote absolute locals — both read 10, both
+ *   wrote 8, the real answer was 6).
+ * - Concurrent edits of the SAME order are refused: pass the `updatedAt` the
+ *   editor loaded (`expectedUpdatedAt`); a mismatch aborts with
+ *   StaleOrderError instead of overwriting the newer version.
+ * - New orders never read their own doc (missing-doc rules trap): the set is a
+ *   plain create/update and rules evaluate the proposed document.
+ * - A product deleted concurrently is skipped (read of a missing doc under
+ *   resource-dependent rules throws → treated as absent), matching the local
+ *   reducer's tolerance.
  */
 export async function saveOrderWithStockTx(
   _user: AppUser,
   order: Order,
-  stockUpdates: { id: string; quantityOnHand: number; updatedAt: string }[]
+  deltas: Map<string, number>,
+  expectedUpdatedAt?: string
 ): Promise<void> {
   const { db } = getFirebase();
-  const batch = writeBatch(db);
+  const orderRef = doc(db, "orders", order.id);
   const { id, ...data } = order;
-  batch.set(doc(db, "orders", id), stripUndefined(data) as Record<string, unknown>, { merge: false });
-  for (const { id: productId, ...stock } of stockUpdates) {
-    batch.update(doc(db, "products", productId), stripUndefined(stock) as Record<string, unknown>);
-  }
-  await batch.commit();
+  await runTransaction(db, async (tx) => {
+    if (expectedUpdatedAt != null) {
+      const snap = await tx.get(orderRef);
+      if (!snap.exists() || snap.data().updatedAt !== expectedUpdatedAt) throw new StaleOrderError();
+    }
+    const canonical = new Map<string, number | undefined>();
+    for (const productId of deltas.keys()) {
+      try {
+        const snap = await tx.get(doc(db, "products", productId));
+        canonical.set(productId, snap.exists() ? (snap.data().quantityOnHand as number | undefined) : undefined);
+      } catch {
+        canonical.set(productId, undefined); // deleted concurrently: skip, don't abort
+      }
+    }
+    const { updates } = applyRelativeDeltas(canonical, deltas);
+    const updatedAt = new Date().toISOString();
+    for (const update of updates) {
+      tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt });
+    }
+    tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
+  });
+}
+
+/**
+ * Atomically delete an order AND release its held stock in ONE transaction
+ * (delete + stock writes used to be separate writes — a crash between them
+ * stranded a reservation forever). Idempotent: deleting an already-deleted
+ * order is a no-op.
+ */
+export async function deleteOrderWithStockTx(
+  _user: AppUser,
+  orderId: string,
+  deltas: Map<string, number>
+): Promise<void> {
+  const { db } = getFirebase();
+  const orderRef = doc(db, "orders", orderId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) return; // already gone: idempotent no-op
+    const canonical = new Map<string, number | undefined>();
+    for (const productId of deltas.keys()) {
+      try {
+        const productSnap = await tx.get(doc(db, "products", productId));
+        canonical.set(productId, productSnap.exists() ? (productSnap.data().quantityOnHand as number | undefined) : undefined);
+      } catch {
+        canonical.set(productId, undefined);
+      }
+    }
+    const { updates } = applyRelativeDeltas(canonical, deltas);
+    const updatedAt = new Date().toISOString();
+    for (const update of updates) {
+      tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt });
+    }
+    tx.delete(orderRef);
+  });
 }
 
 // --- Public catalog projection (3-doc model) ---
