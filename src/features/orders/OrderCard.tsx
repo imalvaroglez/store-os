@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -7,17 +8,22 @@ import {
   PAYMENT_STATUS_TONE,
   ORDER_STATUS_TONE,
   StatRow,
+  Sheet,
+  TextArea,
   useToast,
 } from "../../design-system";
 import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { orderTicketText } from "./orderTicket";
 import { profit } from "../../lib/money";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
-  const { upsertOrder, state } = useStore();
+  const { upsertOrder, state, activeStore } = useStore();
+  const [ticketOpen, setTicketOpen] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const toast = useToast();
-  const customer = state.customers.find((c) => c.id === order.customerId);
+  const customer = state.customers.find((c) => c.id === order.customerId && c.storeId === order.storeId);
   const items = orderItems(order);
   const totals = orderTotals(order);
   const paymentStatus = paymentStatusForOrder(order);
@@ -64,11 +70,24 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     }
   }
 
+  const ticket = ticketOpen ? orderTicketText(order, activeStore?.name ?? "Tienda", customer?.name) : "";
+  async function copyTicket() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(ticket);
+      setCopyFailed(false);
+      toast.success("Detalle copiado");
+    } catch {
+      setCopyFailed(true);
+    }
+  }
+
   return (
+    <>
     <Card onClick={onEdit} className="p-4 sm:p-5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="font-semibold text-ink truncate">#{orderReference(order.id)} · {customer?.name ?? "Sin cliente"}</h3>
+          <h3 className="font-semibold text-ink truncate">#{orderReference(order.id)} · {order.customerName || customer?.name || "Sin cliente"}</h3>
           <p className="text-xs text-ink-soft truncate">{preview || "Sin productos"}{items.length > 3 && " …"}</p>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
@@ -86,13 +105,16 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       </div>
 
       <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
-        <StatRow label="Total"><Money amount={totals.estimatedTotal} /></StatRow>
-        <StatRow label="Pagado"><Money amount={totals.paid} /></StatRow>
-        <StatRow label="Saldo" tone={totals.balance > 0 ? "danger" : "success"}><Money amount={totals.balance} /></StatRow>
+        <StatRow label="Total"><Money exact amount={totals.estimatedTotal} /></StatRow>
+        <StatRow label="Pagado"><Money exact amount={totals.paid} /></StatRow>
+        <StatRow label="Saldo" tone={totals.balance > 0 ? "danger" : "success"}><Money exact amount={totals.balance} /></StatRow>
       </div>
       {knownProfit != null && <p className="text-xs text-ink-soft mt-2">Ganancia estimada: <Money amount={knownProfit} /></p>}
       {shortages.length > 0 && <Badge tone="warning">Faltan {shortages.reduce((sum, n) => sum + n, 0)} piezas</Badge>}
 
+      <div className="mt-3" onClick={(event) => event.stopPropagation()}>
+        <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
+      </div>
       {(verb || totals.balance > 0) && (
         <div className="mt-3 flex gap-2" onClick={(event) => event.stopPropagation()}>
           {verb && <Button full onClick={advance}>{verb}</Button>}
@@ -102,5 +124,13 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         </div>
       )}
     </Card>
+    <Sheet open={ticketOpen} onClose={() => setTicketOpen(false)} title="Detalle para compartir">
+      <div className="space-y-4">
+        <TextArea label="Detalle del pedido" value={ticket} readOnly rows={Math.min(16, Math.max(6, ticket.split("\n").length))} />
+        {copyFailed && <p className="text-danger">No se pudo copiar. Selecciona el texto y cópialo manualmente.</p>}
+        <Button full onClick={copyTicket}>Copiar detalle</Button>
+      </div>
+    </Sheet>
+    </>
   );
 }
