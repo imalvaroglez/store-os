@@ -175,3 +175,20 @@ describe("new order lines prepend (OLI-011)", () => {
     expect(screen.getByText("Línea 2")).toBeInTheDocument();
   });
 });
+
+describe("fast order capture", () => {
+  it("adds a focused line above existing lines without changing their values", () => {
+    render(
+      <ToastProvider>
+        <OrderForm order={{ id: "order_fast", storeId: "store_olivia", customerId: "customer_1", items: Array.from({ length: 49 }, (_, index) => ({ productName: index === 0 ? "Anillo" : `Pieza ${index}`, quantity: 2, unitPrice: 50, subtotal: 100 })), deposit: 0, orderStatus: "asked", paymentStatus: "unpaid", schemaVersion: 2, createdAt: "", updatedAt: "" }} onDone={() => {}} />
+      </ToastProvider>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar línea" }));
+    const products = Array.from(document.querySelectorAll<HTMLInputElement>("input[role=combobox]")).slice(1);
+    expect(products).toHaveLength(50);
+    expect(products[0]).toHaveFocus();
+    expect(products[1]).toHaveValue("Anillo");
+    expect(screen.getAllByLabelText("Cantidad")[1]).toHaveValue("2");
+    expect(screen.getAllByLabelText(/Precio unitario/)[1]).toHaveValue("50");
+  });
+});
