@@ -13,7 +13,8 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { applyPurchaseLines } from "../../lib/inventory";
+import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
+import { migrateOrder } from "../../lib/orders";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
 import { publicPrice } from "../../lib/money";
@@ -292,87 +293,65 @@ export function applyRelativeDeltas(
   return { updates, skipped };
 }
 
-/**
- * Atomically upsert an order AND apply its stock deltas in ONE transaction.
- *
- * Concurrency contract (E1, replaces the absolute-value writeBatch):
- * - Product quantities are RE-READ inside the transaction and the client's
- *   RELATIVE deltas are applied on top, so two devices saving different orders
- *   that touch the same product can no longer silently drop each other's
- *   reservations (writeBatch wrote absolute locals — both read 10, both
- *   wrote 8, the real answer was 6).
- * - Concurrent edits of the SAME order are refused: pass the `updatedAt` the
- *   editor loaded (`expectedUpdatedAt`); a mismatch aborts with
- *   StaleOrderError instead of overwriting the newer version.
- * - New orders never read their own doc (missing-doc rules trap): the set is a
- *   plain create/update and rules evaluate the proposed document.
- * - A product deleted concurrently is skipped (read of a missing doc under
- *   resource-dependent rules throws → treated as absent), matching the local
- *   reducer's tolerance.
- */
+/** Save an order using canonical stock and an idempotent operation identifier. */
 export async function saveOrderWithStockTx(
   _user: AppUser,
   order: Order,
-  deltas: Map<string, number>,
-  expectedUpdatedAt?: string
-): Promise<void> {
+  expectedRevision: number | null,
+  mutationId: string
+): Promise<{ order: Order; stock: StockAdjustment[] }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
-  const { id, ...data } = order;
-  await runTransaction(db, async (tx) => {
-    if (expectedUpdatedAt != null) {
-      const snap = await tx.get(orderRef);
-      if (!snap.exists() || snap.data().updatedAt !== expectedUpdatedAt) throw new StaleOrderError();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    const previous = snap.exists() ? migrateOrder({ ...snap.data(), id: order.id }) : undefined;
+    if (previous && previous.storeId !== order.storeId) throw new StaleOrderError();
+    if (previous?.lastMutationId === mutationId) return { order: previous, stock: [] };
+    if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
+      throw new StaleOrderError();
     }
+    const deltas = reservationDeltasForOrderChange(previous, order);
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
-      try {
-        const snap = await tx.get(doc(db, "products", productId));
-        canonical.set(productId, snap.exists() ? (snap.data().quantityOnHand as number | undefined) : undefined);
-      } catch {
-        canonical.set(productId, undefined); // deleted concurrently: skip, don't abort
-      }
+      const product = await tx.get(doc(db, "products", productId));
+      if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
+      canonical.set(productId, product.exists() ? product.data().quantityOnHand as number | undefined : undefined);
     }
     const { updates } = applyRelativeDeltas(canonical, deltas);
-    const updatedAt = new Date().toISOString();
-    for (const update of updates) {
-      tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt });
-    }
+    const at = new Date().toISOString();
+    const saved = { ...order, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
+    for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    const { id, ...data } = saved;
     tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
+    return { order: saved, stock: updates };
   });
 }
 
-/**
- * Atomically delete an order AND release its held stock in ONE transaction
- * (delete + stock writes used to be separate writes — a crash between them
- * stranded a reservation forever). Idempotent: deleting an already-deleted
- * order is a no-op.
- */
+/** Release the canonical reservation and delete the matching revision atomically. */
 export async function deleteOrderWithStockTx(
   _user: AppUser,
   orderId: string,
-  deltas: Map<string, number>
-): Promise<void> {
+  expectedRevision: number
+): Promise<StockAdjustment[]> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", orderId);
-  await runTransaction(db, async (tx) => {
+  return runTransaction(db, async (tx) => {
     const snap = await tx.get(orderRef);
-    if (!snap.exists()) return; // already gone: idempotent no-op
+    if (!snap.exists()) return [];
+    const previous = migrateOrder({ ...snap.data(), id: orderId });
+    if ((previous.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
+    const deltas = reservationDeltasForOrderChange(previous, { ...previous, orderStatus: "cancelled" });
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
-      try {
-        const productSnap = await tx.get(doc(db, "products", productId));
-        canonical.set(productId, productSnap.exists() ? (productSnap.data().quantityOnHand as number | undefined) : undefined);
-      } catch {
-        canonical.set(productId, undefined);
-      }
+      const product = await tx.get(doc(db, "products", productId));
+      if (product.exists() && product.data().storeId !== previous.storeId) throw new Error("El producto pertenece a otra tienda.");
+      canonical.set(productId, product.exists() ? product.data().quantityOnHand as number | undefined : undefined);
     }
     const { updates } = applyRelativeDeltas(canonical, deltas);
-    const updatedAt = new Date().toISOString();
-    for (const update of updates) {
-      tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt });
-    }
+    const at = new Date().toISOString();
+    for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
     tx.delete(orderRef);
+    return updates;
   });
 }
 

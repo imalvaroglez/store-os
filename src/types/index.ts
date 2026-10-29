@@ -226,6 +226,8 @@ export type OrderItem = {
 };
 
 export type Order = {
+  revision?: number;
+  lastMutationId?: string;
   id: string;
   storeId: string;
   customerId: string;

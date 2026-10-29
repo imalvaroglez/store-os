@@ -121,6 +121,8 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
   const itemsTotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const base = {
     id,
+    ...(typeof raw.revision === "number" ? { revision: raw.revision } : {}),
+    ...(typeof raw.lastMutationId === "string" ? { lastMutationId: raw.lastMutationId } : {}),
     storeId: String(raw.storeId ?? ""),
     customerId: String(raw.customerId ?? ""),
     items,
@@ -148,6 +150,7 @@ export function isMigratedOrder(raw: unknown): raw is Order {
   if (order.paymentStatus !== paymentStatusForOrder(order)) return false;
   if (order.items.some((rawItem) => {
     const item = rawItem as Partial<OrderItem>;
+    if (typeof item.lineId !== "string" || !item.lineId) return true;
     const quantity = item.quantity;
     const unitPrice = item.unitPrice;
     if (typeof item.productName !== "string" || typeof quantity !== "number" || !Number.isInteger(quantity) || quantity <= 0) return true;
