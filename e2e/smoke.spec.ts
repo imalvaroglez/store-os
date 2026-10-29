@@ -167,9 +167,9 @@ test("create a multi-line order with live totals", async ({ sharedPage: page }) 
   for (let index = 1; index <= 10; index++) {
     await page.getByRole("button", { name: "+ Agregar línea" }).click();
     const productFields = page.getByLabel("Producto");
-    await productFields.nth(index).fill(`Producto especial ${index}`);
-    await page.getByLabel("Cantidad").nth(index).fill(String(index + 1));
-    await page.getByLabel("Precio unitario").nth(index).fill("100");
+    await productFields.first().fill(`Producto especial ${index}`);
+    await page.getByLabel("Cantidad").first().fill(String(index + 1));
+    await page.getByLabel("Precio unitario").first().fill("100");
   }
 
   await expect(page.getByText("Piezas").last()).toBeVisible();
