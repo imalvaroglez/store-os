@@ -302,4 +302,17 @@ test("review order lines by category and edit a selected line", async ({ sharedP
   await page.getByRole("button", { name: "Revisar por categoría" }).click();
   await expect(page.getByRole("heading", { name: "Perfumes" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sin categoría" })).toBeVisible();
+test("copy the saved order detail", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.getByRole("button", { name: "Pedidos" }).click();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { (window as any).__copiedOrder = text; } } });
+  });
+  await page.getByRole("button", { name: "Ver detalle para compartir" }).first().click();
+  const detail = page.getByRole("dialog", { name: "Detalle para compartir" });
+  await expect(detail.getByLabel("Detalle del pedido")).toHaveValue(/Total: \$/);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
+  await detail.getByRole("button", { name: "Copiar detalle" }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).toContain("Saldo:");
+  await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
 });

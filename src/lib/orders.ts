@@ -1,6 +1,7 @@
 import type { Order, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { formatMoney } from "./money";
+import { orderAmountCents } from "./orderMoney";
 import { LEGACY_TIER_IDS } from "./pricing";
 
 const ORDER_STATUSES: ReadonlySet<OrderStatus> = new Set([
@@ -33,7 +34,7 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
         quantity,
         ...(tierId(item.priceTier) ? { priceTier: tierId(item.priceTier) } : {}),
         unitPrice,
-        subtotal: quantity * unitPrice,
+        subtotal: orderAmountCents(unitPrice, quantity) / 100,
         ...(typeof item.cost === "number" && Number.isFinite(item.cost) ? { cost: item.cost } : {}),
       };
     });
@@ -49,7 +50,7 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
     quantity,
     ...(tierId(order.priceTier) ? { priceTier: tierId(order.priceTier) } : {}),
     unitPrice,
-    subtotal: quantity * unitPrice,
+    subtotal: orderAmountCents(unitPrice, quantity) / 100,
     ...(typeof order.cost === "number" && Number.isFinite(order.cost) ? { cost: order.cost } : {}),
   }];
 }
@@ -59,10 +60,13 @@ export type OrderTotals = { estimatedTotal: number; paid: number; balance: numbe
 /** Totals always use the frozen line snapshots, never the current catalog. */
 export function orderTotals(order: Partial<Order> & Record<string, unknown>): OrderTotals {
   const items = orderItems(order);
-  const estimatedTotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  const totalCents = items.reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+  if (!Number.isSafeInteger(totalCents)) throw new RangeError("Order total exceeds safe precision");
+  const estimatedTotal = totalCents / 100;
   const pieces = items.reduce((sum, item) => sum + item.quantity, 0);
-  const paid = Math.max(0, finite(order.deposit));
-  return { estimatedTotal, paid, balance: Math.max(0, estimatedTotal - paid), pieces };
+  const paidCents = orderAmountCents(Math.max(0, finite(order.deposit)));
+  const paid = paidCents / 100;
+  return { estimatedTotal, paid, balance: Math.max(0, totalCents - paidCents) / 100, pieces };
 }
 
 export function paymentStatusForOrder(order: Partial<Order> & Record<string, unknown>): PaymentStatus {
@@ -121,13 +125,14 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
     lineId: item.lineId ?? `${id}_L${index}`,
   }));
   const orderStatus = migratedStatus(raw.orderStatus ?? raw.status);
-  const itemsTotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  const itemsTotal = items.reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0) / 100;
   const base = {
     id,
     ...(typeof raw.revision === "number" ? { revision: raw.revision } : {}),
     ...(typeof raw.lastMutationId === "string" ? { lastMutationId: raw.lastMutationId } : {}),
     storeId: String(raw.storeId ?? ""),
     customerId: String(raw.customerId ?? ""),
+    ...(typeof raw.customerName === "string" && raw.customerName ? { customerName: raw.customerName } : {}),
     items,
     // v1 advanced to status='paid' without ever raising deposit; a migrated
     // collected sale must not show a phantom balance ("Falta cobrar").
@@ -158,7 +163,7 @@ export function isMigratedOrder(raw: unknown): raw is Order {
     const unitPrice = item.unitPrice;
     if (typeof item.productName !== "string" || typeof quantity !== "number" || !Number.isInteger(quantity) || quantity <= 0) return true;
     if (typeof unitPrice !== "number" || !Number.isFinite(unitPrice) || unitPrice < 0) return true;
-    return item.subtotal !== quantity * unitPrice;
+    return item.subtotal !== quantity * unitPrice && item.subtotal !== orderAmountCents(unitPrice, quantity) / 100;
   })) return false;
   return !("productId" in order || "productName" in order || "quantity" in order || "price" in order || "status" in order);
 }

@@ -237,6 +237,7 @@ export type Order = {
   id: string;
   storeId: string;
   customerId: string;
+  customerName?: string;
   items: OrderItem[];
   deposit: number;
   orderStatus: OrderStatus;
