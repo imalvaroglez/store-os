@@ -9,6 +9,7 @@ import {
   connectFirestoreEmulator,
   type Firestore,
 } from "firebase/firestore";
+import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
 
 // Firebase config. Values come from Vite env vars (prefixed VITE_). The public
 // Firebase config is safe in a client bundle; access is enforced by Security
@@ -34,11 +35,9 @@ const EMULATOR =
   import.meta.env.MODE !== "production" &&
   import.meta.env.VITE_FIREBASE_EMULATOR === "true";
 
-// In emulator mode we ALWAYS target the local "store-os-demo" namespace,
-// regardless of any VITE_FIREBASE_PROJECT_ID that may be set in .env (the real
-// project id). This keeps the emulator tests deterministic and isolated from
-// the production project.
-const projectId = EMULATOR ? "store-os-demo" : firebaseConfig.projectId;
+// Emulator mode uses the dev project ID while all service hosts remain local.
+// No Firebase request leaves localhost in this mode.
+const projectId = EMULATOR ? FIREBASE_DEV_PROJECT_ID : firebaseConfig.projectId;
 
 // Firebase Auth requires a non-empty apiKey even in emulator mode (it's ignored
 // by the emulator but validated on init). Provide a placeholder in pure-emulator mode.

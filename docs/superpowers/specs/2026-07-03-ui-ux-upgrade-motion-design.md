@@ -125,7 +125,7 @@ temas y respetan `prefers-reduced-motion`.
 - Bloquea scroll del body. `role="dialog"`, `aria-label`, foco al botón cerrar.
 - **Dónde:** ÚNICAMENTE `PublicCatalogScreen` (`/catalogo/:slug`). No en catálogo admin.
 - `ponytail:` una foto a la vez con galería navegable. Sin zoom/pinch, sin miniaturas.
-- **Nota cero-costos:** funciona en demo local; en cloud se habilita junto con el
+- **Nota cero-costos:** funciona sin conexión; en cloud se habilita junto con el
   path público de Firestore (pendiente, fuera de este spec).
 
 ### Fase 4 — Diálogo y acciones

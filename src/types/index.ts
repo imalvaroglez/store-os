@@ -15,7 +15,7 @@ export type Store = {
   skuPrefix?: string;
   createdAt: string;
   updatedAt: string;
-  // Cloud-only membership fields (absent in local demo mode):
+  // Cloud-only membership fields (absent from local-only state):
   ownerUid?: string;
   memberUids?: string[];
   pendingInvites?: string[]; // emails invited but not yet signed up

@@ -21,8 +21,8 @@ describe("orderDraft — borrador offline del editor (E1)", () => {
   beforeEach(() => localStorage.clear());
 
   it("keys separate the new-order editor from a saved order", () => {
-    expect(orderDraftKey("s1", "o1", true)).toBe("store_os_order_draft_v3::demo::s1::new");
-    expect(orderDraftKey("s1", "o1", false)).toBe("store_os_order_draft_v3::demo::s1::o1");
+    expect(orderDraftKey("s1", "o1", true)).toBe("store_os_order_draft_v3::local::s1::new");
+    expect(orderDraftKey("s1", "o1", false)).toBe("store_os_order_draft_v3::local::s1::o1");
     expect(orderDraftKey("s1", "o1", false, "u1")).not.toBe(orderDraftKey("s1", "o1", false, "u2"));
   });
 
