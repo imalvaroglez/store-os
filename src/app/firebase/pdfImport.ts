@@ -10,7 +10,7 @@ import { getStorageInstance } from "./storage";
 
 // PDF import transport (purchase-pdf-import): upload the supplier PDF to
 // Storage, then call importPurchasePdf (OCR) and get the parsed lines back.
-// Demo/local mode (no Firebase) is handled by the caller — this module is
+// Local mode (no Firebase) is handled by the caller — this module is
 // only used when cloud is available.
 
 const EMULATOR =

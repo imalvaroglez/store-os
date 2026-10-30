@@ -7,9 +7,8 @@ export const ACTIVE_STORE_KEY = "store_os_active_store_v1";
 // ponytail: whole-state load/save. Simpler than per-entity keys; local-first so size is tiny.
 // When Firebase lands later, swap this adapter; the reducer/UI shape stays.
 
-// A signed-out visitor (or a developer who hasn't logged in) with empty storage
-// reaches the AuthScreen — we NEVER auto-seed demo stores into the browser.
-// The Olivia fixture for the DEV backend lives only in scripts/seed-dev.cjs.
+// The admin app requires authentication. No store fixtures are created in the
+// browser; controlled development data lives only in scripts/seed-dev.cjs.
 export function emptyState(): AppState {
   return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
 }
@@ -25,7 +24,7 @@ export function loadState(): AppState {
     const parsed = JSON.parse(raw) as AppState;
     return migrateCatalog(normalizeState(parsed));
   } catch {
-    // Corrupt state -> reset. Demo seed in dev, empty in production.
+    // Corrupt state -> reset to an empty, valid state.
     const seeded = emptyState();
     saveState(seeded);
     return seeded;
@@ -96,7 +95,7 @@ export type OrderDraftSnapshot = {
   notes: string;
 };
 
-export function orderDraftKey(storeId: string, orderId: string, isNew: boolean, userId = "demo"): string {
+export function orderDraftKey(storeId: string, orderId: string, isNew: boolean, userId = "local"): string {
   return `store_os_order_draft_v3::${userId}::${storeId}::${isNew ? "new" : orderId}`;
 }
 

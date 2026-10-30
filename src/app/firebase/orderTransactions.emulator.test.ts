@@ -18,7 +18,7 @@ const makeOrder = (id: string, productId: string, quantity: number): Order => ({
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order transactions with Firestore rules", () => {
   beforeAll(async () => {
-    env = await initializeTestEnvironment({ projectId: "store-os-demo", firestore: { rules: readFileSync("firestore.rules", "utf8") } });
+    env = await initializeTestEnvironment({ projectId: "store-os-dev", firestore: { rules: readFileSync("firestore.rules", "utf8") } });
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "users/tx-user"), { role: "member" });
       await setDoc(doc(ctx.firestore(), "adminStores/tx-store"), { ownerUid: "tx-user", memberUids: ["tx-user"] });
