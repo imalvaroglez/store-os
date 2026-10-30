@@ -25,6 +25,7 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
       const unitPrice = Math.max(0, finite(item.unitPrice ?? item.price));
       return {
         ...(typeof item.lineId === "string" && item.lineId ? { lineId: item.lineId } : {}),
+        ...(item.priceSource === "automatic" || item.priceSource === "manual" ? { priceSource: item.priceSource } : {}),
         ...(typeof item.productId === "string" && item.productId ? { productId: item.productId } : {}),
         productName: String(item.productName ?? item.name ?? "Producto").trim() || "Producto",
         quantity,

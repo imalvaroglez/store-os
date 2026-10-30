@@ -24,7 +24,7 @@ import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type Or
 import { ORDER_STATUS_LABELS } from "./orderStatus";
 import { CustomerForm } from "../customers/CustomerForm";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../../types";
-import type { Order, OrderItem, OrderStatus, Product } from "../../types";
+import type { Customer, Order, OrderItem, OrderStatus, Product } from "../../types";
 
 type DraftLine = OrderItem & {
   key: string;
@@ -44,6 +44,7 @@ function lineFromItem(item?: OrderItem): DraftLine {
   return {
     key: uid("line"),
     lineId: item?.lineId,
+    priceSource: item ? (item.priceSource ?? "manual") : "automatic",
     productId: item?.productId,
     productName: item?.productName ?? "",
     productQuery: item?.productName ?? "",
@@ -51,7 +52,7 @@ function lineFromItem(item?: OrderItem): DraftLine {
     quantityText: String(quantity),
     priceTier: item?.priceTier,
     unitPrice,
-    unitPriceText: String(unitPrice),
+    unitPriceText: item ? String(unitPrice) : "",
     subtotal: quantity * unitPrice,
     cost: item?.cost,
     costText: item?.cost == null ? "" : String(item.cost),
@@ -176,6 +177,45 @@ export function OrderForm({
     setLines((current) => [lineFromItem(), ...current]);
   }
 
+  // OLI-008 (#92): the customer's assigned tier drives automatic pricing;
+  // manually-priced lines keep their price (priceSource === "manual").
+  const [pendingCustomer, setPendingCustomer] = useState<Customer | null>(null);
+  const [orderTierOverride, setOrderTierOverride] = useState("");
+  const selectedCustomer = customers.find((customer) => customer.id === customerId);
+  const assignedTier = selectedCustomer?.assignedPriceTierId;
+  const missingTier = isTiered && !!assignedTier && !tiers.some((tier) => tier.id === assignedTier) && !orderTierOverride;
+  const currentTier = orderTierOverride || assignedTier || defaultPriceTier;
+
+  function applyCustomer(customer: Customer, reprice: boolean) {
+    const tier = customer.assignedPriceTierId ?? defaultPriceTier;
+    const tierAvailable = !isTiered || tiers.some((candidate) => candidate.id === tier);
+    if (reprice) setLines((current) => current.map((line) => {
+      if (line.priceSource !== "automatic" || !line.productId) return line;
+      const product = products.find((item) => item.id === line.productId);
+      const price = isTiered ? (tierAvailable ? product?.prices?.[tier ?? ""] : undefined) : product?.price;
+      return { ...line, priceTier: isTiered ? tier : undefined, unitPriceText: price == null ? "" : String(price), unitPrice: price ?? 0 };
+    }));
+    setOrderTierOverride("");
+    setCustomerId(customer.id);
+    setCustomerQuery(customer.name);
+    setPendingCustomer(null);
+  }
+
+  function chooseCustomer(customer: Customer) {
+    if (customer.id === customerId) { setCustomerQuery(customer.name); return; }
+    if (customerId && lines.some((line) => line.productName.trim())) setPendingCustomer(customer);
+    else applyCustomer(customer, true);
+  }
+
+  function resolveMissingTier(tier: string) {
+    setOrderTierOverride(tier);
+    setLines((current) => current.map((line) => {
+      if (line.priceSource !== "automatic" || !line.productId) return line;
+      const price = products.find((product) => product.id === line.productId)?.prices?.[tier];
+      return { ...line, priceTier: tier, unitPriceText: price == null ? "" : String(price), unitPrice: price ?? 0 };
+    }));
+  }
+
   const customerOptions = customers.map((customer) => ({
     value: customer.id,
     label: customer.name,
@@ -183,7 +223,7 @@ export function OrderForm({
     keywords: [customer.phone, customer.instagram].filter(Boolean).join(" "),
   }));
   const productOptions = products.map((product) => {
-    const price = isTiered ? product.prices?.[defaultPriceTier ?? ""] : product.price;
+    const price = isTiered ? product.prices?.[currentTier ?? ""] : product.price;
     return {
       value: product.id,
       label: product.name,
@@ -216,17 +256,17 @@ export function OrderForm({
       updateLine(line.key, { productId: undefined, productName: line.productQuery.trim(), productQuery: line.productQuery });
       return;
     }
-    const priceTier = line.priceTier ?? defaultPriceTier;
-    // A product whose default tier has no price keeps the line's current price
-    // instead of silently dropping to $0 (mirrors changeTier's fallback).
-    const unitPrice = (isTiered ? product.prices?.[priceTier ?? ""] : product.price) ?? numberFromText(line.unitPriceText);
+    const manualTier = isTiered && line.priceSource === "manual" && !!line.priceTier;
+    const priceTier = manualTier ? line.priceTier : currentTier;
+    const unitPrice = isTiered ? (missingTier && !manualTier ? undefined : product.prices?.[priceTier ?? ""]) : product.price;
     updateLine(line.key, {
       productId: product.id,
+      priceSource: manualTier ? "manual" : "automatic",
       productName: product.name,
       productQuery: product.name,
       priceTier: isTiered ? priceTier : undefined,
-      unitPrice,
-      unitPriceText: String(unitPrice),
+      unitPrice: unitPrice ?? 0,
+      unitPriceText: unitPrice == null ? "" : String(unitPrice),
       cost: product.cost,
       costText: product.cost == null ? "" : String(product.cost),
     });
@@ -235,19 +275,23 @@ export function OrderForm({
   function changeProductQuery(line: DraftLine, value: string) {
     const product = products.find((candidate) => candidate.name === value || candidate.id === value);
     if (product) selectProduct(line, product);
-    else updateLine(line.key, { productId: undefined, productName: value, productQuery: value });
+    else updateLine(line.key, { productId: undefined, productName: value, productQuery: value, ...(line.productId ? { priceSource: "automatic", priceTier: undefined, unitPriceText: "" } : {}) });
   }
 
   function changeTier(line: DraftLine, value: string) {
     const product = products.find((candidate) => candidate.id === line.productId);
-    const unitPrice = product?.prices?.[value] ?? numberFromText(line.unitPriceText);
-    updateLine(line.key, { priceTier: value, unitPrice, unitPriceText: String(unitPrice) });
+    const unitPrice = product?.prices?.[value];
+    updateLine(line.key, { priceTier: value, priceSource: "manual", unitPrice: unitPrice ?? 0, unitPriceText: unitPrice == null ? "" : String(unitPrice) });
   }
 
   async function submit() {
     if (savingRef.current || conflictingDraft) return;
-    if (!customerId) {
+    if (!customerId || customerQuery !== selectedCustomer?.name) {
       toast.error("Elige un cliente para guardar el pedido.");
+      return;
+    }
+    if (missingTier) {
+      toast.error("Elige un nivel de precio disponible.");
       return;
     }
     const normalizedItems: OrderItem[] = [];
@@ -266,12 +310,13 @@ export function OrderForm({
       const cost = parseAmount(line.costText);
       // Persist the tier the SELECT showed (line.priceTier ?? default), so the
       // saved snapshot never disagrees with what was on screen.
-      const tier = isTiered ? line.priceTier ?? defaultPriceTier : undefined;
+      const tier = isTiered ? line.priceTier ?? currentTier : undefined;
       normalizedItems.push({
         // A new line adopts its draft key as its permanent identity; an edited
         // line keeps the lineId it was loaded with.
         lineId: line.lineId ?? line.key,
         ...(line.productId ? { productId: line.productId } : {}),
+        priceSource: line.productId ? (line.priceSource ?? "manual") : "manual",
         productName,
         quantity,
         ...(tier ? { priceTier: tier } : {}),
@@ -362,16 +407,19 @@ export function OrderForm({
             // full name is the natural flow); anything else clears the pick so
             // a duplicate name can never silently reassign the order.
             const matches = customers.filter((customer) => customer.name === value);
-            setCustomerId(matches.length === 1 ? matches[0].id : "");
+            if (matches.length === 1) chooseCustomer(matches[0]);
           }}
           onSelect={(option) => {
             const customer = customers.find((item) => item.id === option.value);
             if (!customer) return;
-            setCustomerId(customer.id);
-            setCustomerQuery(customer.name);
+            chooseCustomer(customer);
           }}
         />
         <Button variant="ghost" size="sm" onClick={() => setNewCustomerOpen(true)}>+ Nuevo cliente</Button>
+        {missingTier && <p className="text-danger">El nivel de precio de esta clienta ya no está disponible. Elige uno para este pedido.</p>}
+        {isTiered && assignedTier && !tiers.some((tier) => tier.id === assignedTier) && (
+          <SelectField label="Nivel de precio para el pedido" value={orderTierOverride} onChange={resolveMissingTier} options={[{ value: "", label: "Selecciona un nivel" }, ...tiers.map((tier) => ({ value: tier.id, label: tier.label }))]} />
+        )}
       </div>
 
       <div className="space-y-4">
@@ -415,7 +463,8 @@ export function OrderForm({
                   if (product) selectProduct(line, product);
                 }}
               />
-              {line.productId && <p className="text-xs text-on-surface-soft">Precio tomado del catálogo; puedes editarlo.</p>}
+              {line.priceSource === "manual" && <p className="text-xs text-on-surface-soft">Precio ajustado manualmente.</p>}
+              {line.productId && !line.unitPriceText && <p className="text-danger">Falta capturar el precio de este producto.</p>}
               <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(7rem,0.65fr)_minmax(10rem,1fr)_minmax(11rem,1fr)]">
                 <TextField
                   label="Cantidad"
@@ -437,7 +486,7 @@ export function OrderForm({
                   value={line.unitPriceText}
                   onChange={(event) => {
                     const value = sanitizeDecimalInput(event.target.value);
-                    updateLine(line.key, { unitPriceText: value, unitPrice: numberFromText(value) });
+                    updateLine(line.key, { unitPriceText: value, unitPrice: numberFromText(value), priceSource: "manual" });
                   }}
                 />
                 {isTiered && (
@@ -445,7 +494,7 @@ export function OrderForm({
                     <SelectField
                       label="Nivel de precio"
                       hint="Se guarda en este pedido y no cambia el catálogo."
-                      value={line.priceTier ?? defaultPriceTier ?? ""}
+                      value={line.priceTier ?? currentTier ?? ""}
                       onChange={(value) => changeTier(line, value)}
                       options={tiers.map((tier) => ({ value: tier.id, label: tier.label }))}
                     />
@@ -502,13 +551,19 @@ export function OrderForm({
         </div>
       </div>
 
+      <Dialog open={!!pendingCustomer} title="Cambiar cliente" onClose={() => { setPendingCustomer(null); setCustomerQuery(selectedCustomer?.name ?? ""); }} footer={<div className="flex w-full flex-col gap-2">
+        <Button full onClick={() => pendingCustomer && applyCustomer(pendingCustomer, true)}>Aplicar precios de {pendingCustomer?.name}</Button>
+        <Button full variant="secondary" onClick={() => pendingCustomer && applyCustomer(pendingCustomer, false)}>Conservar importes</Button>
+        <Button full variant="ghost" onClick={() => { setPendingCustomer(null); setCustomerQuery(selectedCustomer?.name ?? ""); }}>Cancelar</Button>
+      </div>}>
+        <p>Los precios ajustados a mano se conservan.</p>
+      </Dialog>
       <Dialog open={newCustomerOpen} title="Nuevo cliente" onClose={() => setNewCustomerOpen(false)}>
         <CustomerForm
           customer={activeStore ? newCustomer(activeStore.id) : newCustomer(order.storeId)}
           onDone={() => setNewCustomerOpen(false)}
           onSaved={(customer) => {
-            setCustomerId(customer.id);
-            setCustomerQuery(customer.name);
+            chooseCustomer(customer);
           }}
         />
       </Dialog>
