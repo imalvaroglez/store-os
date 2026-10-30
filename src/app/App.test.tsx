@@ -1,90 +1,94 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+// @vitest-environment jsdom
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { StoreProvider } from "./StoreProvider";
 import { App } from "./App";
-import { AuthProvider } from "./firebase/AuthProvider";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { fixtureState } from "../lib/testFixtures";
-import type { AppState } from "../types";
-import { saveState } from "../lib/storage";
 import { ToastProvider } from "../design-system";
+import type { AppState } from "../types";
 
-// Runtime mount smoke: catches render-time crashes curl/static checks can't.
-// AuthProvider is in pure-local mode here (no VITE_FIREBASE_* in the test env),
-// so StoreProvider stays on the localStorage path these tests expect.
-function withState(state: AppState) {
-  saveState(state); // so the provider loads this exact state, not a fresh seed
-  return ({ children }: { children: React.ReactNode }) => (
-    <AuthProvider>
-      <StoreProvider>
-        <ToastProvider>{children}</ToastProvider>
-      </StoreProvider>
-    </AuthProvider>
-  );
+const mocks = vi.hoisted(() => ({
+  user: null as null | { uid: string; email: string | null; role: "super_admin" | "member" },
+  state: null as AppState | null,
+  loadCloudState: vi.fn(),
+}));
+
+vi.mock("./firebase/AuthProvider", () => ({
+  AuthProvider: ({ children }: { children: ReactNode }) => children,
+  useAuth: () => ({ user: mocks.user, authReady: true, enabled: true, error: null, signOut: async () => {} }),
+}));
+
+vi.mock("./firebase/firestoreData", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./firebase/firestoreData")>();
+  return {
+    ...actual,
+    loadCloudState: mocks.loadCloudState,
+    subscribeCloudState: vi.fn(() => () => {}),
+    saveEntity: vi.fn(async () => {}),
+    projectPublicForStore: vi.fn(async () => {}),
+  };
+});
+
+const signedInUser = { uid: "uid_test", email: "test@store-os.mx", role: "super_admin" as const };
+
+function withCloudState(state: AppState, user = signedInUser) {
+  mocks.state = state;
+  mocks.user = user;
+  mocks.loadCloudState.mockImplementation(async () => state);
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return <StoreProvider><ToastProvider>{children}</ToastProvider></StoreProvider>;
+  };
 }
 
-// PublicCatalogScreen is now Firestore-backed (anonymous public projection),
-// so its render behavior is covered by the emulator e2e suite
-// (e2e/public-catalog.spec.ts), not this pure-local unit test.
+beforeEach(() => {
+  mocks.state = null;
+  mocks.user = null;
+  mocks.loadCloudState.mockReset();
+  window.history.replaceState({}, "", "/");
+});
 
 describe("HomeScreen store isolation render", () => {
-  it("renders the active store's data and primary action", () => {
-    const Wrapper = withState(fixtureState());
-    render(
-      <Wrapper>
-        <HomeScreen />
-      </Wrapper>
-    );
+  it("renders the authenticated Firestore state and primary action", async () => {
+    const Wrapper = withCloudState(fixtureState());
+    render(<Wrapper><HomeScreen /></Wrapper>);
 
-    // Primary action present
-    expect(screen.getByText("+ Nuevo pedido")).toBeTruthy();
-
-    // Olivia is the active store in seed; her product appears in active orders.
+    await waitFor(() => expect(screen.getByText("+ Nuevo pedido")).toBeTruthy());
     expect(screen.getByText("Anillo de plata 925")).toBeTruthy();
-
-    // A Santi-only product must not leak onto the Olivia home screen.
     expect(screen.queryByText("Perfume Baccarat Rouge 540")).toBeNull();
   });
 
-  it("isolates when switching active store via the provider", () => {
+  it("isolates when the authenticated state selects another store", async () => {
     const state = fixtureState();
-    const joyeria = state.stores.find((s) => s.slug === "joyeria")!;
+    const joyeria = state.stores.find((store) => store.slug === "joyeria")!;
     state.activeStoreId = joyeria.id;
-    const Wrapper = withState(state);
-    const { container } = render(
-      <Wrapper>
-        <HomeScreen />
-      </Wrapper>
-    );
-    // Joyería has inventory; low-stock banner text or product may appear.
-    // The key assertion: Santi's on-demand product must not appear on Joyería home.
+    const Wrapper = withCloudState(state);
+    const { container } = render(<Wrapper><HomeScreen /></Wrapper>);
+
+    await waitFor(() => expect(container.textContent).toContain("Joyería"));
     expect(screen.queryByText("Perfume Baccarat Rouge 540")).toBeNull();
-    expect(container.textContent).toContain("Joyería");
   });
 });
 
-describe("Root signed-out routing (production)", () => {
-  it("shows AuthScreen when DEV is false and there is no session", () => {
-    const original = import.meta.env.DEV;
-    (import.meta.env as { DEV: boolean }).DEV = false;
-    localStorage.clear(); // A built deployment never creates store fixtures.
-    try {
-      // No session, no active store -> in a built deployment this must be AuthScreen.
-      // AuthProvider is in pure-local mode (no VITE_FIREBASE_* here), so user stays null.
-      render(
-        <AuthProvider>
-          <StoreProvider>
-            <App />
-          </StoreProvider>
-        </AuthProvider>
-      );
-      // AuthScreen renders its header subtitle.
-      expect(screen.getByText("Sincroniza tus tiendas en la nube")).toBeTruthy();
-      // No store data should appear before authentication.
-      expect(screen.queryByText("Joyería")).toBeNull();
-    } finally {
-      (import.meta.env as { DEV: boolean }).DEV = original;
-      localStorage.clear();
-    }
+describe("Root signed-out routing", () => {
+  it("shows AuthScreen and never restores an administrative browser snapshot", () => {
+    localStorage.setItem("store_os_state_v1", JSON.stringify(fixtureState()));
+    render(<StoreProvider><App /></StoreProvider>);
+
+    expect(screen.getByRole("heading", { name: "Entrar" })).toBeTruthy();
+    expect(screen.queryByText("Joyería")).toBeNull();
+    expect(mocks.loadCloudState).not.toHaveBeenCalled();
+  });
+
+  it("shows a retryable error when Firestore cannot load the signed-in user's state", async () => {
+    mocks.user = signedInUser;
+    mocks.loadCloudState.mockRejectedValue(new Error("network"));
+    render(<StoreProvider><App /></StoreProvider>);
+
+    await screen.findByRole("alert");
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
+    expect(screen.queryByText("Crea tu primera tienda")).toBeNull();
   });
 });

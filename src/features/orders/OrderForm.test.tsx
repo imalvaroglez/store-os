@@ -46,7 +46,7 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../app/StoreProvider")>();
   return {
     ...actual,
-    useStore: () => ({ state, activeStore, upsertOrder: mockUpsertOrder }),
+    useStore: () => ({ state, activeStore, upsertOrder: mockUpsertOrder, draftOwnerId: "uid_test" }),
   };
 });
 
@@ -93,7 +93,7 @@ describe("recovered order drafts", () => {
   it("discards a restored draft without recreating it", async () => {
     const { saveOrderDraft, orderDraftKey } = await import("./orderDraft");
     const order = { id: "draft_order", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
-    const key = orderDraftKey(order.storeId, order.id, false);
+    const key = orderDraftKey(order.storeId, order.id, false, "uid_test");
     saveOrderDraft(key, { orderUpdatedAt: order.updatedAt, savedAt: order.updatedAt, customerId: "customer_1", customerQuery: "Cliente Olivia", lines: [{ key: "saved", productName: "Anillo", productQuery: "Anillo", quantity: 2, quantityText: "2", unitPrice: 50, unitPriceText: "50", costText: "", subtotal: 100 }], deposit: "0", promisedDate: "", orderStatus: "asked", notes: "" });
     const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
@@ -105,7 +105,7 @@ describe("recovered order drafts", () => {
   it("keeps a conflicting draft available without overwriting it", async () => {
     const { saveOrderDraft, orderDraftKey } = await import("./orderDraft");
     const order = { id: "conflict_order", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, revision: 2, createdAt: "2026-01-01", updatedAt: "2026-02-01" };
-    const key = orderDraftKey(order.storeId, order.id, false);
+    const key = orderDraftKey(order.storeId, order.id, false, "uid_test");
     saveOrderDraft(key, { orderUpdatedAt: "2026-01-01", expectedRevision: 1, savedAt: order.updatedAt, customerId: "customer_1", customerQuery: "Cliente Olivia", lines: [{ key: "old", productName: "Aretes perdidos", productQuery: "Aretes perdidos", quantityText: "1", unitPriceText: "50", costText: "" }], deposit: "0", promisedDate: "", orderStatus: "asked", notes: "" });
     const original = localStorage.getItem(key);
     const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
@@ -154,7 +154,7 @@ describe("acknowledged order drafts", () => {
   it("clears a draft if its operation was already committed", async () => {
     const { saveOrderDraft, orderDraftKey } = await import("./orderDraft");
     const order = { id: "ack-order", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, revision: 2, lastMutationId: "ack-op", createdAt: "2026-01-01", updatedAt: "2026-02-01" };
-    const key = orderDraftKey(order.storeId, order.id, false);
+    const key = orderDraftKey(order.storeId, order.id, false, "uid_test");
     saveOrderDraft(key, { orderUpdatedAt: "2026-01-01", expectedRevision: 1, mutationId: "ack-op", savedAt: order.updatedAt, customerId: "customer_1", customerQuery: "Cliente Olivia", lines: [{ key: "saved", productName: "Anillo", productQuery: "Anillo", quantity: 1, quantityText: "1", unitPrice: 50, unitPriceText: "50", costText: "", subtotal: 50 }], deposit: "0", promisedDate: "", orderStatus: "asked", notes: "" });
     const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
     await waitFor(() => expect(localStorage.getItem(key)).toBeNull());

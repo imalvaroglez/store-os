@@ -51,14 +51,14 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Toda operación administrativa requiere Firebase Auth y Firestore. No agregar ni restaurar persistencia administrativa alternativa en `localStorage`, acceso sin sesión ni datos de tienda operativos en el navegador.
 - Si Firebase no está configurado o falla, mostrar un error explícito y no aparentar éxito ni cambiar a otro almacenamiento.
 - Se conservan el carrito público, preferencias de tienda y tema, borradores de pedido asociados al UID y la infraestructura PWA. El storefront público sigue siendo anónimo y lee las proyecciones públicas Firebase.
-- El runtime actual todavía conserva una rama heredada de estado administrativo local. Es deuda P0, no comportamiento admitido; no extenderla. La erradicación está bloqueada y especificada en `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`.
-- Para iniciar la Fase B deben integrarse los PR #89–#94, #103–#107, #109 y #110; el PR #108 debe cerrarse por su autor o por la persona responsable y queda excluido de integración. No cerrar PRs ajenos.
+- El panel administrativo requiere una sesión de Firebase Auth y guarda sus datos en Firestore. Si Auth o Firebase fallan, se muestra un error; nunca se abre un almacén local.
+- La Fase B de erradicación de persistencia administrativa local se implementa en `chore/eradicate-local-mode`; su spec y criterios viven en `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`.
 
 ## Arquitectura (lo esencial)
 
 - **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. Las rutas administrativas requieren sesión; las rutas públicas del catálogo no.
 - **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules` (super-admin + miembros por tienda). El adaptador `firestoreData.ts` acota lecturas a las tiendas accesibles.
-- **Estado:** `StoreProvider` mantiene el estado administrativo en memoria y lo sincroniza con Firestore. `localStorage` no es respaldo de tiendas ni operaciones; la rama heredada pendiente de eliminación no debe ampliarse.
+- **Estado:** `StoreProvider` mantiene el estado administrativo en memoria y lo sincroniza con Firestore. `localStorage` conserva únicamente preferencias, carrito público y borradores asociados a una persona autenticada.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
 - **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Gate de cumplimiento: falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos (excepción: `ErrorBoundary`).
 - **Temas:** `src/design-system/theme/`. Cada tema define tokens (color, tipografía, radios, sombras, **movimiento**). `ThemeProvider` los inyecta en `<html data-theme>`. Per-usuario, persiste en `localStorage` → perfil Firestore.

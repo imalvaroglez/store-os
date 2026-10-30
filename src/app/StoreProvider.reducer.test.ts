@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { reducer, newOrder, newProduct } from "./StoreProvider";
+import { emptyAppState, reducer, newOrder, newProduct } from "./StoreProvider";
 import type { AppState, Order, Product } from "../types";
-import { emptyState } from "../lib/storage";
 
 // Reducer-level tests for the stock-reservation wiring (the only non-trivial
 // state transition in the inventory feature). The provider's upsertOrder/
@@ -10,7 +9,7 @@ import { emptyState } from "../lib/storage";
 // provider runs, to prove the resulting state is correct without mounting React.
 
 function stateWithOneInventoryProduct(): { state: AppState; product: Product } {
-  const state = { ...emptyState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }] };
+  const state = { ...emptyAppState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }] };
   const store = state.stores[0];
   // Replace products with a single, fully-controlled inventory product.
   const product: Product = {
@@ -138,27 +137,27 @@ const storeB = { id: "b", name: "B", slug: "b", type: "on_demand" as const, crea
 
 describe("reducer: REPLACE_STATE preserves the active store on late syncs", () => {
   const state = (activeStoreId: string) =>
-    ({ ...emptyState(), stores: [storeA, storeB], activeStoreId }) as AppState;
+    ({ ...emptyAppState(), stores: [storeA, storeB], activeStoreId }) as AppState;
 
   it("keeps the current selection when the store still exists in the synced state", () => {
-    const next = reducer(state("b"), { type: "REPLACE_STATE", state: { ...emptyState(), stores: [storeA, storeB], activeStoreId: "a" } as AppState });
+    const next = reducer(state("b"), { type: "REPLACE_STATE", state: { ...emptyAppState(), stores: [storeA, storeB], activeStoreId: "a" } as AppState });
     expect(next.activeStoreId).toBe("b");
   });
 
   it("falls back to the synced selection when the current store vanished", () => {
-    const next = reducer(state("b"), { type: "REPLACE_STATE", state: { ...emptyState(), stores: [storeA], activeStoreId: "a" } as AppState });
+    const next = reducer(state("b"), { type: "REPLACE_STATE", state: { ...emptyAppState(), stores: [storeA], activeStoreId: "a" } as AppState });
     expect(next.activeStoreId).toBe("a");
   });
 
   it("accepts the synced selection when nothing was active", () => {
-    const next = reducer(state(""), { type: "REPLACE_STATE", state: { ...emptyState(), stores: [storeA, storeB], activeStoreId: "b" } as AppState });
+    const next = reducer(state(""), { type: "REPLACE_STATE", state: { ...emptyAppState(), stores: [storeA, storeB], activeStoreId: "b" } as AppState });
     expect(next.activeStoreId).toBe("b");
   });
 });
 
 describe("reducer: supplier/purchase CRUD + cascade on store delete", () => {
   it("adds, updates, and deletes suppliers", () => {
-    const state = { ...emptyState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }], activeStoreId: "store_1" };
+    const state = { ...emptyAppState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }], activeStoreId: "store_1" };
     const storeId = state.stores[0].id;
     const s = { id: "sup-1", storeId, name: "Platería", createdAt: "", updatedAt: "" };
     let next = reducer(state, { type: "ADD_SUPPLIER", supplier: s });
@@ -170,7 +169,7 @@ describe("reducer: supplier/purchase CRUD + cascade on store delete", () => {
   });
 
   it("adds and deletes purchases", () => {
-    const state = { ...emptyState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }], activeStoreId: "store_1" };
+    const state = { ...emptyAppState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }], activeStoreId: "store_1" };
     const storeId = state.stores[0].id;
     const p = {
       id: "pur-1", storeId, date: "2026-08-04", lines: [],
@@ -183,7 +182,7 @@ describe("reducer: supplier/purchase CRUD + cascade on store delete", () => {
   });
 
   it("cascades supplier + purchase cleanup on DELETE_STORE", () => {
-    const state = { ...emptyState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }], activeStoreId: "store_1" };
+    const state = { ...emptyAppState(), stores: [{ id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" }], activeStoreId: "store_1" };
     const storeId = state.stores[0].id;
     const other = "store_2";
     const seeded: AppState = {
