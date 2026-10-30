@@ -255,6 +255,8 @@ test("reload restores the selected store and its order draft", async ({ sharedPa
   await expect(page.locator("header button, aside button").filter({ hasText: "Joyería" }).filter({ visible: true }).first()).toBeVisible();
   await expect(page.getByLabel("Producto").first()).toHaveValue("Cadena de plata 925");
   await expect(page.getByLabel("Cantidad").first()).toHaveValue("2");
+});
+
 test("customer price level applies to new order lines", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
   await page.locator("header button, aside button").filter({ hasText: "▾" }).filter({ visible: true }).first().click();
