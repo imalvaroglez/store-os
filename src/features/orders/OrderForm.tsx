@@ -563,7 +563,10 @@ export function OrderForm({
           customer={activeStore ? newCustomer(activeStore.id) : newCustomer(order.storeId)}
           onDone={() => setNewCustomerOpen(false)}
           onSaved={(customer) => {
-            chooseCustomer(customer);
+            // Creating a customer inline IS the explicit choice to switch:
+            // skip the confirmation dialog (which would strand the switch when
+            // the editor was restored from a draft of another customer).
+            applyCustomer(customer, true);
           }}
         />
       </Dialog>
