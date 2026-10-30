@@ -1,99 +1,94 @@
 # Arquitectura — Store OS
 
-Documento de referencia para entender cómo está construido Store OS. Para procesos y decisiones, ver los specs en `docs/superpowers/specs/`; para el roadmap financiero vigente, el plan técnico de Olivia (sesión 2026-10-28).
+Documento de referencia para entender cómo está construido Store OS. Para procesos y decisiones, ver los specs en `docs/superpowers/specs/`.
 
 ## Visión general
 
-PWA **mobile-first** en español (México): SPA de React 18 + TypeScript + Vite, estilada con Tailwind sobre un sistema de tokens propio. Dos modos de operación tras iniciar sesión:
-
-- **Modo demo (sin sesión):** todo el estado vive en `localStorage`; `StoreProvider` es el único escritor.
-- **Modo cloud (con sesión):** Firestore en colecciones raíz + Firebase Auth (email/password y Google) + Cloud Storage para imágenes y PDFs; despliegue en Vercel.
+App de una sola página (SPA) renderizada con React + TypeScript + Vite y Tailwind sobre un sistema propio de tokens. Firebase Auth y Firestore respaldan las cuentas y los datos de las tiendas; `localStorage` conserva preferencias y permite el estado local usado en pruebas y trabajo sin conexión.
 
 ```
 src/
-  app/            # App, AppShell (responsive), StoreProvider (estado), router, firebase/
+  app/            # raíz: App, AppShell (responsive), StoreProvider (estado), router
   design-system/  # sistema de diseño (tokens + primitivos + gate) y theme/
-  features/       # pantallas por dominio (catalog, orders, customers, inventory, stores, home)
-  lib/            # utilidades puras (money, pricing, inventory, orders, selectors, whatsapp, dates, cart…)
-  types/          # modelo de datos (index.ts)
-functions/        # Cloud Functions (por ahora: OCR de PDFs de compra)
-scripts/          # seed dev, prerender, guards de build/reglas, ensayo del Excel
+  features/       # pantallas por dominio
+  lib/            # utilidades puras (ids, money, dates, storage, selectors, whatsapp, labels, router)
+  types/          # modelo de datos
 ```
-
-### Ambientes
-
-Dos backends Firebase aislados: **`store-os-dev`** (local + Preview/Vercel) y **`store-os-f7cf8`** (producción). `scripts/check-env.cjs` falla el build si un ambiente apunta al backend equivocado. Las reglas se despliegan en cada push a `main` (CI) con verificación de paridad (`scripts/check-rules-deployed.cjs`). Ver `docs/DEPLOYMENT.md`.
 
 ## Modelo de datos (`src/types/index.ts`)
 
-Todas las entidades de negocio viven en colecciones raíz y llevan `storeId`:
+- **`Store`** — `id`, `name`, `slug`, `type: "on_demand" | "inventory_tiered"`, `whatsappPhone?`, timestamps. El `super_admin` puede leer y editar el documento completo de cualquier tienda; los miembros sólo el de sus tiendas.
+- **`Product`** — `storeId`, `name`, `category`, `imageUrl?`, `isPublic`, y según el tipo de tienda:
+  - on-demand: `price?` (precio único) + `cost?`.
+  - inventory-tiered: `prices?: { retail?, wholesale?, reseller? }` + `quantityOnHand?` + `lowStockAt?`.
+  - Además: `publicDescription?`, `privateNotes?`.
+- **`Customer`** — `storeId`, `name`, `phone?`, `notes?`.
+- **`Order`** — `storeId`, `customerId`, `productName` (+ `productId?`), `quantity`, `price`, `deposit`, `status` (7 valores), `cost?`, `priceTier?`, `promisedDate?`, `notes?`.
+- **`AppState`** — `{ stores, activeStoreId, products, customers, orders }`. Es lo que se persiste entero.
 
-- **`Store`** — `type: "on_demand" | "inventory_tiered"`, `priceTiers?: PriceTierDef[]` (IDs estables, labels editables; para Olivia: Regular/Girly/Iconic), `defaultTierId`, `pricingRule` (markup sugerido), `whatsappPhone`, `storefront`, membresía (`ownerUid`, `memberUids`, `pendingInvites`). **`AdminStore`** (`adminStores`) es el plano de control paralelo con la membresía canónica.
-- **`Product`** — `prices?: Record<tierId, number>` (tiered) o `price?` (on-demand), `cost?` (promedio ponderado), `quantityOnHand?`, `lowStockAt?`, `sku?`, `slug?`, `categoryIds?`, `status` (draft/published/archived), `availability`, galería `images[1..5]`, `material/finish`, `privateNotes`, `schemaVersion`.
-- **`Category`** — privada por tienda, plana (máx. 3 por producto), con imagen e `sortOrder`.
-- **`Customer`** — `name`, `phone?`, `instagram?`, `notes?`. (Segmento/nivel por clienta: en camino — plan E2.)
-- **`Order` (order-v2, `schemaVersion: 2`)** — `items: OrderItem[]` con snapshot por línea (`productName`, `unitPrice`, `priceTier`, `cost?`, `quantity`), totales **derivados** (`orderTotals`), `deposit` (anticipo escalar), `orderStatus` (`asked→quoted→confirmed→preparing→ready→delivered` + `cancelled`), `paymentStatus` derivado (unpaid/partial/paid).
-- **`Supplier` / `Purchase`** — compra con `lines: PurchaseLine[]` (`productId`, `quantity`, `unitCost`, importes de PDF OCR con `sourceAmountType`), `subtotal`/`totalConfirmed`, `discount/shipping/tax`, `status` (`draft→needs_review→ready→received`), `documentPath` (PDF), `origin` (manual/pdf). **Una compra recibida es inmutable** (reglas + UI).
-- **Proyecciones públicas** — `publicStores`, `publicCatalogs`, `publicProducts` (allow-list; nunca exponen costos, notas ni inventario exacto — solo señal coarse de stock), `slugs` (reserva global), `users` (perfil + rol).
-
-**AppState** (memoria): `{ stores, products, categories, suppliers, purchases, customers, orders }` + `activeStoreId`. En demo se persiste entero en `localStorage`; en cloud se carga por tiendas accesibles.
+**Reglas:**
+- `price` es para tiendas on-demand; `prices` para inventory-tiered. No se fuerzan campos según el tipo.
+- `quantityOnHand` solo aplica a inventory-tiered.
 
 ## Flujo de estado y persistencia
 
 ```
 tap → dispatch(action) → reducer (StoreProvider) → nuevo AppState
-  demo:  → storage.saveState(state)          ← único escritor de localStorage
-  cloud: → firestoreData.saveEntity(…)       ← escrituras por entidad
-          → saveOrderWithStockTx / receivePurchaseTx   ← batch/transacción con stock+costo
+    → effect: storage.saveState(state)   ← único escritor de localStorage
+    → React re-renderiza
 ```
 
-- **`StoreProvider`** (`src/app/StoreProvider.tsx`) mantiene todo en un `useReducer` y expone `useStore()`; `cloud` es `true` con sesión activa.
-- **`firestoreData.ts`** acota lecturas a tiendas accesibles (`where memberUids array-contains` / `storeId in`), mantiene listeners con debounce y proyecta lo público al guardar.
-- Escrituras atómicas relevantes: `saveOrderWithStockTx` (pedido + stock en un batch) y `receivePurchaseTx` (recepción + costo promedio ponderado, idempotente por `receivedAt`).
-- **Aislamiento entre tiendas:** las pantallas usan selectores (`src/lib/selectors.ts`) y las reglas de Firestore hacen cumplir `canOperateStore(resource.data.storeId)` por documento.
-- Dinero: `src/lib/money.ts` (`parseAmount` evita NaN; `formatMoney` entero, `formatMoneyExact` con centavos). Costos: `src/lib/inventory.ts` (promedio ponderado; reservas: pedidos abiertos y entregados retienen stock).
+- **`StoreProvider`** (`src/app/StoreProvider.tsx`) mantiene el estado de interfaz en un `useReducer` y coordina las operaciones con Firestore cuando hay una sesión.
+- **Persistencia local:** `src/lib/storage.ts` encapsula el acceso a `localStorage`; los datos operativos autenticados se leen y escriben con el adaptador Firestore de `src/app/firebase/`.
+- **Aislamiento entre tiendas:** las pantallas nunca filtran `state.products` directo; usan selectores (`productsForStore`, `ordersForStore`, etc. en `src/lib/selectors.ts`) que filtran por `storeId`.
+- **Datos iniciales:** no se crean tiendas ficticias al abrir la app. El script `scripts/seed-dev.cjs` prepara datos de trabajo únicamente en `store-os-dev`.
 
 ### Acceso de plataforma y aislamiento
 
-- `super_admin` es un rol privilegiado de plataforma con acceso operativo global a las tiendas actuales y a sus datos de operación; sin PII de clientas fuera del plano de datos.
-- `member` opera sólo las tiendas en `memberUids`; `ownerUid` conserva controles de dueña (miembros, transferencia, eliminación).
-- `adminStores` es el plano de control canónico que las reglas consultan; `stores` es el documento de negocio.
-- El acceso global del superadmin no cambia la proyección pública: `publicStores`/`publicCatalogs`/`publicProducts` usan allow-lists. Decisión completa en [`ADR 0003`](adr/0003-platform-super-admin-access.md).
-
-## Backend
-
-- **Cloud Functions (`functions/`):** una callable — `importPurchasePdf` (OCR con mupdf + tesseract.js, región `us-east1`) que parsea PDFs de pedidos de proveedor ya subidos a Storage y devuelve líneas para la pantalla de revisión. No escribe Firestore. Restricción dura del proyecto: **cero costos** (free tier); nada de schedulers/servicios con cobro.
-- **Cloud Storage:** `products/{storeId}/…`, `categories/{storeId}/…` (lectura pública, imágenes), `purchases/{storeId}/…` (PDFs, sólo miembros, sin update), `storefront/{storeId}/…` (sólo owner). Reglas en `storage.rules` con membresía vía `firestore.get()` cross-service.
-- **Seguridad:** `firestore.rules` (aislamiento por tienda, anti-spoofing de `users`, invitaciones auto-reconciliadas, inmutabilidad de compras recibidas) probadas contra el emulador (`npm run test:rules`, garantías G-P01–G-P06+). Sin telemetría cliente (gate en tests).
-
-## Catálogo público
-
-- Rutas públicas sin cuenta: `/catalogo/:slug` (Olivia tiene storefront editorial propio con hero, categorías, búsqueda, FAQ y bloque de reventa), `/catalogo/:slug/categoria/:cSlug` y `/catalogo/:slug/producto/:pSlug`.
-- Carrito público (`useCart` + `CartDrawer`): selección persistida por slug en el navegador, progresión informativa de niveles y envío del pedido por **deep-link de WhatsApp** (`src/lib/whatsapp.ts`). No hay checkout ni pagos.
-- SEO/prerender en build (`scripts/prerender-public.mjs`) y gate anti-SDK en el bundle público (`scripts/check-public-bundle.mjs`).
+- `super_admin` es un rol privilegiado de plataforma con acceso operativo global a las tiendas actuales y a sus datos de operación: productos, categorías, proveedores, compras, clientes, pedidos, inventario, costos, fotos y configuración de WhatsApp.
+- `member` opera sólo las tiendas incluidas en `memberUids`; `ownerUid` conserva los controles específicos de dueña, como miembros, transferencia y eliminación.
+- `adminStores` sigue siendo la fuente canónica para membresía y propiedad. No es una vista limitada del superadmin: es el plano de control que las reglas consultan, mientras `stores` contiene el documento de negocio que el superadmin necesita para operar.
+- El acceso privado global del superadmin no cambia la proyección pública: `publicStores`, `publicCatalogs` y `publicProducts` siguen usando allow-lists y nunca exponen costos, notas privadas, inventario exacto ni membresías.
+- La decisión completa y sus límites están en [`ADR 0003`](adr/0003-platform-super-admin-access.md).
 
 ## Sistema de diseño (`src/design-system/`)
 
-Un solo barrel (`index.ts`) es la única superficie de importación de UI. Primitivos: `Button`/`IconButton`, `Card`, `Badge`, `Money`/`StatRow`, `ScreenHeader`, `EmptyState`, `Sheet`/`useEntitySheet`, `ProductImage`, `BottomNav`, `Sidebar`, `Screen`, `StoreSwitcher`, familia `FormField`.
+Un solo barrel (`index.ts`) es la **única** superficie de importación de UI. Primitivos: `Button`/`IconButton`, `Card`, `Badge`, `Money`/`StatRow`, `ScreenHeader`, `EmptyState`, `Sheet`/`useEntitySheet`, `ProductImage`, `BottomNav`, `Sidebar`, `Screen`, `StoreSwitcher`, y la familia `FormField` (`TextField`/`TextArea`/`CheckboxField`/`SelectField`).
 
-- **Tokens:** variables CSS (`--paper`, `--ink`, `--surface`, `--on-surface`, `--danger`, `--success`, radios, sombras) que Tailwind mapea; los primitivos se adaptan al tema activo.
-- **Gate de cumplimiento** (`design-system-gate.test.ts`): falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos o importan primitivos fuera del barrel.
+- **Tokens:** `tokens.ts` (tonos de estatus → clases), más variables CSS (`--paper`, `--ink`, `--terracotta`, `--surface`, `--on-surface`, `--danger`, `--success`, radios, sombras) definidas en `index.css` y el tema activo. Tailwind (`tailwind.config.js`) mapea sus colores a esas variables, así `bg-paper`/`text-on-surface`/etc. se adaptan al tema.
+- **Gate de cumplimiento** (`design-system-gate.test.ts`): falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos o importan primitivos de fuera del barrel. Es la regla "toda la UI pasa por el sistema de diseño, sin excepciones".
 
 ## Sistema de temas (`src/design-system/theme/`)
 
-Cada tema (`paper`, `maximalist`, `luxury`) define colores, tipografía, radios, sombras y movimiento. `ThemeProvider` inyecta tokens en `<html data-theme>`; persiste en `localStorage` y en el perfil Firestore del usuario. Respeta `prefers-reduced-motion`. **Paper Ledger** es el default (baseline de regresión).
+Cada tema (`paper`, `maximalist`, `luxury`) es una **personalidad completa**: colores, tipografía, radios, sombras y **movimiento**. `ThemeProvider` inyecta los tokens del tema activo en `<html data-theme="…">` (más fuentes y keyframes); al cambiar de tema, todo se restyla automáticamente porque los primitivos leen de variables.
 
-## Routing y layout
+- Persiste por usuaria en el perfil de Firestore; `localStorage` sostiene la preferencia local cuando no hay sesión.
+- Respeta `prefers-reduced-motion` (amortigua animaciones).
+- **Paper Ledger** es el default y reproduce exactamente el look original (baseline de regresión).
 
-Router de historia mínimo sin dependencias (`src/lib/router.ts` + `useRoute`). Rutas admin: `/` (inicio), `/productos` (+ `/categorias`, `/compras`), `/pedidos` (+ `/nuevo`, `/:id`), `/clientes`, `/tienda/configuracion`. **Móvil (`< md`):** header + bottom nav; **escritorio:** `Sidebar` fija + cuadrículas multi-columna. `Sheet` es bottom-sheet en móvil y modal en escritorio.
+## Routing
+
+Router de historia mínimo y sin dependencias (`src/lib/router.ts` + hook `useRoute` en `src/app/router.ts`). `navigate(path)` hace `pushState` + `popstate` sintético.
+
+- `/catalogo/:slug` → catálogo público (vista completa, sin shell, sin datos privados).
+- Cualquier otra ruta → admin shell, donde el primer segmento mapea a un tab (`/`, `/catalogo-admin`, `/pedidos`, `/clientes`, `/inventario`).
+- `appType: "spa"` en Vite para fallback a `index.html` en recargas de rutas profundas.
+
+## Layout responsive (`src/app/AppShell.tsx`)
+
+- **Móvil (`< md`):** header superior (switcher de tienda + ajustes) + contenido scrollable + bottom nav.
+- **Escritorio (`≥ md`):** `Sidebar` fija (marca, switcher, navegación, ajustes) + contenido con cuadrículas multi-columna.
+- `navItems.ts` es la fuente única de navegación, compartida por `BottomNav` y `Sidebar`.
+- `Sheet` es responsive: bottom-sheet en móvil, modal centrado en escritorio.
 
 ## Pruebas
 
-- **Unit + gates (`vitest`, `npm run test`):** money, pricing, inventory (costo ponderado, reservas), purchases lifecycle (idempotencia, inmutabilidad), orders, cart, whatsapp, selectors, ensayo del Excel, gate del design system, gates de seguridad/telemetría.
-- **Reglas Firestore (`npm run test:rules`):** emulador; aislamiento multitienda, superadmin, anti-enumeración pública, invariante `storeId`, anti-spoofing, invitaciones.
-- **E2E (`playwright`, 3 suites):** smoke responsive (móvil+escritorio), firebase (auth, tiendas, invitaciones, subida de fotos, compras 50 líneas, función OCR), refresh (service worker tras deploy), telemetry-egress.
-- **CI (`.github/workflows/ci.yml`):** typecheck → tests → build → rules → e2e → deploy Vercel (Preview/Production) + deploy de reglas con paridad.
+- **Unit (`vitest`):** `lib/money` (formato, profit, parseo), `lib/selectors` (aislamiento por tienda, filtrado del catálogo público), render de primitivos, inyección de temas, y el **gate** del sistema de diseño.
+- **E2E (`playwright`), dos proyectos:** móvil (390×844) y escritorio (1280×800). Cubren el flujo completo (crear tienda/producto/cliente/pedido, avanzar estatus, persistencia, catálogo público) + responsividad + cambio de temas.
 
-## Limitaciones conocidas y dirección (2026-10)
+## Límites entre capas
 
-El plano financiero (cobros granulares, gastos, prorrateos, períodos, cierres, reparto 20/50/30, migración del Excel) **no existe todavía**: `Order.deposit` es un escalar y `profit()` es estimativo. El diagnóstico y el plan incremental (entregas E0–E12) viven en la sesión del 2026-10-28; el ensayo reproducible del Excel en `docs/excel-trial-2026-10-28.md` y las decisiones pendientes en `docs/olivia-decisiones-fer-2026-10-28.md`.
+- **Autenticación:** `AuthProvider` observa la sesión de Firebase y protege las rutas privadas.
+- **Datos cloud:** `firestoreData.ts` contiene las lecturas y escrituras; las reglas de Firestore aplican el aislamiento por tienda.
+- **Estado de interfaz:** `StoreProvider` coordina los cambios visibles y mantiene un único punto para persistencia local.
+- **Temas:** cada tema es un archivo en `src/design-system/theme/` que implementa el mismo tipo `Theme`.
