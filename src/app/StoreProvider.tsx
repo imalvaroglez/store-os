@@ -16,6 +16,7 @@ import type {
   Category,
   Supplier,
   Purchase,
+  Storefront,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
@@ -31,6 +32,7 @@ import {
   loadCloudState,
   subscribeCloudState,
   saveEntity,
+  saveStorefrontBatch,
   deleteEntity,
   claimSlug,
   projectPublicForStore,
@@ -175,6 +177,7 @@ type StoreContextValue = {
   cloud: boolean; // true when operating on Firestore (signed in)
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
+  saveStorefront: (storeId: string, storefront: Storefront) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"invited" | "pending">;
   removeMember: (storeId: string, uid: string) => void;
@@ -390,6 +393,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           throw new PublicCatalogProjectionError(error);
         }
       }
+    },
+    saveStorefront: async (storeId, storefront) => {
+      const existing = state.stores.find((store) => store.id === storeId);
+      if (!existing) throw new Error("No se encontró la tienda.");
+      const updatedAt = nowIso();
+      if (cloud) await saveStorefrontBatch(existing, storefront, updatedAt);
+      dispatch({ type: "UPDATE_STORE", store: { ...existing, storefront, updatedAt } });
     },
     deleteStore: (storeId) => {
       const store = state.stores.find((s) => s.id === storeId);

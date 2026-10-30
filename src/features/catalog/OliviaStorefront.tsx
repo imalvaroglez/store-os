@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 // Scoped editorial styles travel with the storefront chunk, not the shared barrel.
 import "../../design-system/olivia.css";
-import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
+import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND, useToast } from "../../design-system";
 import { loadPublicStore, loadPublicCatalogSummary, loadPublicProduct, PublicCatalogNotFoundError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
 import { navigate, type RouteMatch } from "../../lib/router";
 import { publicPrice } from "../../lib/money";
@@ -12,6 +12,8 @@ import { useSeo } from "./useSeo";
 import { useCart } from "./useCart";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
 import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
+import type { Storefront, StorefrontSection } from "../../types";
+import { InlineEditable, InlineFaqEditor } from "./InlineEditable";
 
 type CartContextValue = ReturnType<typeof useCart> & { store: PublicStore; notifyAdded: (name: string) => void };
 const CartContext = createContext<CartContextValue | null>(null);
@@ -24,11 +26,47 @@ function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSi
 
 // Keep the catalog alive across category/product routes: two reads per visit,
 // then only the detail document when opening a piece. No global/stale cache.
-export function OliviaStorefront({ route }: { route: RouteMatch }) {
+export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?: { storeId: string; storefront: Storefront; save: (storeId: string, storefront: Storefront) => Promise<void> } }) {
   const slug = "slug" in route.params ? route.params.slug : "";
+  const toast = useToast();
   const [store, setStore] = useState<PublicStore | null>(null);
   const [catalog, setCatalog] = useState<PublicCatalog | null>(null);
   const [error, setError] = useState<"missing" | "failed" | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Storefront>({});
+  const [saving, setSaving] = useState(false);
+  const canEdit = route.name === "public_store" && slug === "olivia" && !!editor;
+
+  useEffect(() => {
+    if (!editing) setDraft(editor?.storefront ?? {});
+  }, [editing, editor?.storeId, editor?.storefront]);
+
+  useEffect(() => {
+    if (route.name !== "public_store") setEditing(false);
+  }, [route.name]);
+
+  function patchStorefront<K extends keyof Storefront>(key: K, value: Storefront[K]) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  function patchSection(key: "hero" | "story" | "resale", value: Partial<StorefrontSection>) {
+    setDraft((current) => ({ ...current, [key]: { ...current[key], ...value } }));
+  }
+
+  async function saveDraft() {
+    if (!editor || saving) return;
+    setSaving(true);
+    try {
+      await editor.save(editor.storeId, draft);
+      setStore((current) => current ? { ...current, storefront: draft } : current);
+      setEditing(false);
+      toast.success("Sitio público actualizado");
+    } catch {
+      toast.error("No se pudo guardar. Tus cambios siguen aquí; intenta de nuevo.");
+    } finally {
+      setSaving(false);
+    }
+  }
   useEffect(() => {
     let cancelled = false;
     setStore(null); setCatalog(null); setError(null);
@@ -45,15 +83,24 @@ export function OliviaStorefront({ route }: { route: RouteMatch }) {
   }, [slug]);
   useEffect(() => { document.documentElement.scrollTop = 0; }, [route]);
   const current = store?.slug === slug ? store : null;
-  return <StoreChrome store={current} catalog={catalog} isHomeRoute={route.name === "public_store"}>
+  const editorActive = canEdit && editing;
+  const viewStore = current && editorActive ? { ...current, storefront: draft } : current;
+  return <>
+    <StoreChrome store={viewStore} catalog={catalog} isHomeRoute={route.name === "public_store"} editing={editorActive} patchStorefront={patchStorefront}>
     {error ? <div className="olv-container olv-empty"><EmptyState title={error === "missing" ? "Tienda no encontrada" : "No se pudo cargar"} subtitle={error === "missing" ? "Este catálogo no existe o no está disponible." : "Revisa tu conexión e intenta de nuevo."} /></div>
       : !current ? <div className="olv-container olv-grid olv-loading">{Array.from({ length: 8 }, (_, i) => <SkeletonCard key={i} />)}</div>
       : route.name === "public_product" ? <ProductView key={`${slug}/${route.params.productSlug}`} initialStore={current} productSlug={route.params.productSlug} />
-      : <StoreView key={slug} store={current} catalog={catalog} focusCategory={route.name === "public_category" ? route.params.categorySlug : undefined} />}
-  </StoreChrome>;
+      : <StoreView key={slug} store={viewStore!} catalog={catalog} focusCategory={route.name === "public_category" ? route.params.categorySlug : undefined} editing={editorActive} patchStorefront={patchStorefront} patchSection={patchSection} />}
+    </StoreChrome>
+    {canEdit && !editing && <Button className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 shadow-lg" onClick={() => { setDraft(editor?.storefront ?? {}); setEditing(true); }}>Editar sitio</Button>}
+    {canEdit && editing && <div className="fixed inset-x-0 top-0 z-50 flex flex-wrap items-center justify-between gap-3 border-b border-edge bg-surface p-3 text-on-surface shadow-md">
+      <span className="text-sm font-medium">Estás editando tu sitio público</span>
+      <div className="flex gap-2"><Button size="sm" variant="ghost" disabled={saving} onClick={() => { setDraft(editor?.storefront ?? {}); setEditing(false); }}>Salir sin guardar</Button><Button size="sm" disabled={saving} onClick={() => void saveDraft()}>{saving ? "Guardando…" : "Guardar"}</Button></div>
+    </div>}
+  </>;
 }
 
-function StoreView({ store, catalog, focusCategory }: { store: PublicStore; catalog: PublicCatalog | null; focusCategory?: string }) {
+function StoreView({ store, catalog, focusCategory, editing, patchStorefront, patchSection }: { store: PublicStore; catalog: PublicCatalog | null; focusCategory?: string; editing: boolean; patchStorefront: <K extends keyof Storefront>(key: K, value: Storefront[K]) => void; patchSection: (key: "hero" | "story" | "resale", value: Partial<StorefrontSection>) => void }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("featured");
   const sf = store.storefront ?? {};
@@ -97,10 +144,10 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
       </picture> : null}
       <div className="olv-container olv-hero-copy">
         <p className="olv-eyebrow">Pequeños detalles. Muy tú.</p>
-        <h1>{sf.hero?.heading?.trim().toLocaleLowerCase() === store.name.trim().toLocaleLowerCase() ? OLIVIA_CONTENT.hero!.heading : sf.hero?.heading || OLIVIA_CONTENT.hero!.heading}</h1>
-        {heroBody ? <p className="olv-intro">{heroBody}</p> : null}
+        <InlineEditable enabled={editing} label="Título principal" value={sf.hero?.heading ?? ""} displayValue={sf.hero?.heading?.trim().toLocaleLowerCase() === store.name.trim().toLocaleLowerCase() ? OLIVIA_CONTENT.hero!.heading : sf.hero?.heading || OLIVIA_CONTENT.hero!.heading} placeholder="Toca para añadir un título" render={(text) => <h1>{text}</h1>} onChange={(value) => patchSection("hero", { heading: value || undefined })} />
+        <InlineEditable enabled={editing} label="Mensaje principal" value={sf.hero?.body ?? ""} displayValue={heroBody} placeholder="Toca para añadir un mensaje" multiline render={(text) => text ? <p className="olv-intro">{text}</p> : null} onChange={(value) => patchSection("hero", { body: value || undefined })} />
         <a href="#piezas" className="olv-link-button">Explorar piezas <span aria-hidden="true">↗</span></a>
-        {!!sf.benefits?.length && <div className="olv-benefits">{sf.benefits.map((item) => <span key={item}>{item}</span>)}</div>}
+        <InlineEditable enabled={editing} label="Beneficios" value={(sf.benefits ?? []).join("\n")} displayValue={(sf.benefits ?? []).join("\n")} placeholder="Toca para añadir beneficios, uno por línea" multiline render={(text) => text.trim() ? <div className="olv-benefits">{text.split(/\r?\n/).filter(Boolean).map((item) => <span key={item}>{item}</span>)}</div> : null} onChange={(value) => patchStorefront("benefits", value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))} />
       </div>
     </section>}
     <main id="piezas" className="olv-container olv-main">
@@ -118,10 +165,16 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
         : <div className="olv-empty"><EmptyState title={query ? "No encontramos esa pieza" : "Sin piezas aquí"} subtitle={query ? "Prueba otro nombre o clave." : "Vuelve pronto o explora otra categoría."} />{query && <Button variant="secondary" onClick={() => setQuery("")}>Limpiar búsqueda</Button>}</div>}
       <section className="olv-how" aria-labelledby="how-title"><div><p className="olv-eyebrow">Así de sencillo</p><h2 id="how-title">De tu lista a WhatsApp.</h2></div><div className="olv-steps"><p><span>01</span> Elige tus piezas</p><p><span>02</span> Revisa tu lista</p><p><span>03</span> Envíala por WhatsApp</p></div><p className="olv-muted">Fer confirma contigo el precio y la disponibilidad. Tu selección no reserva las piezas.</p></section>
       {!focusCategory && <div className="olv-about-grid">
-        <section><p className="olv-eyebrow">Un poquito de nosotros</p><h2>{sf.story?.heading || OLIVIA_CONTENT.story!.heading}</h2><p className="olv-body-copy">{sf.story?.body || OLIVIA_CONTENT.story!.body}</p>
-          {sf.resale?.body && <div className="olv-resale"><h3>{sf.resale.heading || "Vende con Olivia"}</h3><p className="olv-body-copy">{sf.resale.body}</p><a className="olv-text-link" href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer">Quiero revender ↗</a></div>}
+        <section><p className="olv-eyebrow">Un poquito de nosotros</p>
+          <InlineEditable enabled={editing} label="Título de historia" value={sf.story?.heading ?? ""} displayValue={sf.story?.heading || OLIVIA_CONTENT.story!.heading} placeholder="Toca para añadir un título" render={(text) => <h2>{text}</h2>} onChange={(value) => patchSection("story", { heading: value || undefined })} />
+          <InlineEditable enabled={editing} label="Historia" value={sf.story?.body ?? ""} displayValue={sf.story?.body || OLIVIA_CONTENT.story!.body} placeholder="Toca para añadir la historia" multiline render={(text) => <p className="olv-body-copy">{text}</p>} onChange={(value) => patchSection("story", { body: value || undefined })} />
+          {(sf.resale?.body || editing) && <div className="olv-resale">
+            <InlineEditable enabled={editing} label="Título para revendedoras" value={sf.resale?.heading ?? ""} displayValue={sf.resale?.heading || "Vende con Olivia"} placeholder="Toca para añadir un título" render={(text) => <h3>{text}</h3>} onChange={(value) => patchSection("resale", { heading: value || undefined })} />
+            <InlineEditable enabled={editing} label="Información para revendedoras" value={sf.resale?.body ?? ""} placeholder="Toca para añadir información" multiline render={(text) => text ? <p className="olv-body-copy">{text}</p> : null} onChange={(value) => patchSection("resale", { body: value || undefined })} />
+            {!editing && <a className="olv-text-link" href={createStorefrontResaleUrl(store, slug)} target="_blank" rel="noreferrer">Quiero revender ↗</a>}
+          </div>}
         </section>
-        <section><h2>Antes de elegir</h2><div className="olv-faq">{(sf.faq ?? OLIVIA_CONTENT.faq!).map((item, i) => <details key={i}><summary>{item.q}<span aria-hidden="true">+</span></summary><p>{item.a}</p></details>)}</div></section>
+        <section><h2>Antes de elegir</h2><InlineFaqEditor enabled={editing} value={editing ? sf.faq ?? [] : sf.faq ?? OLIVIA_CONTENT.faq!} onChange={(value) => patchStorefront("faq", value)} /></section>
       </div>}
     </main>
   </>;
@@ -199,7 +252,7 @@ function StorefrontLink({ to, className, children, current }: { to: string; clas
   }}>{children}</a>;
 }
 
-function StoreChrome({ store, catalog, children, isHomeRoute }: { store: PublicStore | null; catalog: PublicCatalog | null; children: ReactNode; isHomeRoute: boolean }) {
+function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStorefront }: { store: PublicStore | null; catalog: PublicCatalog | null; children: ReactNode; isHomeRoute: boolean; editing: boolean; patchStorefront: <K extends keyof Storefront>(key: K, value: Storefront[K]) => void }) {
   const cart = useCart(store?.slug);
   const [open, setOpen] = useState(false);
   const [addedName, setAddedName] = useState<string | null>(null);
@@ -233,7 +286,7 @@ function StoreChrome({ store, catalog, children, isHomeRoute }: { store: PublicS
   const style = Object.fromEntries(Object.entries(OLIVIA_BRAND).filter(([key]) => !key.startsWith("font")).map(([key, value]) => [`--olv-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, value]));
   const body = <div className="olivia-root" style={style}>
     {store && <>
-      <div className="olv-notice">{sf.notice || "Tu próxima pieza favorita empieza aquí"}</div>
+      <InlineEditable enabled={editing} label="Aviso" value={sf.notice ?? ""} displayValue={sf.notice || "Tu próxima pieza favorita empieza aquí"} placeholder="Toca para añadir un aviso" render={(text) => <div className="olv-notice">{text}</div>} onChange={(value) => patchStorefront("notice", value || undefined)} />
       <header className={`olv-header${isHomeRoute ? " olv-header--home" : ""}${homeHeaderCompact ? " olv-header--compact" : ""}`}><div className={`olv-container olv-header-inner ${isHomeRoute ? "olv-header-inner--home" : ""}`}>
         <StorefrontLink to={`/catalogo/${store.slug}`} className="olv-wordmark">{sf.logoUrl ? <ProductImage src={sf.logoUrl} alt={`Logo de ${store.name}`} size="full" natural loading="eager" /> : <ProductImage src={OLIVIA_LOGO_URL} alt={`Logo de ${store.name}`} size="full" natural loading="eager" />}</StorefrontLink>
         <nav aria-label="Principal"><StorefrontLink to={`/catalogo/${store.slug}`} className="olv-header-catalog">Catálogo</StorefrontLink><Button variant="ghost" aria-label="Ver mi selección" onClick={openCart}>Mi pedido <span className="olv-count">{pieces}</span></Button></nav>
@@ -243,7 +296,12 @@ function StoreChrome({ store, catalog, children, isHomeRoute }: { store: PublicS
     {store && <footer className="olv-footer"><div className="olv-container olv-footer-grid">
       <div><p className="olv-footer-brand">{store.name}</p><p>Pequeños detalles para hacerlos tuyos.</p><a className="olv-text-link" href={createStorefrontContactUrl(store, store.slug)} target="_blank" rel="noreferrer">Hablemos por WhatsApp ↗</a></div>
       <div><h2>Explora</h2><nav className="olv-footer-links" aria-label="Categorías del catálogo"><StorefrontLink to={`/catalogo/${store.slug}`}>Todas las piezas</StorefrontLink>{categories.map((category) => <StorefrontLink key={category.id} to={`/catalogo/${store.slug}/categoria/${category.slug}`}>{category.name}</StorefrontLink>)}</nav></div>
-      <div><h2>Entregas y atención</h2><p>{sf.shipping || OLIVIA_CONTENT.shipping}</p>{sf.hours && <p>Horarios: {sf.hours}</p>}{!!sf.payments?.length && <p>Pagos: {sf.payments.join(", ")}</p>}{sf.instagram && <p>Instagram: {sf.instagram}</p>}</div>
+      <div><h2>Entregas y atención</h2>
+        <InlineEditable enabled={editing} label="Entregas y envíos" value={sf.shipping ?? ""} displayValue={sf.shipping || OLIVIA_CONTENT.shipping} placeholder="Toca para añadir información de entregas" multiline render={(text) => <p>{text}</p>} onChange={(value) => patchStorefront("shipping", value || undefined)} />
+        <InlineEditable enabled={editing} label="Horarios" value={sf.hours ?? ""} displayValue={sf.hours ?? ""} placeholder="Toca para añadir horarios" render={(text) => text ? <p>Horarios: {text}</p> : null} onChange={(value) => patchStorefront("hours", value || undefined)} />
+        <InlineEditable enabled={editing} label="Métodos de pago" value={(sf.payments ?? []).join("\n")} displayValue={(sf.payments ?? []).join("\n")} placeholder="Toca para añadir métodos de pago, uno por línea" multiline render={(text) => text.trim() ? <p>Pagos: {text.split(/\r?\n/).filter(Boolean).join(", ")}</p> : null} onChange={(value) => patchStorefront("payments", value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))} />
+        <InlineEditable enabled={editing} label="Instagram" value={sf.instagram ?? ""} displayValue={sf.instagram ?? ""} placeholder="Toca para añadir Instagram" render={(text) => text ? <p>Instagram: {text}</p> : null} onChange={(value) => patchStorefront("instagram", value || undefined)} />
+      </div>
     </div><div className="olv-container olv-footer-bottom">© {store.name}<span>Elige. Combina. Hazlo tuyo.</span></div></footer>}
     {store && <>
       {addedName && !open && <div className="olv-added-status" role="status" aria-live="polite"><span><strong>Agregado a tu pedido</strong><span className="olv-added-name">{addedName}</span></span><Button variant="primary" onClick={openCart}>Ver mi pedido</Button></div>}

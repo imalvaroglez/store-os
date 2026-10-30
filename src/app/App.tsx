@@ -7,6 +7,8 @@ import { AuthScreen } from "./firebase/AuthScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
 import { ToastProvider, OLIVIA_SLUG } from "../design-system";
+import type { Storefront } from "../types";
+import { canEditOliviaStorefront } from "./storefrontAccess";
 
 // Lazy-load the public storefront so the storefront code (sections, gallery,
 // SEO) lives in its own chunk, separate from admin forms.
@@ -24,8 +26,15 @@ const PublicCatalogScreen = lazy(() =>
 
 function Root() {
   const route = useRoute();
-  const { activeStore, state } = useStore();
+  const { activeStore, state, saveStorefront } = useStore();
   const { user } = useAuth();
+  const candidateStore = state.stores.find((store) => store.slug === OLIVIA_SLUG);
+  const storefrontOwner = canEditOliviaStorefront(route, user, candidateStore) ? candidateStore : undefined;
+  const storefrontEditor = storefrontOwner ? {
+    storeId: storefrontOwner.id,
+    storefront: storefrontOwner.storefront ?? {},
+    save: (storeId: string, storefront: Storefront) => saveStorefront(storeId, storefront),
+  } : undefined;
 
   // Public storefront routes take over the whole viewport: no shell, no private
   // data. Anonymous-readable. A single component handles all three sub-routes.
@@ -38,7 +47,7 @@ function Root() {
     const slug = route.params.slug;
     return (
       <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}>
-        {slug === OLIVIA_SLUG ? <OliviaStorefront route={route} /> : <PublicCatalogScreen slug={slug} />}
+        {slug === OLIVIA_SLUG ? <OliviaStorefront route={route} editor={storefrontEditor} /> : <PublicCatalogScreen slug={slug} />}
       </Suspense>
     );
   }

@@ -15,7 +15,7 @@ import {
 import { getFirebase } from "./config";
 import { applyPurchaseLines } from "../../lib/inventory";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
 import { publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -247,6 +247,17 @@ export async function saveEntity(
   // Orders are rewritten as canonical snapshots during migration/save. A full
   // replace removes legacy flat fields that merge writes would leave behind.
   await setDoc(doc(db, name, id), clean, name === "orders" ? { merge: false } : { merge: true });
+}
+
+/** Save editable storefront text to its private, control, and public projections atomically. */
+export async function saveStorefrontBatch(store: Pick<Store, "id" | "slug">, storefront: Storefront, updatedAt: string): Promise<void> {
+  const { db } = getFirebase();
+  const batch = writeBatch(db);
+  const cleanStorefront = stripUndefined(storefront);
+  batch.set(doc(db, "stores", store.id), { storefront: cleanStorefront, updatedAt }, { merge: true });
+  batch.set(doc(db, "adminStores", store.id), { storeId: store.id }, { merge: true });
+  batch.set(doc(db, "publicStores", store.slug), { storeId: store.id, storefront: cleanStorefront }, { merge: true });
+  await batch.commit();
 }
 
 /** Delete a single entity doc. */
