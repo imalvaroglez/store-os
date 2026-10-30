@@ -87,7 +87,7 @@ const categoryRoute: RouteMatch = {
 
 const cartKey = "store-os:cart:olivia";
 
-async function renderStore(editor?: { storeId: string; storefront: Storefront; save: (storeId: string, storefront: Storefront) => Promise<void> }) {
+async function renderStore(editor?: { storeId: string; storefront: Storefront; save: (storeId: string, storefront: Storefront) => Promise<void>; notifySuccess: (message: string) => void; notifyError: (message: string) => void }) {
   render(<OliviaStorefront route={storeRoute} editor={editor} />);
   // Wait for the grid to be ready.
   await screen.findAllByRole("button", { name: "Agregar al carrito" });
@@ -159,7 +159,7 @@ describe("edición pública in-place", () => {
   });
 
   it("lets only the owner edit, saves the draft and keeps it visible", async () => {
-    await renderStore({ storeId: "store_olivia", storefront: { hero: { body: "Antes" } }, save: mocks.saveStorefront });
+    await renderStore({ storeId: "store_olivia", storefront: { hero: { body: "Antes" } }, save: mocks.saveStorefront, notifySuccess: mocks.toastSuccess, notifyError: mocks.toastError });
     fireEvent.click(await screen.findByRole("button", { name: "Editar sitio" }));
     fireEvent.click(screen.getByRole("button", { name: "Editar Mensaje principal" }));
     fireEvent.change(screen.getByLabelText("Mensaje principal"), { target: { value: "Texto actualizado" } });
@@ -174,7 +174,7 @@ describe("edición pública in-place", () => {
 
   it("keeps the draft visible after a failed save and allows retry", async () => {
     mocks.saveStorefront.mockRejectedValueOnce(new Error("offline"));
-    await renderStore({ storeId: "store_olivia", storefront: {}, save: mocks.saveStorefront });
+    await renderStore({ storeId: "store_olivia", storefront: {}, save: mocks.saveStorefront, notifySuccess: mocks.toastSuccess, notifyError: mocks.toastError });
     fireEvent.click(await screen.findByRole("button", { name: "Editar sitio" }));
     fireEvent.click(screen.getByRole("button", { name: "Editar Mensaje principal" }));
     fireEvent.change(screen.getByLabelText("Mensaje principal"), { target: { value: "Texto pendiente" } });

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 // Scoped editorial styles travel with the storefront chunk, not the shared barrel.
 import "../../design-system/olivia.css";
-import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND, useToast } from "../../design-system";
+import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
 import { loadPublicStore, loadPublicCatalogSummary, loadPublicProduct, PublicCatalogNotFoundError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
 import { navigate, type RouteMatch } from "../../lib/router";
 import { publicPrice } from "../../lib/money";
@@ -26,9 +26,8 @@ function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSi
 
 // Keep the catalog alive across category/product routes: two reads per visit,
 // then only the detail document when opening a piece. No global/stale cache.
-export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?: { storeId: string; storefront: Storefront; save: (storeId: string, storefront: Storefront) => Promise<void> } }) {
+export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?: { storeId: string; storefront: Storefront; save: (storeId: string, storefront: Storefront) => Promise<void>; notifySuccess: (message: string) => void; notifyError: (message: string) => void } }) {
   const slug = "slug" in route.params ? route.params.slug : "";
-  const toast = useToast();
   const [store, setStore] = useState<PublicStore | null>(null);
   const [catalog, setCatalog] = useState<PublicCatalog | null>(null);
   const [error, setError] = useState<"missing" | "failed" | null>(null);
@@ -60,9 +59,9 @@ export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?
       await editor.save(editor.storeId, draft);
       setStore((current) => current ? { ...current, storefront: draft } : current);
       setEditing(false);
-      toast.success("Sitio público actualizado");
+      editor.notifySuccess("Sitio público actualizado");
     } catch {
-      toast.error("No se pudo guardar. Tus cambios siguen aquí; intenta de nuevo.");
+      editor.notifyError("No se pudo guardar. Tus cambios siguen aquí; intenta de nuevo.");
     } finally {
       setSaving(false);
     }

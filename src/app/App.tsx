@@ -6,7 +6,7 @@ import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
-import { ToastProvider, OLIVIA_SLUG } from "../design-system";
+import { ToastProvider, OLIVIA_SLUG, useToast } from "../design-system";
 import type { Storefront } from "../types";
 import { canEditOliviaStorefront } from "./storefrontAccess";
 
@@ -28,12 +28,15 @@ function Root() {
   const route = useRoute();
   const { activeStore, state, saveStorefront } = useStore();
   const { user } = useAuth();
+  const toast = useToast();
   const candidateStore = state.stores.find((store) => store.slug === OLIVIA_SLUG);
   const storefrontOwner = canEditOliviaStorefront(route, user, candidateStore) ? candidateStore : undefined;
   const storefrontEditor = storefrontOwner ? {
     storeId: storefrontOwner.id,
     storefront: storefrontOwner.storefront ?? {},
     save: (storeId: string, storefront: Storefront) => saveStorefront(storeId, storefront),
+    notifySuccess: toast.success,
+    notifyError: toast.error,
   } : undefined;
 
   // Public storefront routes take over the whole viewport: no shell, no private
