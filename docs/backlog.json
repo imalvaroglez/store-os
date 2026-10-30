@@ -20,7 +20,7 @@
       "id": "productos-sort-filter",
       "title": "/productos: ordenar (nombre/precio/stock/fecha) y filtrar por categoría",
       "priority": 2,
-      "status": "awaiting-approval",
+      "status": "done",
       "specPath": "docs/superpowers/specs/productos-sort-filter-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -65,7 +65,7 @@
       "id": "purchase-ux2-fast-receive",
       "title": "UX iteración 2 — Recepción rápida de compras (port + UX2)",
       "priority": 5,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/purchase-ux2-fast-receive-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -80,7 +80,7 @@
       "id": "refresh-hard-reload",
       "title": "Refresh y hard reload confiables",
       "priority": 10,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/refresh-hard-reload-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -95,7 +95,7 @@
       "id": "remove-client-demo-seed",
       "title": "Retirar el seed demo del cliente",
       "priority": 20,
-      "status": "needs-spec",
+      "status": "done",
       "specPath": "docs/superpowers/specs/remove-client-demo-seed-design.md",
       "dependsOn": [],
       "previewChecks": []
@@ -104,7 +104,7 @@
       "id": "pnpm-lockfile",
       "title": "Resolver el lockfile de pnpm",
       "priority": 30,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/pnpm-lockfile-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -167,7 +167,7 @@
       "id": "unified-products",
       "title": "Productos unificados",
       "priority": 80,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/unified-products-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -182,7 +182,7 @@
       "id": "reliable-member-invitations",
       "title": "Invitaciones de miembros confiables",
       "priority": 90,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/reliable-member-invitations-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -210,7 +210,7 @@
       "id": "scalable-pricing",
       "title": "Precios escalables",
       "priority": 110,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/scalable-pricing-design.md",
       "dependsOn": [],
       "previewChecks": [
