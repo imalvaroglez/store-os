@@ -120,11 +120,11 @@ async function seedStaleOlivia() {
   };
   const catalog = {
     slug: "olivia", storeId: "store_olivia", storeSlug: "olivia",
-    categories: [],
+    categories: [{ id: "c_anillos", name: "Anillos", slug: "anillos", sortOrder: 0, imageUrl: null }],
     products: [
       {
         productSlug: "anillo-blossom", name: "Anillo Blossom", storeSlug: "olivia", imageUrl: null, availability: "available",
-        storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0,
+        storeId: "store_olivia", isFeatured: false, isNew: false, canInquire: false, categoryIds: ["c_anillos"], sortOrder: 0,
         images: [{ url: galleryPhoto("#b99860"), alt: "Anillo de prueba, frente" }, { url: galleryPhoto("#8c795a"), alt: "Anillo de prueba, reverso" }],
         sku: "AAN1385", price: 140, prices: { t_retail: 140, t_girly: 120, t_iconic: 90 }, stockSignal: "disponible",
       },
@@ -242,6 +242,38 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   await expect(anon.getByText("Pieza no encontrada")).toHaveCount(0);
   await ctx.close();
 });
+
+for (const width of [390, 1280]) {
+  test(`Olivia catalog keeps category, search and bag navigation coherent at ${width}px`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: width < 640 });
+    const page = await context.newPage();
+    await openCatalogAnonymous(page, "olivia");
+
+    await expect(page.getByRole("heading", { name: "Compra por categoría" })).toBeVisible({ timeout: 15000 });
+    const categoryCard = page.locator('.olv-category-grid a[href="/catalogo/olivia/categoria/anillos"]');
+    await expect(categoryCard).toContainText("Anillos");
+    const columns = await page.locator(".olv-category-grid").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+    expect(columns).toBe(width < 640 ? 2 : 4);
+    await categoryCard.click();
+    await expect(page).toHaveURL(/\/catalogo\/olivia\/categoria\/anillos$/);
+    await expect(page.getByRole("heading", { name: "Anillos" })).toBeVisible();
+
+    await page.getByRole("searchbox", { name: "Buscar una pieza" }).fill("anillo blossom");
+    await expect(page.getByRole("article")).toHaveCount(1);
+    await page.getByRole("button", { name: "Agregar al carrito" }).click();
+    await page.getByRole("button", { name: "Ver mi selección" }).click();
+    const bag = page.getByRole("dialog", { name: "Tu pedido" });
+    await expect(bag).toBeVisible();
+    await expect(bag.getByText("Anillo Blossom")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await page.getByLabel("Categorías", { exact: true }).getByRole("link", { name: "Todas las piezas" }).click();
+    await expect(page).toHaveURL(/\/catalogo\/olivia$/);
+    await expect(page.getByRole("button", { name: "Ver mi selección" })).toContainText("1");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await context.close();
+  });
+}
 
 test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", async ({ browser }) => {
   const ctx = await browser.newContext();
