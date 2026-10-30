@@ -39,19 +39,25 @@ Firestore, Storage and Functions to localhost (it's for local tests only).
 ## 3. Security rules (firestore.rules + storage.rules)
 
 The repo ships `firestore.rules` (data) and `storage.rules` (product photos).
-**CI deploys them after an approved change reaches `main`**: the `deploy-rules`
-job ships both files to `store-os-f7cf8` **and** `store-os-dev` (after
-build-test + rules-and-e2e + the Vercel deploy), then re-runs the deploy as a
-parity check — a second pass that still releases something fails the build.
-This closes the drift class where prod ran three-week-old rules while the repo
-evolved (2026-08 incident: silently-denied public-catalog writes).
+Pull requests and pushes to `main` run build,
+rules, and E2E checks with Preview credentials for `store-os-dev` and local
+Firebase emulators. A push to `main` deploys rules only to
+`store-os-dev`, checks parity, then creates a Vercel Preview deployment.
+
+Production is a separate, explicit release. In GitHub Actions, run **CI** on
+the `main` branch and set `release_production` to true. The workflow reruns the
+checks using Preview/dev credentials, then deploys rules and the app from that
+same `main` commit to production. Leaving the input false never deploys
+production rules or the production app.
 
 One-time setup: create a repo-level `FIREBASE_TOKEN` secret
 (`firebase login:ci` → GitHub Settings → Secrets and variables → Actions).
 Without it the `deploy-rules` job fails loudly.
 
-One-time setup: create a repo-level `FIREBASE_PROD_SERVICE_ACCOUNT_JSON`
-secret for the build-time storefront prerender. `scripts/prerender-public.mjs`
+One-time setup: add `FIREBASE_PROD_SERVICE_ACCOUNT_JSON` as a secret in the
+GitHub **Production** environment for the build-time storefront prerender.
+Preview builds skip prerendering and never read production data.
+`scripts/prerender-public.mjs`
 lists `publicStores` via firebase-admin (security rules deny anonymous LIST —
 no tenant enumeration — so the prerender authenticates as a service account):
 
@@ -59,21 +65,16 @@ no tenant enumeration — so the prerender authenticates as a service account):
 gcloud iam service-accounts create ci-prerender --project store-os-f7cf8   --display-name "CI prerender (Store OS)"
 gcloud projects add-iam-policy-binding store-os-f7cf8   --member "serviceAccount:ci-prerender@store-os-f7cf8.iam.gserviceaccount.com"   --role "roles/datastore.viewer"  # read-only; the prerender only reads
 gcloud iam service-accounts keys create ~/ci-prerender-prod.json   --iam-account ci-prerender@store-os-f7cf8.iam.gserviceaccount.com   --project store-os-f7cf8
-gh secret set FIREBASE_PROD_SERVICE_ACCOUNT_JSON < ~/ci-prerender-prod.json
+# Add ~/ci-prerender-prod.json as FIREBASE_PROD_SERVICE_ACCOUNT_JSON under
+# GitHub → Settings → Environments → Production → Environment secrets.
 ```
 
 Without the secret the deploy still succeeds — the prerender skips with a
 loud warning and the static `public/sitemap.xml` ships instead (the SPA
 serves every route; only per-store SEO metadata and social previews degrade).
 
-Manual production deploys are for **approved emergencies/rollbacks only**
-(console → Firestore → Rules → history to restore a previous ruleset, or):
-
-```bash
-firebase deploy --only firestore:rules,storage --project store-os-f7cf8
-```
-
-After ANY manual/console rules change, verify parity (deployed == repo) with:
+After an emergency rollback in the Firebase console (Firestore → Rules →
+history), verify parity (deployed == repo) with:
 
 ```bash
 npm run check:rules
@@ -136,10 +137,10 @@ npm install
 npm run build          # verify locally first
 ```
 
-Then either:
-- **Vercel dashboard:** import the GitHub repo; framework auto-detected (Vite);
-  add the env vars from step 2; deploy.
-- **CLI:** `npm i -g vercel && vercel` (link the project, add env vars, deploy).
+After a code change passes CI and is merged into `main`, the workflow publishes
+the dev Preview automatically. A production release requires the explicit
+`release_production` action described in §3. Do not use a Vercel dashboard or
+CLI deploy to bypass that release path.
 
 `vercel.json` already sets the SPA rewrite (so deep links like `/catalogo/:slug`
 work on refresh) and long-cache headers for `/assets/*`.

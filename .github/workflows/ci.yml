@@ -1,25 +1,29 @@
 name: CI
 
-# CI/CD pipeline. The Vercel project's "Ignored Build Step" is set to `exit 0`
-# (configured in the Vercel dashboard, not in this repo), so Vercel NEVER builds
-# on Git push. The ONLY path to a Vercel deployment is the `deploy` job below,
-# which runs exclusively after build-test AND rules-and-e2e pass.
-#   - Push to a non-main branch → local Preview validation (points at the dev Firebase).
-#   - Push to main (merge)        → Production deploy (points at prod Firebase).
+# CI/CD pipeline. Vercel Git auto-deploy is disabled; deploys run only after
+# build-test and rules-and-e2e pass.
+#   - PR / branch push → validation with dev credentials and Firebase emulators.
+#   - Push to main     → dev Firebase rules + Vercel Preview.
+#   - Manual main run with release_production=true → production rules + deploy.
 # If Vercel ever starts auto-deploying again (new deployments you didn't trigger
 # from this workflow), the Ignored Build Step regressed — re-set it to `exit 0`.
-# The job-level `environment:` selects which set of VITE_FIREBASE_* secrets
-# GitHub injects (Preview environment → dev, Production environment → prod).
+# Tests always use Preview credentials. Only the explicitly approved release
+# jobs below can use the Production environment.
 on:
   pull_request:
   push:
-    # Any branch: feature-branch pushes produce a Preview deploy (after CI);
-    # a push to main produces a Production deploy.
+    # A push to main validates and publishes only to the dev Preview target.
     branches: ['**']
+  workflow_dispatch:
+    inputs:
+      release_production:
+        description: "Publicar este commit de main en producción"
+        required: true
+        default: false
+        type: boolean
 
 jobs:
-  # Resolves once per run: "Production" when the merge lands on main, else "Preview".
-  # Names match the GitHub environments created in repo Settings (capitalized).
+  # Tests always use Preview credentials, which point to store-os-dev.
   env-select:
     runs-on: ubuntu-latest
     outputs:
@@ -31,11 +35,7 @@ jobs:
           fetch-depth: 0
       - id: set
         run: |
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "main" ]; then
-            echo "env-name=Production" >> "$GITHUB_OUTPUT"
-          else
-            echo "env-name=Preview" >> "$GITHUB_OUTPUT"
-          fi
+          echo "env-name=Preview" >> "$GITHUB_OUTPUT"
       - id: changes
         name: Detect documentary-only diff
         env:
@@ -44,6 +44,10 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
         run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "app-changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "$EVENT_NAME" = "pull_request" ]; then
             BASE_SHA="$PR_BASE_SHA"
           elif [ "$REF_NAME" = "main" ]; then
@@ -145,15 +149,18 @@ jobs:
         run: npm run e2e:refresh
 
   # ───────────────────────────── deploy ──────────────────────────────
-  # The ONLY path to a Vercel deployment. Runs only if BOTH gates passed.
-  # Vercel's Git auto-deploy is OFF, so without this job nothing publishes.
+  # Main pushes publish a Preview backed by store-os-dev. Production is only
+  # reachable by dispatching this workflow on main with release_production=true.
+  # The test jobs above always use Preview credentials.
   deploy:
-    needs: [env-select, build-test, rules-and-e2e]
-    # Only deploy after a push to main. Feature branches validate the production
-    # build on localhost; an external Preview is not required for this PWA.
-    if: github.event_name == 'push' && github.ref_name == 'main' && needs.env-select.outputs.app-changed == 'true'
+    needs: [env-select, build-test, rules-and-e2e, deploy-rules]
+    if: >-
+      github.ref_name == 'main' &&
+      needs.env-select.outputs.app-changed == 'true' &&
+      (github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_production == true))
     runs-on: ubuntu-latest
-    environment: ${{ needs.env-select.outputs.env-name }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.release_production && 'Production' || 'Preview' }}
     # The Vercel CLI reads ORG/PROJECT id from .vercel/project.json OR these env
     # vars. The file is gitignored, so we expose both env vars job-wide here
     # AND recreate the file in the first step for maximum robustness.
@@ -185,7 +192,7 @@ jobs:
       - name: Resolve Vercel target
         id: target
         run: |
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "main" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release_production }}" = "true" ]; then
             echo "env=production" >> "$GITHUB_OUTPUT"
             echo "vercel_env=production" >> "$GITHUB_OUTPUT"
             echo "prod_flag=--prod" >> "$GITHUB_OUTPUT"
@@ -196,7 +203,8 @@ jobs:
           fi
       - name: Pull Vercel project config
         run: vercel pull --yes --environment=${{ steps.target.outputs.env }} --token=${{ secrets.VERCEL_TOKEN }}
-      - name: Prerender service account (prod)
+      - name: Prerender service account (production release only)
+        if: steps.target.outputs.vercel_env == 'production'
         # Prerender lists publicStores via firebase-admin; rules deny anonymous
         # LIST. If the secret is still missing the prerender skips loudly and
         # the deploy proceeds (SPA + static sitemap serve everything).
@@ -219,9 +227,8 @@ jobs:
           # VITE_VERCEL_ENV is NOT auto-injected when building outside Vercel,
           # so we set it explicitly so the cross-env guard runs correctly.
           VITE_VERCEL_ENV: ${{ steps.target.outputs.vercel_env }}
-          # Absolute origin for the prerendered canonical/og/sitemap (public
-          # info, not a secret). scripts/prerender-public.mjs skips without it.
-          PUBLIC_SITE_URL: https://store-os-alpha.vercel.app
+          # Preview skips prerender so it never queries production data.
+          PUBLIC_SITE_URL: ${{ steps.target.outputs.vercel_env == 'production' && 'https://store-os-alpha.vercel.app' || '' }}
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
@@ -249,37 +256,40 @@ jobs:
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
   # ───────────────────── deploy-rules (anti-drift) ─────────────────────
-  # Born from the 2026-08-11 incident: prod ran three-week-old Firestore rules
+  # Born from the 2026-08-11 incident: production ran three-week-old rules
   # while the repo evolved (rules deploys were a manual DEPLOYMENT.md step and
   # nothing compared deployed vs repo), surfacing as silently-denied
   # public-catalog writes. This job is now the ONLY regular path to a rules
-  # deployment: every push to main ships firestore.rules + storage.rules to
-  # BOTH backends, then verifies parity with a second no-op pass.
+  # deployment: main pushes update only dev; an explicitly approved manual
+  # production release updates only production. Each target gets a parity pass.
   deploy-rules:
-    needs: [env-select, build-test, rules-and-e2e, deploy]
-    # Main only, after the frontend deploy. Dev is a shared backend for all
-    # previews, so per-PR rule deploys would mutate it mid-review for other
-    # testers; PR rules are already validated against the EMULATOR in
-    # rules-and-e2e.
-    if: github.event_name == 'push' && github.ref_name == 'main' && needs.env-select.outputs.app-changed == 'true'
+    needs: [env-select, build-test, rules-and-e2e]
+    if: >-
+      github.ref_name == 'main' &&
+      needs.env-select.outputs.app-changed == 'true' &&
+      (github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_production == true))
     runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.release_production && 'Production' || 'Preview' }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Install Firebase CLI
         run: npm i -g firebase-tools
-      - name: Deploy rules (prod + dev)
+      - name: Deploy rules to the selected Firebase project
         # FIREBASE_TOKEN: repo-level secret created with `firebase login:ci`
         # (repo Settings → Secrets and variables → Actions).
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          for P in store-os-f7cf8 store-os-dev; do
-            echo "── deploying firestore+storage rules → $P"
-            firebase deploy --only firestore:rules,storage --project "$P" \
-              --token "$FIREBASE_TOKEN" --non-interactive
-          done
+          P=store-os-dev
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release_production }}" = "true" ]; then
+            P=store-os-f7cf8
+          fi
+          echo "── deploying firestore+storage rules → $P"
+          firebase deploy --only firestore:rules,storage --project "$P" \
+            --token "$FIREBASE_TOKEN" --non-interactive
       - name: Parity check (second pass must be a no-op)
         # This firebase-tools version prints "released rules …" even on a no-op
         # deploy, so "released" is NOT a drift signal. The reliable one is the
@@ -290,18 +300,18 @@ jobs:
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          status=0
-          for P in store-os-f7cf8 store-os-dev; do
-            code=0
-            OUT="$(firebase deploy --only firestore:rules,storage --project "$P" \
-              --token "$FIREBASE_TOKEN" --non-interactive 2>&1)" || code=$?
-            echo "$OUT"
-            if [ "$code" -ne 0 ]; then
-              echo "::error::$P: parity pass failed (exit $code)"
-              status=1
-            elif grep -qi "uploading rules" <<<"$OUT"; then
-              echo "::error::$P: not in parity — the second pass still uploaded rules"
-              status=1
-            fi
-          done
-          exit $status
+          P=store-os-dev
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release_production }}" = "true" ]; then
+            P=store-os-f7cf8
+          fi
+          code=0
+          OUT="$(firebase deploy --only firestore:rules,storage --project "$P" \
+            --token "$FIREBASE_TOKEN" --non-interactive 2>&1)" || code=$?
+          echo "$OUT"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::$P: parity pass failed (exit $code)"
+            exit 1
+          elif grep -qi "uploading rules" <<<"$OUT"; then
+            echo "::error::$P: not in parity — the second pass still uploaded rules"
+            exit 1
+          fi
