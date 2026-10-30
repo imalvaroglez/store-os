@@ -67,10 +67,13 @@ dependencias nuevas.
    escrituras); **solo el botón "Guardar" persiste**, con una sola escritura
    batch (§Persistencia). Compatible con el patrón de `StorefrontEditor` hoy:
    N ediciones = 1 guardado. El draft se descarta al salir sin guardar.
-4. **Permisos V1: solo la dueña** (`ownerUid` de la tienda). Miembros y
-   `super_admin` sin ser dueños no ven el chip "Editar" ni controles inline.
-   Nota: el editor de Ajustes (`StorefrontEditor`) es **owner-only** hoy y V1 lo
-   mantiene así. La clienta anónima nunca ve el modo edición.
+4. **Permisos V1: solo la dueña** (`ownerUid` de la tienda) para el modo
+   inline. Miembros y `super_admin` sin ser dueños no ven el chip "Editar" ni
+   controles inline. En Ajustes se conservan ambos accesos: la dueña puede abrir
+   la edición sobre la vista pública o el formulario completo
+   (`StorefrontEditor`), que también permite administrar imágenes. El formulario
+   existente sigue sujeto a sus permisos actuales de tienda. La clienta anónima
+   nunca ve controles de edición.
 
 ## Diseño técnico
 
