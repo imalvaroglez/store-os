@@ -1,6 +1,6 @@
 ---
 Delivery-ID: migrate-adminstores
-Delivery-Status: Pending approval
+Delivery-Status: Implementation in progress
 specPath: docs/superpowers/specs/migrate-adminstores-design.md
 ---
 
@@ -59,12 +59,12 @@ Tomados del `stores/{id}` correspondiente, igual que `projectAdminStore()` en `f
 ## Flujo del script
 
 ```
-node scripts/migrate-adminstores.cjs [--emulator|--prod] [--apply]
+node scripts/migrate-adminstores.cjs --emulator|--prod [--apply]
 ```
 
 1. **Dry-run (default):** lista stores huérfanos, imprime por doc el payload propuesto y el total de escrituras planeadas. Cero escrituras.
 2. **`--apply`:** ejecuta las escrituras (1 write por doc faltante; con una tienda real el costo es trivialmente dentro del free tier, pero el script imprime el conteo antes de confirmar).
-3. **`--emulator`** apunta a `localhost:9090`; **`--prod`** exige confirmación interactiva de texto libre Y `--apply` como segundo paso explícito (doble aprobación humana, sin atajos combinados).
+3. **`--emulator`** exige `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080` y usa el proyecto `store-os-demo`; **`--prod`** exige confirmación interactiva escribiendo el ID del proyecto. Para escribir en producción también requiere `--apply` y una segunda confirmación interactiva separada. La herramienta nunca se ejecuta contra producción durante pruebas.
 
 ## Aceptación
 
