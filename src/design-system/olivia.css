@@ -55,6 +55,7 @@
 .olv-categories a { flex-shrink: 0; display: inline-flex; align-items: center; min-height: 44px; padding: 8px 16px; font-size: 12px; border: 1px solid var(--olv-rule); border-radius: 30px; }
 .olv-categories a[aria-current=page] { background: var(--olv-ink); color: var(--olv-surface); border-color: var(--olv-ink); }
 .olv-tools { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin: 10px 0 28px; }
+.olv-product-finish { margin: -4px 0 8px; color: var(--olv-ink-soft); font-size: 11px; line-height: 1.4; }
 .olv-tools label > span { text-transform: none; letter-spacing: 0; color: var(--olv-ink-soft); font-size: 12px; }
 .olv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px 14px; }
 .olv-product { min-width: 0; display: flex; flex-direction: column; }
@@ -153,7 +154,7 @@
 @media (min-width: 640px) {
   .olv-container { width: min(100% - 80px, 1280px); }
   .olv-hero-copy { padding-block: 80px 88px; }
-  .olv-tools { grid-template-columns: 1fr 260px; }
+  .olv-tools { grid-template-columns: minmax(0, 1fr) 240px 220px; }
   .olv-grid { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 40px 24px; }
   .olv-how { padding: 40px; }
   .olv-steps { grid-template-columns: repeat(3,1fr); }
