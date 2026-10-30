@@ -23,9 +23,11 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
       const item = (raw ?? {}) as Record<string, unknown>;
       const quantity = Math.max(1, Math.round(finite(item.quantity, 1)));
       const unitPrice = Math.max(0, finite(item.unitPrice ?? item.price));
+      const category = item.categorySnapshot as { id?: unknown; name?: unknown } | undefined;
       return {
         ...(typeof item.lineId === "string" && item.lineId ? { lineId: item.lineId } : {}),
         ...(item.priceSource === "automatic" || item.priceSource === "manual" ? { priceSource: item.priceSource } : {}),
+        ...(typeof category?.id === "string" && category.id && typeof category.name === "string" && category.name ? { categorySnapshot: { id: category.id, name: category.name } } : {}),
         ...(typeof item.productId === "string" && item.productId ? { productId: item.productId } : {}),
         productName: String(item.productName ?? item.name ?? "Producto").trim() || "Producto",
         quantity,
