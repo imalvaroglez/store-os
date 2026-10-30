@@ -1,6 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { loginAsFirstAdmin, gotoSantiHome, openCatalog, gotoClean, writeEmulatorDoc, mintUserToken } from "./helpers";
-import { buildSeedState } from "./seed";
+import { loginAsFirstAdmin, gotoSantiHome, openCatalog, gotoClean } from "./helpers";
 
 // Real end-to-end smoke against the Firebase Emulator. Firebase Auth persists to
 // indexedDB, which Playwright's storageState does NOT capture — so the session
@@ -30,26 +29,8 @@ test.afterAll(async () => {
 });
 
 test("store owner edits Olivia's storefront in place and the public projection survives reload", async ({ sharedPage: page }) => {
-  const browserErrors: string[] = [];
-  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
-  page.on("pageerror", (error) => browserErrors.push(error.stack ?? error.message));
   const body = `Mensaje WYSIWYG ${Date.now()}`;
-  const { uid } = await mintUserToken();
-  const olivia = buildSeedState().stores.find((store) => store.id === "store_olivia");
-  if (!olivia) throw new Error("Olivia fixture missing");
-  await writeEmulatorDoc("stores", "store_olivia", {
-    ...olivia,
-    ownerUid: uid,
-    memberUids: [uid],
-    pendingInvites: [],
-  });
   await gotoClean(page, "/catalogo/olivia");
-  const editButton = page.getByRole("button", { name: "Editar sitio" });
-  try {
-    await editButton.waitFor({ state: "visible", timeout: 15000 });
-  } catch {
-    throw new Error(`No apareció el control de edición en ${page.url()}. Contenido: ${(await page.locator("body").innerText()).slice(0, 1000)}. Errores: ${browserErrors.join(" | ").slice(0, 3000)}`);
-  }
   await page.getByRole("button", { name: "Editar sitio" }).click();
   await page.getByRole("button", { name: "Editar Mensaje principal" }).click();
   await page.getByLabel("Mensaje principal").fill(body);
