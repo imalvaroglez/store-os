@@ -42,7 +42,8 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
 ### ⛔ P0 bloqueado por integraciones
 - **Erradicar persistencia administrativa local** — diseño formal listo en
   `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`; no iniciar
-  cambios definitivos de runtime hasta integrar los PR #89–#94 y #103–#110.
+  cambios definitivos de runtime hasta integrar los PR #89–#94 y #103–#107,
+  #109 y #110, y cerrar el #108.
   El PR #108 contradice la arquitectura decidida y debe seguir bloqueado hasta
   que su autor o la persona responsable lo cierre.
 
