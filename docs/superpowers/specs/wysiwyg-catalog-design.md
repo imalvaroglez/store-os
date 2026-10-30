@@ -172,6 +172,23 @@ adicionales anónimas (la clienta no cambia). Cabe holgado en el free tier.
   en `/catalogo/olivia` → sin chip ni contornos de edición; y guardado con error
   (emulador offline/fallo inyectado) → toast de error, draft intacto.
 
+## Implementación de esta entrega
+
+- `App` comprueba `ownerUid` y pasa a la vitrina solo la tienda, el borrador y
+  la acción de guardado de la dueña. `OliviaStorefront` no importa Auth ni
+  StoreProvider; el guard `check-public-bundle` confirma que Firebase no entra
+  al paquete anónimo.
+- `InlineEditable` edita los campos escalares con `TextField`/`TextArea`; las
+  listas se editan una entrada por línea y `InlineFaqEditor` conserva el flujo
+  de preguntas.
+- `saveStorefrontBatch` actualiza `stores`, `adminStores` y `publicStores` en
+  un único `writeBatch`. Sólo cambia `storefront` y `updatedAt` en el negocio y
+  la proyección; no lee ni republica productos. El borrador permanece visible
+  si falla el guardado.
+- Las pruebas cubren campos, preguntas, permiso solo para la dueña,
+  reintento, forma exacta de las tres escrituras y persistencia pública tras
+  recargar en Firebase Emulator.
+
 ## previewChecks
 
 ```json
