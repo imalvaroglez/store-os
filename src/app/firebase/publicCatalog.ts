@@ -45,6 +45,7 @@ export type PublicProductSummary = {
   prices?: Record<string, number>;
   stockSignal?: PublicStockSignal;
   availability?: string;
+  finish?: string | null;
   isFeatured?: boolean;
   isNew?: boolean;
   canInquire?: boolean;
