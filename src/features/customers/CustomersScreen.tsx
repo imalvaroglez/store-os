@@ -143,9 +143,14 @@ export function CustomersScreen() {
             <Button variant="ghost" onClick={() => setDeleting(null)}>Cancelar</Button>
             <Button
               variant="danger"
-              onClick={() => {
+              onClick={async () => {
                 if (deleting) {
-                  deleteCustomer(deleting.id);
+                  try {
+                    await deleteCustomer(deleting.id);
+                  } catch {
+                    toast.error("No se pudo eliminar la clienta. Intenta de nuevo.");
+                    return;
+                  }
                   toast.success(`«${deleting.name}» eliminado`);
                 }
                 setDeleting(null);
