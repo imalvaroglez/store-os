@@ -123,7 +123,7 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
         <StorefrontLink to={`/catalogo/${slug}`} current={!focusCategory}>Todas las piezas</StorefrontLink>
         {(catalog?.categories ?? []).map((c) => <StorefrontLink key={c.id} to={`/catalogo/${slug}/categoria/${c.slug}`} current={c.slug === focusCategory}>{c.name}</StorefrontLink>)}
       </nav>
-      <div className="olv-tools">
+      <div className={`olv-tools${finishOptions.length > 1 ? " olv-tools--with-finish" : ""}`}>
         <TextField label="Buscar una pieza" type="search" placeholder="Nombre o clave de la pieza" value={query} onChange={(e) => setQuery(e.target.value)} />
         <SelectField label="Ordenar por" value={sort} onChange={setSort} options={[{ value: "featured", label: "Destacados" }, { value: "new", label: "Novedades" }, { value: "price-asc", label: `${priceLabel}: menor a mayor` }, { value: "price-desc", label: `${priceLabel}: mayor a menor` }]} />
         {finishOptions.length > 1 && <SelectField label="Acabado" value={finishFilter} onChange={(value) => setFinishFilter(value)} placeholder="Todos los acabados" options={finishOptions.map(([value, label]) => ({ value, label }))} />}
