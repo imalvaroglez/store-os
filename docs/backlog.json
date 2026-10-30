@@ -20,7 +20,7 @@
       "id": "productos-sort-filter",
       "title": "/productos: ordenar (nombre/precio/stock/fecha) y filtrar por categoría",
       "priority": 2,
-      "status": "awaiting-approval",
+      "status": "done",
       "specPath": "docs/superpowers/specs/productos-sort-filter-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -95,7 +95,7 @@
       "id": "remove-client-demo-seed",
       "title": "Retirar el seed demo del cliente",
       "priority": 20,
-      "status": "needs-spec",
+      "status": "done",
       "specPath": "docs/superpowers/specs/remove-client-demo-seed-design.md",
       "dependsOn": [],
       "previewChecks": []
@@ -104,7 +104,7 @@
       "id": "pnpm-lockfile",
       "title": "Resolver el lockfile de pnpm",
       "priority": 30,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/pnpm-lockfile-design.md",
       "dependsOn": [],
       "previewChecks": [
