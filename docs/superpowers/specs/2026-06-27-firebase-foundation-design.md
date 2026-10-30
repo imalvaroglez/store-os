@@ -90,7 +90,7 @@ signed-out/local vs signed-in/cloud split — all verified locally against the
 
 ## Verification
 
-- Emulator suite (Auth + Firestore) via `firebase emulators:start --only auth,firestore`.
+- Emulator suite (Auth + Firestore) via `firebase emulators:start --project store-os-dev --only auth,firestore`.
 - Playwright e2e (`e2e/firebase.spec.ts`): start emulator, sign up (first = admin),
   verify `users` doc + role, create a store (cloud write), sign out → back to authentication,
   sign up second user → member (no stores visible until invited).

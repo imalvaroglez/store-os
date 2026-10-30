@@ -29,17 +29,17 @@ enforced by **Security Rules**, not by hiding these keys. In your Vercel project
 | `VITE_FIREBASE_API_KEY` | from firebaseConfig |
 | `VITE_FIREBASE_AUTH_DOMAIN` | `_<projectId>_.firebaseapp.com` |
 | `VITE_FIREBASE_PROJECT_ID` | `store-os-dev` for Preview; `store-os-f7cf8` for approved Production releases |
-| `VITE_FIREBASE_STORAGE_BUCKET` | `_<projectId>_.firebasestorage.app` |
+| `VITE_FIREBASE_STORAGE_BUCKET` | valor exacto de `firebaseConfig` para ese proyecto |
 | `VITE_FIREBASE_SENDER_ID` | messaging sender id |
 | `VITE_FIREBASE_APP_ID` | app id |
 
-**Do NOT set** `VITE_FIREBASE_EMULATOR` in production — that flag routes Auth +
-Firestore to localhost (it's for local tests only).
+**Do NOT set** `VITE_FIREBASE_EMULATOR` in production — that flag routes Auth,
+Firestore, Storage and Functions to localhost (it's for local tests only).
 
 ## 3. Security rules (firestore.rules + storage.rules)
 
 The repo ships `firestore.rules` (data) and `storage.rules` (product photos).
-**CI deploys them automatically**: on every push to `main`, the `deploy-rules`
+**CI deploys them after an approved change reaches `main`**: the `deploy-rules`
 job ships both files to `store-os-f7cf8` **and** `store-os-dev` (after
 build-test + rules-and-e2e + the Vercel deploy), then re-runs the deploy as a
 parity check — a second pass that still releases something fails the build.
@@ -66,8 +66,8 @@ Without the secret the deploy still succeeds — the prerender skips with a
 loud warning and the static `public/sitemap.xml` ships instead (the SPA
 serves every route; only per-store SEO metadata and social previews degrade).
 
-Manual deploys are for **emergencies/rollbacks only** (console → Firestore →
-Rules → history to restore a previous ruleset, or):
+Manual production deploys are for **approved emergencies/rollbacks only**
+(console → Firestore → Rules → history to restore a previous ruleset, or):
 
 ```bash
 firebase deploy --only firestore:rules,storage --project store-os-f7cf8
@@ -182,7 +182,8 @@ opening the app migrates it; cloud stores migrate on the next cloud sync.
 
 **Security rules:** `firestore.rules` adds `categories/{id}` (membership-gated
 like products) and `publicCatalogs/{slug}` (anonymous read, signed-in write).
-Deploy with `npm run deploy:rules` (or `firebase deploy --only firestore,storage --project store-os-dev`).
+For development, use `npm run deploy:rules` (explicitly targets `store-os-dev`).
+Production rules are released only through the approved release path.
 
 **Storage:** gallery images live at `products/{storeId}/{productId}/{imgId}.jpg`,
 optimized JPEG ≤1600px q80. The bucket stays in `us-east1` (free-tier region).
@@ -236,9 +237,9 @@ what isolates Olivia's real data.
 | Production | `store-os-f7cf8` | Olivia's real business | Only the platform super-admin (`admin@store.os`) and the tenant owners she invites |
 | Development | `store-os-dev` | Dev/testing against realistic-but-fake data | Development only |
 
-Local emulators use the `store-os-dev` project ID but route Auth, Firestore and
-Storage to `127.0.0.1`. This is the same dev target, not a third Firebase
-project; see "Local development / testing" below.
+Local emulator tests also use the `store-os-dev` project ID, with every service
+connected to `127.0.0.1`. They do not create a separate Firebase project or
+connect to the remote dev or production services.
 
 ### Vercel environment variables (per target)
 
@@ -261,11 +262,12 @@ its target only.
 
 A build-time tripwire (defense-in-depth, **not** primary security) runs before
 `tsc`/`vite` on every `npm run build`. It reads `VITE_VERCEL_ENV` (auto-injected
-by Vercel) and `VITE_FIREBASE_PROJECT_ID`, and **aborts the build** (exit 1) on:
+by Vercel) and `VITE_FIREBASE_PROJECT_ID`, and **aborts the build** (exit 1) unless local development and Preview target exactly `store-os-dev`, or Production targets exactly `store-os-f7cf8`:
 
-- `preview` + `store-os-f7cf8` (a Preview deploy pointing at prod), or
-- `preview` + empty/missing project id (a mis-scoped variable), or
-- `production` + anything other than `store-os-f7cf8`.
+- local development configured with any project other than `store-os-dev`,
+- `preview` or `development` with anything other than `store-os-dev`,
+- `production` with anything other than `store-os-f7cf8`, or
+- an unrecognized Vercel environment.
 
 This catches the "All Environments" accident at build time. It is not primary
 isolation — a determined actor with prod's public config can still instantiate
@@ -280,7 +282,7 @@ the SDK — that's by Firebase design (access is enforced by Security Rules).
 5. Project settings → Your apps → add a Web App → copy the six config values into the Vercel **Preview** + **Development** groups.
 6. Set a **$0.01 budget alert** in Google Cloud Console → Billing → Budgets (notification only; it does not stop charges).
 7. Apply the **IAM grant** `roles/datastore.user` to the Storage service agent of `store-os-dev` (same as §4b for prod), or product-photo uploads fail with 403.
-8. Deploy the rules to dev: `firebase deploy --only firestore,storage --project store-os-dev` (rules are identical to prod — do not loosen them, or dev stops reflecting prod).
+8. Deploy the rules to dev with `npm run deploy:rules` (or `firebase deploy --only firestore,storage --project store-os-dev`). Rules are identical to production — do not loosen them, or dev stops reflecting production.
 
 ### Lock production (one-time, console)
 

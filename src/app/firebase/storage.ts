@@ -21,7 +21,7 @@ import { FIREBASE_DEV_STORAGE_BUCKET } from "./projectIds";
 const EMULATOR =
   import.meta.env.MODE !== "production" &&
   import.meta.env.VITE_FIREBASE_EMULATOR === "true";
-// The Storage SDK needs an explicit bucket name even when its endpoint is local.
+// The bucket name matches the configured dev project; the host remains local.
 const EMULATOR_BUCKET = FIREBASE_DEV_STORAGE_BUCKET;
 
 let storage: FirebaseStorage | null = null;

@@ -46,7 +46,6 @@ export type PublicProductSummary = {
   prices?: Record<string, number>;
   stockSignal?: PublicStockSignal;
   availability?: string;
-  finish?: string | null;
   isFeatured?: boolean;
   isNew?: boolean;
   canInquire?: boolean;
@@ -118,7 +117,8 @@ export class PublicProductNotFoundError extends Error {
   }
 }
 
-// Mirror config.ts's environment detection; emulator REST calls stay on localhost.
+// Mirror of src/app/firebase/config.ts's environment detection: emulator mode
+// is opt-in and DEV/TEST-only. Requests use the dev project ID at localhost.
 const EMULATOR =
   import.meta.env.MODE !== "production" &&
   import.meta.env.VITE_FIREBASE_EMULATOR === "true";

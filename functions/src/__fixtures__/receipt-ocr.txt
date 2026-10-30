@@ -194,18 +194,18 @@ Dirección de envío
 
 Cliente Anónimo
 
-calle anonima 123
+[DOMICILIO DE PRUEBA OMITIDO]
 === render-5.png ===
-Coto 1 casa 2
-00000 ciudad, Estado
+[DATOS DEL DOMICILIO OMITIDOS]
+[LOCALIDAD Y CÓDIGO POSTAL OMITIDOS]
 México
-0000000000
+[TELÉFONO OMITIDO]
 Dirección de facturación
 Igual que la dirección de envío
 Envío
 Envio B2B
 Dirección de correo electrónico
-cliente.anonima@example.com
+[CORREO OMITIDO]
 Tienda
 
 Colore
