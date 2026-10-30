@@ -129,6 +129,47 @@ describe("tarjetas — jerarquía de precios", () => {
   });
 });
 
+describe("portada — acceso visual por categoría", () => {
+  it("usa la foto configurada y, si falta, la primera foto pública de una pieza", async () => {
+    const visualCatalog: PublicCatalog = {
+      categories: [
+        { id: "c1", name: "Anillos", slug: "anillos", imageUrl: "/anillos-cover.jpg", sortOrder: 0 },
+        { id: "c2", name: "Aretes", slug: "aretes", sortOrder: 1 },
+        { id: "c3", name: "Collares", slug: "collares", sortOrder: 2 },
+      ],
+      products: [
+        { ...catalog.products[0], categoryIds: ["c1"], images: [{ url: "/pieza-anillo.jpg" }] },
+        { ...catalog.products[1], categoryIds: ["c2"], imageUrl: "/pieza-arete.jpg" },
+        { ...catalog.products[2], categoryIds: ["c3"] },
+      ],
+    };
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: visualCatalog });
+    render(<OliviaStorefront route={storeRoute} />);
+
+    const rings = await screen.findByRole("link", { name: /Anillos.*1 pieza/ });
+    expect(rings).toHaveAttribute("href", "/catalogo/olivia/categoria/anillos");
+    expect(rings.querySelector("img")).toHaveAttribute("src", "/anillos-cover.jpg");
+    const earrings = screen.getByRole("link", { name: /Aretes.*1 pieza/ });
+    expect(earrings.querySelector("img")).toHaveAttribute("src", "/pieza-arete.jpg");
+    const necklaces = screen.getByRole("link", { name: /Collares.*1 pieza/ });
+    expect(within(necklaces).getByRole("img", { name: "Imagen de Collares no disponible" })).toBeTruthy();
+  });
+
+  it("omite categorías sin piezas visibles cuando la tienda oculta los agotados", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { showSoldOut: false } },
+      catalog: {
+        categories: [catalog.categories[0], { id: "c3", name: "Collares", slug: "collares", sortOrder: 1 }],
+        products: [{ ...catalog.products[0], categoryIds: ["c1"] }, { ...catalog.products[2], categoryIds: ["c3"] }],
+      },
+    });
+    render(<OliviaStorefront route={storeRoute} />);
+
+    expect(await screen.findByRole("link", { name: /Anillos.*1 pieza/ })).toBeTruthy();
+    expect(document.querySelector('.olv-category-grid a[href$="collares"]')).toBeNull();
+  });
+});
+
 describe("carrito del storefront — acumular y pedir", () => {
   it("agrega desde el grid, muestra el contador y arma UN mensaje con todas las líneas", async () => {
     await renderStore();

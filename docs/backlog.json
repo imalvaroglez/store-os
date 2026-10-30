@@ -350,9 +350,16 @@
       "id": "fer-catalog-visual-home",
       "title": "Portada fotográfica y categorías visuales",
       "priority": 290,
-      "status": "needs-spec",
+      "status": "queued",
+      "specPath": "docs/superpowers/specs/fer-10-catalogo-portada.md",
       "dependsOn": [],
-      "previewChecks": [],
+      "previewChecks": [
+        {
+          "path": "/catalogo/olivia",
+          "selector": "body",
+          "text": "Compra por categoría"
+        }
+      ],
       "discoveryId": "FER-10",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
       "proposedPriority": "P2"
@@ -383,13 +390,22 @@
       "id": "fer-catalog-cohesion",
       "title": "Experiencia visual integrada del catálogo",
       "priority": 320,
-      "status": "needs-spec",
+      "status": "queued",
+      "specPath": "docs/superpowers/specs/fer-13-catalogo-cohesion.md",
       "dependsOn": [],
-      "previewChecks": [],
+      "previewChecks": [
+        {
+          "path": "/catalogo/olivia/categoria/anillos",
+          "selector": "body",
+          "text": "Anillos"
+        }
+      ],
       "discoveryId": "FER-13",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
       "proposedPriority": "P2",
       "relatedItems": [
+        "fer-catalog-visual-home",
+        "fer-catalog-subcategories",
         "wysiwyg-catalog"
       ]
     },
