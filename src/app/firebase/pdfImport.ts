@@ -5,17 +5,13 @@ import {
   type Functions,
 } from "firebase/functions";
 import { ref, uploadBytes, getBlob } from "firebase/storage";
-import { getFirebase } from "./config";
+import { FIREBASE_EMULATOR_ENABLED, getFirebase } from "./config";
 import { getStorageInstance } from "./storage";
 
 // PDF import transport (purchase-pdf-import): upload the supplier PDF to
 // Storage, then call importPurchasePdf (OCR) and get the parsed lines back.
-// Local mode (no Firebase) is handled by the caller — this module is
-// only used when cloud is available.
-
-const EMULATOR =
-  import.meta.env.MODE !== "production" &&
-  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
+// This transport is available only after Firebase configuration and Auth pass.
+const EMULATOR = FIREBASE_EMULATOR_ENABLED;
 
 export type ParsedPdfLine = {
   name: string;
