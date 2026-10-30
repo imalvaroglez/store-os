@@ -6,7 +6,7 @@ import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
-import { ToastProvider, OLIVIA_SLUG } from "../design-system";
+import { Button, ToastProvider, OLIVIA_SLUG } from "../design-system";
 
 // Lazy-load the public storefront so the storefront code (sections, gallery,
 // SEO) lives in its own chunk, separate from admin forms.
@@ -79,11 +79,36 @@ export function App() {
   return (
     <ToastProvider>
       <Root />
+      <SyncErrorNotice />
       {/* Build marker for the refresh-hard-reload previewCheck/repro: visible text
           carrying the served deploy's SHA. Reads the same meta the Vite plugin injects. */}
       <BuildMarker />
     </ToastProvider>
   );
+}
+
+export function SyncErrorNoticeView({
+  syncError,
+  onDismiss,
+}: {
+  syncError: { label: string; retry: () => Promise<void> } | null;
+  onDismiss: () => void;
+}) {
+  if (!syncError) return null;
+  return (
+    <div role="alert" className="fixed inset-x-3 top-3 z-[100] mx-auto flex max-w-xl flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/30 bg-surface p-3 text-danger shadow-lg">
+      <span className="text-sm">No se pudo {syncError.label}.</span>
+      <div className="flex gap-2">
+        <Button size="sm" variant="secondary" onClick={() => { void syncError.retry().catch(() => {}); }}>Reintentar</Button>
+        <Button size="sm" variant="ghost" onClick={onDismiss}>Descartar</Button>
+      </div>
+    </div>
+  );
+}
+
+function SyncErrorNotice() {
+  const { syncError, dismissSyncError } = useStore();
+  return <SyncErrorNoticeView syncError={syncError} onDismiss={dismissSyncError} />;
 }
 
 // ponytail: reads the x-build meta at runtime instead of duplicating the SHA at

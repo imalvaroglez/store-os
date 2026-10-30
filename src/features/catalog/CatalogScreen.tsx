@@ -385,7 +385,18 @@ export function CatalogScreen() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setDeleting(null)}>Cancelar</Button>
-            <Button variant="danger" onClick={() => { if (deleting) { deleteProduct(deleting.id); toast.success(`«${deleting.name}» eliminado`); } setDeleting(null); }}>Eliminar</Button>
+            <Button variant="danger" onClick={async () => {
+              if (deleting) {
+                try {
+                  await deleteProduct(deleting.id);
+                } catch {
+                  toast.error("No se pudo eliminar el producto. Intenta de nuevo.");
+                  return;
+                }
+                toast.success(`«${deleting.name}» eliminado`);
+              }
+              setDeleting(null);
+            }}>Eliminar</Button>
           </>
         }
       >
