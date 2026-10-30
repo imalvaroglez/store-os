@@ -23,11 +23,11 @@ Pensado para que cualquiera lo use: un adolescente que vende por primera vez, un
 - **Tres temas** intercambiables: **Paper Ledger**, **Maximalista** y **Lujo** — cada uno con su propia personalidad (color, tipografía, movimiento).
 - **Responsive** — funciona en móvil (bottom nav) y escritorio (sidebar).
 - **PWA** instalable y con soporte offline.
-- **Local-first** — todo se guarda en el navegador (`localStorage`). Sin nube… todavía.
+- **Modo local de desarrollo** — sin variables de Firebase, `npm run dev` guarda una tienda vacía en el navegador (`localStorage`). Con Firebase configurado se requiere iniciar sesión; los despliegues de producción siempre muestran acceso.
 
 ## Empezar
 
-Requisitos: Node 18+ y npm.
+Requisitos: Node 22+ y npm.
 
 ```bash
 npm install
@@ -44,7 +44,7 @@ npm run test        # vitest (unit + design-system gate)
 npm run e2e         # playwright (mobile + desktop)
 ```
 
-Los datos de ejemplo (dos tiendas: **Santi** y **Joyería**) se cargan automáticamente en el primer uso. Puedes reiniciarlos desde **Opciones → Reiniciar con datos de ejemplo**.
+El primer uso local empieza vacío: crea una tienda para comenzar. No se cargan datos de ejemplo en el navegador.
 
 ## Estructura del proyecto
 
@@ -53,7 +53,7 @@ src/
   app/            # App, AppShell (responsive), StoreProvider (estado), router
   design-system/  # sistema de diseño (tokens, primitivos, gate) + theme/
   features/       # pantallas por dominio: stores, home, catalog, customers, orders, inventory
-  lib/            # ids, money, dates, storage, selectors, whatsapp, seed, labels, router
+  lib/            # ids, money, dates, storage, selectors, whatsapp, labels, router
   types/          # modelo de datos (Store, Product, Customer, Order)
 docs/
   ARCHITECTURE.md
