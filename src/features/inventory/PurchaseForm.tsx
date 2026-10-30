@@ -218,6 +218,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       toast.error("Agrega al menos una pieza.");
       return;
     }
+    const incompleteExpense = (draft.expenses ?? []).some((expense) => {
+      const amount = expenseAmounts[expense.id];
+      return !expense.description.trim() || amount == null || amount.trim() === "" || parseAmount(amount) == null;
+    });
+    if (incompleteExpense) {
+      toast.error("Completa la descripción y el importe de cada gasto de surtido.");
+      return;
+    }
     if (receive && !canReceive) {
       toast.error(blockReason ? `No se puede recibir: ${blockReason}.` : "Resuelve la compra antes de recibir.");
       return;
