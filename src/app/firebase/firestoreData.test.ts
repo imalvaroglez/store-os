@@ -123,6 +123,17 @@ describe("projectPublicProductSummary", () => {
     expect("prices" in noTiers).toBe(false);
   });
 
+
+  it("includes the public finish in the catalog summary, never internal costs", () => {
+    const projected = projectPublicProductSummary(
+      baseProduct({ finish: "Dorado", cost: 300, privateNotes: "secreto" }),
+      "olivia"
+    );
+    expect(projected.finish).toBe("Dorado");
+    expect("cost" in projected).toBe(false);
+    expect("privateNotes" in projected).toBe(false);
+  });
+
   it("picks the primary gallery image for the grid", () => {
     const projected = projectPublicProductSummary(
       baseProduct({
