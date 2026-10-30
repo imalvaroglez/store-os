@@ -61,6 +61,14 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
   const slug = store.slug;
   const priceLabel = store.priceTiers?.find((tier) => tier.id === store.defaultTierId)?.label || "Precio";
   const category = catalog?.categories.find((item) => item.slug === focusCategory);
+  const categoryCards = useMemo(() => (catalog?.categories ?? []).map((item) => {
+    const productsInCategory = (catalog?.products ?? []).filter((product) =>
+      product.categoryIds?.includes(item.id) && ((sf.showSoldOut ?? true) || !isSoldOut(product))
+    );
+    const firstProduct = productsInCategory[0];
+    const fallbackImage = firstProduct?.images?.[0]?.url ?? firstProduct?.imageUrl ?? undefined;
+    return { ...item, image: item.imageUrl || fallbackImage, pieceCount: productsInCategory.length };
+  }).filter((item) => item.pieceCount > 0), [catalog, sf.showSoldOut]);
   useEffect(() => { setQuery(""); }, [focusCategory]);
   useSeo({
     title: category ? `${category.name} · ${store.name}` : sf.seo?.title || `${store.name} — Joyería`,
@@ -106,10 +114,19 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
     <main id="piezas" className="olv-container olv-main">
       <div className="olv-section-heading"><div><p className="olv-eyebrow">Elige lo que va contigo</p><h2>{category?.name || "Encuentra tus favoritas"}</h2></div><p className="olv-muted">{products.length} {products.length === 1 ? "pieza" : "piezas"}</p></div>
       {category?.description && <p className="olv-muted">{category.description}</p>}
-      <nav aria-label="Categorías" className="olv-categories">
+      {!focusCategory && categoryCards.length > 0 && <section className="olv-category-section" aria-labelledby="category-title">
+        <div className="olv-category-section-heading"><div><p className="olv-eyebrow">Explora Olivia</p><h2 id="category-title">Compra por categoría</h2></div></div>
+        <div className="olv-category-grid">
+          {categoryCards.map((item) => <StorefrontLink key={item.id} to={`/catalogo/${slug}/categoria/${item.slug}`} className="olv-category-card">
+            <ProductImage src={item.image ?? undefined} alt={item.image ? "" : `Imagen de ${item.name} no disponible`} size="full" className="olv-category-image" placeholder={item.name} />
+            <span className="olv-category-card-copy"><span className="olv-category-card-name">{item.name}</span><span className="olv-category-card-count">{item.pieceCount} {item.pieceCount === 1 ? "pieza" : "piezas"} <span aria-hidden="true">↗</span></span></span>
+          </StorefrontLink>)}
+        </div>
+      </section>}
+      {focusCategory && <nav aria-label="Categorías" className="olv-categories">
         <StorefrontLink to={`/catalogo/${slug}`} current={!focusCategory}>Todas las piezas</StorefrontLink>
         {(catalog?.categories ?? []).map((c) => <StorefrontLink key={c.id} to={`/catalogo/${slug}/categoria/${c.slug}`} current={c.slug === focusCategory}>{c.name}</StorefrontLink>)}
-      </nav>
+      </nav>}
       <div className="olv-tools">
         <TextField label="Buscar una pieza" type="search" placeholder="Nombre o clave de la pieza" value={query} onChange={(e) => setQuery(e.target.value)} />
         <SelectField label="Ordenar por" value={sort} onChange={setSort} options={[{ value: "featured", label: "Destacados" }, { value: "new", label: "Novedades" }, { value: "price-asc", label: `${priceLabel}: menor a mayor` }, { value: "price-desc", label: `${priceLabel}: mayor a menor` }]} />
