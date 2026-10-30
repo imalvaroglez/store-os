@@ -167,7 +167,7 @@
       "id": "unified-products",
       "title": "Productos unificados",
       "priority": 80,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/unified-products-design.md",
       "dependsOn": [],
       "previewChecks": [
@@ -210,7 +210,7 @@
       "id": "scalable-pricing",
       "title": "Precios escalables",
       "priority": 110,
-      "status": "queued",
+      "status": "done",
       "specPath": "docs/superpowers/specs/scalable-pricing-design.md",
       "dependsOn": [],
       "previewChecks": [
