@@ -16,15 +16,21 @@ import { todayIso, nowIso, parseSpanishDate } from "../../lib/dates";
 import { formatMoney, formatMoneyExact, parseAmount } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
+import { uid } from "../../lib/ids";
 import { openPurchasePdf } from "../../app/firebase/pdfImport";
 import {
   effectivePurchaseStatus,
   derivedUnitCost,
   lineStatus,
   purchaseTotals,
+  purchaseRecordedTotal,
+  purchaseSourcingExpenseTotal,
+  PURCHASE_EXPENSE_CATEGORY_LABEL,
   recalcPurchaseStatus,
   type PriceTierDef,
   type Purchase,
+  type PurchaseExpense,
+  type PurchaseExpenseCategory,
   type PurchaseLine,
   type PurchaseLineStatus,
   type Supplier,
@@ -52,6 +58,11 @@ const LINE_STATUS_TONE: Record<PurchaseLineStatus, "warning" | "info" | "success
   linked: "success",
 };
 
+const EXPENSE_CATEGORY_OPTIONS = Object.entries(PURCHASE_EXPENSE_CATEGORY_LABEL).map(([value, label]) => ({
+  value: value as PurchaseExpenseCategory,
+  label,
+}));
+
 type Filter = "all" | PurchaseLineStatus;
 
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
@@ -65,6 +76,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const [receiving, setReceiving] = useState(false);
   const [bulkCreating, setBulkCreating] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
+  const [expenseAmountDrafts, setExpenseAmountDrafts] = useState<Record<string, string>>({});
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
@@ -74,6 +86,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
 
   // Spec §1 totals live in purchaseTotals (single source, shared with status).
   const { merchandise, calculated } = purchaseTotals(draft);
+  const sourcingExpenses = draft.sourcingExpenses ?? [];
+  const sourcingExpenseTotal = purchaseSourcingExpenseTotal(draft);
+  const recordedTotal = purchaseRecordedTotal(draft);
+  const incompleteExpenseCount = sourcingExpenses.filter(
+    (expense) => !Number.isFinite(expense.amount) || expense.amount <= 0
+  ).length;
   // A confirmed total of 0 is REAL (free order); never fall back to `calculated`
   // or the difference would vanish. Missing/non-finite reads as 0 → mismatch.
   const totalPaid = Number.isFinite(draft.totalConfirmed) ? draft.totalConfirmed : 0;
@@ -99,6 +117,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       ? `${counts.amount_review} ${counts.amount_review === 1 ? "línea tiene un importe sin interpretar" : "líneas tienen importes sin interpretar"}`
       : counts.unlinked > 0
         ? `${counts.unlinked} ${counts.unlinked === 1 ? "línea no está vinculada a un producto" : "líneas no están vinculadas a un producto"}`
+        : incompleteExpenseCount > 0
+          ? `${incompleteExpenseCount} ${incompleteExpenseCount === 1 ? "gasto necesita" : "gastos necesitan"} un importe mayor que cero`
         : mismatch > 0.5 && !mismatchConfirmed
           ? `diferencia de ${formatMoneyExact(mismatch)} sin confirmar`
           : undefined;
@@ -122,6 +142,40 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
   function setTotalPaid(raw: string) {
     setDraft(invalidateMismatch({ ...draft, totalConfirmed: parseAmount(raw) ?? 0 }));
+  }
+  function updateExpense(id: string, patch: Partial<PurchaseExpense>) {
+    setDraft({
+      ...draft,
+      sourcingExpenses: sourcingExpenses.map((expense) =>
+        expense.id === id ? { ...expense, ...patch } : expense
+      ),
+    });
+  }
+  function addExpense() {
+    setDraft({
+      ...draft,
+      sourcingExpenses: [
+        ...sourcingExpenses,
+        { id: uid("pe"), category: "sourcing_transport", amount: 0 },
+      ],
+    });
+  }
+  function removeExpense(id: string) {
+    setDraft({
+      ...draft,
+      sourcingExpenses: sourcingExpenses.filter((expense) => expense.id !== id),
+    });
+    setExpenseAmountDrafts((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+  }
+  function setExpenseAmount(id: string, raw: string) {
+    setExpenseAmountDrafts((previous) => ({ ...previous, [id]: raw }));
+    const parsed = parseAmount(raw);
+    const amount = parsed == null ? 0 : Math.round(parsed * 100) / 100;
+    updateExpense(id, { amount });
   }
   function setQuantity(idx: number, raw: string) {
     const qty = Math.max(1, Math.trunc(parseAmount(raw) ?? 1));
@@ -205,6 +259,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
 
   async function saveDraft(receive = false) {
+    if (incompleteExpenseCount > 0) {
+      toast.error("Completa el importe de cada gasto o quita los gastos vacíos.");
+      return;
+    }
     if (draft.lines.length === 0) {
       toast.error("Agrega al menos una pieza.");
       return;
@@ -630,6 +688,76 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         )}
       </div>
 
+      {/* ── Gastos separados del documento del proveedor ── */}
+      <div className="border-t border-edge pt-3 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="font-semibold text-ink">Gastos de surtido</h3>
+            <p className="text-xs text-ink-soft mt-1">
+              Se registran aparte del total del proveedor y no cambian el costo por pieza.
+            </p>
+          </div>
+          {!locked && (
+            <Button size="sm" variant="secondary" onClick={addExpense}>
+              + Agregar gasto
+            </Button>
+          )}
+        </div>
+
+        {sourcingExpenses.length === 0 ? (
+          <p className="text-sm text-on-surface-soft">No hay gastos adicionales registrados.</p>
+        ) : (
+          <div className="space-y-3">
+            {sourcingExpenses.map((expense) => (
+              <div
+                key={expense.id}
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.2fr_0.7fr_1.2fr_auto] gap-3 items-end rounded-lg border border-edge p-3"
+              >
+                <SelectField
+                  label="Tipo de gasto"
+                  value={expense.category}
+                  disabled={locked}
+                  onChange={(category) => updateExpense(expense.id, { category })}
+                  options={EXPENSE_CATEGORY_OPTIONS}
+                />
+                <TextField
+                  label="Importe"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  required
+                  disabled={locked}
+                  value={expenseAmountDrafts[expense.id] ?? (expense.amount > 0 ? expense.amount.toFixed(2) : "")}
+                  onChange={(e) => setExpenseAmount(expense.id, e.target.value)}
+                />
+                <TextField
+                  label="Descripción (opcional)"
+                  placeholder="4 camiones"
+                  disabled={locked}
+                  value={expense.description ?? ""}
+                  onChange={(e) => updateExpense(expense.id, { description: e.target.value })}
+                />
+                {!locked && (
+                  <Button size="sm" variant="ghost" onClick={() => removeExpense(expense.id)}>
+                    Quitar
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="rounded-lg border border-edge p-3 space-y-1 text-sm">
+          <div className="flex justify-between gap-3">
+            <span className="text-ink-soft">Gastos adicionales</span>
+            <span>{formatMoneyExact(sourcingExpenseTotal)}</span>
+          </div>
+          <div className="flex justify-between gap-3 font-semibold">
+            <span>Total del proveedor + gastos</span>
+            <span>{formatMoneyExact(recordedTotal)}</span>
+          </div>
+        </div>
+      </div>
+
       <TextArea
         label="Notas"
         value={draft.notes ?? ""}
@@ -653,10 +781,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               {blockReason && <span className="text-xs text-warning">{blockReason}</span>}
             </div>
             <div className="flex gap-2 mt-1.5">
-              <Button variant="secondary" className="flex-1" onClick={() => void saveDraft(false)}>
+              <Button variant="secondary" className="flex-1" disabled={incompleteExpenseCount > 0} onClick={() => void saveDraft(false)}>
                 Guardar borrador
               </Button>
-              <Button className="flex-1" disabled={!canReceive || receiving} onClick={() => void saveDraft(true)}>
+              <Button className="flex-1" disabled={!canReceive || incompleteExpenseCount > 0 || receiving} onClick={() => void saveDraft(true)}>
                 {receiving ? "Recibiendo…" : "Recibir mercancía"}
               </Button>
             </div>

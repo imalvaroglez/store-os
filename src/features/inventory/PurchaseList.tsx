@@ -1,9 +1,14 @@
 import { useStore } from "../../app/StoreProvider";
 import { Button, Card, EmptyState, Badge } from "../../design-system";
 import { purchasesForStore } from "../../lib/selectors";
-import { formatMoney } from "../../lib/money";
+import { formatMoneyExact } from "../../lib/money";
 import { formatDate } from "../../lib/dates";
-import { effectivePurchaseStatus, type Purchase } from "../../types";
+import {
+  effectivePurchaseStatus,
+  purchaseRecordedTotal,
+  purchaseSourcingExpenseTotal,
+  type Purchase,
+} from "../../types";
 
 // Purchase history — the cost/stock evidence (each line stores unitCost +
 // date + productId). Newest first. Click opens the purchase in the shared
@@ -51,6 +56,7 @@ export function PurchaseList({
           const supplier = state.suppliers.find((s) => s.id === p.supplierId);
           const status = effectivePurchaseStatus(p);
           const pieces = p.lines.reduce((s, l) => s + l.quantity, 0);
+          const sourcingExpenseTotal = purchaseSourcingExpenseTotal(p);
           return (
             <Card key={p.id} className="cursor-pointer" onClick={() => onOpen(p)}>
               <div className="flex items-start justify-between gap-2">
@@ -73,7 +79,16 @@ export function PurchaseList({
                     {p.lines.map((l) => `${l.quantity} ${l.name}`).join(", ")}
                   </p>
                 </div>
-                <Badge tone="neutral">{formatMoney(Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0)}</Badge>
+                <div className="shrink-0 text-right">
+                  <Badge tone="neutral">
+                    Proveedor {formatMoneyExact(Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0)}
+                  </Badge>
+                  {sourcingExpenseTotal > 0 && (
+                    <p className="mt-1 text-xs text-ink-soft">
+                      Gastos {formatMoneyExact(sourcingExpenseTotal)} · Total {formatMoneyExact(purchaseRecordedTotal(p))}
+                    </p>
+                  )}
+                </div>
               </div>
             </Card>
           );
