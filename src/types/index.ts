@@ -298,6 +298,28 @@ export type PurchaseLine = {
  */
 export type PurchaseStatus = "draft" | "needs_review" | "ready" | "received";
 
+export type PurchaseExpenseCategory =
+  | "sourcing_transport"
+  | "customer_delivery"
+  | "individual_packaging"
+  | "shared_packaging"
+  | "other";
+
+export type PurchaseExpense = {
+  id: string;
+  category: PurchaseExpenseCategory;
+  amount: number;
+  description?: string;
+};
+
+export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, string> = {
+  sourcing_transport: "Traslado para surtir",
+  customer_delivery: "Entrega a clienta",
+  individual_packaging: "Empaque individual",
+  shared_packaging: "Bolsa compartida",
+  other: "Otro gasto",
+};
+
 /** A supplier purchase (a "ticket"): one or more lines, a confirmed total. */
 export type Purchase = {
   id: string;
@@ -328,6 +350,9 @@ export type Purchase = {
   discount?: number;
   shipping?: number;
   tax?: number;
+  // Costs around sourcing/preparing the order, kept separate from the
+  // supplier document total and product unit costs (allocation is FER-02).
+  sourcingExpenses?: PurchaseExpense[];
   createdAt: string;
   updatedAt: string;
 };
@@ -346,6 +371,21 @@ export function purchaseTotals(p: Purchase): { merchandise: number; calculated: 
   const merchandise = p.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
   const adjustments = (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
   return { merchandise, calculated: merchandise + adjustments };
+}
+
+/** Sum additional sourcing costs in integer cents; absent data is a legacy zero. */
+export function purchaseSourcingExpenseTotal(p: Pick<Purchase, "sourcingExpenses">): number {
+  const cents = (p.sourcingExpenses ?? []).reduce((sum, expense) => {
+    if (!Number.isFinite(expense.amount) || expense.amount <= 0) return sum;
+    return sum + Math.round(expense.amount * 100);
+  }, 0);
+  return cents / 100;
+}
+
+/** Actual registered outlay is the confirmed supplier amount plus extra expenses. */
+export function purchaseRecordedTotal(p: Pick<Purchase, "totalConfirmed" | "sourcingExpenses">): number {
+  const supplierTotal = Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
+  return supplierTotal + purchaseSourcingExpenseTotal(p);
 }
 
 /**
