@@ -63,7 +63,7 @@ modelo financiero sin esa evidencia arriesga descubrir incompatibilidades tarde.
 
 - `--out <dir>` (default `./excel-trial-out/`): `report.json` (completo, con nombres tal
   cual — **no se commitea**) y `summary.md` (anonimizado, commiteable como evidencia).
-- Anonimización en `summary.md`: clientas → inicial + hash corto (FNV-1a) del nombre;
+- Anonimización en `summary.md`: clientas → inicial + hash corto (SHA-256) del nombre;
   nombres de producto sí se incluyen (el catálogo ya es público); sin teléfonos.
 - `docs/excel-trial-2026-10-28.md`: resumen interpretado del ensayo real (evidencia E0).
 
