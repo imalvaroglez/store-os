@@ -87,7 +87,6 @@ describe("OrderForm price override", () => {
   });
 });
 
-<<<<<<< HEAD
 describe("recovered order drafts", () => {
   it("discards a restored draft without recreating it", async () => {
     const { saveOrderDraft, orderDraftKey } = await import("./orderDraft");
