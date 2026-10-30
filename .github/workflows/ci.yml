@@ -150,6 +150,17 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
         run: npm run e2e
       - name: E2E with Firebase Emulator
+        env:
+          # The dev server still needs a complete Firebase config to initialize
+          # the SDK. These values are only used with the emulator endpoints;
+          # no project credentials are needed by this suite.
+          VITE_FIREBASE_API_KEY: emulator-only
+          VITE_FIREBASE_AUTH_DOMAIN: localhost
+          VITE_FIREBASE_PROJECT_ID: store-os-dev
+          VITE_FIREBASE_STORAGE_BUCKET: store-os-dev.appspot.com
+          VITE_FIREBASE_SENDER_ID: "123456789"
+          VITE_FIREBASE_APP_ID: emulator-only
+          VITE_FIREBASE_EMULATOR: "true"
         run: npm run e2e:firebase
       # Refresh-hard-reload guard: builds A/B/cloud and asserts a browser that
       # lived through a "deploy" gets the new version on plain + hard reload.
