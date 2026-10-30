@@ -123,7 +123,6 @@ describe("projectPublicProductSummary", () => {
     expect("prices" in noTiers).toBe(false);
   });
 
-
   it("includes the public finish in the catalog summary, never internal costs", () => {
     const projected = projectPublicProductSummary(
       baseProduct({ finish: "Dorado", cost: 300, privateNotes: "secreto" }),
