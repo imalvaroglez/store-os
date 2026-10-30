@@ -24,6 +24,7 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
       const quantity = Math.max(1, Math.round(finite(item.quantity, 1)));
       const unitPrice = Math.max(0, finite(item.unitPrice ?? item.price));
       return {
+        ...(typeof item.lineId === "string" && item.lineId ? { lineId: item.lineId } : {}),
         ...(typeof item.productId === "string" && item.productId ? { productId: item.productId } : {}),
         productName: String(item.productName ?? item.name ?? "Producto").trim() || "Producto",
         quantity,
@@ -109,11 +110,19 @@ export function effectiveOrderStatus(order: Partial<Order> & Record<string, unkn
 /** Idempotent legacy order migration. The returned object contains no flat fields. */
 export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()): Order {
   const raw = (rawOrder ?? {}) as Partial<Order> & Record<string, unknown>;
-  const items = orderItems(raw);
+  const id = String(raw.id ?? "");
+  // Stable line identity for grouping/allocations: keep an existing lineId, else
+  // derive deterministically from order id + position (fixed on first migration).
+  const items = orderItems(raw).map((item, index) => ({
+    ...item,
+    lineId: item.lineId ?? `${id}_L${index}`,
+  }));
   const orderStatus = migratedStatus(raw.orderStatus ?? raw.status);
   const itemsTotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const base = {
-    id: String(raw.id ?? ""),
+    id,
+    ...(typeof raw.revision === "number" ? { revision: raw.revision } : {}),
+    ...(typeof raw.lastMutationId === "string" ? { lastMutationId: raw.lastMutationId } : {}),
     storeId: String(raw.storeId ?? ""),
     customerId: String(raw.customerId ?? ""),
     items,
@@ -141,6 +150,7 @@ export function isMigratedOrder(raw: unknown): raw is Order {
   if (order.paymentStatus !== paymentStatusForOrder(order)) return false;
   if (order.items.some((rawItem) => {
     const item = rawItem as Partial<OrderItem>;
+    if (typeof item.lineId !== "string" || !item.lineId) return true;
     const quantity = item.quantity;
     const unitPrice = item.unitPrice;
     if (typeof item.productName !== "string" || typeof quantity !== "number" || !Number.isInteger(quantity) || quantity <= 0) return true;
