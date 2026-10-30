@@ -220,6 +220,8 @@ export type OrderItem = {
   lineId?: string;
   /** OLI-008: "manual" lines keep their price when the customer/tier changes. */
   priceSource?: "automatic" | "manual";
+  /** OLI-012: frozen category at capture time, powers grouping and the ticket. */
+  categorySnapshot?: { id: string; name: string };
   productId?: string;
   productName: string;
   quantity: number;
