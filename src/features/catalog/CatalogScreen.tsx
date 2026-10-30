@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useStore, newProduct } from "../../app/StoreProvider";
 import {
   Button,
@@ -231,6 +231,7 @@ export function CatalogScreen() {
   const [sortDesc, setSortDesc] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [restockOnly, setRestockOnly] = useState(false);
+  useEffect(() => setRestockOnly(false), [activeStore?.id, activeStore?.type]);
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
@@ -246,7 +247,7 @@ export function CatalogScreen() {
   // screen; productsForStore (shared selector) stays untouched.
   const filtered = products.filter((product) =>
     (!categoryFilter || (product.categoryIds ?? []).includes(categoryFilter)) &&
-    (!restockOnly || (
+    (!isTiered || !restockOnly || (
       typeof product.quantityOnHand === "number" && (
         product.quantityOnHand <= 0 ||
         (typeof product.lowStockAt === "number" && product.quantityOnHand <= product.lowStockAt)
@@ -258,7 +259,7 @@ export function CatalogScreen() {
     if (cmp !== 0) return sortDesc ? -cmp : cmp;
     return a.name.localeCompare(b.name, "es");
   });
-  const filterActive = categoryFilter !== "" || restockOnly;
+  const filterActive = categoryFilter !== "" || (isTiered && restockOnly);
   const sortOptions = (Object.keys(SORT_DEFAULTS) as SortKey[])
     .filter((k) => k !== "stock" || isTiered)
     .map((k) => ({ value: k, label: SORT_DEFAULTS[k].label }));
