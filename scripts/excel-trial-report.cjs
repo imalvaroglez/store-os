@@ -9,7 +9,7 @@
 
 "use strict";
 
-const { execSync } = require("node:child_process");
+const { execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -368,7 +368,7 @@ function buildSummary(report, sourceHash) {
 function runReport(xlsxPath, outDir) {
   const before = crypto.createHash("sha256").update(fs.readFileSync(xlsxPath)).digest("hex");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "excel-trial-"));
-  execSync(`unzip -q -o ${JSON.stringify(xlsxPath)} -d ${JSON.stringify(tmp)}`);
+  execFileSync("unzip", ["-q", "-o", xlsxPath, "-d", tmp]);
   const shared = parseSharedStrings(fs.readFileSync(path.join(tmp, "xl/sharedStrings.xml"), "utf8"));
 
   const sheets = [
