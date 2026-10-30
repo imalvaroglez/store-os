@@ -10,6 +10,7 @@ interface Cell {
   type: string;
   value: number | string | null;
   formula: string | null;
+  formulaAttributes?: string;
 }
 
 interface Sheet {
@@ -26,6 +27,8 @@ interface Issue {
   splitFactors?: Record<string, number>;
   months?: Record<string, number>;
   status?: Record<string, number>;
+  formulas?: Record<string, string | null>;
+  blankCells?: string[];
 }
 
 interface ExcelTrialModule {
@@ -35,6 +38,7 @@ interface ExcelTrialModule {
   anonymizeName(name: string): string;
   serialDateToIso(serial: number): string | null;
   detectInventoryIssues(sheet: Sheet, dataFrom?: number, dataTo?: number): Issue[];
+  runReport(xlsxPath: string, outDir: string): unknown;
   detectSalesIssues(
     sheet: Sheet,
     sheetName: string,
@@ -56,12 +60,15 @@ const mod: ExcelTrialModule = createRequire(import.meta.url)("../../scripts/exce
 // --- fixtures -------------------------------------------------------------
 
 /** Build a minimal sheet XML from rows of cells. */
-function sheetXml(rows: { ref: string; type?: string; value?: string; formula?: string }[], merges: string[] = []): string {
+function sheetXml(rows: { ref: string; type?: string; value?: string; formula?: string; formulaAttrs?: string }[], merges: string[] = []): string {
   const byRow = new Map<number, string[]>();
   for (const c of rows) {
     const rowNumber = Number(/[A-Z]+(\d+)/.exec(c.ref)![1]);
     const attrs = `r="${c.ref}"${c.type ? ` t="${c.type}"` : ""} s="1"`;
-    const body = `${c.formula != null ? `<f>${c.formula}</f>` : ""}${c.value != null ? `<v>${c.value}</v>` : ""}`;
+    const formula = c.formula != null || c.formulaAttrs != null
+      ? `<f${c.formulaAttrs ? ` ${c.formulaAttrs}` : ""}${c.formula != null ? `>${c.formula}</f>` : "/>"}`
+      : "";
+    const body = `${formula}${c.value != null ? `<v>${c.value}</v>` : ""}`;
     const cell = body ? `<c ${attrs}>${body}</c>` : `<c ${attrs}/>`;
     byRow.set(rowNumber, [...(byRow.get(rowNumber) ?? []), cell]);
   }
@@ -152,6 +159,11 @@ describe("detectInventoryIssues", () => {
     // I2: error cells in cost column — Excel serializes t="e", Numbers t="str" with the error text.
     { ref: "E15", type: "e", value: "#DIV/0!" },
     { ref: "E16", type: "str", value: "#DIV/0!" },
+    // I5: the totals row uses J for M/N but a blank K for O.
+    { ref: "J178", formula: "SUM(F178:I178)", value: "100" },
+    { ref: "M178", formula: "J178*0.15", value: "15" },
+    { ref: "N178", formula: "J178*0.5", formulaAttrs: 't="shared" ref="N178:O178" si="145"', value: "50" },
+    { ref: "O178", formulaAttrs: 't="shared" si="145"', value: "0" },
   ]);
   const issues = mod.detectInventoryIssues(mod.parseSheet(xml, SHARED), 5, 20);
 
@@ -168,6 +180,17 @@ describe("detectInventoryIssues", () => {
   });
   it("detects quantity without cost (I4)", () => {
     expect(issues.find((i) => i.id === "I4")?.refs).toContain("C12");
+  });
+  it("detects the confusing totals row formulas (I5)", () => {
+    const i5 = issues.find((i) => i.id === "I5");
+    expect(i5?.refs).toEqual(["J178", "M178", "N178", "O178", "K178"]);
+    expect(i5?.formulas).toEqual({
+      J178: "SUM(F178:I178)",
+      M178: "J178*0.15",
+      N178: "J178*0.5",
+      O178: "K178*0.5",
+    });
+    expect(i5?.blankCells).toEqual(["K178"]);
   });
   it("collects split factors from formulas (I6)", () => {
     expect(issues.find((i) => i.id === "I6")?.splitFactors).toEqual({ "0.15": 1 });
@@ -198,7 +221,7 @@ describe("detectSalesIssues", () => {
     { ref: "P30", type: "s", value: "6" }, // NO PAGADO
     { ref: "L30", formula: "H30-SUM(I30:K30)", value: "5" },
     { ref: "P31", type: "s", value: "5" }, // PAGADO
-    // O3b: packing different from 2.83
+    // O3: packing different from 2.83
     { ref: "I33", value: "2" },
   ]);
   const sheet = mod.parseSheet(xml, SHARED);
@@ -211,8 +234,10 @@ describe("detectSalesIssues", () => {
     splitCols: ["K"],
   });
 
-  it("detects rows with quantity > 1 (V4/O3)", () => {
-    expect(issues.find((i) => i.id === "O3")?.refs).toContain("F5");
+  it("labels quantity > 1 as V4 in both sales sheets", () => {
+    expect(issues.find((i) => i.id === "V4")?.refs).toContain("F5");
+    const augustSeptember = mod.detectSalesIssues(sheet, "Ventas Ago - Sep", { dataFrom: 3, dataTo: 40 });
+    expect(augustSeptember.find((i) => i.id === "V4")?.refs).toContain("F5");
   });
   it("detects split factors (V3)", () => {
     expect(issues.find((i) => i.id === "V3")?.splitFactors).toEqual({ "0.2": 1, "0.5": 1 });
@@ -241,7 +266,36 @@ describe("detectSalesIssues", () => {
   it("flags profit formulas on NO PAGADO rows (O2)", () => {
     expect(issues.find((i) => i.id === "O2")?.refs).toContain("P30");
   });
-  it("flags packing values different from 2.83 (O3b)", () => {
-    expect(issues.find((i) => i.id === "O3b")?.refs[0]).toContain("I33");
+  it("flags packing values different from 2.83 (O3)", () => {
+    expect(issues.find((i) => i.id === "O3")?.refs[0]).toContain("I33");
+  });
+  it("reports a missing October monthly cutoff (O4)", () => {
+    expect(issues.find((i) => i.id === "O4")?.refs).toEqual(["A1:P40"]);
+  });
+  it("does not report O4 when the monthly total label exists", () => {
+    const withCutoff = mod.parseSheet(sheetXml([{ ref: "H39", type: "str", value: "TOTALES DEL MES" }]), SHARED);
+    const found = mod.detectSalesIssues(withCutoff, "Ventas Oct", { dataFrom: 3, dataTo: 40 });
+    expect(found.some((i) => i.id === "O4")).toBe(false);
+  });
+});
+
+describe("runReport cleanup", () => {
+  it("removes extracted files when ZIP extraction fails", () => {
+    const require = createRequire(import.meta.url);
+    const fs = require("node:fs") as typeof import("node:fs");
+    const os = require("node:os") as typeof import("node:os");
+    const path = require("node:path") as typeof import("node:path");
+    const originalTmpdir = os.tmpdir;
+    const root = fs.mkdtempSync(path.join(originalTmpdir(), "excel-trial-test-"));
+    const source = path.join(root, "invalid.xlsx");
+    fs.writeFileSync(source, "not a zip file");
+    os.tmpdir = () => root;
+    try {
+      expect(() => mod.runReport(source, path.join(root, "out"))).toThrow();
+      expect(fs.readdirSync(root).filter((name: string) => name.startsWith("excel-trial-"))).toEqual([]);
+    } finally {
+      os.tmpdir = originalTmpdir;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
