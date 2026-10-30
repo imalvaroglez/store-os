@@ -192,7 +192,7 @@ Incluyendo 1379,55 MXN en impuestos
 
 Dirección de envío
 
-Cliente Anónimo Demo
+Cliente Anónimo
 
 calle anonima 123
 === render-5.png ===

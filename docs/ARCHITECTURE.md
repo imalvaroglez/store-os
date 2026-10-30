@@ -4,14 +4,14 @@ Documento de referencia para entender cómo está construido Store OS. Para proc
 
 ## Visión general
 
-App de una sola página (SPA) **local-first**, renderizada con React + TypeScript + Vite, estilada con Tailwind sobre un sistema de tokens. Todo el estado vive en el navegador (`localStorage`); no hay backend todavía.
+App de una sola página (SPA) renderizada con React + TypeScript + Vite y Tailwind sobre un sistema propio de tokens. Firebase Auth y Firestore son la fuente de verdad para toda la administración. `localStorage` se reserva para preferencias, carrito público y borradores asociados a una persona autenticada.
 
 ```
 src/
   app/            # raíz: App, AppShell (responsive), StoreProvider (estado), router
   design-system/  # sistema de diseño (tokens + primitivos + gate) y theme/
   features/       # pantallas por dominio
-  lib/            # utilidades puras (ids, money, dates, storage, selectors, whatsapp, seed, labels, router)
+  lib/            # utilidades puras (ids, money, dates, storage, selectors, whatsapp, labels, router)
   types/          # modelo de datos
 ```
 
@@ -24,7 +24,7 @@ src/
   - Además: `publicDescription?`, `privateNotes?`.
 - **`Customer`** — `storeId`, `name`, `phone?`, `notes?`.
 - **`Order`** — `storeId`, `customerId`, `productName` (+ `productId?`), `quantity`, `price`, `deposit`, `status` (7 valores), `cost?`, `priceTier?`, `promisedDate?`, `notes?`.
-- **`AppState`** — `{ stores, activeStoreId, products, customers, orders }`. Es lo que se persiste entero.
+- **`AppState`** — `{ stores, activeStoreId, products, customers, orders }`. Es el estado de interfaz derivado de Firebase; no se persiste como un documento local completo.
 
 **Reglas:**
 - `price` es para tiendas on-demand; `prices` para inventory-tiered. No se fuerzan campos según el tipo.
@@ -33,15 +33,17 @@ src/
 ## Flujo de estado y persistencia
 
 ```
-tap → dispatch(action) → reducer (StoreProvider) → nuevo AppState
-    → effect: storage.saveState(state)   ← único escritor de localStorage
-    → React re-renderiza
+Firebase Auth → usuario autenticado → StoreProvider → Firestore
+                                      └→ estado de interfaz en memoria
+                                      └→ borradores autenticados en localStorage
+Catálogo público → proyección pública de Firebase (lectura anónima)
 ```
 
-- **`StoreProvider`** (`src/app/StoreProvider.tsx`) mantiene todo en un `useReducer`. Expone `useStore()` con acciones (`addStore`, `upsertProduct`, `upsertOrder`, `advanceStatus`, `adjustInventory`, `resetDemo`, etc.).
-- **Ningún componente llama a `localStorage` directamente** — solo `src/lib/storage.ts`, invocado por el provider. Esto aísla la persistencia para poder cambiarla (ej. Firebase) sin tocar la UI.
+- **`StoreProvider`** (`src/app/StoreProvider.tsx`) mantiene en memoria el estado de interfaz y lee/escribe datos administrativos mediante el adaptador Firestore de `src/app/firebase/`.
+- **Estado de transición:** la rama actual aún conserva una ruta heredada de carga y guardado administrativo local en `src/lib/storage.ts`. No es una arquitectura admitida ni debe ampliarse; su eliminación está bloqueada y especificada en [`eradicate-local-mode`](superpowers/specs/2026-10-30-eradicate-local-mode-design.md).
+- **Persistencia legítima del navegador:** carrito público por tienda, preferencias, tema y borradores de pedido vinculados a una cuenta autenticada. La limpieza futura elimina únicamente el estado administrativo heredado `store_os_state_v1`, no todo `localStorage`.
 - **Aislamiento entre tiendas:** las pantallas nunca filtran `state.products` directo; usan selectores (`productsForStore`, `ordersForStore`, etc. en `src/lib/selectors.ts`) que filtran por `storeId`.
-- **Seed:** en la primera carga (sin `store_os_state_v1` en `localStorage`) se siembran dos tiendas demo (Santi on-demand, Joyería inventory-tiered) con productos/clientes/pedidos.
+- **Datos iniciales:** no se crean tiendas automáticamente al abrir la app. El script `scripts/seed-dev.cjs` prepara datos de trabajo únicamente en `store-os-dev`.
 
 ### Acceso de plataforma y aislamiento
 
@@ -62,7 +64,7 @@ Un solo barrel (`index.ts`) es la **única** superficie de importación de UI. P
 
 Cada tema (`paper`, `maximalist`, `luxury`) es una **personalidad completa**: colores, tipografía, radios, sombras y **movimiento**. `ThemeProvider` inyecta los tokens del tema activo en `<html data-theme="…">` (más fuentes y keyframes); al cambiar de tema, todo se restyla automáticamente porque los primitivos leen de variables.
 
-- Persiste en `localStorage["store_os_theme"]`; cuando exista auth, pasará al perfil del usuario en Firestore sin tocar la UI.
+- Persiste por usuaria en el perfil de Firestore; `localStorage` puede conservar una copia de la preferencia para una carga inmediata, nunca habilita administración sin sesión.
 - Respeta `prefers-reduced-motion` (amortigua animaciones).
 - **Paper Ledger** es el default y reproduce exactamente el look original (baseline de regresión).
 
@@ -86,8 +88,9 @@ Router de historia mínimo y sin dependencias (`src/lib/router.ts` + hook `useRo
 - **Unit (`vitest`):** `lib/money` (formato, profit, parseo), `lib/selectors` (aislamiento por tienda, filtrado del catálogo público), render de primitivos, inyección de temas, y el **gate** del sistema de diseño.
 - **E2E (`playwright`), dos proyectos:** móvil (390×844) y escritorio (1280×800). Cubren el flujo completo (crear tienda/producto/cliente/pedido, avanzar estatus, persistencia, catálogo público) + responsividad + cambio de temas.
 
-## Diseñado para cambiar
+## Límites entre capas
 
-- **Persistencia:** cambiar `src/lib/storage.ts` por un adaptador async (Firestore) no afecta al reducer ni a la UI.
-- **Auth/roles:** `StoreProvider` es el lugar natural para leer el usuario y filtrar tiendas por membresía.
-- **Temas:** agregar un tema es un nuevo archivo en `theme/` que exporte el mismo `Theme`.
+- **Autenticación:** `AuthProvider` observa la sesión de Firebase y protege las rutas privadas.
+- **Datos cloud:** `firestoreData.ts` contiene las lecturas y escrituras; las reglas de Firestore aplican el aislamiento por tienda.
+- **Estado de interfaz:** `StoreProvider` coordina los cambios visibles y las operaciones administrativas de Firestore. La ruta heredada de persistencia local sigue pendiente de erradicación como P0; no se debe ampliar.
+- **Temas:** cada tema es un archivo en `src/design-system/theme/` que implementa el mismo tipo `Theme`.

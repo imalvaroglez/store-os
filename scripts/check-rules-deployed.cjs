@@ -152,7 +152,7 @@ async function main() {
     }
   }
   if (failures) {
-    console.error(`[check-rules] ${failures} verificación(es) fallaron. Deploya con CI o \`firebase deploy --only firestore:rules,storage\`.`);
+    console.error(`[check-rules] ${failures} verificación(es) fallaron. Deploya con CI o \`firebase deploy --only firestore:rules,storage --project store-os-dev\`.`);
     process.exit(1);
   }
   console.log("[check-rules] paridad completa: desplegado == repo.");

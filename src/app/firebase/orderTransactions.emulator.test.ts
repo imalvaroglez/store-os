@@ -3,6 +3,7 @@ import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import type { Order } from "../../types";
+import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
@@ -18,7 +19,7 @@ const makeOrder = (id: string, productId: string, quantity: number): Order => ({
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order transactions with Firestore rules", () => {
   beforeAll(async () => {
-    env = await initializeTestEnvironment({ projectId: "store-os-demo", firestore: { rules: readFileSync("firestore.rules", "utf8") } });
+    env = await initializeTestEnvironment({ projectId: FIREBASE_DEV_PROJECT_ID, firestore: { rules: readFileSync("firestore.rules", "utf8") } });
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "users/tx-user"), { role: "member" });
       await setDoc(doc(ctx.firestore(), "adminStores/tx-store"), { ownerUid: "tx-user", memberUids: ["tx-user"] });

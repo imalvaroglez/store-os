@@ -1,4 +1,5 @@
 import type { StoreType, Storefront } from "../../types";
+import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
 
 /** Coarse stock signal — never an exact count. */
 export type PublicStockSignal = "agotado" | "pocas" | "disponible";
@@ -116,15 +117,13 @@ export class PublicProductNotFoundError extends Error {
   }
 }
 
-// Mirror of src/app/firebase/config.ts's environment detection: emulator mode
-// is opt-in and DEV/TEST-only, and it always targets the store-os-demo
-// namespace so emulator tests stay isolated from the real projects.
+// Mirror config.ts's environment detection; emulator REST calls stay on localhost.
 const EMULATOR =
   import.meta.env.MODE !== "production" &&
   import.meta.env.VITE_FIREBASE_EMULATOR === "true";
 
 const PROJECT_ID = EMULATOR
-  ? "store-os-demo"
+  ? FIREBASE_DEV_PROJECT_ID
   : (import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined);
 
 const DOCS_BASE = EMULATOR

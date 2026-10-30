@@ -6,14 +6,24 @@
 //   - maxInstances 1, retry disabled, 1 GB, 540s, no min instances
 //   - returns data directly (no Firestore writes)
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { parseSupplierOrder } from "./parser.js";
 
 // Initialize the default Admin app once (the emulator may re-evaluate this
 // module on reload; guard against double init).
-if (!globalThis.__storeOsAdmin) globalThis.__storeOsAdmin = initializeApp();
-import { initializeApp } from "firebase-admin/app";
+const emulatorProjectId =
+  process.env.FUNCTIONS_EMULATOR === "true" ? process.env.GCLOUD_PROJECT : undefined;
+const adminOptions = emulatorProjectId
+  ? {
+      projectId: emulatorProjectId,
+      // CI may not have ADC to fetch Firebase project config; derive the dev
+      // bucket from the explicit emulator project ID. Requests stay local.
+      storageBucket: `${emulatorProjectId}.firebasestorage.app`,
+    }
+  : undefined;
+if (!globalThis.__storeOsAdmin) globalThis.__storeOsAdmin = initializeApp(adminOptions);
 
 const MAX_PAGES = 8;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;

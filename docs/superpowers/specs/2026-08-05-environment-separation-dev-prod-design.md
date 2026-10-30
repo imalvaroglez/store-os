@@ -13,8 +13,9 @@ build pointed at the real backend) can **create, edit, or delete her actual
 business data**. A bug, a seed, or a misconfigured env var can affect the
 operation and therefore the business economically.
 
-The local emulator (`store-os-demo` namespace, volatile) is correctly isolated.
-The gap is the **preview ↔ production** boundary, which does not exist today.
+The local emulator uses the `store-os-dev` project ID and routes its services
+to `127.0.0.1`; it is not a separate Firebase project. The gap is the
+**preview ↔ production** boundary, which does not exist today.
 
 ## Outcome
 
@@ -57,8 +58,9 @@ touch Firebase/Vercel/GCP consoles).
 
 ### Repo (what the FSM builds, reviews, secures)
 
-1. **`.firebaserc`** — add `"dev": "store-os-dev"` alias. `firebase deploy`
-   (default) → prod; `firebase deploy --project dev` → dev. (Already committed
+1. **`.firebaserc`** — make `store-os-dev` the default and add the `production`
+   alias. Development commands target dev explicitly; production is used only
+   after human approval. (Already committed
    as draft `9806a8c` on the branch — to be audited by the FSM's reviewers.)
 2. **`scripts/check-env.cjs`** (new, Node CommonJS) — build-time guard. Reads
    `VITE_VERCEL_ENV` (auto-injected by Vercel) + `VITE_FIREBASE_PROJECT_ID`.
@@ -80,7 +82,7 @@ touch Firebase/Vercel/GCP consoles).
   Storage bucket (`us-east1` — mandatory for free tier), Auth (Email/Password +
   Google, **never Phone**), Web App (6 config values), $0.01 budget alert, IAM
   grant `roles/datastore.user` on the Storage service agent.
-- **Deploy rules to dev:** `firebase deploy --only firestore,storage --project dev`.
+- **Deploy rules to dev:** `firebase deploy --only firestore,storage --project store-os-dev`.
 - **Vercel env vars:** scope Production → `store-os-f7cf8` values (Production
   only); Preview + Development → `store-os-dev` values. **No** var with scope
   "All Environments".
