@@ -247,6 +247,8 @@ test("supply expenses persist separately from the supplier total", async ({ shar
   await ensureStoreActive(page, "Joyería");
   await page.getByText("#FER01").first().click();
   await page.getByRole("button", { name: "+ Agregar gasto" }).click();
+  await page.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(page.getByText("Completa la descripción y el importe de cada gasto de surtido.")).toBeVisible();
   await page.getByLabel("Descripción").fill("Cuatro camiones");
   await page.getByLabel("Importe", { exact: true }).fill("44.25");
   await expect(page.getByText("$154.25")).toBeVisible();
