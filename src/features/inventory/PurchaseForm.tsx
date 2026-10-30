@@ -13,19 +13,22 @@ import {
 } from "../../design-system";
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
 import { todayIso, nowIso, parseSpanishDate } from "../../lib/dates";
-import { formatMoney, formatMoneyExact, parseAmount } from "../../lib/money";
+import { formatMoney, formatMoneyExact, parseAmount, sanitizeDecimalInput } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
+import { uid } from "../../lib/ids";
 import { openPurchasePdf } from "../../app/firebase/pdfImport";
 import {
   effectivePurchaseStatus,
   derivedUnitCost,
   lineStatus,
   purchaseTotals,
+  purchaseExpenseTotal,
   recalcPurchaseStatus,
   type PriceTierDef,
   type Purchase,
   type PurchaseLine,
+  type PurchaseExpense,
   type PurchaseLineStatus,
   type Supplier,
   type Product,
@@ -58,6 +61,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, cloud } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<Purchase>(purchase);
+  const [expenseAmounts, setExpenseAmounts] = useState<Record<string, string>>(() =>
+    Object.fromEntries((purchase.expenses ?? []).map((expense) => [expense.id, String(expense.amount)]))
+  );
   const [creatingSupplier, setCreatingSupplier] = useState(false);
   const [supplierDraft, setSupplierDraft] = useState<Supplier | null>(null);
   const [productLineIdx, setProductLineIdx] = useState<number | null>(null);
@@ -119,6 +125,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
   function setAdjustment(field: "discount" | "shipping" | "tax", raw: string) {
     setDraft(invalidateMismatch({ ...draft, [field]: parseAmount(raw) ?? 0 }));
+  }
+  function updateExpense(id: string, patch: Partial<PurchaseExpense>) {
+    setDraft((d) => ({ ...d, expenses: (d.expenses ?? []).map((e) => e.id === id ? { ...e, ...patch } : e) }));
   }
   function setTotalPaid(raw: string) {
     setDraft(invalidateMismatch({ ...draft, totalConfirmed: parseAmount(raw) ?? 0 }));
@@ -629,6 +638,35 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           </div>
         )}
       </div>
+
+      <section className="border-t border-edge pt-3 space-y-3" aria-label="Gastos de surtido">
+        <div>
+          <h3 className="font-semibold text-ink">Gastos de surtido</h3>
+          <p className="text-sm text-ink-soft">Registra gastos fuera del documento del proveedor. El envío del proveedor se captura arriba.</p>
+        </div>
+        {(draft.expenses ?? []).map((expense) => (
+          <div key={expense.id} className="rounded-lg border border-edge p-3 space-y-2">
+            <SelectField label="Tipo de gasto" value={expense.kind} disabled={locked}
+              onChange={(value) => updateExpense(expense.id, { kind: value === "travel" ? "travel" : "other" })}
+              options={[{ value: "travel", label: "Traslado para surtir" }, { value: "other", label: "Otro gasto de surtido" }]} />
+            <TextField label="Descripción" value={expense.description} disabled={locked}
+              onChange={(e) => updateExpense(expense.id, { description: e.target.value })} />
+            <TextField label="Importe" inputMode="decimal" value={expenseAmounts[expense.id] ?? String(expense.amount)} disabled={locked}
+              onChange={(e) => {
+                const clean = sanitizeDecimalInput(e.target.value);
+                const [whole, decimals] = clean.split(".");
+                const value = decimals === undefined ? whole : `${whole}.${decimals.slice(0, 2)}`;
+                setExpenseAmounts((amounts) => ({ ...amounts, [expense.id]: value }));
+                updateExpense(expense.id, { amount: parseAmount(value) ?? 0 });
+              }} />
+            {!locked && <Button size="sm" variant="secondary" onClick={() => setDraft((d) => ({ ...d, expenses: (d.expenses ?? []).filter((e) => e.id !== expense.id) }))}>Quitar gasto</Button>}
+          </div>
+        ))}
+        {!locked && <Button size="sm" variant="secondary" onClick={() => setDraft((d) => ({ ...d, expenses: [...(d.expenses ?? []), { id: uid("expense"), kind: "travel", description: "", amount: 0 }] }))}>+ Agregar gasto</Button>}
+        <div className="flex justify-between text-sm"><span>Gastos de surtido</span><span>{formatMoneyExact(purchaseExpenseTotal(draft))}</span></div>
+        <div className="flex justify-between text-sm font-semibold"><span>Total pagado al proveedor y gastos</span><span>{formatMoneyExact(totalPaid + purchaseExpenseTotal(draft))}</span></div>
+        <p className="text-xs text-ink-soft">Estos gastos aún no se distribuyen entre las piezas ni modifican su costo.</p>
+      </section>
 
       <TextArea
         label="Notas"

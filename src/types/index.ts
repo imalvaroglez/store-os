@@ -283,6 +283,13 @@ export type PurchaseLine = {
  */
 export type PurchaseStatus = "draft" | "needs_review" | "ready" | "received";
 
+export type PurchaseExpense = {
+  id: string;
+  kind: "travel" | "other";
+  description: string;
+  amount: number;
+};
+
 /** A supplier purchase (a "ticket"): one or more lines, a confirmed total. */
 export type Purchase = {
   id: string;
@@ -313,6 +320,8 @@ export type Purchase = {
   discount?: number;
   shipping?: number;
   tax?: number;
+  /** Additional expenses outside the supplier document; not allocated to stock. */
+  expenses?: PurchaseExpense[];
   createdAt: string;
   updatedAt: string;
 };
@@ -320,6 +329,12 @@ export type Purchase = {
 /** Legacy purchases (no status) already applied stock when saved. */
 export function effectivePurchaseStatus(p: Purchase): PurchaseStatus {
   return p.status ?? "received";
+}
+
+/** Sum expenses in cents so decimal inputs do not accumulate binary errors. */
+export function purchaseExpenseTotal(p: Purchase): number {
+  const cents = (p.expenses ?? []).reduce((sum, expense) => sum + Math.round((expense.amount + Number.EPSILON) * 100), 0);
+  return cents / 100;
 }
 
 /**

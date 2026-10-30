@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { loginAsFirstAdmin, gotoSantiHome, openCatalog } from "./helpers";
+import { loginAsFirstAdmin, gotoSantiHome, openCatalog, ensureStoreActive, gotoClean, writeEmulatorDoc } from "./helpers";
 
 // Real end-to-end smoke against the Firebase Emulator. Firebase Auth persists to
 // indexedDB, which Playwright's storageState does NOT capture — so the session
@@ -234,4 +234,29 @@ test("mobile viewport: no horizontal scroll, primary button on-screen", async ({
   const box = await page.getByRole("button", { name: /Nuevo pedido/ }).boundingBox();
   expect(box).toBeTruthy();
   expect(box!.x + box!.width).toBeLessThanOrEqual(392);
+});
+
+test("supply expenses persist separately from the supplier total", async ({ sharedPage: page }) => {
+  await writeEmulatorDoc("purchases", "fer01_expenses", {
+    storeId: "store_joyeria", supplierName: "Proveedor", supplierOrder: "FER01",
+    date: "2026-08-19", lines: [{ productId: "prod_joyeria_1", name: "Pieza", quantity: 1, unitCost: 100 }],
+    subtotal: 100, totalConfirmed: 110, shipping: 10, status: "draft",
+    createdAt: "2026-08-19T00:00:00Z", updatedAt: "2026-08-19T00:00:00Z",
+  });
+  await gotoClean(page, "/productos/compras");
+  await ensureStoreActive(page, "Joyería");
+  await page.getByText("#FER01").first().click();
+  await page.getByRole("button", { name: "+ Agregar gasto" }).click();
+  await page.getByLabel("Descripción").fill("Cuatro camiones");
+  await page.getByLabel("Importe", { exact: true }).fill("44.25");
+  await expect(page.getByText("$154.25")).toBeVisible();
+  await expect(page.getByLabel("Total pagado")).toHaveValue("110");
+  await page.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(page.getByText("Borrador guardado.")).toBeVisible();
+  await gotoClean(page, "/productos/compras");
+  await ensureStoreActive(page, "Joyería");
+  await page.getByText("#FER01").first().click();
+  await expect(page.getByLabel("Descripción")).toHaveValue("Cuatro camiones");
+  await expect(page.getByLabel("Importe", { exact: true })).toHaveValue("44.25");
+  await expect(page.getByText("$154.25")).toBeVisible();
 });
