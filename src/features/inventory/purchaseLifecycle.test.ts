@@ -3,6 +3,8 @@ import {
   derivedUnitCost,
   effectivePurchaseStatus,
   lineStatus,
+  purchaseExpenseTotal,
+  purchaseTotals,
   recalcPurchaseStatus,
   type Purchase,
 } from "../../types";
@@ -19,6 +21,27 @@ const base: Purchase = {
   createdAt: "2026-08-20T00:00:00Z",
   updatedAt: "2026-08-20T00:00:00Z",
 };
+
+describe("purchase supply expenses", () => {
+  it("keeps external travel separate from the supplier total and supports legacy purchases", () => {
+    const p: Purchase = {
+      ...base, status: "draft", lines: [{ productId: "a", name: "A", quantity: 100, unitCost: 2 }],
+      shipping: 10, totalConfirmed: 210,
+      expenses: [{ id: "e1", kind: "travel", description: "Camiones", amount: 44 }],
+    };
+    expect(purchaseTotals(p).calculated).toBe(210);
+    expect(recalcPurchaseStatus(p)).toBe("ready");
+    expect(purchaseExpenseTotal(p)).toBe(44);
+    expect(purchaseExpenseTotal(base)).toBe(0);
+  });
+
+  it("sums expense cents without losing small amounts", () => {
+    expect(purchaseExpenseTotal({ ...base, expenses: [
+      { id: "1", kind: "travel", description: "", amount: 0.1 },
+      { id: "2", kind: "other", description: "", amount: 0.2 },
+    ] })).toBe(0.3);
+  });
+});
 
 describe("effectivePurchaseStatus", () => {
   it("treats legacy purchases (no status) as received", () => {
