@@ -11,7 +11,7 @@
 // the deploy cadence, not by this file).
 //
 // Zero cost: 1 + 2 reads per store per deploy, well inside the free tier.
-// Skipped silently (exit 0) on local/demo builds without a Firebase config or
+// Skipped silently (exit 0) on local builds without a Firebase config or
 // PUBLIC_SITE_URL.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
