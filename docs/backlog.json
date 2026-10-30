@@ -269,9 +269,16 @@
       "id": "fer-purchase-expenses",
       "title": "Compra con gastos de surtido",
       "priority": 200,
-      "status": "needs-spec",
+      "status": "in-progress",
+      "specPath": "docs/superpowers/specs/2026-10-30-fer-purchase-expenses-design.md",
       "dependsOn": [],
-      "previewChecks": [],
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ],
       "discoveryId": "FER-01",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
       "proposedPriority": "P1",
