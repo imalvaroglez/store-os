@@ -14,8 +14,9 @@ function parseArgs(argv) {
 
 function buildAdminStore(id, store) {
   if (!store || typeof store !== "object") return { status: "skip", reason: "la tienda no contiene datos válidos" };
-  if (!Array.isArray(store.memberUids) || typeof store.ownerUid !== "string" || !store.ownerUid) {
-    return { status: "skip", reason: "faltan ownerUid o memberUids; requiere revisión humana" };
+  if (!Array.isArray(store.memberUids) || typeof store.ownerUid !== "string" || !store.ownerUid
+      || !store.memberUids.includes(store.ownerUid)) {
+    return { status: "skip", reason: "faltan ownerUid o membresía del propietario; requiere revisión humana" };
   }
   const data = { storeId: id };
   for (const key of ["name", "slug", "type", "ownerUid", "memberUids", "createdAt", "updatedAt"]) {
@@ -44,6 +45,18 @@ async function planMigration(db) {
   return { creates, skipped };
 }
 
+function validateTarget(target, emulatorHost) {
+  if (target === "prod" && emulatorHost) {
+    throw new Error("FIRESTORE_EMULATOR_HOST está configurado; quítalo antes de seleccionar producción.");
+  }
+  if (target === "emulator") {
+    if (!emulatorHost) throw new Error("Emulador no detectado. Inícialo y vuelve a correr con --emulator.");
+    if (emulatorHost !== "127.0.0.1:8080" && emulatorHost !== "localhost:8080") {
+      throw new Error(`Host de emulador inesperado: ${emulatorHost}`);
+    }
+  }
+}
+
 async function confirmProduction(apply) {
   const readline = require("node:readline/promises");
   if (!process.stdin.isTTY) throw new Error("--prod requiere una terminal interactiva.");
@@ -63,14 +76,8 @@ async function confirmProduction(apply) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const projectId = options.target === "prod" ? PROJECT : EMULATOR_PROJECT;
+  validateTarget(options.target, process.env.FIRESTORE_EMULATOR_HOST);
   if (options.target === "prod") await confirmProduction(options.apply);
-  else {
-    const emulator = process.env.FIRESTORE_EMULATOR_HOST;
-    if (!emulator) throw new Error("Emulador no detectado. Inícialo y vuelve a correr con --emulator.");
-    if (emulator !== "127.0.0.1:8080" && emulator !== "localhost:8080") {
-      throw new Error(`Host de emulador inesperado: ${emulator}`);
-    }
-  }
 
   const { getFirestore } = require("firebase-admin/firestore");
   const { initializeApp, getApps } = require("firebase-admin/app");
@@ -107,4 +114,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildAdminStore, parseArgs, planMigration };
+module.exports = { buildAdminStore, parseArgs, planMigration, validateTarget };
