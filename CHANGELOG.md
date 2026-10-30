@@ -7,7 +7,7 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 ## [0.5.0] — 2026-08-11 (mergeado a main, deployado a producción)
 
 > PR #12 mergeado (`7645b73`). Production deploy vía CI (gate verde). Reglas
-> de Firestore deployadas a los 3 ambientes (dev, prod) para eliminar el drift
+> de Firestore deployadas a los dos proyectos Firebase (dev y producción) para eliminar el drift
 > estructural. Olivia visible y operable en `store-os-alpha.vercel.app`.
 
 ### Added — CI/CD y cableado de ambientes
@@ -15,11 +15,12 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
   **solo si** `build-test` + `rules-and-e2e` pasan. Vercel auto-deploy OFF
   (Ignored Build Step `exit 0`). Captura correcta de la URL de preview y
   comment automático en el PR.
-- **Cableado de 3 ambientes:** **Local + Preview** = `store-os-dev` (mismo
+- **Cableado de Firebase:** **Desarrollo local + Preview** = `store-os-dev` (mismo
   backend); **Producción** = `store-os-f7cf8` (aislado). GitHub es la fuente
   única de `VITE_FIREBASE_*` (las vars de Vercel se eliminaron para evitar drift).
-- **Policy estricta de sincronización** (`docs/LOOPS.md` §4): datos aislados
-  dev↔preview; estructura (reglas, schema, IAM) fluye a los 3 ambientes;
+- **Policy estricta de sincronización** (`docs/LOOPS.md` §4): desarrollo y
+  producción usan proyectos separados; estructura (reglas, schema, IAM) se
+  mantiene compatible en ambos proyectos;
   promoción local→preview→prod solo con aprobación humana.
 
 ### Added — Flujo de compra rediseñado
@@ -56,7 +57,7 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
   llegaba a Firestore y rechazaba el ticket completo ("Unsupported field value").
 - **Preview de foto en el modal de producto** no se sale del tile (wrapper
   `absolute inset-0`).
-- **Reglas de Firestore deployadas a los 3 ambientes** (dev, prod): el drift
+- **Reglas de Firestore deployadas a los dos proyectos Firebase** (dev, prod): el drift
   estructural (reglas del repo vs deployadas) era la causa raíz de "Olivia no
   aparece" en dev y prod. Ahora en sync.
 

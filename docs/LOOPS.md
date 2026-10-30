@@ -33,7 +33,7 @@ npm run build     # tsc --noEmit + vite build — typecheck AND bundle
 npm run test      # vitest (unit + design-system gate)
 npm run e2e       # playwright (smoke + responsive + theme)
 npm run verify    # NOT A SCRIPT — see note below
-npm run dev       # local dev server on 5173 (demo mode, no backend)
+npm run dev       # local dev server on 5173 (local mode without Firebase)
 ```
 
 Extra, used when relevant:
@@ -66,29 +66,33 @@ If any one fails, report the exact blocker. The only successful verdict is **DRA
 
 ### Environment synchronization (STRICT, non-negotiable)
 
-Store OS runs three environments. Their synchronization rule is invariant and
-governs every change:
+Store OS has one development Firebase project and one production Firebase
+project. Local development and Preview target dev; production is a separate
+release destination:
 
-- **Development (local) and Preview share one backend (`store-os-dev`)**. Data
-  persists across both — what the developer validates locally is what UAT/Preview
-  shows. **Production (`store-os-f7cf8`) is fully isolated**; its data never
-  crosses into dev/preview and vice versa.
-- **Structure flows to all three environments, always in sync.** "Structure"
-  means Firestore schema (collections, fields), Security Rules, Storage rules,
+- **Development (local) and Preview use `store-os-dev`**. Local emulator runs
+  use the same project ID but connect every service to `127.0.0.1`; connected
+  local development and Preview use the dev Firebase backend. Production
+  (`store-os-f7cf8`) is fully isolated.
+- **Structure stays compatible between dev and production.** "Structure" means
+  Firestore schema (collections, fields), Security Rules, Storage rules,
   IAM/permissions, and any code that defines how data is shaped or accessed.
-  When a change alters structure, that same structure is deployed to dev,
-  preview, **and** prod — no environment drifts structurally.
-- **The promotion order is fixed and linear:** **local (code written and tested)
-  → Preview (validated by Fer as a real user) → Production (only with Fer's
-  explicit approval).** Nothing skips a stage. The developer (agent) never
-  self-promotes to Production; human approval (Fer/PO) is the sole gate to prod.
-- **Data is never promoted.** Only structure and code flow across environments.
-  Seeding test data belongs only in dev/preview (`scripts/seed-dev.cjs`, which
-  hard-aborts unless `projectId === 'store-os-dev'`). Production is never seeded.
+  CI can deploy compatible rules to both projects after the reviewed change
+  reaches its approved release path.
+- **The promotion order is fixed and linear:** local development → Preview
+  (validated by Fer as a real user) → Production (only with explicit human
+  approval). The agent never approves or self-promotes a release.
+- **Data is never promoted.** Test data and seeds stay in dev
+  (`scripts/seed-dev.cjs`, which aborts unless `projectId === 'store-os-dev'`).
+  Production is never seeded.
 
-A change that would cause structural drift between environments (e.g. a new
-collection read in code but no rule for it, or a rule deployed to dev but not
-prod) is a release blocker — fix it before deploy.
+Every Firebase CLI command that can choose a project must specify its target.
+`.firebaserc` defaults to `store-os-dev`; no project or emulator namespace is
+created for local work. Production requires explicit human approval.
+
+A change that would cause structural drift between dev and production (e.g. a
+new collection read in code but no rule for it) is a release blocker — fix it
+before release.
 
 ## 5. Release blockers
 

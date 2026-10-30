@@ -26,4 +26,7 @@ Política vigente tras eliminar el delivery harness como gate (ver `docs/adr/000
 - Un agente nunca: mergea un PR, hace push a `main`, despliega producción, ni lee/escribe datos productivos.
 - Nunca `firebase deploy --only ...` desde el agente; CI despliega Preview/Production.
 - Producción (`store-os-f7cf8`) intocable: siembra y pruebas solo en `store-os-dev`.
+- Desarrollo conectado, pruebas y Preview usan únicamente `store-os-dev`. Los emuladores locales usan el mismo ID y mantienen todos los servicios en `127.0.0.1`; no se crea un proyecto o namespace separado.
+- `.firebaserc` debe tener `store-os-dev` como predeterminado. Todo comando Firebase que pueda elegir proyecto declara el destino; nunca se depende de un valor implícito.
+- Producción (`store-os-f7cf8`) solo se usa después de aprobación humana explícita. No se copian datos de prueba ni seeds desde dev.
 - Tests, aislamiento multitienda y la restricción de cero costos no se flexibilizan para bajar un PR.
