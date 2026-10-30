@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { Button, TextField, TextArea } from "../../design-system";
+import { Button, TextField, TextArea, useToast } from "../../design-system";
 import { nowIso } from "../../lib/dates";
 import type { Supplier } from "../../types";
 
@@ -10,6 +10,8 @@ import type { Supplier } from "../../types";
 // and onDone fires.
 export function SupplierForm({ supplier, onDone }: { supplier: Supplier; onDone: () => void }) {
   const { upsertSupplier } = useStore();
+  const toast = useToast();
+  const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Supplier>(supplier);
 
   return (
@@ -35,12 +37,19 @@ export function SupplierForm({ supplier, onDone }: { supplier: Supplier; onDone:
       <Button
         full
         size="lg"
-        onClick={() => {
+        onClick={async () => {
           if (!draft.name.trim()) return;
-          upsertSupplier({ ...draft, name: draft.name.trim(), updatedAt: nowIso() });
+          setSaving(true);
+          try {
+            await upsertSupplier({ ...draft, name: draft.name.trim(), updatedAt: nowIso() });
+          } catch {
+            toast.error("No se pudo guardar el proveedor. Intenta de nuevo.");
+            setSaving(false);
+            return;
+          }
           onDone();
         }}
-        disabled={!draft.name.trim()}
+        disabled={!draft.name.trim() || saving}
       >
         Guardar proveedor
       </Button>
