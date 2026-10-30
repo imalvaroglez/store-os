@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { fieldBase, FormField } from "./FormField";
 
 export type SearchSelectOption = {
@@ -16,6 +16,7 @@ export function SearchSelect({
   onSelect,
   placeholder,
   emptyLabel = "No hay coincidencias.",
+  inputRef,
 }: {
   label: string;
   value: string;
@@ -24,6 +25,7 @@ export function SearchSelect({
   onSelect: (option: SearchSelectOption) => void;
   placeholder?: string;
   emptyLabel?: string;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -58,6 +60,7 @@ export function SearchSelect({
     <FormField label={label}>
       <div ref={rootRef} className="relative">
         <input
+          ref={inputRef}
           id={inputId}
           className={fieldBase}
           role="combobox"
