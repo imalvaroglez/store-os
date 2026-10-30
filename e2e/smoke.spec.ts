@@ -1,5 +1,6 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { loginAsFirstAdmin, gotoSantiHome, openCatalog, gotoClean, writeEmulatorDoc, mintUserToken } from "./helpers";
+import { buildSeedState } from "./seed";
 
 // Real end-to-end smoke against the Firebase Emulator. Firebase Auth persists to
 // indexedDB, which Playwright's storageState does NOT capture — so the session
@@ -31,7 +32,14 @@ test.afterAll(async () => {
 test("store owner edits Olivia's storefront in place and the public projection survives reload", async ({ sharedPage: page }) => {
   const body = `Mensaje WYSIWYG ${Date.now()}`;
   const { uid } = await mintUserToken();
-  await writeEmulatorDoc("stores", "store_olivia", { ownerUid: uid });
+  const olivia = buildSeedState().stores.find((store) => store.id === "store_olivia");
+  if (!olivia) throw new Error("Olivia fixture missing");
+  await writeEmulatorDoc("stores", "store_olivia", {
+    ...olivia,
+    ownerUid: uid,
+    memberUids: [uid],
+    pendingInvites: [],
+  });
   await gotoClean(page, "/catalogo/olivia");
   await page.getByRole("button", { name: "Editar sitio" }).waitFor({ state: "visible", timeout: 15000 });
   await page.getByRole("button", { name: "Editar sitio" }).click();
