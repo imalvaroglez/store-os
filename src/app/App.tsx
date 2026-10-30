@@ -39,6 +39,16 @@ function Root() {
     notifyError: toast.error,
   } : undefined;
 
+  // The owner editor uses the authenticated app entry so the anonymous
+  // storefront bundle never contains Auth or private store data.
+  if (route.name === "storefront_editor") {
+    if (!user) return <AuthScreen />;
+    if (!storefrontOwner || !storefrontEditor) {
+      return <div className="min-h-full flex items-center justify-center p-6"><div className="space-y-3 text-center"><h1 className="text-lg font-semibold text-on-surface">No tienes acceso a este editor</h1><a className="text-primary underline" href="/catalogo/olivia">Volver al catálogo público</a></div></div>;
+    }
+    return <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}><OliviaStorefront route={{ name: "storefront_editor", params: { slug: OLIVIA_SLUG } }} editor={storefrontEditor} /></Suspense>;
+  }
+
   // Public storefront routes take over the whole viewport: no shell, no private
   // data. Anonymous-readable. A single component handles all three sub-routes.
   // These are the ONLY routes visible without authentication.

@@ -8,6 +8,8 @@ const store = { slug: "olivia", ownerUid: "owner_1" };
 describe("canEditOliviaStorefront", () => {
   it("allows only the signed-in owner on the Olivia home route", () => {
     expect(canEditOliviaStorefront(home, { uid: "owner_1" }, store)).toBe(true);
+    expect(canEditOliviaStorefront({ name: "storefront_editor", params: { slug: "olivia" } }, { uid: "owner_1" }, store)).toBe(true);
+    expect(canEditOliviaStorefront({ name: "storefront_editor", params: { slug: "olivia" } }, { uid: "member_1" }, store)).toBe(false);
     expect(canEditOliviaStorefront(home, null, store)).toBe(false);
     expect(canEditOliviaStorefront(home, { uid: "member_1" }, store)).toBe(false);
     expect(canEditOliviaStorefront(home, { uid: "owner_1" }, { ...store, slug: "otra" })).toBe(false);

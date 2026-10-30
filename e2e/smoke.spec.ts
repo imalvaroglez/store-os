@@ -30,7 +30,7 @@ test.afterAll(async () => {
 
 test("store owner edits Olivia's storefront in place and the public projection survives reload", async ({ sharedPage: page }) => {
   const body = `Mensaje WYSIWYG ${Date.now()}`;
-  await gotoClean(page, "/catalogo/olivia");
+  await gotoClean(page, "/catalogo/olivia/editar");
   await page.getByRole("button", { name: "Editar sitio" }).click();
   await page.getByRole("button", { name: "Editar Mensaje principal" }).click();
   await page.getByLabel("Mensaje principal").fill(body);
@@ -41,6 +41,9 @@ test("store owner edits Olivia's storefront in place and the public projection s
 
   await page.reload();
   await expect(page.getByText(body)).toBeVisible();
+
+  await gotoClean(page, "/catalogo/olivia");
+  await expect(page.getByRole("button", { name: "Editar sitio" })).toHaveCount(0);
 });
 
 test("home renders seeded store with primary action", async ({ sharedPage: page }) => {
