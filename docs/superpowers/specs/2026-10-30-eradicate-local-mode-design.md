@@ -149,9 +149,10 @@ elimina aún la ruta de runtime heredada.
 
 ## Dependencias y bloqueo actual
 
-La Fase B no inicia hasta integrar en `main` los PR #89–#94 y #103–#110. Al 30
-de octubre de 2026 siguen abiertos como draft; los commits locales de una rama
-de integración no sustituyen su integración al `main` protegido.
+La Fase B no inicia hasta integrar en `main` los PR #89–#94 y #103–#107, #109
+y #110, y cerrar el PR #108. Al 30 de octubre de 2026 siguen abiertos como
+draft; los commits locales de una rama de integración no sustituyen su
+integración al `main` protegido.
 
 El PR #108 agrega un camino de acceso administrativo local y contradice esta
 decisión. Debe permanecer bloqueado y fuera de la integración. Su cierre queda

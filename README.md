@@ -2,7 +2,7 @@
 
 > Un sistema operativo ligero para pequeñas tiendas.
 
-Store OS es una PWA **local-first**, **mobile-first** y **100% en español (México)** para llevar tiendas pequeñas que venden por WhatsApp, Instagram o catálogo público.
+Store OS es una PWA **cloud-first**, **mobile-first** y **100% en español (México)** para llevar tiendas pequeñas que venden por WhatsApp, Instagram o catálogo público. La administración requiere autenticación y usa Firebase.
 
 No es un ERP, ni un POS, ni un CRM, ni un sistema de contabilidad. Es un **cuaderno moderno** para administrar tu tienda: catálogo, clientes, pedidos, inventario y ganancia.
 
@@ -22,8 +22,8 @@ Pensado para que cualquiera lo use: un adolescente que vende por primera vez, un
 - **Inventario** con ajustes rápidos (−1 / +1) y alertas de baja existencia (solo tiendas con inventario).
 - **Tres temas** intercambiables: **Paper Ledger**, **Maximalista** y **Lujo** — cada uno con su propia personalidad (color, tipografía, movimiento).
 - **Responsive** — funciona en móvil (bottom nav) y escritorio (sidebar).
-- **PWA** instalable y con soporte offline.
-- **Firebase Auth + Firestore** — los datos del negocio se guardan en la nube; `localStorage` conserva preferencias y apoyo para el trabajo sin conexión.
+- **PWA** instalable; la administración necesita conexión con Firebase. Los borradores autenticados permiten recuperar capturas interrumpidas.
+- **Firebase Auth + Firestore** respaldan las cuentas y los datos del negocio. `localStorage` conserva preferencias, el carrito público y borradores de pedido asociados a una persona autenticada; no sustituye al backend administrativo.
 
 ## Empezar
 
