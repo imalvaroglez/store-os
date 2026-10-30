@@ -5,6 +5,7 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  deleteField,
   onSnapshot,
   query,
   where,
@@ -231,6 +232,11 @@ export async function saveEntity(
   // from the F3 price-edit fields. Strip undefined RECURSIVELY so any depth is
   // safe. One guard for every entity/call site (products, purchases, etc.).
   const clean = stripUndefined(data) as Record<string, unknown>;
+  // Explicitly clearing a customer's assigned tier must remove the old field
+  // from a merge write; omitting undefined alone would leave it in Firestore.
+  if (name === "customers" && Object.prototype.hasOwnProperty.call(data, "assignedPriceTierId") && data.assignedPriceTierId === undefined) {
+    clean.assignedPriceTierId = deleteField();
+  }
 
   // G-P02: a store write MUST also write its adminStores control doc in the SAME
   // batched write — the rules resolve membership/ownership exclusively from

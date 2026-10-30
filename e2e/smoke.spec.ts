@@ -256,3 +256,47 @@ test("reload restores the selected store and its order draft", async ({ sharedPa
   await expect(page.getByLabel("Producto").first()).toHaveValue("Cadena de plata 925");
   await expect(page.getByLabel("Cantidad").first()).toHaveValue("2");
 });
+
+test("customer price level applies to new order lines", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.locator("header button, aside button").filter({ hasText: "▾" }).filter({ visible: true }).first().click();
+  await page.getByText("Joyería", { exact: true }).first().click();
+  await page.getByRole("button", { name: "Clientes" }).click();
+  const name = `Precio cliente ${Date.now()}`;
+  await page.getByRole("button", { name: "+ Agregar" }).click();
+  await page.getByLabel("Nombre", { exact: true }).fill(name);
+  await page.getByLabel("Tipo de cliente").selectOption("entrepreneur");
+  await page.getByRole("combobox", { name: "Nivel de precio", exact: true }).selectOption("t_wholesale");
+  await page.getByRole("button", { name: "Guardar cliente" }).click();
+  await expect(page.getByText(name)).toBeVisible();
+  await page.getByRole("button", { name: "Pedidos" }).click();
+  await page.getByRole("button", { name: "+ Nuevo" }).click();
+  // Select the freshly created customer EXPLICITLY from the dropdown instead of
+  // relying on the exact-name auto-bind: the customer list arrives via cloud
+  // sync, and racing the sync made this test flaky when run after other tests.
+  // Clear the restored draft's customer query so the FULL customer list shows
+  // (the dropdown filters by the current text), then pick the freshly created
+  // customer by partial match — the option's accessible name carries the
+  // customer's phone as detail. The auto-waited click also absorbs any delay
+  // of the cloud sync delivering the new customer.
+  await page.getByLabel("Cliente").fill("");
+  await page.getByRole("option", { name: new RegExp(name) }).click();
+  // A restored draft of another customer turns this first switch into the
+  // confirmation dialog; applying the new customer's prices is the point.
+  const switchDialog = page.getByRole("dialog", { name: "Cambiar cliente" });
+  if (await switchDialog.isVisible({ timeout: 1500 }).catch(() => false)) {
+    await switchDialog.getByRole("button", { name: `Aplicar precios de ${name}` }).click();
+  }
+  await page.getByLabel("Producto").fill("Cadena de plata 925");
+  await expect(page.getByLabel("Precio unitario")).toHaveValue("700");
+  await page.getByLabel("Precio unitario").fill("650");
+  await page.getByLabel("Cliente").fill("Ana Torres");
+  const confirmation = page.getByRole("dialog", { name: "Cambiar cliente" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "Aplicar precios de Ana Torres" }).click();
+  await expect(page.getByLabel("Precio unitario")).toHaveValue("650");
+  await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
+  await page.getByRole("button", { name: "Guardar pedido" }).click();
+  await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+});
+
