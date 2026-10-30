@@ -152,6 +152,8 @@
 @keyframes olv-photo-enter-a { from { transform: scale(1.012); } to { transform: scale(1); } }
 @keyframes olv-photo-enter-b { from { transform: scale(1.012); } to { transform: scale(1); } }
 @media (min-width: 640px) {
+  .olv-tools--with-finish { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .olv-tools--with-finish > label:first-child { grid-column: 1 / -1; }
   .olv-container { width: min(100% - 80px, 1280px); }
   .olv-hero-copy { padding-block: 80px 88px; }
   .olv-tools { grid-template-columns: minmax(0, 1fr) 240px 220px; }
@@ -162,6 +164,8 @@
   .olv-about-grid { grid-template-columns: 1fr 1fr; gap: 80px; }
 }
 @media (min-width: 1024px) {
+  .olv-tools--with-finish { grid-template-columns: minmax(0, 1fr) 220px 200px; }
+  .olv-tools--with-finish > label:first-child { grid-column: auto; }
   .olv-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
   .olv-main { padding-top: 56px; }
   .olv-detail-grid { grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); gap: 72px; }
