@@ -18,6 +18,7 @@ persistentes.
 - Incluye existencias positivas cuando `quantityOnHand <= lowStockAt`.
 - Excluye productos sin cantidad o por encima del umbral.
 - Puede combinarse con categoría; **Limpiar** restablece ambos filtros.
+- Cambiar de tienda o tipo de tienda limpia el filtro para evitar dejar un criterio oculto activo.
 - El estado se indica con `aria-pressed` y componentes/tokens del sistema de diseño.
 
 ## Bloqueador documentado para avisos externos
