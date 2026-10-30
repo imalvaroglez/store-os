@@ -189,6 +189,8 @@ export type Product = {
 };
 
 export type Customer = {
+  segment?: "regular" | "entrepreneur";
+  assignedPriceTierId?: string;
   id: string;
   storeId: string;
   name: string;
@@ -216,6 +218,8 @@ export type OrderItem = {
    * reference lines by id, surviving reorders and edits. Deterministic
    * `${orderId}_L${index}` on legacy migration; uid() on new lines. */
   lineId?: string;
+  /** OLI-008: "manual" lines keep their price when the customer/tier changes. */
+  priceSource?: "automatic" | "manual";
   productId?: string;
   productName: string;
   quantity: number;
