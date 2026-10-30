@@ -6,6 +6,7 @@
 - Mostrar el acabado en cada tarjeta y permitir filtrar el catálogo por acabado cuando haya al menos dos acabados entre las piezas visibles. El filtro se combina con categoría, búsqueda, disponibilidad configurada y orden.
 - No añade lecturas ni escrituras. El acabado es un campo ya presente en `products`; se copia al documento `publicCatalogs` existente. El aumento de almacenamiento y descarga es proporcional al largo de los acabados, sin imágenes ni servicios nuevos.
 - La etiqueta `Agotado` se conserva en tarjetas y detalle. El resumen ya calcula `stockSignal` a partir de `quantityOnHand` y `lowStockAt`, sin exponer cantidades.
+- Los documentos `publicCatalogs` existentes no reciben el nuevo campo por desplegar el código. Para validar productos ya publicados se requiere usar una vez la acción existente “Republicar catálogo”; su consumo de escrituras crece con la cantidad de productos publicados. No ejecutar esa acción en producción desde este PR.
 
 ## Bloqueos documentados para la siguiente entrega
 
