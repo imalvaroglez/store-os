@@ -613,6 +613,7 @@ export function projectPublicProductSummary(
       .slice(0, 5)
       .map(({ url, alt, width, height }) => ({ url, alt: alt ?? null, width: width ?? null, height: height ?? null })),
     availability: product.availability ?? "available",
+    finish: product.finish ?? null,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
     canInquire: product.canInquire ?? false,
