@@ -22,6 +22,10 @@ function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSi
   return product.availability === "sold_out" || product.stockSignal === "agotado";
 }
 
+function normalizeCatalogText(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-MX");
+}
+
 // Keep the catalog alive across category/product routes: two reads per visit,
 // then only the detail document when opening a piece. No global/stale cache.
 export function OliviaStorefront({ route }: { route: RouteMatch }) {
@@ -56,12 +60,21 @@ export function OliviaStorefront({ route }: { route: RouteMatch }) {
 function StoreView({ store, catalog, focusCategory }: { store: PublicStore; catalog: PublicCatalog | null; focusCategory?: string }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("featured");
+  const [finishFilter, setFinishFilter] = useState("");
   const sf = store.storefront ?? {};
   const heroBody = sf.hero?.body ?? OLIVIA_CONTENT.hero!.body;
   const slug = store.slug;
   const priceLabel = store.priceTiers?.find((tier) => tier.id === store.defaultTierId)?.label || "Precio";
   const category = catalog?.categories.find((item) => item.slug === focusCategory);
-  useEffect(() => { setQuery(""); }, [focusCategory]);
+  useEffect(() => { setQuery(""); setFinishFilter(""); }, [focusCategory]);
+  const finishOptions = useMemo(() => {
+    const visibleFinishes = (catalog?.products ?? [])
+      .filter((product) => (!category || product.categoryIds?.includes(category.id)) && ((sf.showSoldOut ?? true) || !isSoldOut(product)))
+      .map((product) => product.finish?.trim())
+      .filter((finish): finish is string => !!finish);
+    const unique = new Map(visibleFinishes.map((finish) => [normalizeCatalogText(finish), finish]));
+    return [...unique.entries()].sort((a, b) => a[1].localeCompare(b[1], "es-MX"));
+  }, [catalog, category, sf.showSoldOut]);
   useSeo({
     title: category ? `${category.name} · ${store.name}` : sf.seo?.title || `${store.name} — Joyería`,
     description: sf.seo?.description || sf.hero?.body || OLIVIA_CONTENT.hero?.body,
@@ -70,12 +83,12 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
     jsonLd: { "@context": "https://schema.org", "@type": "Store", name: store.name, url: `${window.location.origin}/catalogo/${slug}` },
   });
   const products = useMemo(() => {
-    const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    const needle = normalize(query.trim());
+    const needle = normalizeCatalogText(query.trim());
     return (catalog?.products ?? []).filter((p) =>
       ((sf.showSoldOut ?? true) || !isSoldOut(p)) &&
       (!category || p.categoryIds?.includes(category.id)) &&
-      normalize(`${p.name} ${p.sku ?? ""}`).includes(needle)
+      (!finishFilter || normalizeCatalogText(p.finish ?? "") === finishFilter) &&
+      normalizeCatalogText(`${p.name} ${p.sku ?? ""} ${p.finish ?? ""}`).includes(needle)
     ).sort((a, b) => {
       if (sort === "price-asc" || sort === "price-desc") {
         const ap = publicPrice(a, store.defaultTierId ?? undefined), bp = publicPrice(b, store.defaultTierId ?? undefined);
@@ -86,7 +99,7 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
       const flag = sort === "new" ? "isNew" : "isFeatured";
       return Number(Boolean(b[flag])) - Number(Boolean(a[flag])) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
     });
-  }, [catalog, category, query, sort, sf.showSoldOut, store.defaultTierId]);
+  }, [catalog, category, finishFilter, query, sort, sf.showSoldOut, store.defaultTierId]);
 
   if (focusCategory && catalog && !category) return <div className="olv-container olv-empty"><EmptyState title="Categoría no encontrada" subtitle="Explora las demás piezas de Olivia." /><StorefrontLink to={`/catalogo/${slug}`} className="olv-link-button">Ver catálogo</StorefrontLink></div>;
   return <>
@@ -113,9 +126,10 @@ function StoreView({ store, catalog, focusCategory }: { store: PublicStore; cata
       <div className="olv-tools">
         <TextField label="Buscar una pieza" type="search" placeholder="Nombre o clave de la pieza" value={query} onChange={(e) => setQuery(e.target.value)} />
         <SelectField label="Ordenar por" value={sort} onChange={setSort} options={[{ value: "featured", label: "Destacados" }, { value: "new", label: "Novedades" }, { value: "price-asc", label: `${priceLabel}: menor a mayor` }, { value: "price-desc", label: `${priceLabel}: mayor a menor` }]} />
+        {finishOptions.length > 1 && <SelectField label="Acabado" value={finishFilter} onChange={(value) => setFinishFilter(value)} placeholder="Todos los acabados" options={finishOptions.map(([value, label]) => ({ value, label }))} />}
       </div>
       {products.length ? <div className="olv-grid">{products.map((p) => <ProductCard key={p.productSlug} p={p} slug={slug} />)}</div>
-        : <div className="olv-empty"><EmptyState title={query ? "No encontramos esa pieza" : "Sin piezas aquí"} subtitle={query ? "Prueba otro nombre o clave." : "Vuelve pronto o explora otra categoría."} />{query && <Button variant="secondary" onClick={() => setQuery("")}>Limpiar búsqueda</Button>}</div>}
+        : <div className="olv-empty"><EmptyState title={query || finishFilter ? "No encontramos piezas con estos filtros" : "Sin piezas aquí"} subtitle={query || finishFilter ? "Prueba otro nombre o acabado." : "Vuelve pronto o explora otra categoría."} />{(query || finishFilter) && <Button variant="secondary" onClick={() => { setQuery(""); setFinishFilter(""); }}>Limpiar filtros</Button>}</div>}
       <section className="olv-how" aria-labelledby="how-title"><div><p className="olv-eyebrow">Así de sencillo</p><h2 id="how-title">De tu lista a WhatsApp.</h2></div><div className="olv-steps"><p><span>01</span> Elige tus piezas</p><p><span>02</span> Revisa tu lista</p><p><span>03</span> Envíala por WhatsApp</p></div><p className="olv-muted">Fer confirma contigo el precio y la disponibilidad. Tu selección no reserva las piezas.</p></section>
       {!focusCategory && <div className="olv-about-grid">
         <section><p className="olv-eyebrow">Un poquito de nosotros</p><h2>{sf.story?.heading || OLIVIA_CONTENT.story!.heading}</h2><p className="olv-body-copy">{sf.story?.body || OLIVIA_CONTENT.story!.body}</p>
@@ -138,6 +152,7 @@ function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
     <div className="olv-product-info">
       <div className="olv-product-labels">{soldOut ? <Badge tone="neutral">Agotado</Badge> : p.stockSignal === "pocas" ? <Badge tone="warning">Quedan pocas</Badge> : p.isNew ? <Badge>Nuevo</Badge> : p.isFeatured ? <span>Selección Olivia</span> : null}</div>
       <h3><StorefrontLink to={href}>{p.name}</StorefrontLink></h3>
+      {p.finish && <p className="olv-product-finish">Acabado: {p.finish}</p>}
       <PublicTierPrices store={store} product={p} />
     </div>
     <CartProductControl key={`${p.productSlug}-${quantity}`} productSlug={p.productSlug} productName={p.name} quantity={quantity} onAdd={() => { add(cartItemFromPublicProduct(p)); notifyAdded(p.name); }} onSetQty={setQty} full />
