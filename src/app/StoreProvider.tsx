@@ -41,6 +41,8 @@ import {
   receivePurchaseTx,
   createDraftProductsForPurchaseTx,
   saveOrderWithStockTx,
+  deleteOrderWithStockTx,
+  StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
   stripUndefined,
@@ -173,6 +175,7 @@ type StoreContextValue = {
   state: AppState;
   activeStore: Store | null;
   cloud: boolean; // true when operating on Firestore (signed in)
+  draftOwnerId: string;
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
   deleteStore: (storeId: string) => void;
@@ -201,8 +204,8 @@ type StoreContextValue = {
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => void;
-  upsertOrder: (order: Order) => Promise<void>;
-  deleteOrder: (orderId: string) => Promise<void>;
+  upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
+  deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -249,16 +252,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               migratedStores.push(store);
             }
           }
-          for (const order of migrated.orders) {
-            const before = s.orders.find((o) => o.id === order.id);
-            if (before !== order) writes.push(saveEntity(user, "orders", order));
-          }
+          // Normalize orders in memory only: writing a stale migration snapshot
+          // here could overwrite an order edited by another device.
           // Render FIRST, persist in the background: on a cold/slow backend the
           // awaited writes delayed REPLACE_STATE so much that a REPLACE arriving
           // after the user switched stores reverted their selection. Migration
           // is idempotent, so a failed background write just re-migrates on the
           // next load.
           fromCloud.current = true;
+          // Restore the latest explicitly selected store after auth hydration.
+          // Read at dispatch time so a switch made while loading wins.
+          const preferred = loadPreferredStoreId();
+          if (preferred && migrated.stores.some((store) => store.id === preferred)) {
+            dispatch({ type: "SET_ACTIVE_STORE", storeId: preferred });
+          }
           dispatch({ type: "REPLACE_STATE", state: migrated });
           fromCloud.current = false;
           void (async () => {
@@ -329,6 +336,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state,
     activeStore: state.stores.find((s) => s.id === state.activeStoreId) ?? null,
     cloud,
+    draftOwnerId: cloud && user ? user.uid : "demo",
     addStore: async (input) => {
       const store: Store = { ...input, id: uid("store"), createdAt: nowIso(), updatedAt: nowIso() };
       // Claim the slug first (throws SlugTakenError on global collision) so we
@@ -647,7 +655,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "DELETE_CUSTOMER", customerId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "customers", customerId).catch(() => {});
     },
-    upsertOrder: async (order) => {
+    upsertOrder: async (order, options) => {
       // Canonical v2 snapshot before it touches either store: migration +
       // paymentStatus derivation in one place for every caller.
       const nextOrder = {
@@ -664,38 +672,52 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           stockWrites.push({ ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: stockAt });
         }
       }
-      // Cloud: ONE atomic batch (order + every stock adjustment). Local state
+      // Cloud: ONE transaction (order + every stock delta). Deltas are applied
+      // RELATIVE to the canonical quantities re-read inside the transaction, so
+      // concurrent orders on another device can't be silently overwritten; a
+      // stale edit of THIS order aborts with StaleOrderError. Local state
       // commits only on success, so a failed save leaves no phantom order and
-      // the retry the toast invites replays the FULL delta set — a partial
-      // N+1 write could double-reserve or strand a reservation forever.
+      // the retry the toast invites replays the FULL delta set.
       if (cloud && user && !fromCloud.current) {
-        await saveOrderWithStockTx(
-          user,
-          nextOrder,
-          stockWrites.map((p) => ({ id: p.id, quantityOnHand: p.quantityOnHand as number, updatedAt: p.updatedAt }))
-        );
+        const result = await saveOrderWithStockTx(user, nextOrder, options ? options.expectedRevision : prev ? (order.revision ?? 0) : null, options?.mutationId ?? uid("mutation"));
+        for (const update of result.stock) {
+          const product = state.products.find((p) => p.id === update.productId);
+          if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
+        }
+        dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
+        return;
       }
       for (const updated of stockWrites) dispatch({ type: "UPDATE_PRODUCT", product: updated });
       dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order: nextOrder });
     },
-    deleteOrder: async (orderId) => {
-      // Release the held stock before removing the order (cancelling a
+    deleteOrder: async (orderId, expectedRevision) => {
+      // Release the held stock and remove the order atomically (cancelling a
       // delivered sale also returns the goods — see reservationDeltas*).
       const existing = state.orders.find((o) => o.id === orderId);
+      if (existing && (existing.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
+      const deltas = existing
+        ? reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" })
+        : new Map<string, number>();
+      if (cloud && user && !fromCloud.current) {
+        if (!existing) throw new Error("No se encontró el pedido.");
+        const updates = await deleteOrderWithStockTx(user, orderId, expectedRevision);
+        for (const update of updates) {
+          const product = state.products.find((p) => p.id === update.productId);
+          if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() } });
+        }
+        dispatch({ type: "DELETE_ORDER", orderId });
+        return;
+      }
       const writes: Promise<void>[] = [];
-      if (existing) {
-        const deltas = reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" });
-        for (const [productId, delta] of deltas) {
-          const product = state.products.find((p) => p.id === productId && p.storeId === existing.storeId);
-          if (product && typeof product.quantityOnHand === "number") {
-            const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
-            dispatch({ type: "UPDATE_PRODUCT", product: updated });
-            writes.push(persistEntity("products", updated));
-          }
+      for (const [productId, delta] of deltas) {
+        const product = state.products.find((p) => p.id === productId && p.storeId === existing?.storeId);
+        if (product && typeof product.quantityOnHand === "number") {
+          const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
+          dispatch({ type: "UPDATE_PRODUCT", product: updated });
+          writes.push(persistEntity("products", updated));
         }
       }
       dispatch({ type: "DELETE_ORDER", orderId });
-      if (cloud && user && !fromCloud.current) writes.push(deleteEntity(user, "orders", orderId));
       await Promise.all(writes);
     },
   };

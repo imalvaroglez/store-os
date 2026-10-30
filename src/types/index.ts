@@ -212,6 +212,10 @@ export type LegacyOrderStatus = "asked" | "confirmed" | "to_buy" | "bought" | "a
 export type PaymentStatus = "unpaid" | "partial" | "paid";
 
 export type OrderItem = {
+  /** Stable line identity: expense allocations (E5+) and category grouping (E3)
+   * reference lines by id, surviving reorders and edits. Deterministic
+   * `${orderId}_L${index}` on legacy migration; uid() on new lines. */
+  lineId?: string;
   productId?: string;
   productName: string;
   quantity: number;
@@ -222,6 +226,8 @@ export type OrderItem = {
 };
 
 export type Order = {
+  revision?: number;
+  lastMutationId?: string;
   id: string;
   storeId: string;
   customerId: string;
@@ -259,6 +265,8 @@ export type Supplier = {
 
 /** One line of a purchase ticket: a product bought, how many, at what unit cost. */
 export type PurchaseLine = {
+  /** Stable line identity for expense allocations (E5+) and import matching. */
+  lineId?: string;
   productId: string;
   name: string; // snapshot at purchase time
   quantity: number;

@@ -146,7 +146,7 @@ jobs:
   # The ONLY path to a Vercel deployment. Runs only if BOTH gates passed.
   # Vercel's Git auto-deploy is OFF, so without this job nothing publishes.
   deploy:
-    needs: [env-select, build-test, rules-and-e2e]
+    needs: [env-select, build-test, rules-and-e2e, deploy-rules]
     # Only deploy after a push to main. Feature branches validate the production
     # build on localhost; an external Preview is not required for this PWA.
     if: github.event_name == 'push' && github.ref_name == 'main' && needs.env-select.outputs.app-changed == 'true'
@@ -251,11 +251,12 @@ jobs:
   # while the repo evolved (rules deploys were a manual DEPLOYMENT.md step and
   # nothing compared deployed vs repo), surfacing as silently-denied
   # public-catalog writes. This job is now the ONLY regular path to a rules
-  # deployment: every push to main ships firestore.rules + storage.rules to
-  # BOTH backends, then verifies parity with a second no-op pass.
+  # deployment: every push to main ships firestore.rules + firestore indexes
+  # + storage.rules to BOTH backends, then verifies parity with a second no-op
+  # pass.
   deploy-rules:
-    needs: [env-select, build-test, rules-and-e2e, deploy]
-    # Main only, after the frontend deploy. Dev is a shared backend for all
+    needs: [env-select, build-test, rules-and-e2e]
+    # Main only, before the frontend deploy. Dev is a shared backend for all
     # previews, so per-PR rule deploys would mutate it mid-review for other
     # testers; PR rules are already validated against the EMULATOR in
     # rules-and-e2e.
@@ -274,8 +275,8 @@ jobs:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
           for P in store-os-f7cf8 store-os-dev; do
-            echo "── deploying firestore+storage rules → $P"
-            firebase deploy --only firestore:rules,storage --project "$P" \
+            echo "── deploying firestore rules+indexes+storage rules → $P"
+            firebase deploy --only firestore:rules,firestore:indexes,storage --project "$P" \
               --token "$FIREBASE_TOKEN" --non-interactive
           done
       - name: Parity check (second pass must be a no-op)
@@ -291,7 +292,7 @@ jobs:
           status=0
           for P in store-os-f7cf8 store-os-dev; do
             code=0
-            OUT="$(firebase deploy --only firestore:rules,storage --project "$P" \
+            OUT="$(firebase deploy --only firestore:rules,firestore:indexes,storage --project "$P" \
               --token "$FIREBASE_TOKEN" --non-interactive 2>&1)" || code=$?
             echo "$OUT"
             if [ "$code" -ne 0 ]; then
