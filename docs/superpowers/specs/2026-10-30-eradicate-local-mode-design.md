@@ -1,7 +1,9 @@
 # Erradicar persistencia administrativa local
 
-Fecha: 30 de octubre de 2026  
-Prioridad: **P0 — bloqueante arquitectónico**  
+Fecha: 30 de octubre de 2026
+
+Prioridad: **P0 — bloqueante arquitectónico**
+
 Estado: **bloqueado por integración de dependencias**
 
 ## Objetivo
