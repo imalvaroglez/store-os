@@ -473,7 +473,7 @@ import { doc, setDoc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
 
 let env: RulesTestEnvironment;
 
-const PROJ = "store-os-demo";
+const PROJ = "store-os-dev";
 
 beforeAll(async () => {
   env = await initializeTestEnvironment({

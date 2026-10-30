@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
+import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
@@ -10,7 +11,7 @@ let env: RulesTestEnvironment;
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer price levels", () => {
   beforeAll(async () => {
-    env = await initializeTestEnvironment({ projectId: "store-os-demo", firestore: { rules: readFileSync("firestore.rules", "utf8") } });
+    env = await initializeTestEnvironment({ projectId: FIREBASE_DEV_PROJECT_ID, firestore: { rules: readFileSync("firestore.rules", "utf8") } });
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "adminStores/price-store"), { ownerUid: "price-user", memberUids: ["price-user"] });
       await setDoc(doc(ctx.firestore(), "users/price-user"), { role: "member" });

@@ -1,20 +1,22 @@
 # Deployment guide
 
-Store OS is a static SPA (Vite build) + Firebase (Auth + Firestore). Deploy the
-frontend to **Vercel** and point it at a real Firebase project. This guide covers
-both.
+Store OS is a static SPA (Vite build) + Firebase (Auth + Firestore), deployed
+to Vercel. This repository uses exactly two existing Firebase projects: dev
+(`store-os-dev`) for all development, emulator work, and Preview; production
+(`store-os-f7cf8`) only after explicit human approval. Do not create or configure
+a third project for this repository.
 
-## 1. Create a Firebase project
+## 1. Use the existing Firebase projects
 
-1. Go to <https://console.firebase.google.com> → **Add project**.
-2. **Build → Authentication → Sign-in method:** enable **Email/Password** and
-   **Google**.
-3. **Build → Firestore Database → Create database** (production mode). Pick a
-   region close to your users.
-4. **Build → Storage → Get started** (creates the default bucket). Browser photo
-   uploads need CORS configured on the bucket — see step 4.
-5. **Project settings → Your apps → Web (`</>`)** → register a web app → copy the
-   `firebaseConfig` values (apiKey, authDomain, projectId, …).
+In Firebase Console, open the project that matches the task:
+
+- `store-os-dev` for development, tests, and Preview.
+- `store-os-f7cf8` only for an approved production release.
+
+Authentication, Firestore, Storage, and web-app credentials are already set up
+for these projects. Use the project-specific `firebaseConfig` values; never copy
+production values into local or Preview configuration. Browser photo uploads need
+CORS configured on the dev bucket — see step 4.
 
 ## 2. Set environment variables on Vercel
 
@@ -26,8 +28,8 @@ enforced by **Security Rules**, not by hiding these keys. In your Vercel project
 |----------|-------|
 | `VITE_FIREBASE_API_KEY` | from firebaseConfig |
 | `VITE_FIREBASE_AUTH_DOMAIN` | `_<projectId>_.firebaseapp.com` |
-| `VITE_FIREBASE_PROJECT_ID` | your project id |
-| `VITE_FIREBASE_STORAGE_BUCKET` | `_<projectId>_.appspot.com` |
+| `VITE_FIREBASE_PROJECT_ID` | `store-os-dev` for Preview; `store-os-f7cf8` for approved Production releases |
+| `VITE_FIREBASE_STORAGE_BUCKET` | `_<projectId>_.firebasestorage.app` |
 | `VITE_FIREBASE_SENDER_ID` | messaging sender id |
 | `VITE_FIREBASE_APP_ID` | app id |
 
@@ -180,7 +182,7 @@ opening the app migrates it; cloud stores migrate on the next cloud sync.
 
 **Security rules:** `firestore.rules` adds `categories/{id}` (membership-gated
 like products) and `publicCatalogs/{slug}` (anonymous read, signed-in write).
-Deploy with `npm run deploy:rules` (or `firebase deploy --only firestore,storage`).
+Deploy with `npm run deploy:rules` (or `firebase deploy --only firestore,storage --project store-os-dev`).
 
 **Storage:** gallery images live at `products/{storeId}/{productId}/{imgId}.jpg`,
 optimized JPEG ≤1600px q80. The bucket stays in `us-east1` (free-tier region).
@@ -234,8 +236,9 @@ what isolates Olivia's real data.
 | Production | `store-os-f7cf8` | Olivia's real business | Only the platform super-admin (`admin@store.os`) and the tenant owners she invites |
 | Development | `store-os-dev` | Dev/testing against realistic-but-fake data | Development only |
 
-The local emulator (`store-os-demo` namespace, volatile) is a third target that
-never touches either real project — see "Local development / testing" below.
+Local emulators use the `store-os-dev` project ID but route Auth, Firestore and
+Storage to `127.0.0.1`. This is the same dev target, not a third Firebase
+project; see "Local development / testing" below.
 
 ### Vercel environment variables (per target)
 
@@ -277,7 +280,7 @@ the SDK — that's by Firebase design (access is enforced by Security Rules).
 5. Project settings → Your apps → add a Web App → copy the six config values into the Vercel **Preview** + **Development** groups.
 6. Set a **$0.01 budget alert** in Google Cloud Console → Billing → Budgets (notification only; it does not stop charges).
 7. Apply the **IAM grant** `roles/datastore.user` to the Storage service agent of `store-os-dev` (same as §4b for prod), or product-photo uploads fail with 403.
-8. Deploy the rules to dev: `firebase deploy --only firestore,storage --project dev` (the `dev` alias is in `.firebaserc`; rules are identical to prod — do not loosen them, or dev stops reflecting prod).
+8. Deploy the rules to dev: `firebase deploy --only firestore,storage --project store-os-dev` (rules are identical to prod — do not loosen them, or dev stops reflecting prod).
 
 ### Lock production (one-time, console)
 
@@ -332,10 +335,10 @@ The build guard exists precisely so this is caught at build time, not after.
 
 ## Local development / testing
 
-- **Demo mode (no backend):** `npm run dev` — runs fully on `localStorage` with
-  seeded demo data.
-- **With emulator:** `npm run emulators` (Auth + Firestore on localhost), then
-  `npm run dev` with `VITE_FIREBASE_EMULATOR=true` in `.env`, or
+- Copy `.env.example` to `.env`; development must target `store-os-dev`.
+  `npm run dev` checks this before starting and refuses other or missing project IDs.
+- **With emulator:** `npm run emulators` (Auth, Firestore, Storage, and Functions
+  on localhost), then `npm run dev` with `VITE_FIREBASE_EMULATOR=true`, or
   `npm run e2e:firebase` for the emulator test suite.
 
 ## Notes
@@ -343,7 +346,7 @@ The build guard exists precisely so this is caught at build time, not after.
 - **Public catalog for cloud stores:** implemented. The app writes a public
   projection (`publicStores`/`publicProducts`) on store create/rename and on
   every product save, and `firestore.rules` allows anonymous read on those
-  collections — so `/catalogo/:slug` works for both local demo and cloud
+  collections — so `/catalogo/:slug` works against the dev emulator and cloud
   stores. Owners get the public URL + "Copiar enlace" / "Compartir por
   WhatsApp" buttons in store settings, and "Republicar catálogo" to rebuild
   the projection on demand.

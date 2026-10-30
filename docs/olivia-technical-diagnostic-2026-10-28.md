@@ -1,5 +1,12 @@
 # Olivia / Store OS: diagnóstico técnico y propuesta de entregas
 
+> **Actualización arquitectónica del 30 de octubre de 2026:** la administración
+> requiere Firebase Auth + Firestore. Las observaciones de persistencia
+> administrativa local describen la implementación inspeccionada, no una
+> capacidad que deba conservarse. Su erradicación está bloqueada como P0 y
+> especificada en
+> [`2026-10-30-eradicate-local-mode-design.md`](superpowers/specs/2026-10-30-eradicate-local-mode-design.md).
+
 Fecha: 28 de octubre de 2026. Estado: **propuesta para revisión de Álvaro**.
 No se modificó la aplicación, las reglas, el Excel ni datos de producción.
 
@@ -52,7 +59,7 @@ números de línea verificados en la revisión anterior.
 | Ref. | Código / flujo | Lo que existe y su límite |
 | --- | --- | --- |
 | E01 | `src/types/index.ts:6`, `:95`, `:140`, `:191`, `:224`, `:261`, `:287` | Store, Category, Product, Customer, Order, PurchaseLine y Purchase. Cada entidad operativa lleva storeId. No hay modelos de cobro individual, gasto asignable, cierre, beneficio o premio. |
-| E02 | `src/app/StoreProvider.tsx:210`; `src/app/firebase/firestoreData.ts:38`, `:42`, `:94` | Provider coordina estado, demo local y persistencia cloud. Carga colecciones completas accesibles y vuelve a cargar todo tras cambios, con debounce. No escalar ese patrón a años de movimientos/cobros. |
+| E02 | `src/app/StoreProvider.tsx:210`; `src/app/firebase/firestoreData.ts:38`, `:42`, `:94` | La implementación inspeccionada conserva una rama de persistencia administrativa local además de Firestore. Es deuda P0 y no una arquitectura permitida para nuevas funciones. Carga colecciones completas accesibles y vuelve a cargar todo tras cambios, con debounce; no escalar ese patrón a años de movimientos/cobros. |
 | E03 | `src/app/firebase/firestoreData.ts:356`; `src/app/StoreProvider.tsx:593`; `src/lib/inventory.ts:18`, `:41` | Recibir compra usa transacción, verifica productos/tienda y marca receivedAt. Acumula cantidad y costo promedio ponderado usando unitCost. No incorpora shipping al costo por pieza ni genera un movimiento por entrada. |
 | E04 | `src/types/index.ts:321`, `:330`, `:362`; `src/features/inventory/PurchaseForm.tsx`; `PurchasePdfImport.tsx` | Compras con borrador/revisión/lista/recibida, proveedor, fecha, referencia, líneas nuevas/existentes, importación PDF, descuento, impuesto y envío. Reglas bloquean editar/eliminar compras explícitamente recibidas. No hay recepción parcial ni reversa formal. |
 | E05 | `src/lib/inventory.ts:76`, `:87`, `:105`; `src/app/StoreProvider.tsx:650`, `:681` | Pedidos asked/quoted/confirmed/preparing/ready ya retienen stock; delivered lo conserva consumido; cancelled lo devuelve, incluso después de entrega. El borrado también devuelve existencias. No separa cancelación comercial de retorno físico. |
@@ -191,7 +198,7 @@ contratos mínimos y políticas; no son razones para implementar todo junto.
 
 ### 7.1 Mantener la interfaz y separar los cálculos de los efectos
 
-Conservar StoreProvider como fachada de UI y demo. Extraer funciones puras de
+Conservar StoreProvider como fachada de UI y coordinación con Firestore. Extraer funciones puras de
 dinero, precios, asignación y fechas; introducir servicios pequeños de comandos
 por dominio detrás de la fachada. Mantener catálogo público separado del panel.
 No incorporar una dependencia de UI, una base SQL ni un framework de estado.
@@ -275,11 +282,12 @@ reintentos ante conflictos y que las transacciones web fallan offline; batch no
 valida que las lecturas previas sigan vigentes. Véase [transacciones](https://firebase.google.com/docs/firestore/manage-data/transactions)
 y [límites y getAfter de reglas](https://firebase.google.com/docs/firestore/security/rules-conditions).
 
-Demo sigue local. En cloud, conservar borradores recuperables sin sesión de red
-si se diseña esa capacidad, pero mostrar operación confirmada solo tras acuse
-canónico. No prometer cierre, cobro o reserva final offline. Una doble pulsación
-o timeout no debe crear dos pagos. No se requiere simultáneamente migrar toda la
-app a una nueva capa: sustituir los comandos afectados por entrega.
+La administración sin conexión no cambia registros ni aparenta confirmar
+operaciones. Se conservan borradores de pedido vinculados a la persona
+autenticada para recuperar una captura; mostrar operación confirmada solo tras
+acuse canónico. No prometer cierre, cobro o reserva final offline. Una doble
+pulsación o timeout no debe crear dos pagos. No se requiere simultáneamente
+migrar toda la app a una nueva capa: sustituir los comandos afectados por entrega.
 
 ### 7.5 Catálogo público, canal privado y solicitudes
 
@@ -408,7 +416,7 @@ Fer; la cantidad concreta de periodos se acuerda, no se impone aquí.
 
 - **Base ejecutada en esta auditoría:** typecheck verde, 33 archivos/353 tests
   verdes y build verde. Bundle público pasó el gate sin SDK; prerender omitido
-  por configuración local/demo. Persisten warnings de React en tests y tamaño
+  por configuración local de Preview. Persisten warnings de React en tests y tamaño
   del chunk admin. No equivalen a falla de checks ni prueban nuevas historias.
 - **Funciones puras:** unidades frente a líneas, suma de asignaciones, costo
   desconocido distinto de cero, snapshots, base de umbral y 30 días, meses en

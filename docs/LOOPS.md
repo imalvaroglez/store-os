@@ -33,7 +33,7 @@ npm run build     # tsc --noEmit + vite build — typecheck AND bundle
 npm run test      # vitest (unit + design-system gate)
 npm run e2e       # playwright (smoke + responsive + theme)
 npm run verify    # NOT A SCRIPT — see note below
-npm run dev       # local dev server on 5173 (demo mode, no backend)
+npm run dev       # servidor local en 5173; requiere Firebase dev o emuladores
 ```
 
 Extra, used when relevant:
@@ -57,7 +57,7 @@ A draft PR is reviewable only when CI (`build-test` + `rules-and-e2e`) is green 
 - App runs locally (`npm run dev`)
 - **No release blockers** (see §5)
 - Admin flows work (stores, products, customers, orders)
-- Public catalog works (`/catalogo`, `/catalogo/:slug` in demo)
+- Public catalog works (`/catalogo`, `/catalogo/:slug` in local)
 - Store isolation works (no cross-store leak)
 - No secrets committed (no keys, tokens, service accounts in the diff)
 - Env requirements documented (which vars Vercel needs)
@@ -65,6 +65,8 @@ A draft PR is reviewable only when CI (`build-test` + `rules-and-e2e`) is green 
 If any one fails, report the exact blocker. The only successful verdict is **DRAFT PR GREEN — READY FOR HUMAN REVIEW**.
 
 ### Environment synchronization (STRICT, non-negotiable)
+
+Only `store-os-dev` and `store-os-f7cf8` are allowed Firebase project IDs; any other target blocks the change.
 
 Store OS runs three environments. Their synchronization rule is invariant and
 governs every change:

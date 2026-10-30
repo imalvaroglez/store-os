@@ -220,7 +220,7 @@ test("data persists across a full reload", async ({ sharedPage: page }) => {
 });
 
 // The "public catalog shows only public products" scenario (originally in the
-// local-demo smoke) is covered by public-catalog.spec against the emulator with a
+// unauthenticated local storage path) is covered by public-catalog.spec against the emulator with a
 // deterministic REST seed. Removed from smoke because the app-side public
 // projection write (seedCloudIfEmpty -> projectPublicForStore) races under the
 // emulator and the anonymous visit intermittently hits "Tienda no encontrada".
