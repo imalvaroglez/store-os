@@ -4,6 +4,7 @@ import { useAuth } from "./firebase/AuthProvider";
 import { useRoute } from "./router";
 import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
+import { StartupErrorScreen } from "./StartupErrorScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
 import { ToastProvider, OLIVIA_SLUG } from "../design-system";
@@ -24,8 +25,8 @@ const PublicCatalogScreen = lazy(() =>
 
 function Root() {
   const route = useRoute();
-  const { activeStore, state } = useStore();
-  const { user } = useAuth();
+  const { activeStore, state, stateStatus, stateError, retryStateLoad } = useStore();
+  const { user, authReady, error: authError } = useAuth();
 
   // Public storefront routes take over the whole viewport: no shell, no private
   // data. Anonymous-readable. A single component handles all three sub-routes.
@@ -45,7 +46,20 @@ function Root() {
 
   // SECURITY GATE: every non-public route requires an authenticated user. A
   // visitor who opens the root URL or a private route without a session sees
-  // only the authentication screen, even if localStorage has an active store.
+  // only the authentication screen.
+  if (!authReady) {
+    return <div className="min-h-full flex items-center justify-center p-4" role="status">Verificando tu sesión…</div>;
+  }
+  if (authError) {
+    return (
+      <StartupErrorScreen
+        title="No se pudo verificar tu sesión"
+        message={authError}
+        onRetry={() => window.location.reload()}
+        retryLabel="Reintentar"
+      />
+    );
+  }
   if (!user) {
     return (
       <div className="min-h-full flex items-center justify-center p-4">
@@ -53,6 +67,20 @@ function Root() {
           <AuthScreen />
         </div>
       </div>
+    );
+  }
+
+  if (stateStatus === "loading" || stateStatus === "idle") {
+    return <div className="min-h-full flex items-center justify-center p-4" role="status">Cargando tus tiendas…</div>;
+  }
+  if (stateError) {
+    return (
+      <StartupErrorScreen
+        title="No se pudieron cargar tus tiendas"
+        message={stateError}
+        onRetry={retryStateLoad}
+        retryLabel="Reintentar"
+      />
     );
   }
 

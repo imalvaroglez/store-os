@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "A lightweight operating system for small stores. Local-first PWA.",
+  "description": "A lightweight operating system for small stores. Cloud-first PWA.",
   "engines": {
     "node": ">=22"
   },

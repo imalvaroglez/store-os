@@ -4,7 +4,7 @@ Fecha: 30 de octubre de 2026
 
 Prioridad: **P0 — bloqueante arquitectónico**
 
-Estado: **bloqueado por integración de dependencias**
+Estado: **implementación en curso en `chore/eradicate-local-mode`**
 
 ## Objetivo
 
@@ -18,10 +18,10 @@ Flujo único de ambientes:
 
 **Desarrollo → validación con `store-os-dev` → aprobación humana → producción con `store-os-f7cf8`.**
 
-Esta especificación formaliza la Fase B. La preparación documental de Fase A no
-elimina aún la ruta de runtime heredada.
+Esta especificación formaliza la Fase B. Esta rama retira la ruta heredada del
+runtime administrativo y conserva los usos de navegador descritos abajo.
 
-## Evidencia de la implementación inspeccionada
+## Evidencia del estado anterior a esta implementación
 
 - `src/app/firebase/config.ts` exporta `isFirebaseConfigured()`. Si faltan
   variables, `AuthProvider` queda deshabilitado en vez de reportar un error.
@@ -149,21 +149,13 @@ elimina aún la ruta de runtime heredada.
 9. No se introducen migraciones de datos, cambios de negocio, servicios externos
    ni escrituras a proyectos Firebase remotos durante pruebas.
 
-## Dependencias y bloqueo actual
+## Integración
 
-La Fase B no inicia hasta integrar en `main` los PR #89–#94 y #103–#107, #109
-y #110, y cerrar el PR #108. Al 30 de octubre de 2026 siguen abiertos como
-draft; los commits locales de una rama de integración no sustituyen su
-integración al `main` protegido.
-
-El PR #108 se cerró por decisión del Product Owner el 30 de octubre de 2026.
-Agregaba un camino de acceso administrativo local y contradecía esta decisión;
-quedó fuera de la integración.
-
-Al desbloquearse, implementar en una rama independiente
-`chore/eradicate-local-mode` desde el `main` actualizado y abrir el PR dedicado.
-Los cambios que afecten simultáneamente runtime y tests deben ir en commits
-atómicos que mantengan compilación y suites válidas en cada entrega revisable.
+La fila de PRs acordada quedó integrada en `main` el 30 de octubre de 2026.
+Esta implementación se desarrolla en `chore/eradicate-local-mode`, creada desde
+el `main` actualizado, y se entrega en un PR independiente. Los cambios de
+runtime, pruebas y documentación se separan en commits atómicos cuando sea
+posible, manteniendo el destino de desarrollo en `store-os-dev`.
 
 ## Fuera de alcance
 

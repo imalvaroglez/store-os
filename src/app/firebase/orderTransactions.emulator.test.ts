@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import type { Order } from "../../types";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
-vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
+vi.mock("./config", () => ({ FIREBASE_EMULATOR_ENABLED: false, getFirebase: () => ({ db: holder.db }) }));
 import { deleteOrderWithStockTx, saveOrderWithStockTx, StaleOrderError } from "./firestoreData";
 
 let env: RulesTestEnvironment;

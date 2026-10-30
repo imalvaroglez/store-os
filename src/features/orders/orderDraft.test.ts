@@ -21,13 +21,14 @@ describe("orderDraft — borrador offline del editor (E1)", () => {
   beforeEach(() => localStorage.clear());
 
   it("keys separate the new-order editor from a saved order", () => {
-    expect(orderDraftKey("s1", "o1", true)).toBe("store_os_order_draft_v3::local::s1::new");
-    expect(orderDraftKey("s1", "o1", false)).toBe("store_os_order_draft_v3::local::s1::o1");
+    expect(orderDraftKey("s1", "o1", true, "u1")).toBe("store_os_order_draft_v3::u1::s1::new");
+    expect(orderDraftKey("s1", "o1", false, "u1")).toBe("store_os_order_draft_v3::u1::s1::o1");
     expect(orderDraftKey("s1", "o1", false, "u1")).not.toBe(orderDraftKey("s1", "o1", false, "u2"));
+    expect(() => orderDraftKey("s1", "o1", false, "")).toThrow(/sesión autenticada/i);
   });
 
   it("round-trips a meaningful draft and restores it", () => {
-    const key = orderDraftKey("s1", "o1", false);
+    const key = orderDraftKey("s1", "o1", false, "u1");
     saveOrderDraft(key, snapshot());
     const restored = loadOrderDraft(key, { updatedAt: "2026-10-28T10:00:00.000Z" }, false);
     expect(restored?.lines).toHaveLength(1);
@@ -35,13 +36,13 @@ describe("orderDraft — borrador offline del editor (E1)", () => {
   });
 
   it("refuses a stale draft: the saved order moved past it (another device)", () => {
-    const key = orderDraftKey("s1", "o1", false);
+    const key = orderDraftKey("s1", "o1", false, "u1");
     saveOrderDraft(key, snapshot());
     expect(loadOrderDraft(key, { updatedAt: "2026-10-28T11:00:00.000Z" }, false)).toBeNull();
   });
 
   it("restores a stale-checked draft for the NEW-order editor (no saved version yet)", () => {
-    const key = orderDraftKey("s1", "whatever", true);
+    const key = orderDraftKey("s1", "whatever", true, "u1");
     saveOrderDraft(key, snapshot());
     expect(loadOrderDraft(key, { updatedAt: "2026-10-28T23:00:00.000Z" }, true)).not.toBeNull();
   });
@@ -56,7 +57,7 @@ describe("orderDraft — borrador offline del editor (E1)", () => {
   });
 
   it("clears on demand (successful save)", () => {
-    const key = orderDraftKey("s1", "o1", false);
+    const key = orderDraftKey("s1", "o1", false, "u1");
     saveOrderDraft(key, snapshot());
     clearOrderDraft(key);
     expect(localStorage.getItem(key)).toBeNull();

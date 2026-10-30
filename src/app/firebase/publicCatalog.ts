@@ -1,5 +1,6 @@
 import type { StoreType, Storefront } from "../../types";
 import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
+import { FIREBASE_EMULATOR_ENABLED } from "./environment";
 
 /** Coarse stock signal — never an exact count. */
 export type PublicStockSignal = "agotado" | "pocas" | "disponible";
@@ -118,11 +119,10 @@ export class PublicProductNotFoundError extends Error {
   }
 }
 
-// Mirror of src/app/firebase/config.ts's environment detection: emulator mode
-// is opt-in and DEV/TEST-only. Requests use the dev project ID at localhost.
-const EMULATOR =
-  import.meta.env.MODE !== "production" &&
-  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
+// Uses the shared environment flag without importing the Firebase SDK, keeping
+// the anonymous storefront bundle small. Emulator builds stay on localhost,
+// including local production-preview builds.
+const EMULATOR = FIREBASE_EMULATOR_ENABLED;
 
 const PROJECT_ID = EMULATOR
   ? FIREBASE_DEV_PROJECT_ID
