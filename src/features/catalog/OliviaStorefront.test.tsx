@@ -97,6 +97,13 @@ beforeEach(() => {
 });
 
 describe("filtro por acabado", () => {
+  it("no muestra un selector cuando solo hay un acabado", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [catalog.products[0]] } });
+    render(<OliviaStorefront route={categoryRoute} />);
+    await screen.findByText("Acabado: Dorado");
+    expect(screen.queryByLabelText("Acabado")).toBeNull();
+  });
+
   it("muestra acabados en tarjetas y limita la categoría seleccionada", async () => {
     render(<OliviaStorefront route={categoryRoute} />);
     await screen.findByText("Acabado: Dorado");
