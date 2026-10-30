@@ -10,7 +10,10 @@ import { ToastProvider } from "../design-system";
 import { ThemeProvider } from "../design-system/theme";
 import type { AppUser } from "./firebase/auth";
 
-const authState: { user: AppUser } = { user: { uid: "uid_fer", email: "fer@olivia.mx", role: "member" } };
+const authState: { user: AppUser | null; enabled: boolean } = {
+  user: { uid: "uid_fer", email: "fer@olivia.mx", role: "member" },
+  enabled: true,
+};
 vi.mock("./firebase/config", () => ({
   isFirebaseConfigured: () => false,
   getFirebase: () => { throw new Error("Firebase no está configurado en esta prueba."); },
@@ -19,20 +22,21 @@ vi.mock("./firebase/AuthProvider", () => ({
   useAuth: () => ({
     user: authState.user,
     authReady: true,
-    enabled: true,
+    enabled: authState.enabled,
     signOut: async () => {},
   }),
 }));
 
 beforeEach(() => {
   const state = fixtureState();
-  state.stores[0].ownerUid = authState.user.uid;
+  state.stores[0].ownerUid = authState.user!.uid;
   window.history.replaceState({}, "", "/productos");
   saveState(state);
 });
 
 afterEach(() => {
   authState.user = { uid: "uid_fer", email: "fer@olivia.mx", role: "member" };
+  authState.enabled = true;
 });
 
 describe("AppShell configuración de tienda", () => {
@@ -94,5 +98,28 @@ describe("AppShell configuración de tienda", () => {
 
     expect(screen.getByRole("heading", { name: "No tienes permiso" })).toBeTruthy();
     expect(screen.queryByText("Teléfono de WhatsApp")).toBeNull();
+  });
+
+  it("en modo local permite administrar la tienda y oculta acciones de cloud", () => {
+    authState.user = null;
+    authState.enabled = false;
+
+    render(
+      <ThemeProvider>
+        <ToastProvider>
+          <StoreProvider>
+            <AppShell />
+          </StoreProvider>
+        </ToastProvider>
+      </ThemeProvider>
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Tienda" })[0]);
+
+    expect(screen.getByRole("heading", { name: "Administrar tienda" })).toBeTruthy();
+    expect(screen.getByText("Teléfono de WhatsApp")).toBeTruthy();
+    expect(screen.queryByText("Miembros")).toBeNull();
+    expect(screen.queryByText("Catálogo público")).toBeNull();
+    expect(screen.getByText("Niveles de precio")).toBeTruthy();
   });
 });
