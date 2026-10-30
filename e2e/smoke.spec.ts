@@ -28,6 +28,14 @@ test.afterAll(async () => {
   sharedPage = null;
 });
 
+async function clearSavedOrderDrafts(page: Page) {
+  await page.evaluate(() => {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith("store_os_order_draft_")) localStorage.removeItem(key);
+    }
+  });
+}
+
 test("home renders seeded store with primary action", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
   await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
@@ -141,6 +149,7 @@ test("order editor uses styled pickers and strict numeric fields", async ({ shar
 
 test("inline customer creation keeps the order draft", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
+  await clearSavedOrderDrafts(page);
   await page.goto("/pedidos/nuevo", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(500);
   await page.getByLabel("Producto").first().fill("Tenis Jordan 1 Retro");
@@ -255,8 +264,11 @@ test("reload restores the selected store and its order draft", async ({ sharedPa
   await expect(page.locator("header button, aside button").filter({ hasText: "Joyería" }).filter({ visible: true }).first()).toBeVisible();
   await expect(page.getByLabel("Producto").first()).toHaveValue("Cadena de plata 925");
   await expect(page.getByLabel("Cantidad").first()).toHaveValue("2");
+});
+
 test("customer price level applies to new order lines", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
+  await clearSavedOrderDrafts(page);
   await page.locator("header button, aside button").filter({ hasText: "▾" }).filter({ visible: true }).first().click();
   await page.getByText("Joyería", { exact: true }).first().click();
   await page.getByRole("button", { name: "Clientes" }).click();
@@ -281,20 +293,25 @@ test("customer price level applies to new order lines", async ({ sharedPage: pag
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
   await page.getByRole("button", { name: "Guardar pedido" }).click();
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+});
+
 test("review order lines by category and edit a selected line", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
+  await clearSavedOrderDrafts(page);
   await page.goto("/pedidos/nuevo", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(500);
   await page.getByLabel("Cliente").fill("Carlos Ruiz");
   await page.getByLabel("Producto").first().fill("Perfume Baccarat Rouge 540");
   await page.getByRole("button", { name: "+ Agregar línea" }).click();
-  await page.getByLabel("Producto").last().fill("Encargo especial");
-  await page.getByLabel("Precio unitario").last().fill("50");
+  // Fast capture prepends a blank line, so keep the catalog product on the
+  // second row and enter the free-form line at the top.
+  await page.getByLabel("Producto").first().fill("Encargo especial");
+  await page.getByLabel("Precio unitario").first().fill("50");
   await page.getByRole("button", { name: "Revisar por categoría" }).click();
   await expect(page.getByRole("heading", { name: "Perfumes" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sin categoría" })).toBeVisible();
   await page.getByRole("button", { name: "Editar Encargo especial" }).click();
-  await expect(page.getByLabel("Producto").last()).toBeFocused();
+  await expect(page.getByLabel("Producto").first()).toBeFocused();
   await page.getByRole("button", { name: "Guardar pedido" }).click();
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
   await page.getByText(/Encargo especial/).first().click();
@@ -302,6 +319,8 @@ test("review order lines by category and edit a selected line", async ({ sharedP
   await page.getByRole("button", { name: "Revisar por categoría" }).click();
   await expect(page.getByRole("heading", { name: "Perfumes" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sin categoría" })).toBeVisible();
+});
+
 test("copy the saved order detail", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
   await page.getByRole("button", { name: "Pedidos" }).click();
