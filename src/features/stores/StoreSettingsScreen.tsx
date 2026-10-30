@@ -363,15 +363,14 @@ export function StoreSettingsScreen({
           <p className="text-sm text-ink-soft break-all">{catalogUrl}</p>
           <Button full onClick={copyCatalogUrl}>Copiar enlace</Button>
           <Button full variant="success" onClick={shareOnWhatsApp}>Compartir por WhatsApp</Button>
-          {store.slug === "olivia" && store.ownerUid === user?.uid ? (
+          {store.slug === "olivia" && store.ownerUid === user?.uid && (
             <Button full variant="secondary" onClick={() => navigate("/catalogo/olivia/editar")}>
-              Editar sobre la vista pública
-            </Button>
-          ) : (
-            <Button full variant="secondary" onClick={() => setEditSite(true)}>
-              Editar sitio público
+              Editar textos sobre la vista pública
             </Button>
           )}
+          <Button full variant="secondary" onClick={() => setEditSite(true)}>
+            Editar sitio público
+          </Button>
           <Button full variant="secondary" onClick={republish} disabled={catalogBusy}>
             Republicar catálogo
           </Button>
