@@ -25,7 +25,8 @@ const PublicCatalogScreen = lazy(() =>
 function Root() {
   const route = useRoute();
   const { activeStore, state } = useStore();
-  const { user } = useAuth();
+  const { user, enabled: authEnabled } = useAuth();
+  const localDemoMode = import.meta.env.DEV && !authEnabled;
 
   // Public storefront routes take over the whole viewport: no shell, no private
   // data. Anonymous-readable. A single component handles all three sub-routes.
@@ -43,12 +44,9 @@ function Root() {
     );
   }
 
-  // SECURITY GATE: every non-public route requires an authenticated user. There
-  // is NO local demo and NO anonymous access to the admin panel — a visitor who
-  // lands on the root URL (or any private route) without a session sees ONLY the
-  // authentication screen. This also closes the hole where a stale demo
-  // activeStore in localStorage could render AppShell without a login.
-  if (!user) {
+  // Production and Firebase-configured builds always require an authenticated
+  // user. Only the unconfigured Vite dev server may use the isolated local demo.
+  if (!user && !localDemoMode) {
     return (
       <div className="min-h-full flex items-center justify-center p-4">
         <div className="w-full max-w-sm">
@@ -58,9 +56,8 @@ function Root() {
     );
   }
 
-  // Authenticated but no active store yet → the picker (or create-first if the
-  // account is genuinely empty). super_admin sees every store here; a member
-  // sees only the stores they belong to (scoped by loadCloudState + Firestore rules).
+  // With no active store, show the picker or the create-first screen. In cloud
+  // mode the store list is already scoped by the Firestore adapter and rules.
   if (!activeStore) {
     return state.stores.length > 0 ? <StorePickerScreen /> : (
       <div className="min-h-full">

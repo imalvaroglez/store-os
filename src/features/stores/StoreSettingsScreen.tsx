@@ -28,8 +28,8 @@ export function StoreSettingsScreen({
   storeId: string;
   onDeleted?: () => void;
 }) {
-  const { state, updateStore, deleteStore, inviteMember, removeMember, transferStoreOwnership, republishCatalog } = useStore();
-  const { user } = useAuth();
+  const { state, updateStore, deleteStore, inviteMember, removeMember, transferStoreOwnership, republishCatalog, cloud } = useStore();
+  const { user, enabled: authEnabled } = useAuth();
   const toast = useToast();
   const store = state.stores.find((s) => s.id === storeId);
 
@@ -70,7 +70,7 @@ export function StoreSettingsScreen({
   const pending = store.pendingInvites ?? [];
   // Owners and platform super_admins can manage the store. Other members keep
   // the read-only view and cannot submit business-content writes.
-  const isOwnerOrAdmin = user?.role === "super_admin" || store.ownerUid === user?.uid;
+  const isOwnerOrAdmin = !authEnabled || user?.role === "super_admin" || store.ownerUid === user?.uid;
 
   async function republish() {
     setCatalogBusy(true);
@@ -296,7 +296,7 @@ export function StoreSettingsScreen({
         </Button>
       </div>}
 
-      <div className="space-y-2">
+      {authEnabled && <div className="space-y-2">
         <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Miembros</h3>
         {memberUids.length === 0 && pending.length === 0 && (
           <p className="text-sm text-ink-soft">Solo tú. Invita a alguien por correo.</p>
@@ -354,9 +354,9 @@ export function StoreSettingsScreen({
           </div>
         )}
         {inviteMsg && <p className="text-xs text-ink-soft">{inviteMsg}</p>}
-      </div>
+      </div>}
 
-      {isOwnerOrAdmin && (
+      {isOwnerOrAdmin && cloud && (
         <div className="space-y-3">
           <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wide">Catálogo público</h3>
           <p className="text-sm text-ink-soft break-all">{catalogUrl}</p>

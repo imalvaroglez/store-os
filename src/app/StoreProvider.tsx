@@ -282,7 +282,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         fromCloud.current = false;
       });
     } else if (!cloud) {
-      // Local mode: seed-backed localStorage.
+      // Local mode: localStorage, initially empty unless this browser has data.
       fromCloud.current = true;
       dispatch({ type: "REPLACE_STATE", state: loadState() });
       fromCloud.current = false;

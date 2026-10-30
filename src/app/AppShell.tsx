@@ -70,7 +70,7 @@ export function AppShell() {
 
   if (!activeStore) return null;
 
-  const canManageStore = user?.role === "super_admin" || activeStore.ownerUid === user?.uid;
+  const canManageStore = !authEnabled || user?.role === "super_admin" || activeStore.ownerUid === user?.uid;
 
   if (storeSettingsRoute && !canManageStore) {
     return (
@@ -141,7 +141,7 @@ export function AppShell() {
         switcher={<StoreSwitcher stores={state.stores} activeStore={activeStore} onSelect={setActiveStore} />}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenStoreSettings={canManageStore ? () => navigate("/tienda/configuracion") : undefined}
-        onChangeStore={user ? () => setActiveStore(null) : undefined}
+        onChangeStore={user || !authEnabled ? () => setActiveStore(null) : undefined}
       />
 
       {/* Main column (mobile: header + scroll + bottom nav; desktop: scroll only) */}

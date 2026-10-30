@@ -10,25 +10,27 @@ import { saveState } from "../../lib/storage";
 // ever reports a user when Firebase is configured, so the tests mock the module
 // to place an owner / member / super_admin in the picker.
 let mockUser: AppUser | null = null;
+let mockAuthEnabled = false;
 vi.mock("../../app/firebase/AuthProvider", () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: () => ({
     user: mockUser,
     authReady: true,
-    enabled: false,
+    enabled: mockAuthEnabled,
     signOut: async () => {},
   }),
 }));
 
 const OLIVIA = "store_olivia";
 
-function renderPicker(user: AppUser | null, ownerUid?: string) {
+function renderPicker(user: AppUser | null, ownerUid?: string, authEnabled = !!user) {
   const state = fixtureState();
   if (ownerUid) {
     const olivia = state.stores.find((s) => s.id === OLIVIA)!;
     olivia.ownerUid = ownerUid;
   }
   mockUser = user;
+  mockAuthEnabled = authEnabled;
   saveState(state);
   return render(
     <StoreProvider>
@@ -44,6 +46,7 @@ const superAdmin: AppUser = { uid: "uid_root", email: "admin@store.os", role: "s
 beforeEach(() => {
   localStorage.clear();
   mockUser = null;
+  mockAuthEnabled = false;
 });
 
 describe("StorePickerScreen gear de Administrar", () => {
@@ -63,11 +66,16 @@ describe("StorePickerScreen gear de Administrar", () => {
     expect(screen.getByLabelText("Administrar Santi")).toBeTruthy();
   });
 
-  it("sin sesión (modo demo) no hay ⚙ en ninguna tienda (ni sin ownerUid)", () => {
+  it("en modo local permite administrar tiendas sin sesión", () => {
     renderPicker(null, "uid_fer");
+    expect(screen.getByLabelText("Administrar Olivia")).toBeTruthy();
+    expect(screen.getByLabelText("Administrar Santi")).toBeTruthy();
+    expect(screen.getByLabelText("Administrar Joyería")).toBeTruthy();
+  });
+
+  it("con Firebase activo y sin sesión no permite administrar tiendas", () => {
+    renderPicker(null, "uid_fer", true);
     expect(screen.queryByLabelText("Administrar Olivia")).toBeNull();
-    // Santi/Joyería no tienen ownerUid en el fixture: undefined === undefined
-    // no debe colarse cuando user es null (review F1).
     expect(screen.queryByLabelText("Administrar Santi")).toBeNull();
     expect(screen.queryByLabelText("Administrar Joyería")).toBeNull();
   });
