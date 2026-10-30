@@ -300,3 +300,26 @@ test("customer price level applies to new order lines", async ({ sharedPage: pag
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
 });
 
+test("review order lines by category and edit a selected line", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.goto("/pedidos/nuevo", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(500);
+  await page.getByLabel("Cliente").fill("Carlos Ruiz");
+  await page.getByLabel("Producto").first().fill("Perfume Baccarat Rouge 540");
+  await page.getByRole("button", { name: "+ Agregar línea" }).click();
+  // Prepend (#91): the fresh line lands on TOP, so it is FIRST, not last.
+  await page.getByLabel("Producto").first().fill("Encargo especial");
+  await page.getByLabel("Precio unitario").first().fill("50");
+  await page.getByRole("button", { name: "Revisar por categoría" }).click();
+  await expect(page.getByRole("heading", { name: "Perfumes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sin categoría" })).toBeVisible();
+  await page.getByRole("button", { name: "Editar Encargo especial" }).click();
+  await expect(page.getByLabel("Producto").first()).toBeFocused();
+  await page.getByRole("button", { name: "Guardar pedido" }).click();
+  await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+  await page.getByText(/Encargo especial/).first().click();
+  await expect(page.getByRole("heading", { name: "Editar pedido", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Revisar por categoría" }).click();
+  await expect(page.getByRole("heading", { name: "Perfumes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sin categoría" })).toBeVisible();
+});
