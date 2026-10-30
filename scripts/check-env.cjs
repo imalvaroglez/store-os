@@ -14,7 +14,7 @@
  * Rules:
  *   VITE_VERCEL_ENV === 'preview'     + projectId !== DEV   => FAIL
  *   VITE_VERCEL_ENV === 'production'  + projectId !== PROD  => FAIL
- *   local build with a projectId other than DEV             => FAIL
+ *   local build without exactly the DEV project ID            => FAIL
  *
  * VITE_VERCEL_ENV is injected automatically by Vercel per deployment target.
  */
@@ -38,6 +38,33 @@ function pass(msg) {
   console.log(`\x1b[32m[check-env] OK:\x1b[0m ${msg}`);
 }
 
+// Vite loads .env files after npm pre-scripts run. Read them here so the guard
+// validates the same Firebase target before dev and preview servers start.
+function loadLocalEnv() {
+  const fs = require("fs");
+  const path = require("path");
+  const root = path.join(__dirname, "..");
+  const loaded = {};
+  for (const file of [".env", ".env.local"]) {
+    const fullPath = path.join(root, file);
+    if (!fs.existsSync(fullPath)) continue;
+    for (const line of fs.readFileSync(fullPath, "utf8").split(/\r?\n/)) {
+      const match = line.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (!match) continue;
+      let value = match[2];
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      } else {
+        value = value.replace(/\s+#.*$/, "").trim();
+      }
+      loaded[match[1]] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(loaded)) {
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
 function checkFirebaseAliases() {
   const path = require("path");
   const fs = require("fs");
@@ -48,10 +75,13 @@ function checkFirebaseAliases() {
   } catch {
     fail("no se pudo leer .firebaserc");
   }
+  const allowedProjectIds = new Set([DEV_PROJECT_ID, PROD_PROJECT_ID]);
+  const aliases = Object.values(projects || {});
   if (
     projects?.default !== DEV_PROJECT_ID ||
     projects?.dev !== DEV_PROJECT_ID ||
-    projects?.production !== PROD_PROJECT_ID
+    projects?.production !== PROD_PROJECT_ID ||
+    aliases.some((projectId) => !allowedProjectIds.has(projectId))
   ) {
     fail(
       `.firebaserc debe usar ${DEV_PROJECT_ID} como predeterminado/dev y ${PROD_PROJECT_ID} como alias production.`
@@ -65,13 +95,11 @@ function checkFirebaseAliases() {
  * @param {string|null|undefined} projectId
  */
 function check(vercelEnv, projectId) {
-  // Local builds may omit Firebase config for offline-only work. When Firebase
-  // is configured, development must use the dev project.
   if (!vercelEnv) {
-    if (projectId && projectId !== DEV_PROJECT_ID) {
-      fail(`build local con projectId '${projectId}'. El desarrollo conectado debe usar ${DEV_PROJECT_ID}.`);
+    if (projectId !== DEV_PROJECT_ID) {
+      fail(`desarrollo local con projectId '${projectId || "sin configurar"}'. Debe usar ${DEV_PROJECT_ID}.`);
     }
-    pass(projectId ? `desarrollo local → ${DEV_PROJECT_ID}` : "build local sin Firebase configurado");
+    pass(`desarrollo local → ${DEV_PROJECT_ID}`);
     return;
   }
 
@@ -104,8 +132,11 @@ if (require.main === module) {
   if (process.argv.includes("--test")) {
     runSelfTest();
   } else {
+    loadLocalEnv();
     checkFirebaseAliases();
-    check(process.env.VITE_VERCEL_ENV, process.env.VITE_FIREBASE_PROJECT_ID);
+    const localCommand = process.argv.includes("--local");
+    const vercelEnv = localCommand ? undefined : process.env.VITE_VERCEL_ENV;
+    check(vercelEnv, process.env.VITE_FIREBASE_PROJECT_ID);
   }
 }
 
@@ -223,14 +254,14 @@ function runSelfTest() {
     assert.ok(!blocked, "El desarrollo local debe aceptar store-os-dev");
   });
 
-  it("local without Firebase config => not blocked", () => {
+  it("local without dev project configured => blocked", () => {
     blocked = false;
     try {
       check(undefined, undefined);
     } catch (e) {
       /* expected */
     }
-    assert.ok(!blocked, "El build local sin conexión debe seguir disponible");
+    assert.ok(blocked, "El desarrollo local debe exigir store-os-dev");
   });
 
   it("unknown Vercel environment => blocked", () => {

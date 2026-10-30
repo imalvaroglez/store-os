@@ -40,6 +40,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Regla de Firebase
 
+- Los únicos IDs de proyecto Firebase permitidos en el repositorio son `store-os-dev` y `store-os-f7cf8`; cualquier otro destino bloquea el cambio.
 - Todo desarrollo conectado, prueba contra emuladores y Preview usa el ID `store-os-dev`.
 - Los emuladores usan ese mismo ID y el bucket de dev, pero todos sus servicios apuntan a `127.0.0.1`; no se crea otro proyecto ni namespace para el trabajo local.
 - `.firebaserc` deja `store-os-dev` como proyecto predeterminado. Todo comando Firebase que permita elegir proyecto debe indicar el destino explícitamente; los comandos de desarrollo apuntan a `store-os-dev`.
@@ -47,7 +48,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Arquitectura (lo esencial)
 
-- **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. El modo local sin sesión permanece disponible.
+- **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. El panel siempre requiere autenticación; las pruebas unitarias pueden usar estado local sin conectar Firebase.
 - **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules` (super-admin + miembros por tienda). El adaptador `firestoreData.ts` acota lecturas a las tiendas accesibles.
 - **Estado:** `StoreProvider` (`useReducer`) es el **único** escritor de `localStorage` en modo local; en modo cloud escribe en Firestore. Aislamiento entre tiendas **solo** vía selectores en `src/lib/selectors.ts`.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.

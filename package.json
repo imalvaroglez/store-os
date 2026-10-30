@@ -8,9 +8,11 @@
     "node": ">=22"
   },
   "scripts": {
+    "predev": "node scripts/check-env.cjs --local",
     "dev": "vite",
     "build": "node scripts/check-env.cjs && tsc --noEmit && vite build && node scripts/check-public-bundle.mjs && node scripts/prerender-public.mjs",
     "typecheck": "tsc --noEmit",
+    "prepreview": "node scripts/check-env.cjs --local",
     "preview": "vite preview",
     "test": "vitest run --exclude src/app/firebase/firestore.rules.test.ts",
     "test:watch": "vitest",

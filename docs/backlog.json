@@ -92,15 +92,6 @@
       ]
     },
     {
-      "id": "remove-client-demo-seed",
-      "title": "Retirar el seed demo del cliente",
-      "priority": 20,
-      "status": "needs-spec",
-      "specPath": "docs/superpowers/specs/remove-client-demo-seed-design.md",
-      "dependsOn": [],
-      "previewChecks": []
-    },
-    {
       "id": "pnpm-lockfile",
       "title": "Resolver el lockfile de pnpm",
       "priority": 30,

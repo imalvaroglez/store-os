@@ -8,14 +8,14 @@ import {
   type AppUser,
 } from "./auth";
 
-// App-wide auth state. When `user` is null the app is in local-demo mode; when
-// set, the cloud data layer is active. `authReady` is false during the initial
-// Firebase session check.
+// App-wide auth state. Private routes require `user`; without a configured
+// Firebase session, the app stays on the authentication screen. `authReady` is
+// false during the initial Firebase session check.
 
 type AuthContextValue = {
   user: AppUser | null;
   authReady: boolean;
-  enabled: boolean; // false when Firebase isn't configured (pure local app)
+  enabled: boolean; // false when Firebase is not configured
   signOut: () => Promise<void>;
 };
 
@@ -27,7 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authReady, setAuthReady] = useState(!enabled);
 
   useEffect(() => {
-    if (!enabled) return; // pure local mode: never signed in
+    if (!enabled) return; // No Firebase session is available.
     const unsub = subscribeToAuth((u) => {
       setUser(u);
       setAuthReady(true);

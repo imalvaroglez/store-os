@@ -282,7 +282,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         fromCloud.current = false;
       });
     } else if (!cloud) {
-      // Local mode: seed-backed localStorage.
+      // Local state is loaded from localStorage when no cloud session is available.
       fromCloud.current = true;
       dispatch({ type: "REPLACE_STATE", state: loadState() });
       fromCloud.current = false;
@@ -363,7 +363,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // LOCAL state, so a stale tab could clobber remote edits field by field
       // (the 2026-08 whatsapp + storefront overwrite). Merged `store` above is
       // still what drives claimSlug, the dispatch and the public projection;
-      // demo mode is unaffected (the reducer owns localStorage).
+      // Without a cloud session, the reducer persists state through localStorage.
       const persisted = stripUndefined({ ...patch, updatedAt: nowIso() }) as { id: string } & Record<string, unknown>;
       await persistEntity("stores", persisted);
       // Cloud state follows the private write. This prevents a rejected write
@@ -617,7 +617,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
         return "received";
       }
-      // Demo local: same effect, guarded by the check above. A stale or
+      // Local persistence: same effect, guarded by the check above. A stale or
       // corrupt localStorage must never mix stores: every linked product must
       // exist and belong to this purchase's store before stock moves.
       for (const line of purchase.lines) {

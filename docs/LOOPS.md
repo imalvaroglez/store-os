@@ -33,7 +33,7 @@ npm run build     # tsc --noEmit + vite build — typecheck AND bundle
 npm run test      # vitest (unit + design-system gate)
 npm run e2e       # playwright (smoke + responsive + theme)
 npm run verify    # NOT A SCRIPT — see note below
-npm run dev       # local dev server on 5173 (local mode without Firebase)
+npm run dev       # servidor de desarrollo en 5173; conectado a store-os-dev
 ```
 
 Extra, used when relevant:
@@ -57,7 +57,7 @@ A draft PR is reviewable only when CI (`build-test` + `rules-and-e2e`) is green 
 - App runs locally (`npm run dev`)
 - **No release blockers** (see §5)
 - Admin flows work (stores, products, customers, orders)
-- Public catalog works (`/catalogo`, `/catalogo/:slug` in demo)
+- Public catalog works (`/catalogo/:slug` against the dev emulator)
 - Store isolation works (no cross-store leak)
 - No secrets committed (no keys, tokens, service accounts in the diff)
 - Env requirements documented (which vars Vercel needs)
@@ -70,6 +70,7 @@ Store OS has one development Firebase project and one production Firebase
 project. Local development and Preview target dev; production is a separate
 release destination:
 
+- **Only `store-os-dev` and `store-os-f7cf8` are allowed Firebase project IDs**; any other target blocks the change.
 - **Development (local) and Preview use `store-os-dev`**. Local emulator runs
   use the same project ID but connect every service to `127.0.0.1`; connected
   local development and Preview use the dev Firebase backend. Production
