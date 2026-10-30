@@ -42,7 +42,7 @@ Extra, used when relevant:
 npm run typecheck        # tsc --noEmit only
 npm run e2e:firebase     # Firebase emulator suite (needs `npm run emulators`)
 npm run emulators        # Auth + Firestore + Storage emulators on localhost
-npm run deploy:rules     # human-only production operation; agents never execute it
+npm run deploy:rules     # writes only to store-os-dev; production uses the approved CI release
 ```
 
 > **`npm run verify` does NOT exist in this repo.** If asked to run it, **report that it is not defined** — do not pretend success and do not invent a substitute. The closest real equivalent is `npm run build && npm run test && npm run e2e`. Same rule for any other missing script: **say it's missing, don't fake it.**
