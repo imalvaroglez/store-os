@@ -19,7 +19,7 @@ vi.mock("./firebase/AuthProvider", () => ({
   useAuth: () => ({
     user: authState.user,
     authReady: true,
-    enabled: false,
+    enabled: true,
     signOut: async () => {},
   }),
 }));

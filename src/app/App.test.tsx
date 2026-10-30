@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StoreProvider } from "./StoreProvider";
 import { App } from "./App";
@@ -8,6 +8,16 @@ import { fixtureState } from "../lib/testFixtures";
 import type { AppState } from "../types";
 import { saveState } from "../lib/storage";
 import { ToastProvider } from "../design-system";
+
+const authMock = vi.hoisted(() => ({ enabled: false }));
+vi.mock("./firebase/AuthProvider", () => ({
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useAuth: () => ({ user: null, authReady: true, enabled: authMock.enabled, signOut: async () => {} }),
+}));
+
+beforeEach(() => {
+  authMock.enabled = false;
+});
 
 // Runtime mount smoke: catches render-time crashes curl/static checks can't.
 // AuthProvider is in pure-local mode here (no VITE_FIREBASE_* in the test env),
@@ -82,6 +92,61 @@ describe("Root signed-out routing (production)", () => {
       expect(screen.getByText("Sincroniza tus tiendas en la nube")).toBeTruthy();
       // The demo store must NOT appear.
       expect(screen.queryByText("Joyería")).toBeNull();
+    } finally {
+      (import.meta.env as { DEV: boolean }).DEV = original;
+      localStorage.clear();
+    }
+  });
+
+  it("permite el modo local vacío durante npm run dev sin Firebase", () => {
+    const original = import.meta.env.DEV;
+    (import.meta.env as { DEV: boolean }).DEV = true;
+    localStorage.clear();
+    try {
+      render(
+        <AuthProvider>
+          <StoreProvider>
+            <App />
+          </StoreProvider>
+        </AuthProvider>
+      );
+      expect(screen.getByText("Crea tu primera tienda")).toBeTruthy();
+      expect(screen.queryByText("Sincroniza tus tiendas en la nube")).toBeNull();
+    } finally {
+      (import.meta.env as { DEV: boolean }).DEV = original;
+      localStorage.clear();
+    }
+  });
+
+  it("abre la tienda local guardada durante npm run dev", () => {
+    const original = import.meta.env.DEV;
+    (import.meta.env as { DEV: boolean }).DEV = true;
+    try {
+      const Wrapper = withState(fixtureState());
+      render(<Wrapper><App /></Wrapper>);
+      expect(screen.getByText("+ Nuevo pedido")).toBeTruthy();
+      expect(screen.queryByText("Sincroniza tus tiendas en la nube")).toBeNull();
+    } finally {
+      (import.meta.env as { DEV: boolean }).DEV = original;
+      localStorage.clear();
+    }
+  });
+
+  it("sigue exigiendo autenticación en dev cuando Firebase sí está configurado", () => {
+    const original = import.meta.env.DEV;
+    (import.meta.env as { DEV: boolean }).DEV = true;
+    authMock.enabled = true;
+    localStorage.clear();
+    try {
+      render(
+        <AuthProvider>
+          <StoreProvider>
+            <App />
+          </StoreProvider>
+        </AuthProvider>
+      );
+      expect(screen.getByText("Sincroniza tus tiendas en la nube")).toBeTruthy();
+      expect(screen.queryByText("Crea tu primera tienda")).toBeNull();
     } finally {
       (import.meta.env as { DEV: boolean }).DEV = original;
       localStorage.clear();

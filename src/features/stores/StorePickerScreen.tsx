@@ -11,7 +11,7 @@ import { StoreForm } from "./StoreForm";
 // "Cambiar tienda" to switch.
 export function StorePickerScreen() {
   const { state, setActiveStore } = useStore();
-  const { user } = useAuth();
+  const { user, enabled: authEnabled } = useAuth();
   const [creating, setCreating] = useState(false);
 
   return (
@@ -39,7 +39,7 @@ export function StorePickerScreen() {
                   </div>
                 </div>
               </Card>
-              {!!user && (user.role === "super_admin" || s.ownerUid === user.uid) && (
+              {(!authEnabled || !!user && (user.role === "super_admin" || s.ownerUid === user.uid)) && (
                 <IconButton
                   variant="ghost"
                   aria-label={`Administrar ${s.name}`}
