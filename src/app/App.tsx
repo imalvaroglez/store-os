@@ -27,7 +27,7 @@ const PublicCatalogScreen = lazy(() =>
 function Root() {
   const route = useRoute();
   const { activeStore, state, saveStorefront } = useStore();
-  const { user } = useAuth();
+  const { user, authReady } = useAuth();
   const toast = useToast();
   const candidateStore = state.stores.find((store) => store.slug === OLIVIA_SLUG);
   const storefrontOwner = canEditOliviaStorefront(route, user, candidateStore) ? candidateStore : undefined;
@@ -42,6 +42,7 @@ function Root() {
   // The owner editor uses the authenticated app entry so the anonymous
   // storefront bundle never contains Auth or private store data.
   if (route.name === "storefront_editor") {
+    if (!authReady) return <div className="min-h-full" role="status" aria-label="Cargando sesión…" />;
     if (!user) return <AuthScreen />;
     if (!storefrontOwner || !storefrontEditor) {
       return <div className="min-h-full flex items-center justify-center p-6"><div className="space-y-3 text-center"><h1 className="text-lg font-semibold text-on-surface">No tienes acceso a este editor</h1><a className="text-primary underline" href="/catalogo/olivia">Volver al catálogo público</a></div></div>;

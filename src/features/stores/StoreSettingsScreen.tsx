@@ -7,6 +7,7 @@ import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { PublicCatalogProjectionError, SlugTakenError } from "../../app/firebase/firestoreData";
 import { createWhatsAppShareCatalogUrl } from "../../lib/whatsapp";
 import { slugify } from "../../lib/catalog";
+import { navigate } from "../../lib/router";
 import { StorefrontEditor } from "../catalog/StorefrontEditor";
 import { normalizeSkuPrefixToken } from "../../lib/catalog";
 import { CANONICAL_TIERS } from "../../lib/pricing";
@@ -363,7 +364,7 @@ export function StoreSettingsScreen({
           <Button full onClick={copyCatalogUrl}>Copiar enlace</Button>
           <Button full variant="success" onClick={shareOnWhatsApp}>Compartir por WhatsApp</Button>
           {store.slug === "olivia" && store.ownerUid === user?.uid ? (
-            <Button full variant="secondary" onClick={() => window.open("/catalogo/olivia/editar", "_blank", "noopener,noreferrer")}>
+            <Button full variant="secondary" onClick={() => navigate("/catalogo/olivia/editar")}>
               Editar sobre la vista pública
             </Button>
           ) : (
