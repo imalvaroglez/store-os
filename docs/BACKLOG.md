@@ -28,7 +28,7 @@ El flujo para mover una entrada a "en curso" es el **Product Loop** (LOOPS.md
 implementa → QA → merge. Nada aquí está comprometido hasta que hay spec.
 
 Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` · `✅ done` ·
-`❄️ frozen`
+`⛔ blocked` · `❄️ frozen`
 
 ## Índice (por prioridad)
 
@@ -38,6 +38,14 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
 > cual. Un item `🟡 needs-decision` tiene decisiones que solo el PO puede cerrar;
 > hasta entonces el harness las inventaría. `🔴 needs-spec` requiere escritura
 > de spec antes de tocar código. La prioridad de negocio va en cada entrada.
+
+### ⛔ P0 bloqueado por integraciones
+- **Erradicar persistencia administrativa local** — diseño formal listo en
+  `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`; no iniciar
+  cambios definitivos de runtime hasta integrar los PR #89–#94 y #103–#107,
+  #109 y #110, y cerrar el #108.
+  El PR #108 contradice la arquitectura decidida y debe seguir bloqueado hasta
+  que su autor o la persona responsable lo cierre.
 
 ### 🟢 Ready para el workflow (objetivo acotado, decisiones cerradas)
 - **Deuda: "Un refresh debería funcionar como un refresh"** — ready, **no

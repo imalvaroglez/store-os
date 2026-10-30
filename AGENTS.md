@@ -8,14 +8,14 @@ Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentr
 
 ## Qué es Store OS
 
-PWA **local-first**, **mobile-first** y **100% en español (México)** para administrar tiendas pequeñas. Multitienda, dos tipos de tienda (Bajo pedido / Inventario y precios). Ver [`README.md`](README.md) y [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+PWA **cloud-first**, **mobile-first** y **100% en español (México)** para administrar tiendas pequeñas. Firebase Auth y Firestore respaldan la administración. Multitienda, dos tipos de tienda (Bajo pedido / Inventario y precios). Ver [`README.md`](README.md) y [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-Stack: **React 18 + TypeScript + Vite + Tailwind + Firebase**, `localStorage` para el modo local, PWA. Sin dependencias de UI externas — el sistema de diseño es propio.
+Stack: **React 18 + TypeScript + Vite + Tailwind + Firebase**, PWA. `localStorage` se reserva para preferencias, carrito público y borradores asociados a una persona autenticada; nunca sustituye la persistencia administrativa.
 
 ## Comandos
 
 ```bash
-npm run dev            # desarrollo (5173) — modo local sin Firebase
+npm run dev            # desarrollo (5173) — Firebase store-os-dev o emuladores locales
 npm run build          # tsc --noEmit + vite build
 npm run typecheck      # tsc --noEmit
 npm run test           # vitest (unit + design-system gate)
@@ -44,15 +44,23 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - `.firebaserc` deja `store-os-dev` como proyecto predeterminado. Todo comando Firebase que permita elegir proyecto debe indicar el destino explícitamente; los comandos de desarrollo apuntan a `store-os-dev`.
 - Producción (`store-os-f7cf8`) solo se usa para liberar un cambio aprobado explícitamente por una persona. El trabajo de desarrollo nunca ejecuta operaciones contra producción.
 
+## Regla permanente de arquitectura administrativa
+
+- Toda operación administrativa requiere Firebase Auth y Firestore. No agregar ni restaurar persistencia administrativa alternativa en `localStorage`, acceso sin sesión ni datos de tienda operativos en el navegador.
+- Si Firebase no está configurado o falla, mostrar un error explícito y no aparentar éxito ni cambiar a otro almacenamiento.
+- Se conservan el carrito público, preferencias de tienda y tema, borradores de pedido asociados al UID y la infraestructura PWA. El storefront público sigue siendo anónimo y lee las proyecciones públicas Firebase.
+- El runtime actual todavía conserva una rama heredada de estado administrativo local. Es deuda P0, no comportamiento admitido; no extenderla. La erradicación está bloqueada y especificada en `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`.
+- Para iniciar la Fase B deben integrarse los PR #89–#94, #103–#107, #109 y #110; el PR #108 debe cerrarse por su autor o por la persona responsable y queda excluido de integración. No cerrar PRs ajenos.
+
 ## Arquitectura (lo esencial)
 
-- **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. `AuthProvider` expone el estado; `useStore().cloud` es true al iniciar sesión. El panel siempre requiere autenticación; las pruebas unitarias pueden usar estado local sin conectar Firebase.
+- **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. Las rutas administrativas requieren sesión; las rutas públicas del catálogo no.
 - **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules`: `super_admin` puede operar cualquier tienda; los miembros sólo sus tiendas. El adaptador `firestoreData.ts` carga todos los datos operativos para `super_admin` y acota los de miembros.
-- **Estado:** `StoreProvider` (`useReducer`) es el **único** escritor de `localStorage` en modo local; en modo cloud escribe en Firestore. La UI normal se mantiene enfocada en la tienda activa; la frontera de seguridad la imponen las reglas, con acceso global explícito para `super_admin`.
+- **Estado:** `StoreProvider` mantiene el estado administrativo en memoria y lo sincroniza con Firestore. `localStorage` no es respaldo de tiendas ni operaciones; la rama heredada pendiente de eliminación no debe ampliarse.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
 - **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Gate de cumplimiento: falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos (excepción: `ErrorBoundary`).
 - **Temas:** `src/design-system/theme/`. Cada tema define tokens (color, tipografía, radios, sombras, **movimiento**). `ThemeProvider` los inyecta en `<html data-theme>`. Per-usuario, persiste en `localStorage` → perfil Firestore.
-- **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. Ruta pública `/catalogo/:slug` (funciona en local y en cloud: la proyección `publicStores`/`publicProducts` se escribe al crear/renombrar tienda y al guardar productos, con lectura anónima).
+- **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. La ruta pública `/catalogo/:slug` consulta las proyecciones `publicStores`/`publicProducts` con lectura anónima; las rutas administrativas requieren sesión.
 - **Datos:** tipos en `src/types/index.ts`. Coerción numérica siempre vía `parseAmount` (`src/lib/money.ts`) — nunca escribas `NaN` al estado.
 
 ## Convenciones (importantes)
