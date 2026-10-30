@@ -287,13 +287,13 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release_production }}" = "true" ]; then
             P=store-os-f7cf8
           fi
-          echo "── deploying firestore+storage rules → $P"
-          firebase deploy --only firestore:rules,storage --project "$P" \
+          echo "── deploying firestore rules, indexes, storage rules → $P"
+          firebase deploy --only firestore:rules,firestore:indexes,storage --project "$P" \
             --token "$FIREBASE_TOKEN" --non-interactive
       - name: Parity check (second pass must be a no-op)
         # This firebase-tools version prints "released rules …" even on a no-op
         # deploy, so "released" is NOT a drift signal. The reliable one is the
-        # inverse: an actual change always UPLOADS ("uploading rules …"), while
+        # inverse: a rules or index change always uploads rules or indexes, while
         # an up-to-date deploy prints "already up to date, skipping upload". If
         # the second pass uploads anything, the first pass didn't stick (or
         # something rewrote the release in between) — that's the drift we fail on.
@@ -305,13 +305,13 @@ jobs:
             P=store-os-f7cf8
           fi
           code=0
-          OUT="$(firebase deploy --only firestore:rules,storage --project "$P" \
+          OUT="$(firebase deploy --only firestore:rules,firestore:indexes,storage --project "$P" \
             --token "$FIREBASE_TOKEN" --non-interactive 2>&1)" || code=$?
           echo "$OUT"
           if [ "$code" -ne 0 ]; then
             echo "::error::$P: parity pass failed (exit $code)"
             exit 1
-          elif grep -qi "uploading rules" <<<"$OUT"; then
-            echo "::error::$P: not in parity — the second pass still uploaded rules"
+          elif grep -Eqi "uploading .*?(rules|index)" <<<"$OUT"; then
+            echo "::error::$P: not in parity — the second pass still uploaded rules or indexes"
             exit 1
           fi
