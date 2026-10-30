@@ -41,7 +41,12 @@ test("store owner edits Olivia's storefront in place and the public projection s
     pendingInvites: [],
   });
   await gotoClean(page, "/catalogo/olivia");
-  await page.getByRole("button", { name: "Editar sitio" }).waitFor({ state: "visible", timeout: 15000 });
+  const editButton = page.getByRole("button", { name: "Editar sitio" });
+  try {
+    await editButton.waitFor({ state: "visible", timeout: 15000 });
+  } catch {
+    throw new Error(`No apareció el control de edición en ${page.url()}. Contenido: ${(await page.locator("body").innerText()).slice(0, 1000)}`);
+  }
   await page.getByRole("button", { name: "Editar sitio" }).click();
   await page.getByRole("button", { name: "Editar Mensaje principal" }).click();
   await page.getByLabel("Mensaje principal").fill(body);
