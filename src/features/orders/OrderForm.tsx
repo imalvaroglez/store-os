@@ -18,7 +18,6 @@ import { customersForStore } from "../../lib/selectors";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
-import { useEffect, useMemo, useRef, useState } from "react";
 import { uid } from "../../lib/ids";
 import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
