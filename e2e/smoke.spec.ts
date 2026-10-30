@@ -271,7 +271,22 @@ test("customer price level applies to new order lines", async ({ sharedPage: pag
   await expect(page.getByText(name)).toBeVisible();
   await page.getByRole("button", { name: "Pedidos" }).click();
   await page.getByRole("button", { name: "+ Nuevo" }).click();
-  await page.getByLabel("Cliente").fill(name);
+  // Select the freshly created customer EXPLICITLY from the dropdown instead of
+  // relying on the exact-name auto-bind: the customer list arrives via cloud
+  // sync, and racing the sync made this test flaky when run after other tests.
+  // Clear the restored draft's customer query so the FULL customer list shows
+  // (the dropdown filters by the current text), then pick the freshly created
+  // customer by partial match — the option's accessible name carries the
+  // customer's phone as detail. The auto-waited click also absorbs any delay
+  // of the cloud sync delivering the new customer.
+  await page.getByLabel("Cliente").fill("");
+  await page.getByRole("option", { name: new RegExp(name) }).click();
+  // A restored draft of another customer turns this first switch into the
+  // confirmation dialog; applying the new customer's prices is the point.
+  const switchDialog = page.getByRole("dialog", { name: "Cambiar cliente" });
+  if (await switchDialog.isVisible({ timeout: 1500 }).catch(() => false)) {
+    await switchDialog.getByRole("button", { name: `Aplicar precios de ${name}` }).click();
+  }
   await page.getByLabel("Producto").fill("Cadena de plata 925");
   await expect(page.getByLabel("Precio unitario")).toHaveValue("700");
   await page.getByLabel("Precio unitario").fill("650");
@@ -284,3 +299,4 @@ test("customer price level applies to new order lines", async ({ sharedPage: pag
   await page.getByRole("button", { name: "Guardar pedido" }).click();
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
 });
+
