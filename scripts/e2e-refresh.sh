@@ -5,8 +5,7 @@
 # signs in and reads data through the Auth + Firestore emulators.
 set -euo pipefail
 
-# --project is load-bearing: without it the Auth emulator resolves .firebaserc's
-# default (store-os-f7cf8) while the helpers read the store-os-demo bucket —
-# oobCodes came back empty and signUp failed ("no verification code").
-firebase emulators:exec --project store-os-demo --config firebase.emulator.json --only auth,firestore \
+# Keep the local Auth and Firestore emulators under the same dev project ID used
+# by the shared test helpers. All emulator traffic stays on localhost.
+firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore \
   'playwright test --config=playwright.refresh.config.ts'

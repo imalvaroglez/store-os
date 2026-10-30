@@ -2,6 +2,33 @@
   "version": 1,
   "items": [
     {
+      "id": "eradicate-local-admin-mode",
+      "title": "Erradicar la persistencia administrativa local",
+      "priority": 0,
+      "status": "blocked",
+      "specPath": "docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md",
+      "dependsOn": [],
+      "blockedBy": [
+        "PR #89",
+        "PR #90",
+        "PR #91",
+        "PR #92",
+        "PR #93",
+        "PR #94",
+        "PR #103",
+        "PR #104",
+        "PR #105",
+        "PR #106",
+        "PR #107",
+        "PR #108: cierre por responsable del repositorio",
+        "PR #109",
+        "PR #110"
+      ],
+      "previewChecks": [],
+      "deliveryId": "eradicate-local-admin-mode",
+      "proposedPriority": "P0"
+    },
+    {
       "id": "public-product-detail",
       "title": "Catálogo público: detalle de producto inaccesible (storeId ausente en publicStores estancado)",
       "priority": 1,
@@ -90,15 +117,6 @@
           "text": "Entrar"
         }
       ]
-    },
-    {
-      "id": "remove-client-demo-seed",
-      "title": "Retirar el seed demo del cliente",
-      "priority": 20,
-      "status": "needs-spec",
-      "specPath": "docs/superpowers/specs/remove-client-demo-seed-design.md",
-      "dependsOn": [],
-      "previewChecks": []
     },
     {
       "id": "pnpm-lockfile",
@@ -251,9 +269,16 @@
       "id": "fer-purchase-expenses",
       "title": "Compra con gastos de surtido",
       "priority": 200,
-      "status": "needs-spec",
+      "status": "in-progress",
+      "specPath": "docs/superpowers/specs/2026-10-30-fer-purchase-expenses-design.md",
       "dependsOn": [],
-      "previewChecks": [],
+      "previewChecks": [
+        {
+          "path": "/",
+          "selector": "body",
+          "text": "Entrar"
+        }
+      ],
       "discoveryId": "FER-01",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
       "proposedPriority": "P1",
