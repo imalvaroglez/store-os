@@ -8,6 +8,7 @@ import {
   isPublished,
   SlugTakenError,
   stripUndefined,
+  applyRelativeDeltas,
 } from "./firestoreData";
 import {
   PUBLIC_STORE_FIELDS,
@@ -483,5 +484,25 @@ describe("public card gallery", () => {
     const legacy = projectPublicProductSummary(baseProduct({ imageUrl: "https://example.com/legacy.jpg" }), "olivia");
     expect(legacy.images).toEqual([]);
     expect(legacy.imageUrl).toBe("https://example.com/legacy.jpg");
+  });
+});
+
+describe("applyRelativeDeltas — reservas relativas al stock canónico (E1)", () => {
+  it("applies deltas on top of the canonical quantities, not local absolutes", () => {
+    // Device B reads 10 (canonical now 8 after device A reserved 2): delta -2 → 6.
+    const result = applyRelativeDeltas(new Map([["p1", 8]]), new Map([["p1", -2]]));
+    expect(result.updates).toEqual([{ productId: "p1", quantityOnHand: 6 }]);
+    expect(result.skipped).toEqual([]);
+  });
+
+  it("skips products missing from canonical (deleted concurrently) instead of aborting", () => {
+    const result = applyRelativeDeltas(new Map([["p1", 5], ["p2", undefined]]), new Map([["p1", -1], ["p2", -3]]));
+    expect(result.updates).toEqual([{ productId: "p1", quantityOnHand: 4 }]);
+    expect(result.skipped).toEqual(["p2"]);
+  });
+
+  it("handles positive and zero deltas", () => {
+    const result = applyRelativeDeltas(new Map([["a", 1], ["b", 0]]), new Map([["a", 4], ["b", 0]]));
+    expect(result.updates).toEqual([{ productId: "a", quantityOnHand: 5 }, { productId: "b", quantityOnHand: 0 }]);
   });
 });

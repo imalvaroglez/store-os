@@ -13,7 +13,8 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { applyPurchaseLines } from "../../lib/inventory";
+import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
+import { migrateOrder } from "../../lib/orders";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
 import { publicPrice } from "../../lib/money";
@@ -259,29 +260,99 @@ export async function deleteEntity(
   await deleteDoc(doc(db, name, id));
 }
 
+/** The order changed on another device after this editor loaded it. */
+export class StaleOrderError extends Error {
+  constructor() {
+    super("El pedido cambió en otro dispositivo. Vuelve a entrar para ver la versión reciente.");
+    this.name = "StaleOrderError";
+  }
+}
+
+export type StockAdjustment = { productId: string; quantityOnHand: number };
+
 /**
- * Atomically upsert an order AND apply its stock adjustments in ONE writeBatch:
- * the order doc is written as a canonical snapshot (merge:false drops legacy
- * flat fields) and each affected product's quantityOnHand is updated. A partial
- * commit (order saved but stock not, or vice versa) is impossible, so the retry
- * the error toast invites can never double-apply a reservation.
- * ponytail: writeBatch, not runTransaction — re-deriving deltas from canonical
- * docs would hit the missing-doc rules trap on new orders and cost extra reads;
- * concurrent same-order edits converge via the snapshot reload (as in v1).
+ * Pure: apply RELATIVE deltas to the canonical quantities read inside the
+ * transaction. Products missing from `canonical` (deleted concurrently, or
+ * without a quantity) are skipped and reported — same tolerance the local
+ * reducer has for products deleted while an order still references them.
  */
+export function applyRelativeDeltas(
+  canonical: Map<string, number | undefined>,
+  deltas: Map<string, number>
+): { updates: StockAdjustment[]; skipped: string[] } {
+  const updates: StockAdjustment[] = [];
+  const skipped: string[] = [];
+  for (const [productId, delta] of deltas) {
+    const current = canonical.get(productId);
+    if (typeof current !== "number") {
+      skipped.push(productId);
+      continue;
+    }
+    updates.push({ productId, quantityOnHand: current + delta });
+  }
+  return { updates, skipped };
+}
+
+/** Save an order using canonical stock and an idempotent operation identifier. */
 export async function saveOrderWithStockTx(
   _user: AppUser,
   order: Order,
-  stockUpdates: { id: string; quantityOnHand: number; updatedAt: string }[]
-): Promise<void> {
+  expectedRevision: number | null,
+  mutationId: string
+): Promise<{ order: Order; stock: StockAdjustment[] }> {
   const { db } = getFirebase();
-  const batch = writeBatch(db);
-  const { id, ...data } = order;
-  batch.set(doc(db, "orders", id), stripUndefined(data) as Record<string, unknown>, { merge: false });
-  for (const { id: productId, ...stock } of stockUpdates) {
-    batch.update(doc(db, "products", productId), stripUndefined(stock) as Record<string, unknown>);
-  }
-  await batch.commit();
+  const orderRef = doc(db, "orders", order.id);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    const previous = snap.exists() ? migrateOrder({ ...snap.data(), id: order.id }) : undefined;
+    if (previous && previous.storeId !== order.storeId) throw new StaleOrderError();
+    if (previous?.lastMutationId === mutationId) return { order: previous, stock: [] };
+    if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
+      throw new StaleOrderError();
+    }
+    const deltas = reservationDeltasForOrderChange(previous, order);
+    const canonical = new Map<string, number | undefined>();
+    for (const productId of deltas.keys()) {
+      const product = await tx.get(doc(db, "products", productId));
+      if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
+      canonical.set(productId, product.exists() ? product.data().quantityOnHand as number | undefined : undefined);
+    }
+    const { updates } = applyRelativeDeltas(canonical, deltas);
+    const at = new Date().toISOString();
+    const saved = { ...order, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
+    for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    const { id, ...data } = saved;
+    tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
+    return { order: saved, stock: updates };
+  });
+}
+
+/** Release the canonical reservation and delete the matching revision atomically. */
+export async function deleteOrderWithStockTx(
+  _user: AppUser,
+  orderId: string,
+  expectedRevision: number
+): Promise<StockAdjustment[]> {
+  const { db } = getFirebase();
+  const orderRef = doc(db, "orders", orderId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) return [];
+    const previous = migrateOrder({ ...snap.data(), id: orderId });
+    if ((previous.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
+    const deltas = reservationDeltasForOrderChange(previous, { ...previous, orderStatus: "cancelled" });
+    const canonical = new Map<string, number | undefined>();
+    for (const productId of deltas.keys()) {
+      const product = await tx.get(doc(db, "products", productId));
+      if (product.exists() && product.data().storeId !== previous.storeId) throw new Error("El producto pertenece a otra tienda.");
+      canonical.set(productId, product.exists() ? product.data().quantityOnHand as number | undefined : undefined);
+    }
+    const { updates } = applyRelativeDeltas(canonical, deltas);
+    const at = new Date().toISOString();
+    for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    tx.delete(orderRef);
+    return updates;
+  });
 }
 
 // --- Public catalog projection (3-doc model) ---

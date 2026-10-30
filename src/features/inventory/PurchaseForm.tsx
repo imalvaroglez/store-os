@@ -16,6 +16,7 @@ import { todayIso, nowIso, parseSpanishDate } from "../../lib/dates";
 import { formatMoney, formatMoneyExact, parseAmount } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
+import { uid } from "../../lib/ids";
 import { openPurchasePdf } from "../../app/firebase/pdfImport";
 import {
   effectivePurchaseStatus,
@@ -108,7 +109,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
   function addLine() {
     // Any line change — including adding — invalidates a prior confirmation.
-    setDraft(invalidateMismatch({ ...draft, lines: [...draft.lines, { productId: "", name: "", quantity: 1, unitCost: 0 }] }));
+    setDraft(invalidateMismatch({ ...draft, lines: [...draft.lines, { lineId: uid("pl"), productId: "", name: "", quantity: 1, unitCost: 0 }] }));
   }
   function updateLine(idx: number, patch: Partial<PurchaseLine>) {
     // Any line edit invalidates a prior explicit mismatch confirmation.
@@ -190,7 +191,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     setDraft((d) => invalidateMismatch({
       ...d,
       origin: "pdf",
-      lines: payload.lines,
+      // Imported lines get their stable identity at ingestion (idempotent: only
+      // lines without a lineId adopt one).
+      lines: payload.lines.map((l) => (l.lineId ? l : { ...l, lineId: uid("pl") })),
       supplierOrder: payload.supplierOrder ?? d.supplierOrder,
       supplierName: payload.supplierCandidate ?? d.supplierName,
       documentPath: payload.documentPath ?? d.documentPath,
