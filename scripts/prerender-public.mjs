@@ -37,7 +37,7 @@ const PROJECT_ID = envOrDotenv("VITE_FIREBASE_PROJECT_ID");
 const SITE_URL = (envOrDotenv("PUBLIC_SITE_URL")).replace(/\/$/, "");
 
 if (!API_KEY || !PROJECT_ID || !SITE_URL) {
-  console.log("[prerender-public] sin configuración de build (apiKey/projectId/PUBLIC_SITE_URL) — omitido (build local/demo).");
+  console.log("[prerender-public] sin configuración de build (apiKey/projectId/PUBLIC_SITE_URL) — omitido (build local).");
   process.exit(0);
 }
 

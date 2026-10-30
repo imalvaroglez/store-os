@@ -25,7 +25,7 @@ Firebase can be added later without rewriting the UI.
 | State | Single `StoreProvider` = `useReducer` over all entities + `activeStoreId`. Components read via `useStore()`. **No component writes localStorage directly** — provider is the sole writer via the storage adapter. |
 | Tests | Vitest on `lib/` (money, price/profit calc, store isolation, public-catalog filtering). `tsc --noEmit` type gate + `npm run build`. No component/DOM tests in v1. |
 | PWA | Installable + offline: `manifest.webmanifest` + maskable icon + a minimal service worker registered via `src/pwa.ts`. |
-| Seed | Two demo stores (Santi on-demand, Joyería inventory-tiered) + demo products/customers/orders auto-seeded on first load (no `STORE_OS` key). A small "Reset demo data" affordance wipes to a fresh seed. |
+| Seed | Two seeded sample stores (Santi on-demand, Joyería inventory-tiered) + sample products/customers/orders auto-seeded on first load (no `STORE_OS` key). A small "Reset local data" affordance wipes to a fresh seed. |
 
 ## Architecture
 

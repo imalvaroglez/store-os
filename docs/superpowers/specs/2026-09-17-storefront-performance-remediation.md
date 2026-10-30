@@ -104,7 +104,7 @@ Formato: evidencia → causa → impacto → solución. Prioridad/impacto/esfuer
 - **Impacto**: cada visita anónima paga ~275 KB gzip de SDK y admin que no usa; es el término dominante del FCP/LCP móvil.
 - **Solución**: entry público separado (§6): `public.html` + `src/public-main.tsx` sin Auth/Store/SW; `publicCatalog` pasa a REST anónimo (fuera Firebase SDK del camino público). Objetivo: **~75-85 KB gzip** totales de JS público (~70 % menos).
 - **Alternativas**: (a) solo `lazy()` de AppShell/AuthScreen/etc. en `App.tsx` — menor refactor, deja ~50-80 KB de SDK y no arregla SEO/fonts; (b) route-detect antes de montar providers — lo anticipa el comentario ponytail, pero mantiene un solo HTML (peor para fonts/SEO por-entry). Elegida: entry separado (aísla todo de una vez y habilita las fases 2).
-- **Riesgos**: módulos que asumen StoreProvider/ThemeProvider en el storefront (el agente de mecánica valida: OliviaStorefront no usa `useStore`; los tokens `:root` de `index.css` sí se necesitan → extraer `tokens.css` compartido); regresión admin/demo/emuladores.
+- **Riesgos**: módulos que asumen StoreProvider/ThemeProvider en el storefront (el agente de mecánica valida: OliviaStorefront no usa `useStore`; los tokens `:root` de `index.css` sí se necesitan → extraer `tokens.css` compartido); regresión admin/local/emuladores.
 - **Mejora esperada**: FCP móvil 5.6 → ~1.2-1.8 s; LCP 5.9 → ~2.0-2.5 s (combinado con fonts y §B).
 
 ### B. LCP — Elemento, desglose y serialización 【P1 · Alto · Pequeño · Bajo】
@@ -241,7 +241,7 @@ Objetivos de ingeniería verificables:
 - Lighthouse a11y: 0 fallos de contraste (verificar pares: 6.38/5.82/6.71 ≥ 4.5).
 - Consola: sin errores de la app (favicon MIME resuelto).
 - Headers: XCTO/COOP/XFO/Referrer-Policy presentes; CSP Report-Only sin reportes en admin+storefront+popup.
-- Regresión: e2e existentes (smoke/responsive/theme + catálogo) en verde; admin y demo local intactos; `npm run typecheck && test && build` verde.
+- Regresión: e2e existentes (smoke/responsive/theme + catálogo) en verde; admin y rutas privadas intactas; `npm run typecheck && test && build` verde.
 
 ## 9. Plan de validación
 

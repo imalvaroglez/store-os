@@ -62,10 +62,9 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
   aparece" en dev y prod. Ahora en sync.
 
 ### Removed
-- **Modo demo eliminado:** nada visible sin login. La app ya no auto-carga tiendas
-  demo (Olivia/Santi/Joyería) en el navegador ni siembra demos en cuentas cloud
-  nuevas (`seedCloudIfEmpty` es no-op). Un visitante sin sesión ve solo la
-  pantalla de login.
+- **Acceso protegido:** el panel requiere iniciar sesión. La app no crea tiendas
+  ficticias en el navegador ni carga fixtures en cuentas cloud nuevas
+  (`seedCloudIfEmpty` es no-op). Un visitante sin sesión ve la pantalla de acceso.
 
 ### Docs
 - `docs/LOOPS.md` §4 + §8: policy de sincronización de ambientes.
@@ -84,7 +83,7 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 ### Added
 - **Firebase foundation:** Auth (email/password + Google), Firestore (colecciones raíz
   + membresía), reglas de seguridad (super-admin + miembros por tienda), primer
-  usuario → super_admin. Modo demo local (sin sesión) intacto; modo cloud al iniciar sesión.
+  usuario → super_admin. Al cerrar sesión se vuelve a la pantalla de acceso.
 - **Selector de tienda "¿Quién opera hoy?"** (lista compacta) tras iniciar sesión;
   "Cambiar tienda" regresa a él.
 - **Gestión completa de tiendas:** renombrar, cambiar tipo (Bajo pedido ↔ Inventario
@@ -95,13 +94,13 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 - **ErrorBoundary** para recuperación ante fallos en producción.
 - **Listo para Vercel:** `vercel.json` (SPA rewrite, cache de assets) + guía de
   despliegue (`docs/DEPLOYMENT.md`).
-- Pruebas e2e contra el emulador Firebase (signup → admin + seed; sign out → demo;
+- Pruebas e2e contra el emulador Firebase (signup → admin + seed; sign out → acceso;
   member sin tiendas; picker + crear tienda).
 
 ### Changed
 - `npm run e2e` ahora excluye las pruebas de Firebase (requieren emulador); usa
   `npm run e2e:firebase`. Nuevos scripts `emulators` y `e2e:firebase`.
-- `StoreProvider` es auth-aware: localStorage (demo) o Firestore (cloud); escrituras
+- `StoreProvider` es auth-aware: estado local o Firestore según la sesión; escrituras
   optimistas + sincronización por `onSnapshot`.
 
 ## [0.3.0] — 2026-06-27
