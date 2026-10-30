@@ -95,7 +95,8 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
 /** Subscribe to live cloud updates; returns an unsubscribe. */
 export function subscribeCloudState(
   user: AppUser,
-  onChange: (state: AppState) => void
+  onChange: (state: AppState) => void,
+  onError?: (error: Error) => void
 ): Unsubscribe {
   const { db } = getFirebase();
   // Both roles subscribe to the stores they can see, then scope entity listeners
@@ -126,8 +127,8 @@ export function subscribeCloudState(
       timer = null;
       try {
         onChange(await loadCloudState(user));
-      } catch {
-        /* ignore transient errors */
+      } catch (error) {
+        onError?.(error instanceof Error ? error : new Error("Firestore request failed."));
       }
     }, DEBOUNCE_MS);
   };
@@ -138,7 +139,7 @@ export function subscribeCloudState(
   let tornDown = false;
 
   // Stores listener is always live — storesQ is already role-scoped above.
-  unsubscribers.push(onSnapshot(storesQ, triggerReload));
+  unsubscribers.push(onSnapshot(storesQ, triggerReload, onError));
 
   // Members use storeId-filtered listeners because Firestore rules cannot use
   // rules as filters. Super_admins can use full collection listeners because
@@ -152,7 +153,7 @@ export function subscribeCloudState(
       const entityQ = user.role === "super_admin"
         ? collection(db, name)
         : query(collection(db, name), where("storeId", "in", storeIds));
-      unsubscribers.push(onSnapshot(entityQ, triggerReload));
+      unsubscribers.push(onSnapshot(entityQ, triggerReload, onError));
     }
   }
 
@@ -163,8 +164,8 @@ export function subscribeCloudState(
       // and the member query is scoped by membership. Both yield store ids.
       registerEntityListeners(snap.docs.map((d) => d.id));
     })
-    .catch(() => {
-      /* ignore — storesQ listener still drives reloads on subsequent changes */
+    .catch((error) => {
+      onError?.(error instanceof Error ? error : new Error("Firestore request failed."));
     });
 
   return () => {

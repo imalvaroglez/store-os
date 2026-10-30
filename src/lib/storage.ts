@@ -1,41 +1,15 @@
-import type { AppState, Order, OrderStatus } from "../types";
-import { migrateCatalog } from "./catalog";
+import type { Order, OrderStatus } from "../types";
 
-export const STORAGE_KEY = "store_os_state_v1";
+const LEGACY_ADMIN_STATE_KEY = "store_os_state_v1";
 export const ACTIVE_STORE_KEY = "store_os_active_store_v1";
 
-// ponytail: whole-state load/save. Simpler than per-entity keys; local-first so size is tiny.
-// When Firebase lands later, swap this adapter; the reducer/UI shape stays.
-
-// The admin app requires authentication. No store fixtures are created in the
-// browser; controlled development data lives only in scripts/seed-dev.cjs.
-export function emptyState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
-}
-
-export function loadState(): AppState {
+/** Remove the former full administrative snapshot without touching other keys. */
+export function retireLegacyAdminState(): boolean {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const seeded = emptyState();
-      saveState(seeded);
-      return seeded;
-    }
-    const parsed = JSON.parse(raw) as AppState;
-    return migrateCatalog(normalizeState(parsed));
+    window.localStorage.removeItem(LEGACY_ADMIN_STATE_KEY);
+    return true;
   } catch {
-    // Corrupt state -> reset to an empty, valid state.
-    const seeded = emptyState();
-    saveState(seeded);
-    return seeded;
-  }
-}
-
-export function saveState(state: AppState): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // Storage full / unavailable: no-op. Local-first degrades silently.
+    return false;
   }
 }
 
@@ -55,22 +29,6 @@ export function savePreferredStoreId(storeId: string | null): void {
     // Storage unavailable: the in-memory selection still works.
   }
 }
-
-// Defensive: tolerate older/partial shapes so a missing array never crashes the app.
-function normalizeState(s: Partial<AppState> | null | undefined): AppState {
-  return {
-    stores: s?.stores ?? [],
-    activeStoreId: s?.activeStoreId ?? s?.stores?.[0]?.id ?? null,
-    products: s?.products ?? [],
-    categories: s?.categories ?? [],
-    suppliers: s?.suppliers ?? [],
-    purchases: s?.purchases ?? [],
-    customers: s?.customers ?? [],
-    orders: s?.orders ?? [],
-  };
-}
-
-
 
 // Offline draft persistence for the order editor (E1 — R8: a 50-line capture
 // must survive a lost connection / accidental close, clearly distinguishable
@@ -95,7 +53,8 @@ export type OrderDraftSnapshot = {
   notes: string;
 };
 
-export function orderDraftKey(storeId: string, orderId: string, isNew: boolean, userId = "local"): string {
+export function orderDraftKey(storeId: string, orderId: string, isNew: boolean, userId: string): string {
+  if (!userId.trim()) throw new Error("El borrador requiere una sesión autenticada.");
   return `store_os_order_draft_v3::${userId}::${storeId}::${isNew ? "new" : orderId}`;
 }
 

@@ -7,7 +7,7 @@ import {
   deleteObject,
   type FirebaseStorage,
 } from "firebase/storage";
-import { getFirebase } from "./config";
+import { FIREBASE_EMULATOR_ENABLED, getFirebase } from "./config";
 import { FIREBASE_DEV_STORAGE_BUCKET } from "./projectIds";
 
 // Cloud image transport for product photos. The only module that imports the
@@ -18,9 +18,7 @@ import { FIREBASE_DEV_STORAGE_BUCKET } from "./projectIds";
 
 // Emulator mode mirrors config.ts: same opt-in, DEV/TEST-only, never in prod.
 // String compare (Vite injects .env as strings — `!!` would treat "false" as on).
-const EMULATOR =
-  import.meta.env.MODE !== "production" &&
-  import.meta.env.VITE_FIREBASE_EMULATOR === "true";
+const EMULATOR = FIREBASE_EMULATOR_ENABLED;
 // The bucket name matches the configured dev project; the host remains local.
 const EMULATOR_BUCKET = FIREBASE_DEV_STORAGE_BUCKET;
 

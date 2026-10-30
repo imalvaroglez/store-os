@@ -214,7 +214,10 @@ export async function signOutFirebase(): Promise<void> {
 }
 
 /** Subscribe to auth state; resolves an AppUser (or null) once the users doc is loaded. */
-export function subscribeToAuth(onChange: (user: AppUser | null) => void): () => void {
+export function subscribeToAuth(
+  onChange: (user: AppUser | null) => void,
+  onError?: (error: Error) => void
+): () => void {
   const { auth } = getFirebase();
   return onAuthStateChanged(auth, async (fbUser) => {
     if (!fbUser) {
@@ -227,7 +230,7 @@ export function subscribeToAuth(onChange: (user: AppUser | null) => void): () =>
     } catch {
       onChange(null);
     }
-  });
+  }, (error) => onError?.(error));
 }
 
 /**

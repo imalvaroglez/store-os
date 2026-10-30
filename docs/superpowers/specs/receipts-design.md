@@ -96,7 +96,7 @@ export type Order = {
 - Cada Order viejo → nuevo con `items: [{ productId, name: productName,
   quantity, price, cost }]` y `schemaVersion: 2`. Re-ejecutar la migración
   sobre documentos ya migrados es no-op.
-- Corre en el cliente al cargar Orders (modo local y cloud vía el adapter),
+- Corre en el cliente al cargar Orders desde Firestore,
   escribiendo solo los documentos que faltan — sin Cloud Function, sin costo.
 - No se tocan `publicProducts` ni `adminStores` (Orders no tiene proyección
   pública).
@@ -147,9 +147,7 @@ export type Order = {
   `receiptSeq` en `stores/{id}` y re-escribe `adminStores/{id}` sin cambios
   (G-P02, ver §5). Sin incrementos por separado (permiten huecos o falsos
   éxitos). Si la transacción falla, no hay pedido ni folio: **no se imprime
-  nada y no se muestra éxito**; se notifica el error y la dueña reintenta. En
-  modo local (sin backend) el folio se asigna localmente con el mismo
-  sequential.
+  nada y no se muestra éxito**; se notifica el error y la dueña reintenta.
 - **Orders legacy (migrados sin folio):** el **primer clic en "Imprimir /
   Guardar PDF"** ejecuta la misma transacción (asignar folio + incrementar
   `receiptSeq` + `adminStores` sin cambios) y, sólo al confirmarla, llama

@@ -40,8 +40,8 @@ Catálogo público → proyección pública de Firebase (lectura anónima)
 ```
 
 - **`StoreProvider`** (`src/app/StoreProvider.tsx`) mantiene en memoria el estado de interfaz y lee/escribe datos administrativos mediante el adaptador Firestore de `src/app/firebase/`.
-- **Estado de transición:** la rama actual aún conserva una ruta heredada de carga y guardado administrativo local en `src/lib/storage.ts`. No es una arquitectura admitida ni debe ampliarse; su eliminación está bloqueada y especificada en [`eradicate-local-mode`](superpowers/specs/2026-10-30-eradicate-local-mode-design.md).
-- **Persistencia legítima del navegador:** carrito público por tienda, preferencias, tema y borradores de pedido vinculados a una cuenta autenticada. La limpieza futura elimina únicamente el estado administrativo heredado `store_os_state_v1`, no todo `localStorage`.
+- **Acceso administrativo:** el panel exige Firebase Auth y Firestore. Sin sesión, con configuración inválida o ante errores de carga, muestra acceso o un error explícito; no consulta datos administrativos del navegador.
+- **Persistencia del navegador:** carrito público por tienda, preferencias, tema y borradores de pedido vinculados a una cuenta autenticada. Al arrancar se retira únicamente la clave antigua `store_os_state_v1`; las demás claves se conservan.
 - **Aislamiento entre tiendas:** las pantallas nunca filtran `state.products` directo; usan selectores (`productsForStore`, `ordersForStore`, etc. en `src/lib/selectors.ts`) que filtran por `storeId`.
 - **Datos iniciales:** no se crean tiendas ficticias al abrir la app. El script `scripts/seed-dev.cjs` prepara datos de trabajo únicamente en `store-os-dev`.
 
