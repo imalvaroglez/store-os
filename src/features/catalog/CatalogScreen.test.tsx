@@ -96,6 +96,29 @@ describe("CatalogScreen filtro por categoría real", () => {
     expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]);
     expect(screen.queryByText("Limpiar")).toBeNull();
   });
+
+  it("muestra solo productos por surtir según el umbral o si están agotados", () => {
+    const state = sortFilterState();
+    state.products[0].lowStockAt = 3;
+    state.products[1].lowStockAt = 0;
+    // An exhausted product remains visible for restocking even without a saved threshold.
+    state.products[2].lowStockAt = undefined;
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <CatalogScreen />
+      </Wrapper>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
+    expect(cardNames()).toEqual(["Aretes Luna", "anillo perla"]);
+    expect(screen.getByText("2 de 3 piezas")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByText("Limpiar"));
+    expect(cardNames()).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("false");
+  });
 });
 
 describe("CatalogScreen orden", () => {
