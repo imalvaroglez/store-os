@@ -22,6 +22,14 @@ function headerBlock(source: string) {
 }
 
 describe("vercel.json — routing contract", () => {
+  it("the owner editor uses the authenticated entry before the public catalog rewrite", () => {
+    const editorIdx = config.rewrites.findIndex((r) => r.source === "/catalogo/(.*)/editar");
+    const catalogIdx = config.rewrites.findIndex((r) => r.source === "/catalogo/(.*)");
+    expect(editorIdx).toBeGreaterThanOrEqual(0);
+    expect(editorIdx).toBeLessThan(catalogIdx);
+    expect(config.rewrites[editorIdx].destination).toBe("/index.html");
+  });
+
   it("the generic /catalogo rewrite exists and wins over the SPA catch-all", () => {
     const catalogIdx = config.rewrites.findIndex((r) => r.source === "/catalogo/(.*)");
     const catchAllIdx = config.rewrites.findIndex((r) => r.source === "/((?!assets/).*)");
