@@ -13,9 +13,8 @@ build pointed at the real backend) can **create, edit, or delete her actual
 business data**. A bug, a seed, or a misconfigured env var can affect the
 operation and therefore the business economically.
 
-The local emulator uses the `store-os-dev` project ID and routes its services
-to `127.0.0.1`; it is not a separate Firebase project. The gap is the
-**preview ↔ production** boundary, which does not exist today.
+Local emulator services use the `store-os-dev` project ID and connect only to localhost; no additional Firebase project is used.
+The gap is the **preview ↔ production** boundary, which does not exist today.
 
 ## Outcome
 
@@ -58,10 +57,9 @@ touch Firebase/Vercel/GCP consoles).
 
 ### Repo (what the FSM builds, reviews, secures)
 
-1. **`.firebaserc`** — make `store-os-dev` the default and add the `production`
-   alias. Development commands target dev explicitly; production is used only
-   after human approval. (Already committed
-   as draft `9806a8c` on the branch — to be audited by the FSM's reviewers.)
+1. **`.firebaserc`** — `store-os-dev` is the default project and `store-os-f7cf8`
+   is the explicit production target. Development commands always pass
+   `--project store-os-dev`; production operations require human approval.
 2. **`scripts/check-env.cjs`** (new, Node CommonJS) — build-time guard. Reads
    `VITE_VERCEL_ENV` (auto-injected by Vercel) + `VITE_FIREBASE_PROJECT_ID`.
    Fails the build on mismatch: Preview+prod project, or Production+non-prod

@@ -5,7 +5,7 @@
 # signs in and reads data through the Auth + Firestore emulators.
 set -euo pipefail
 
-# --project is explicit so Auth and Firestore emulators use the same dev ID as
-# the application helpers.
+# Keep the local Auth and Firestore emulators under the same dev project ID used
+# by the shared test helpers. All emulator traffic stays on localhost.
 firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore \
   'playwright test --config=playwright.refresh.config.ts'

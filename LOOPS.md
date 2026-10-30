@@ -27,8 +27,7 @@ Política vigente tras eliminar el delivery harness como gate (ver `docs/adr/000
 - Nunca `firebase deploy --only ...` desde el agente; CI despliega Preview/Production.
 - Producción (`store-os-f7cf8`) intocable: siembra y pruebas solo en `store-os-dev`.
 - Los únicos IDs Firebase permitidos son `store-os-dev` para desarrollo y `store-os-f7cf8` para producción; cualquier otro destino bloquea el cambio.
-- `store-os-dev` es el único proyecto para desarrollo, emuladores y Preview; `.firebaserc` lo define como predeterminado y los comandos lo indican explícitamente.
-- Producción solo se usa para liberar un cambio con aprobación humana explícita.
-- La administración requiere Auth + Firestore; no se admite persistencia administrativa alternativa en `localStorage`. Mantener carrito público, preferencias, borradores autenticados y PWA.
-- No se reintroduce el acceso administrativo sin sesión ni el fallback de estado local. La erradicación P0 sigue bloqueada por los PR enumerados en el backlog y el conflicto abierto del PR #108.
+- Desarrollo conectado, pruebas y Preview usan únicamente `store-os-dev`. Los emuladores locales usan el mismo ID y mantienen todos los servicios en `127.0.0.1`; no se crea un proyecto o namespace separado.
+- `.firebaserc` debe tener `store-os-dev` como predeterminado. Todo comando Firebase que pueda elegir proyecto declara el destino; nunca se depende de un valor implícito.
+- Producción (`store-os-f7cf8`) solo se usa después de aprobación humana explícita. No se copian datos de prueba ni seeds desde dev.
 - Tests, aislamiento multitienda y la restricción de cero costos no se flexibilizan para bajar un PR.

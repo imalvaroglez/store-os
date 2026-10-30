@@ -35,7 +35,8 @@ const EMULATOR =
   import.meta.env.MODE !== "production" &&
   import.meta.env.VITE_FIREBASE_EMULATOR === "true";
 
-// Emulators use the dev project ID while all SDK endpoints stay on localhost.
+// Emulator mode uses the dev project ID while all service hosts remain local.
+// No Firebase request leaves localhost in this mode.
 const projectId = EMULATOR ? FIREBASE_DEV_PROJECT_ID : firebaseConfig.projectId;
 
 // Firebase Auth requires a non-empty apiKey even in emulator mode (it's ignored

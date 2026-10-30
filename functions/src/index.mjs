@@ -18,8 +18,8 @@ const emulatorProjectId =
 const adminOptions = emulatorProjectId
   ? {
       projectId: emulatorProjectId,
-      // CI may not have ADC to fetch Firebase project config; derive the dev
-      // bucket from the explicit emulator project ID. Requests stay local.
+      // The emulator may not have ADC to fetch Firebase project config (as in CI).
+      // Derive the bucket from its explicit --project ID; requests stay local.
       storageBucket: `${emulatorProjectId}.firebasestorage.app`,
     }
   : undefined;
