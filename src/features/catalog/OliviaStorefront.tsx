@@ -34,7 +34,7 @@ export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Storefront>({});
   const [saving, setSaving] = useState(false);
-  const canEdit = route.name === "public_store" && slug === "olivia" && !!editor;
+  const canEdit = (route.name === "public_store" || route.name === "storefront_editor") && slug === "olivia" && !!editor;
 
   useEffect(() => {
     if (!editing) setDraft(editor?.storefront ?? {});
@@ -85,7 +85,7 @@ export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?
   const editorActive = canEdit && editing;
   const viewStore = current && editorActive ? { ...current, storefront: draft } : current;
   return <>
-    <StoreChrome store={viewStore} catalog={catalog} isHomeRoute={route.name === "public_store"} editing={editorActive} patchStorefront={patchStorefront}>
+    <StoreChrome store={viewStore} catalog={catalog} isHomeRoute={route.name === "public_store" || route.name === "storefront_editor"} editing={editorActive} patchStorefront={patchStorefront}>
     {error ? <div className="olv-container olv-empty"><EmptyState title={error === "missing" ? "Tienda no encontrada" : "No se pudo cargar"} subtitle={error === "missing" ? "Este catálogo no existe o no está disponible." : "Revisa tu conexión e intenta de nuevo."} /></div>
       : !current ? <div className="olv-container olv-grid olv-loading">{Array.from({ length: 8 }, (_, i) => <SkeletonCard key={i} />)}</div>
       : route.name === "public_product" ? <ProductView key={`${slug}/${route.params.productSlug}`} initialStore={current} productSlug={route.params.productSlug} />

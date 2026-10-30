@@ -1,16 +1,21 @@
 // Tiny route matching. A route is "/catalogo/:slug" -> compiled into a regex.
 // ponytail: hand-rolled, no dependency. Covers admin (hash-less) + public catalog.
 
-export type RouteName = "public_store" | "public_category" | "public_product" | "admin";
+export type RouteName = "public_store" | "public_category" | "public_product" | "storefront_editor" | "admin";
 
 export type RouteMatch =
   | { name: "public_store"; params: { slug: string } }
   | { name: "public_category"; params: { slug: string; categorySlug: string } }
   | { name: "public_product"; params: { slug: string; productSlug: string } }
+  | { name: "storefront_editor"; params: { slug: string } }
   | { name: "admin"; params: { tab?: string; sub?: string } };
 
 // Match a pathname against the public storefront routes, then the admin shell.
 export function matchRoute(pathname: string): RouteMatch {
+  const storefrontEditorMatch = pathname.match(/^\/catalogo\/([^/]+)\/editar\/?$/);
+  if (storefrontEditorMatch) {
+    return { name: "storefront_editor", params: { slug: decodeURIComponent(storefrontEditorMatch[1]) } };
+  }
   const productMatch = pathname.match(/^\/catalogo\/([^/]+)\/producto\/([^/]+)\/?$/);
   if (productMatch) {
     return {
