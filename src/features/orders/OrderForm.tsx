@@ -1,3 +1,4 @@
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStore, newCustomer } from "../../app/StoreProvider";
 import {
   Badge,
@@ -156,6 +157,24 @@ export function OrderForm({
     setPromisedDate(order.promisedDate ?? "");
     setOrderStatus(effectiveOrderStatus(order));
     setNotes(order.notes ?? "");
+  }
+
+  // OLI-011 (#91): the fresh line lands on TOP and takes the focus — Fer
+  // captures 40–50 lines per order without scrolling or reaching for the mouse.
+  const newProductInput = useRef<HTMLInputElement>(null);
+  const focusNewLine = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!focusNewLine.current) return;
+    focusNewLine.current = false;
+    const input = newProductInput.current;
+    input?.focus({ preventScroll: true });
+    input?.scrollIntoView?.({ block: "center", behavior: "auto" });
+  }, [lines]);
+
+  function addLine() {
+    focusNewLine.current = true;
+    setLines((current) => [lineFromItem(), ...current]);
   }
 
   const customerOptions = customers.map((customer) => ({
@@ -362,9 +381,7 @@ export function OrderForm({
             <h2 className="serif-display text-lg font-semibold text-ink">Productos</h2>
             <p className="text-xs text-on-surface-soft mt-0.5">Agrega una o varias líneas al pedido.</p>
           </div>
-          {/* OLI-011: new lines go to the TOP — Fer captures 40–50 lines and must
-              see the fresh one immediately, without scrolling to the bottom. */}
-          <Button variant="secondary" size="sm" onClick={() => setLines((current) => [lineFromItem(), ...current])}>+ Agregar línea</Button>
+          <Button variant="secondary" size="sm" onClick={addLine}>+ Agregar línea</Button>
         </div>
         {lines.map((line, index) => {
           const currentQuantity = Math.max(0, Math.round(numberFromText(line.quantityText)));
@@ -387,6 +404,7 @@ export function OrderForm({
                 )}
               </div>
               <SearchSelect
+                inputRef={index === 0 ? newProductInput : undefined}
                 label="Producto"
                 placeholder="Busca o escribe un producto"
                 value={line.productQuery}
