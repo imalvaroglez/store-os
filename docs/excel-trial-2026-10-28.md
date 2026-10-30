@@ -19,6 +19,7 @@ sesión de decisiones (D01–D15).
 | I2 | Errores de fórmula `#DIV/0!` | **81 celdas** (E68–E87 y sus columnas derivadas J/K/L; también E178). Numbers los cachea como `t="str"` — el ensayo detecta ambas serializaciones |
 | I3 | Productos duplicados | **1 par** de nombres normalizados idénticos |
 | I4 | Cantidad > 0 sin costo | 0 filas (los costos faltantes se manifestaron como I1/I2, no como costo cero) |
+| I5 | Base confusa en la fila de totales | J178 suma F178:I178; M178/N178 usan J178 y O178 usa K178 vacío; no es una base fiable de reparto |
 | I6 | Factores de reparto en fórmulas | `0.15×22, 0.5×22, 0.35×21` — **confirma 15/50/35 en Inventario** |
 
 ### Ventas Ago - Sep
@@ -36,8 +37,9 @@ sesión de decisiones (D01–D15).
 |---|---|---|
 | O1 | Estatus de pago | **18 PAGADO / 4 NO PAGADO** (celdas sin estatus no cuentan pedidos completos) |
 | O2 | Ganancia calculada en NO PAGADO | 1 bloque (P22, con fórmulas L:O) — el reparto no depende del cobro (D04) |
-| O3 | Cantidad > 1 | **3 renglones** (F13, F27, F37) |
-| O3b | Packing de octubre | **28 filas con $1 por pieza** (J5–J32 aprox.) y algunas sin valor |
+| V4 | Cantidad > 1 | **3 renglones** (F13, F27, F37) — semántica Precio/Costo por-línea vs unitario a confirmar (D14) |
+| O3 | Packing adicional | **28 filas con $1 por pieza** (J5–J32 aprox.) y algunas sin valor |
+| O4 | Sin fila de corte total | No se encontró una fila de corte total mensual |
 | V2 | Meses | Solo 2026-10 ✓ |
 
 ## Hallazgos para la sesión de decisiones
