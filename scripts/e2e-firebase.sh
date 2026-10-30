@@ -7,9 +7,9 @@ set -euo pipefail
 # flow for CI and local runs.
 npm --prefix functions ci --silent
 # Session 1: the app suite WITHOUT the Functions emulator.
-firebase emulators:exec --project store-os-demo --config firebase.emulator.json --only auth,firestore,storage \
+firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore,storage \
   'playwright test --config=playwright.firebase.config.ts --grep-invert @functions'
 # Session 2: the callable suite with the Functions emulator. Global setup wipes
 # Auth+Firestore between sessions, so this suite seeds its own state.
-firebase emulators:exec --project store-os-demo --config firebase.emulator.json --only auth,firestore,storage,functions \
+firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore,storage,functions \
   'playwright test --config=playwright.firebase.config.ts --project=foundation e2e/functions.spec.ts'

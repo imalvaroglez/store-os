@@ -7,10 +7,11 @@ import {
 } from "@firebase/rules-unit-testing";
 import { readFileSync } from "node:fs";
 import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
+import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
 
 let env: RulesTestEnvironment;
 
-const PROJ = "store-os-demo";
+const PROJ = FIREBASE_DEV_PROJECT_ID;
 
 beforeAll(async () => {
   env = await initializeTestEnvironment({
