@@ -139,7 +139,15 @@ jobs:
         run: npm run test:rules
       - name: E2E (Playwright)
         env:
+          # `npm run preview` runs check-env in its pre-hook. The app bundle
+          # already contains the Preview config from the build above, and this
+          # environment also keeps the pre-hook pointed at store-os-dev.
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: store-os-dev
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_SENDER_ID: ${{ secrets.VITE_FIREBASE_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
         run: npm run e2e
       - name: E2E with Firebase Emulator
         run: npm run e2e:firebase
