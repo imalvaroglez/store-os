@@ -134,6 +134,8 @@ jobs:
       - name: Firestore rules tests (emulator)
         run: npm run test:rules
       - name: E2E (Playwright)
+        env:
+          VITE_FIREBASE_PROJECT_ID: store-os-dev
         run: npm run e2e
       - name: E2E with Firebase Emulator
         run: npm run e2e:firebase
