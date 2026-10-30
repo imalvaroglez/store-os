@@ -156,10 +156,9 @@ y #110, y cerrar el PR #108. Al 30 de octubre de 2026 siguen abiertos como
 draft; los commits locales de una rama de integración no sustituyen su
 integración al `main` protegido.
 
-El PR #108 agrega un camino de acceso administrativo local y contradice esta
-decisión. Debe permanecer bloqueado y fuera de la integración. Su cierre queda
-a cargo de su autor o de la persona responsable del repositorio; esta tarea no
-lo cierra ni modifica PRs ajenos.
+El PR #108 se cerró por decisión del Product Owner el 30 de octubre de 2026.
+Agregaba un camino de acceso administrativo local y contradecía esta decisión;
+quedó fuera de la integración.
 
 Al desbloquearse, implementar en una rama independiente
 `chore/eradicate-local-mode` desde el `main` actualizado y abrir el PR dedicado.
@@ -174,5 +173,4 @@ atómicos que mantengan compilación y suites válidas en cada entrega revisable
 - Migrar los datos administrativos antiguos del navegador a Firestore.
 - Cambiar lógica de negocio, permisos, reglas multitienda, modelo financiero o
   Service Worker.
-- Abrir este PR de implementación durante Fase A, cerrar PR #108 o integrar
-  cambios a `main`.
+- Abrir este PR de implementación durante Fase A o integrar cambios a `main`.
