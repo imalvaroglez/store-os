@@ -51,9 +51,9 @@ function splitRef(ref) {
 
 /**
  * Parse a worksheet XML into { cells, merges, maxRow, maxCol }.
- * cells: Map<ref, { col, row, type, value, formula }> — value is the cached
- * value (number | string) or null for empty cells; formula is the formula text
- * when present (shared formulas carry it only on the first cell of the group).
+ * cells: Map<ref, { col, row, type, value, formula, formulaAttributes }> — value
+ * is the cached value (number | string) or null for empty cells. Formula attributes
+ * are retained so detectors can identify shared-formula continuations.
  */
 function parseSheet(xml, shared) {
   const cells = new Map();
@@ -72,7 +72,9 @@ function parseSheet(xml, shared) {
       const ref = refMatch[1];
       const type = /\bt="(\w+)"/.exec(attrs)?.[1] ?? "n";
       const raw = /<v>([\s\S]*?)<\/v>/.exec(body)?.[1] ?? null;
-      const formula = /<f[^>]*>([\s\S]*?)<\/f>/.exec(body)?.[1] ?? null;
+      const formulaMatch = /<f\b([^>]*?)(?:\/>|>([\s\S]*?)<\/f>)/.exec(body);
+      const formulaAttributes = formulaMatch?.[1] ?? "";
+      const formula = formulaMatch?.[2] ?? null;
       let value = null;
       if (raw != null) {
         if (type === "s") value = shared[Number(raw)] ?? null;
@@ -82,7 +84,7 @@ function parseSheet(xml, shared) {
         }
       }
       const { col, row } = splitRef(ref);
-      cells.set(ref, { col, row, type, value, formula });
+      cells.set(ref, { col, row, type, value, formula, formulaAttributes });
     }
     void rowNumber;
   }
@@ -204,6 +206,46 @@ function detectInventoryIssues(sheet, dataFrom = 5, dataTo = 177) {
     issues.push(issue("I3", "Inventario", `Nombres de producto duplicados (normalizados): ${duplicates.length}`, [], { duplicates: duplicates.slice(0, 30) }));
   if (zeroCost.length)
     issues.push(issue("I4", "Inventario", `Cantidad > 0 con costo total vacío o cero: ${zeroCost.length} filas`, zeroCost.slice(0, 20)));
+
+  // I5: the totals row mixes packing and price values into the split base.
+  const n178 = cellAt(sheet, "N178");
+  const o178 = cellAt(sheet, "O178");
+  const sharedFormulaId = (cell) => /\bsi="([^"]+)"/.exec(cell?.formulaAttributes ?? "")?.[1] ?? null;
+  const n178SharedRange = /\bref="([^"]+)"/.exec(n178?.formulaAttributes ?? "")?.[1] ?? null;
+  const o178SharedContinuation =
+    n178?.formula &&
+    /\bt="shared"/.test(n178.formulaAttributes ?? "") &&
+    /\bt="shared"/.test(o178?.formulaAttributes ?? "") &&
+    sharedFormulaId(n178) != null &&
+    sharedFormulaId(n178) === sharedFormulaId(o178) &&
+    n178SharedRange === "N178:O178"
+      ? n178.formula.replace(/\bJ178\b/g, "K178")
+      : null;
+  const totalRowFormulas = {
+    J178: cellAt(sheet, "J178")?.formula ?? null,
+    M178: cellAt(sheet, "M178")?.formula ?? null,
+    N178: n178?.formula ?? null,
+    O178: o178?.formula ?? o178SharedContinuation,
+  };
+  const normalizeFormula = (formula) => String(formula ?? "").replace(/^=/, "").replace(/\$/g, "").replace(/\s+/g, "").toUpperCase();
+  const referencesCell = (formula, ref) => new RegExp(`(^|[^A-Z0-9])${ref}([^0-9]|$)`).test(normalizeFormula(formula));
+  const j178Formula = normalizeFormula(totalRowFormulas.J178);
+  const k178 = cellAt(sheet, "K178");
+  const k178IsBlank = !k178 || (k178.value == null && !k178.formula);
+  if (j178Formula === "SUM(F178:I178)" &&
+      referencesCell(totalRowFormulas.M178, "J178") &&
+      referencesCell(totalRowFormulas.N178, "J178") &&
+      referencesCell(totalRowFormulas.O178, "K178") &&
+      k178IsBlank) {
+    issues.push(issue(
+      "I5",
+      "Inventario",
+      "La fila de totales reparte J178 (packing + precios), pero O178 usa K178 vacío",
+      ["J178", "M178", "N178", "O178", "K178"],
+      { formulas: totalRowFormulas, blankCells: ["K178"] }
+    ));
+  }
+
   if (splitFactors.size)
     issues.push(issue("I6", "Inventario", "Factores de reparto en fórmulas M:U", [], { splitFactors: Object.fromEntries(splitFactors) }));
   return issues;
@@ -214,14 +256,14 @@ function detectSalesIssues(sheet, sheetName, opts) {
   const issues = [];
   const { subtotalCells, qtyCol = "F", priceCol = "H", statusCol = null, packingCol = null, dataFrom, dataTo } = opts;
 
-  // V4/O3: rows with quantity > 1 — line semantics (unit vs total) must be confirmed.
+  // V4: rows with quantity > 1 — line semantics (unit vs total) must be confirmed.
   const multiQty = [];
   for (let row = dataFrom; row <= dataTo; row++) {
     const qty = valueOf(sheet, `${qtyCol}${row}`);
     if (qty != null && Number(qty) > 1) multiQty.push(`${qtyCol}${row}`);
   }
   if (multiQty.length)
-    issues.push(issue(sheetName === "Ventas Ago - Sep" ? "V4" : "O3", sheetName, `Renglones con cantidad > 1 (semántica de Precio/Costo total-línea a confirmar): ${multiQty.length}`, multiQty.slice(0, 20)));
+    issues.push(issue("V4", sheetName, `Renglones con cantidad > 1 (semántica de Precio/Costo total-línea a confirmar): ${multiQty.length}`, multiQty.slice(0, 20)));
 
   // V3: split factors in per-row profit formulas (0.2/0.5/0.3 expected).
   if (opts.splitCols) {
@@ -303,7 +345,7 @@ function detectSalesIssues(sheet, sheetName, opts) {
       issues.push(issue("O2", sheetName, `Filas NO PAGADO con fórmulas de ganancia/reparto calculadas: ${unpaidWithProfit.length}`, unpaidWithProfit.slice(0, 20)));
   }
 
-  // O3b (extra): October packing column values different from the 2.83 inventory constant.
+  // O3: October packing column values different from the 2.83 inventory constant.
   if (packingCol) {
     const others = [];
     for (let row = dataFrom; row <= dataTo; row++) {
@@ -311,7 +353,17 @@ function detectSalesIssues(sheet, sheetName, opts) {
       if (v != null && v !== "" && Number(v) > 0 && Math.abs(Number(v) - 2.83) >= 0.005) others.push(`${packingCol}${row}=${v}`);
     }
     if (others.length)
-      issues.push(issue("O3b", sheetName, `Valores de Packing distintos de $2.83 (Inventario): ${others.length}`, others.slice(0, 20)));
+      issues.push(issue("O3", sheetName, `Valores de Packing distintos de $2.83 (Inventario): ${others.length}`, others.slice(0, 20)));
+  }
+
+  // O4: October has no monthly cutoff row.
+  if (sheetName === "Ventas Oct") {
+    const hasMonthlyTotal = [...sheet.cells.values()].some((cell) =>
+      typeof cell.value === "string" && /^TOTALES?\s+DEL\s+MES$/i.test(cell.value.trim().replace(/\s+/g, " "))
+    );
+    if (!hasMonthlyTotal) {
+      issues.push(issue("O4", sheetName, "No se encontró una fila de corte total mensual", [`A1:P${dataTo}`]));
+    }
   }
   return issues;
 }
@@ -368,57 +420,60 @@ function buildSummary(report, sourceHash) {
 function runReport(xlsxPath, outDir) {
   const before = crypto.createHash("sha256").update(fs.readFileSync(xlsxPath)).digest("hex");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "excel-trial-"));
-  execFileSync("unzip", ["-q", "-o", xlsxPath, "-d", tmp]);
-  const shared = parseSharedStrings(fs.readFileSync(path.join(tmp, "xl/sharedStrings.xml"), "utf8"));
+  try {
+    execFileSync("unzip", ["-q", "-o", xlsxPath, "-d", tmp]);
+    const shared = parseSharedStrings(fs.readFileSync(path.join(tmp, "xl/sharedStrings.xml"), "utf8"));
 
-  const sheets = [
-    { name: "Inventario", detect: (sheet) => detectInventoryIssues(sheet) },
-    {
-      name: "Ventas Ago - Sep",
-      detect: (sheet) =>
-        detectSalesIssues(sheet, "Ventas Ago - Sep", {
-          dataFrom: 3,
-          dataTo: 93,
-          qtyCol: "F",
-          priceCol: "H",
-          splitCols: ["K", "L", "M"],
-          subtotalCells: [{ subtotalRef: "K28", sumFrom: 12, sumTo: 27, col: "K" }],
-        }),
-    },
-    {
-      name: "Ventas Oct",
-      detect: (sheet) =>
-        detectSalesIssues(sheet, "Ventas Oct", {
-          dataFrom: 3,
-          dataTo: 50,
-          qtyCol: "F",
-          priceCol: "H",
-          statusCol: "P",
-          packingCol: "J",
-        }),
-    },
-  ];
+    const sheets = [
+      { name: "Inventario", detect: (sheet) => detectInventoryIssues(sheet) },
+      {
+        name: "Ventas Ago - Sep",
+        detect: (sheet) =>
+          detectSalesIssues(sheet, "Ventas Ago - Sep", {
+            dataFrom: 3,
+            dataTo: 93,
+            qtyCol: "F",
+            priceCol: "H",
+            splitCols: ["K", "L", "M"],
+            subtotalCells: [{ subtotalRef: "K28", sumFrom: 12, sumTo: 27, col: "K" }],
+          }),
+      },
+      {
+        name: "Ventas Oct",
+        detect: (sheet) =>
+          detectSalesIssues(sheet, "Ventas Oct", {
+            dataFrom: 3,
+            dataTo: 50,
+            qtyCol: "F",
+            priceCol: "H",
+            statusCol: "P",
+            packingCol: "J",
+          }),
+      },
+    ];
 
-  const report = { generatedAt: new Date().toISOString(), sourceSha256: before, sheets: {} };
-  for (const { name, detect } of sheets) {
-    const file = sheetFileFor(tmp, name);
-    if (!file) {
-      report.sheets[name] = [{ id: "X", sheet: name, detail: "Hoja no encontrada en el libro", refs: [] }];
-      continue;
+    const report = { generatedAt: new Date().toISOString(), sourceSha256: before, sheets: {} };
+    for (const { name, detect } of sheets) {
+      const file = sheetFileFor(tmp, name);
+      if (!file) {
+        report.sheets[name] = [{ id: "X", sheet: name, detail: "Hoja no encontrada en el libro", refs: [] }];
+        continue;
+      }
+      report.sheets[name] = detect(parseSheet(fs.readFileSync(file, "utf8"), shared));
     }
-    report.sheets[name] = detect(parseSheet(fs.readFileSync(file, "utf8"), shared));
+
+    const after = crypto.createHash("sha256").update(fs.readFileSync(xlsxPath)).digest("hex");
+    report.sourceUnmodified = before === after;
+    if (!report.sourceUnmodified) throw new Error("El archivo fuente cambió durante el ensayo — abortar.");
+
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, null, 2));
+    const summaryPath = path.join(outDir, "summary.md");
+    fs.writeFileSync(summaryPath, buildSummary(report, before));
+    return { report, summaryPath };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
-
-  const after = crypto.createHash("sha256").update(fs.readFileSync(xlsxPath)).digest("hex");
-  report.sourceUnmodified = before === after;
-  if (!report.sourceUnmodified) throw new Error("El archivo fuente cambió durante el ensayo — abortar.");
-
-  fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, null, 2));
-  const summaryPath = path.join(outDir, "summary.md");
-  fs.writeFileSync(summaryPath, buildSummary(report, before));
-  fs.rmSync(tmp, { recursive: true, force: true });
-  return { report, summaryPath };
 }
 
 function main() {
