@@ -16,10 +16,10 @@
     "test:watch": "vitest",
     "test:rules": "bash scripts/test-rules.sh",
     "e2e": "playwright test",
-    "emulators": "firebase emulators:start --only auth,firestore,storage,functions",
+    "emulators": "firebase emulators:start --project store-os-dev --only auth,firestore,storage,functions",
     "e2e:firebase": "bash scripts/e2e-firebase.sh",
     "e2e:refresh": "bash scripts/e2e-refresh.sh",
-    "deploy:rules": "firebase deploy --only firestore,storage",
+    "deploy:rules": "firebase deploy --only firestore,storage --project store-os-dev",
     "check:rules": "node scripts/check-rules-deployed.cjs"
   },
   "dependencies": {

@@ -84,9 +84,11 @@ App lista para producción (Vercel + Firebase). Ver la guía completa en
 4. Importar el repo en Vercel (framework Vite auto-detectado). El primer usuario
    que se registra se vuelve super-admin.
 
-Para desarrollo local sin backend: `npm run dev` (modo demostración en
-`localStorage`). Para pruebas con emulador: `npm run emulators` +
-`npm run e2e:firebase`.
+Para desarrollo conectado, configura `.env` con los valores de `store-os-dev`.
+Las pruebas con emulador usan el mismo ID de proyecto y mantienen Auth,
+Firestore, Storage y Functions en localhost: `npm run emulators` +
+`npm run e2e:firebase`. El modo local sin Firebase sigue disponible para
+trabajar sin conexión.
 
 ## Decisiones de diseño
 
