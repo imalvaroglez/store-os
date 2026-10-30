@@ -4,14 +4,14 @@ Documento de referencia para entender cómo está construido Store OS. Para proc
 
 ## Visión general
 
-App de una sola página (SPA) **local-first**, renderizada con React + TypeScript + Vite, estilada con Tailwind sobre un sistema de tokens. Todo el estado vive en el navegador (`localStorage`); no hay backend todavía.
+App de una sola página (SPA) **local-first**, renderizada con React + TypeScript + Vite, estilada con Tailwind sobre un sistema de tokens. En desarrollo sin Firebase, el estado vive en `localStorage` y empieza vacío. Con Firebase configurado, la sesión autenticada usa Firestore; producción siempre exige autenticación en las rutas privadas.
 
 ```
 src/
   app/            # raíz: App, AppShell (responsive), StoreProvider (estado), router
   design-system/  # sistema de diseño (tokens + primitivos + gate) y theme/
   features/       # pantallas por dominio
-  lib/            # utilidades puras (ids, money, dates, storage, selectors, whatsapp, seed, labels, router)
+  lib/            # utilidades puras (ids, money, dates, storage, selectors, whatsapp, labels, router)
   types/          # modelo de datos
 ```
 
@@ -41,7 +41,14 @@ tap → dispatch(action) → reducer (StoreProvider) → nuevo AppState
 - **`StoreProvider`** (`src/app/StoreProvider.tsx`) mantiene todo en un `useReducer`. Expone `useStore()` con acciones (`addStore`, `upsertProduct`, `upsertOrder`, `advanceStatus`, `adjustInventory`, `resetDemo`, etc.).
 - **Ningún componente llama a `localStorage` directamente** — solo `src/lib/storage.ts`, invocado por el provider. Esto aísla la persistencia para poder cambiarla (ej. Firebase) sin tocar la UI.
 - **Aislamiento entre tiendas:** las pantallas nunca filtran `state.products` directo; usan selectores (`productsForStore`, `ordersForStore`, etc. en `src/lib/selectors.ts`) que filtran por `storeId`.
-- **Seed:** en la primera carga (sin `store_os_state_v1` en `localStorage`) se siembran dos tiendas demo (Santi on-demand, Joyería inventory-tiered) con productos/clientes/pedidos.
+- **Inicio local:** en la primera carga (sin `store_os_state_v1` en `localStorage`) se guarda un estado vacío. No se inyectan tiendas demo en el cliente; los datos sintéticos para desarrollo Firebase se administran por separado con scripts de emulador/dev.
+
+### Acceso y persistencia
+
+- Solo el servidor Vite de desarrollo sin Firebase configurado permite operar sin sesión, usando `localStorage`.
+- Con Firebase configurado, una sesión cerrada ve `AuthScreen`; no hay fallback local que pueda mostrar datos guardados del navegador.
+- Los builds de producción siempre exigen autenticación en las rutas privadas, incluso si Firebase no quedó configurado.
+- Las rutas públicas `/catalogo/:slug` son la única excepción y leen su proyección pública.
 
 ### Acceso de plataforma y aislamiento
 
