@@ -150,3 +150,28 @@ describe("acknowledged order drafts", () => {
     rendered.unmount();
   });
 });
+
+describe("new order lines prepend (OLI-011)", () => {
+  it("adds the fresh line at the top, keeping captured content below", () => {
+    localStorage.clear(); // other tests in this file leave drafts behind
+    const order = {
+      id: "prepend_order", storeId: "store_olivia", customerId: "customer_1",
+      items: [{ productName: "Arete dorado", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const,
+      schemaVersion: 2, createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    // The saved line is the only one so far, pre-filled from its snapshot.
+    expect((screen.getAllByLabelText("Producto")[0] as HTMLInputElement).value).toBe("Arete dorado");
+    // Add a new line: it must land on TOP (visible without scrolling — Fer
+    // captures 40–50 lines per order).
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar línea" }));
+    const after = screen.getAllByLabelText("Producto");
+    expect(after).toHaveLength(2);
+    expect((after[0] as HTMLInputElement).value).toBe(""); // fresh empty line first
+    expect((after[1] as HTMLInputElement).value).toBe("Arete dorado"); // captured content preserved below
+    // Line numbering follows the visual order.
+    expect(screen.getByText("Línea 1")).toBeInTheDocument();
+    expect(screen.getByText("Línea 2")).toBeInTheDocument();
+  });
+});

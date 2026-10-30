@@ -362,7 +362,9 @@ export function OrderForm({
             <h2 className="serif-display text-lg font-semibold text-ink">Productos</h2>
             <p className="text-xs text-on-surface-soft mt-0.5">Agrega una o varias líneas al pedido.</p>
           </div>
-          <Button variant="secondary" size="sm" onClick={() => setLines((current) => [...current, lineFromItem()])}>+ Agregar línea</Button>
+          {/* OLI-011: new lines go to the TOP — Fer captures 40–50 lines and must
+              see the fresh one immediately, without scrolling to the bottom. */}
+          <Button variant="secondary" size="sm" onClick={() => setLines((current) => [lineFromItem(), ...current])}>+ Agregar línea</Button>
         </div>
         {lines.map((line, index) => {
           const currentQuantity = Math.max(0, Math.round(numberFromText(line.quantityText)));
