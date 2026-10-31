@@ -26,6 +26,13 @@ claridad del precio aplicado e historial/vigencia por clienta. Conserva la
 diferencia entre el comportamiento actual y la expectativa reportada, sin
 aprobar reglas automáticas nuevas.
 
+Después se acordó una entrega para el 31 de octubre a las 08:00:
+[correcciones y adquisición de inventario](superpowers/specs/2026-10-30-showcase-purchase-fixes-design.md).
+Para esa etapa, el viaje admite proveedores distintos, transporte/envío se
+reparten por piezas y el inventario usa el costo completo de la última
+compra. El precio de la clienta se elige una vez y se aplica automáticamente;
+marcar Emprendedora no asigna Iconic. La renovación de 30 días sigue pendiente.
+
 ## Insumo recibido: Excel de ventas
 
 El archivo ya se recibió y se analizó. El [análisis del Excel](fer-excel-analysis-2026-10-28.md)

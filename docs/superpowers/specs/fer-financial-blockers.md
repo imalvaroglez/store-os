@@ -1,5 +1,12 @@
 # FER-02/03/15/16 · Bloqueos del flujo financiero
 
+Actualización del 30 de octubre: para la adquisición de inventario, Álvaro
+confirmó repartir transporte y envío por cantidad de piezas y usar el costo
+completo de la última compra, con varios proveedores por viaje. La
+[entrega del showcase](2026-10-30-showcase-purchase-fixes-design.md) define
+el alcance implementado; las demás reglas de ventas, empaques y cierres
+continúan pendientes donde se indica abajo.
+
 ## Reglas confirmadas que sí se conservan
 
 - El reparto vigente de ganancia es 20% para pagar la inversión recibida, 50% para Fer y 30% para Olivia. No es una transferencia automática.
@@ -11,7 +18,7 @@
 
 Acordar antes de calcular costo por pieza:
 
-1. Repartir gastos por cantidad de piezas, por valor u otra base; y qué base usar en cada tipo de gasto.
+1. Para transporte y envío de adquisición, ya se confirmó cantidad de piezas. Otros repartos de venta o entrega requieren definir su base; no trasladarles automáticamente esa regla.
 2. Cómo distribuir empaques individuales y bolsas compartidas cuando quedan fracciones de centavo. El total asignado debe conservar exactamente el total original.
 3. Qué hacer con piezas que se agregan o quitan de una compra después de registrar el gasto.
 4. Cómo asignar viajes que combinan surtido, entrega y actividades ajenas al negocio.
@@ -23,7 +30,7 @@ FER-01 registra gastos con la compra, pero por sí solo no define ni calcula est
 
 Depende de FER-02 y requiere acordar:
 
-- costo histórico por unidad al vender, incluidas compras parciales y existencias que mezclan lotes;
+- costo histórico por unidad al vender y correcciones; el costo de inventario para las nuevas recepciones ya se acordó como costo completo de la última compra, sin promediarlo con las existencias anteriores;
 - fecha que atribuye la venta y el costo si el pedido se crea, paga y entrega en meses distintos;
 - tratamiento de abonos, cancelaciones, cambios y devoluciones;
 - diferencia entre venta registrada, efectivo cobrado y ganancia distribuible.

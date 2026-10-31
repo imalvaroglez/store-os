@@ -7,6 +7,13 @@ una compra de Olivia; incluye una captura de la pantalla Editar compra.
 expresamente registrar estas necesidades, sin implementarlas en este momento.
 Las ideas de interfaz y modelo descritas aquí no constituyen una spec aprobada.
 
+Actualización posterior: Álvaro confirmó una entrega para revisión en dev el
+31 de octubre a las 08:00. Incluye varios proveedores por viaje, el costo
+completo de la última compra y las correcciones de captura. El
+[diseño de esa entrega](superpowers/specs/2026-10-30-showcase-purchase-fixes-design.md)
+documenta las reglas confirmadas; las secciones siguientes conservan la nota
+inicial y la explicación del comportamiento que se observó antes del cambio.
+
 ## Problemas reportados en la captura
 
 Entrada de backlog: `purchase-entry-polish`.
