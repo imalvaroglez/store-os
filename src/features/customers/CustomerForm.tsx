@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { Button, SelectField, TextField, TextArea, useToast } from "../../design-system";
-import { tiersForStore } from "../../lib/pricing";
+import { defaultTier, tiersForStore } from "../../lib/pricing";
 import type { Customer } from "../../types";
 
 export function CustomerForm({
@@ -60,8 +60,9 @@ export function CustomerForm({
         onChange={(e) => setDraft({ ...draft, instagram: e.target.value || undefined })}
       />
       <SelectField label="Tipo de cliente" value={draft.segment ?? "regular"} onChange={(segment) => setDraft({ ...draft, segment })} options={[{ value: "regular", label: "Regular" }, { value: "entrepreneur", label: "Emprendedora" }]} />
+      {activeStore?.type === "inventory_tiered" && <p className="text-sm text-ink-soft">El tipo identifica a tu clienta. Su precio se elige abajo; marcar Emprendedora no asigna Iconic automáticamente.</p>}
       {activeStore?.type === "inventory_tiered" && (
-        <SelectField label="Nivel de precio" value={draft.assignedPriceTierId ?? ""} onChange={(value) => setDraft({ ...draft, assignedPriceTierId: value || undefined })} options={[
+        <SelectField label="Nivel de precio" aria-label="Nivel de precio" hint={`Se aplica automáticamente en sus nuevos pedidos. Sin un nivel elegido se usa ${defaultTier(activeStore)?.label ?? "el precio de la tienda"}.`} value={draft.assignedPriceTierId ?? ""} onChange={(value) => setDraft({ ...draft, assignedPriceTierId: value || undefined })} options={[
           { value: "", label: "Precio de la tienda" },
           ...(draft.assignedPriceTierId && !tiersForStore(activeStore).some((tier) => tier.id === draft.assignedPriceTierId) ? [{ value: draft.assignedPriceTierId, label: "Nivel no disponible" }] : []),
           ...tiersForStore(activeStore).map((tier) => ({ value: tier.id, label: tier.label })),

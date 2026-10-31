@@ -454,6 +454,7 @@ export function OrderForm({
           }}
         />
         <Button variant="ghost" size="sm" onClick={() => setNewCustomerOpen(true)}>+ Nuevo cliente</Button>
+        {isTiered && selectedCustomer && !missingTier && <p className="text-sm text-ink-soft" aria-live="polite">Precio para este pedido: <strong className="text-ink">{tiers.find((tier) => tier.id === currentTier)?.label ?? "Precio de la tienda"}</strong>. Se aplica a los productos nuevos; los precios ajustados a mano se conservan.</p>}
         {missingTier && <p className="text-danger">El nivel de precio de esta clienta ya no está disponible. Elige uno para este pedido.</p>}
         {isTiered && assignedTier && !tiers.some((tier) => tier.id === assignedTier) && (
           <SelectField label="Nivel de precio para el pedido" value={orderTierOverride} onChange={resolveMissingTier} options={[{ value: "", label: "Selecciona un nivel" }, ...tiers.map((tier) => ({ value: tier.id, label: tier.label }))]} />
