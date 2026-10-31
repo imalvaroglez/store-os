@@ -580,7 +580,8 @@ export function OrderForm({
               </div>
               <div className="grid grid-cols-2 items-end gap-3">
                 <TextField
-                  label="Costo (opcional)"
+                  label="Costo de la pieza"
+                  hint="Lo que te costó tenerla (no se cobra). Se llena solo desde el catálogo y alimenta tu ganancia estimada."
                   type="text"
                   inputMode="decimal"
                   pattern="[0-9]*[.]?[0-9]*"
