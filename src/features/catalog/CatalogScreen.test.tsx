@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import { StoreProvider } from "../../app/StoreProvider";
 import { AuthProvider } from "../../app/firebase/AuthProvider";
-import { ToastProvider } from "../../design-system";
+import { Button, ToastProvider } from "../../design-system";
+import { useStore } from "../../app/StoreProvider";
 import { CatalogScreen } from "./CatalogScreen";
 import { fixtureState } from "../../lib/testFixtures";
 import type { AppState, Product } from "../../types";
@@ -74,6 +75,11 @@ function changeSelect(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
+function StoreToggleButton() {
+  const { activeStore, setActiveStore } = useStore();
+  return <Button onClick={() => setActiveStore(activeStore?.id === OLIVIA ? SANTI : OLIVIA)}>Cambiar tienda</Button>;
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
@@ -95,6 +101,48 @@ describe("CatalogScreen filtro por categoría real", () => {
     fireEvent.click(screen.getByText("Limpiar"));
     expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]);
     expect(screen.queryByText("Limpiar")).toBeNull();
+  });
+
+  it("muestra solo productos por surtir según el umbral o si están agotados", () => {
+    const state = sortFilterState();
+    state.products[0].lowStockAt = 3;
+    state.products[1].lowStockAt = 0;
+    // An exhausted product remains visible for restocking even without a saved threshold.
+    state.products[2].lowStockAt = undefined;
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <CatalogScreen />
+      </Wrapper>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
+    expect(cardNames()).toEqual(["Aretes Luna", "anillo perla"]);
+    expect(screen.getByText("2 de 3 piezas")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByText("Limpiar"));
+    expect(cardNames()).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("limpia Por surtir al cambiar de tienda", () => {
+    const state = sortFilterState();
+    state.stores.find((store) => store.id === SANTI)!.type = "on_demand";
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <StoreToggleButton />
+        <CatalogScreen />
+      </Wrapper>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar tienda" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar tienda" }));
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("false");
   });
 });
 
