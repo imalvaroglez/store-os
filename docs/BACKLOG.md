@@ -1,5 +1,15 @@
 # Backlog
 
+## Meta de revisión en dev: 31 de octubre, 08:00
+
+La [entrega del showcase](superpowers/specs/2026-10-30-showcase-purchase-fixes-design.md)
+incluye captura y vinculación de Compras, interfaz y claridad de precio por
+clienta, más compras de inventario por viaje con varios tickets y reparto de
+gastos por cantidad de piezas. Álvaro confirmó proveedores distintos en el
+mismo viaje, costo completo de la última compra y nivel de precio elegido
+una vez por clienta. La captura y el flujo de inventario están en curso. La meta
+exige validación completa y draft PR, sin merge ni producción.
+
 ## Registro del showcase, 30 de octubre de 2026
 
 La [nota general del showcase](showcase-feedback-2026-10-30.md) reúne el caso

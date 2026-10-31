@@ -4,12 +4,12 @@ type Variant = "primary" | "secondary" | "ghost" | "danger" | "success";
 type Size = "sm" | "md" | "lg";
 
 const VARIANTS: Record<Variant, string> = {
-  primary: "bg-ink text-paper hover:bg-stone-800 active:bg-stone-950 shadow-sm",
+  primary: "bg-ink text-paper hover:opacity-90 active:opacity-80 shadow-sm",
   secondary:
-    "bg-white/70 text-ink ring-1 ring-rule hover:bg-white active:bg-paper-2",
-  ghost: "bg-transparent text-ink-soft hover:bg-stone-200/50",
-  danger: "bg-rose-600 text-white hover:bg-rose-500 active:bg-rose-700 shadow-sm",
-  success: "bg-forest text-paper hover:bg-forest-700 active:bg-forest-700 shadow-sm",
+    "bg-surface text-on-surface ring-1 ring-edge hover:bg-surface-muted active:bg-surface-muted",
+  ghost: "bg-transparent text-ink-soft hover:bg-surface-muted active:bg-surface-muted",
+  danger: "bg-[var(--danger)] text-on-accent hover:opacity-90 active:opacity-80 shadow-sm",
+  success: "bg-[var(--success)] text-on-accent hover:opacity-90 active:opacity-80 shadow-sm",
 };
 
 // sm/md carry a min tap height (~40px) so dense tables stay touch-friendly.
@@ -54,9 +54,9 @@ export function IconButton({
   variant?: "primary" | "secondary" | "ghost";
 }) {
   const styles: Record<string, string> = {
-    primary: "bg-ink text-paper active:bg-stone-700",
-    secondary: "bg-white/70 text-ink ring-1 ring-rule active:bg-paper-2",
-    ghost: "bg-transparent text-ink-soft active:bg-stone-200/50",
+    primary: "bg-ink text-paper active:opacity-80",
+    secondary: "bg-surface text-on-surface ring-1 ring-edge active:bg-surface-muted",
+    ghost: "bg-transparent text-ink-soft active:bg-surface-muted",
   };
   return (
     <button
