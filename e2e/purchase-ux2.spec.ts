@@ -185,6 +185,46 @@ test("one journey receives two suppliers and distributes 44 pesos over 70 pieces
   await expect(page.getByLabel("Folio del ticket")).toHaveValue("QA-T-A");
 });
 
+test("create one private product from purchase search and receive it only on confirmation", async ({ sharedPage: page }) => {
+  await gotoClean(page, "/productos/compras");
+  await ensureStoreActive(page, "Joyería");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "+ Nueva compra" }).click();
+  await page.getByLabel("Nombre de la compra", { exact: true }).fill("Producto nuevo QA");
+  await page.getByLabel("Folio del ticket").fill("QA-CREAR");
+  await page.getByRole("button", { name: "+ Agregar línea" }).click();
+  await page.getByLabel("Producto", { exact: true }).fill("Diseño nuevo unitario QA");
+  await page.getByLabel("Cantidad", { exact: true }).fill("2");
+  await page.getByLabel("Costo unitario", { exact: true }).fill("16.45");
+  await page.getByRole("combobox", { name: "Producto en Store OS" }).fill("Diseño nuevo unitario QA");
+  await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(0);
+  await page.getByRole("button", { name: "+ Crear nuevo producto" }).click();
+  const productForm = page.getByRole("dialog", { name: "Nuevo producto" });
+  await expect(productForm.getByLabel("Nombre", { exact: true })).toHaveValue("Diseño nuevo unitario QA");
+  await expect(productForm.getByLabel("Costo", { exact: true })).toHaveValue("16.45");
+  await productForm.getByLabel("Menudeo", { exact: true }).fill("50");
+  await productForm.getByRole("button", { name: "Crear producto", exact: true }).click();
+  await expect(productForm).toHaveCount(0);
+  await expect(page.getByLabel("Costo unitario", { exact: true })).toHaveValue("16.45");
+  await page.getByLabel("Total pagado", { exact: true }).fill("32.90");
+  await page.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(page.getByText("Borrador guardado.")).toBeVisible();
+  const { token } = await adminToken("admin@store.os", "password123");
+  const headers = { Authorization: `Bearer ${token}` };
+  const purchases = await (await fetch(`${FIRESTORE_REST}/purchases?pageSize=100`, { headers })).json();
+  const saved = purchases.documents.find((document: { fields: { name?: { stringValue: string } } }) => document.fields.name?.stringValue === "Producto nuevo QA");
+  const productId = saved.fields.lines.arrayValue.values[0].mapValue.fields.productId.stringValue;
+  const before = await (await fetch(`${FIRESTORE_REST}/products/${productId}`, { headers })).json();
+  expect(Number(before.fields.quantityOnHand?.integerValue ?? before.fields.quantityOnHand?.doubleValue ?? 0)).toBe(0);
+  expect(before.fields.isPublic.booleanValue).toBe(false);
+  await page.getByRole("button", { name: "Recibir mercancía", exact: true }).click();
+  await expect(page.getByText(/el inventario se actualizó/)).toBeVisible();
+  const after = await (await fetch(`${FIRESTORE_REST}/products/${productId}`, { headers })).json();
+  expect(Number(after.fields.quantityOnHand.integerValue)).toBe(2);
+  expect(after.fields.status.stringValue).toBe("draft");
+  expect(after.fields.isPublic.booleanValue).toBe(false);
+});
+
 
 
 test("50-line review: filters, global resolution, bulk create, receive", async ({ sharedPage: page }) => {
