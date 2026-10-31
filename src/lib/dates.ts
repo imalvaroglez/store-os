@@ -2,17 +2,22 @@
 
 export function formatDate(iso?: string): string {
   if (!iso) return "";
-  const d = new Date(iso);
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const d = new Date(dateOnly ? `${iso}T12:00:00Z` : iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString("es-MX", {
     day: "numeric",
     month: "short",
     year: "numeric",
+    timeZone: dateOnly ? "UTC" : "America/Mexico_City",
   });
 }
 
-export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+export function todayIso(now = new Date()): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en", {
+    timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 export function nowIso(): string {
