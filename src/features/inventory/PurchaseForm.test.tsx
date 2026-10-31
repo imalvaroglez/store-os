@@ -2,13 +2,16 @@
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ToastProvider } from "../../design-system";
+import { Button, ToastProvider } from "../../design-system";
+import type { PdfApplyPayload } from "./PurchasePdfImport";
 import type { Purchase } from "../../types";
 import { PurchaseForm } from "./PurchaseForm";
 
-const { upsertPurchase, upsertProduct, activeStore, state } = vi.hoisted(() => ({
+const { upsertPurchase, upsertProduct, receivePurchase, pdfPayloads, activeStore, state } = vi.hoisted(() => ({
   upsertPurchase: vi.fn().mockResolvedValue(undefined),
   upsertProduct: vi.fn().mockResolvedValue(undefined),
+  receivePurchase: vi.fn().mockResolvedValue("received"),
+  pdfPayloads: [] as PdfApplyPayload[],
   activeStore: { id: "olivia", name: "Olivia", type: "inventory_tiered" as const },
   state: {
     suppliers: [],
@@ -24,7 +27,10 @@ const { upsertPurchase, upsertProduct, activeStore, state } = vi.hoisted(() => (
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../app/StoreProvider")>(),
-  useStore: () => ({ state, activeStore, upsertPurchase, upsertProduct, cloud: true }),
+  useStore: () => ({ state, activeStore, upsertPurchase, upsertProduct, receivePurchase, cloud: true }),
+}));
+vi.mock("./PurchasePdfImport", () => ({
+  PurchasePdfImport: ({ onApply }: { onApply: (payload: PdfApplyPayload) => void }) => <Button onClick={() => onApply(pdfPayloads.shift()!)}>Importar PDF de prueba</Button>,
 }));
 
 function purchase(): Purchase {
@@ -39,7 +45,7 @@ function open(value = purchase()) {
   render(<ToastProvider><PurchaseForm purchase={value} onDone={() => {}} /></ToastProvider>);
 }
 
-beforeEach(() => { upsertPurchase.mockClear(); upsertProduct.mockReset().mockResolvedValue(undefined); });
+beforeEach(() => { upsertPurchase.mockClear(); upsertProduct.mockReset().mockResolvedValue(undefined); receivePurchase.mockReset().mockResolvedValue("received"); pdfPayloads.length = 0; });
 
 describe("purchase amount entry", () => {
   it("keeps the decimal separator when entering a cost one key at a time", async () => {
@@ -87,7 +93,35 @@ describe("purchase amount entry", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
     await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
-    expect(upsertPurchase.mock.calls[0][0]).toMatchObject({ discount: 0.5, shipping: 0.5, tax: 0.5, totalConfirmed: 0.5 });
+    expect(upsertPurchase.mock.calls[0][0].tickets[0]).toMatchObject({ discount: 0.5, shipping: 0.5, tax: 0.5, totalConfirmed: 0.5 });
+  });
+  it("lets the operator clear and type 70 pieces without restoring an unwanted leading one", async () => {
+    open();
+    const quantity = screen.getByLabelText("Cantidad", { exact: true }) as HTMLInputElement;
+    fireEvent.change(quantity, { target: { value: "" } });
+    expect(quantity).toHaveValue("");
+    for (const char of "70") fireEvent.change(quantity, { target: { value: quantity.value + char } });
+    expect(quantity).toHaveValue("70");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    expect(upsertPurchase.mock.calls[0][0].lines[0].quantity).toBe(70);
+  });
+  it("does not save an invalid visible amount as a silent zero", () => {
+    open();
+    fireEvent.change(screen.getByLabelText("Costo unitario"), { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    expect(upsertPurchase).not.toHaveBeenCalled();
+    expect(screen.getByText("Revisa los importes y las cantidades que estás escribiendo.")).toBeVisible();
+  });
+  it("explains a Firebase receipt failure in Spanish and keeps the purchase open", async () => {
+    receivePurchase.mockRejectedValueOnce(Object.assign(new Error("Missing or insufficient permissions"), { code: "permission-denied" }));
+    const value = purchase();
+    value.lines[0].productId = "ring";
+    open(value);
+    fireEvent.click(screen.getByRole("button", { name: "Recibir mercancía" }));
+    await waitFor(() => expect(screen.getByText("No se pudo recibir la mercancía. Intenta de nuevo.")).toBeVisible());
+    expect(screen.queryByText("Missing or insufficient permissions")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Costo unitario")).toHaveValue("16.45");
   });
 
   it("does not move an edited cost to another line when the preceding row is removed", () => {
@@ -127,5 +161,22 @@ describe("purchase amount entry", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Nuevo producto" })).not.toBeInTheDocument());
     expect(upsertProduct).toHaveBeenCalledTimes(2);
     expect(screen.getByLabelText("Costo unitario")).toHaveValue("16.45");
+  });
+
+  it("keeps both PDFs and their line-to-ticket relationship when importing a second ticket", async () => {
+    pdfPayloads.push({ supplierOrder: "PDF-A", supplierCandidate: "Proveedor A", total: 20, fingerprint: "a".repeat(64), documentPath: "private/pdf-a.pdf", lines: [{ productId: "", name: "Primero", quantity: 2, unitCost: 10 }] });
+    pdfPayloads.push({ supplierOrder: "PDF-B", supplierCandidate: "Proveedor B", total: 15, fingerprint: "b".repeat(64), documentPath: "private/pdf-b.pdf", lines: [{ productId: "", name: "Segundo", quantity: 3, unitCost: 5 }] });
+    open({ ...purchase(), lines: [], subtotal: 0, totalConfirmed: 0 });
+    fireEvent.click(screen.getByRole("button", { name: "Importar PDF de prueba" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar ticket" }));
+    fireEvent.click(screen.getByRole("button", { name: "Importar PDF de prueba" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    const saved = upsertPurchase.mock.calls[0][0] as Purchase;
+    expect(saved.lines.map((line) => line.name)).toEqual(["Primero", "Segundo"]);
+    expect(saved.tickets!.map((ticket) => ticket.folio)).toEqual(["PDF-A", "PDF-B"]);
+    expect(saved.tickets!.map((ticket) => ticket.documentPath)).toEqual(["private/pdf-a.pdf", "private/pdf-b.pdf"]);
+    expect(saved.lines.map((line) => line.ticketId)).toEqual(saved.tickets!.map((ticket) => ticket.id));
+    expect(saved.totalConfirmed).toBe(35);
   });
 });
