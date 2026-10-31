@@ -578,22 +578,12 @@ export function OrderForm({
                 )}
                 {!isTiered && <div className="hidden md:block" aria-hidden />}
               </div>
-              <div className="grid grid-cols-2 items-end gap-3">
-                <TextField
-                  label="Costo de la pieza"
-                  hint="Lo que te costó tenerla (no se cobra). Se llena solo desde el catálogo y alimenta tu ganancia estimada."
-                  type="text"
-                  inputMode="decimal"
-                  pattern="[0-9]*[.]?[0-9]*"
-                  value={line.costText}
-                  onChange={(event) => {
-                    const value = sanitizeDecimalInput(event.target.value);
-                    updateLine(line.key, { costText: value, cost: parseAmount(value) });
-                  }}
-                />
-                <div className="rounded-md bg-surface-muted px-3 py-2.5 min-h-[3.25rem] flex items-center">
-                  <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
-                </div>
+              {/* No cost INPUT here: cost is catalog data that rides along in the
+                  line snapshot to feed the saved order's estimated profit — it is
+                  not something the operator captures, and an editable field with
+                  no visible effect was noise (field feedback, dev trial). */}
+              <div className="rounded-md bg-surface-muted px-3 py-2.5 min-h-[3.25rem] flex items-center">
+                <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
               </div>
               {warning && <Badge tone="warning">{warning}</Badge>}
             </Card>
