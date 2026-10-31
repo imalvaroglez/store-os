@@ -14,6 +14,12 @@ incorpora el backlog funcional externo de 39 historias OLI, el cruce con estos
 la revisión técnica previa a implementación; conserva abiertas las reglas que
 todavía no se han validado.
 
+La [nota de Compras del 30 de octubre](purchase-feedback-2026-10-30.md) amplía
+FER-01/02/03 con problemas de captura, una compra por viaje con varios tickets
+y el reparto propuesto por cantidad de piezas ($44 / 70 y $150 / 100).
+Solo registra backlog; no autoriza implementación ni cierra las demás reglas
+de costos pendientes.
+
 ## Insumo recibido: Excel de ventas
 
 El archivo ya se recibió y se analizó. El [análisis del Excel](fer-excel-analysis-2026-10-28.md)

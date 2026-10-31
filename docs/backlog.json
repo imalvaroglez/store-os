@@ -283,8 +283,11 @@
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
       "proposedPriority": "P1",
       "relatedItems": [
-        "purchase-ux2-fast-receive"
+        "purchase-ux2-fast-receive",
+        "purchase-trip-multiple-tickets",
+        "purchase-entry-polish"
       ],
+      "referenceNotesPath": "docs/purchase-feedback-2026-10-30.md",
       "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
@@ -297,6 +300,10 @@
       "discoveryId": "FER-02",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
       "proposedPriority": "P1",
+      "relatedItems": [
+        "purchase-trip-multiple-tickets"
+      ],
+      "referenceNotesPath": "docs/purchase-feedback-2026-10-30.md",
       "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
@@ -472,6 +479,33 @@
         "fer-monthly-close"
       ],
       "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
+    },
+    {
+      "id": "purchase-entry-polish",
+      "title": "Compras: decimales, búsqueda al vincular, conservación del costo y pulido visual",
+      "priority": 370,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryPath": "docs/purchase-feedback-2026-10-30.md",
+      "relatedItems": [
+        "purchase-ux2-fast-receive",
+        "fer-purchase-expenses"
+      ]
+    },
+    {
+      "id": "purchase-trip-multiple-tickets",
+      "title": "Compra de inventario por viaje con varios tickets y gastos compartidos",
+      "priority": 380,
+      "status": "needs-spec",
+      "dependsOn": [],
+      "previewChecks": [],
+      "discoveryPath": "docs/purchase-feedback-2026-10-30.md",
+      "relatedItems": [
+        "fer-purchase-expenses",
+        "fer-cost-allocation",
+        "fer-sale-profit"
+      ]
     }
   ]
 }

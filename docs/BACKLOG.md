@@ -1,5 +1,16 @@
 # Backlog
 
+## Nota de uso: Compras, 30 de octubre de 2026
+
+El [reporte de captura y compra por viaje](purchase-feedback-2026-10-30.md)
+registra los problemas de decimales, vinculación de productos y acabado visual,
+la propuesta de agrupar varios tickets en una compra y el reparto de transporte
+o envío entre piezas. Se relaciona con FER-01/02/03 y añade las entradas
+`purchase-entry-polish` y `purchase-trip-multiple-tickets` en `docs/backlog.json`.
+Es únicamente backlog: prioridad y diseño pendientes, sin autorización de
+implementación. El historial de costos, la remuneración de Fer y el caso de
+Mari quedan documentados como contexto futuro.
+
 ## Ciclo actual: entrevista con Fer, 28 de octubre de 2026
 
 El [diagnóstico técnico y plan incremental](olivia-technical-diagnostic-2026-10-28.md)
