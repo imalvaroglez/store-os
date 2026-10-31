@@ -63,12 +63,14 @@ export function CheckboxField({
   checked,
   onChange,
   caption,
+  disabled = false,
 }: {
   label: string;
   hint?: string;
   checked: boolean;
   onChange: (next: boolean) => void;
   caption?: string;
+  disabled?: boolean;
 }) {
   return (
     <FormField label={label} hint={hint}>
@@ -77,6 +79,7 @@ export function CheckboxField({
           type="checkbox"
           className="h-5 w-5 accent-ink"
           checked={checked}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.checked)}
         />
         {caption && <span className="text-sm text-ink">{caption}</span>}

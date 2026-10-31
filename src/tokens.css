@@ -8,6 +8,8 @@
 */
 
 :root {
+  --color-scheme: light;
+  color-scheme: var(--color-scheme);
   --paper: #f6f1e7;
   --paper-2: #efe7d6;
   --ink: #1c1917;
