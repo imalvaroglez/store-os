@@ -176,9 +176,10 @@ describe("customer price assignment", () => {
     fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "Sofía" } });
     expect(screen.getByText("Cambiar cliente")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Aplicar precios de Sofía" }));
+    // Stack view: the LAST captured item (manual 123) renders on top.
     const prices = screen.getAllByLabelText(/Precio unitario/);
-    expect(prices[0]).toHaveValue("70");
-    expect(prices[1]).toHaveValue("123");
+    expect(prices[0]).toHaveValue("123");
+    expect(prices[1]).toHaveValue("70");
     fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
     await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
     expect(mockUpsertOrder.mock.calls[0][0].items.map((item: { unitPrice: number }) => item.unitPrice)).toEqual([70, 123]);
@@ -266,9 +267,14 @@ describe("new order lines prepend (OLI-011)", () => {
     expect(after).toHaveLength(2);
     expect((after[0] as HTMLInputElement).value).toBe(""); // fresh empty line first
     expect((after[1] as HTMLInputElement).value).toBe("Arete dorado"); // captured content preserved below
-    // Line numbering follows the visual order.
-    expect(screen.getByText("Línea 1")).toBeInTheDocument();
-    expect(screen.getByText("Línea 2")).toBeInTheDocument();
+    // Article numbers follow CAPTURE order (stable): the saved article keeps
+    // "Artículo 1" (rendered BELOW), the fresh one is "Artículo 2" on top.
+    expect(screen.getByText("Artículo 1")).toBeInTheDocument();
+    expect(screen.getByText("Artículo 2")).toBeInTheDocument();
+    // The stack view shows the NEWEST first; "Artículo 1" is the second card.
+    const labels = screen.getAllByText(/^Artículo \d+$/);
+    expect(labels[0]).toHaveTextContent("Artículo 2");
+    expect(labels[1]).toHaveTextContent("Artículo 1");
   });
 });
 
@@ -282,10 +288,10 @@ describe("fast order capture", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar línea" }));
     const products = Array.from(document.querySelectorAll<HTMLInputElement>("input[role=combobox]")).slice(1);
     expect(products).toHaveLength(50);
-    expect(products[0]).toHaveFocus();
-    expect(products[1]).toHaveValue("Anillo");
-    expect(screen.getAllByLabelText("Cantidad")[1]).toHaveValue("2");
-    expect(screen.getAllByLabelText(/Precio unitario/)[1]).toHaveValue("50");
+    expect(products[0]).toHaveFocus(); // fresh line on top of the stack
+    expect(products[49]).toHaveValue("Anillo"); // first captured stays at the bottom
+    expect(screen.getAllByLabelText("Cantidad")[49]).toHaveValue("2");
+    expect(screen.getAllByLabelText(/Precio unitario/)[49]).toHaveValue("50");
   });
 });
 
