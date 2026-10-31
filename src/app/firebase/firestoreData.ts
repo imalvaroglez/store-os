@@ -14,7 +14,9 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
+import { reservationDeltasForOrderChange } from "../../lib/inventory";
+import { purchaseInventoryUpdates } from "../../lib/purchases";
+import { recalcPurchaseStatus } from "../../types";
 import { migrateOrder } from "../../lib/orders";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
@@ -421,8 +423,9 @@ export class PurchaseAlreadyReceived extends Error {
 }
 
 /**
- * Atomically receive a purchase into inventory: products get stock + weighted
- * average cost, the purchase gets status "received" + receivedAt — all in ONE
+ * Atomically receive a purchase into inventory: products get stock and the
+ * selected cost policy; legacy is weighted, new journeys use acquisition cost.
+ * The purchase gets status "received" + receivedAt — all in ONE
  * Firestore commit. Idempotency guards, checked INSIDE the transaction:
  *   - `receivedAt` already set → already received through the lifecycle
  *   - `status === undefined` → legacy purchase whose stock was applied on save
@@ -430,7 +433,7 @@ export class PurchaseAlreadyReceived extends Error {
  * the public-catalog republish that upsertProduct performs, so prices stay
  * untouched (editable later from the product form).
  */
-export async function receivePurchaseTx(purchaseId: string): Promise<void> {
+export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<typeof purchaseInventoryUpdates>> {
   const { db } = getFirebase();
   // Pre-validate OUTSIDE the transaction: errors thrown inside runTransaction
   // reach the caller with an emptied message on the emulator, so the UI toast
@@ -440,6 +443,15 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
     if (!snap.exists()) throw new Error("No se encontró la compra.");
     const purchase = snap.data() as Purchase;
     if (purchase.receivedAt != null || purchase.status === undefined) throw new PurchaseAlreadyReceived();
+    if (purchase.costingMethod === "latest_purchase" && recalcPurchaseStatus(purchase) !== "ready") {
+      throw new Error("Revisa los productos y los totales de cada ticket antes de recibir.");
+    }
+    for (const supplierId of new Set((purchase.tickets ?? []).map((ticket) => ticket.supplierId).filter((id): id is string => !!id))) {
+      let supplier;
+      try { supplier = await getDoc(doc(db, "suppliers", supplierId)); }
+      catch { throw new Error("No se pudo consultar uno de los proveedores de esta tienda."); }
+      if (!supplier.exists() || supplier.data().storeId !== purchase.storeId) throw new Error("Uno de los proveedores no pertenece a esta tienda.");
+    }
     for (const line of purchase.lines) {
       if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
       let pSnap;
@@ -457,7 +469,7 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
       }
     }
   }
-  await runTransaction(db, async (tx) => {
+  return runTransaction(db, async (tx) => {
     const purchaseRef = doc(db, "purchases", purchaseId);
     const snap = await tx.get(purchaseRef);
     if (!snap.exists()) throw new Error("No se encontró la compra.");
@@ -466,6 +478,10 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
       throw new PurchaseAlreadyReceived();
     }
     const at = new Date().toISOString();
+    for (const supplierId of new Set((purchase.tickets ?? []).map((ticket) => ticket.supplierId).filter((id): id is string => !!id))) {
+      const supplier = await tx.get(doc(db, "suppliers", supplierId));
+      if (!supplier.exists() || supplier.data().storeId !== purchase.storeId) throw new Error("Uno de los proveedores no pertenece a esta tienda.");
+    }
     const productRefs = new Map<string, ReturnType<typeof doc>>();
     const productDocs = new Map<string, Product>();
     for (const line of purchase.lines) {
@@ -475,24 +491,27 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
       productRefs.set(line.productId, ref);
       const snapP = await tx.get(ref);
       if (!snapP.exists()) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
-      const product = snapP.data() as Product;
+      // Entity writes omit the id field; use the canonical document identity
+      // so applyPurchaseLines can match this product to its purchase lines.
+      const product = { ...snapP.data(), id: snapP.id } as Product;
       if (product.storeId !== purchase.storeId) {
         throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
       }
       productDocs.set(line.productId, product);
     }
-    const stockUpdates = applyPurchaseLines(
-      [...productDocs.values()].filter(Boolean),
-      purchase.lines
-    );
-    for (const [productId, update] of stockUpdates) {
+    const result = purchaseInventoryUpdates([...productDocs.values()], purchase);
+    for (const [productId, update] of result.stockUpdates) {
       tx.update(productRefs.get(productId)!, {
         quantityOnHand: update.quantityOnHand,
         cost: update.cost,
         updatedAt: at,
       });
     }
-    tx.update(purchaseRef, { status: "received", receivedAt: at, updatedAt: at });
+    tx.update(purchaseRef, {
+      status: "received", receivedAt: at, updatedAt: at,
+      ...(result.costAllocations ? { costAllocations: result.costAllocations } : {}),
+    });
+    return result;
   });
 }
 

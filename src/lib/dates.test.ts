@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseSpanishDate } from "./dates";
+import { formatDate, parseSpanishDate, todayIso } from "./dates";
 
-// Anchor "now" in a known Mexico City instant: 2026-08-22 10:00 CST.
-const NOW = new Date("2026-08-22T16:00:00Z");
+// Construct a local wall-clock time, independent of the test runner's zone.
+const NOW = new Date(2026, 7, 22, 10, 0);
 
 describe("parseSpanishDate", () => {
   it("label without year → most recent past occurrence", () => {
@@ -13,7 +13,7 @@ describe("parseSpanishDate", () => {
     expect(parseSpanishDate("sep 30", NOW)).toEqual({ iso: "2025-09-30", inferredYear: true });
   });
 
-  it("today in Mexico City counts as past", () => {
+  it("today in the device's local zone counts as past", () => {
     expect(parseSpanishDate("ago 22", NOW)).toEqual({ iso: "2026-08-22", inferredYear: true });
   });
 
@@ -34,13 +34,10 @@ describe("parseSpanishDate", () => {
     expect(parseSpanishDate("12 may 25", NOW)).toEqual({ iso: "2025-05-12", inferredYear: false });
   });
 
-  it("Mexico City day boundary is UTC-6, not the host machine's offset", () => {
-    // 23:30 UTC = 17:30 in CDMX, same calendar day.
-    expect(parseSpanishDate("ago 22", new Date("2026-08-22T23:30:00Z"))).toEqual({ iso: "2026-08-22", inferredYear: true });
-    // 05:00 UTC = 23:00 the PREVIOUS day in CDMX → "ago 22" is already past.
-    expect(parseSpanishDate("ago 22", new Date("2026-08-23T05:00:00Z"))).toEqual({ iso: "2026-08-22", inferredYear: true });
-    // 2026-08-23T05:00Z is still Aug 22 in CDMX → "ago 23" is future there → previous year.
-    expect(parseSpanishDate("ago 23", new Date("2026-08-23T05:00:00Z"))).toEqual({ iso: "2025-08-23", inferredYear: true });
+  it("uses local midnight when inferring a ticket's year", () => {
+    expect(parseSpanishDate("ago 22", new Date(2026, 7, 22, 23, 30))).toEqual({ iso: "2026-08-22", inferredYear: true });
+    expect(parseSpanishDate("ago 23", new Date(2026, 7, 22, 23, 30))).toEqual({ iso: "2025-08-23", inferredYear: true });
+    expect(parseSpanishDate("ago 23", new Date(2026, 7, 23, 0, 30))).toEqual({ iso: "2026-08-23", inferredYear: true });
   });
 
   it("rejects impossible dates (UTC round-trip)", () => {
@@ -53,5 +50,22 @@ describe("parseSpanishDate", () => {
   it("rejects garbage", () => {
     expect(parseSpanishDate("hola mundo", NOW)).toBeNull();
     expect(parseSpanishDate("", NOW)).toBeNull();
+  });
+});
+
+
+describe("local calendar dates", () => {
+  it("changes the purchase date at the device's local midnight", () => {
+    expect(todayIso(new Date(2026, 9, 30, 23, 59, 59))).toBe("2026-10-30");
+    expect(todayIso(new Date(2026, 9, 31, 0, 0, 0))).toBe("2026-10-31");
+  });
+  it("keeps the day of a date-only ticket when formatting it", () => {
+    expect(formatDate("2026-10-30")).toMatch(/^30 oct\.? 2026$/);
+  });
+  it("shows saved UTC instants on the device's local day", () => {
+    expect(formatDate(new Date(2026, 9, 30, 23, 30).toISOString())).toMatch(/^30 oct\.? 2026$/);
+    expect(formatDate(new Date(2026, 9, 31, 0, 30).toISOString())).toMatch(/^31 oct\.? 2026$/);
+    expect(formatDate(undefined)).toBe("");
+    expect(formatDate("invalid")).toBe("");
   });
 });

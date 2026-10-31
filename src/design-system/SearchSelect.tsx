@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { fieldBase, FormField } from "./FormField";
+import { Button } from "./Button";
 
 export type SearchSelectOption = {
   value: string;
@@ -17,6 +18,9 @@ export function SearchSelect({
   placeholder,
   emptyLabel = "No hay coincidencias.",
   inputRef,
+  disabled = false,
+  action,
+  labelClassName,
 }: {
   label: string;
   value: string;
@@ -26,6 +30,9 @@ export function SearchSelect({
   placeholder?: string;
   emptyLabel?: string;
   inputRef?: Ref<HTMLInputElement>;
+  disabled?: boolean;
+  action?: { label: string; onClick: () => void };
+  labelClassName?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -57,17 +64,19 @@ export function SearchSelect({
   }
 
   return (
-    <FormField label={label}>
+    <FormField label={label} labelClassName={labelClassName}>
       <div ref={rootRef} className="relative">
         <input
           ref={inputRef}
           id={inputId}
           className={fieldBase}
+          aria-label={label}
+          disabled={disabled}
           role="combobox"
           aria-autocomplete="list"
           aria-controls={listId}
-          aria-expanded={open}
-          aria-activedescendant={open && filtered[active] ? `${listId}-option-${active}` : undefined}
+          aria-expanded={open && !disabled}
+          aria-activedescendant={open && !disabled && filtered[active] ? `${listId}-option-${active}` : undefined}
           placeholder={placeholder}
           value={value}
           onFocus={() => setOpen(true)}
@@ -100,31 +109,38 @@ export function SearchSelect({
           }}
         />
 
-        {open && (
+        {open && !disabled && (
           <div
-            id={listId}
-            role="listbox"
             className="absolute inset-x-0 top-full z-40 mt-2 max-h-64 overflow-y-auto rounded-lg border border-edge bg-surface p-1.5 shadow-lift"
           >
-            {filtered.length > 0 ? filtered.map((option, index) => (
-              <button
-                key={option.value}
-                id={`${listId}-option-${index}`}
-                type="button"
-                role="option"
-                aria-selected={index === active}
-                className={`block min-h-10 w-full rounded-md px-3 py-2 text-left transition-colors ${
-                  index === active ? "bg-surface-muted" : "hover:bg-surface-muted"
-                }`}
-                onMouseEnter={() => setActive(index)}
-                onClick={() => select(option)}
-              >
-                <span className="block truncate text-sm font-semibold text-on-surface">{option.label}</span>
-                {option.detail && <span className="block truncate text-xs text-on-surface-soft">{option.detail}</span>}
-              </button>
-            )) : (
-              <p className="px-3 py-3 text-sm text-on-surface-soft" role="status">{emptyLabel}</p>
+            {action && (
+              <div className="mb-1 border-b border-edge pb-1">
+                <Button type="button" variant="ghost" full onClick={() => { setOpen(false); action.onClick(); }}>
+                  {action.label}
+                </Button>
+              </div>
             )}
+            <div id={listId} role="listbox">
+              {filtered.length > 0 ? filtered.map((option, index) => (
+                <button
+                  key={option.value}
+                  id={`${listId}-option-${index}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === active}
+                  className={`block min-h-10 w-full rounded-md px-3 py-2 text-left transition-colors ${
+                    index === active ? "bg-surface-muted" : "hover:bg-surface-muted"
+                  }`}
+                  onMouseEnter={() => setActive(index)}
+                  onClick={() => select(option)}
+                >
+                  <span className="block truncate text-sm font-semibold text-on-surface">{option.label}</span>
+                  {option.detail && <span className="block truncate text-xs text-on-surface-soft">{option.detail}</span>}
+                </button>
+              )) : (
+                <p className="px-3 py-3 text-sm text-on-surface-soft" role="status">{emptyLabel}</p>
+              )}
+            </div>
           </div>
         )}
       </div>

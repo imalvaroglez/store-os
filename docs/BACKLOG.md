@@ -1,5 +1,37 @@
 # Backlog
 
+## Meta de revisión en dev: 31 de octubre, 08:00
+
+La [entrega del showcase](superpowers/specs/2026-10-30-showcase-purchase-fixes-design.md)
+incluye captura y vinculación de Compras, interfaz y claridad de precio por
+clienta, más compras de inventario por viaje con varios tickets y reparto de
+gastos por cantidad de piezas. Álvaro confirmó proveedores distintos en el
+mismo viaje, costo completo de la última compra y nivel de precio elegido
+una vez por clienta. La captura y el flujo de inventario están en curso. La meta
+exige validación completa y draft PR, sin merge ni producción.
+
+## Registro del showcase, 30 de octubre de 2026
+
+La [nota general del showcase](showcase-feedback-2026-10-30.md) reúne el caso
+de Emprendedora/Iconic, el seguimiento por clienta y la forma de incorporar
+nuevos reportes. Amplía FER-04/05 sin duplicarlos y conserva la configuración
+confirmada: solo se había marcado Emprendedora, sin asignar nivel Iconic.
+Cada reporte permite revisar prioridades por impacto y frecuencia; se propone
+atender primero los importes que cambian inesperadamente y la claridad del
+precio por clienta. Las prioridades globales y los bloqueos P0 se conservan;
+esta sesión registra backlog, sin implementación.
+
+## Nota de uso: Compras, 30 de octubre de 2026
+
+El [reporte de captura y compra por viaje](purchase-feedback-2026-10-30.md)
+registra los problemas de decimales, vinculación de productos y acabado visual,
+la propuesta de agrupar varios tickets en una compra y el reparto de transporte
+o envío entre piezas. Se relaciona con FER-01/02/03 y añade las entradas
+`purchase-entry-polish` y `purchase-trip-multiple-tickets` en `docs/backlog.json`.
+Es únicamente backlog: prioridad y diseño pendientes, sin autorización de
+implementación. El historial de costos, la remuneración de Fer y el caso de
+Mari quedan documentados como contexto futuro.
+
 ## Ciclo actual: entrevista con Fer, 28 de octubre de 2026
 
 El [diagnóstico técnico y plan incremental](olivia-technical-diagnostic-2026-10-28.md)

@@ -21,7 +21,7 @@ import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
-import { nowIso } from "../lib/dates";
+import { nowIso, todayIso } from "../lib/dates";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
 import { migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { useAuth } from "./firebase/AuthProvider";
@@ -189,7 +189,7 @@ type StoreContextValue = {
   deleteProduct: (productId: string) => void;
   upsertCategory: (category: Category) => void;
   deleteCategory: (categoryId: string) => void;
-  upsertSupplier: (supplier: Supplier) => void;
+  upsertSupplier: (supplier: Supplier) => Promise<void>;
   deleteSupplier: (supplierId: string) => void;
   upsertPurchase: (purchase: Purchase) => Promise<void>;
   /**
@@ -561,15 +561,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    upsertSupplier: (supplier) => {
+    upsertSupplier: async (supplier) => {
+      if (!cloud || !user) throw new Error("Inicia sesión y conecta Firebase para guardar proveedores.");
+      await persistEntity("suppliers", supplier);
       dispatch({ type: state.suppliers.some((s) => s.id === supplier.id) ? "UPDATE_SUPPLIER" : "ADD_SUPPLIER", supplier });
-      void persistEntity("suppliers", supplier).catch(() => {});
     },
     deleteSupplier: (supplierId) => {
       dispatch({ type: "DELETE_SUPPLIER", supplierId });
       if (cloud && user && !fromCloud.current) deleteEntity(user, "suppliers", supplierId).catch(() => {});
     },
     upsertPurchase: async (purchase) => {
+      if (purchase.costingMethod === "latest_purchase" && (!cloud || !user)) {
+        throw new Error("Inicia sesión y conecta Firebase para guardar la compra de inventario.");
+      }
       dispatch({ type: state.purchases.some((p) => p.id === purchase.id) ? "UPDATE_PURCHASE" : "ADD_PURCHASE", purchase });
       // Await so callers (PurchaseForm) can catch a Firestore rejection instead
       // of showing a false success toast. persistEntity re-throws on rejection.
@@ -591,38 +595,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (cloud && user && !fromCloud.current) {
         deleteEntity(user, "purchases", purchaseId).catch(() => {});
         // Retention policy: the PDF lives while its purchase does.
-        if (purchase?.documentPath) {
-          deletePurchasePdf(purchase.documentPath).catch((e) =>
+        const paths = new Set([purchase?.documentPath, ...(purchase?.tickets ?? []).map((ticket) => ticket.documentPath)].filter((path): path is string => !!path && path.startsWith(`purchases/${purchase?.storeId}/`)));
+        for (const path of paths) {
+          deletePurchasePdf(path).catch((e) =>
             console.error(`[Storage] No se pudo borrar el PDF de la compra ${purchaseId}:`, e)
           );
         }
       }
     },
     receivePurchase: async (purchase) => {
+      if (purchase.costingMethod === "latest_purchase" && (!cloud || !user)) {
+        throw new Error("Inicia sesión y conecta Firebase para recibir la compra de inventario.");
+      }
       // Both guards BEFORE any effect: legacy (status undefined) already
       // applied stock when it was saved, and receivedAt marks a prior receive.
       if (effectivePurchaseStatus(purchase) === "received" || purchase.receivedAt != null) {
         return "already";
       }
       if (cloud) {
+        let result: Awaited<ReturnType<typeof receivePurchaseTx>>;
         // Transactional in Firestore: stock + purchase in ONE commit, with the
         // legacy/receivedAt guards re-checked inside.
         try {
-          await receivePurchaseTx(purchase.id);
+          result = await receivePurchaseTx(purchase.id);
         } catch (e) {
           if (e instanceof PurchaseAlreadyReceived) return "already";
           throw e;
         }
         // Reconcile local state from the transaction's outcome.
         const at = nowIso();
-        const updated = applyPurchaseLines(state.products, purchase.lines);
-        for (const [productId, update] of updated) {
+        for (const [productId, update] of result.stockUpdates) {
           const p = state.products.find((x) => x.id === productId);
           if (p) {
             dispatch({ type: "UPDATE_PRODUCT", product: { ...p, ...update, updatedAt: at } });
           }
         }
-        dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
+        dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at, ...(result.costAllocations ? { costAllocations: result.costAllocations } : {}) } });
         return "received";
       }
       // Local persistence: same effect, guarded by the check above. A stale or
@@ -773,5 +781,5 @@ export function newSupplier(storeId: string): Supplier {
 }
 export function newPurchase(storeId: string): Purchase {
   const now = nowIso();
-  return { id: uid("purchase"), storeId, date: now.slice(0, 10), lines: [], subtotal: 0, totalConfirmed: 0, status: "draft", origin: "manual", createdAt: now, updatedAt: now };
+  return { id: uid("purchase"), storeId, date: todayIso(), lines: [], subtotal: 0, totalConfirmed: 0, status: "draft", origin: "manual", tickets: [{ id: uid("pt"), totalConfirmed: 0 }], costingMethod: "latest_purchase", createdAt: now, updatedAt: now };
 }

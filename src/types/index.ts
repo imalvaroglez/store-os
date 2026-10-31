@@ -274,6 +274,7 @@ export type Supplier = {
 export type PurchaseLine = {
   /** Stable line identity for expense allocations (E5+) and import matching. */
   lineId?: string;
+  ticketId?: string;
   productId: string;
   name: string; // snapshot at purchase time
   quantity: number;
@@ -310,6 +311,28 @@ export type PurchaseExpense = {
   category: PurchaseExpenseCategory;
   amount: number;
   description?: string;
+  includeInInventoryCost?: boolean;
+};
+
+export type PurchaseTicket = {
+  id: string;
+  supplierId?: string;
+  supplierName?: string;
+  folio?: string;
+  totalConfirmed: number;
+  discount?: number;
+  shipping?: number;
+  tax?: number;
+  documentPath?: string;
+  documentFingerprint?: string;
+};
+
+export type PurchaseCostAllocation = {
+  lineId: string;
+  merchandiseCents: number;
+  supplierAdjustmentCents: number;
+  sourcingExpenseCents: number;
+  totalCents: number;
 };
 
 export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, string> = {
@@ -324,6 +347,10 @@ export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, st
 export type Purchase = {
   id: string;
   storeId: string;
+  name?: string;
+  tickets?: PurchaseTicket[];
+  costingMethod?: "latest_purchase";
+  costAllocations?: PurchaseCostAllocation[];
   supplierId?: string;
   date: string; // purchase date (default today)
   // purchase-ux2: true while `date` came from an inferred PDF date label
@@ -369,8 +396,23 @@ export function effectivePurchaseStatus(p: Purchase): PurchaseStatus {
  */
 export function purchaseTotals(p: Purchase): { merchandise: number; calculated: number } {
   const merchandise = p.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
-  const adjustments = (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
+  const adjustments = p.tickets?.length
+    ? p.tickets.reduce((sum, ticket) => sum + (ticket.shipping ?? 0) + (ticket.tax ?? 0) - (ticket.discount ?? 0), 0)
+    : (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
   return { merchandise, calculated: merchandise + adjustments };
+}
+
+export function purchaseTicketTotals(p: Purchase, ticketId: string): { merchandise: number; calculated: number } {
+  const ticket = p.tickets?.find((item) => item.id === ticketId);
+  const merchandise = p.lines.filter((line) => line.ticketId === ticketId)
+    .reduce((sum, line) => sum + line.quantity * (line.unitCost ?? 0), 0);
+  return { merchandise, calculated: merchandise - (ticket?.discount ?? 0) + (ticket?.shipping ?? 0) + (ticket?.tax ?? 0) };
+}
+
+export function purchaseConfirmedTotal(p: Pick<Purchase, "totalConfirmed" | "tickets">): number {
+  return p.tickets?.length
+    ? p.tickets.reduce((sum, ticket) => sum + (Number.isFinite(ticket.totalConfirmed) ? ticket.totalConfirmed : 0), 0)
+    : Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
 }
 
 /** Sum additional sourcing costs in integer cents; absent data is a legacy zero. */
@@ -383,8 +425,8 @@ export function purchaseSourcingExpenseTotal(p: Pick<Purchase, "sourcingExpenses
 }
 
 /** Actual registered outlay is the confirmed supplier amount plus extra expenses. */
-export function purchaseRecordedTotal(p: Pick<Purchase, "totalConfirmed" | "sourcingExpenses">): number {
-  const supplierTotal = Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
+export function purchaseRecordedTotal(p: Pick<Purchase, "totalConfirmed" | "sourcingExpenses" | "tickets">): number {
+  const supplierTotal = purchaseConfirmedTotal(p);
   return supplierTotal + purchaseSourcingExpenseTotal(p);
 }
 
@@ -419,6 +461,20 @@ export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
   if (p.lines.length === 0) return "draft";
   const unknownAmount = p.lines.some((l) => l.sourceAmountType === "unknown");
   const unlinked = p.lines.some((l) => !l.productId);
+  if (p.tickets) {
+    const ticketIds = new Set(p.tickets.map((ticket) => ticket.id));
+    const invalid = ticketIds.size !== p.tickets.length || p.tickets.length === 0
+      || p.lines.some((line) => !ticketIds.has(line.ticketId ?? "") || !Number.isSafeInteger(line.quantity) || line.quantity <= 0 || !Number.isFinite(line.unitCost) || line.unitCost < 0)
+      || p.tickets.some((ticket) => {
+        const totals = purchaseTicketTotals(p, ticket.id);
+        return !p.lines.some((line) => line.ticketId === ticket.id)
+          || !Number.isFinite(ticket.totalConfirmed) || ticket.totalConfirmed < 0
+          || [ticket.discount ?? 0, ticket.shipping ?? 0, ticket.tax ?? 0].some((amount) => !Number.isFinite(amount) || amount < 0)
+          || (ticket.discount ?? 0) - totals.merchandise > 0.005
+          || Math.abs(totals.calculated - ticket.totalConfirmed) > 0.005;
+      });
+    return invalid || unlinked || unknownAmount ? "needs_review" : "ready";
+  }
   const { calculated } = purchaseTotals(p);
   // The confirmed total is THE paid amount. Missing/non-finite (legacy data)
   // never auto-reconciles to the calculated total — it reads as 0 so a

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useStore, newCustomer } from "../../app/StoreProvider";
 import {
   Button,
+  Badge,
   Card,
   Dialog,
   Dropdown,
@@ -22,6 +23,7 @@ import { CustomerForm } from "./CustomerForm";
 import { customersForStore, ordersForStore } from "../../lib/selectors";
 import { orderBucket, orderCountsTowardToPay, orderTotals } from "../../lib/orders";
 import type { Customer } from "../../types";
+import { defaultTier, tiersForStore } from "../../lib/pricing";
 
 export function CustomersScreen() {
   const { state, activeStore, deleteCustomer } = useStore();
@@ -79,6 +81,10 @@ export function CustomersScreen() {
                     <p className="text-xs text-ink-soft truncate">
                       {c.phone ?? "Sin teléfono"} · {cOrders.length} {cOrders.length === 1 ? "pedido" : "pedidos"}
                     </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-soft">
+                      <Badge tone={c.segment === "entrepreneur" ? "info" : "neutral"}>{c.segment === "entrepreneur" ? "Emprendedora" : "Regular"}</Badge>
+                      {activeStore.type === "inventory_tiered" && <span>Precio: {c.assignedPriceTierId ? tiersForStore(activeStore).find((tier) => tier.id === c.assignedPriceTierId)?.label ?? "Nivel no disponible" : defaultTier(activeStore)?.label ?? "Sin nivel"}</span>}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <div className="text-right space-y-1">

@@ -14,6 +14,25 @@ incorpora el backlog funcional externo de 39 historias OLI, el cruce con estos
 la revisión técnica previa a implementación; conserva abiertas las reglas que
 todavía no se han validado.
 
+La [nota de Compras del 30 de octubre](purchase-feedback-2026-10-30.md) amplía
+FER-01/02/03 con problemas de captura, una compra por viaje con varios tickets
+y el reparto propuesto por cantidad de piezas ($44 / 70 y $150 / 100).
+Solo registra backlog; no autoriza implementación ni cierra las demás reglas
+de costos pendientes.
+
+La [nota del showcase](showcase-feedback-2026-10-30.md) amplía FER-04/05:
+marcar solo Emprendedora no seleccionó Iconic al crear un pedido, y se pide
+claridad del precio aplicado e historial/vigencia por clienta. Conserva la
+diferencia entre el comportamiento actual y la expectativa reportada, sin
+aprobar reglas automáticas nuevas.
+
+Después se acordó una entrega para el 31 de octubre a las 08:00:
+[correcciones y adquisición de inventario](superpowers/specs/2026-10-30-showcase-purchase-fixes-design.md).
+Para esa etapa, el viaje admite proveedores distintos, transporte/envío se
+reparten por piezas y el inventario usa el costo completo de la última
+compra. El precio de la clienta se elige una vez y se aplica automáticamente;
+marcar Emprendedora no asigna Iconic. La renovación de 30 días sigue pendiente.
+
 ## Insumo recibido: Excel de ventas
 
 El archivo ya se recibió y se analizó. El [análisis del Excel](fer-excel-analysis-2026-10-28.md)
