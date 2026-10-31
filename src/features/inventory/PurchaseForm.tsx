@@ -150,6 +150,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     return c;
   }, [statuses]);
   const hasUnknown = counts.amount_review > 0;
+  const activeUnknownCount = draft.lines.filter((line) => line.ticketId === activeTicket.id && line.sourceAmountType === "unknown").length;
   const visible = statuses.map((s, i) => ({ line: draft.lines[i], status: s, idx: i })).filter((r) => filter === "all" || r.status === filter);
 
   const blockReason = locked
@@ -309,13 +310,19 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       updateLine(idx, { productId: "", name: "", matchStatus: "unmatched" });
     }
   }
-  // Global resolution for every `unknown` line at once (unit vs line total).
-  function resolveAmountsGlobally(type: "unit" | "line") {
-    setAmountDrafts({});
+  // Different suppliers can print different amount semantics. Resolve only
+  // the selected ticket, leaving other tickets and their edited text intact.
+  function resolveTicketAmounts(type: "unit" | "line") {
+    const targets = draft.lines.filter((line) => line.ticketId === activeTicket.id && line.sourceAmountType === "unknown");
+    setAmountDrafts((previous) => {
+      const next = { ...previous };
+      for (const line of targets) delete next[`line:${line.lineId}`];
+      return next;
+    });
     setDraft(invalidateMismatch({
       ...draft,
       lines: draft.lines.map((l) =>
-        l.sourceAmountType === "unknown" && l.sourceAmount != null
+        l.ticketId === activeTicket.id && l.sourceAmountType === "unknown" && l.sourceAmount != null
           ? { ...l, sourceAmountType: type, unitCost: type === "unit" ? l.sourceAmount : l.sourceAmount / (l.quantity || 1) }
           : l
       ),
@@ -575,17 +582,17 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       )}
 
       {/* ── Resolución global de importes ── */}
-      {hasUnknown && !locked && (
+      {activeUnknownCount > 0 && !locked && (
         <div className="rounded-lg bg-warning/10 p-3 flex flex-col sm:flex-row sm:items-center gap-2">
           <p className="text-sm text-ink flex-1">
-            Hay {counts.amount_review} {counts.amount_review === 1 ? "importe sin interpretar" : "importes sin interpretar"}. ¿Qué
-            significan en el documento?
+            Hay {activeUnknownCount} {activeUnknownCount === 1 ? "importe sin interpretar" : "importes sin interpretar"} en este ticket. ¿Qué
+            significan en su documento?
           </p>
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={() => resolveAmountsGlobally("unit")}>
+            <Button size="sm" variant="secondary" onClick={() => resolveTicketAmounts("unit")}>
               Unitarios
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => resolveAmountsGlobally("line")}>
+            <Button size="sm" variant="secondary" onClick={() => resolveTicketAmounts("line")}>
               Total por línea
             </Button>
           </div>
