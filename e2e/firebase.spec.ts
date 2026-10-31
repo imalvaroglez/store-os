@@ -1,4 +1,6 @@
 import { test as base, expect, type Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import {
   unique,
   gotoClean,
@@ -11,6 +13,8 @@ import {
   loginAsFirstAdmin,
   openCatalog,
   switchToStore,
+  adminToken,
+  writeEmulatorDoc,
 } from "./helpers";
 
 // End-to-end against the Firebase Emulator (Auth + Firestore). Covers the
@@ -52,6 +56,32 @@ test("first signup becomes super_admin and test fixtures stay in the emulator", 
   await expect(page.getByText(/¿Qué necesitas hacer hoy en (Santi|Joyería)\?/)).toBeVisible({
     timeout: 15000,
   });
+});
+
+test("adminStores repair is idempotent and the migrated store appears in the picker", async ({ sharedPage: page }) => {
+  await ensureSignedOut(page);
+  await signIn(page, ADMIN_EMAIL, "password123");
+  await gotoClean(page);
+  const uid = (await adminToken(ADMIN_EMAIL, "password123")).uid;
+  const id = `migration_e2e_${Date.now()}`;
+  const name = `Migración ${Date.now()}`;
+  await writeEmulatorDoc("stores", id, {
+    name, slug: id, type: "inventory_tiered", ownerUid: uid, memberUids: [uid],
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  });
+
+  const script = resolve(process.cwd(), "scripts/migrate-adminstores.cjs");
+  const env = { ...process.env, FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" };
+  const applied = execFileSync(process.execPath, [script, "--emulator", "--apply"], { env, encoding: "utf8" });
+  expect(applied).toContain(`CREADO ${id}`);
+  const secondRun = execFileSync(process.execPath, [script, "--emulator"], { env, encoding: "utf8" });
+  expect(secondRun).toContain("Documentos faltantes que se crearían: 0");
+
+  const changeStore = page.getByRole("button", { name: /Cambiar tienda/ });
+  await expect(changeStore).toBeVisible();
+  await changeStore.click();
+  await expect(page.getByText("¿Quién opera hoy?")).toBeVisible();
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
 });
 
 test("sign out returns to the authentication screen", async ({ sharedPage: page }) => {
