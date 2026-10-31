@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { ensureStoreActive, gotoClean, loginAsFirstAdmin, writeEmulatorDoc } from "./helpers";
+import { adminToken, FIRESTORE_REST, ensureStoreActive, gotoClean, loginAsFirstAdmin, writeEmulatorDoc } from "./helpers";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { ADMIN_EMAIL as _ADMIN } from "./helpers";
 
@@ -55,6 +55,63 @@ test.beforeAll(async ({ browser }) => {
 test.afterAll(async () => {
   await sharedPage?.context().close();
   sharedPage = null;
+});
+
+test("manual purchase keeps decimals and cost through search, save, themes and receipt", async ({ sharedPage: page }) => {
+  test.setTimeout(90_000);
+  await writeEmulatorDoc("products", "showcase_decimal_ring", {
+    storeId: "store_joyeria", name: "Anillo de prueba decimal", sku: "QA-DECIMAL",
+    cost: 99, quantityOnHand: 3, category: "jewelry", isPublic: false, status: "draft",
+    prices: { t_retail: 150 }, createdAt: "2026-10-30T00:00:00Z", updatedAt: "2026-10-30T00:00:00Z",
+  });
+  await gotoClean(page, "/productos/compras");
+  await ensureStoreActive(page, "Joyería");
+  await page.getByRole("button", { name: "+ Nueva compra" }).click();
+  await page.getByLabel("Pedido / documento").fill("QA-DECIMALES");
+  await page.getByRole("button", { name: "+ Agregar línea" }).click();
+  await page.getByLabel("Producto", { exact: true }).fill("Pieza del ticket");
+  await page.getByLabel("Cantidad", { exact: true }).fill("4");
+  const cost = page.getByLabel("Costo unitario", { exact: true });
+  await cost.fill("");
+  await cost.pressSequentially("16.45");
+  await expect(cost).toHaveValue("16.45");
+
+  const product = page.getByRole("combobox", { name: "Producto en Store OS" });
+  await product.fill("QA-DECIMAL");
+  await expect(page.getByRole("button", { name: "+ Crear nuevo producto" })).toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(1);
+  await page.getByRole("option", { name: /Anillo de prueba decimal/ }).click();
+  await expect(cost).toHaveValue("16.45");
+  await expect(page.getByRole("button", { name: "Crear 1 producto", exact: true })).toHaveCount(0);
+  await page.getByLabel("Total pagado", { exact: true }).fill("65.80");
+  await page.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(page.getByText("Borrador guardado.")).toBeVisible();
+
+  for (const theme of ["paper", "luxury", "maximalist"]) {
+    // Theme is a user preference; operational fixtures remain in Firestore.
+    await page.evaluate((value) => localStorage.setItem("store_os_theme", value), theme);
+    await gotoClean(page, "/productos/compras");
+    await ensureStoreActive(page, "Joyería");
+    await page.getByText("#QA-DECIMALES", { exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    await expect(page.getByLabel("Costo unitario", { exact: true })).toHaveValue("16.45");
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `test-results/purchase-${theme}-${width}.png`, fullPage: true });
+    }
+  }
+
+  await page.getByRole("button", { name: "Recibir mercancía", exact: true }).click();
+  await expect(page.getByText(/el inventario se actualizó/)).toBeVisible();
+  const { token } = await adminToken("admin@store.os", "password123");
+  const response = await fetch(`${FIRESTORE_REST}/products/showcase_decimal_ring`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(response.ok).toBe(true);
+  const persisted = await response.json();
+  expect(Number(persisted.fields.quantityOnHand.integerValue)).toBe(7);
+  await page.evaluate(() => localStorage.setItem("store_os_theme", "paper"));
 });
 
 

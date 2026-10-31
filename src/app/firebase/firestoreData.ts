@@ -475,7 +475,9 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
       productRefs.set(line.productId, ref);
       const snapP = await tx.get(ref);
       if (!snapP.exists()) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
-      const product = snapP.data() as Product;
+      // Entity writes omit the id field; use the canonical document identity
+      // so applyPurchaseLines can match this product to its purchase lines.
+      const product = { ...snapP.data(), id: snapP.id } as Product;
       if (product.storeId !== purchase.storeId) {
         throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
       }
