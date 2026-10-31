@@ -51,6 +51,16 @@ describe("WhatsApp evidence intake", () => {
     expect(report).not.toHaveProperty("payments");
   });
 
+  it.each(["31/10/2026, 10:05 — Clienta: Ya pagué", "31/10/2026, 10:xx - Clienta: Ya pagué"])("does not attribute an unrecognized header to the previous sender: %s", (header) => {
+    const report = parseChat(`31/10/2026, 10:00 - Tienda: Cotización\n${header}\nComprobante pendiente\n31/10/2026, 10:10 - Tienda: Otro mensaje`, options);
+    expect(report.messages).toHaveLength(2);
+    expect(report.messages[0].text).toBe("Cotización");
+    expect(report.issues).toMatchObject([
+      { code: "unsupported_header", line: 2, raw: header },
+      { code: "unparsed_line", line: 3, raw: "Comprobante pendiente" },
+    ]);
+  });
+
   it("protects spreadsheet imports from formula injection without changing JSON evidence", () => {
     const report = parseChat('31/10/2026, 10:00 - =Nombre: =HYPERLINK("x")\nsegunda línea', options);
     expect(report.messages[0].text).toBe('=HYPERLINK("x")\nsegunda línea');

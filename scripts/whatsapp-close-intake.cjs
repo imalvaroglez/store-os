@@ -12,6 +12,7 @@ const DATE = "(\\d{1,4}[/.\\-]\\d{1,2}[/.\\-]\\d{1,4})";
 const TIME = "(\\d{1,2}:\\d{2}(?::\\d{2})?(?:\\s*[ap]\\.?\\s*m\\.?)?)";
 const IOS = new RegExp(`^\\[${DATE},?\\s+${TIME}\\]\\s*(.*)$`, "iu");
 const ANDROID = new RegExp(`^${DATE},?\\s+${TIME}\\s+-\\s+(.*)$`, "iu");
+const HEADER_LIKE = /^\[?\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4}(?:[,\]\s]|$)/u;
 
 function localTimestamp(dateText, timeText, dateOrder) {
   const parts = dateText.split(/[/.\-]/);
@@ -75,6 +76,11 @@ function parseChat(text, { dateOrder, month, sourceName = "chat.txt", sourceSha2
         continue;
       }
       current = { timestamp, startLine: index + 1, endLine: index + 1, body: [header[3]], raw: [raw] };
+    } else if (HEADER_LIKE.test(clean)) {
+      // Be conservative: an unfamiliar export header must not silently attach
+      // a different sender, date or payment statement to the preceding message.
+      flush();
+      issues.push({ code: "unsupported_header", line: index + 1, raw, question: "Revisar este posible encabezado: su formato no se pudo leer." });
     } else if (current) {
       current.body.push(raw);
       current.raw.push(raw);
@@ -158,7 +164,7 @@ function main(args) {
   if ([...allowed].some((flag) => !options[flag])) throw new Error("Faltan argumentos. Consulta --help.");
   const report = writeIntake(options["--input"], options["--out"], { month: options["--month"], dateOrder: options["--date-order"] });
   console.log(`Lectura terminada: ${report.counts.messages} mensajes, ${report.counts.issues} incidencias. Revisión en ${path.resolve(options["--out"])}`);
-  if (report.issues.some((issue) => ["invalid_timestamp", "unparsed_line", "no_messages"].includes(issue.code))) process.exitCode = 2;
+  if (report.issues.some((issue) => ["invalid_timestamp", "unsupported_header", "unparsed_line", "no_messages"].includes(issue.code))) process.exitCode = 2;
 }
 
 if (require.main === module) {
