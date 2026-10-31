@@ -33,8 +33,9 @@ del mensaje y SHA-256 de la fuente. La fecha no se convierte a UTC ni se usa
 como fecha de venta, entrega o cobro.
 
 El orden día/mes se indica expresamente. No se descartan los mensajes de otros
-meses: pueden explicar un pedido o un cobro de octubre. Fechas imposibles y
-líneas sin encabezado reconocible quedan como incidencias; mensajes idénticos
+meses: pueden explicar un pedido o un cobro de octubre. Fechas imposibles,
+posibles encabezados con formato no admitido y líneas sin encabezado reconocible
+quedan como incidencias; mensajes idénticos
 se conservan y se señalan para revisión. El texto no se clasifica como una
 transacción por palabras o importes. Los adjuntos omitidos quedan identificados
 cuando el export los señala; no se interpreta su contenido ausente.
