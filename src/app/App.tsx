@@ -6,7 +6,9 @@ import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
-import { ToastProvider, OLIVIA_SLUG } from "../design-system";
+import { ToastProvider, OLIVIA_SLUG, useToast } from "../design-system";
+import type { Storefront } from "../types";
+import { canEditOliviaStorefront } from "./storefrontAccess";
 
 // Lazy-load the public storefront so the storefront code (sections, gallery,
 // SEO) lives in its own chunk, separate from admin forms.
@@ -24,8 +26,29 @@ const PublicCatalogScreen = lazy(() =>
 
 function Root() {
   const route = useRoute();
-  const { activeStore, state } = useStore();
-  const { user } = useAuth();
+  const { activeStore, state, saveStorefront } = useStore();
+  const { user, authReady } = useAuth();
+  const toast = useToast();
+  const candidateStore = state.stores.find((store) => store.slug === OLIVIA_SLUG);
+  const storefrontOwner = canEditOliviaStorefront(route, user, candidateStore) ? candidateStore : undefined;
+  const storefrontEditor = storefrontOwner ? {
+    storeId: storefrontOwner.id,
+    storefront: storefrontOwner.storefront ?? {},
+    save: (storeId: string, storefront: Storefront) => saveStorefront(storeId, storefront),
+    notifySuccess: toast.success,
+    notifyError: toast.error,
+  } : undefined;
+
+  // The owner editor uses the authenticated app entry so the anonymous
+  // storefront bundle never contains Auth or private store data.
+  if (route.name === "storefront_editor") {
+    if (!authReady) return <div className="min-h-full" role="status" aria-label="Cargando sesión…" />;
+    if (!user) return <AuthScreen />;
+    if (!storefrontOwner || !storefrontEditor) {
+      return <div className="min-h-full flex items-center justify-center p-6"><div className="space-y-3 text-center"><h1 className="text-lg font-semibold text-on-surface">No tienes acceso a este editor</h1><a className="text-primary underline" href="/catalogo/olivia">Volver al catálogo público</a></div></div>;
+    }
+    return <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}><OliviaStorefront route={{ name: "storefront_editor", params: { slug: OLIVIA_SLUG } }} editor={storefrontEditor} /></Suspense>;
+  }
 
   // Public storefront routes take over the whole viewport: no shell, no private
   // data. Anonymous-readable. A single component handles all three sub-routes.
@@ -38,7 +61,7 @@ function Root() {
     const slug = route.params.slug;
     return (
       <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}>
-        {slug === OLIVIA_SLUG ? <OliviaStorefront route={route} /> : <PublicCatalogScreen slug={slug} />}
+        {slug === OLIVIA_SLUG ? <OliviaStorefront route={route} editor={storefrontEditor} /> : <PublicCatalogScreen slug={slug} />}
       </Suspense>
     );
   }
