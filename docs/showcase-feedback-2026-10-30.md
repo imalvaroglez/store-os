@@ -3,7 +3,7 @@
 Fecha: 30 de octubre de 2026. Fuente: observaciones de Álvaro durante el
 showcase con Fer y aclaración posterior sobre la configuración de una clienta.
 
-**Estado: registro de feedback, sin implementación.** Este chat se usa para
+**Origen: registro de feedback, inicialmente sin implementación.** Este chat se usa para
 reunir errores, fricciones y necesidades, relacionarlos con el backlog y
 reevaluar prioridades. Las propuestas no autorizan cambios de producto ni
 sustituyen el diseño pendiente de cada entrega.
@@ -15,6 +15,16 @@ documenta la primera etapa y las decisiones confirmadas: varios proveedores
 por viaje, costo completo de la última compra y nivel elegido una vez por
 clienta. Este cambio
 de etapa no convierte las propuestas anteriores en reglas aprobadas.
+
+La entrega actual está en validación. La prueba con dos proveedores, 70
+piezas y $44 de transporte verifica el total asignado y la cantidad guardada
+en Firestore, no solo el mensaje de éxito.
+
+QA encontró además que una recepción podía omitir productos cuyo documento
+Firestore no llevaba un campo `id` embebido. Se corrigió la lectura de la
+identidad canónica y se añadió regresión de existencias. No se reparan ni se
+vuelven a recibir automáticamente registros anteriores; cualquier revisión
+de datos históricos requiere una tarea separada y producción sigue protegida.
 
 ## Clientes: Emprendedora no aplicó Iconic al crear un pedido
 
