@@ -26,11 +26,47 @@ Entrada de backlog: `purchase-entry-polish`.
   por lote.
 - **Conservar el costo capturado:** vincular un producto existente reemplaza
   el costo ya escrito. La vinculación debe conservar el importe de esa
-  compra; cualquier uso de un costo anterior debe ser explícito.
+  compra; cualquier uso de un costo anterior debe ser explícito. Álvaro
+  reiteró este problema durante el showcase: relacionar el producto del
+  ticket con el de la tienda no debe modificar el costo de esa compra.
 - **Totales comprensibles:** “Mercancía (Σ líneas)”, descuento y envío no
   explican suficientemente qué representan ni cómo se relacionan con lo que
   Fer necesita. Revisar las etiquetas y el desglose; distinguir productos,
   ajustes del proveedor y gastos adicionales, sin contabilizarlos dos veces.
+
+Álvaro amplió el pedido de pulido a la coherencia entre Compras y Pedidos:
+ambas pantallas deben usar el mismo estilo y sentirse completas. La corrección
+de importes tiene prioridad propuesta P1; el rediseño visual y las etiquetas
+requieren revisión sin cambiar la aplicación en esta entrega documental.
+
+## Qué significan hoy los totales de Compras
+
+Explicación contrastada con `purchaseTotals`, `purchaseRecordedTotal` y el
+editor actual; describe lo implementado, no una propuesta fiscal ni una
+decisión de conservar estos campos en el rediseño.
+
+| Campo | Función actual |
+| --- | --- |
+| Mercancía (Σ líneas) | Suma de cantidad por costo unitario de cada renglón. Σ significa suma; un nombre más simple para revisar sería “Subtotal de productos”. |
+| Descuento | Importe en pesos que se resta al subtotal. No es porcentaje ni descuento a la clienta. Si ya está reflejado en los costos de las líneas, volver a capturarlo lo restaría dos veces. |
+| Envío | Cargo de envío del proveedor que se agrega al total de su compra. No representa el transporte de Fer ni la entrega a una clienta. |
+| Impuestos | Importe adicional en pesos que se agrega al subtotal. No calcula una tasa automáticamente; si ya está incluido en los costos capturados, no debe sumarse otra vez. |
+| Total calculado | Subtotal de productos menos descuento, más envío e impuestos adicionales. |
+| Total pagado | Lo que se confirma haber pagado al proveedor según su documento; se compara con el total calculado para detectar diferencias. |
+| Gastos de surtido | Gastos separados del documento del proveedor, como los camiones de Fer. Se suman al total registrado, pero actualmente no al costo por pieza. |
+
+Ejemplo ilustrativo: 10 piezas a $20 suman $200 de productos; menos $10 de
+descuento, más $50 de envío y cero impuestos adicionales, dan $240 al
+proveedor. Con $44 de transporte por separado, el total registrado es $284.
+El mismo envío o transporte no debe registrarse en dos apartados.
+
+En el código actual, descuento, envío, impuestos y gastos de surtido afectan
+los totales, pero no se reparten entre las líneas al recibir inventario. Esa
+limitación es precisamente parte del trabajo futuro de FER-02.
+
+Álvaro pide primero entender y poder explicar este desglose a Fer. Después
+se debe revisar qué campos necesitan, cómo nombrarlos y cuándo mostrarlos;
+esta nota no autoriza quitarlos ni mantenerlos sin cambios.
 
 ## Unidad de registro propuesta: una compra puede tener varios tickets
 
