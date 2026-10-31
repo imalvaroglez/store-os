@@ -4,6 +4,7 @@ import {
   Button,
   CheckboxField,
   SelectField,
+  SearchSelect,
   TextField,
   TextArea,
   IconButton,
@@ -20,7 +21,6 @@ import { uid } from "../../lib/ids";
 import { openPurchasePdf } from "../../app/firebase/pdfImport";
 import {
   effectivePurchaseStatus,
-  derivedUnitCost,
   lineStatus,
   purchaseTotals,
   purchaseRecordedTotal,
@@ -68,7 +68,10 @@ type Filter = "all" | PurchaseLineStatus;
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
   const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, cloud } = useStore();
   const toast = useToast();
-  const [draft, setDraft] = useState<Purchase>(purchase);
+  const [draft, setDraft] = useState<Purchase>(() => ({
+    ...purchase,
+    lines: purchase.lines.map((line) => line.lineId ? line : { ...line, lineId: uid("pl") }),
+  }));
   const [creatingSupplier, setCreatingSupplier] = useState(false);
   const [supplierDraft, setSupplierDraft] = useState<Supplier | null>(null);
   const [productLineIdx, setProductLineIdx] = useState<number | null>(null);
@@ -77,11 +80,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const [bulkCreating, setBulkCreating] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [expenseAmountDrafts, setExpenseAmountDrafts] = useState<Record<string, string>>({});
+  const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
+  const [productQueries, setProductQueries] = useState<Record<string, string>>({});
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const suppliers = suppliersForStore(state.suppliers, activeStore.id);
-  const products = productsForStore(state.products, activeStore.id);
+  const products = productsForStore(state.products, activeStore.id)
+    .sort((a, b) => a.name.localeCompare(b.name, "es-MX", { sensitivity: "base" }));
   const locked = effectivePurchaseStatus(draft) === "received";
 
   // Spec §1 totals live in purchaseTotals (single source, shared with status).
@@ -131,6 +137,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     setDraft(invalidateMismatch({ ...draft, lines: [...draft.lines, { lineId: uid("pl"), productId: "", name: "", quantity: 1, unitCost: 0 }] }));
   }
   function updateLine(idx: number, patch: Partial<PurchaseLine>) {
+    if (patch.unitCost != null) {
+      const key = `line:${draft.lines[idx].lineId}`;
+      setAmountDrafts((previous) => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+    }
     // Any line edit invalidates a prior explicit mismatch confirmation.
     setDraft(invalidateMismatch({ ...draft, lines: draft.lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)) }));
   }
@@ -138,10 +152,17 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     setDraft(invalidateMismatch({ ...draft, lines: draft.lines.filter((_, i) => i !== idx) }));
   }
   function setAdjustment(field: "discount" | "shipping" | "tax", raw: string) {
+    setAmountDrafts((previous) => ({ ...previous, [field]: raw }));
     setDraft(invalidateMismatch({ ...draft, [field]: parseAmount(raw) ?? 0 }));
   }
   function setTotalPaid(raw: string) {
+    setAmountDrafts((previous) => ({ ...previous, totalConfirmed: raw }));
     setDraft(invalidateMismatch({ ...draft, totalConfirmed: parseAmount(raw) ?? 0 }));
+  }
+  function setUnitCost(idx: number, raw: string) {
+    updateLine(idx, { unitCost: parseAmount(raw) ?? 0 });
+    // Keep the editable text so a trailing decimal separator survives typing.
+    setAmountDrafts((previous) => ({ ...previous, [`line:${draft.lines[idx].lineId}`]: raw }));
   }
   function updateExpense(id: string, patch: Partial<PurchaseExpense>) {
     setDraft({
@@ -184,7 +205,6 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     const unitCost = line.sourceAmountType === "line" && line.sourceAmount != null ? line.sourceAmount / qty : line.unitCost;
     updateLine(idx, { quantity: qty, unitCost });
   }
-  const CREATE_OPTION = "__create__";
   function openMiniForm(idx: number) {
     if (!activeStore) return;
     const line = draft.lines[idx];
@@ -199,24 +219,15 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     setProductLineIdx(idx);
   }
   function pickProduct(idx: number, productId: string) {
-    if (productId === CREATE_OPTION) {
-      openMiniForm(idx);
-      return;
-    }
     const product = products.find((p) => p.id === productId);
     if (product) {
-      const line = draft.lines[idx];
-      // The document's amount outranks the product's stored cost: linking a
-      // product must never silently zero (or stale) the imported money. The
-      // stored cost is only a fallback for lines without a printed amount.
+      setProductQueries((previous) => ({ ...previous, [draft.lines[idx].lineId!]: product.name }));
+      // Linking identifies the product; it does not edit the purchase amount
+      // or interpret the printed ticket. Both are explicit operator actions.
       updateLine(idx, {
         productId,
         name: product.name,
-        unitCost: derivedUnitCost(line) ?? product.cost ?? line.unitCost,
         matchStatus: "matched",
-        // Choosing semantics resolves "unknown" for this line (as line-total;
-        // the cost above was derived under that reading).
-        sourceAmountType: line.sourceAmountType === "unknown" ? "line" : line.sourceAmountType,
       });
     } else {
       updateLine(idx, { productId: "", name: "", matchStatus: "unmatched" });
@@ -224,6 +235,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
   // Global resolution for every `unknown` line at once (unit vs line total).
   function resolveAmountsGlobally(type: "unit" | "line") {
+    setAmountDrafts({});
     setDraft(invalidateMismatch({
       ...draft,
       lines: draft.lines.map((l) =>
@@ -240,6 +252,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
 
   function applyPdf(payload: PdfApplyPayload) {
+    setAmountDrafts({});
     const parsedDate = payload.dateLabel ? parseSpanishDate(payload.dateLabel) : null;
     setDraft((d) => invalidateMismatch({
       ...d,
@@ -364,7 +377,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     : undefined;
 
   return (
-    <div className="space-y-4 pb-28">
+    <div className="mx-auto max-w-5xl space-y-5 pb-36">
       {/* ── Cabecera ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
@@ -496,7 +509,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </div>
 
         {/* Header row (desktop only), outside the rows' scroll flow */}
-        <div className="hidden md:grid md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] gap-2 px-3 pb-1 text-xs font-semibold text-on-surface-soft uppercase tracking-wide sticky top-0 z-10 bg-surface">
+        <div className="hidden xl:grid xl:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] gap-2 px-3 py-3 text-xs font-semibold text-ink-soft uppercase tracking-wide sticky top-0 z-10 rounded-lg border-b border-edge bg-paper">
           <span>Estado</span>
           <span>Producto</span>
           <span>Cant.</span>
@@ -504,33 +517,34 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           <span>Costo unit.</span>
           <span>Total</span>
           <span />{/* quitar */}
-          <span>En Store OS</span>
+          <span>Vincular producto</span>
         </div>
         <div className="space-y-1.5">
           {visible.map(({ line, status: st, idx }) => (
             <div
-              key={idx}
-              className="p-2 md:min-h-14 rounded-lg bg-surface-soft grid grid-cols-2 md:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] md:items-center gap-2"
+              key={line.lineId}
+              className="p-3 xl:min-h-14 rounded-lg border border-edge bg-surface-muted grid grid-cols-2 xl:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] xl:items-center gap-3"
             >
               {/* Mobile tier 1: status + name + printed amount. Desktop: flat grid cells. */}
-              <div className="col-span-2 flex items-start gap-2 md:contents">
+              <div className="col-span-2 flex items-start gap-2 xl:contents">
                 <div className="flex items-center pt-2.5">
                   <Badge tone={LINE_STATUS_TONE[st]}>{LINE_STATUS_LABEL[st]}</Badge>
                 </div>
-                <div className="min-w-0 flex-1 md:col-span-1">
+                <div className="min-w-0 flex-1 xl:col-span-1">
                   <TextField
                     aria-label="Producto"
-                    label=""
+                    label="Producto del ticket"
+                    labelClassName="xl:sr-only"
                     value={line.name}
                     disabled={locked}
                     onChange={(e) => updateLine(idx, { name: e.target.value, matchStatus: e.target.value ? line.matchStatus : "unmatched" })}
                   />
-                  <div className="md:hidden mt-1 flex items-center justify-between gap-2 text-xs text-on-surface-soft">
+                  <div className="xl:hidden mt-1 flex items-center justify-between gap-2 text-xs text-on-surface-soft">
                     <span className="font-mono">{line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}</span>
                     <span className="font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
                   </div>
                   {st === "amount_review" && !locked && line.sourceAmount != null && (
-                    <div className="md:hidden mt-1 flex gap-1">
+                    <div className="xl:hidden mt-1 flex gap-1">
                       <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "unit")}>
                         Unitario
                       </Button>
@@ -543,17 +557,18 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               </div>
 
               {/* Mobile tier 2: qty/cost/delete on one line, linking below. */}
-              <div className="col-span-2 md:contents">
-                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center md:contents">
+              <div className="col-span-2 xl:contents">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center xl:contents">
                   <TextField
                     aria-label="Cantidad"
-                    label=""
+                    label="Cantidad"
+                    labelClassName="xl:sr-only"
                     inputMode="numeric"
                     value={line.quantity.toString()}
                     disabled={locked}
                     onChange={(e) => setQuantity(idx, e.target.value)}
                   />
-                  <div className="hidden md:block">
+                  <div className="hidden xl:block">
                     <p className={`text-sm font-mono ${line.sourceAmount != null ? "text-ink-soft" : "text-ink-soft/40"}`}>
                       {line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}
                     </p>
@@ -570,38 +585,43 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   </div>
                   <TextField
                     aria-label="Costo unitario"
-                    label=""
+                    label="Costo por pieza"
+                    labelClassName="xl:sr-only"
                     inputMode="decimal"
-                    value={(line.unitCost ?? 0).toString()}
+                    value={amountDrafts[`line:${line.lineId}`] ?? (line.unitCost ?? 0).toString()}
                     disabled={locked}
-                    onChange={(e) => updateLine(idx, { unitCost: parseAmount(e.target.value) ?? 0 })}
+                    onChange={(e) => setUnitCost(idx, e.target.value)}
                   />
-                  <div className="hidden md:flex items-center">
+                  <div className="hidden xl:flex items-center">
                     <span className="text-sm font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
                   </div>
-                </div>
                 {!locked ? (
-                  <IconButton variant="ghost" aria-label="Quitar línea" className="!min-h-10 !min-w-10 md:justify-self-center" onClick={() => removeLine(idx)}>
+                  <IconButton variant="ghost" aria-label="Quitar línea" className="!min-h-10 !min-w-10 xl:justify-self-center" onClick={() => removeLine(idx)}>
                     ✕
                   </IconButton>
                 ) : (
-                  <span className="hidden md:block" />
+                  <span className="hidden xl:block" />
                 )}
-                <div className="col-span-3 md:col-span-1 min-w-0">
-                  <SelectField
-                    aria-label="Producto en Store OS"
-                    label=""
-                    value={line.productId}
+                </div>
+                <div className="col-span-3 xl:col-span-1 min-w-0 mt-3 xl:mt-0">
+                  <SearchSelect
+                    label="Producto en Store OS"
+                    labelClassName="xl:sr-only"
+                    value={productQueries[line.lineId!] ?? products.find((product) => product.id === line.productId)?.name ?? ""}
                     disabled={locked}
-                    onChange={(v) => pickProduct(idx, v)}
-                    options={[
-                      ...products.map((p2) => ({
-                        value: p2.id,
-                        label: `${p2.name} (existencia: ${p2.quantityOnHand ?? 0})`,
-                      })),
-                      ...(locked ? [] : [{ value: CREATE_OPTION, label: "Crear nuevo producto…" }]),
-                    ]}
-                    placeholder="Vincular producto…"
+                    onChange={(value) => {
+                      setProductQueries((previous) => ({ ...previous, [line.lineId!]: value }));
+                      if (line.productId) updateLine(idx, { productId: "", matchStatus: "unmatched" });
+                    }}
+                    onSelect={(option) => pickProduct(idx, option.value)}
+                    options={products.map((product) => ({
+                      value: product.id,
+                      label: product.name,
+                      detail: `Existencia: ${product.quantityOnHand ?? 0}`,
+                      keywords: product.sku,
+                    }))}
+                    placeholder="Buscar por nombre o clave…"
+                    action={{ label: "+ Crear nuevo producto", onClick: () => openMiniForm(idx) }}
                   />
                 </div>
               </div>
@@ -613,7 +633,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             <Button size="sm" variant="secondary" onClick={addLine}>
               + Agregar línea
             </Button>
-            {cloud && counts.unlinked > 0 && !hasUnknown && (
+            {cloud && counts.unlinked > 1 && !hasUnknown && (
               <Button size="sm" variant="secondary" disabled={bulkCreating} onClick={() => void bulkCreateProducts()}>
                 {bulkCreating ? "Creando…" : `Crear ${counts.unlinked} ${counts.unlinked === 1 ? "producto" : "productos"}`}
               </Button>
@@ -625,29 +645,35 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       {/* ── Totales y reconciliación (contenido, no footer) ── */}
       <div className="border-t border-edge pt-3 space-y-2">
         <div className="flex justify-between text-sm">
-          <span className="text-ink-soft">Mercancía (Σ líneas)</span>
+          <span className="text-ink-soft">Subtotal de productos</span>
           <span className="font-semibold text-ink">{formatMoneyExact(merchandise)}</span>
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <TextField
             label="Descuento"
+            aria-label="Descuento"
+            hint="Pesos descontados por el proveedor."
             inputMode="decimal"
             disabled={locked}
-            value={(draft.discount ?? 0).toString()}
+            value={amountDrafts.discount ?? (draft.discount ?? 0).toString()}
             onChange={(e) => setAdjustment("discount", e.target.value)}
           />
           <TextField
             label="Envío"
+            aria-label="Envío"
+            hint="Cargo del proveedor; no el traslado para surtir."
             inputMode="decimal"
             disabled={locked}
-            value={(draft.shipping ?? 0).toString()}
+            value={amountDrafts.shipping ?? (draft.shipping ?? 0).toString()}
             onChange={(e) => setAdjustment("shipping", e.target.value)}
           />
           <TextField
             label="Impuestos"
+            aria-label="Impuestos"
+            hint="Solo el importe adicional que no esté incluido en los productos."
             inputMode="decimal"
             disabled={locked}
-            value={(draft.tax ?? 0).toString()}
+            value={amountDrafts.tax ?? (draft.tax ?? 0).toString()}
             onChange={(e) => setAdjustment("tax", e.target.value)}
           />
         </div>
@@ -657,10 +683,11 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </div>
         <TextField
           label="Total pagado"
+          aria-label="Total pagado"
           hint="Lo que realmente pagaste según el documento."
           inputMode="decimal"
           disabled={locked}
-          value={draft.totalConfirmed.toString()}
+          value={amountDrafts.totalConfirmed ?? draft.totalConfirmed.toString()}
           onChange={(e) => setTotalPaid(e.target.value)}
         />
         {mismatch > 0.5 && !locked && (
@@ -822,6 +849,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             tiers={tiersForStore(activeStore)}
             onDone={async (saved) => {
               await upsertProduct(saved);
+              setProductQueries((previous) => ({ ...previous, [draft.lines[productLineIdx].lineId!]: saved.name }));
               updateLine(productLineIdx, {
                 productId: saved.id,
                 name: saved.name,
@@ -866,7 +894,7 @@ function ProductMiniForm({
   draft: Product;
   isTiered: boolean;
   tiers: PriceTierDef[];
-  onDone: (saved: Product) => void;
+  onDone: (saved: Product) => Promise<void>;
   onDraftChange: (p: Product) => void;
 }) {
   const [publish, setPublish] = useState(false);
@@ -875,9 +903,11 @@ function ProductMiniForm({
   );
   const [price, setPrice] = useState(draft.price?.toString() ?? "0");
   const [cost, setCost] = useState(draft.cost?.toString() ?? "0");
+  const [saving, setSaving] = useState(false);
   const toast = useToast();
 
-  function save() {
+  async function save() {
+    if (saving) return;
     if (!draft.name.trim()) {
       toast.error("Pon un nombre al producto.");
       return;
@@ -885,7 +915,7 @@ function ProductMiniForm({
     const saved: Product = {
       ...draft,
       name: draft.name.trim(),
-      cost: parseAmount(cost) || undefined,
+      cost: parseAmount(cost),
       prices: isTiered
         ? Object.fromEntries(tiers.map((t) => [t.id, parseAmount(tierPrices[t.id]) ?? 0]))
         : draft.prices,
@@ -895,7 +925,14 @@ function ProductMiniForm({
       isPublic: publish,
       updatedAt: nowIso(),
     };
-    onDone(saved);
+    setSaving(true);
+    try {
+      await onDone(saved);
+    } catch {
+      toast.error("No se pudo crear el producto. Revisa tu conexión e intenta de nuevo.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -930,8 +967,8 @@ function ProductMiniForm({
         onChange={setPublish}
         hint="Si no, queda como borrador privado. Completa la ficha después."
       />
-      <Button full size="lg" onClick={save} disabled={!draft.name.trim()}>
-        Crear producto
+      <Button full size="lg" onClick={() => void save()} disabled={saving || !draft.name.trim()}>
+        {saving ? "Creando…" : "Crear producto"}
       </Button>
     </div>
   );

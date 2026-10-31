@@ -8,6 +8,14 @@ reunir errores, fricciones y necesidades, relacionarlos con el backlog y
 reevaluar prioridades. Las propuestas no autorizan cambios de producto ni
 sustituyen el diseño pendiente de cada entrega.
 
+**Actualización posterior:** Álvaro definió una meta de entrega para revisión
+en dev el 31 de octubre a las 08:00, incluyendo las correcciones y el flujo
+de inventario por viaje. La [entrega en curso](superpowers/specs/2026-10-30-showcase-purchase-fixes-design.md)
+documenta la primera etapa y las decisiones confirmadas: varios proveedores
+por viaje, costo completo de la última compra y nivel elegido una vez por
+clienta. Este cambio
+de etapa no convierte las propuestas anteriores en reglas aprobadas.
+
 ## Clientes: Emprendedora no aplicó Iconic al crear un pedido
 
 Relacionado con `fer-customer-price-tier` (FER-04) y `fer-iconic-renewal`

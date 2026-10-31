@@ -13,14 +13,16 @@ export function FormField({
   label,
   hint,
   children,
+  labelClassName = "",
 }: {
   label: string;
   hint?: string;
   children: ReactNode;
+  labelClassName?: string;
 }) {
   return (
     <label className="block">
-      <span className="block text-xs font-semibold text-on-surface-soft uppercase tracking-wide mb-1.5">
+      <span className={`block text-xs font-semibold text-on-surface-soft uppercase tracking-wide mb-1.5 ${labelClassName}`}>
         {label}
       </span>
       {children}
@@ -32,10 +34,11 @@ export function FormField({
 export function TextField({
   label,
   hint,
+  labelClassName,
   ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string }) {
+}: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string; labelClassName?: string }) {
   return (
-    <FormField label={label} hint={hint}>
+    <FormField label={label} hint={hint} labelClassName={labelClassName}>
       <input className={fieldBase} {...rest} />
     </FormField>
   );
