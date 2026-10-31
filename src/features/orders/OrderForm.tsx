@@ -177,7 +177,11 @@ export function OrderForm({
 
   function addLine() {
     focusNewLine.current = true;
-    setLines((current) => [lineFromItem(), ...current]);
+    // Capture order stays stable in the data (first captured = first saved);
+    // only the VIEW is a stack — the fresh line renders on top (see below).
+    const fresh = lineFromItem();
+    setEnteringKey(fresh.key);
+    setLines((current) => [...current, fresh]);
   }
 
   // OLI-008 (#92): the customer's assigned tier drives automatic pricing;
@@ -221,6 +225,8 @@ export function OrderForm({
 
   // OLI-012 (#93): category review mode with per-line focus recovery.
   const [reviewing, setReviewing] = useState(false);
+  // The just-added line plays the theme's riseIn entrance once (mount only).
+  const [enteringKey, setEnteringKey] = useState<string | null>(null);
   const [focusLine, setFocusLine] = useState<string | null>(null);
   const productInputs = useRef<Record<string, HTMLInputElement | null>>({});
   useLayoutEffect(() => {
@@ -486,7 +492,7 @@ export function OrderForm({
           </div>
           <Button variant="secondary" size="sm" onClick={addLine}>+ Agregar línea</Button>
         </div>
-        {lines.map((line, index) => {
+        {lines.map((line, captureIndex) => ({ line, captureIndex })).reverse().map(({ line, captureIndex }) => {
           const currentQuantity = Math.max(0, Math.round(numberFromText(line.quantityText)));
           const currentPrice = numberFromText(line.unitPriceText);
           let lineSubtotal: number | null;
@@ -498,13 +504,18 @@ export function OrderForm({
           const selectedTier = tiers.find((tier) => tier.id === line.priceTier);
           const warning = selectedTier ? tierWarning({ quantity: currentQuantity, subtotal: lineSubtotal ?? 0 }, selectedTier) : null;
           return (
-            <Card key={line.key} className="space-y-4 p-4 md:p-5 shadow-none">
+            <Card
+              key={line.key}
+              className={`space-y-4 p-4 md:p-5 shadow-none${line.key === enteringKey ? " animate-[riseIn_var(--motion-base)_var(--ease-smooth)]" : ""}`}
+            >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Línea {index + 1}</span>
+                {/* Article numbers follow CAPTURE order (stable per article);
+                    the stack view shows the newest on top without renumbering. */}
+                <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Artículo {captureIndex + 1}</span>
                 {lines.length > 1 && (
                   <IconButton
                     variant="ghost"
-                    aria-label={`Eliminar línea ${index + 1}`}
+                    aria-label={`Eliminar artículo ${captureIndex + 1}`}
                     onClick={() => setLines((current) => current.filter((item) => item.key !== line.key))}
                     className="text-lg"
                   >
@@ -515,7 +526,7 @@ export function OrderForm({
               <SearchSelect
                 inputRef={(input) => {
                   productInputs.current[line.key] = input;
-                  if (index === 0) newProductInput.current = input; // addLine focuses the top line
+                  if (captureIndex === lines.length - 1) newProductInput.current = input; // addLine focuses the newest (rendered on top)
                 }}
                 label="Producto"
                 placeholder="Busca o escribe un producto"
@@ -567,21 +578,12 @@ export function OrderForm({
                 )}
                 {!isTiered && <div className="hidden md:block" aria-hidden />}
               </div>
-              <div className="grid grid-cols-2 items-end gap-3">
-                <TextField
-                  label="Costo (opcional)"
-                  type="text"
-                  inputMode="decimal"
-                  pattern="[0-9]*[.]?[0-9]*"
-                  value={line.costText}
-                  onChange={(event) => {
-                    const value = sanitizeDecimalInput(event.target.value);
-                    updateLine(line.key, { costText: value, cost: parseAmount(value) });
-                  }}
-                />
-                <div className="rounded-md bg-surface-muted px-3 py-2.5 min-h-[3.25rem] flex items-center">
-                  <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
-                </div>
+              {/* No cost INPUT here: cost is catalog data that rides along in the
+                  line snapshot to feed the saved order's estimated profit — it is
+                  not something the operator captures, and an editable field with
+                  no visible effect was noise (field feedback, dev trial). */}
+              <div className="rounded-md bg-surface-muted px-3 py-2.5 min-h-[3.25rem] flex items-center">
+                <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
               </div>
               {warning && <Badge tone="warning">{warning}</Badge>}
             </Card>
