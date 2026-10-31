@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { navigate, visibleNavItems, parentActive, type Tab } from "./navItems";
+import { navigate, visibleNavItems, parentActive, type PlatformRole, type Tab } from "./navItems";
 
 // Re-export so existing imports (`import { BottomNav, type Tab }`) keep working.
 export type { Tab };
@@ -7,11 +7,13 @@ export type { Tab };
 export function BottomNav({
   active,
   storeType,
+  userRole,
 }: {
   active: Tab;
   storeType: import("../types").StoreType;
+  userRole?: PlatformRole;
 }) {
-  const tabs = visibleNavItems(storeType);
+  const tabs = visibleNavItems(storeType, userRole);
   const [productosOpen, setProductosOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);
 
@@ -101,6 +103,7 @@ export function BottomNav({
         return (
           <button
             key={t.id}
+            aria-label={t.id === "usuarios" ? "Usuarios" : undefined}
             onClick={() => navigate(t.path)}
             className={`relative flex-1 py-3 text-[13px] font-semibold transition-colors ${
               isActive ? "text-ink" : "text-ink-soft/50"
