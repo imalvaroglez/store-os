@@ -179,4 +179,27 @@ describe("purchase amount entry", () => {
     expect(saved.lines.map((line) => line.ticketId)).toEqual(saved.tickets!.map((ticket) => ticket.id));
     expect(saved.totalConfirmed).toBe(35);
   });
+  it("interprets each supplier ticket independently without overwriting the others", async () => {
+    const value: Purchase = {
+      ...purchase(), totalConfirmed: 70,
+      tickets: [{ id: "a", folio: "A", totalConfirmed: 40 }, { id: "b", folio: "B", totalConfirmed: 30 }],
+      lines: [
+        { lineId: "a-line", ticketId: "a", productId: "ring", name: "A", quantity: 2, unitCost: 0, sourceAmount: 20, sourceAmountType: "unknown" },
+        { lineId: "b-line", ticketId: "b", productId: "ring", name: "B", quantity: 3, unitCost: 0, sourceAmount: 30, sourceAmountType: "unknown" },
+      ],
+    };
+    open(value);
+    fireEvent.click(screen.getByRole("button", { name: "Unitarios" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    const first = upsertPurchase.mock.calls[0][0] as Purchase;
+    expect(first.lines[0]).toMatchObject({ unitCost: 20, sourceAmountType: "unit" });
+    expect(first.lines[1]).toMatchObject({ unitCost: 0, sourceAmountType: "unknown" });
+    fireEvent.change(screen.getByLabelText("Ticket que estás capturando"), { target: { value: "b" } });
+    fireEvent.click(screen.getByRole("button", { name: "Total por línea" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(2));
+    expect(upsertPurchase.mock.calls[1][0].lines[0].unitCost).toBe(20);
+    expect(upsertPurchase.mock.calls[1][0].lines[1]).toMatchObject({ unitCost: 10, sourceAmountType: "line" });
+  });
 });

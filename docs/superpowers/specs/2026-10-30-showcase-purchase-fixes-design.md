@@ -39,7 +39,9 @@ captura descrita abajo es una primera etapa, no el cierre de la meta.
   `id` dentro de sus campos; no se debe marcar recibida una compra omitiendo
   por esa razón sus actualizaciones de inventario.
 - Conservar la captura y confirmación actuales al importar PDF. Resolver
-  importes unitarios o por línea continúa siendo una acción explícita.
+  importes unitarios o por línea continúa siendo una acción explícita,
+  limitada al ticket seleccionado; no altera la interpretación de otros
+  proveedores del mismo viaje.
 
 ## Interfaz y totales
 
@@ -58,8 +60,10 @@ actualizados, los importes deben cuadrar al centavo antes de recibir.
 
 El resumen distingue productos, envío y ajustes de tickets, gastos del viaje
 repartidos y costo completo de inventario. La barra de acciones muestra el
-total de la compra con sus gastos. Las fechas de compra y su presentación
-respetan el día de México; una fecha sin hora no retrocede al día anterior.
+total de la compra con sus gastos. Por confirmación posterior de Álvaro,
+captura, visualización e inferencia de fechas de tickets usan la zona local
+del dispositivo, sin fijar una ciudad ni un desfase. Una fecha sin hora
+conserva su día; los instantes se guardan en UTC y se muestran en hora local.
 
 ## Decisiones confirmadas por Álvaro
 
