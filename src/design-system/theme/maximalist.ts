@@ -9,6 +9,7 @@ export const maximalist: Theme = {
   name: "Maximalista",
   blurb: "Fuerte, ruidoso, sin miedo.",
   vars: {
+    "--color-scheme": "light",
     "--paper": "#fef200",
     "--paper-2": "#fff59a",
     "--ink": "#0a0a0a",
