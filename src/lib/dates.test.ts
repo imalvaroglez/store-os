@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSpanishDate } from "./dates";
+import { formatDate, parseSpanishDate, todayIso } from "./dates";
 
 // Anchor "now" in a known Mexico City instant: 2026-08-22 10:00 CST.
 const NOW = new Date("2026-08-22T16:00:00Z");
@@ -53,5 +53,21 @@ describe("parseSpanishDate", () => {
   it("rejects garbage", () => {
     expect(parseSpanishDate("hola mundo", NOW)).toBeNull();
     expect(parseSpanishDate("", NOW)).toBeNull();
+  });
+});
+
+
+describe("Mexico City business dates", () => {
+  it("does not start tomorrow's purchase when UTC has already changed day", () => {
+    expect(todayIso(new Date("2026-10-31T05:59:59Z"))).toBe("2026-10-30");
+    expect(todayIso(new Date("2026-10-31T06:00:00Z"))).toBe("2026-10-31");
+  });
+  it("keeps the day of a date-only ticket when formatting it", () => {
+    expect(formatDate("2026-10-30")).toMatch(/^30 oct\.? 2026$/);
+  });
+  it("formats a timestamp on the business date and handles missing dates", () => {
+    expect(formatDate("2026-10-31T04:30:00Z")).toMatch(/^30 oct\.? 2026$/);
+    expect(formatDate(undefined)).toBe("");
+    expect(formatDate("invalid")).toBe("");
   });
 });
