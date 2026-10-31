@@ -329,8 +329,10 @@
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
       "proposedPriority": "P1",
       "relatedItems": [
-        "scalable-pricing"
+        "scalable-pricing",
+        "fer-iconic-renewal"
       ],
+      "referenceNotesPath": "docs/showcase-feedback-2026-10-30.md",
       "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
@@ -343,6 +345,10 @@
       "discoveryId": "FER-05",
       "discoveryPath": "docs/fer-backlog-2026-10-28.md",
       "proposedPriority": "P2",
+      "relatedItems": [
+        "fer-customer-price-tier"
+      ],
+      "referenceNotesPath": "docs/showcase-feedback-2026-10-30.md",
       "referenceAnalysisPath": "docs/fer-excel-analysis-2026-10-28.md"
     },
     {
@@ -484,6 +490,7 @@
       "id": "purchase-entry-polish",
       "title": "Compras: decimales, búsqueda al vincular, conservación del costo y pulido visual",
       "priority": 370,
+      "proposedPriority": "P1",
       "status": "needs-spec",
       "dependsOn": [],
       "previewChecks": [],

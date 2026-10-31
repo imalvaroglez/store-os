@@ -1,5 +1,16 @@
 # Backlog
 
+## Registro del showcase, 30 de octubre de 2026
+
+La [nota general del showcase](showcase-feedback-2026-10-30.md) reúne el caso
+de Emprendedora/Iconic, el seguimiento por clienta y la forma de incorporar
+nuevos reportes. Amplía FER-04/05 sin duplicarlos y conserva la configuración
+confirmada: solo se había marcado Emprendedora, sin asignar nivel Iconic.
+Cada reporte permite revisar prioridades por impacto y frecuencia; se propone
+atender primero los importes que cambian inesperadamente y la claridad del
+precio por clienta. Las prioridades globales y los bloqueos P0 se conservan;
+esta sesión registra backlog, sin implementación.
+
 ## Nota de uso: Compras, 30 de octubre de 2026
 
 El [reporte de captura y compra por viaje](purchase-feedback-2026-10-30.md)

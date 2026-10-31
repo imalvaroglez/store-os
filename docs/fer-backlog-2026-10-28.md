@@ -20,6 +20,12 @@ y el reparto propuesto por cantidad de piezas ($44 / 70 y $150 / 100).
 Solo registra backlog; no autoriza implementación ni cierra las demás reglas
 de costos pendientes.
 
+La [nota del showcase](showcase-feedback-2026-10-30.md) amplía FER-04/05:
+marcar solo Emprendedora no seleccionó Iconic al crear un pedido, y se pide
+claridad del precio aplicado e historial/vigencia por clienta. Conserva la
+diferencia entre el comportamiento actual y la expectativa reportada, sin
+aprobar reglas automáticas nuevas.
+
 ## Insumo recibido: Excel de ventas
 
 El archivo ya se recibió y se analizó. El [análisis del Excel](fer-excel-analysis-2026-10-28.md)
