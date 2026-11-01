@@ -155,19 +155,21 @@ function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-// gh's project mutations intermittently fail with a server-side GraphQL
-// error ("Something went wrong while executing your query"); retrying the
-// same call succeeds. Retries are safe: item-add is idempotent (adding an
-// existing item returns it) and item-edit sets absolute values.
-function ghRetry(args, tries = 5) {
+// gh's project mutations fail under GitHub's secondary rate limit when fired
+// in bursts ("Something went wrong…" / "API rate limit exceeded"), even with
+// primary quota left. Pace every mutation and back off exponentially.
+// Retries are safe: item-add is idempotent (adding an existing item returns
+// it) and item-edit sets absolute values.
+function ghRetry(args, tries = 6) {
   let lastErr;
   for (let i = 0; i < tries; i++) {
     try {
       return gh(args);
     } catch (err) {
       lastErr = err;
-      console.error(`  (reintento ${i + 1}/${tries}: ${args.slice(0, 3).join(" ")})`);
-      sleep(2000);
+      const waitMs = 2000 * 2 ** i;
+      console.error(`  (reintento ${i + 1}/${tries} en ${waitMs / 1000}s: ${args.slice(0, 3).join(" ")})`);
+      sleep(waitMs);
     }
   }
   throw lastErr;
@@ -227,6 +229,7 @@ function summary(planned) {
 // item-edit by name: --url points at the issue/PR, --field names the field,
 // --value is the single-select option name (per `gh project item-edit --help`).
 function setField(project, url, field, value) {
+  sleep(400);
   ghRetry([
     "project", "item-edit", String(project), "--owner", OWNER, "--url", url,
     "--field", field, "--value", value,
@@ -234,6 +237,7 @@ function setField(project, url, field, value) {
 }
 
 function addItem(project, url) {
+  sleep(400);
   ghJsonRetry(["project", "item-add", String(project), "--owner", OWNER, "--url", url, "--format", "json"]);
 }
 
@@ -298,6 +302,11 @@ function runMigrate(project) {
   }
 
   const created = { issues: 0, skipped: 0 };
+  // Items already on the board skip item-add (saves mutations and burst noise).
+  const inProject = new Set(
+    ghJsonRetry(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"])
+      .items.map((i) => i.url)
+  );
   for (const issue of planned.issues) {
     let rec = existingByTitle.get(issue.title);
     if (!rec) {
@@ -313,7 +322,7 @@ function runMigrate(project) {
     } else {
       created.skipped++;
     }
-    addItem(project, rec.url);
+    if (!inProject.has(rec.url)) addItem(project, rec.url);
     for (const [field, value] of [
       ["Estado", issue.estado],
       ["Prioridad", issue.prioridad],
@@ -334,7 +343,7 @@ function runMigrate(project) {
   }
 
   for (const p of planned.prItems) {
-    addItem(project, p.url);
+    if (!inProject.has(p.url)) addItem(project, p.url);
     for (const [field, value] of [
       ["Estado", "En PR"],
       ["Ciclo", p.ciclo],
