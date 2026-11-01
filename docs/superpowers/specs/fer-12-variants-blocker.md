@@ -1,5 +1,20 @@
 # FER-12 · Bloqueo de diseño para variantes
 
+## Actualización de descubrimiento — 1 de noviembre de 2026
+
+El feedback nuevo confirma un mismo diseño con colores dorado/plateado,
+existencias independientes y selección del color al vender. Esas tres preguntas
+ya no bloquean el diseño ni se vuelven a preguntar. La parte administrativa de
+FER-12 sube de P3 a P1; el selector público queda como entrega posterior.
+
+Siguen pendientes precio/foto/costo/clave compartidos o independientes,
+transición de productos existentes, comportamiento público de agotados y
+momento de reserva/descuento sin doble afectación. La lista original de abajo
+se conserva como antecedente, no como preguntas completamente abiertas.
+Ver [plan vigente](../../fer-action-plan-2026-11-01.md).
+No se aprueba todavía modelo de datos ni migración.
+
+
 ## Evidencia en el código actual
 
 - Cada registro `Product` es una pieza inventariable con su propio `id`, `sku`, `quantityOnHand`, precios e imágenes.
