@@ -151,6 +151,32 @@ function ghJson(args) {
   return JSON.parse(gh(args));
 }
 
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// gh's project mutations intermittently fail with a server-side GraphQL
+// error ("Something went wrong while executing your query"); retrying the
+// same call succeeds. Retries are safe: item-add is idempotent (adding an
+// existing item returns it) and item-edit sets absolute values.
+function ghRetry(args, tries = 5) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return gh(args);
+    } catch (err) {
+      lastErr = err;
+      console.error(`  (reintento ${i + 1}/${tries}: ${args.slice(0, 3).join(" ")})`);
+      sleep(2000);
+    }
+  }
+  throw lastErr;
+}
+
+function ghJsonRetry(args) {
+  return JSON.parse(ghRetry(args));
+}
+
 function readBacklog() {
   if (!fs.existsSync(BACKLOG_PATH)) {
     console.error(`No existe ${BACKLOG_PATH}: correr desde un árbol que aún lo incluya (pre Task 7 del plan).`);
@@ -201,7 +227,14 @@ function summary(planned) {
 // item-edit by name: --url points at the issue/PR, --field names the field,
 // --value is the single-select option name (per `gh project item-edit --help`).
 function setField(project, url, field, value) {
-  gh(["project", "item-edit", String(project), "--owner", OWNER, "--url", url, "--field", field, "--value", value]);
+  ghRetry([
+    "project", "item-edit", String(project), "--owner", OWNER, "--url", url,
+    "--field", field, "--value", value,
+  ]);
+}
+
+function addItem(project, url) {
+  ghJsonRetry(["project", "item-add", String(project), "--owner", OWNER, "--url", url, "--format", "json"]);
 }
 
 function main() {
@@ -280,6 +313,7 @@ function runMigrate(project) {
     } else {
       created.skipped++;
     }
+    addItem(project, rec.url);
     for (const [field, value] of [
       ["Estado", issue.estado],
       ["Prioridad", issue.prioridad],
@@ -300,6 +334,7 @@ function runMigrate(project) {
   }
 
   for (const p of planned.prItems) {
+    addItem(project, p.url);
     for (const [field, value] of [
       ["Estado", "En PR"],
       ["Ciclo", p.ciclo],
