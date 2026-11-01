@@ -228,8 +228,12 @@ function summary(planned) {
 
 // item-edit by name: --url points at the issue/PR, --field names the field,
 // --value is the single-select option name (per `gh project item-edit --help`).
+// Each gh project mutation costs 2-3 internal requests; GitHub's secondary
+// limit trips around ~100 req/min, so pace one mutation every ~2.5s.
+const MUTATION_PACE_MS = 2500;
+
 function setField(project, url, field, value) {
-  sleep(400);
+  sleep(MUTATION_PACE_MS);
   ghRetry([
     "project", "item-edit", String(project), "--owner", OWNER, "--url", url,
     "--field", field, "--value", value,
@@ -237,7 +241,7 @@ function setField(project, url, field, value) {
 }
 
 function addItem(project, url) {
-  sleep(400);
+  sleep(MUTATION_PACE_MS);
   ghJsonRetry(["project", "item-add", String(project), "--owner", OWNER, "--url", url, "--format", "json"]);
 }
 
@@ -302,6 +306,7 @@ function runMigrate(project) {
   }
 
   const created = { issues: 0, skipped: 0 };
+  const failures = [];
   // Items already on the board skip item-add (saves mutations and burst noise).
   const inProject = new Set(
     ghJsonRetry(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"])
@@ -322,37 +327,52 @@ function runMigrate(project) {
     } else {
       created.skipped++;
     }
-    if (!inProject.has(rec.url)) addItem(project, rec.url);
-    for (const [field, value] of [
-      ["Estado", issue.estado],
-      ["Prioridad", issue.prioridad],
-      ["Tipo", issue.tipo],
-      ["Ciclo", issue.ciclo],
-    ]) {
-      if (!value) continue;
-      setField(project, rec.url, field, value);
-    }
-    if (issue.done) {
-      try {
-        gh(["issue", "close", String(rec.number), "--reason", "completed"]);
-      } catch {
-        /* ya cerrada */
+    try {
+      if (!inProject.has(rec.url)) addItem(project, rec.url);
+      for (const [field, value] of [
+        ["Estado", issue.estado],
+        ["Prioridad", issue.prioridad],
+        ["Tipo", issue.tipo],
+        ["Ciclo", issue.ciclo],
+      ]) {
+        if (!value) continue;
+        setField(project, rec.url, field, value);
       }
+      if (issue.done) {
+        try {
+          gh(["issue", "close", String(rec.number), "--reason", "completed"]);
+        } catch {
+          /* ya cerrada */
+        }
+      }
+      console.log(`issue ${issue.estado.padEnd(13)} ${issue.title}`);
+    } catch (err) {
+      failures.push(`${issue.title}: ${String(err).split("\n")[0]}`);
+      console.error(`FALLO ${issue.title}`);
     }
-    console.log(`issue ${issue.estado.padEnd(13)} ${issue.title}`);
   }
 
   for (const p of planned.prItems) {
-    if (!inProject.has(p.url)) addItem(project, p.url);
-    for (const [field, value] of [
-      ["Estado", "En PR"],
-      ["Ciclo", p.ciclo],
-    ]) {
-      setField(project, p.url, field, value);
+    try {
+      if (!inProject.has(p.url)) addItem(project, p.url);
+      for (const [field, value] of [
+        ["Estado", "En PR"],
+        ["Ciclo", p.ciclo],
+      ]) {
+        setField(project, p.url, field, value);
+      }
+      console.log(`pr    En PR         #${p.number} ${p.title}`);
+    } catch (err) {
+      failures.push(`PR #${p.number}: ${String(err).split("\n")[0]}`);
+      console.error(`FALLO PR #${p.number}`);
     }
-    console.log(`pr    En PR         #${p.number} ${p.title}`);
   }
   console.log(`\nCreadas: ${created.issues}, omitidas (ya existían): ${created.skipped}. Verifica con --verify.`);
+  if (failures.length) {
+    console.error(`\n${failures.length} fallos (re-ejecuta --migrate; es idempotente):`);
+    for (const f of failures) console.error(`  - ${f}`);
+    process.exit(1);
+  }
 }
 
 function runVerify(project) {
