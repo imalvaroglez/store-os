@@ -140,8 +140,194 @@ function estadoColumn(item, openPrs) {
 
 module.exports = { ESTADO_OPTIONS, CICLO_OPTIONS, buildIssueTitle, buildIssueBody, estadoColumn, cicloOf, tipoOf };
 
-// CLI lives below this guard (added in Task 3).
-if (require.main === module) {
-  console.error("CLI no implementado todavía (Task 3).");
-  process.exit(1);
+// ---------------------------------------------------------------------------
+// CLI
+
+function gh(args, opts) {
+  return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], ...opts });
 }
+
+function ghJson(args) {
+  return JSON.parse(gh(args));
+}
+
+function readBacklog() {
+  if (!fs.existsSync(BACKLOG_PATH)) {
+    console.error(`No existe ${BACKLOG_PATH}: correr desde un árbol que aún lo incluya (pre Task 7 del plan).`);
+    process.exit(1);
+  }
+  return JSON.parse(fs.readFileSync(BACKLOG_PATH, "utf8")).items;
+}
+
+function openPrs() {
+  const prs = ghJson(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,url"]);
+  return { numbers: new Set(prs.map((p) => p.number)), list: prs };
+}
+
+function planIssues(items, prs) {
+  const titles = new Map(items.map((i) => [i.id, i.title]));
+  const issues = items.map((item) => ({
+    id: item.id,
+    title: buildIssueTitle(item),
+    body: buildIssueBody(item, titles),
+    estado: estadoColumn(item, prs.numbers),
+    prioridad: item.proposedPriority || null,
+    tipo: tipoOf(item.id),
+    ciclo: cicloOf(item.id),
+    done: item.status === "done",
+    frozen: item.status === "frozen",
+  }));
+  // Open PRs enter as items too; cycle resolved from the entry that tracks them.
+  const prItems = prs.list.map((p) => {
+    const owner = items.find((i) => (i.pullRequests || []).includes(p.number));
+    return {
+      number: p.number,
+      url: p.url,
+      title: p.title,
+      ciclo: owner ? cicloOf(owner.id) : "Complementario",
+    };
+  });
+  return { issues, prItems };
+}
+
+function summary(planned) {
+  const byEstado = {};
+  for (const i of planned.issues) byEstado[i.estado] = (byEstado[i.estado] || 0) + 1;
+  const byCiclo = {};
+  for (const i of planned.issues) byCiclo[i.ciclo] = (byCiclo[i.ciclo] || 0) + 1;
+  return { issues: planned.issues.length, byEstado, byCiclo, prs: planned.prItems.length };
+}
+
+// item-edit by name: --url points at the issue/PR, --field names the field,
+// --value is the single-select option name (per `gh project item-edit --help`).
+function setField(project, url, field, value) {
+  gh(["project", "item-edit", String(project), "--owner", OWNER, "--url", url, "--field", field, "--value", value]);
+}
+
+function main() {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--dry-run")) {
+    const planned = planIssues(readBacklog(), openPrs());
+    console.log(JSON.stringify(summary(planned), null, 2));
+    console.log("\nMuestra de issues proyectadas:");
+    for (const i of planned.issues.slice(0, 5)) console.log(`  [${i.estado}] ${i.title}`);
+    console.log("PRs como items:", planned.prItems.map((p) => `#${p.number}`).join(", "));
+    return;
+  }
+  if (argv.includes("--setup")) {
+    const proj = ghJson(["project", "create", "--owner", OWNER, "--title", PROJECT_TITLE, "--format", "json"]);
+    console.log(`Proyecto creado: número ${proj.number} — ${proj.url}`);
+    for (const field of [
+      { name: "Estado", options: ESTADO_OPTIONS.join(",") },
+      { name: "Prioridad", options: "P0,P1,P2,P3" },
+      { name: "Tipo", options: "feature,deuda,ops" },
+      { name: "Ciclo", options: CICLO_OPTIONS.join(",") },
+    ]) {
+      gh([
+        "project", "field-create", String(proj.number), "--owner", OWNER, "--name", field.name,
+        "--data-type", "SINGLE_SELECT", "--single-select-options", field.options,
+      ]);
+      console.log(`Campo creado: ${field.name}`);
+    }
+    console.log(`\nSiguiente: node scripts/migrate-backlog-to-projects.cjs --project ${proj.number} --migrate`);
+    return;
+  }
+  const projectFlag = argv.indexOf("--project");
+  const project = projectFlag >= 0 ? argv[projectFlag + 1] : null;
+  if (!project) {
+    console.error("Falta --project <number> (o usa --setup / --dry-run).");
+    process.exit(1);
+  }
+  if (argv.includes("--migrate")) {
+    runMigrate(project);
+  } else if (argv.includes("--verify")) {
+    runVerify(project);
+  } else {
+    console.error("Nada que hacer: usa --dry-run, --setup, --project N --migrate o --project N --verify.");
+    process.exit(1);
+  }
+}
+
+function runMigrate(project) {
+  const items = readBacklog();
+  const prs = openPrs();
+  const planned = planIssues(items, prs);
+  // Idempotencia: issues existentes se detectan por su título exacto "[<id>] <título>".
+  const existing = ghJson(["issue", "list", "--state", "all", "--limit", "300", "--json", "number,title,url"]);
+  const existingByTitle = new Map(existing.map((i) => [i.title, i]));
+
+  for (const label of ["congelado"]) {
+    try {
+      gh(["label", "create", label, "--color", "bfd4f2", "--description", "Item congelado (decisión PO)"]);
+    } catch {
+      /* ya existe */
+    }
+  }
+
+  const created = { issues: 0, skipped: 0 };
+  for (const issue of planned.issues) {
+    let rec = existingByTitle.get(issue.title);
+    if (!rec) {
+      const bodyFile = path.join(require("node:os").tmpdir(), `backlog-${issue.id}.md`);
+      fs.writeFileSync(bodyFile, issue.body);
+      const args = ["issue", "create", "--title", issue.title, "--body-file", bodyFile];
+      if (issue.frozen) args.push("--label", "congelado");
+      const url = gh(args).trim();
+      fs.unlinkSync(bodyFile);
+      rec = { url, number: Number(url.match(/issues\/(\d+)/)[1]) };
+      existingByTitle.set(issue.title, rec);
+      created.issues++;
+    } else {
+      created.skipped++;
+    }
+    for (const [field, value] of [
+      ["Estado", issue.estado],
+      ["Prioridad", issue.prioridad],
+      ["Tipo", issue.tipo],
+      ["Ciclo", issue.ciclo],
+    ]) {
+      if (!value) continue;
+      setField(project, rec.url, field, value);
+    }
+    if (issue.done) {
+      try {
+        gh(["issue", "close", String(rec.number), "--reason", "completed"]);
+      } catch {
+        /* ya cerrada */
+      }
+    }
+    console.log(`issue ${issue.estado.padEnd(13)} ${issue.title}`);
+  }
+
+  for (const p of planned.prItems) {
+    for (const [field, value] of [
+      ["Estado", "En PR"],
+      ["Ciclo", p.ciclo],
+    ]) {
+      setField(project, p.url, field, value);
+    }
+    console.log(`pr    En PR         #${p.number} ${p.title}`);
+  }
+  console.log(`\nCreadas: ${created.issues}, omitidas (ya existían): ${created.skipped}. Verifica con --verify.`);
+}
+
+function runVerify(project) {
+  const items = ghJson(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"]);
+  const issues = items.filter((i) => i.type === "ISSUE");
+  const prs = items.filter((i) => i.type === "PULL_REQUEST");
+  const estados = {};
+  for (const i of issues) {
+    const est = (i.fieldValues || []).find((f) => f.field === "Estado");
+    const name = est ? est.value : "(sin estado)";
+    estados[name] = (estados[name] || 0) + 1;
+  }
+  console.log(JSON.stringify({ issues: issues.length, prs: prs.length, estados }, null, 2));
+  const expectedIssues = readBacklog().length;
+  if (issues.length < expectedIssues) {
+    console.error(`Faltan issues: ${issues.length} de ${expectedIssues}.`);
+    process.exit(1);
+  }
+  console.log(`OK: ${issues.length + prs.length} items en el tablero.`);
+}
+
+if (require.main === module) main();
