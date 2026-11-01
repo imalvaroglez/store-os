@@ -68,10 +68,17 @@ que este proceso realmente reduce su captura.
 
 ### 3. Completar octubre y preparar el corte
 
-Con el piloto revisado se procesan las demás conversaciones. La salida será un
-archivo auxiliar con Corte de octubre, Detalle y Pendientes. El original queda
-intacto. Las ventas, los cobros y los saldos se presentan por separado; una
-ganancia con costo incompleto permanece sin determinar.
+Con el piloto revisado se procesan las demás conversaciones. Álvaro aclaró que
+la entrega debe completar una copia del mismo Excel que ya usa la operadora:
+se conservan sus hojas, columnas, formatos, datos anteriores y fórmulas, y se
+agregan los pedidos en la hoja de ventas del mes. El original queda intacto.
+El archivo de revisión separado del piloto no sustituye esa entrega.
+
+Los datos que no constan en las fuentes permanecen pendientes, sin inventar
+cantidades, costos, método o confirmación de cobro. Las fórmulas de ganancia de
+las líneas nuevas esperan a tener los costos y gastos necesarios. Las
+aclaraciones confirmadas se dejan como notas en el pedido, sin añadir otro
+ajuste numérico cuando la compensación ya se realizó entre pedidos.
 
 Se conservan los costos históricos identificables. Se aclara qué incluye
 Packing antes de sumar empaque/envío otra vez. Las compras recientes y las
