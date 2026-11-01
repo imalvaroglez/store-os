@@ -5,10 +5,41 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
 
-const { parseChat, messagesCsv, writeIntake } = createRequire(import.meta.url)("../../scripts/whatsapp-close-intake.cjs");
+const { parseChat, parsePastedNote, messagesCsv, writeIntake } = createRequire(import.meta.url)("../../scripts/whatsapp-close-intake.cjs");
 const options = { dateOrder: "dmy", month: "2026-10" };
 
 describe("WhatsApp evidence intake", () => {
+  it("accepts a copied order note without fabricating export dates, sender or payment", () => {
+    const text = "*CLIENTA DE EJEMPLO 27 de octubre, 2026*\n\n*Anillos*\n3 Modelo A $105 ($35 c/u)\n*Total $105*";
+    const report = parsePastedNote(text, { month: "2026-10" });
+    expect(report.messages[0]).toMatchObject({ text, raw: text, startLine: 1, endLine: 5, localDate: null, localTime: null, inMonth: null, sender: null });
+    expect(report.counts.inMonth).toBeNull();
+    expect(report).not.toHaveProperty("payments");
+    expect(report).not.toHaveProperty("sales");
+    expect(messagesCsv(report)).toContain("Sin confirmar");
+    expect(() => parsePastedNote(" ", { month: "2026-10" })).toThrow("vacía");
+  });
+
+  it("runs the pasted-note CLI on plain text without requiring invented chat metadata", () => {
+    const directory = mkdtempSync(join(tmpdir(), "close-note-test-"));
+    try {
+      const input = join(directory, "nota.txt");
+      const output = join(directory, "revision");
+      const text = "*CLIENTA DE EJEMPLO 27 de octubre, 2026*\n1 Cambio $0 + 1 $100\n*Total $100*";
+      writeFileSync(input, text);
+      const result = spawnSync(process.execPath, ["scripts/whatsapp-close-intake.cjs", "--input", input, "--month", "2026-10", "--format", "pasted-note", "--out", output], { encoding: "utf8" });
+      expect(result.status).toBe(0);
+      expect(readFileSync(input, "utf8")).toBe(text);
+      const report = JSON.parse(readFileSync(join(output, "mensajes.json"), "utf8"));
+      expect(report.format).toBe("pasted-note");
+      expect(report.messages[0].raw).toBe(text);
+      expect(report.counts.inMonth).toBeNull();
+      expect(readFileSync(join(output, "revision.md"), "utf8")).toContain("sin confirmar");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("preserves multiline Android messages, source lines and previous-month context", () => {
     const text = "30/09/2026, 23:50 - Clienta: Quisiera dos anillos\n¿Hay dorados?\n31/10/2026, 14:05 - Tienda: Recibido\n";
     const report = parseChat(text, options);

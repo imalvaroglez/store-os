@@ -16,8 +16,9 @@ No se le pide actualizar primero el Excel: esa es parte de esta ayuda.
   Se verificó el mismo SHA-256 del ensayo E0. No incluye necesariamente las
   ventas y los cobros recientes.
 - Álvaro identifica WhatsApp como fuente probable de las ventas pendientes.
-  No se recibieron aún exportaciones; se empieza con una conversación de una
-  venta reciente, idealmente la de mayor importe, antes de ampliar el proceso.
+  El 1 de noviembre aportó un primer mensaje de detalle de pedido copiado para
+  probar la captura. La prueba conserva ese contenido fuera de Git; no es
+  necesario obtener antes una exportación completa ni actualizar el Excel.
 - No hay un conector WhatsApp disponible en esta sesión. Se puede usar la
   exportación de texto del chat desde el teléfono; los adjuntos necesarios se
   revisan aparte. No se envían mensajes ni se instalan servicios.
@@ -43,6 +44,12 @@ cuando el export los señala; no se interpreta su contenido ausente.
 Una ejecución parcial por errores de lectura devuelve código 2 y mantiene su
 reporte. El asistente revisa esas incidencias antes de preparar operaciones.
 La herramienta no modifica el Excel, el chat ni un paquete generado antes.
+
+También admite `--format pasted-note` para un mensaje copiado sin los
+encabezados de una exportación. Se guarda como una sola evidencia completa,
+sin inventar remitente, hora o fecha del mensaje. El nombre y fecha escritos
+en el contenido se revisan por separado. Este modo no clasifica la nota como
+venta entregada o cobrada, ni calcula importes por sí mismo.
 
 ### 2. Piloto con una conversación real
 
@@ -99,6 +106,11 @@ node scripts/whatsapp-close-intake.cjs \
   --date-order dmy \
   --out .local/monthly-close/chat-01
 ```
+
+Para un mensaje copiado se omite `--date-order` y se usa `--format pasted-note`.
+El detalle estructurado y el archivo de prueba se generan durante la captura
+asistida y conservan referencias a las líneas de esa nota. La prueba real y sus
+importes no se usan como fixtures públicos del repositorio.
 
 Los chats y reportes reales se guardan fuera de Git; el directorio sugerido
 está ignorado. El PR contiene solamente herramienta, pruebas y documentación,
