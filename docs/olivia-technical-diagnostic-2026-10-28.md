@@ -1,5 +1,9 @@
 # Olivia / Store OS: diagnóstico técnico y propuesta de entregas
 
+> Antecedente al 28 de octubre. El orden y los estados vigentes se encuentran en
+> [el plan del 1 de noviembre](fer-action-plan-2026-11-01.md) y
+> [backlog.json](backlog.json). No usar las prioridades originales como una cola paralela.
+
 > **Actualización arquitectónica del 30 de octubre de 2026:** la administración
 > requiere Firebase Auth + Firestore. Las observaciones de persistencia
 > administrativa local describen la implementación inspeccionada, no una

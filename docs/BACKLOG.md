@@ -1,5 +1,28 @@
 # Backlog
 
+## Plan vigente: feedback de Fer, 1 de noviembre de 2026
+
+La cola única está en [backlog.json](backlog.json); la vista de trabajo, evidencia
+de liberación, dependencias y criterios está en el
+[plan de acción vigente](fer-action-plan-2026-11-01.md).
+
+Orden acordado: integridad P0 (#96/#111 ya construidos); captura con fotos y
+valores predeterminados; cobros/abonos; variantes administrativas por color;
+compras/costos; ganancia; mes/reparto/cierre; seguimiento; catálogo público.
+El corte asistido de octubre (#115) se conserva como trabajo operativo paralelo.
+
+Producción liberó `aa26233` el 1 de noviembre; líneas arriba, precios por
+clienta, agrupación y ticket texto ya están integrados y liberados.
+Los bloqueos históricos de integración del modo local están satisfechos:
+#89–#94, #103–#107, #109 y #110 integrados; #108 cerrado sin integrar.
+La entrega #111 sigue abierta y requiere aceptación conjunta con #96.
+
+Las secciones que siguen son antecedentes históricos. Sus estados, prioridades,
+readiness y referencias al harness no gobiernan la cola actual. No iniciar una
+segunda implementación por un estado antiguo: revisar primero los PR enlazados.
+
+---
+
 ## Ciclo actual: entrevista con Fer, 28 de octubre de 2026
 
 El [diagnóstico técnico y plan incremental](olivia-technical-diagnostic-2026-10-28.md)
