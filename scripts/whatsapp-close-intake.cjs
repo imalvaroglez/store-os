@@ -104,6 +104,28 @@ function parseChat(text, { dateOrder, month, sourceName = "chat.txt", sourceSha2
   };
 }
 
+function parsePastedNote(text, { month, sourceName = "nota.txt", sourceSha256 = hash(text) }) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("Indica el mes como AAAA-MM.");
+  if (!text.trim()) throw new Error("La nota está vacía.");
+  // Pasted text has no export metadata. Dates/names in its body are evidence
+  // to review, not invented message timestamps or proof of a completed sale.
+  const messages = [{
+    id: hash(`${sourceSha256}:1`).slice(0, 24),
+    sourceName, startLine: 1, endLine: text.split(/\r\n|\n|\r/).length,
+    localDate: null, localTime: null, inMonth: null, sender: null,
+    text, raw: text,
+    attachmentMentioned: null,
+    fingerprint: hash(text),
+  }];
+  return {
+    version: 1, format: "pasted-note", month, dateOrder: null,
+    sourceName, sourceSha256,
+    timestampMeaning: "Texto copiado sin fecha ni remitente de exportación. Revisar por separado las fechas y nombres escritos en el contenido.",
+    messages, issues: [],
+    counts: { messages: 1, inMonth: null, attachmentMentions: null, issues: 0 },
+  };
+}
+
 function csvCell(value) {
   let text = value == null ? "" : String(value);
   // Preserve the exact evidence in JSON; keep spreadsheet imports from treating
@@ -114,7 +136,7 @@ function csvCell(value) {
 
 function messagesCsv(report) {
   const rows = [["Referencia", "Archivo", "Línea inicial", "Línea final", "Fecha del mensaje", "Hora local", "Remitente del texto", "Mensaje", "Menciona archivo", "Mensaje del mes"]];
-  for (const m of report.messages) rows.push([m.id, m.sourceName, m.startLine, m.endLine, m.localDate, m.localTime, m.sender, m.text, m.attachmentMentioned ? "Sí" : "No", m.inMonth ? "Sí" : "No"]);
+  for (const m of report.messages) rows.push([m.id, m.sourceName, m.startLine, m.endLine, m.localDate, m.localTime, m.sender, m.text, report.format === "pasted-note" ? "Sin revisar" : m.attachmentMentioned ? "Sí" : "No", m.inMonth == null ? "Sin confirmar" : m.inMonth ? "Sí" : "No"]);
   return "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
 }
 
@@ -123,7 +145,9 @@ function writeIntake(input, outDir, options) {
   const buffer = fs.readFileSync(inputPath);
   if (buffer.includes(0)) throw new Error("Se necesita un chat de texto UTF-8 (.txt), no un ZIP ni una copia de seguridad.");
   const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer);
-  const report = parseChat(text, { ...options, sourceName: path.basename(inputPath), sourceSha256: hash(buffer) });
+  if (options.format && !["chat-export", "pasted-note"].includes(options.format)) throw new Error("Formato no admitido: usa chat-export o pasted-note.");
+  const parse = options.format === "pasted-note" ? parsePastedNote : parseChat;
+  const report = parse(text, { ...options, sourceName: path.basename(inputPath), sourceSha256: hash(buffer) });
   if (hash(fs.readFileSync(inputPath)) !== report.sourceSha256) throw new Error("El chat cambió durante la lectura. Vuelve a exportarlo.");
   fs.mkdirSync(path.dirname(path.resolve(outDir)), { recursive: true });
   // Never replace a previous intake or an existing source directory.
@@ -133,8 +157,9 @@ function writeIntake(input, outDir, options) {
   write("mensajes.csv", messagesCsv(report));
   write("revision.md", [
     `# Captura asistida de ${report.month}`, "",
-    `Mensajes leídos: ${report.counts.messages}. Mensajes fechados en el mes: ${report.counts.inMonth}.`,
-    `Referencias a archivos: ${report.counts.attachmentMentions}. Incidencias de lectura: ${report.counts.issues}.`, "",
+    `Mensajes leídos: ${report.counts.messages}. Mensajes fechados en el mes: ${report.counts.inMonth ?? "sin confirmar"}.`,
+    `Referencias a archivos: ${report.counts.attachmentMentions ?? "sin revisar"}. Incidencias de lectura: ${report.counts.issues}.`, "",
+    report.timestampMeaning,
     "Se conservan los mensajes de otros meses como contexto. La fecha del mensaje no determina el mes de una venta o un cobro.",
     "Esta lectura prepara evidencia; todavía no calcula ventas, cobros ni reparto.", "",
     "## Trabajo de captura", "",
@@ -151,18 +176,18 @@ function writeIntake(input, outDir, options) {
 
 function main(args) {
   if (args.includes("--help")) {
-    console.log("Uso: node scripts/whatsapp-close-intake.cjs --input chat.txt --month 2026-10 --date-order dmy --out .local/monthly-close/chat-01");
+    console.log("Uso: node scripts/whatsapp-close-intake.cjs --input chat.txt --month 2026-10 --date-order dmy --out .local/monthly-close/chat-01\nPara un mensaje copiado: --format pasted-note (sin --date-order). No se inventan fecha ni remitente de exportación.");
     return;
   }
-  const allowed = new Set(["--input", "--month", "--date-order", "--out"]);
+  const allowed = new Set(["--input", "--month", "--date-order", "--out", "--format"]);
   const options = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
     if (!allowed.has(flag) || !args[index + 1] || args[index + 1].startsWith("--") || options[flag]) throw new Error("Argumentos incompletos o repetidos. Consulta --help.");
     options[flag] = args[index + 1];
   }
-  if ([...allowed].some((flag) => !options[flag])) throw new Error("Faltan argumentos. Consulta --help.");
-  const report = writeIntake(options["--input"], options["--out"], { month: options["--month"], dateOrder: options["--date-order"] });
+  if (["--input", "--month", "--out"].some((flag) => !options[flag])) throw new Error("Faltan argumentos. Consulta --help.");
+  const report = writeIntake(options["--input"], options["--out"], { month: options["--month"], dateOrder: options["--date-order"], format: options["--format"] });
   console.log(`Lectura terminada: ${report.counts.messages} mensajes, ${report.counts.issues} incidencias. Revisión en ${path.resolve(options["--out"])}`);
   if (report.issues.some((issue) => ["invalid_timestamp", "unsupported_header", "unparsed_line", "no_messages"].includes(issue.code))) process.exitCode = 2;
 }
@@ -172,4 +197,4 @@ if (require.main === module) {
   catch (error) { console.error(`No se pudo preparar la captura: ${error.message}`); process.exitCode = 1; }
 }
 
-module.exports = { parseChat, messagesCsv, writeIntake };
+module.exports = { parseChat, parsePastedNote, messagesCsv, writeIntake };
