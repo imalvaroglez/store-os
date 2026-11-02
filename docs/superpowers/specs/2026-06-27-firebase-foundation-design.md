@@ -22,8 +22,8 @@ The visible UX (picker, owner/admin split) comes after.
 | Roles | super-admin (all stores) + per-store members |
 | Data layout | Root collections + membership fields |
 | Membership | Admin invites members by email; no open join |
-| Local vs cloud | Signed-out = current local demo (untouched); signed-in = cloud truth |
-| First cloud login | Seed demo stores (Santi + Joyería) into Firestore |
+| Local vs cloud | Signed-out = authentication screen; signed-in = Firestore data |
+| First cloud login | Do not create stores automatically; development fixtures stay in the dev project |
 | Verification | Build against **Firebase Emulator** for local e2e; real project later |
 
 ## Data model (Firestore, root collections)
@@ -54,11 +54,11 @@ isMember(storeId) := get(/stores/$(storeId)).data.memberUids.hasAny([request.aut
 
 ## Auth + space model
 
-- `AuthGate` wraps the app. Signed-out → existing local app (unchanged, demo seed).
+- `AuthGate` wraps the app. Signed-out → authentication screen.
   Signed-in → cloud-backed app.
 - On first cloud sign-in with empty cloud, seed Santi + Joyería into Firestore
   (reuse `buildSeedState`, owned by the new user).
-- Sign-out returns to the local demo.
+- Sign-out returns to the authentication screen.
 
 ## Architecture change
 
@@ -82,7 +82,7 @@ signed-out/local vs signed-in/cloud split — all verified locally against the
 
 - Netflix picker + role-gated UI → next sub-project.
 - **Public catalog for cloud stores**: Firestore rules hide products from
-  non-members, so `/catalogo/:slug` works only for local demo stores until a
+  non-members, so `/catalogo/:slug` works only for development stores until a
   public-read path is added. Deferred; noted.
 - Real Google OAuth needs a real project + client ID; emulator supports email/password
   fully, Google is wired but verified live later.
@@ -90,8 +90,8 @@ signed-out/local vs signed-in/cloud split — all verified locally against the
 
 ## Verification
 
-- Emulator suite (Auth + Firestore) via `firebase emulators:start --only auth,firestore`.
+- Emulator suite (Auth + Firestore) via `firebase emulators:start --project store-os-dev --only auth,firestore`.
 - Playwright e2e (`e2e/firebase.spec.ts`): start emulator, sign up (first = admin),
-  verify `users` doc + role, create a store (cloud write), sign out → back to demo,
+  verify `users` doc + role, create a store (cloud write), sign out → back to authentication,
   sign up second user → member (no stores visible until invited).
 - `npm run test` (unit) green; `npm run build` green; gate still green.

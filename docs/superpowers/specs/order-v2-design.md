@@ -24,7 +24,7 @@ paso 2 y **no está en este cambio**.
 ## Objetivo
 
 1. `Order` multi-línea: `items: OrderItem[]`, un pedido = N líneas.
-2. Migración idempotente de pedidos existentes (demo + cloud).
+2. Migración idempotente de pedidos existentes (local + cloud).
 3. `OrderForm` multi-línea con búsqueda de producto/cliente y totales en vivo.
 4. Ciclo de pedido propio de la dueña, con el pago como estado derivado.
 5. Reservas de inventario por producto agregadas de todas las líneas.
@@ -120,7 +120,7 @@ lecturas extra; ediciones concurrentes del mismo pedido convergen por snapshot
 - `CustomersScreen`: búsqueda (nombre/teléfono/Instagram) + campo Instagram.
 - Inicio: pedidos pendientes y activos, ganancia esperada por línea,
   "Falta cobrar" unificado con Clientes vía `orderCountsTowardToPay`.
-- Migración: corre al cargar (demo y cloud, incl. cada snapshot), persiste
+- Migración: corre al cargar (local y cloud, incl. cada snapshot), persiste
   solo los docs que cambian (1 write por pedido legacy — muy por debajo de la
   cuota); `e2e/seed.ts` siembra v1 plano a propósito para ejercer el camino.
 
@@ -143,7 +143,7 @@ lecturas extra; ediciones concurrentes del mismo pedido convergen por snapshot
 
 1. Un pedido nuevo con 2+ líneas persiste una sola venta con N items; totales
    y saldo correctos en la barra y en la tarjeta.
-2. Pedidos legacy se migran al cargar (demo y cloud) y la re-carga no
+2. Pedidos legacy se migran al cargar (local y cloud) y la re-carga no
    re-migra ni re-escribe (`schemaVersion` 2 + identity-compare).
 3. Legacy `paid` migra sin saldo fantasma (deposit elevado al total).
 4. El ciclo delivered→cancelled→delivered nunca consume stock doble (test del

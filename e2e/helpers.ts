@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { buildSeedState } from "./seed";
+import { FIREBASE_DEV_PROJECT_ID } from "../src/app/firebase/projectIds";
 
 // Shared helpers for the Firebase-emulator e2e specs. Every helper here is the
 // exact behavior that used to live as module-local copies in firebase.spec.ts,
@@ -9,7 +10,7 @@ import { buildSeedState } from "./seed";
 // Prereq: the app is served with VITE_FIREBASE_EMULATOR=true (see
 // playwright.firebase.config.ts) and the emulator is running.
 
-export const PROJECT = "store-os-demo";
+export const PROJECT = FIREBASE_DEV_PROJECT_ID;
 
 // The platform super-admin email. firestore.rules gates super_admin creation on
 // this verified email (isAllowlistedSuperAdmin), so any test that needs an admin

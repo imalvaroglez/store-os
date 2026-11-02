@@ -1,13 +1,13 @@
 import { OLIVIA_CONTENT } from "../src/lib/oliviaContent";
 import type { AppState, Store, Product, Customer, Order, Category, Storefront } from "../src/types";
 
-// E2E-only fixture (moved from src/lib/seed.ts): the client demo seed was
+// E2E-only fixture: client-side synthetic data was
 // removed; the emulator suites still need the full three-store world.
 // Olivia is the primary, ready-to-operate store (the
 // north-star: a jewelry shop Fer runs end-to-end) — seeded with storefront
 // content + initial categories so it's presentable on /catalogo/olivia out of
 // the box. Santi (on-demand) and Joyería (inventory-tiered) stay as secondary
-// demos so both store types remain explorable. Each entity is isolated by storeId.
+// fixtures so both store types remain explorable. Each entity is isolated by storeId.
 
 export function buildSeedState(): AppState {
   const now = new Date().toISOString();

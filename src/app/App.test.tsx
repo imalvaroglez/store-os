@@ -64,10 +64,10 @@ describe("HomeScreen store isolation render", () => {
 });
 
 describe("Root signed-out routing (production)", () => {
-  it("shows AuthScreen, not the demo, when DEV is false and there is no session", () => {
+  it("shows AuthScreen when DEV is false and there is no session", () => {
     const original = import.meta.env.DEV;
     (import.meta.env as { DEV: boolean }).DEV = false;
-    localStorage.clear(); // cold visitor: no demo seed in a built deployment
+    localStorage.clear(); // A built deployment never creates store fixtures.
     try {
       // No session, no active store -> in a built deployment this must be AuthScreen.
       // AuthProvider is in pure-local mode (no VITE_FIREBASE_* here), so user stays null.
@@ -80,7 +80,7 @@ describe("Root signed-out routing (production)", () => {
       );
       // AuthScreen renders its header subtitle.
       expect(screen.getByText("Sincroniza tus tiendas en la nube")).toBeTruthy();
-      // The demo store must NOT appear.
+      // No store data should appear before authentication.
       expect(screen.queryByText("Joyería")).toBeNull();
     } finally {
       (import.meta.env as { DEV: boolean }).DEV = original;

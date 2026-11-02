@@ -48,8 +48,8 @@ const store: PublicStore = {
 const catalog: PublicCatalog = {
   categories: [{ id: "c1", name: "Anillos", slug: "anillos", sortOrder: 0 }],
   products: [
-    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "anillo-blossom", name: "Anillo Blossom", price: 140, prices: { t_retail: 140, t_girly: 120, t_iconic: 90 }, stockSignal: "disponible", sku: "AAN1385" },
-    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "aretes-luna", name: "Aretes Luna", price: 120, prices: { t_retail: 120, t_girly: 100, t_iconic: 80 }, stockSignal: "pocas", sku: "OLI-002" },
+    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "anillo-blossom", name: "Anillo Blossom", finish: "Dorado", categoryIds: ["c1"], price: 140, prices: { t_retail: 140, t_girly: 120, t_iconic: 90 }, stockSignal: "disponible", sku: "AAN1385" },
+    { storeId: "store_olivia", storeSlug: "olivia", productSlug: "aretes-luna", name: "Aretes Luna", finish: "Plateado", categoryIds: ["c1"], price: 120, prices: { t_retail: 120, t_girly: 100, t_iconic: 80 }, stockSignal: "pocas", sku: "OLI-002" },
     { storeId: "store_olivia", storeSlug: "olivia", productSlug: "collar-vega", name: "Collar Vega", price: 200, prices: { t_retail: 200, t_girly: 170, t_iconic: 150 }, stockSignal: "agotado", sku: "OLI-003" },
   ] as PublicCatalog["products"],
 };
@@ -94,6 +94,25 @@ beforeEach(() => {
   localStorage.clear();
   mocks.loadPublicCatalog.mockReset().mockResolvedValue({ store, catalog });
   mocks.loadPublicProduct.mockReset().mockResolvedValue({ product: detail, store });
+});
+
+describe("filtro por acabado", () => {
+  it("no muestra un selector cuando solo hay un acabado", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [catalog.products[0]] } });
+    render(<OliviaStorefront route={categoryRoute} />);
+    await screen.findByText("Acabado: Dorado");
+    expect(screen.queryByLabelText("Acabado")).toBeNull();
+  });
+
+  it("muestra acabados en tarjetas y limita la categoría seleccionada", async () => {
+    render(<OliviaStorefront route={categoryRoute} />);
+    await screen.findByText("Acabado: Dorado");
+    expect(screen.getByText("Acabado: Dorado")).toBeTruthy();
+    expect(screen.getByLabelText("Acabado")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Acabado"), { target: { value: "plateado" } });
+    expect(screen.getByRole("article", { name: "Aretes Luna" })).toBeTruthy();
+    expect(screen.queryByRole("article", { name: "Anillo Blossom" })).toBeNull();
+  });
 });
 
 describe("tarjetas — jerarquía de precios", () => {
@@ -417,9 +436,9 @@ describe("editorial catalog", () => {
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByRole("article")).toHaveAccessibleName("Anillo Blossom");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no existe" } });
-    expect(screen.getByText("No encontramos esa pieza")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Limpiar búsqueda" }));
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "price-asc" } });
+    expect(screen.getByText("No encontramos piezas con estos filtros")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+    fireEvent.change(screen.getByLabelText("Ordenar por"), { target: { value: "price-asc" } });
     expect(screen.getAllByRole("article")[0]).toHaveAccessibleName("Aretes Luna");
     // Progressive load: one store read + one catalog read (the mock backs both).
     expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(2);

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { servePreview } from "./refresh-server";
-import { hideEmulatorBanner, loginAsFirstAdmin, openCatalog, writeEmulatorDoc } from "./helpers";
+import { hideEmulatorBanner, loginAsFirstAdmin, openCatalog, switchToStore, writeEmulatorDoc } from "./helpers";
 
 // The executable closure criterion for the refresh-hard-reload spec: a browser
 // that lived through a "deploy" (same URL, new build marker) must show the new
@@ -99,9 +99,13 @@ test("cloud: session survives reload and fresh data appears (emulator)", async (
     await loginAsFirstAdmin(page);
     expect(await buildMarker(page)).toBe(MARKER_CLOUD);
 
+    // Store selection now persists through reload; select the store that will
+    // receive the between-deploy product before writing the fixture.
+    await switchToStore(page, "Joyería");
+    await expect(page.getByText("¿Qué necesitas hacer hoy en Joyería?")).toBeVisible();
+
     // Data lands "between deploys" (here: mid-session, straight to Firestore).
-    // Seeded into Joyería (stores[0]) — the deterministic active store after a
-    // cloud reload — with its inventory-tiered shape so the catalog lists it.
+    // Joyería uses inventory-tiered pricing, so the seeded product appears in its catalog.
     const FRESH = "Producto Refresh E2E";
     const now = Date.now();
     // createdAt/updatedAt are ISO strings in the domain (types.Product, e2e/

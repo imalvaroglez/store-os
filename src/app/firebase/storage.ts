@@ -8,6 +8,7 @@ import {
   type FirebaseStorage,
 } from "firebase/storage";
 import { getFirebase } from "./config";
+import { FIREBASE_DEV_STORAGE_BUCKET } from "./projectIds";
 
 // Cloud image transport for product photos. The only module that imports the
 // Storage SDK. Reads are public (the anonymous catalog loads imageUrl); writes
@@ -20,9 +21,8 @@ import { getFirebase } from "./config";
 const EMULATOR =
   import.meta.env.MODE !== "production" &&
   import.meta.env.VITE_FIREBASE_EMULATOR === "true";
-// Explicit emulator bucket — the Web SDK needs a real bucket name, and config.ts
-// forces the "store-os-demo" namespace, so we do the same for Storage.
-const EMULATOR_BUCKET = "store-os-demo.appspot.com";
+// The bucket name matches the configured dev project; the host remains local.
+const EMULATOR_BUCKET = FIREBASE_DEV_STORAGE_BUCKET;
 
 let storage: FirebaseStorage | null = null;
 let emulatorConnected = false;
