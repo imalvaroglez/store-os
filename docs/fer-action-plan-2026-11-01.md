@@ -1,4 +1,4 @@
-# Backlog vigente y plan de acción de Fer
+# Plan de acción de Fer y fotografía histórica del backlog
 
 Fecha de corte: 1 de noviembre de 2026, America/Mexico_City.
 Alcance de esta revisión: organización documental. No autoriza implementación,
@@ -6,9 +6,12 @@ integración de PR, migraciones ni liberaciones.
 
 ## Fuente y estado comprobado
 
-Esta es la vista vigente del plan; `docs/backlog.json` conserva todos los IDs,
-el orden, el estado y los criterios. Los documentos del 28 de octubre y el
-diagnóstico OLI se conservan como antecedentes, no como otra cola.
+El estado y los criterios vivos se mantienen en el [tablero Store OS](https://github.com/users/imalvaroglez/projects/1),
+una issue por capacidad. Este documento conserva las decisiones y secuencia de
+ciclos acordadas. Las tablas de estados y PR de abajo son una fotografía del
+1 de noviembre de 2026, no otra cola: no se actualizan como espejo del tablero.
+El JSON usado para migrar está en el historial de Git del PR #116, no en el
+árbol actual. Los documentos del 28 de octubre y el diagnóstico OLI son antecedentes.
 
 - GitHub consultado en esta sesión: main en
   `aa26233adf1cb35c29b9e0934c7aeb02716c53bd`.
@@ -52,7 +55,7 @@ P0 = integridad y operación urgente; P1 = operación diaria acordada;
 P2 = siguiente ciclo; P3 = evolución posterior. El número priority del JSON
 ordena dentro de la cola; done sale de la cola activa.
 in-progress significa trabajo construido/en revisión, no autorización nueva.
-Cada entrada del JSON contiene criterios; aquí se muestra la secuencia principal.
+Cada issue del tablero contiene criterios; aquí se conserva la secuencia principal al corte histórico.
 
 | Orden | Trabajo | Estado real y próximo paso | Dependencias / salida |
 | --- | --- | --- | --- |

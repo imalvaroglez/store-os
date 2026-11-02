@@ -9,7 +9,7 @@ Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentr
 ## Gestión del trabajo
 
 La cola vive en el tablero "Store OS" de [GitHub Projects](https://github.com/users/imalvaroglez/projects/1)
-(issues + PRs; campos Estado / Prioridad / Tipo / Ciclo). La issue es la unidad de
+(issues + PRs; Status nativo con estados en español / Prioridad / Tipo / Ciclo). La issue es la unidad de
 trabajo: criterios de aceptación en su cuerpo. La spec de archivo es excepcional
 (decisiones de arquitectura o reglas de negocio) y viaja dentro del PR. Los agentes
 consultan y actualizan el tablero con `gh project` / `gh issue`; si `gh` falla,

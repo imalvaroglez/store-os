@@ -20,8 +20,13 @@ Política vigente tras eliminar el delivery harness como gate (ver `docs/adr/000
 ## Backlog
 
 La lista viva es el tablero "Store OS" de [GitHub Projects](https://github.com/users/imalvaroglez/projects/1):
-una issue por capacidad con criterios de aceptación, y campos Estado / Prioridad /
+una issue por capacidad con criterios de aceptación, y campos Status (estado en español) / Prioridad /
 Tipo / Ciclo. Los agentes lo consultan y actualizan con `gh project` / `gh issue`.
+Al iniciar: consultar la issue y sus dependencias. Al abrir el draft PR, enlazar
+la issue y moverla a En PR. Usar `Closes #N` solo si el PR satisface todos sus
+criterios; para avances parciales, usar `Refs #N`. Un PR fusionado pasa a Hecho,
+pero una issue parcial no se cierra por la sola mención en el PR.
+
 El contexto de descubrimiento (entrevistas, diagnóstico, plan de acción) sigue en
 [`docs/BACKLOG.md`](docs/BACKLOG.md); ningún documento del repo registra estados.
 
