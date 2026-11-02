@@ -19,7 +19,11 @@ Política vigente tras eliminar el delivery harness como gate (ver `docs/adr/000
 
 ## Backlog
 
-`docs/backlog.json` es la lista viva de items (dato, sin gating). El flujo de ideas sigue en [`docs/BACKLOG.md`](docs/BACKLOG.md).
+La lista viva es el tablero "Store OS" de [GitHub Projects](https://github.com/users/imalvaroglez/projects/1):
+una issue por capacidad con criterios de aceptación, y campos Estado / Prioridad /
+Tipo / Ciclo. Los agentes lo consultan y actualizan con `gh project` / `gh issue`.
+El contexto de descubrimiento (entrevistas, diagnóstico, plan de acción) sigue en
+[`docs/BACKLOG.md`](docs/BACKLOG.md); ningún documento del repo registra estados.
 
 ## Límites que se mantienen
 
