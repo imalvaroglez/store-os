@@ -117,12 +117,14 @@ describe("valores iniciales del producto", () => {
     expect(lastByLabel("Permite pedir info")).toHaveProperty("checked", true);
     expect(lastByLabel("Novedad")).toHaveProperty("checked", false);
     expect(lastByLabel("Destacado")).toHaveProperty("checked", false);
-    expect(lastByLabel("Color / acabado")).toHaveProperty("value", "Acero inoxidable");
+    expect(lastByLabel("Material")).toHaveProperty("value", "Acero inoxidable");
+    expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
 
     fireEvent.change(screen.getByLabelText("Estado de publicación"), { target: { value: "draft" } });
     expect(lastByLabel("Estado de publicación")).toHaveProperty("value", "draft");
     fireEvent.click(screen.getByLabelText("Permite pedir info"));
-    fireEvent.change(screen.getByLabelText("Color / acabado"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Material"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Color / acabado"), { target: { value: "Dorado" } });
     fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "Producto de prueba" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "+ Agregar" })).toBeInTheDocument());
@@ -132,16 +134,18 @@ describe("valores iniciales del producto", () => {
     expect(lastByLabel("Permite pedir info")).toHaveProperty("checked", false);
     expect(lastByLabel("Novedad")).toHaveProperty("checked", false);
     expect(lastByLabel("Destacado")).toHaveProperty("checked", false);
-    expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
+    expect(lastByLabel("Material")).toHaveProperty("value", "");
+    expect(lastByLabel("Color / acabado")).toHaveProperty("value", "Dorado");
   });
 
-  it("no aplica el acabado de Olivia al crear en Santi", () => {
+  it("no aplica el material de Olivia al crear en Santi", () => {
     const state = fixtureState();
     state.activeStoreId = SANTI;
     const Wrapper = withState(state);
     render(<Wrapper><CatalogScreen /></Wrapper>);
 
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar" }));
+    expect(lastByLabel("Material")).toHaveProperty("value", "");
     expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
   });
 
@@ -153,6 +157,7 @@ describe("valores iniciales del producto", () => {
       canInquire: false,
       isNew: true,
       isFeatured: true,
+      material: "Plata 925",
       finish: "",
     });
     const Wrapper = withState(state);
@@ -164,6 +169,7 @@ describe("valores iniciales del producto", () => {
     expect(lastByLabel("Permite pedir info")).toHaveProperty("checked", false);
     expect(lastByLabel("Novedad")).toHaveProperty("checked", true);
     expect(lastByLabel("Destacado")).toHaveProperty("checked", true);
+    expect(lastByLabel("Material")).toHaveProperty("value", "Plata 925");
     expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
   });
 });

@@ -9,10 +9,13 @@ const base = {
 
 describe("productCreationDefaults", () => {
   it("sets editable Olivia creation defaults without changing identity", () => {
-    expect(productCreationDefaults(base, "olivia")).toMatchObject({
+    const result = productCreationDefaults(base, "olivia");
+    expect(result).toMatchObject({
       id: "p1", storeId: "store_olivia", status: "published", canInquire: true,
-      isNew: false, isFeatured: false, finish: "Acero inoxidable",
+      isNew: false, isFeatured: false, material: "Acero inoxidable",
     });
+    // Color/acabado starts empty: only Material carries the creation default.
+    expect(result.finish).toBeUndefined();
   });
 
   it("leaves other stores unchanged", () => {
@@ -20,7 +23,7 @@ describe("productCreationDefaults", () => {
   });
 
   it("preserves explicitly saved empty and false values", () => {
-    const edited = { ...base, status: "draft" as const, canInquire: false, isNew: true, isFeatured: true, finish: "" };
+    const edited = { ...base, status: "draft" as const, canInquire: false, isNew: true, isFeatured: true, material: "", finish: "" };
     expect(productCreationDefaults(edited, "santi")).toEqual(edited);
   });
 });

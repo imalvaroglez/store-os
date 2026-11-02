@@ -10,6 +10,6 @@ export function productCreationDefaults(product: Product, storeSlug: string): Pr
     canInquire: true,
     isNew: false,
     isFeatured: false,
-    finish: "Acero inoxidable",
+    material: "Acero inoxidable",
   };
 }
