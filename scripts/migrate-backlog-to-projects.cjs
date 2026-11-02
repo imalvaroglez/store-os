@@ -315,21 +315,21 @@ function runMigrate(project) {
       .items.map((i) => [((i.content || {}).url || ""), { estado: i.estado, prioridad: i.prioridad, tipo: i.tipo, ciclo: i.ciclo }])
   );
   for (const issue of planned.issues) {
-    let rec = existingByTitle.get(issue.title);
-    if (!rec) {
-      const bodyFile = path.join(require("node:os").tmpdir(), `backlog-${issue.id}.md`);
-      fs.writeFileSync(bodyFile, issue.body);
-      const args = ["issue", "create", "--title", issue.title, "--body-file", bodyFile];
-      if (issue.frozen) args.push("--label", "congelado");
-      const url = gh(args).trim();
-      fs.unlinkSync(bodyFile);
-      rec = { url, number: Number(url.match(/issues\/(\d+)/)[1]) };
-      existingByTitle.set(issue.title, rec);
-      created.issues++;
-    } else {
-      created.skipped++;
-    }
     try {
+      let rec = existingByTitle.get(issue.title);
+      if (!rec) {
+        const bodyFile = path.join(require("node:os").tmpdir(), `backlog-${issue.id}.md`);
+        fs.writeFileSync(bodyFile, issue.body);
+        const args = ["issue", "create", "--title", issue.title, "--body-file", bodyFile];
+        if (issue.frozen) args.push("--label", "congelado");
+        const url = ghRetry(args).trim();
+        fs.unlinkSync(bodyFile);
+        rec = { url, number: Number(url.match(/issues\/(\d+)/)[1]) };
+        existingByTitle.set(issue.title, rec);
+        created.issues++;
+      } else {
+        created.skipped++;
+      }
       const cur = board.get(rec.url);
       if (!cur) addItem(project, rec.url);
       for (const [field, key, value] of [
