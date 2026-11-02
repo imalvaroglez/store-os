@@ -176,9 +176,9 @@ type StoreContextValue = {
   state: AppState;
   activeStore: Store | null;
   cloud: boolean; // true when operating on Firestore (signed in)
-  deleteCustomer: (customerId: string) => Promise<void>;
-  upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
-  deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
+  syncError: { label: string; retry: () => Promise<void> } | null;
+  dismissSyncError: () => void;
+  draftOwnerId: string;
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
   deleteStore: (storeId: string) => void;
@@ -206,15 +206,9 @@ type StoreContextValue = {
   receivePurchase: (purchase: Purchase) => Promise<"received" | "already">;
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
-<<<<<<< HEAD
   deleteCustomer: (customerId: string) => Promise<void>;
-  upsertOrder: (order: Order) => Promise<void>;
-  deleteOrder: (orderId: string) => Promise<void>;
-=======
-  deleteCustomer: (customerId: string) => void;
   upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
->>>>>>> origin/main
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -231,13 +225,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // echo it back to Firestore (write loops).
   const fromCloud = useRef(false);
   const [syncError, setSyncError] = useState<StoreContextValue["syncError"]>(null);
+  const syncErrorVersion = useRef(0);
+  const currentUid = useRef(user?.uid ?? null);
+  currentUid.current = user?.uid ?? null;
+
+  useEffect(() => {
+    syncErrorVersion.current += 1;
+    setSyncError(null);
+  }, [user?.uid]);
 
   function persistInBackground(label: string, write: () => Promise<unknown>) {
+    const ownerUid = user?.uid;
     void write().catch((error) => {
       console.error(`[Firestore] No se pudo ${label}:`, error);
+      if (!ownerUid || currentUid.current !== ownerUid) return;
+      const version = ++syncErrorVersion.current;
       setSyncError({ label, retry: async () => {
+        if (currentUid.current !== ownerUid) return;
         await write();
-        setSyncError(null);
+        if (currentUid.current === ownerUid && syncErrorVersion.current === version) {
+          setSyncError(null);
+        }
       } });
     });
   }
@@ -358,7 +366,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value: StoreContextValue = {
     state,
     syncError,
-    dismissSyncError: () => setSyncError(null),
+    dismissSyncError: () => { syncErrorVersion.current += 1; setSyncError(null); },
     activeStore: state.stores.find((s) => s.id === state.activeStoreId) ?? null,
     cloud,
     draftOwnerId: cloud && user ? user.uid : "local",
