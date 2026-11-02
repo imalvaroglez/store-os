@@ -252,10 +252,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // When auth mode changes, load the appropriate source.
   useEffect(() => {
+    let active = true;
     let unsub: (() => void) | undefined;
     if (cloud && user) {
       loadCloudState(user)
         .then(async (s) => {
+          // Auth can change while the first cloud read is in flight. Never let
+          // a previous account hydrate this provider after its listener is gone.
+          if (!active || currentUid.current !== user.uid) return;
           const migrated = migrateCatalog(s);
           const writes: Promise<void>[] = [];
           for (const product of migrated.products) {
@@ -311,6 +315,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           })();
         })
         .catch((error) => {
+          if (!active || currentUid.current !== user.uid) return;
           console.error("[Firestore] No se pudo cargar la tienda:", error);
           setSyncError({ label: "cargar la información de la tienda", retry: async () => window.location.reload() });
         });
@@ -325,7 +330,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "REPLACE_STATE", state: loadState() });
       fromCloud.current = false;
     }
-    return () => unsub?.();
+    return () => {
+      active = false;
+      unsub?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid]);
 
