@@ -307,10 +307,12 @@ function runMigrate(project) {
 
   const created = { issues: 0, skipped: 0 };
   const failures = [];
-  // Items already on the board skip item-add (saves mutations and burst noise).
-  const inProject = new Set(
+  // Board snapshot: skip item-add for items already present and field edits
+  // whose value already matches (fewer mutations, fewer secondary-limit trips).
+  // item-list exposes custom fields flattened as lowercase keys (estado, tipo…).
+  const board = new Map(
     ghJsonRetry(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"])
-      .items.map((i) => i.url)
+      .items.map((i) => [((i.content || {}).url || ""), { estado: i.estado, prioridad: i.prioridad, tipo: i.tipo, ciclo: i.ciclo }])
   );
   for (const issue of planned.issues) {
     let rec = existingByTitle.get(issue.title);
@@ -328,14 +330,15 @@ function runMigrate(project) {
       created.skipped++;
     }
     try {
-      if (!inProject.has(rec.url)) addItem(project, rec.url);
-      for (const [field, value] of [
-        ["Estado", issue.estado],
-        ["Prioridad", issue.prioridad],
-        ["Tipo", issue.tipo],
-        ["Ciclo", issue.ciclo],
+      const cur = board.get(rec.url);
+      if (!cur) addItem(project, rec.url);
+      for (const [field, key, value] of [
+        ["Estado", "estado", issue.estado],
+        ["Prioridad", "prioridad", issue.prioridad],
+        ["Tipo", "tipo", issue.tipo],
+        ["Ciclo", "ciclo", issue.ciclo],
       ]) {
-        if (!value) continue;
+        if (!value || (cur && cur[key] === value)) continue;
         setField(project, rec.url, field, value);
       }
       if (issue.done) {
@@ -354,13 +357,10 @@ function runMigrate(project) {
 
   for (const p of planned.prItems) {
     try {
-      if (!inProject.has(p.url)) addItem(project, p.url);
-      for (const [field, value] of [
-        ["Estado", "En PR"],
-        ["Ciclo", p.ciclo],
-      ]) {
-        setField(project, p.url, field, value);
-      }
+      const cur = board.get(p.url);
+      if (!cur) addItem(project, p.url);
+      if (!cur || cur.estado !== "En PR") setField(project, p.url, "Estado", "En PR");
+      if (!cur || cur.ciclo !== p.ciclo) setField(project, p.url, "Ciclo", p.ciclo);
       console.log(`pr    En PR         #${p.number} ${p.title}`);
     } catch (err) {
       failures.push(`PR #${p.number}: ${String(err).split("\n")[0]}`);
@@ -376,16 +376,16 @@ function runMigrate(project) {
 }
 
 function runVerify(project) {
-  const items = ghJson(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"]);
-  const issues = items.filter((i) => i.type === "ISSUE");
-  const prs = items.filter((i) => i.type === "PULL_REQUEST");
+  const res = ghJson(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"]);
+  const issues = res.items.filter((i) => ((i.content || {}).type || "") === "Issue");
+  const prs = res.items.filter((i) => ((i.content || {}).type || "") === "PullRequest");
   const estados = {};
   for (const i of issues) {
-    const est = (i.fieldValues || []).find((f) => f.field === "Estado");
-    const name = est ? est.value : "(sin estado)";
+    const name = i.estado || "(sin estado)";
     estados[name] = (estados[name] || 0) + 1;
   }
-  console.log(JSON.stringify({ issues: issues.length, prs: prs.length, estados }, null, 2));
+  const sinCiclo = issues.filter((i) => !i.ciclo).length;
+  console.log(JSON.stringify({ issues: issues.length, prs: prs.length, estados, sinCiclo }, null, 2));
   const expectedIssues = readBacklog().length;
   if (issues.length < expectedIssues) {
     console.error(`Faltan issues: ${issues.length} de ${expectedIssues}.`);
