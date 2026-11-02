@@ -19,6 +19,7 @@ import {
   useToast,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
+import { productCreationDefaults } from "./productDefaults";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
 import { committedForProduct } from "../../lib/inventory";
@@ -366,7 +367,7 @@ export function CatalogScreen() {
         title="Agregar producto"
       >
         <ProductForm
-          product={newProduct(activeStore.id)}
+          product={productCreationDefaults(newProduct(activeStore.id), activeStore.slug)}
           onDone={() => setCreating(false)}
         />
       </Sheet>
