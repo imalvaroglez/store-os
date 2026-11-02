@@ -8,6 +8,14 @@ Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentr
 
 ## Gestión del trabajo
 
+El acuerdo vigente del proceso está en el README del tablero Store OS. Prevalece
+sobre documentos históricos para organización, estados y evidencias. El feedback
+se refina en issues, sin PR de documentación por cada solicitud; las áreas son
+permanentes y las épicas tienen objetivos finitos. Solo se asignan historias
+Listo; al tomar una se registra responsable y worktree. Para producto, merge
+significa Por liberar: Hecho requiere disponibilidad y aceptación verificadas
+tras una liberación humana autorizada.
+
 La cola vive en el tablero "Store OS" de [GitHub Projects](https://github.com/users/imalvaroglez/projects/1)
 (issues + PRs; Status nativo con estados en español / Prioridad / Tipo / Ciclo). La issue es la unidad de
 trabajo: criterios de aceptación en su cuerpo. La spec de archivo es excepcional
