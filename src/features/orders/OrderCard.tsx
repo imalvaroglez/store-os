@@ -16,11 +16,13 @@ import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effecti
 import { orderTicketText } from "./orderTicket";
 import { profit } from "../../lib/money";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
+import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
   const { upsertOrder, state, activeStore } = useStore();
   const [ticketOpen, setTicketOpen] = useState(false);
+  const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const toast = useToast();
   const customer = state.customers.find((c) => c.id === order.customerId && c.storeId === order.storeId);
@@ -112,8 +114,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       {knownProfit != null && <p className="text-xs text-ink-soft mt-2">Ganancia estimada: <Money amount={knownProfit} /></p>}
       {shortages.length > 0 && <Badge tone="warning">Faltan {shortages.reduce((sum, n) => sum + n, 0)} piezas</Badge>}
 
-      <div className="mt-3" onClick={(event) => event.stopPropagation()}>
+      <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
+        <Button variant="ghost" onClick={() => setPaymentsOpen(true)}>Cobros</Button>
       </div>
       {(verb || totals.balance > 0) && (
         <div className="mt-3 flex gap-2" onClick={(event) => event.stopPropagation()}>
@@ -131,6 +134,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         <Button full onClick={copyTicket}>Copiar detalle</Button>
       </div>
     </Sheet>
+    <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
     </>
   );
 }
