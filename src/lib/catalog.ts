@@ -183,6 +183,13 @@ export function migrateCatalog(state: AppState): AppState {
   const needsMigration = products.some(
     (p) => p.schemaVersion !== CURRENT_PRODUCT_SCHEMA_VERSION
   );
+  // Assign deterministic identities in memory without rewriting received purchases.
+  const existingPurchases = next.purchases ?? [];
+  const purchases = existingPurchases.map((purchase) => {
+    if (!purchase.lines.some((line) => !line.lineId)) return purchase;
+    return { ...purchase, lines: purchase.lines.map((line, index) => ({ ...line, lineId: line.lineId || `${purchase.id}_L${index}` })) };
+  });
+  if (purchases.some((purchase, index) => purchase !== existingPurchases[index])) next = { ...next, purchases };
   const migratedOrders = migrateOrders(next.orders);
   const ordersChanged = migratedOrders.some((order, index) => order !== next.orders[index]);
   if (ordersChanged) next = { ...next, orders: migratedOrders };

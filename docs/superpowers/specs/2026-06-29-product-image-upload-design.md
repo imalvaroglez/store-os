@@ -24,7 +24,7 @@ anonymous catalog to load them.
 | Area | Decision |
 |------|----------|
 | Scope | Product photos only (no customer/store-logo upload this round) |
-| Demo/local mode | Unchanged — keep the URL `TextField`. Storage runs only in cloud mode. |
+| Offline/local mode | Unchanged — keep the URL `TextField`. Storage runs only in cloud mode. |
 | Sizing | Client-side resize: canvas, long edge ≤ 1024px, JPEG q≈0.8 → ~80–150 KB |
 | Orphan cleanup | Deterministic path `products/{storeId}/{productId}.jpg` (replace overwrites); delete object when product is deleted |
 | Picker UX | Preview tile + native `<input type="file" accept="image/*">` + "Quitar foto" |
@@ -34,8 +34,8 @@ anonymous catalog to load them.
 | Storage read rule | Public (`allow read: if true`) — required by the anonymous catalog |
 | Storage write/delete rule | `super_admin` OR store membership, verified in the rule via `firestore.get()`; size/type on `create, update`; separate `delete` |
 | Filename rule | `match /products/{storeId}/{fileName}` with `fileName.matches('.*\\.jpg')` (don't bet on `{productId}.jpg` partial capture) |
-| Emulator bucket | Explicit `store-os-demo.appspot.com` + `connectStorageEmulator(host, 9199)` — not an empty `.env` |
-| Demo access | Already strict (commit `bf5c10d` forces AuthScreen for signed-out visitors) |
+| Emulator bucket | Explicit dev bucket `store-os-dev.firebasestorage.app` + `connectStorageEmulator(host, 9199)` — not an empty `.env` |
+| Signed-out access | Already strict (commit `bf5c10d` forces AuthScreen for signed-out visitors) |
 
 ## Strictness note (why public read is correct)
 
@@ -93,7 +93,7 @@ form (orchestration) split.
 |------|------|----------------|
 | `src/app/firebase/storage.ts` (new) | Transport: `resizeImageFile`, `uploadProductImage`, `deleteProductImage`. Pure async fns. | Yes — only place |
 | `src/design-system/PhotoPicker.tsx` (new) | Preview tile + hidden file input + "Quitar foto". Callbacks hand `File \| undefined` up. | No (DS stays dep-free) |
-| `src/features/catalog/ProductForm.tsx` (changed) | Cloud: render `PhotoPicker` instead of URL field; resize on pick, upload on submit. Demo: unchanged URL field. | Yes |
+| `src/features/catalog/ProductForm.tsx` (changed) | Cloud: render `PhotoPicker` instead of URL field; resize on pick, upload on submit. local: unchanged URL field. | Yes |
 | `firestore.rules` | Unchanged | — |
 | `storage.rules` (new) + `firebase.json` (+storage, +:9199) | Public read; Firestore-backed membership write/delete; size/type on create/update | — |
 
@@ -124,7 +124,7 @@ existing `deleteEntity`/`removePublicProduct`. Note: there is **no product-delet
 UI today** (`deleteProduct` is API-only), so this is a provider hook verified by
 code review, not by e2e.
 
-**Demo mode:** zero Storage code runs; URL `TextField` unchanged. The form reads
+**Offline mode:** zero Storage code runs; URL `TextField` unchanged. The form reads
 `useStore().cloud` to decide which control to render.
 
 ## Error handling & edge cases
@@ -183,8 +183,8 @@ Auth + Firestore are wired today; Storage joins them:
 - `e2e/firebase-global-setup.ts`: Storage is intentionally **not** wiped — the
   emulator has no bulk-reset endpoint, and `emulators:exec` starts a fresh
   instance each run, so Storage starts empty deterministically.
-- Emulator bucket is **explicit** (`store-os-demo.appspot.com`), not derived from
-  an empty `.env`, mirroring how `config.ts` forces the `store-os-demo` namespace.
+- Emulator bucket is **explicit** (`store-os-dev.firebasestorage.app`), and all
+  Storage requests still connect to localhost.
 
 ### Emulator rules limitation + swap script (verified during implementation)
 

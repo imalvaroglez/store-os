@@ -42,6 +42,8 @@ import {
   receivePurchaseTx,
   createDraftProductsForPurchaseTx,
   saveOrderWithStockTx,
+  deleteOrderWithStockTx,
+  StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
   stripUndefined,
@@ -174,8 +176,9 @@ type StoreContextValue = {
   state: AppState;
   activeStore: Store | null;
   cloud: boolean; // true when operating on Firestore (signed in)
-  syncError: { label: string; retry: () => Promise<void> } | null;
-  dismissSyncError: () => void;
+  deleteCustomer: (customerId: string) => Promise<void>;
+  upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
+  deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
   deleteStore: (storeId: string) => void;
@@ -203,9 +206,15 @@ type StoreContextValue = {
   receivePurchase: (purchase: Purchase) => Promise<"received" | "already">;
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
+<<<<<<< HEAD
   deleteCustomer: (customerId: string) => Promise<void>;
   upsertOrder: (order: Order) => Promise<void>;
   deleteOrder: (orderId: string) => Promise<void>;
+=======
+  deleteCustomer: (customerId: string) => void;
+  upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
+  deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
+>>>>>>> origin/main
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -263,16 +272,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               migratedStores.push(store);
             }
           }
-          for (const order of migrated.orders) {
-            const before = s.orders.find((o) => o.id === order.id);
-            if (before !== order) writes.push(saveEntity(user, "orders", order));
-          }
+          // Normalize orders in memory only: writing a stale migration snapshot
+          // here could overwrite an order edited by another device.
           // Render FIRST, persist in the background: on a cold/slow backend the
           // awaited writes delayed REPLACE_STATE so much that a REPLACE arriving
           // after the user switched stores reverted their selection. Migration
           // is idempotent, so a failed background write just re-migrates on the
           // next load.
           fromCloud.current = true;
+          // Restore the latest explicitly selected store after auth hydration.
+          // Read at dispatch time so a switch made while loading wins.
+          const preferred = loadPreferredStoreId();
+          if (preferred && migrated.stores.some((store) => store.id === preferred)) {
+            dispatch({ type: "SET_ACTIVE_STORE", storeId: preferred });
+          }
           dispatch({ type: "REPLACE_STATE", state: migrated });
           fromCloud.current = false;
           void (async () => {
@@ -299,7 +312,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         fromCloud.current = false;
       });
     } else if (!cloud) {
-      // Local mode: seed-backed localStorage.
+      // Local state is loaded from localStorage when no cloud session is available.
       fromCloud.current = true;
       dispatch({ type: "REPLACE_STATE", state: loadState() });
       fromCloud.current = false;
@@ -348,6 +361,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dismissSyncError: () => setSyncError(null),
     activeStore: state.stores.find((s) => s.id === state.activeStoreId) ?? null,
     cloud,
+    draftOwnerId: cloud && user ? user.uid : "local",
     addStore: async (input) => {
       const store: Store = { ...input, id: uid("store"), createdAt: nowIso(), updatedAt: nowIso() };
       // Claim the slug first (throws SlugTakenError on global collision) so we
@@ -382,7 +396,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // LOCAL state, so a stale tab could clobber remote edits field by field
       // (the 2026-08 whatsapp + storefront overwrite). Merged `store` above is
       // still what drives claimSlug, the dispatch and the public projection;
-      // demo mode is unaffected (the reducer owns localStorage).
+      // Without a cloud session, the reducer persists state through localStorage.
       const persisted = stripUndefined({ ...patch, updatedAt: nowIso() }) as { id: string } & Record<string, unknown>;
       await persistEntity("stores", persisted);
       // Cloud state follows the private write. This prevents a rejected write
@@ -636,7 +650,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
         return "received";
       }
-      // Demo local: same effect, guarded by the check above. A stale or
+      // Local persistence: same effect, guarded by the check above. A stale or
       // corrupt localStorage must never mix stores: every linked product must
       // exist and belong to this purchase's store before stock moves.
       for (const line of purchase.lines) {
@@ -659,14 +673,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return "received";
     },
     upsertCustomer: async (customer) => {
-      dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
       await persistEntity("customers", customer);
+      dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
     },
     deleteCustomer: async (customerId) => {
       dispatch({ type: "DELETE_CUSTOMER", customerId });
       if (cloud && user && !fromCloud.current) await deleteEntity(user, "customers", customerId);
     },
-    upsertOrder: async (order) => {
+    upsertOrder: async (order, options) => {
       // Canonical v2 snapshot before it touches either store: migration +
       // paymentStatus derivation in one place for every caller.
       const nextOrder = {
@@ -683,38 +697,52 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           stockWrites.push({ ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: stockAt });
         }
       }
-      // Cloud: ONE atomic batch (order + every stock adjustment). Local state
+      // Cloud: ONE transaction (order + every stock delta). Deltas are applied
+      // RELATIVE to the canonical quantities re-read inside the transaction, so
+      // concurrent orders on another device can't be silently overwritten; a
+      // stale edit of THIS order aborts with StaleOrderError. Local state
       // commits only on success, so a failed save leaves no phantom order and
-      // the retry the toast invites replays the FULL delta set — a partial
-      // N+1 write could double-reserve or strand a reservation forever.
+      // the retry the toast invites replays the FULL delta set.
       if (cloud && user && !fromCloud.current) {
-        await saveOrderWithStockTx(
-          user,
-          nextOrder,
-          stockWrites.map((p) => ({ id: p.id, quantityOnHand: p.quantityOnHand as number, updatedAt: p.updatedAt }))
-        );
+        const result = await saveOrderWithStockTx(user, nextOrder, options ? options.expectedRevision : prev ? (order.revision ?? 0) : null, options?.mutationId ?? uid("mutation"));
+        for (const update of result.stock) {
+          const product = state.products.find((p) => p.id === update.productId);
+          if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
+        }
+        dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
+        return;
       }
       for (const updated of stockWrites) dispatch({ type: "UPDATE_PRODUCT", product: updated });
       dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order: nextOrder });
     },
-    deleteOrder: async (orderId) => {
-      // Release the held stock before removing the order (cancelling a
+    deleteOrder: async (orderId, expectedRevision) => {
+      // Release the held stock and remove the order atomically (cancelling a
       // delivered sale also returns the goods — see reservationDeltas*).
       const existing = state.orders.find((o) => o.id === orderId);
+      if (existing && (existing.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
+      const deltas = existing
+        ? reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" })
+        : new Map<string, number>();
+      if (cloud && user && !fromCloud.current) {
+        if (!existing) throw new Error("No se encontró el pedido.");
+        const updates = await deleteOrderWithStockTx(user, orderId, expectedRevision);
+        for (const update of updates) {
+          const product = state.products.find((p) => p.id === update.productId);
+          if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() } });
+        }
+        dispatch({ type: "DELETE_ORDER", orderId });
+        return;
+      }
       const writes: Promise<void>[] = [];
-      if (existing) {
-        const deltas = reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" });
-        for (const [productId, delta] of deltas) {
-          const product = state.products.find((p) => p.id === productId && p.storeId === existing.storeId);
-          if (product && typeof product.quantityOnHand === "number") {
-            const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
-            dispatch({ type: "UPDATE_PRODUCT", product: updated });
-            writes.push(persistEntity("products", updated));
-          }
+      for (const [productId, delta] of deltas) {
+        const product = state.products.find((p) => p.id === productId && p.storeId === existing?.storeId);
+        if (product && typeof product.quantityOnHand === "number") {
+          const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
+          dispatch({ type: "UPDATE_PRODUCT", product: updated });
+          writes.push(persistEntity("products", updated));
         }
       }
       dispatch({ type: "DELETE_ORDER", orderId });
-      if (cloud && user && !fromCloud.current) writes.push(deleteEntity(user, "orders", orderId));
       await Promise.all(writes);
     },
   };

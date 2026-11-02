@@ -4,6 +4,7 @@ import { test, expect } from "@playwright/test";
 // never contends with the photo/preview e2e on CI runners.
 import { readFileSync } from "node:fs";
 import { adminToken, mintUserToken, PROJECT, writeEmulatorDoc } from "./helpers";
+import { FIREBASE_DEV_STORAGE_BUCKET } from "../src/app/firebase/projectIds";
 
 // Direct callable authorization + safe-cleanup tests against the Functions
 // emulator. tesseract/mupdf load lazily AFTER these guards, so no OCR runs.
@@ -26,7 +27,7 @@ const MINIMAL_PDF = readFileSync("e2e/fixtures/minimal.pdf");
 
 // Storage emulator REST calls carry the auth token: the emulator enforces the
 // (permissive test) rules, which gate purchases/ on request.auth.
-const BUCKET = "store-os-demo.appspot.com";
+const BUCKET = FIREBASE_DEV_STORAGE_BUCKET;
 
 async function uploadPdf(storeId: string, name: string, token: string) {
   const res = await fetch(

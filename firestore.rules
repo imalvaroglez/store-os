@@ -140,7 +140,8 @@ service cloud.firestore {
     // Entities: `get`/write gated by store access; `list` is used with a
     // storeId query by the client. Super_admins may operate every store.
     match /products/{id} {
-      allow read: if canOperateStore(resource.data.storeId);
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
@@ -193,7 +194,8 @@ service cloud.firestore {
       allow delete: if canOperateStore(resource.data.storeId);
     }
     match /orders/{id} {
-      allow read: if canOperateStore(resource.data.storeId);
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)

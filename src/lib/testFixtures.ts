@@ -1,5 +1,5 @@
-// Minimal three-store fixture for unit tests. Replaces the deleted demo seed
-// (src/lib/seed.ts): only the entities the tests actually assert on, built with
+// Minimal three-store fixture for unit tests: only the entities the tests
+// assert on, built with
 // plain literals so no provider/factory import is needed. The full Olivia
 // fixture for the DEV backend lives in scripts/seed-dev.cjs.
 import type { AppState, Customer, Order, OrderStatus, Product, Store } from "../types";

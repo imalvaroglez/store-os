@@ -1,5 +1,28 @@
 # Backlog
 
+## Plan vigente: feedback de Fer, 1 de noviembre de 2026
+
+La cola única está en [backlog.json](backlog.json); la vista de trabajo, evidencia
+de liberación, dependencias y criterios está en el
+[plan de acción vigente](fer-action-plan-2026-11-01.md).
+
+Orden acordado: integridad P0 (#96/#111 ya construidos); captura con fotos y
+valores predeterminados; cobros/abonos; variantes administrativas por color;
+compras/costos; ganancia; mes/reparto/cierre; seguimiento; catálogo público.
+El corte asistido de octubre (#115) se conserva como trabajo operativo paralelo.
+
+Producción liberó `aa26233` el 1 de noviembre; líneas arriba, precios por
+clienta, agrupación y ticket texto ya están integrados y liberados.
+Los bloqueos históricos de integración del modo local están satisfechos:
+#89–#94, #103–#107, #109 y #110 integrados; #108 cerrado sin integrar.
+La entrega #111 sigue abierta y requiere aceptación conjunta con #96.
+
+Las secciones que siguen son antecedentes históricos. Sus estados, prioridades,
+readiness y referencias al harness no gobiernan la cola actual. No iniciar una
+segunda implementación por un estado antiguo: revisar primero los PR enlazados.
+
+---
+
 ## Ciclo actual: entrevista con Fer, 28 de octubre de 2026
 
 El [diagnóstico técnico y plan incremental](olivia-technical-diagnostic-2026-10-28.md)
@@ -28,7 +51,7 @@ El flujo para mover una entrada a "en curso" es el **Product Loop** (LOOPS.md
 implementa → QA → merge. Nada aquí está comprometido hasta que hay spec.
 
 Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` · `✅ done` ·
-`❄️ frozen`
+`⛔ blocked` · `❄️ frozen`
 
 ## Índice (por prioridad)
 
@@ -39,13 +62,19 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
 > hasta entonces el harness las inventaría. `🔴 needs-spec` requiere escritura
 > de spec antes de tocar código. La prioridad de negocio va en cada entrada.
 
+### ⛔ P0 bloqueado por integraciones
+- **Erradicar persistencia administrativa local** — diseño formal listo en
+  `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`; no iniciar
+  cambios definitivos de runtime hasta integrar los PR #89–#94 y #103–#107,
+  #109 y #110, y cerrar el #108.
+  El PR #108 contradice la arquitectura decidida y debe seguir bloqueado hasta
+  que su autor o la persona responsable lo cierre.
+
 ### 🟢 Ready para el workflow (objetivo acotado, decisiones cerradas)
 - **Deuda: "Un refresh debería funcionar como un refresh"** — ready, **no
   iniciado**. (Un lanzamiento previo del workflow reportó COMPLETE, pero era un
   falso positivo: el objective estaba hardcoded y el run reusó evidencia del
   seed-dev. El refresh real nunca corrió.) Release blocker del mini-ciclo.
-- **Deuda: Eliminar el seed de datos de ejemplo** — pequeño, autocontenido, sin
-  decisiones abiertas. Producto real en producción; el demo ya no corresponde.
 - **Deuda: `pnpm-lock.yaml` dual** — un commit, borrar + gitignore. Trivial.
 - **Deuda: `persistEntity` fire-and-forget sin `.catch`** — endurecer con catch
   + toast de error. Causa conocida (regresión F3). Sin decisiones abiertas.
@@ -178,15 +207,6 @@ Estado: `💡 idea` · `🔬 refining` · `📋 specced` · `🚧 in progress` �
   quitar puntos de Gmail) al comparar.
   > **Incluida en la feature 'Invitar miembros por correo'** (la normalización
   > va en esa misma entrega). No ejecutar aislado.
-- **Eliminar el seed de datos de ejemplo** — Store OS ya es producto real en
-  producción (Olivia operando, ventas reales). La opción de cargar datos
-  ejemplo (Olivia/Santi/Joyería ficticios) ya no corresponde: confunde,
-  ensucia el picker de tiendas si se activa, y contradice el cambio de 0.5.0
-  que ya removió el modo demo. Borrar el código de seed del cliente + el
-  script `scripts/seed-dev.cjs` queda **solo para dev/preview** (sembrar
-  `store-os-dev`, nunca prod — aborta si `projectId !== 'store-os-dev'`),
-  pero no expone nada en la UI de prod.
-  > **Delivery-ID: remove-client-demo-seed.** La cola y una spec aprobada autorizan su implementación. Alcance: eliminar de la app cliente (`src/`) el seed ficticio, conservar `scripts/seed-dev.cjs` sólo para dev/preview y cubrir que una cuenta nueva no reciba datos demo.
 
 ---
 

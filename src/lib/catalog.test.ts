@@ -87,6 +87,17 @@ describe("categoryFromLegacy", () => {
 });
 
 describe("migrateCatalog", () => {
+  it("assigns stable identities to existing purchase lines without changing received purchases", () => {
+    const state = emptyState([]);
+    state.purchases = [{ id: "purchase1", storeId: "s1", date: "2026-01-01", lines: [
+      { productId: "p1", name: "Anillo", quantity: 1, unitCost: 10 },
+      { lineId: "existing", productId: "p2", name: "Arete", quantity: 1, unitCost: 20 },
+    ], subtotal: 30, totalConfirmed: 30, status: "received", createdAt: "", updatedAt: "" }];
+    const migrated = migrateCatalog(state);
+    expect(migrated.purchases[0].lines.map((line) => line.lineId)).toEqual(["purchase1_L0", "existing"]);
+    expect(migrateCatalog(migrated).purchases[0]).toBe(migrated.purchases[0]);
+    expect(state.purchases[0].lines[0].lineId).toBeUndefined();
+  });
   it("is idempotent: running twice equals running once", () => {
     const s1 = migrateCatalog(emptyState([legacyProduct()]));
     const s2 = migrateCatalog(s1);
