@@ -143,17 +143,17 @@ export function inheritedDepositRecord(
 }
 
 /** Σ signed cents over records; corrupt amounts contribute 0 (never NaN). */
-export function paymentsCents(payments: OrderPayment[]): number {
-  return payments.reduce((sum, p) => sum + finiteCents(p.amount), 0);
+export function paymentsCents(payments: OrderPayment[] | undefined | null): number {
+  return (payments ?? []).reduce((sum, p) => sum + finiteCents(p.amount), 0);
 }
 
 /** Store isolation: a payment must match BOTH the order and the store. */
 export function orderPaymentsFor(
-  payments: OrderPayment[],
+  payments: OrderPayment[] | undefined | null,
   orderId: string,
   storeId: string
 ): OrderPayment[] {
-  return payments.filter((p) => p.orderId === orderId && p.storeId === storeId);
+  return (payments ?? []).filter((p) => p.orderId === orderId && p.storeId === storeId);
 }
 
 /** Merge loaded/saved records by id (replace, never duplicate). */
