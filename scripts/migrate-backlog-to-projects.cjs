@@ -230,7 +230,7 @@ function summary(planned) {
 // --value is the single-select option name (per `gh project item-edit --help`).
 // Each gh project mutation costs 2-3 internal requests; GitHub's secondary
 // limit trips around ~100 req/min, so pace one mutation every ~2.5s.
-const MUTATION_PACE_MS = 2500;
+const MUTATION_PACE_MS = 4000;
 
 function setField(project, url, field, value) {
   sleep(MUTATION_PACE_MS);
