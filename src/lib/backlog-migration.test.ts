@@ -1,5 +1,4 @@
 import { createRequire } from "node:module";
-import fs from "node:fs";
 
 // Unit tests for the backlog → GitHub Projects migration script
 // (scripts/migrate-backlog-to-projects.cjs), following the excel-trial /
@@ -30,6 +29,9 @@ const lib = require("../../scripts/migrate-backlog-to-projects.cjs") as {
   estadoColumn: (item: BacklogItem, openPrs: Set<number>) => string;
   cicloOf: (id: string) => string;
   tipoOf: (id: string) => string;
+  planIssues: (items: BacklogItem[], prs: { numbers: Set<number>; list: { number: number; url: string; title: string }[] }) => { issues: { estado: string }[]; prItems: { tipo: string; ciclo: string }[] };
+  normalizeBoardItem: (item: Record<string, unknown>) => Record<string, unknown>;
+  validateBoard: (planned: { issues: Record<string, unknown>[]; prItems: Record<string, unknown>[] }, items: Record<string, unknown>[], records: { number: number; state: string }[]) => string[];
   CICLO_OPTIONS: string[];
   ESTADO_OPTIONS: string[];
 };
@@ -99,21 +101,40 @@ describe("migrate-backlog-to-projects", () => {
     expect(new Set(lib.CICLO_OPTIONS).size).toBe(lib.CICLO_OPTIONS.length);
   });
 
-  // Se salta si backlog.json ya no existe (se elimina en la Task 7).
-  let backlogPath: string | null = null;
-  try {
-    backlogPath = require.resolve("../../docs/backlog.json");
-  } catch {
-    backlogPath = null;
-  }
-  describe.skipIf(!backlogPath)("cobertura del JSON real", () => {
-    it("los 41 ítems resuelven ciclo y tipo sin caer en vacío", () => {
-      const items: BacklogItem[] = JSON.parse(fs.readFileSync(backlogPath!, "utf8")).items;
-      expect(items.length).toBe(41);
-      for (const it of items) {
-        expect(lib.cicloOf(it.id)).toBeTruthy();
-        expect(lib.tipoOf(it.id)).toBeTruthy();
-      }
+  it("resuelve ciclo y estado del PR a partir de la capacidad correspondiente", () => {
+    const planned = lib.planIssues([item({ status: "in-progress", pullRequests: [9] })], {
+      numbers: new Set([9]), list: [{ number: 9, url: "pr", title: "Capture" }],
     });
+    expect(planned.issues[0].estado).toBe("En PR");
+    expect(planned.prItems[0]).toMatchObject({ tipo: "feature", ciclo: "1 · Captura" });
+  });
+
+  it("usa Status nativo como estado y evita leer una copia importada desactualizada", () => {
+    expect(lib.normalizeBoardItem({ status: "Hecho", estado: "Backlog" }).estado).toBe("Hecho");
+  });
+
+  const planned = {
+    issues: [{ id: "known", body: "- Criterion", estado: "Hecho", prioridad: "P1", tipo: "feature", ciclo: "1 · Captura", done: true }],
+    prItems: [{ url: "https://github.com/owner/repo/pull/3", tipo: "feature", ciclo: "1 · Captura" }],
+  };
+  const boardIssue = { content: { type: "Issue", title: "[known] Title", number: 2, url: "issue", body: "- Criterion" }, estado: "Hecho", prioridad: "P1", tipo: "feature", ciclo: "1 · Captura" };
+  const boardPr = { content: { type: "PullRequest", url: planned.prItems[0].url }, estado: "En PR", tipo: "feature", ciclo: "1 · Captura" };
+  const records = [{ number: 2, state: "CLOSED" }];
+
+  it("valida identidad, criterios, campos, cierre histórico y PRs", () => {
+    expect(lib.validateBoard(planned, [boardIssue, boardPr], records)).toEqual([]);
+  });
+
+  it("rechaza un tablero con suficientes filas pero sin el PR esperado", () => {
+    expect(lib.validateBoard(planned, [boardIssue, { content: { type: "PullRequest", url: "other" } }], records)).toContainEqual(expect.stringContaining("found 0"));
+  });
+
+  it("rechaza duplicados, campos incompletos y cierres que fallaron", () => {
+    expect(lib.validateBoard(planned, [boardIssue, boardIssue, boardPr], records)).toContainEqual(expect.stringContaining("found 2"));
+    const incomplete = { ...boardIssue, tipo: undefined, content: { ...boardIssue.content, body: "" } };
+    const errors = lib.validateBoard(planned, [incomplete, boardPr], [{ number: 2, state: "OPEN" }]);
+    expect(errors).toContainEqual(expect.stringContaining("tipo should"));
+    expect(errors).toContainEqual(expect.stringContaining("criteria/context missing"));
+    expect(errors).toContainEqual(expect.stringContaining("not closed"));
   });
 });
