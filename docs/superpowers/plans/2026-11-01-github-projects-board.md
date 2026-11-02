@@ -1,5 +1,9 @@
 # Migración a GitHub Projects — Plan de implementación
 
+> Plan original de la migración, conservado como antecedente. No reejecutar
+> sus pasos sobre el tablero vivo. El cierre y los ajustes de Status nativo,
+> verificación y retiro del JSON están documentados en la spec y el script.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Migrar la gestión del trabajo de `docs/backlog.json` (41 entradas, conciliado en main vía PR #116) a un proyecto GitHub Projects V2 "Store OS" (campos Estado/Prioridad/Tipo/Ciclo) y adelgazar la documentación del repo.

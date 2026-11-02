@@ -2,14 +2,14 @@
 
 El estado vivo del trabajo vive en el [tablero "Store OS"](https://github.com/users/imalvaroglez/projects/1)
 (GitHub Projects): una issue por capacidad, con criterios de aceptación en su
-cuerpo, prioridad (P0–P3), tipo y ciclo. La issue es la unidad de trabajo; la
+cuerpo, Status (estado en español), prioridad (P0–P3), tipo y ciclo. La issue es la unidad de trabajo; la
 spec de archivo es excepcional (decisiones de arquitectura o reglas de negocio)
 y viaja dentro del PR del código cuando aplica.
 
 Este archivo ya no registra estados. Conserva solo el contexto de descubrimiento
 que respalda al tablero:
 
-- [Plan de acción de Fer](fer-action-plan-2026-11-01.md) — backlog vigente conciliado
+- [Plan de acción de Fer](fer-action-plan-2026-11-01.md) — fotografía del backlog conciliado
   con los PR y la liberación del 1 de noviembre de 2026 (`aa26233`); secuencia de
   ciclos, decisiones confirmadas y pendientes por capacidad.
 - [Backlog de Olivia (entrevista Fer)](fer-backlog-2026-10-28.md) — 17 candidatos con

@@ -1,7 +1,6 @@
 # Migración de la gestión a GitHub Projects (tablero kanban)
 
-Fecha: 2026-11-01. Estado: diseño conversado y aprobado por el PO; spec pendiente
-de revisión. Se consolida la reorganización del PR #116 (backlog conciliado de
+Fecha: 2026-11-01. Diseño aprobado por el PO; la implementación se entrega en draft PR. Se consolida la reorganización del PR #116 (backlog conciliado de
 41 entradas y plan de acción de Fer).
 
 ## Problema
@@ -19,7 +18,9 @@ humana) se conserva tal cual.
 ## Decisiones
 
 1. **El tablero es la única fuente de estado.** Un Projects (V2) "Store OS"
-   con campo `Estado`: Backlog / Especificado / En curso / En PR / Hecho.
+   con el campo nativo `Status` como estado: Backlog / Especificado / En curso / En PR / Hecho.
+   GitHub conserva su nombre nativo; no crear otro campo `Estado`. Así las
+   automatizaciones de cierre y merge actualizan la misma columna que ve la usuaria.
    Campos mínimos: `Prioridad` (P0–P3), `Tipo` (feature / deuda / ops) y
    `Ciclo` (fases del plan de acción de Fer). Vistas: **Tablero** (agrupado
    por Estado, solo issues), **Cola** (tabla por Ciclo + Prioridad) y
@@ -45,7 +46,7 @@ Ejecutar después de que el PO mergee #116, para partir del backlog conciliado.
 - Script `scripts/migrate-backlog-to-projects.cjs` (idempotente, con
   `--dry-run`): lee `docs/backlog.json` de `main` post-#116 y crea una issue
   por entrada, con los criterios del JSON en el cuerpo, la agrega al proyecto
-  y fija Estado / Prioridad / Tipo / Ciclo.
+  y fija Status / Prioridad / Tipo / Ciclo.
 - Mapeo de estado JSON → columna: `idea`/`refining` → Backlog;
   `specced`/`awaiting-approval` → Especificado; `in-progress` → En curso
   (o En PR si tiene PR abierto); `done` → Hecho con issue cerrada;
@@ -87,6 +88,34 @@ Ejecutar después de que el PO mergee #116, para partir del backlog conciliado.
 - Dry-run contra el JSON de #116: 41 issues proyectadas, sin IDs perdidos ni
   duplicados (mismo criterio de la validación del propio plan).
 - Tras ejecutar: conteo de items del proyecto == entradas migradas + PRs
-  abiertos; columnas y campos correctos (`gh project item-list`).
+  abiertos; columnas y campos correctos (`gh project item-list`), identidad sin duplicados,
+  criterios preservados y cierre efectivo de las 14 issues históricas.
+- El verificador no aprueba por conteo solamente. Después de retirar el JSON,
+  la herramienta obtiene la entrada inmutable de Git en el commit de main
+  post-#116. Requiere historial completo (en un clon shallow, recuperar ese
+  commit antes de ejecutar la herramienta); no mantiene un espejo de estados.
 - CI del PR en verde (typecheck, test, build). Sin E2E nuevo: es un cambio
   documental y de herramienta, no toca la aplicación.
+
+## Cierre de migración — evidencia del 2 de noviembre de 2026
+
+- Verificadas las 41 issues originales sin IDs duplicados ni criterios perdidos,
+  sus 13 PR abiertos y el cierre de las 14 issues históricas. La issue #158
+  registra por separado el endurecimiento pendiente de la key web de dev.
+- El campo nativo Status conserva los estados en español. Se compararon los
+  54 estados importados contra la copia nativa antes de retirar el campo duplicado.
+- Vistas: Tablero (solo issues, columnas de estado), Cola (issues pendientes,
+  agrupadas por Ciclo y Prioridad ascendente) y PRs abiertos (solo PR abiertos).
+- Automatizaciones nativas: merge → Hecho; issue enlazada a PR → En PR.
+  El cierre de una issue exige criterios completos: un PR parcial no se declara
+  final mediante una referencia de cierre. No se hizo un merge para probarlas.
+- Se retira el JSON después de la verificación. La fuente inmutable permanece
+  en Git para auditar la migración; --migrate se bloquea sin JSON para evitar
+  sobrescribir el tablero vivo con estados históricos. --verify sigue disponible
+  con historial completo y compara el alcance original, no futuras prioridades.
+- Sin cambios de aplicación, reglas, workflows de despliegue ni datos Firebase.
+  La alerta histórica #1 se resolvió como wont_fix tras verificar que coincide
+  con la Browser key pública de dev; las restricciones HTTP referrer no estaban
+  configuradas y siguen como tarea #158. No se cambió la key ni su configuración.
+
+Este registro acredita la migración; no se actualiza como un espejo del tablero.
