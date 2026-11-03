@@ -7,10 +7,11 @@ import type { PdfApplyPayload } from "./PurchasePdfImport";
 import type { Purchase } from "../../types";
 import { PurchaseForm } from "./PurchaseForm";
 
-const { upsertPurchase, upsertProduct, receivePurchase, pdfPayloads, activeStore, state } = vi.hoisted(() => ({
+const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, pdfPayloads, activeStore, state } = vi.hoisted(() => ({
   upsertPurchase: vi.fn().mockResolvedValue(undefined),
   upsertProduct: vi.fn().mockResolvedValue(undefined),
   receivePurchase: vi.fn().mockResolvedValue("received"),
+  adjustReceivedPurchase: vi.fn(),
   pdfPayloads: [] as PdfApplyPayload[],
   activeStore: { id: "olivia", name: "Olivia", type: "inventory_tiered" as const },
   state: {
@@ -27,7 +28,7 @@ const { upsertPurchase, upsertProduct, receivePurchase, pdfPayloads, activeStore
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../app/StoreProvider")>(),
-  useStore: () => ({ state, activeStore, upsertPurchase, upsertProduct, receivePurchase, cloud: true }),
+  useStore: () => ({ state, activeStore, upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, cloud: true }),
 }));
 vi.mock("./PurchasePdfImport", () => ({
   PurchasePdfImport: ({ onApply }: { onApply: (payload: PdfApplyPayload) => void }) => <Button onClick={() => onApply(pdfPayloads.shift()!)}>Importar PDF de prueba</Button>,
@@ -45,7 +46,76 @@ function open(value = purchase()) {
   render(<ToastProvider><PurchaseForm purchase={value} onDone={() => {}} /></ToastProvider>);
 }
 
-beforeEach(() => { upsertPurchase.mockClear(); upsertProduct.mockReset().mockResolvedValue(undefined); receivePurchase.mockReset().mockResolvedValue("received"); pdfPayloads.length = 0; });
+beforeEach(() => { upsertPurchase.mockClear(); upsertProduct.mockReset().mockResolvedValue(undefined); receivePurchase.mockReset().mockResolvedValue("received"); adjustReceivedPurchase.mockReset().mockResolvedValue(undefined); pdfPayloads.length = 0; });
+
+describe("sale expenses and post-reception adjustments (FER-02)", () => {
+  function receivedPurchase(): Purchase {
+    return {
+      ...purchase(),
+      status: "received",
+      receivedAt: "2026-11-01T12:00:00Z",
+      costingMethod: "latest_purchase",
+      tickets: [{ id: "ticket:purchase", totalConfirmed: 65.8 }],
+      lines: [{ lineId: "line", ticketId: "ticket:purchase", productId: "ring", name: "Pieza del ticket", quantity: 4, unitCost: 16.45 }],
+      costAllocations: [{ lineId: "line", merchandiseCents: 6580, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 0, totalCents: 6580 }],
+    };
+  }
+
+  it("explains a sale expense per piece without offering it as inventory cost", async () => {
+    open();
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto" }));
+    fireEvent.change(screen.getByLabelText("Tipo de gasto"), { target: { value: "customer_delivery" } });
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "25" } });
+    expect(screen.getByText(/Se reparte entre las piezas del viaje y se cuenta al vender/)).toBeVisible();
+    expect(screen.queryByLabelText("Costo del inventario")).not.toBeInTheDocument();
+    // The cost card shows the sale allocation without touching piece cost.
+    expect(screen.getByText("Gastos de venta repartidos")).toBeVisible();
+    expect(screen.getAllByText("$25.00").length).toBeGreaterThan(1);
+    expect(screen.getByText("Costo completo de las piezas").parentElement).toHaveTextContent("$65.80");
+  });
+
+  it("adds a sale expense after receiving and keeps the received evidence intact", async () => {
+    const value = receivedPurchase();
+    adjustReceivedPurchase.mockResolvedValueOnce({
+      ...value,
+      saleCostAdjustments: [{ id: "adj1", at: "2026-11-02T12:00:00Z", category: "customer_delivery", amount: 25, allocations: [{ lineId: "line", saleExpenseCents: 2500 }] }],
+    });
+    open(value);
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto después de recibir" }));
+    fireEvent.change(screen.getByLabelText("Tipo de gasto"), { target: { value: "customer_delivery" } });
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    await waitFor(() => expect(adjustReceivedPurchase).toHaveBeenCalledOnce());
+    const [purchaseArg, expenseArg] = adjustReceivedPurchase.mock.calls[0];
+    expect(purchaseArg.id).toBe("purchase");
+    expect(expenseArg).toMatchObject({ category: "customer_delivery", amount: 25 });
+    expect(expenseArg.id).toBeTruthy();
+    // The append-only entry is visible with its exact allocation.
+    expect(screen.getByText(/Entrega a clienta/)).toBeVisible();
+    expect(screen.getAllByText("$25.00").length).toBeGreaterThan(0);
+    expect(screen.getByText(/repartido entre 4 piezas/)).toBeVisible();
+    // The original inventory snapshot stays untouched.
+    expect(screen.getByText("Costo completo de las piezas").parentElement).toHaveTextContent("$65.80");
+  });
+
+  it("rejects a late expense without a positive amount", async () => {
+    open(receivedPurchase());
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto después de recibir" }));
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    expect(screen.getByText("Escribe un importe mayor que cero.")).toBeVisible();
+    expect(adjustReceivedPurchase).not.toHaveBeenCalled();
+  });
+
+  it("explains a Firestore failure when saving the late expense", async () => {
+    adjustReceivedPurchase.mockRejectedValueOnce(Object.assign(new Error("Missing or insufficient permissions"), { code: "permission-denied" }));
+    open(receivedPurchase());
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto después de recibir" }));
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    await waitFor(() => expect(screen.getByText("No se pudo guardar el gasto. Revisa tu conexión e intenta de nuevo.")).toBeVisible());
+  });
+});
 
 describe("purchase amount entry", () => {
   it("keeps the decimal separator when entering a cost one key at a time", async () => {
