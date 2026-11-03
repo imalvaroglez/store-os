@@ -22,4 +22,33 @@ describe("orderTicketText", () => {
     const order: Order = { id: "o1", storeId: "s1", customerId: "c1", items: [{ productName: "A", quantity: 1, unitPrice: 40, subtotal: 40 }], deposit: 50, orderStatus: "asked", paymentStatus: "paid", createdAt: "", updatedAt: "" };
     expect(orderTicketText(order, "Olivia")).toContain("Anticipo mayor al total: $10.00");
   });
+
+  it("reports Recibido/Saldo from the doc accumulator for orders with cobros (#168 F4)", () => {
+    // $1,500 received via registered cobros on a $1,800 order: the legacy
+    // `deposit` is $0 and used to print "Anticipo $0 / Saldo $1,800".
+    const order: Order = {
+      id: "o2", storeId: "s1", customerId: "c1",
+      items: [{ lineId: "l1", productName: "Caja adviento", quantity: 1, unitPrice: 1800, subtotal: 1800 }],
+      deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid",
+      paymentsReceivedCents: 150000,
+      createdAt: "", updatedAt: "",
+    };
+    const ticket = orderTicketText(order, "Olivia");
+    expect(ticket).toContain("Recibido: $1,500.00");
+    expect(ticket).toContain("Saldo: $300.00");
+    expect(ticket).not.toContain("Anticipo registrado: $0.00");
+  });
+
+  it("counts an unmaterialized inherited deposit on the ticket without double-counting", () => {
+    const order: Order = {
+      id: "o3", storeId: "s1", customerId: "c1",
+      items: [{ lineId: "l1", productName: "Arracada", quantity: 1, unitPrice: 1000, subtotal: 1000 }],
+      deposit: 400, orderStatus: "confirmed", paymentStatus: "partial",
+      paymentsReceivedCents: 10000,
+      createdAt: "", updatedAt: "",
+    };
+    expect(orderTicketText(order, "Olivia")).toContain("Recibido: $500.00"); // $100 cobros + $400 anticipo aún sin materializar
+    const materialized = { ...order, paymentsReceivedCents: 50000, inheritedDepositMaterialized: true as const };
+    expect(orderTicketText(materialized, "Olivia")).toContain("Recibido: $500.00"); // ya dentro del acumulado
+  });
 });
