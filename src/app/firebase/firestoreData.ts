@@ -14,11 +14,13 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
-import { migrateOrder } from "../../lib/orders";
+import { applyPurchaseLines, firstInstallmentReservationDeltas, reservationDeltasForOrderChange } from "../../lib/inventory";
+import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
+import { installmentDeliveryBlocked } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   inheritedDepositRecord,
+  paymentSummary,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment } from "../../types";
@@ -303,12 +305,47 @@ export function applyRelativeDeltas(
   return { updates, skipped };
 }
 
-/** Save an order using canonical stock and an idempotent operation identifier. */
+/**
+ * #165: an installment order cannot be CONFIRMED delivered while money is
+ * owed. Validated on the mutation path itself (the UI hiding buttons is not
+ * the guarantee): the transition INTO "delivered" on a plan order requires the
+ * SAME payment records to show zero balance.
+ */
+export class DeliveryWithBalanceError extends Error {
+  constructor() {
+    super("No se puede confirmar la entrega: este pedido tiene saldo pendiente. Registra el último abono y vuelve a intentarlo.");
+    this.name = "DeliveryWithBalanceError";
+  }
+}
+
+/**
+ * #165: the first confirmed abono found not enough pieces on the shelf. The
+ * registration aborts — no negative stock, no silent skip. Whether an abono
+ * without stock should be allowed (bajo pedido) is pending the PO.
+ */
+export class InsufficientStockError extends Error {
+  constructor(public readonly shortages: { productId: string; missing: number }[]) {
+    super("No hay existencias suficientes para apartar las piezas de este pedido. Surte inventario y vuelve a registrar el abono.");
+    this.name = "InsufficientStockError";
+  }
+}
+
+/**
+ * Save an order using canonical stock and an idempotent operation identifier.
+ *
+ * #165: `paymentRecords` carries the caller's view of the order's payment
+ * records (the provider passes its session records). Firestore transactions
+ * cannot query, so the delivery/conversion guarantees below evaluate against
+ * this snapshot. Records are create-only, so a stale snapshot can only
+ * UNDERCOUNT received money — the delivery gate errs toward blocking, never
+ * toward allowing a delivery with balance.
+ */
 export async function saveOrderWithStockTx(
   _user: AppUser,
   order: Order,
   expectedRevision: number | null,
-  mutationId: string
+  mutationId: string,
+  paymentRecords: OrderPayment[] = []
 ): Promise<{ order: Order; stock: StockAdjustment[] }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
@@ -320,7 +357,27 @@ export async function saveOrderWithStockTx(
     if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
       throw new StaleOrderError();
     }
-    const deltas = reservationDeltasForOrderChange(previous, order);
+    // #165 installment guarantees (evaluated against the caller's records):
+    let next = order;
+    if (order.installments) {
+      // Converting an order that ALREADY received money: the pieces stay
+      // apartadas (an open ordinary order already held them, so the mark
+      // lands with zero stock delta).
+      if (!previous?.installments && paymentSummary(order, paymentRecords).receivedCents > 0) {
+        next = { ...next, installmentsReservedAt: new Date().toISOString() };
+      }
+      // The transition INTO delivered requires the records to show zero
+      // balance. Validated on the mutation path — hiding buttons is not the
+      // guarantee.
+      if (
+        effectiveOrderStatus(next) === "delivered" &&
+        (!previous || effectiveOrderStatus(previous) !== "delivered") &&
+        installmentDeliveryBlocked(next, paymentRecords)
+      ) {
+        throw new DeliveryWithBalanceError();
+      }
+    }
+    const deltas = reservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
       const product = await tx.get(doc(db, "products", productId));
@@ -329,7 +386,7 @@ export async function saveOrderWithStockTx(
     }
     const { updates } = applyRelativeDeltas(canonical, deltas);
     const at = new Date().toISOString();
-    const saved = { ...order, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
+    const saved = { ...next, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
     for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
     const { id, ...data } = saved;
     tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
@@ -356,6 +413,14 @@ export async function fetchOrderPayments(orderId: string): Promise<OrderPayment[
  * along a real payment, never an adjustment. Payment docs are create-only
  * evidence (see firestore.rules); corrections are new signed records, which is
  * why this path never updates an existing doc.
+ *
+ * #165: for an installment order, the FIRST confirmed positive abono reserves
+ * the order's quantities ONCE, in this same transaction: the canonical product
+ * stock is re-read, insufficient stock aborts the whole registration with an
+ * explicit error (no negative stock, no silent skip), and the order doc gets
+ * `installmentsReservedAt` + a revision bump so a concurrent/stale editor save
+ * is rejected instead of silently un-reserving. Later abonos (and retries of
+ * the first one) are recognized by the mark and never reserve again.
  */
 export async function registerOrderPaymentTx(
   payment: OrderPayment,
@@ -363,37 +428,79 @@ export async function registerOrderPaymentTx(
 ): Promise<OrderPayment[]> {
   const { db } = getFirebase();
   return runTransaction(db, async (tx) => {
+    // READ PHASE (Firestore requires every read before any write).
     const paymentsRef = collection(db, "orders", payment.orderId, "payments");
     const paymentRef = doc(paymentsRef, payment.id);
     const existing = await tx.get(paymentRef);
     if (existing.exists()) return [existing.data() as OrderPayment];
-    const orderSnap = await tx.get(doc(db, "orders", payment.orderId));
+    const orderRef = doc(db, "orders", payment.orderId);
+    const orderSnap = await tx.get(orderRef);
     if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
     if ((orderSnap.data().storeId ?? "") !== payment.storeId) {
       throw new Error("El pedido pertenece a otra tienda.");
     }
-    const saved: OrderPayment[] = [];
-    if (payment.kind === "payment") {
-      const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
-      const inheritedSnap = await tx.get(inheritedRef);
-      if (!inheritedSnap.exists()) {
-        const deposit = orderSnap.data().deposit;
-        const pending = typeof deposit === "number" ? deposit : 0;
-        if (pending > 0 && !inherited) {
-          throw new Error("Captura la fecha y el método del anticipo previo.");
+    // Inherited deposit materialization (#123, PO 2026-11-03): only a real
+    // payment carries it, and the operator-supplied date/method is required.
+    const inheritedInput = payment.kind === "payment" ? inherited : undefined;
+    const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
+    const inheritedSnap = await tx.get(inheritedRef);
+    let inheritedRecord: OrderPayment | null = null;
+    if (payment.kind === "payment" && !inheritedSnap.exists()) {
+      const deposit = orderSnap.data().deposit;
+      const pending = typeof deposit === "number" ? deposit : 0;
+      if (pending > 0 && !inheritedInput) {
+        throw new Error("Captura la fecha y el método del anticipo previo.");
+      }
+      inheritedRecord = inheritedDepositRecord(
+        payment.orderId,
+        payment.storeId,
+        pending,
+        payment.createdBy,
+        inheritedInput as { method: "cash" | "transfer"; date: string }
+      );
+    }
+
+    // #165 first-abono reservation reads (canonical stock + sufficiency).
+    const order = migrateOrder({ ...orderSnap.data(), id: payment.orderId });
+    const firstPositiveAbono = payment.kind === "payment" && payment.amount > 0;
+    let reservation: { updates: StockAdjustment[]; at: string } | null = null;
+    if (order.installments && !order.installmentsReservedAt && firstPositiveAbono) {
+      const deltas = firstInstallmentReservationDeltas(order);
+      const canonical = new Map<string, number | undefined>();
+      const shortages: { productId: string; missing: number }[] = [];
+      for (const [productId, delta] of deltas) {
+        const product = await tx.get(doc(db, "products", productId));
+        if (product.exists() && product.data().storeId !== payment.storeId) {
+          throw new Error("El producto pertenece a otra tienda.");
         }
-        const record = inheritedDepositRecord(
-          payment.orderId,
-          payment.storeId,
-          pending,
-          payment.createdBy,
-          inherited as { method: "cash" | "transfer"; date: string }
-        );
-        if (record) {
-          tx.set(inheritedRef, stripUndefined(record) as Record<string, unknown>);
-          saved.push(record);
+        const current = product.exists() ? (product.data().quantityOnHand as number | undefined) : undefined;
+        canonical.set(productId, current);
+        // Untracked products (no quantityOnHand) cannot go negative; tracked
+        // ones must cover the reservation — explicit abort otherwise.
+        if (typeof current === "number" && current + delta < 0) {
+          shortages.push({ productId, missing: -(current + delta) });
         }
       }
+      if (shortages.length > 0) throw new InsufficientStockError(shortages);
+      reservation = { updates: applyRelativeDeltas(canonical, deltas).updates, at: new Date().toISOString() };
+    }
+
+    // WRITE PHASE — one atomic commit: evidence, reservation, and mark.
+    const saved: OrderPayment[] = [];
+    if (inheritedRecord) {
+      tx.set(inheritedRef, stripUndefined(inheritedRecord) as Record<string, unknown>);
+      saved.push(inheritedRecord);
+    }
+    if (reservation) {
+      for (const update of reservation.updates) {
+        tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: reservation.at });
+      }
+      tx.update(orderRef, {
+        installmentsReservedAt: reservation.at,
+        revision: (order.revision ?? 0) + 1,
+        lastMutationId: `installment_reservation_${payment.id}`,
+        updatedAt: reservation.at,
+      });
     }
     tx.set(paymentRef, stripUndefined(payment) as Record<string, unknown>);
     saved.push(payment);
