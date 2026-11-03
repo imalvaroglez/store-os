@@ -2,6 +2,7 @@ import { cert, initializeApp, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 import path from 'node:path';
+import { stat } from 'node:fs/promises';
 import { DEV, PROD, fileHash, json, privateDirectory, readJson, sha256 } from './core.mjs';
 
 export const EMULATORS = { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080', FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099', FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:9199' };
@@ -120,7 +121,8 @@ export async function capture(client, config, dir, now = () => new Date().toISOS
     const object = sha256(metadata.name);
     const output = path.join(dir, 'objects', object);
     // Pin generation: replacement during capture must not silently change the captured object.
-    await client.bucket.file(metadata.name, { generation: metadata.generation }).download({ destination: output, validation: 'crc32c' });
+    await client.bucket.file(metadata.name, { generation: metadata.generation }).download({ destination: output, validation: 'crc32c', decompress: false });
+    if ((await stat(output)).size !== Number(metadata.size)) throw new Error('STORAGE_SIZE_MISMATCH');
     const digest = await fileHash(output);
     objects.push({ metadata, object, sha256: digest }); bytes += Number(metadata.size);
   }
@@ -189,7 +191,7 @@ export async function restore(client, config, dir, manifest) {
     if (!actual || user.email !== actual.email || Boolean(user.disabled) !== Boolean(actual.disabled) || JSON.stringify(sortObject(user.customClaims ?? {})) !== JSON.stringify(sortObject(actual.customClaims ?? {})) || JSON.stringify(sortObject(user.providerData ?? [])) !== JSON.stringify(sortObject(actual.providerData ?? []))) throw new Error('AUTH_VERIFY_FAILED');
   }
   for (const entry of objects) {
-    const [buffer] = await client.bucket.file(entry.metadata.name).download();
+    const [buffer] = await client.bucket.file(entry.metadata.name).download({ decompress: false });
     if (sha256(buffer) !== entry.sha256) throw new Error('STORAGE_VERIFY_FAILED');
     const actual = actualObjects.find(m => m.name === entry.metadata.name);
     for (const key of mutableMetadata) if (entry.metadata[key] !== undefined && JSON.stringify(sortObject(actual[key])) !== JSON.stringify(sortObject(entry.metadata[key]))) throw new Error('STORAGE_METADATA_VERIFY_FAILED');
