@@ -10,6 +10,7 @@ import {
   orderPaymentsFor,
   paymentSummary,
   paymentsCents,
+  signedAmountCents,
 } from "./payments";
 import type { Order, OrderPayment } from "../../types";
 
@@ -273,5 +274,21 @@ describe("merging loaded payments", () => {
     expect(mergePayments([a, b], [replaced, b])).toEqual([replaced, b]);
     const fresh = payment({ id: "p3", amount: 300 });
     expect(mergePayments([a, b], [fresh])).toHaveLength(3);
+  });
+});
+
+
+describe("safe transactional payment totals (#171)", () => {
+  it("normalizes sub-cent negative amounts to integer zero for Firestore", () => {
+    expect(Object.is(signedAmountCents(-1e-7), -0)).toBe(false);
+  });
+  it("rejects overflow rather than persisting an imprecise balance", () => {
+    expect(() => orderMoneyAfterPayments({ paymentsReceivedCents: Number.MAX_SAFE_INTEGER }, 1, false)).toThrow(RangeError);
+  });
+  it("rejects corrupt accumulated cents and fractional deltas instead of silently repairing money", () => {
+    for (const acc of [Number.NaN, Number.POSITIVE_INFINITY, 0.5]) {
+      expect(() => orderMoneyAfterPayments({ paymentsReceivedCents: acc }, 100, false)).toThrow(RangeError);
+    }
+    expect(() => orderMoneyAfterPayments({}, 0.5, false)).toThrow(RangeError);
   });
 });
