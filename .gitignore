@@ -34,3 +34,10 @@ playwright-report/
 
 # Local-only fixtures
 docs/superpowers/specs/receipt.pdf
+
+# Local working data (captures, evidence) — never leaves this machine
+.local/
+
+# File-sync conflict duplicates (macOS "name 2.ext")
+* [0-9].*
+* [0-9][0-9].*
