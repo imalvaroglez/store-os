@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn(), url: vi.fn() }));
-vi.mock("./config", () => ({ getFirebase: () => ({ app: {} }) }));
+vi.mock("./config", () => ({ FIREBASE_EMULATOR_ENABLED: false, getFirebase: () => ({ app: {} }) }));
 vi.mock("firebase/storage", () => ({
   getStorage: () => ({}), connectStorageEmulator: vi.fn(),
   ref: (_storage: unknown, path = "") => {

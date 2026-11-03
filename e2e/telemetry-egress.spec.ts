@@ -18,6 +18,9 @@ test("catalog route makes no request to forbidden telemetry routes or hosts", as
   // navigation itself) can fire before page.url() reflects the final origin, so
   // comparing against the configured baseURL is more reliable than page.url().
   const appOrigin = new URL(baseURL ?? "http://localhost:4319").origin;
+  const emulatorOrigin = process.env.VITE_FIREBASE_EMULATOR === "true"
+    ? "http://127.0.0.1:8080"
+    : null;
   const violations: string[] = [];
 
   page.on("request", (req: Request) => {
@@ -35,6 +38,7 @@ test("catalog route makes no request to forbidden telemetry routes or hosts", as
       const u = new URL(url);
       const allowedHost =
         u.origin === appOrigin ||
+        u.origin === emulatorOrigin ||
         u.hostname.endsWith("googleapis.com") ||
         u.hostname.endsWith("firebaseapp.com") ||
         u.hostname.endsWith("firebasedatabase.app") ||
