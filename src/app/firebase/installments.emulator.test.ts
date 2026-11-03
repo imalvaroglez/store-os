@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { collection, deleteDoc, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, deleteField, doc, getDoc, getDocs, setDoc, updateDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import type { Order, OrderPayment } from "../../types";
 
@@ -242,6 +242,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     expect(await stock("p-res-edit")).toBe(0);
     await expect(deleteOrderWithStockTx(user, "res-edit", cancelled.order.revision!)).rejects.toBeInstanceOf(OrderEvidenceDeletionError);
     await expect(deleteDoc(doc(holder.db, "orders/res-edit"))).rejects.toThrow();
+    // A raw client cannot first erase the fields and then delete the parent.
+    await expect(updateDoc(doc(holder.db, "orders/res-edit"), { installmentsReservedAt: deleteField(), paymentsReceivedCents: deleteField() })).rejects.toThrow();
+    await expect(updateDoc(doc(holder.db, "orders/res-edit"), { installmentsReservedAt: "replacement" })).rejects.toThrow();
     expect((await orderDoc("res-edit"))?.revision).toBe(cancelled.order.revision);
     expect(await stock("p-res-edit")).toBe(0);
     expect(await paymentCount("res-edit")).toBe(1);
@@ -257,6 +260,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     expect((await orderDoc("res-zero-history"))?.paymentsReceivedCents).toBe(0);
     await expect(deleteOrderWithStockTx(user, "res-zero-history", created.order.revision!)).rejects.toBeInstanceOf(OrderEvidenceDeletionError);
     await expect(deleteDoc(doc(holder.db, "orders/res-zero-history"))).rejects.toThrow();
+    await expect(updateDoc(doc(holder.db, "orders/res-zero-history"), { paymentsReceivedCents: deleteField() })).rejects.toThrow();
     expect(await paymentCount("res-zero-history")).toBe(2);
   });
 
@@ -280,4 +284,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     expect(await paymentCount("res-race-a")).toBe(1);
     expect(await paymentCount("res-race-b")).toBe(1);
   });
+
+  it("ignores caller-invented money and reservation fields on creation (#171)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/p-res-forged"), { storeId: "tx-store", quantityOnHand: 5 });
+    });
+    const saved = await saveOrderWithStockTx(user, makeOrder("res-forged", "p-res-forged", 1, {
+      installments: plan, installmentsReservedAt: "invented", paymentsReceivedCents: 90000, inheritedDepositMaterialized: true,
+    }), null, "res-forged-create");
+    expect(saved.order.installmentsReservedAt).toBeUndefined();
+    expect(saved.order.paymentsReceivedCents).toBeUndefined();
+    expect(saved.order.inheritedDepositMaterialized).toBeUndefined();
+    expect(await stock("p-res-forged")).toBe(5);
+    expect(await paymentCount("res-forged")).toBe(0);
+    await expect(saveOrderWithStockTx(user, { ...saved.order, orderStatus: "delivered", paymentsReceivedCents: 90000 }, saved.order.revision!, "res-forged-deliver")).rejects.toBeInstanceOf(DeliveryWithBalanceError);
+    expect((await orderDoc("res-forged"))?.orderStatus).toBe("asked");
+    expect(await stock("p-res-forged")).toBe(5);
+  });
+
 });

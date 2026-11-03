@@ -189,7 +189,11 @@ calendario y la tarjeta se derivan en memoria desde el documento.
   pedidos ordinarios abiertos y conserva visibles las reservas canceladas hasta
   una resolución explícita. Una entrega sale de Comprometido, sin devolver stock.
   Borrar el padre de una reserva o un acumulado de cobros (incluso neto cero)
-  se rechaza en la transacción y en las reglas: no se huérfana evidencia. Ampliar
+  se rechaza en la transacción y en las reglas: no se huérfana evidencia. El
+  guardado solo toma acumulado, materialización y marca de reserva del documento
+  canónico; ignora valores inventados por el llamador, incluso al crear. Las
+  reglas impiden quitar los campos protectores antes de borrar el padre y
+  reemplazar una marca de reserva ya persistida. Ampliar
   una reserva verifica existencias canónicas antes de escribir, igual que el
   primer abono; el rechazo no cambia pedido, productos ni cobros. No se define
   aquí cómo cancelar/devolver o permitir sobreventa.

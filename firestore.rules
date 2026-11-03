@@ -199,7 +199,14 @@ service cloud.firestore {
       allow create: if canOperateStore(request.resource.data.storeId);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
-        && resource.data.storeId == request.resource.data.storeId;
+        && resource.data.storeId == request.resource.data.storeId
+        // Editing cannot strip the evidence that prevents orphaning a parent.
+        && (!('paymentsReceivedCents' in resource.data)
+            || 'paymentsReceivedCents' in request.resource.data)
+        && (!('installmentsReservedAt' in resource.data)
+            || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
+        && (resource.data.get('inheritedDepositMaterialized', false) != true
+            || request.resource.data.get('inheritedDepositMaterialized', false) == true);
       // Preserve the parent of immutable money evidence, including net-zero
       // corrections, and any stock still held by an installment reservation.
       allow delete: if canOperateStore(resource.data.storeId)
