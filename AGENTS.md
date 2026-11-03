@@ -6,6 +6,23 @@ Guía para trabajar en Store OS. Lee esto antes de empezar.
 
 Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI y Preview. Nunca merge, push a `main`, producción ni datos productivos.
 
+## Gestión del trabajo
+
+El acuerdo vigente del proceso está en el README del tablero Store OS. Prevalece
+sobre documentos históricos para organización, estados y evidencias. El feedback
+se refina en issues, sin PR de documentación por cada solicitud; las áreas son
+permanentes y las épicas tienen objetivos finitos. Solo se asignan historias
+Listo; al tomar una se registra responsable y worktree. Para producto, merge
+significa Por liberar: Hecho requiere disponibilidad y aceptación verificadas
+tras una liberación humana autorizada.
+
+La cola vive en el tablero "Store OS" de [GitHub Projects](https://github.com/users/imalvaroglez/projects/1)
+(issues + PRs; Status nativo con estados en español / Prioridad / Tipo / Ciclo). La issue es la unidad de
+trabajo: criterios de aceptación en su cuerpo. La spec de archivo es excepcional
+(decisiones de arquitectura o reglas de negocio) y viaja dentro del PR. Los agentes
+consultan y actualizan el tablero con `gh project` / `gh issue`; si `gh` falla,
+preguntan. Ver `docs/superpowers/specs/2026-11-01-github-projects-board-design.md`.
+
 ## Qué es Store OS
 
 PWA **cloud-first**, **mobile-first** y **100% en español (México)** para administrar tiendas pequeñas. Firebase Auth y Firestore respaldan la administración. Multitienda, dos tipos de tienda (Bajo pedido / Inventario y precios). Ver [`README.md`](README.md) y [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
