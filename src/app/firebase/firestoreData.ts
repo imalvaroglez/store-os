@@ -380,6 +380,7 @@ export async function saveOrderWithStockTx(
       // A caller can neither erase existing evidence nor invent it on create.
       // Only the canonical doc (or the payment transaction) owns these fields.
       installmentsReservedAt: previous?.installmentsReservedAt,
+      lastPaymentId: typeof docData?.lastPaymentId === "string" ? docData.lastPaymentId : undefined,
       paymentsReceivedCents: typeof docData?.paymentsReceivedCents === "number" ? docData.paymentsReceivedCents : undefined,
       inheritedDepositMaterialized: docData?.inheritedDepositMaterialized === true ? true : undefined,
     };
@@ -532,20 +533,23 @@ export async function registerOrderPaymentTx(
       throw error;
     }
     const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
+    const receipt = { ...payment, amountCents: signedAmountCents(payment.amount) };
     const saved: OrderPayment[] = [];
     if (inheritedRecord) {
-      tx.set(inheritedRef, stripUndefined(inheritedRecord) as Record<string, unknown>);
-      saved.push(inheritedRecord);
+      const evidence = { ...inheritedRecord, amountCents: signedAmountCents(inheritedRecord.amount) };
+      tx.set(inheritedRef, stripUndefined(evidence) as Record<string, unknown>);
+      saved.push(evidence);
     }
     tx.update(orderRef, {
       paymentsReceivedCents: money.paymentsReceivedCents,
+      lastPaymentId: payment.id,
       ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
       ...(order.installments && !order.installmentsReservedAt && firstPositiveAbono
         ? { installmentsReservedAt: new Date().toISOString() }
         : {}),
     });
-    tx.set(paymentRef, stripUndefined(payment) as Record<string, unknown>);
-    saved.push(payment);
+    tx.set(paymentRef, stripUndefined(receipt) as Record<string, unknown>);
+    saved.push(receipt);
     return saved;
   });
 }

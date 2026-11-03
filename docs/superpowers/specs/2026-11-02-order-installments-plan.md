@@ -173,10 +173,11 @@ calendario y la tarjeta se derivan en memoria desde el documento.
 
 ## Limitaciones conocidas (deuda explícita, no silenciosa)
 
-- El acumulado viaja en el documento del pedido y las reglas de `orders`
-  permiten a un miembro reescribirlo con un SDK crudo — misma confianza que
-  editar totales o anticipo (el modelo no defiende una tienda de su propia
-  operadora); el camino de la app siempre lo reconstruye desde el documento.
+- La corrección incremental de #171 vincula cada cambio de acumulado con
+  comprobantes nuevos por `lastPaymentId`/`amountCents`, validados en ambas
+  direcciones por reglas atómicas. El SDK directo ya no puede reescribir ese
+  valor sin evidencia nueva válida. Esto no sustituye una conciliación de datos
+  anteriores ni valida todo el contrato de dinero/stock por sí solo.
 - Sembrar cobros directo en la subcolección (scripts de dev) sin mantener
   `paymentsReceivedCents` produce un pedido que se lee con $0 recibido: estado
   no soportado (ver "Sin migración").
