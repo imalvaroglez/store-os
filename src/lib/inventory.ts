@@ -31,6 +31,40 @@ export function weightedAverageCost(
 
 export type ProductStockUpdate = { quantityOnHand: number; cost: number };
 
+// --- Stock alerts (FER-09) ---------------------------------------------------
+
+/**
+ * Conservative default low-stock threshold, used when a product has no
+ * `lowStockAt` saved. Applied at derivation time only — never written back to
+ * Firestore (zero extra writes/reads; alerts derive from synced state).
+ * Matches the "Alerta en" placeholder in ProductForm. PO-autonomy adoption,
+ * reversible by changing this constant.
+ */
+export const DEFAULT_LOW_STOCK_AT = 3;
+
+/** Effective alert threshold: the product's own, else the store-wide default. */
+export function effectiveLowStockAt(p: Pick<Product, "lowStockAt">): number {
+  return typeof p.lowStockAt === "number" && Number.isFinite(p.lowStockAt)
+    ? p.lowStockAt
+    : DEFAULT_LOW_STOCK_AT;
+}
+
+export type StockAlertLevel = "out" | "low";
+
+/**
+ * Restock alert level for a product, always derived (never stored):
+ * - "out": quantityOnHand <= 0 — Agotado (0) or Faltan N (negative).
+ * - "low": 0 < quantityOnHand <= effectiveLowStockAt — "Quedan N".
+ * - null: untracked stock (on-demand stores) or healthy stock — no alert.
+ */
+export function stockAlertLevel(
+  p: Pick<Product, "quantityOnHand" | "lowStockAt">
+): StockAlertLevel | null {
+  if (typeof p.quantityOnHand !== "number" || !Number.isFinite(p.quantityOnHand)) return null;
+  if (p.quantityOnHand <= 0) return "out";
+  return p.quantityOnHand <= effectiveLowStockAt(p) ? "low" : null;
+}
+
 /**
  * Compute the stock + cost updates a purchase applies to each product.
  * Returns a Map<productId, ProductStockUpdate>. Lines whose product isn't in
