@@ -136,8 +136,8 @@ export function remapFields(fields, source, target) {
     if (value.referenceValue) {
       return { referenceValue: value.referenceValue.startsWith(from) ? value.referenceValue.replace(from, `projects/${target}/databases/(default)/documents/`) : value.referenceValue };
     }
-    if (value.mapValue) return { mapValue: { fields: remapFields(value.mapValue.fields ?? {}, source, target) } };
-    if (value.arrayValue) return { arrayValue: { values: (value.arrayValue.values ?? []).map(visit) } };
+    if (value.mapValue?.fields) return { mapValue: { fields: remapFields(value.mapValue.fields, source, target) } };
+    if (value.arrayValue?.values) return { arrayValue: { values: value.arrayValue.values.map(visit) } };
     return value;
   }
   return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, visit(value)]));
