@@ -35,7 +35,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
       await setDoc(doc(ctx.firestore(), "adminStores/tx-store"), { ownerUid: "tx-user", memberUids: ["tx-user"] });
       await setDoc(doc(ctx.firestore(), "adminStores/other-store"), { ownerUid: "tx-other", memberUids: ["tx-other"] });
       await setDoc(doc(ctx.firestore(), "orders/pay-order"), { storeId: "tx-store", items: [], deposit: 400, createdAt: "", updatedAt: "" });
-      await setDoc(doc(ctx.firestore(), "orders/foreign-order"), { storeId: "other-store", items: [], deposit: 0, createdAt: "", updatedAt: "" });
+      // Distinct id from other emulator suites: vitest orders files by size,
+      // so a shared doc id can leak state across suites and flip their rules
+      // expectations depending on which file grew last.
+      await setDoc(doc(ctx.firestore(), "orders/foreign-pay-order"), { storeId: "other-store", items: [], deposit: 0, createdAt: "", updatedAt: "" });
     });
     holder.db = env.authenticatedContext("tx-user").firestore();
   });
@@ -74,7 +77,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
   });
 
   it("a member of another store cannot attach a payment to a foreign order", async () => {
-    const foreign: OrderPayment = { ...payment("pay_f", 50), orderId: "foreign-order", storeId: "other-store" };
+    const foreign: OrderPayment = { ...payment("pay_f", 50), orderId: "foreign-pay-order", storeId: "other-store" };
     // The transaction reads the parent order, which this member cannot access.
     await expect(registerOrderPaymentTx(foreign)).rejects.toThrow();
     const foreignDb = env.authenticatedContext("tx-other").firestore();
