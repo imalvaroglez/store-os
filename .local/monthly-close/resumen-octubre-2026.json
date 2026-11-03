@@ -1,0 +1,292 @@
+{
+  "sheetId": "16fgOfQTVc648pZyT5xSq6sbv73fCQprXVGkvZQ4N23I",
+  "orders": [
+    {
+      "customer": "Sofía Zamora",
+      "date": "4/10/2026",
+      "start": 3,
+      "total": 40
+    },
+    {
+      "customer": "Fer Almaráz ",
+      "date": "7/10/2026",
+      "start": 5,
+      "total": 1460
+    },
+    {
+      "customer": "Natty Balcazar ",
+      "date": "9/10/2026",
+      "start": 22,
+      "total": 239
+    },
+    {
+      "customer": "Danitza Villalobos",
+      "date": "17/10/2026",
+      "start": 27,
+      "total": 370
+    },
+    {
+      "customer": "Lizbeth Cardona",
+      "date": "13/10/2026",
+      "start": 30,
+      "total": 280
+    },
+    {
+      "customer": "Sofía Zamora",
+      "date": "17/10/2026",
+      "start": 32,
+      "total": 220
+    },
+    {
+      "customer": "Dileri Vázquez",
+      "date": "17/10/2026",
+      "start": 37,
+      "total": 565
+    },
+    {
+      "customer": "Nayeli Gamboa",
+      "date": "27/10/2026",
+      "start": 50,
+      "total": 2767
+    },
+    {
+      "customer": "Violeta González",
+      "date": "31/10/2026",
+      "start": 82,
+      "total": 4110
+    },
+    {
+      "customer": "Fátima Bonilla",
+      "date": "31/10/2026",
+      "start": 137,
+      "total": 1210
+    },
+    {
+      "customer": "Fernanda Almaráz",
+      "date": "17/10/2026",
+      "start": 144,
+      "total": 660
+    },
+    {
+      "customer": "Violeta González",
+      "date": "25/10/2026",
+      "start": 148,
+      "total": 225
+    },
+    {
+      "customer": "Michelle Vega",
+      "date": "25/10/2026",
+      "start": 151,
+      "total": 160
+    },
+    {
+      "customer": "Marisol Bautista",
+      "date": "25/10/2026",
+      "start": 152,
+      "total": 250
+    },
+    {
+      "customer": "Sofía Zamora",
+      "date": "23/10/2026",
+      "start": 157,
+      "total": 710
+    },
+    {
+      "customer": "Michelle Vega",
+      "date": "31/10/2026",
+      "start": 169,
+      "total": 250
+    }
+  ],
+  "stats": {
+    "all": {
+      "rows": 153,
+      "total": 13726,
+      "explicitUnits": 85,
+      "missingQty": 82,
+      "assumedOneUnits": 167,
+      "paid": 1780,
+      "unpaid": 949,
+      "withCost": 32,
+      "completeCosts": 22
+    },
+    "dated": {
+      "rows": 151,
+      "total": 13516,
+      "explicitUnits": 82,
+      "missingQty": 81,
+      "assumedOneUnits": 163,
+      "paid": 1780,
+      "unpaid": 949,
+      "withCost": 32,
+      "completeCosts": 22
+    },
+    "orders": 17,
+    "datedOrders": 16,
+    "byDate": {
+      "4/10/2026": 40,
+      "7/10/2026": 1460,
+      "9/10/2026": 239,
+      "17/10/2026": 1815,
+      "13/10/2026": 280,
+      "27/10/2026": 2767,
+      "31/10/2026": 5570,
+      "25/10/2026": 635,
+      "23/10/2026": 710
+    },
+    "customers": {
+      "Sofía Zamora": 970,
+      "Fernanda Almaráz": 2120,
+      "Natty Balcazar": 239,
+      "Danitza Villalobos": 370,
+      "Lizbeth Cardona": 280,
+      "Dileri Vázquez": 565,
+      "Nayeli Gamboa": 2767,
+      "Violeta González": 4335,
+      "Fátima Bonilla": 1210,
+      "Michelle Vega": 410,
+      "Marisol Bautista": 250
+    },
+    "topOrders": [
+      {
+        "name": "Violeta González",
+        "date": "31/10/2026",
+        "total": 4110
+      },
+      {
+        "name": "Nayeli Gamboa",
+        "date": "27/10/2026",
+        "total": 2767
+      },
+      {
+        "name": "Fer Almaráz ",
+        "date": "7/10/2026",
+        "total": 1460
+      },
+      {
+        "name": "Fátima Bonilla",
+        "date": "31/10/2026",
+        "total": 1210
+      },
+      {
+        "name": "Sofía Zamora",
+        "date": "23/10/2026",
+        "total": 710
+      },
+      {
+        "name": "Fernanda Almaráz",
+        "date": "17/10/2026",
+        "total": 660
+      },
+      {
+        "name": "Dileri Vázquez",
+        "date": "17/10/2026",
+        "total": 565
+      },
+      {
+        "name": "Danitza Villalobos",
+        "date": "17/10/2026",
+        "total": 370
+      },
+      {
+        "name": "Lizbeth Cardona",
+        "date": "13/10/2026",
+        "total": 280
+      },
+      {
+        "name": "Marisol Bautista",
+        "date": "25/10/2026",
+        "total": 250
+      },
+      {
+        "name": "Michelle Vega",
+        "date": "31/10/2026",
+        "total": 250
+      },
+      {
+        "name": "Natty Balcazar ",
+        "date": "9/10/2026",
+        "total": 239
+      },
+      {
+        "name": "Violeta González",
+        "date": "25/10/2026",
+        "total": 225
+      },
+      {
+        "name": "Sofía Zamora",
+        "date": "17/10/2026",
+        "total": 220
+      },
+      {
+        "name": "Michelle Vega",
+        "date": "25/10/2026",
+        "total": 160
+      },
+      {
+        "name": "Sofía Zamora",
+        "date": "4/10/2026",
+        "total": 40
+      }
+    ],
+    "watches": {
+      "rows": 21,
+      "total": 3940,
+      "explicitUnits": 12,
+      "missingQty": 10,
+      "assumedOneUnits": 22,
+      "paid": 1080,
+      "unpaid": 0,
+      "withCost": 8,
+      "completeCosts": 6
+    },
+    "services": [
+      {
+        "row": 25,
+        "product": "Servicio de regalo ",
+        "qty": 1,
+        "price": 74,
+        "cost": 37,
+        "packing": 0,
+        "shipping": 0,
+        "profit": 37,
+        "status": "NO PAGADO "
+      }
+    ],
+    "zeroRows": [
+      {
+        "row": 51,
+        "product": "Collares · Alexandra el de cambio"
+      },
+      {
+        "row": 132,
+        "product": "Promociones · Italian bracelet silver de regalo"
+      },
+      {
+        "row": 135,
+        "product": "Italiano · Gold"
+      },
+      {
+        "row": 136,
+        "product": "Italiano · Mixed dorado con plata"
+      }
+    ],
+    "avgTicket": 844.75
+  },
+  "audit": {
+    "authoredRowsChecked": 121,
+    "captureDifferences": [],
+    "datedTotal": 13516,
+    "totalWithUndatedNaye": 13726,
+    "goodsRevenue": 13442,
+    "estimatedSaleUnits": 158,
+    "explicitSaleUnits": 80,
+    "missingSaleQtyRows": 78,
+    "top2Share": 0.5088043799940811,
+    "lastDayShare": 0.41210417283219886,
+    "lastWeekSales": 8972,
+    "watchShare": 0.2915063628292394,
+    "unconfirmedPayments": 10787
+  },
+  "method": "H es importe de renglón, no se multiplica por F. $90 de saldo anterior no se suma. $15 sólo nota, sin descuento adicional. Pedido sin fecha $210 separado. Noviembre $200 excluido. Piezas estimadas: cantidad explícita o una unidad por renglón, kits/pares como unidades comerciales; excluir servicio, cambio y regalos a cero."
+}

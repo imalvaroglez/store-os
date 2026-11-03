@@ -1,0 +1,15 @@
+{
+  "spreadsheetId": "16fgOfQTVc648pZyT5xSq6sbv73fCQprXVGkvZQ4N23I",
+  "ranges": [
+    "'Ventas Oct'!A50:P81",
+    "'Ventas Oct'!A82:P136"
+  ],
+  "rows": 87,
+  "formulas": 348,
+  "sumsCents": [
+    276700,
+    411000
+  ],
+  "issues": [],
+  "visualVerification": "Browser requires sign-in; native cell formats checked via connector; layout not visually verified."
+}
