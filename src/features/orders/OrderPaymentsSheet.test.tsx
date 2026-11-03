@@ -122,3 +122,71 @@ describe("OrderPaymentsSheet", () => {
     );
   });
 });
+
+describe("OrderPaymentsSheet installment calendar (#165)", () => {
+  const planOrder: Order = {
+    ...order,
+    items: [{ lineId: "l1", productName: "Caja adviento", quantity: 1, unitPrice: 1800, subtotal: 1800 }],
+    installments: { count: 6, frequency: "monthly", firstDueDate: "2026-11-15", agreedAt: "2026-11-01", agreedBy: "u1" },
+  };
+
+  beforeEach(() => {
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+  });
+
+  function renderPlanSheet(orderOverride: Order = planOrder) {
+    return render(
+      <ToastProvider>
+        <OrderPaymentsSheet order={orderOverride} open onClose={() => {}} />
+      </ToastProvider>
+    );
+  }
+
+  it("shows the expected calendar separately from received and balance", async () => {
+    store.payments = [transfer(100, "2026-11-02", "p1")];
+    renderPlanSheet();
+    expect(await screen.findByText("Calendario previsto")).toBeInTheDocument();
+    expect(screen.getByText(/Cuota 1 ·/)).toBeInTheDocument();
+    expect(screen.getByText(/Cuota 6 ·/)).toBeInTheDocument();
+    expect(screen.getAllByText("$300.00").length).toBeGreaterThanOrEqual(6);
+    // $100 cubre parcialmente la cuota más próxima; 2 recibos ≠ 2 cuotas.
+    expect(screen.getByText("Parcial")).toBeInTheDocument();
+    expect(screen.getByText("0 de 6 cubiertas")).toBeInTheDocument();
+    // Recibido y saldo siguen siendo los mismos cobros de #123.
+    expect(screen.getByText("Recibido")).toBeInTheDocument();
+    expect(screen.getAllByText("$100.00").length).toBeGreaterThanOrEqual(2); // recibido y registro
+    expect(screen.getByText("$1,700.00")).toBeInTheDocument();
+  });
+
+  it("tells the operator the pieces are NOT reserved until the first abono, and delivery waits", async () => {
+    renderPlanSheet();
+    expect(await screen.findByText(/se aparta con el primer abono/i)).toBeInTheDocument();
+    expect(screen.getByText(/entrega se habilita al liquidar/i)).toBeInTheDocument();
+  });
+
+  it("marks the reservation and covered cuotas as money arrives (illustrative case)", async () => {
+    store.payments = [1, 2, 3, 4, 5].map((n) => transfer(300, `2026-11-${String(n).padStart(2, "0")}`, `p${n}`));
+    renderPlanSheet({ ...planOrder, installmentsReservedAt: "2026-11-02T10:00:00.000Z" });
+    expect(await screen.findByText(/apartadas desde el primer abono/i)).toBeInTheDocument();
+    expect(screen.getByText("5 de 6 cubiertas")).toBeInTheDocument();
+    expect(screen.getByText("$1,500.00")).toBeInTheDocument();
+    expect(screen.getAllByText("$300.00").length).toBeGreaterThanOrEqual(2); // cuotas y saldo
+    expect(screen.getByText("Pendiente")).toBeInTheDocument();
+  });
+
+  it("flags late cuotas informationally — no penalties exist", async () => {
+    renderPlanSheet({
+      ...planOrder,
+      installments: { count: 6, frequency: "monthly", firstDueDate: "2026-08-15", agreedAt: "2026-08-01", agreedBy: "u1" },
+    });
+    expect(screen.getAllByText("Atrasada").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps the plain payments sheet for ordinary orders", async () => {
+    renderPlanSheet({ ...order });
+    expect(await screen.findByText(/Sin cobros registrados/i)).toBeInTheDocument();
+    expect(screen.queryByText("Calendario previsto")).toBeNull();
+  });
+});
