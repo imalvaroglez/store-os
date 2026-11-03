@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  CheckboxField,
   Dialog,
   IconButton,
   Money,
@@ -24,6 +25,13 @@ import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
 import { groupOrderLines } from "./orderGrouping";
 import { ORDER_STATUS_LABELS } from "./orderStatus";
+import {
+  INSTALLMENT_FREQUENCY_LABELS,
+  installmentDueDate,
+  splitInstallmentCents,
+  validateInstallmentPlanInput,
+  type InstallmentFrequency,
+} from "./installments";
 import { CustomerForm } from "../customers/CustomerForm";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../../types";
 import type { Customer, Order, OrderItem, OrderStatus, Product } from "../../types";
@@ -64,6 +72,15 @@ function lineFromItem(item?: OrderItem): DraftLine {
 
 function numberFromText(value: string): number {
   return Math.max(0, parseAmount(value) ?? 0);
+}
+
+// "T00:00:00" is load-bearing: a bare yyyy-mm-dd parses as UTC and shows the
+// previous day in Mexico (UTC-6) — the same trap OrderCard documents.
+function formatPlanDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
 }
 
 export function OrderForm({
@@ -109,6 +126,20 @@ export function OrderForm({
     () => restoredDraft?.customerQuery ?? customers.find((c) => c.id === order.customerId)?.name ?? ""
   );
   const [deposit, setDeposit] = useState(restoredDraft?.deposit ?? String(order.deposit ?? 0));
+  // #165 installment capture. Nothing is defaulted: the count, the frequency
+  // and the first due date are the operator's agreement, per order.
+  const [installmentsOn, setInstallmentsOn] = useState(
+    restoredDraft?.installmentsOn ?? !!order.installments
+  );
+  const [cuotasText, setCuotasText] = useState(
+    restoredDraft?.cuotasText ?? (order.installments ? String(order.installments.count) : "")
+  );
+  const [frequency, setFrequency] = useState<InstallmentFrequency | "">(
+    (restoredDraft?.frequency as InstallmentFrequency | undefined) ?? order.installments?.frequency ?? ""
+  );
+  const [firstDueDate, setFirstDueDate] = useState(
+    restoredDraft?.firstDueDate ?? order.installments?.firstDueDate ?? ""
+  );
   const [promisedDate, setPromisedDate] = useState(restoredDraft?.promisedDate ?? order.promisedDate ?? "");
   const [orderStatus, setOrderStatus] = useState<OrderStatus>(
     restoredDraft?.orderStatus ?? effectiveOrderStatus(order)
@@ -127,7 +158,7 @@ export function OrderForm({
   // as the baseline: an untouched editor never (re)writes a draft, so simply
   // opening an order never raises the "recovered draft" banner next time.
   const snapshotDraft = () =>
-    JSON.stringify({ orderUpdatedAt: loadedUpdatedAt.current, orderId: restoredDraft?.orderId ?? order.id, orderCreatedAt: restoredDraft?.orderCreatedAt ?? order.createdAt, expectedRevision: expectedRevision.current, mutationId: mutationId.current, mutationPayload: mutationPayload.current, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes });
+    JSON.stringify({ orderUpdatedAt: loadedUpdatedAt.current, orderId: restoredDraft?.orderId ?? order.id, orderCreatedAt: restoredDraft?.orderCreatedAt ?? order.createdAt, expectedRevision: expectedRevision.current, mutationId: mutationId.current, mutationPayload: mutationPayload.current, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes, installmentsOn, cuotasText, frequency, firstDueDate });
   const baselineSnapshot = useRef(snapshotDraft());
   const discardedDraft = useRef(false);
   useEffect(() => {
@@ -144,7 +175,7 @@ export function OrderForm({
       savedAt: new Date().toISOString(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes, conflictingDraft]);
+  }, [draftKey, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes, installmentsOn, cuotasText, frequency, firstDueDate, conflictingDraft]);
 
   function discardDraft() {
     if (!clearOrderDraft(draftKey)) {
@@ -157,6 +188,10 @@ export function OrderForm({
     setCustomerId(order.customerId);
     setCustomerQuery(customers.find((c) => c.id === order.customerId)?.name ?? "");
     setDeposit(String(order.deposit ?? 0));
+    setInstallmentsOn(!!order.installments);
+    setCuotasText(order.installments ? String(order.installments.count) : "");
+    setFrequency(order.installments?.frequency ?? "");
+    setFirstDueDate(order.installments?.firstDueDate ?? "");
     setPromisedDate(order.promisedDate ?? "");
     setOrderStatus(effectiveOrderStatus(order));
     setNotes(order.notes ?? "");
@@ -269,6 +304,30 @@ export function OrderForm({
     }
   }, [deposit, lines]);
 
+  // #165: the agreement preview — derived live from the order total ÷ cuotas
+  // with exact cents, dates derived from the first due date + frequency. Shown
+  // BEFORE saving so the operator confirms exactly what was agreed.
+  const planPreview = useMemo(() => {
+    if (!installmentsOn || !totals) return null;
+    try {
+      const input = validateInstallmentPlanInput({
+        countText: cuotasText,
+        frequency,
+        firstDueDate,
+        totalCents: orderAmountCents(totals.estimatedTotal),
+      });
+      const amounts = splitInstallmentCents(orderAmountCents(totals.estimatedTotal), input.count);
+      return {
+        ...input,
+        amounts,
+        dueDates: amounts.map((_, i) => installmentDueDate(input.firstDueDate, input.frequency, i)),
+      };
+    } catch {
+      return null; // incomplete capture: no preview, no invented agreement
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [installmentsOn, cuotasText, frequency, firstDueDate, totals?.estimatedTotal]);
+
   function updateLine(key: string, patch: Partial<DraftLine>) {
     setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
   }
@@ -359,7 +418,32 @@ export function OrderForm({
       toast.error("Revisa el anticipo.");
       return;
     }
-    const paid = orderAmountCents(numberFromText(deposit)) / 100;
+    // #165: validate the whole agreement before saving anything. Errors are
+    // the operator's exact reason, in Spanish.
+    let installments: Order["installments"];
+    if (installmentsOn) {
+      try {
+        const input = validateInstallmentPlanInput({
+          countText: cuotasText,
+          frequency,
+          firstDueDate,
+          totalCents: orderAmountCents(totals.estimatedTotal),
+        });
+        installments = {
+          ...input,
+          // Preserve the original agreement moment across edits (evidence).
+          agreedAt: order.installments?.agreedAt ?? new Date().toISOString(),
+          agreedBy: order.installments?.agreedBy ?? draftOwnerId,
+        };
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Revisa el plan de pagos.");
+        return;
+      }
+    }
+    // No separate down payment exists (decision iii): a NEW plan order starts
+    // with zero anticipo and money arrives as registered cobros. An existing
+    // order's stored deposit is evidence and is never zeroed here.
+    const paid = installmentsOn && isNew ? 0 : orderAmountCents(numberFromText(deposit)) / 100;
     const customerName = customerId === order.customerId && order.customerName
       ? order.customerName
       : customers.find((customer) => customer.id === customerId)?.name;
@@ -374,6 +458,11 @@ export function OrderForm({
       paymentStatus: paymentStatusForOrder({ ...order, items: normalizedItems, deposit: paid }),
       ...(promisedDate ? { promisedDate } : {}),
       ...(notes.trim() ? { notes: notes.trim() } : {}),
+      // #165: the plan + its one-shot reservation mark + edit evidence travel
+      // with the order; dropping them on edit would un-reserve by accident.
+      ...(installments ? { installments } : {}),
+      ...(order.installmentsReservedAt ? { installmentsReservedAt: order.installmentsReservedAt } : {}),
+      ...(order.installmentsHistory?.length ? { installmentsHistory: order.installmentsHistory } : {}),
       schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
       createdAt: restoredDraft?.orderCreatedAt ?? order.createdAt,
       updatedAt: new Date().toISOString(),
@@ -589,15 +678,81 @@ export function OrderForm({
         })}
       </div>}
 
+      <CheckboxField
+        label="Pagos por partes"
+        hint="Cuotas y fechas acordadas en este pedido, sin intereses. La pieza se aparta con el primer abono y se entrega al liquidar."
+        checked={installmentsOn}
+        onChange={setInstallmentsOn}
+      />
+      {installmentsOn && (
+        <Card className="space-y-3 p-4 md:p-5 shadow-none">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <TextField
+              label="Número de cuotas"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={cuotasText}
+              onChange={(event) => setCuotasText(sanitizeIntegerInput(event.target.value))}
+            />
+            <SelectField
+              label="Frecuencia"
+              value={frequency}
+              onChange={(value) => setFrequency(value as InstallmentFrequency)}
+              placeholder="Selecciona la frecuencia"
+              options={(Object.keys(INSTALLMENT_FREQUENCY_LABELS) as InstallmentFrequency[]).map((value) => ({
+                value,
+                label: INSTALLMENT_FREQUENCY_LABELS[value],
+              }))}
+            />
+            <TextField
+              label="Primera fecha de vencimiento"
+              type="date"
+              value={firstDueDate}
+              onChange={(event) => setFirstDueDate(event.target.value)}
+            />
+          </div>
+          {planPreview && totals ? (
+            <div className="space-y-2" aria-label="Acuerdo de pagos">
+              <p className="text-sm font-medium text-on-surface">
+                {planPreview.count} {planPreview.count === 1 ? "cuota" : "cuotas"} ·{" "}
+                {INSTALLMENT_FREQUENCY_LABELS[planPreview.frequency]}
+              </p>
+              <ul className="max-h-48 overflow-y-auto divide-y divide-edge" aria-label="Calendario de cuotas">
+                {planPreview.amounts.map((amountCents, i) => (
+                  <li key={i} className="flex items-center justify-between gap-3 py-1 text-sm">
+                    <span className="min-w-0 text-on-surface-soft">
+                      Cuota {i + 1} · {formatPlanDate(planPreview.dueDates[i])}
+                    </span>
+                    <span className="serif-display tnum shrink-0">
+                      <Money exact amount={amountCents / 100} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-on-surface-soft">
+                Última fecha: {formatPlanDate(planPreview.dueDates[planPreview.dueDates.length - 1])}. La suma del
+                plan es exactamente el total: <Money exact amount={totals.estimatedTotal} />.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-on-surface-soft">
+              Captura cuotas, frecuencia y primera fecha para ver el acuerdo antes de guardar.
+            </p>
+          )}
+        </Card>
+      )}
       <div className="grid grid-cols-2 gap-2">
-        <TextField
-          label="Anticipo"
-          type="text"
-          inputMode="decimal"
-          pattern="[0-9]*[.]?[0-9]*"
-          value={deposit}
-          onChange={(event) => setDeposit(sanitizeDecimalInput(event.target.value))}
-        />
+        {!installmentsOn && (
+          <TextField
+            label="Anticipo"
+            type="text"
+            inputMode="decimal"
+            pattern="[0-9]*[.]?[0-9]*"
+            value={deposit}
+            onChange={(event) => setDeposit(sanitizeDecimalInput(event.target.value))}
+          />
+        )}
         <TextField label="Fecha prometida" type="date" value={promisedDate} onChange={(event) => setPromisedDate(event.target.value)} />
       </div>
       <SelectField label="Estado del pedido" value={orderStatus} onChange={setOrderStatus} options={STATUS_OPTIONS} />
