@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { formatMoney } from "../lib/money";
+import { formatMoney, formatMoneyExact } from "../lib/money";
 
 // Money renders in the display serif with tabular figures so amounts feel
 // weighty and columns align — a ledger, not a dashboard.
@@ -7,14 +7,16 @@ export function Money({
   amount,
   className = "",
   muted = false,
+  exact = false,
 }: {
   amount: number | undefined | null;
   className?: string;
   muted?: boolean;
+  exact?: boolean;
 }) {
   return (
     <span className={`serif-display tnum ${muted ? "text-on-surface-soft" : ""} ${className}`}>
-      {formatMoney(amount)}
+      {exact ? formatMoneyExact(amount) : formatMoney(amount)}
     </span>
   );
 }
