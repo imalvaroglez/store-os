@@ -56,12 +56,13 @@ dinero/stock que viaja dentro del PR de código.
 6. **Entrega al liquidar, confirmación manual.** La transición hacia
    `delivered` se rechaza con `DeliveryWithBalanceError` en
    `saveOrderWithStockTx` (camino de mutación, no solo botones ocultos) cuando
-   el pedido tiene plan **O** dinero recibido según el documento
-   (`paymentsReceivedCents` + anticipo heredado pendiente) y ese dinero no
-   cubre el total. Quitar el plan con saldo NO habilita entregar en el mismo
-   guardado (#168 F1). Liquidar HABILITA entregar; no marca nada
-   automáticamente. Pedidos ordinarios sin cobros ni plan conservan su
-   comportamiento.
+   el pedido tiene plan **O** cobros registrados según el acumulado del
+   documento (`paymentsReceivedCents` > 0) y el dinero recibido — acumulado +
+   anticipo heredado pendiente, contado una sola vez — no cubre el total.
+   Quitar el plan con saldo NO habilita entregar en el mismo guardado (#168
+   F1). Liquidar HABILITA entregar; no marca nada automáticamente. Un pedido
+   ordinario sin cobros registrados conserva su comportamiento actual (el
+   anticipo heredado solo, sin cobros, no dispara la compuerta).
 7. **Cancelación no infiere.** Cancelar un pedido a plazos YA reservado NO
    libera stock ni devuelve dinero: las piezas siguen apartadas hasta que la
    operadora lo resuelva explícitamente (ajuste de inventario; devolución =
@@ -95,8 +96,8 @@ dinero/stock que viaja dentro del PR de código.
 - Módulo puro `src/features/orders/installments.ts`: validación es-MX, reparto
   exacto en centavos, derivación de fechas, waterfall de cobertura, vista de
   lectura (`installmentPlanView`, dinero del documento) y compuerta de entrega
-  (`deliveryWithBalanceBlocked`: plan **o** dinero recibido, total > recibido).
-  Sin estado, sin segunda fuente de dinero.
+  (`deliveryWithBalanceBlocked`: plan **o** cobros registrados; total >
+  recibido). Sin estado, sin segunda fuente de dinero.
 - Persistencia: ninguna colección nueva. El plan y el acumulado viven en el
   documento del pedido; los abonos siguen en `orders/{orderId}/payments`
   (#123). Las reglas de la subcolección validan CONTENIDO en create

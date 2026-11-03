@@ -205,16 +205,26 @@ export function installmentPlanView(
   };
 }
 
-/** #165/#168 F1 delivery gate for the mutation path: an order with a plan OR
- * with received money (the doc accumulator) may only be confirmed delivered
- * once its total is covered. Evaluating `docReceived` (the document's truth)
- * means removing the plan with a saldo cannot dodge the gate in the same save.
+/**
+ * #168: the doc-side money a delivery gate evaluates. `accumulatorCents` is
+ * `paymentsReceivedCents` — cobros that actually landed; it TRIGGERS the gate
+ * for plan-less orders. `receivedCents` is the accumulator plus the still
+ * pending inherited deposit — the money that may cover the total (the same
+ * single-count semantics paymentSummary always gave plan orders).
  */
-export function deliveryWithBalanceBlocked(
-  order: Partial<Order> & Record<string, unknown>,
-  docReceived: number
-): boolean {
-  return (!!order.installments || docReceived > 0) && orderTotalCents(order) > docReceived;
+export type DocMoney = {
+  accumulatorCents: number;
+  receivedCents: number;
+};
+
+/** #165/#168 F1 delivery gate for the mutation path: an order with a plan OR
+ * with registered cobros (the doc accumulator) may only be confirmed delivered
+ * once its total is covered by received money. Removing the plan with a saldo
+ * cannot dodge the gate in the same save; a deposit-only ordinary order keeps
+ * its legacy behavior (no cobros → the gate never triggers).
+ */
+export function deliveryWithBalanceBlocked(order: Partial<Order> & Record<string, unknown>, money: DocMoney): boolean {
+  return (!!order.installments || money.accumulatorCents > 0) && orderTotalCents(order) > money.receivedCents;
 }
 
 /** Order total in exact cents — the same frozen-line math payments.ts uses. */

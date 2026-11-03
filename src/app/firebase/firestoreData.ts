@@ -371,22 +371,27 @@ export async function saveOrderWithStockTx(
     };
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
-    // conservative max, since records are immutable evidence.
-    const docReceived = Math.max(docReceivedCents(previous ?? {}), docReceivedCents(next));
+    // conservative max, since records are immutable evidence. The accumulator
+    // alone is what TRIGGERS the delivery gate for plan-less orders (#168 F1).
+    const docMoney = {
+      accumulatorCents: Math.max(previous?.paymentsReceivedCents ?? 0, next.paymentsReceivedCents ?? 0),
+      receivedCents: Math.max(docReceivedCents(previous ?? {}), docReceivedCents(next)),
+    };
     // #165/#168 F2: converting an ordinary order that already received money
     // marks the reservation immediately — an open ordinary order already held
     // the pieces, so the mark lands with zero stock delta.
-    if (next.installments && !previous?.installments && docReceived > 0 && !next.installmentsReservedAt) {
+    if (next.installments && !previous?.installments && docMoney.receivedCents > 0 && !next.installmentsReservedAt) {
       next.installmentsReservedAt = new Date().toISOString();
     }
     // #165/#168 F1: the transition INTO delivered requires the doc to show the
-    // total covered — a plan order OR any order with received money. Removing
-    // the plan with a saldo does not enable delivering in the same save.
+    // total covered — a plan order OR any order with registered cobros.
+    // Removing the plan with a saldo does not enable delivering in the same
+    // save; a deposit-only ordinary order keeps its legacy behavior.
     // Validated on the mutation path — hiding buttons is not the guarantee.
     if (
       effectiveOrderStatus(next) === "delivered" &&
       (!previous || effectiveOrderStatus(previous) !== "delivered") &&
-      deliveryWithBalanceBlocked(next, docReceived)
+      deliveryWithBalanceBlocked(next, docMoney)
     ) {
       throw new DeliveryWithBalanceError();
     }

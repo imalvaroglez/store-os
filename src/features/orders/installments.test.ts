@@ -237,25 +237,39 @@ describe("delivery gate (planView)", () => {
 });
 
 describe("deliveryWithBalanceBlocked (#168 F1: the mutation-path gate reads the doc)", () => {
+  const money = (accumulatorCents: number, receivedCents = accumulatorCents) => ({ accumulatorCents, receivedCents });
+
   it("blocks delivering with a plan while money is owed (issue case)", () => {
-    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), 150000)).toBe(true);
+    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), money(150000))).toBe(true);
   });
 
-  it("blocks a plan-less order that already received money — removing the plan cannot dodge the gate", () => {
-    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready" }), 10000)).toBe(true);
+  it("blocks a plan-less order with registered cobros — removing the plan cannot dodge the gate", () => {
+    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready" }), money(10000))).toBe(true);
   });
 
-  it("allows an ordinary order with no received money (legacy behavior intact)", () => {
-    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready" }), 0)).toBe(false);
+  it("keeps the legacy behavior of a deposit-only ordinary order (no cobros → no gate)", () => {
+    // A $400 anticipo on a $900 ordinary order with NO registered cobros never
+    // triggers the gate: ordinary orders keep their current behavior.
+    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready", deposit: 400 }), money(0, 40000))).toBe(false);
+  });
+
+  it("the pending inherited deposit counts toward covering the total (plan orders)", () => {
+    // $400 anticipo aún sin materializar + $100 de cobros = $500 recibidos.
+    expect(
+      deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready", deposit: 400 }), money(10000, 50000))
+    ).toBe(true);
+    expect(
+      deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready", deposit: 400 }), money(140000, 180000))
+    ).toBe(false);
   });
 
   it("allows delivering once the doc money covers the total (plan or not)", () => {
-    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), 180000)).toBe(false);
-    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready" }), 180000)).toBe(false);
+    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), money(180000))).toBe(false);
+    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready" }), money(180000))).toBe(false);
   });
 
   it("money in the customer's favor does not block", () => {
-    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), 190000)).toBe(false);
+    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), money(190000))).toBe(false);
   });
 });
 

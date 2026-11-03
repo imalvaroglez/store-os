@@ -704,18 +704,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // money, mirroring the cloud transaction's doc reconciliation.
       if (prev?.paymentsReceivedCents != null) nextOrder.paymentsReceivedCents = prev.paymentsReceivedCents;
       if (prev?.inheritedDepositMaterialized) nextOrder.inheritedDepositMaterialized = true;
-      const docReceived = Math.max(docReceivedCents(prev ?? {}), docReceivedCents(nextOrder));
+      const docMoney = {
+        accumulatorCents: Math.max(prev?.paymentsReceivedCents ?? 0, nextOrder.paymentsReceivedCents ?? 0),
+        receivedCents: Math.max(docReceivedCents(prev ?? {}), docReceivedCents(nextOrder)),
+      };
       // #165/#168 (local mode parity): the cloud tx enforces these on the doc;
       // the legacy local branch follows the SAME rules — conversion with money
       // received marks the reservation, and delivering requires the doc's
       // received money to cover the total.
-      if (nextOrder.installments && !prev?.installments && docReceived > 0 && !nextOrder.installmentsReservedAt) {
+      if (nextOrder.installments && !prev?.installments && docMoney.receivedCents > 0 && !nextOrder.installmentsReservedAt) {
         nextOrder.installmentsReservedAt = nowIso();
       }
       if (
         effectiveOrderStatus(nextOrder) === "delivered" &&
         (!prev || effectiveOrderStatus(prev) !== "delivered") &&
-        deliveryWithBalanceBlocked(nextOrder, docReceived)
+        deliveryWithBalanceBlocked(nextOrder, docMoney)
       ) {
         throw new DeliveryWithBalanceError();
       }
