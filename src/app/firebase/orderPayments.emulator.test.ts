@@ -266,4 +266,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(2);
   });
 
+
+  it("materializes a legacy deposit once when the first two receipts race", async () => {
+    const orderId = "ledger-inherited-race";
+    await setDoc(doc(holder.db, "orders", orderId), { storeId: "tx-store", deposit: 400, items: [], createdAt: "", updatedAt: "" });
+    await Promise.all([
+      registerOrderPaymentTx({ ...payment("inherited-race-a", 100), orderId }),
+      registerOrderPaymentTx({ ...payment("inherited-race-b", 200), orderId }),
+    ]);
+    expect((await getDoc(doc(holder.db, "orders", orderId))).data()).toMatchObject({ paymentsReceivedCents: 70000, inheritedDepositMaterialized: true });
+    expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(3);
+  });
+
+
+  it("propagates a real content rejection without writing a receipt or changing the balance", async () => {
+    const parent = doc(holder.db, "orders/pay-order");
+    const before = (await getDoc(parent)).data();
+    await expect(registerOrderPaymentTx({ ...payment("service-invalid-actor", 10), createdBy: "another-operator" })).rejects.toMatchObject({ code: "permission-denied" });
+    expect((await getDoc(parent)).data()).toEqual(before);
+    expect((await getDoc(doc(holder.db, "orders/pay-order/payments/service-invalid-actor"))).exists()).toBe(false);
+  });
+
 });
