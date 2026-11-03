@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   INSTALLMENT_FREQUENCY_LABELS,
+  deliveryWithBalanceBlocked,
   installmentDueDate,
   installmentPlanView,
   sameInstallmentPlan,
@@ -260,6 +261,29 @@ describe("delivery gate", () => {
     const view = installmentPlanView(order({ installments: plan }), payments, "2026-11-01");
     expect(view?.balanceCents).toBe(-10000);
     expect(view?.deliveryBlocked).toBe(false);
+  });
+});
+
+describe("deliveryWithBalanceBlocked (#168 F1: the mutation-path gate reads the doc)", () => {
+  it("blocks delivering with a plan while money is owed (issue case)", () => {
+    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), 150000)).toBe(true);
+  });
+
+  it("blocks a plan-less order that already received money — removing the plan cannot dodge the gate", () => {
+    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready" }), 10000)).toBe(true);
+  });
+
+  it("allows an ordinary order with no received money (legacy behavior intact)", () => {
+    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready" }), 0)).toBe(false);
+  });
+
+  it("allows delivering once the doc money covers the total (plan or not)", () => {
+    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), 180000)).toBe(false);
+    expect(deliveryWithBalanceBlocked(order({ orderStatus: "ready" }), 180000)).toBe(false);
+  });
+
+  it("money in the customer's favor does not block", () => {
+    expect(deliveryWithBalanceBlocked(order({ installments: plan, orderStatus: "ready" }), 190000)).toBe(false);
   });
 });
 
