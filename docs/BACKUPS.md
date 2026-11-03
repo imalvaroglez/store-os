@@ -26,7 +26,8 @@ copia real restaurada, descarga independiente desde iCloud y una ejecución prog
 - Capturas entre servicios y páginas no son atómicas. El manifiesto registra
   intervalos. Durante actividad concurrente puede haber referencias a datos
   modificados en otro intervalo; programar en horario de poca actividad.
-- Storage captura objetos activos, fija generación al descargar y guarda sus
+- Storage captura objetos activos sin descompresión automática (incluidos gzip),
+  verifica tamaño y fija generación al descargar y guarda sus
   metadatos completos. La restauración recupera contenido, nombre, tipo,
   cacheControl, disposition, encoding, language y metadatos personalizados.
   `customTime` también se restaura cuando está presente. Generaciones, fechas y otros campos administrados por Google se regeneran;

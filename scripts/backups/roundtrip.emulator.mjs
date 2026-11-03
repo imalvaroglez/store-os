@@ -1,3 +1,4 @@
+import { gzipSync } from 'node:zlib';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -26,17 +27,19 @@ test('complete encrypted backup restores raw Firestore, orphan descendants, Auth
   ] });
   for (let i = 0; i < 501; i += 100) await client.request(`${client.base}/projects/${DEV}/databases/(default)/documents:commit`, { writes: Array.from({ length: Math.min(100, 501 - i) }, (_, j) => ({ update: { name: `${client.root}/pages/p${String(i + j).padStart(4, '0')}`, fields: {} } })) });
   await client.bucket.file('folder/photo.txt').save(Buffer.from('sample photo'), { metadata: { contentType: 'text/plain', cacheControl: 'private, max-age=60', customTime: '2026-11-03T12:00:00Z', metadata: { storeId: 'fixture' } } });
+  const compressed = gzipSync(Buffer.from('compressed fixture'));
+  await client.bucket.file('folder/compressed.txt.gz').save(compressed, { metadata: { contentType: 'text/plain', contentEncoding: 'gzip' } });
   const key = path.join(root, 'identity'); await command('age-keygen', ['-o', key]);
   config.recipient = execFileSync('age-keygen', ['-y', key], { encoding: 'utf8' }).trim();
   await assert.rejects(client.documents({ maxDocuments: 2, maxReads: 2000 }), /DOCUMENT_LIMIT/);
   await assert.rejects(client.documents({ maxReads: 1 }), /FIRESTORE_READ_LIMIT/);
   const report = await preflight(config, client);
-  assert.equal(report.documents, 504); assert.equal(report.users, 1); assert.equal(report.objects, 1);
+  assert.equal(report.documents, 504); assert.equal(report.users, 1); assert.equal(report.objects, 2);
   config.reviewedPreflightSha256 = await fileHash(path.join(config.home, 'preflight.json'));
   const result = await runBackup(config);
   assert(result.completed); assert.equal((await runBackup(config)).skipped, true);
   const output = path.join(root, 'unpacked'); const info = await decryptArchive(path.join(config.destination, result.archive), output, key, config.age);
-  assert.equal(info.counts.documents, 504); assert.equal(info.counts.users, 1); assert.equal(info.counts.objects, 1);
+  assert.equal(info.counts.documents, 504); assert.equal(info.counts.users, 1); assert.equal(info.counts.objects, 2);
   assert.equal(info.projectId, DEV);
   await assert.rejects(restore(client, config, output, info), /EMULATORS_NOT_EMPTY/);
   assert((await fetch(`http://${EMULATORS.FIRESTORE_EMULATOR_HOST}/emulator/v1/projects/${DEV}/databases/(default)/documents`, { method: 'DELETE' })).ok);
@@ -53,5 +56,6 @@ test('complete encrypted backup restores raw Firestore, orphan descendants, Auth
   // The emulator uses its own password representation. This proves the fixture's login,
   // not production SCRYPT verification, which the Auth emulator cannot certify.
   assert(login.ok, 'fixture password must remain usable after restore');
+  assert.deepEqual((await client.bucket.file('folder/compressed.txt.gz').download({ decompress: false }))[0], compressed);
   assert.equal((await client.bucket.file('folder/photo.txt').download())[0].toString(), 'sample photo');
 });
