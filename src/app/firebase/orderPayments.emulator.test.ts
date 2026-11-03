@@ -244,4 +244,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(1);
   }, 15000);
 
+
+  it("concurrent first abonos keep one reservation and both receipts", async () => {
+    const orderId = "ledger-first-race";
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/ledger-first-race-product"), { storeId: "tx-store", quantityOnHand: 2 });
+    });
+    const order: Order = {
+      id: orderId, storeId: "tx-store", customerId: "c1", deposit: 0,
+      items: [{ productId: "ledger-first-race-product", productName: "Caja de prueba", quantity: 1, unitPrice: 900, subtotal: 900 }],
+      orderStatus: "asked", paymentStatus: "unpaid", createdAt: "2026-11-03", updatedAt: "2026-11-03",
+      installments: { count: 3, frequency: "monthly", firstDueDate: "2026-11-15", agreedAt: "2026-11-03", agreedBy: "tx-user" },
+    };
+    await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, order, null, "ledger-first-race-create");
+    await Promise.all([
+      registerOrderPaymentTx({ ...payment("first-race-a", 100), orderId }),
+      registerOrderPaymentTx({ ...payment("first-race-b", 200), orderId }),
+    ]);
+    expect((await getDoc(doc(holder.db, "orders", orderId))).data()).toMatchObject({ paymentsReceivedCents: 30000, revision: 2 });
+    expect((await getDoc(doc(holder.db, "products/ledger-first-race-product"))).data()?.quantityOnHand).toBe(1);
+    expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(2);
+  });
+
 });

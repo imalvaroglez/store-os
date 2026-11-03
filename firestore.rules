@@ -203,7 +203,7 @@ service cloud.firestore {
       let digits = parts[0].replace('[.]', '');
       let at = coefficient[0].size() + exponent + 2;
       let prefix = at <= 0 ? '0' : (at < digits.size() ? digits[0:at]
-        : digits + '000000000000000'[0:at - digits.size()]);
+        : (at == digits.size() ? digits : digits + '000000000000000'[0:at - digits.size()]));
       let next = at >= 0 && at < digits.size() ? digits[at] : '0';
       let magnitude = int(prefix) + (next >= '5' ? 1 : 0);
       return amount < 0 ? -magnitude : magnitude;
@@ -222,7 +222,7 @@ service cloud.firestore {
         && ((paymentId == 'inherited_deposit' && data.kind == 'payment'
               && data.method == 'unknown' && !data.keys().hasAny(['date']))
             || (paymentId != 'inherited_deposit'
-              && ((data.kind == 'adjustment' && data.method == 'unknown')
+              && ((data.kind == 'adjustment' && data.method in ['cash', 'transfer', 'unknown'])
                 || (data.kind == 'payment' && data.method in ['cash', 'transfer']
                   && data.date is string && data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')))));
     }

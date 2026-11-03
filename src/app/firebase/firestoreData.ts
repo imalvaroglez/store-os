@@ -10,6 +10,7 @@ import {
   query,
   where,
   runTransaction,
+  increment,
   writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
@@ -541,7 +542,7 @@ export async function registerOrderPaymentTx(
       saved.push(evidence);
     }
     tx.update(orderRef, {
-      paymentsReceivedCents: money.paymentsReceivedCents,
+      paymentsReceivedCents: increment(savedCents),
       lastPaymentId: payment.id,
       ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
       ...(order.installments && !order.installmentsReservedAt && firstPositiveAbono
