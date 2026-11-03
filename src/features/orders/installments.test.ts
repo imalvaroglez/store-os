@@ -215,10 +215,8 @@ describe("installmentPlanView (schedule + coverage read model)", () => {
   });
 
   it("a refund (signed adjustment) reduces coverage without deleting evidence", () => {
-    const payments = [
-      payment("p1", 300, "2026-11-02T12:00:00.000Z"),
-      { id: "a1", orderId: "o1", storeId: "s1", method: "unknown", kind: "adjustment", amount: -150, note: "Devolución", createdAt: "2026-11-03T12:00:00.000Z", createdBy: "u1" },
-    ];
+    const refund: OrderPayment = { id: "a1", orderId: "o1", storeId: "s1", method: "unknown", kind: "adjustment", amount: -150, note: "Devolución", createdAt: "2026-11-03T12:00:00.000Z", createdBy: "u1" };
+    const payments = [payment("p1", 300, "2026-11-02T12:00:00.000Z"), refund];
     const view = installmentPlanView(order({ installments: plan }), payments, "2026-11-01");
     expect(view?.receivedCents).toBe(15000);
     expect(view?.cuotas[0]).toMatchObject({ coveredCents: 15000, status: "partial" });
