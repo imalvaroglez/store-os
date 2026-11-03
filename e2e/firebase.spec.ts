@@ -58,6 +58,16 @@ test("first signup becomes super_admin and test fixtures stay in the emulator", 
   });
 });
 
+test("super_admin consulta la lista de usuarios de la plataforma", async ({ sharedPage: page }) => {
+  await page.getByRole("button", { name: "Usuarios" }).first().click();
+  await expect(page.getByRole("heading", { name: "Usuarios de la plataforma" })).toBeVisible();
+  await expect(page.getByTestId("user-card")).toHaveCount(1);
+  await expect(page.getByText(ADMIN_EMAIL)).toBeVisible();
+  await expect(page.getByText("Administración", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Inicio" }).first().click();
+  await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
+});
+
 test("adminStores repair is idempotent and the migrated store appears in the picker", async ({ sharedPage: page }) => {
   await ensureSignedOut(page);
   await signIn(page, ADMIN_EMAIL, "password123");
@@ -82,16 +92,6 @@ test("adminStores repair is idempotent and the migrated store appears in the pic
   await changeStore.click();
   await expect(page.getByText("¿Quién opera hoy?")).toBeVisible();
   await expect(page.getByText(name, { exact: true })).toBeVisible();
-});
-
-test("super_admin consulta la lista de usuarios de la plataforma", async ({ sharedPage: page }) => {
-  await page.getByRole("button", { name: "Usuarios" }).first().click();
-  await expect(page.getByRole("heading", { name: "Usuarios de la plataforma" })).toBeVisible();
-  await expect(page.getByTestId("user-card")).toHaveCount(1);
-  await expect(page.getByText(ADMIN_EMAIL)).toBeVisible();
-  await expect(page.getByText("Administración", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Inicio" }).first().click();
-  await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
 });
 
 test("sign out returns to the authentication screen", async ({ sharedPage: page }) => {
