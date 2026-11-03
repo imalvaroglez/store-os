@@ -96,4 +96,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     await expect(getDoc(doc(anonymous, "orders/pay-order/payments/pay_a"))).rejects.toThrow();
     expect((await getDoc(doc(holder.db, "orders/pay-order/payments/pay_a"))).exists()).toBe(true);
   });
+
+  // #168 F5: the create rule validates CONTENT — records are money evidence,
+  // so a raw SDK write cannot inject garbage amounts or invented enums.
+  it("rejects payment writes with invalid content", async () => {
+    const base = { orderId: "pay-order", storeId: "tx-store", date: "2026-11-02", createdAt: "", createdBy: "tx-user" };
+    const ref = (id: string) => doc(holder.db, "orders/pay-order/payments", id);
+    await expect(setDoc(ref("bad_text"), { ...base, method: "cash", kind: "payment", amount: "200" })).rejects.toThrow();
+    await expect(setDoc(ref("bad_negative"), { ...base, method: "cash", kind: "payment", amount: -50 })).rejects.toThrow();
+    await expect(setDoc(ref("bad_zero"), { ...base, method: "cash", kind: "payment", amount: 0 })).rejects.toThrow();
+    await expect(setDoc(ref("bad_method"), { ...base, method: "paypal", kind: "payment", amount: 50 })).rejects.toThrow();
+    await expect(setDoc(ref("bad_kind"), { ...base, method: "cash", kind: "birthday", amount: 50 })).rejects.toThrow();
+    await expect(setDoc(ref("bad_huge"), { ...base, method: "cash", kind: "payment", amount: 9.5e12 })).rejects.toThrow();
+    await expect(setDoc(ref("bad_adj_note"), { ...base, method: "unknown", kind: "adjustment", amount: -100 })).rejects.toThrow();
+    const docs = await getDocs(collection(holder.db, "orders/pay-order/payments"));
+    expect(docs.size).toBe(3); // inherited + pay_a + pay_b: nothing leaked in
+  });
+
+  it("accepts a signed adjustment with its note (corrections stay valid evidence)", async () => {
+    const ref = doc(holder.db, "orders/pay-order/payments/adj_ok");
+    await expect(
+      setDoc(ref, { orderId: "pay-order", storeId: "tx-store", createdAt: "2026-11-02T10:00:00.000Z", createdBy: "tx-user", method: "unknown", kind: "adjustment", amount: -100, note: "Devolución en efectivo" })
+    ).resolves.toBeUndefined();
+  });
 });
