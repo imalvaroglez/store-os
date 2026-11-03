@@ -21,7 +21,7 @@ import {
 import { ProductForm } from "./ProductForm";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
-import { committedForProduct } from "../../lib/inventory";
+import { committedForProduct, stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { defaultTier } from "../../lib/pricing";
 import { publicPrice, profit, formatMoney } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
@@ -109,11 +109,8 @@ function ProductCard({
   const closeMenu = useCallback(() => setMenu(false), []);
   const p = publicPrice(product);
   const est = p != null ? profit(p, product.cost) : undefined;
-  const low =
-    isTiered &&
-    typeof product.quantityOnHand === "number" &&
-    typeof product.lowStockAt === "number" &&
-    product.quantityOnHand <= product.lowStockAt;
+  // FER-09: one derivation for the whole app (default threshold included).
+  const alert = isTiered ? stockAlertLevel(product) : null;
 
   return (
     <Card onClick={onEdit} className="p-4 sm:p-5">
@@ -163,7 +160,7 @@ function ProductCard({
                   {defaultLabel} <b>{formatMoney(product.prices?.[defaultId])}</b>
                 </span>
                 {typeof product.quantityOnHand === "number" && (
-                  <span className={low ? "text-danger font-semibold" : "text-on-surface-soft"}>
+                  <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
                     Existencia: {product.quantityOnHand}
                   </span>
                 )}
@@ -188,9 +185,10 @@ function ProductCard({
                     <IconButton variant="primary" onClick={() => onAdjust(1)} aria-label="Sumar uno">
                       +
                     </IconButton>
-                    {low && <Badge tone="warning">Baja existencia</Badge>}
-                    {product.quantityOnHand < 0 && (
-                      <Badge tone="danger">Faltan {Math.abs(product.quantityOnHand)}</Badge>
+                    {alert && (
+                      <Badge tone={alert === "out" ? "danger" : "warning"}>
+                        {stockAlertText(product)}
+                      </Badge>
                     )}
                   </div>
                 </div>
