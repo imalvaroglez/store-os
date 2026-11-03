@@ -21,7 +21,7 @@ import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
-  const { upsertOrder, state, activeStore, payments } = useStore();
+  const { upsertOrder, state, activeStore } = useStore();
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -32,10 +32,10 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const paymentStatus = paymentStatusForOrder(order);
   const status = effectiveOrderStatus(order);
   const verb = nextActionVerb(status);
-  // #165 read model for plan orders. Uses the session's payment records: when
-  // they are not loaded yet the numbers undercount received money, which can
-  // only hold actions back (never enable them); opening Cobros refreshes.
-  const planView = order.installments ? installmentPlanView(order, payments ?? []) : null;
+  // #165/#168 read model for plan orders: Recibido/Saldo come from the order
+  // doc's transactional accumulator, so the card is correct right after a
+  // reload. The per-cobro breakdown still only loads when Cobros opens.
+  const planView = order.installments ? installmentPlanView(order) : null;
   const owed = planView ? planView.balanceCents > 0 : totals.balance > 0;
   const deliveryHeld = !!planView?.deliveryBlocked && verb === "Entregar";
   // Per-line profit: lines without a known cost contribute 0 instead of

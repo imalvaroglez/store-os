@@ -74,9 +74,10 @@ export function OrderPaymentsSheet({
 
   const summary = paymentSummary(order, payments);
   const owed = summary.balanceCents > 0;
-  // #165: the expected calendar for plan orders. Same records as the summary
-  // above — received/saldo are never recomputed from a second accumulator.
-  const plan = installmentPlanView(order, payments);
+  // #165/#168: the expected calendar for plan orders. The calendar's money
+  // comes from the order DOC (transactional accumulator) — by construction the
+  // same Σ as the records listed below; the breakdown loads with this sheet.
+  const plan = installmentPlanView(order);
 
   async function save(input: Parameters<typeof registerOrderPayment>[1], onDone: () => void) {
     setSaving(true);

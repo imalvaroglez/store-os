@@ -79,16 +79,32 @@ describe("installment order card (#165)", () => {
     rendered.unmount();
   });
 
-  it("reconstructs recibido/saldo from the payment records, not a second accumulator", () => {
+  it("shows recibido/saldo from the order doc accumulator — correct right after a reload (#168 F3)", () => {
+    // Session has NO payment records loaded (fresh reload); the money truth
+    // lives on the order document and the card must show it.
+    const rendered = render(
+      <ToastProvider>
+        <OrderCard order={{ ...planOrder, paymentsReceivedCents: 60000 }} onEdit={() => {}} />
+      </ToastProvider>
+    );
+    expect(screen.getByText("Recibido")).toBeInTheDocument();
+    expect(screen.getByText("$600.00")).toBeInTheDocument();
+    expect(screen.getByText("$1,200.00")).toBeInTheDocument();
+    rendered.unmount();
+  });
+
+  it("session records alone no longer drive the card numbers", () => {
     holder.payments = [abono("p1", 100), abono("p2", 500)];
     const rendered = render(
       <ToastProvider>
         <OrderCard order={planOrder} onEdit={() => {}} />
       </ToastProvider>
     );
+    // Without the doc accumulator the card shows $0 received — records only
+    // surface in the Cobros sheet, never as a second truth on the card.
     expect(screen.getByText("Recibido")).toBeInTheDocument();
-    expect(screen.getByText("$600.00")).toBeInTheDocument();
-    expect(screen.getByText("$1,200.00")).toBeInTheDocument();
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
+    expect(screen.getAllByText("$1,800.00").length).toBeGreaterThanOrEqual(2); // total y saldo
     rendered.unmount();
   });
 
