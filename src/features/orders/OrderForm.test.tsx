@@ -494,6 +494,10 @@ describe("installment plan capture (#165)", () => {
     expect(screen.getByLabelText("Anticipo")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: /pagos por partes/i }));
     expect(screen.queryByLabelText("Anticipo")).toBeNull();
+    rendered.unmount();
+  });
+});
+
 describe("estimated profit while registering a sale", () => {
   it("previews precio − costo − gastos de venta in the totals bar", () => {
     state.products.push({ ...state.products[0], id: "prod_cost", name: "Collar con costo", cost: 40 } as typeof state.products[number]);
