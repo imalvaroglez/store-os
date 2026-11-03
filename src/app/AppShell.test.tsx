@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { AppShell } from "./AppShell";
 import { StoreProvider } from "./StoreProvider";
@@ -111,5 +111,49 @@ describe("AppShell configuración de tienda", () => {
 
     expect(screen.getByRole("heading", { name: "No tienes permiso" })).toBeTruthy();
     expect(screen.queryByText("Teléfono de WhatsApp")).toBeNull();
+  });
+
+  it("oculta Usuarios a member y bloquea la ruta directa", async () => {
+    mocks.user = { uid: "uid_mar", email: "mar@olivia.mx", role: "member" };
+    window.history.replaceState({}, "", "/productos");
+
+    render(
+      <ThemeProvider>
+        <ToastProvider>
+          <StoreProvider>
+            <AppShell />
+          </StoreProvider>
+        </ToastProvider>
+      </ThemeProvider>
+    );
+
+    await waitFor(() => expect(screen.getAllByText("Olivia").length).toBeGreaterThan(0));
+    expect(screen.queryByRole("button", { name: "Usuarios" })).toBeNull();
+    act(() => {
+      window.history.replaceState({}, "", "/usuarios");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "No tienes permiso" })).toBeTruthy());
+  });
+
+  it("expone la ruta Usuarios a super_admin en navegación móvil y de escritorio", async () => {
+    mocks.user = { uid: "uid_admin", email: "admin@store.os", role: "super_admin" };
+    window.history.replaceState({}, "", "/usuarios");
+    const state = fixtureState();
+    state.stores[0].ownerUid = "uid_fer";
+    mocks.loadCloudState.mockImplementation(async () => state);
+
+    render(
+      <ThemeProvider>
+        <ToastProvider>
+          <StoreProvider>
+            <AppShell />
+          </StoreProvider>
+        </ToastProvider>
+      </ThemeProvider>
+    );
+
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Usuarios" })).toHaveLength(2));
+    expect(await screen.findByRole("heading", { name: "No se pudo cargar la lista" })).toBeTruthy();
   });
 });
