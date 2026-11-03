@@ -58,12 +58,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     expect(docs.size).toBe(2);
     const inherited = docs.docs.find((d) => d.id === "inherited_deposit");
     expect(inherited?.data()).toMatchObject({ method: "cash", amount: 400, date: "2026-10-20" });
+    // #168: the doc-level accumulator absorbed payment + inherited deposit in
+    // the SAME transaction, and the deposit is marked so it never double-counts.
+    const orderDoc = (await getDoc(doc(holder.db, "orders/pay-order"))).data();
+    expect(orderDoc?.paymentsReceivedCents).toBe(60000); // $200 + inherited $400
+    expect(orderDoc?.inheritedDepositMaterialized).toBe(true);
   });
 
   it("never re-materializes the inherited deposit on later payments", async () => {
     await registerOrderPaymentTx(payment("pay_b", 100), { method: "transfer", date: "2026-10-25" });
     const docs = await getDocs(collection(holder.db, "orders/pay-order/payments"));
     expect(docs.size).toBe(3); // inherited + pay_a + pay_b
+    // The accumulator keeps folding: 600 + 100 cents-dollars = $700.
+    expect((await getDoc(doc(holder.db, "orders/pay-order"))).data()?.paymentsReceivedCents).toBe(70000);
   });
 
   it("a member of another store cannot attach a payment to a foreign order", async () => {

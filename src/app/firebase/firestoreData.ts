@@ -20,7 +20,9 @@ import { installmentDeliveryBlocked } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   inheritedDepositRecord,
+  orderMoneyAfterPayments,
   paymentSummary,
+  signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment } from "../../types";
@@ -410,9 +412,12 @@ export async function fetchOrderPayments(orderId: string): Promise<OrderPayment[
  * `deposit` is materialized once as an inherited record (deterministic id)
  * carrying the date/method supplied by the operator — estimated when unknown,
  * never left as "unknown" (PO decision 2026-11-03). Materialization only rides
- * along a real payment, never an adjustment. Payment docs are create-only
- * evidence (see firestore.rules); corrections are new signed records, which is
- * why this path never updates an existing doc.
+ * along a real payment, never an adjustment — and the order's doc-level money
+ * accumulator `paymentsReceivedCents` absorbs the registration's signed cents
+ * (#168), so the document is always the truth of received money. Payment docs
+ * are create-only evidence (see firestore.rules); corrections are new signed
+ * records, which is why this path never updates an existing PAYMENT doc (the
+ * parent order doc only gains the accumulator + reservation fields).
  *
  * #165: for an installment order, the FIRST confirmed positive abono reserves
  * the order's quantities ONCE, in this same transaction: the canonical product
@@ -485,7 +490,22 @@ export async function registerOrderPaymentTx(
       reservation = { updates: applyRelativeDeltas(canonical, deltas).updates, at: new Date().toISOString() };
     }
 
-    // WRITE PHASE — one atomic commit: evidence, reservation, and mark.
+    // WRITE PHASE — one atomic commit: evidence, reservation, mark, and the
+    // doc-level money accumulator (#168). The accumulator folds this
+    // registration's signed cents (and the inherited deposit's, exactly once
+    // when it materializes) into `paymentsReceivedCents`, so the ORDER DOC is
+    // the truth of received money — a fresh session cannot undercount it.
+    // Unsafe precision aborts the whole registration (fail-closed on writes).
+    let savedCents: number;
+    try {
+      savedCents = signedAmountCents(payment.amount) + (inherited ? signedAmountCents(inherited.amount) : 0);
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw new Error("El monto del cobro excede la precisión admitida.");
+      }
+      throw error;
+    }
+    const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inherited);
     const saved: OrderPayment[] = [];
     if (inheritedRecord) {
       tx.set(inheritedRef, stripUndefined(inheritedRecord) as Record<string, unknown>);
@@ -500,6 +520,13 @@ export async function registerOrderPaymentTx(
         revision: (order.revision ?? 0) + 1,
         lastMutationId: `installment_reservation_${payment.id}`,
         updatedAt: reservation.at,
+        paymentsReceivedCents: money.paymentsReceivedCents,
+        ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
+      });
+    } else {
+      tx.update(orderRef, {
+        paymentsReceivedCents: money.paymentsReceivedCents,
+        ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
       });
     }
     tx.set(paymentRef, stripUndefined(payment) as Record<string, unknown>);

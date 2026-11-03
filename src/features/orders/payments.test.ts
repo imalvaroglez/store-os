@@ -3,8 +3,10 @@ import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   buildAdjustmentRecord,
   buildPaymentRecord,
+  docReceivedCents,
   inheritedDepositRecord,
   mergePayments,
+  orderMoneyAfterPayments,
   orderPaymentsFor,
   paymentSummary,
   paymentsCents,
@@ -127,6 +129,43 @@ describe("received and balance (issue #123 case)", () => {
   it("ignores corrupt non-finite amounts instead of writing NaN", () => {
     const payments = [payment({ amount: Number.NaN }), payment({ amount: 5 })];
     expect(paymentsCents(payments)).toBe(500);
+  });
+
+  it("treats an amount beyond safe cents precision as corrupt (excluded, no RangeError)", () => {
+    // #168 F5: a garbage stored amount must never crash the render with the
+    // RangeError orderAmountCents throws — it is excluded, like any corrupt data.
+    const payments = [payment({ amount: 9.5e13 }), payment({ amount: 5 })];
+    expect(paymentsCents(payments)).toBe(500);
+  });
+});
+
+describe("doc-level money truth (#168: the accumulator on the order document)", () => {
+  it("docReceivedCents reads the accumulator — no session records involved", () => {
+    expect(docReceivedCents(order({ paymentsReceivedCents: 150000 }))).toBe(150000);
+  });
+
+  it("an unmaterialized legacy deposit still counts on top of the accumulator", () => {
+    expect(docReceivedCents(order({ deposit: 400, paymentsReceivedCents: 10000 }))).toBe(50000);
+  });
+
+  it("once materialized (marker set) the deposit is never counted twice", () => {
+    // The accumulator already contains the inherited record's cents.
+    expect(docReceivedCents(order({ deposit: 400, paymentsReceivedCents: 50000, inheritedDepositMaterialized: true }))).toBe(50000);
+  });
+
+  it("absent accumulator + zero deposit reads as zero; corrupt fields read as zero, never NaN", () => {
+    expect(docReceivedCents(order())).toBe(0);
+    expect(docReceivedCents(order({ paymentsReceivedCents: Number.NaN, deposit: Number.NaN }))).toBe(0);
+  });
+
+  it("orderMoneyAfterPayments adds the saved cents and flips the materialization marker once", () => {
+    const money = orderMoneyAfterPayments(order({ deposit: 400 }), 20000, true);
+    expect(money).toEqual({ paymentsReceivedCents: 20000, inheritedDepositMaterialized: true });
+    // A later abono adds on top; the marker stays set.
+    const later = orderMoneyAfterPayments({ paymentsReceivedCents: 20000, inheritedDepositMaterialized: true }, 10000, false);
+    expect(later).toEqual({ paymentsReceivedCents: 30000, inheritedDepositMaterialized: true });
+    // No inherited materialization → the marker is not invented.
+    expect(orderMoneyAfterPayments(order(), 10000, false)).toEqual({ paymentsReceivedCents: 10000 });
   });
 });
 

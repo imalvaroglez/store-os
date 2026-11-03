@@ -279,6 +279,16 @@ export type Order = {
   installmentsReservedAt?: string;
   /** Replaced plans, oldest first — evidence, never rewritten. */
   installmentsHistory?: PastInstallmentPlan[];
+  /** #168: Σ signed cents of this order's payment records (cobros positive,
+   * adjustments signed), maintained by registerOrderPaymentTx in the SAME
+   * transaction as each record — the money truth of the ORDER DOC. Gates and
+   * displays read this, never the session's records: a fresh session can no
+   * longer undercount received money. Absent = no records were ever written. */
+  paymentsReceivedCents?: number;
+  /** #168: set (same transaction) once the legacy `deposit` materialized as
+   * the inherited payment record, so the doc never counts that deposit twice
+   * (accumulator + pending deposit). */
+  inheritedDepositMaterialized?: boolean;
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.

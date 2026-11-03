@@ -184,6 +184,12 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
       ? { installmentsReservedAt: raw.installmentsReservedAt }
       : {}),
     ...(migratedInstallmentHistory(raw.installmentsHistory) ? { installmentsHistory: migratedInstallmentHistory(raw.installmentsHistory) } : {}),
+    // #168 doc-level money truth: passed verbatim when well-formed, dropped
+    // when corrupt — money fields are never repaired or invented here.
+    ...(typeof raw.paymentsReceivedCents === "number" && Number.isFinite(raw.paymentsReceivedCents)
+      ? { paymentsReceivedCents: raw.paymentsReceivedCents }
+      : {}),
+    ...(raw.inheritedDepositMaterialized === true ? { inheritedDepositMaterialized: true } : {}),
     schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,

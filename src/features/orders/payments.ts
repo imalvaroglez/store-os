@@ -1,7 +1,10 @@
 // Order payments (#123): the money rules behind per-order payment records.
 // Received = Σ payment records (plus the still-unmaterialized legacy deposit);
-// balance = total − received. Always recomputed from the records — there is no
-// parallel accumulator. All numeric coercion flows through parseAmount and the
+// balance = total − received. The read model recomputes from the records; the
+// order DOCUMENT additionally carries `paymentsReceivedCents` (#168) — the same
+// Σ maintained transactionally by registerOrderPaymentTx, not a second source
+// of truth — so gates and the order card survive a fresh session with no
+// records loaded. All numeric coercion flows through parseAmount and the
 // exact-cents helpers; NaN never enters the state.
 import type { Order, OrderPayment, OrderPaymentMethod } from "../../types";
 import { parseAmount } from "../../lib/money";
@@ -55,7 +58,19 @@ export function signedAmountCents(amount: number): number {
 }
 
 function finiteCents(amount: number): number {
-  return Number.isFinite(amount) ? signedAmountCents(amount) : 0;
+  if (!Number.isFinite(amount)) return 0;
+  try {
+    return signedAmountCents(amount);
+  } catch (error) {
+    // #168 F5: a stored amount beyond safe cents precision is corrupt data —
+    // excluded (contributes 0) with a warning instead of a RangeError that
+    // would crash the render. Money never guesses, but it never explodes either.
+    if (error instanceof RangeError) {
+      console.warn("[payments] Monto de cobro fuera de precisión segura, excluido del acumulado:", amount);
+      return 0;
+    }
+    throw error;
+  }
 }
 
 function normalizeAmount(amountText: string): number {
@@ -162,6 +177,55 @@ export function inheritedDepositRecord(
 /** Σ signed cents over records; corrupt amounts contribute 0 (never NaN). */
 export function paymentsCents(payments: OrderPayment[] | undefined | null): number {
   return (payments ?? []).reduce((sum, p) => sum + finiteCents(p.amount), 0);
+}
+
+/**
+ * #168: the money truth of the ORDER DOCUMENT — the transactional accumulator
+ * (`paymentsReceivedCents`, Σ signed cents of the payment records, maintained
+ * by registerOrderPaymentTx in the same transaction as each record) plus the
+ * legacy `deposit` while it is still pending materialization. Gates and the
+ * order card read THIS, never the session's records: a fresh session can no
+ * longer undercount received money. Corrupt fields read as zero, never NaN.
+ */
+export function docReceivedCents(order: Partial<Order> & Record<string, unknown>): number {
+  const acc =
+    typeof order.paymentsReceivedCents === "number" && Number.isFinite(order.paymentsReceivedCents)
+      ? order.paymentsReceivedCents
+      : 0;
+  if (order.inheritedDepositMaterialized === true) return acc;
+  const deposit = typeof order.deposit === "number" && Number.isFinite(order.deposit) ? Math.max(0, order.deposit) : 0;
+  try {
+    return acc + orderAmountCents(deposit);
+  } catch {
+    return acc; // a deposit beyond safe precision is corrupt, not money
+  }
+}
+
+/** The doc-money fields a successful payment registration writes (#168). */
+export type OrderMoneyFields = { paymentsReceivedCents: number; inheritedDepositMaterialized?: true };
+
+/**
+ * Fold one registration's saved cents into the order's doc money. Used by the
+ * Firestore transaction itself and mirrored into the in-memory order so the
+ * card reflects an abono without waiting for the listener round-trip.
+ * `materializesInherited` flips the marker exactly once (the pending deposit
+ * joins the accumulator, so it must never be counted again on top of it).
+ */
+export function orderMoneyAfterPayments(
+  order: Partial<Order> & Record<string, unknown>,
+  savedCents: number,
+  materializesInherited: boolean
+): OrderMoneyFields {
+  const acc =
+    typeof order.paymentsReceivedCents === "number" && Number.isFinite(order.paymentsReceivedCents)
+      ? order.paymentsReceivedCents
+      : 0;
+  return {
+    paymentsReceivedCents: acc + savedCents,
+    ...(order.inheritedDepositMaterialized === true || materializesInherited
+      ? { inheritedDepositMaterialized: true as const }
+      : {}),
+  };
 }
 
 /** Store isolation: a payment must match BOTH the order and the store. */
