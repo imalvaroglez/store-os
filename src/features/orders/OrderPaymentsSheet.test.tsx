@@ -146,7 +146,9 @@ describe("OrderPaymentsSheet installment calendar (#165)", () => {
 
   it("shows the expected calendar separately from received and balance", async () => {
     store.payments = [transfer(100, "2026-11-02", "p1")];
-    renderPlanSheet();
+    // #168: the calendar reads the order doc accumulator (the same Σ the
+    // records below carry — the sheet lists them as evidence).
+    renderPlanSheet({ ...planOrder, paymentsReceivedCents: 10000 });
     expect(await screen.findByText("Calendario previsto")).toBeInTheDocument();
     expect(screen.getByText(/Cuota 1 ·/)).toBeInTheDocument();
     expect(screen.getByText(/Cuota 6 ·/)).toBeInTheDocument();
@@ -168,7 +170,7 @@ describe("OrderPaymentsSheet installment calendar (#165)", () => {
 
   it("marks the reservation and covered cuotas as money arrives (illustrative case)", async () => {
     store.payments = [1, 2, 3, 4, 5].map((n) => transfer(300, `2026-11-${String(n).padStart(2, "0")}`, `p${n}`));
-    renderPlanSheet({ ...planOrder, installmentsReservedAt: "2026-11-02T10:00:00.000Z" });
+    renderPlanSheet({ ...planOrder, installmentsReservedAt: "2026-11-02T10:00:00.000Z", paymentsReceivedCents: 150000 });
     expect(await screen.findByText(/apartadas desde el primer abono/i)).toBeInTheDocument();
     expect(screen.getByText("5 de 6 cubiertas")).toBeInTheDocument();
     expect(screen.getByText("$1,500.00")).toBeInTheDocument();

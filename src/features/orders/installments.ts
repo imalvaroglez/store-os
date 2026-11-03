@@ -1,9 +1,9 @@
 // Installment plans (#165): the schedule/coverage rules layered on top of the
 // #123 payment records. Pure functions only — persistence lives in
-// firestoreData.ts. The read model ALWAYS recomputes from the order's current
-// total plus the SAME payment records payments.ts reads (received/balance come
-// from paymentSummary): there is no second money accumulator, and the number
-// of receipts is never the number of cuotas covered.
+// firestoreData.ts. The read model recomputes from the order's current total
+// plus the money truth of the ORDER DOC (#168): docReceivedCents — the
+// transactional accumulator payments.ts maintains — never a session's view of
+// the records, and the number of receipts is never the number of cuotas.
 //
 // Adopted decisions (issue #165 comment, 2026-11-02): the operator picks the
 // first due date and a configurable frequency (weekly/biweekly/monthly); later
@@ -12,11 +12,11 @@
 // leftover flows to the next; lateness is shown without penalties; there is no
 // separate down payment — any abono reduces the same total; no interest or
 // charges of any kind exist in this model.
-import type { InstallmentFrequency, Order, OrderInstallmentPlan, OrderPayment } from "../../types";
+import type { InstallmentFrequency, Order, OrderInstallmentPlan } from "../../types";
 import { parseAmount } from "../../lib/money";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
-import { paymentSummary } from "./payments";
+import { docReceivedCents } from "./payments";
 
 export type { InstallmentFrequency, OrderInstallmentPlan };
 
@@ -163,19 +163,22 @@ function applyReceivedToSchedule(amounts: number[], receivedCents: number): numb
 
 /**
  * The single read model for the installment UI. Recomputed every time from the
- * CURRENT total and the SAME #123 records (via paymentSummary), so a total or
- * plan change re-derives everything without touching a single payment.
+ * CURRENT total and the money truth of the ORDER DOC (docReceivedCents: the
+ * transactional accumulator plus the pending inherited deposit), so a total or
+ * plan change re-derives everything without touching a single payment — and a
+ * fresh session with no payment records loaded shows the real numbers (#168).
  */
 export function installmentPlanView(
   order: Partial<Order> & Record<string, unknown>,
-  payments: OrderPayment[],
   today: string = new Date().toISOString().slice(0, 10)
 ): InstallmentPlanView | null {
   const plan = order.installments as OrderInstallmentPlan | undefined;
   if (!plan) return null;
-  const summary = paymentSummary(order, payments);
-  const amounts = splitInstallmentCents(summary.totalCents, plan.count);
-  const coverage = applyReceivedToSchedule(amounts, summary.receivedCents);
+  const totalCents = orderTotalCents(order);
+  const receivedCents = docReceivedCents(order);
+  const balanceCents = totalCents - receivedCents;
+  const amounts = splitInstallmentCents(totalCents, plan.count);
+  const coverage = applyReceivedToSchedule(amounts, receivedCents);
   const cuotas: InstallmentCuota[] = amounts.map((amountCents, i) => {
     const coveredCents = coverage[i];
     const dueDate = installmentDueDate(plan.firstDueDate, plan.frequency, i);
@@ -194,11 +197,11 @@ export function installmentPlanView(
     coveredCount: cuotas.filter((c) => c.status === "covered").length,
     lateCount: cuotas.filter((c) => c.late).length,
     lastDueDate: cuotas[cuotas.length - 1]?.dueDate ?? plan.firstDueDate,
-    totalCents: summary.totalCents,
-    receivedCents: summary.receivedCents,
-    balanceCents: summary.balanceCents,
+    totalCents,
+    receivedCents,
+    balanceCents,
     reserved: !!order.installmentsReservedAt,
-    deliveryBlocked: summary.balanceCents > 0,
+    deliveryBlocked: balanceCents > 0,
   };
 }
 

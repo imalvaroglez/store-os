@@ -8,7 +8,7 @@ import {
   splitInstallmentCents,
   validateInstallmentPlanInput,
 } from "./installments";
-import type { Order, OrderPayment } from "../../types";
+import type { Order } from "../../types";
 
 const order = (overrides: Partial<Order> = {}): Order => ({
   id: "o1",
@@ -30,18 +30,6 @@ const plan = {
   agreedAt: "2026-11-01T00:00:00.000Z",
   agreedBy: "u1",
 };
-
-const payment = (id: string, amount: number, createdAt: string): OrderPayment => ({
-  id,
-  orderId: "o1",
-  storeId: "s1",
-  date: createdAt.slice(0, 10),
-  method: "cash",
-  kind: "payment",
-  amount,
-  createdAt,
-  createdBy: "u1",
-});
 
 describe("exact-cents cuota split", () => {
   it("divides evenly with no remainder lost ($1,800 in 6 → six $300)", () => {
@@ -124,7 +112,7 @@ describe("plan input validation", () => {
 
 describe("installmentPlanView (schedule + coverage read model)", () => {
   it("derives the full schedule from the plan and the CURRENT total", () => {
-    const view = installmentPlanView(order({ installments: plan }), [], "2026-11-01");
+    const view = installmentPlanView(order({ installments: plan }), "2026-11-01");
     expect(view?.cuotas).toHaveLength(6);
     expect(view?.cuotas[0]).toMatchObject({ dueDate: "2026-11-15", amountCents: 30000, coveredCents: 0 });
     expect(view?.lastDueDate).toBe("2027-04-15");
@@ -133,14 +121,14 @@ describe("installmentPlanView (schedule + coverage read model)", () => {
     expect(view?.reserved).toBe(false);
   });
 
-  it("returns null for ordinary orders", () => {
-    expect(installmentPlanView(order(), [])).toBeNull();
+  it("returns null for ordinary orders — money on the doc alone builds no calendar", () => {
+    expect(installmentPlanView(order())).toBeNull();
+    expect(installmentPlanView(order({ paymentsReceivedCents: 999999 }))).toBeNull();
   });
 
   it("re-derives the amounts when the total changes post-agreement (evidence intact)", () => {
     const view = installmentPlanView(
       order({ installments: plan, items: [{ lineId: "l1", productName: "Caja", quantity: 1, unitPrice: 1200, subtotal: 1200 }] }),
-      [],
       "2026-11-01"
     );
     expect(view?.totalCents).toBe(120000);
@@ -148,17 +136,13 @@ describe("installmentPlanView (schedule + coverage read model)", () => {
   });
 
   it("covers the nearest-due cuota first and flows the leftover forward ($100 then $500)", () => {
-    const first = installmentPlanView(order({ installments: plan }), [payment("p1", 100, "2026-11-02T12:00:00.000Z")], "2026-11-01");
+    const first = installmentPlanView(order({ installments: plan, paymentsReceivedCents: 10000 }), "2026-11-01");
     expect(first?.receivedCents).toBe(10000);
     expect(first?.balanceCents).toBe(170000); // $1,700
     expect(first?.coveredCount).toBe(0); // no cuota fully covered yet
     expect(first?.cuotas[0]).toMatchObject({ coveredCents: 10000, status: "partial" });
 
-    const second = installmentPlanView(
-      order({ installments: plan }),
-      [payment("p1", 100, "2026-11-02T12:00:00.000Z"), payment("p2", 500, "2026-11-09T12:00:00.000Z")],
-      "2026-11-01"
-    );
+    const second = installmentPlanView(order({ installments: plan, paymentsReceivedCents: 60000 }), "2026-11-01");
     expect(second?.receivedCents).toBe(60000);
     expect(second?.balanceCents).toBe(120000); // $1,200
     expect(second?.coveredCount).toBe(2); // cuotas 1 y 2 cubiertas por el acumulado
@@ -168,20 +152,15 @@ describe("installmentPlanView (schedule + coverage read model)", () => {
   });
 
   it("two receipts never fake two covered cuotas when the money does not reach them", () => {
-    // $100 + $150 = 2 recibos, pero ninguna cuota de $300 se cubre.
-    const view = installmentPlanView(
-      order({ installments: plan }),
-      [payment("p1", 100, "2026-11-02T12:00:00.000Z"), payment("p2", 150, "2026-11-09T12:00:00.000Z")],
-      "2026-11-01"
-    );
+    // $100 + $150 = 2 recibos ($250 acumulado), pero ninguna cuota de $300 se cubre.
+    const view = installmentPlanView(order({ installments: plan, paymentsReceivedCents: 25000 }), "2026-11-01");
     expect(view?.receivedCents).toBe(25000);
     expect(view?.coveredCount).toBe(0);
     expect(view?.cuotas[0].coveredCents).toBe(25000);
   });
 
   it("shows the illustrative case: 5 × $300 leaves $1,500 received / $300 owed", () => {
-    const payments = [1, 2, 3, 4, 5].map((n) => payment(`p${n}`, 300, `2026-11-${String(n).padStart(2, "0")}T12:00:00.000Z`));
-    const view = installmentPlanView(order({ installments: plan }), payments, "2026-11-01");
+    const view = installmentPlanView(order({ installments: plan, paymentsReceivedCents: 150000 }), "2026-11-01");
     expect(view?.receivedCents).toBe(150000);
     expect(view?.balanceCents).toBe(30000);
     expect(view?.coveredCount).toBe(5);
@@ -189,14 +168,13 @@ describe("installmentPlanView (schedule + coverage read model)", () => {
   });
 
   it("marking the order reserved is reflected (the reservation itself lives on the order)", () => {
-    const view = installmentPlanView(order({ installments: plan, installmentsReservedAt: "2026-11-02T10:00:00.000Z" }), [], "2026-11-01");
+    const view = installmentPlanView(order({ installments: plan, installmentsReservedAt: "2026-11-02T10:00:00.000Z" }), "2026-11-01");
     expect(view?.reserved).toBe(true);
   });
 
   it("flags late cuotas informatively (no penalty fields exist)", () => {
     const view = installmentPlanView(
       order({ installments: { ...plan, firstDueDate: "2026-09-15", frequency: "monthly" } }),
-      [],
       "2026-11-20"
     );
     expect(view?.lateCount).toBe(3); // sep 15, oct 15 y nov 15 vencidas y sin cubrir
@@ -206,59 +184,53 @@ describe("installmentPlanView (schedule + coverage read model)", () => {
   });
 
   it("a fully covered cuota is never late even if its date passed", () => {
-    const payments = [1, 2, 3].map((n) => payment(`p${n}`, 300, `2026-09-${String(10 + n).padStart(2, "0")}T12:00:00.000Z`));
     const view = installmentPlanView(
-      order({ installments: { ...plan, firstDueDate: "2026-09-15", frequency: "monthly" } }),
-      payments,
+      order({ installments: { ...plan, firstDueDate: "2026-09-15", frequency: "monthly" }, paymentsReceivedCents: 90000 }),
       "2026-11-20"
     );
     expect(view?.lateCount).toBe(0); // 3 cuotas cubiertas, la 4ª vence dic 15
   });
 
   it("a refund (signed adjustment) reduces coverage without deleting evidence", () => {
-    const refund: OrderPayment = { id: "a1", orderId: "o1", storeId: "s1", method: "unknown", kind: "adjustment", amount: -150, note: "Devolución", createdAt: "2026-11-03T12:00:00.000Z", createdBy: "u1" };
-    const payments = [payment("p1", 300, "2026-11-02T12:00:00.000Z"), refund];
-    const view = installmentPlanView(order({ installments: plan }), payments, "2026-11-01");
+    // $300 cobrado − $150 devueltos = $150 neto en el acumulado del documento.
+    const view = installmentPlanView(order({ installments: plan, paymentsReceivedCents: 15000 }), "2026-11-01");
     expect(view?.receivedCents).toBe(15000);
     expect(view?.cuotas[0]).toMatchObject({ coveredCents: 15000, status: "partial" });
     expect(view?.coveredCount).toBe(0);
   });
 
-  it("never counts another order's or store's payments", () => {
-    const foreign: OrderPayment[] = [
-      { ...payment("f1", 1800, "2026-11-02T12:00:00.000Z"), orderId: "o2" },
-      { ...payment("f2", 1800, "2026-11-02T12:00:00.000Z"), storeId: "s2" },
-    ];
-    const view = installmentPlanView(order({ installments: plan }), foreign, "2026-11-01");
-    expect(view?.receivedCents).toBe(0);
-    expect(view?.deliveryBlocked).toBe(true);
+  it("an unmaterialized legacy deposit counts toward the coverage until it materializes", () => {
+    const view = installmentPlanView(order({ installments: plan, deposit: 400, paymentsReceivedCents: 10000 }), "2026-11-01");
+    expect(view?.receivedCents).toBe(50000); // $100 de cobros + $400 de anticipo heredado
+    const materialized = installmentPlanView(
+      order({ installments: plan, deposit: 400, paymentsReceivedCents: 50000, inheritedDepositMaterialized: true }),
+      "2026-11-01"
+    );
+    expect(materialized?.receivedCents).toBe(50000); // ya dentro del acumulado, nunca dos veces
   });
 });
 
-describe("delivery gate", () => {
+describe("delivery gate (planView)", () => {
   it("blocks the delivery confirmation while money is owed (issue case)", () => {
-    const payments = [1, 2, 3, 4, 5].map((n) => payment(`p${n}`, 300, `2026-11-${String(n).padStart(2, "0")}T12:00:00.000Z`));
-    const view = installmentPlanView(order({ installments: plan }), payments, "2026-11-01");
+    const view = installmentPlanView(order({ installments: plan, paymentsReceivedCents: 150000 }), "2026-11-01");
     expect(view?.deliveryBlocked).toBe(true);
   });
 
   it("liquidar habilita la entrega — but nothing auto-delivers", () => {
-    const payments = [1, 2, 3, 4, 5, 6].map((n) => payment(`p${n}`, 300, `2026-11-${String(n).padStart(2, "0")}T12:00:00.000Z`));
-    const owed = order({ installments: plan, orderStatus: "ready" });
-    const view = installmentPlanView(owed, payments, "2026-11-01");
+    const owed = order({ installments: plan, orderStatus: "ready", paymentsReceivedCents: 180000 });
+    const view = installmentPlanView(owed, "2026-11-01");
     expect(view?.balanceCents).toBe(0);
     expect(view?.deliveryBlocked).toBe(false);
     expect(owed.orderStatus).toBe("ready"); // liquidar alone changes no status
   });
 
   it("an ordinary order with balance keeps its current behavior (not blocked here)", () => {
-    const view = installmentPlanView(order(), [payment("p1", 100, "2026-11-02T12:00:00.000Z")], "2026-11-01");
+    const view = installmentPlanView(order({ paymentsReceivedCents: 10000 }));
     expect(view).toBeNull(); // no plan → this gate does not apply
   });
 
   it("money in the customer's favor (negative balance) does not block", () => {
-    const payments = [payment("p1", 1800, "2026-11-02T12:00:00.000Z"), payment("p2", 100, "2026-11-03T12:00:00.000Z")];
-    const view = installmentPlanView(order({ installments: plan }), payments, "2026-11-01");
+    const view = installmentPlanView(order({ installments: plan, paymentsReceivedCents: 190000 }), "2026-11-01");
     expect(view?.balanceCents).toBe(-10000);
     expect(view?.deliveryBlocked).toBe(false);
   });
