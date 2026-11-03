@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderCard } from "./OrderCard";
-import type { Order } from "../../types";
+import type { Order, OrderPayment } from "../../types";
 
-vi.mock("../../app/StoreProvider", () => ({ useStore: () => ({ upsertOrder: vi.fn(), activeStore: { name: "Olivia" }, state: { customers: [{ id: "c1", storeId: "s1", name: "Sofía" }], products: [] } }) }));
+const { state, activeStore, holder } = vi.hoisted(() => ({
+  state: { customers: [{ id: "c1", storeId: "s1", name: "Sofía" }], products: [] },
+  activeStore: { name: "Olivia" },
+  holder: { upsertOrder: vi.fn(), payments: [] as OrderPayment[] },
+}));
+vi.mock("../../app/StoreProvider", () => ({
+  useStore: () => ({ upsertOrder: holder.upsertOrder, activeStore, state, payments: holder.payments }),
+}));
 const order: Order = { id: "o1", storeId: "s1", customerId: "c1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 1.25, subtotal: 1.25 }], deposit: 0, orderStatus: "asked", paymentStatus: "unpaid", createdAt: "2026-01-01", updatedAt: "" };
 
 describe("sharing a saved order", () => {
@@ -31,6 +38,67 @@ describe("sharing a saved order", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copiar detalle" }));
     await waitFor(() => expect(screen.getByText(/Selecciona el texto/)).toBeInTheDocument());
     expect((screen.getByLabelText("Detalle del pedido") as HTMLTextAreaElement).value).toContain("Anillo");
+    rendered.unmount();
+  });
+});
+
+describe("installment order card (#165)", () => {
+  const planOrder: Order = {
+    id: "o2",
+    storeId: "s1",
+    customerId: "c1",
+    items: [{ lineId: "l1", productName: "Caja adviento", quantity: 1, unitPrice: 1800, subtotal: 1800 }],
+    deposit: 0,
+    orderStatus: "ready",
+    paymentStatus: "unpaid",
+    createdAt: "2026-11-01",
+    updatedAt: "",
+    installments: { count: 6, frequency: "monthly", firstDueDate: "2026-11-15", agreedAt: "2026-11-01", agreedBy: "u1" },
+  };
+  const abono = (id: string, amount: number): OrderPayment => ({
+    id, orderId: "o2", storeId: "s1", date: "2026-11-02", method: "cash", kind: "payment",
+    amount, createdAt: "2026-11-02T12:00:00.000Z", createdBy: "u1",
+  });
+
+  beforeEach(() => {
+    holder.payments = [];
+    holder.upsertOrder.mockReset();
+  });
+
+  it("shows the plan badge, Abonar instead of the legacy Cobrar, and no auto-delivery", () => {
+    const rendered = render(
+      <ToastProvider>
+        <OrderCard order={planOrder} onEdit={() => {}} />
+      </ToastProvider>
+    );
+    expect(screen.getByText("Pagos por partes")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cobrar" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Abonar" })).toBeInTheDocument();
+    // Con saldo, la entrega no se ofrece como acción disponible.
+    expect(screen.getByText(/entrega se habilita al liquidar/i)).toBeInTheDocument();
+    rendered.unmount();
+  });
+
+  it("reconstructs recibido/saldo from the payment records, not a second accumulator", () => {
+    holder.payments = [abono("p1", 100), abono("p2", 500)];
+    const rendered = render(
+      <ToastProvider>
+        <OrderCard order={planOrder} onEdit={() => {}} />
+      </ToastProvider>
+    );
+    expect(screen.getByText("Recibido")).toBeInTheDocument();
+    expect(screen.getByText("$600.00")).toBeInTheDocument();
+    expect(screen.getByText("$1,200.00")).toBeInTheDocument();
+    rendered.unmount();
+  });
+
+  it("marks reserved pieces once the first abono landed", () => {
+    const rendered = render(
+      <ToastProvider>
+        <OrderCard order={{ ...planOrder, installmentsReservedAt: "2026-11-02T10:00:00.000Z" }} onEdit={() => {}} />
+      </ToastProvider>
+    );
+    expect(screen.getByText("Apartado")).toBeInTheDocument();
     rendered.unmount();
   });
 });
