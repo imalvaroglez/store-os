@@ -10,7 +10,7 @@ import {
   Screen,
   StatRow,
 } from "../../design-system";
-import { ordersForStore, lowStockProducts } from "../../lib/selectors";
+import { ordersForStore, productsToRestock } from "../../lib/selectors";
 import { profit } from "../../lib/money";
 import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
@@ -37,7 +37,7 @@ export function HomeScreen() {
     (sum, o) => sum + orderItems(o).reduce((itemSum, item) => itemSum + (profit(item.unitPrice, item.cost, item.quantity) ?? 0), 0),
     0
   );
-  const lowStock = isTiered ? lowStockProducts(state.products, activeStore.id) : [];
+  const lowStock = isTiered ? productsToRestock(state.products, activeStore.id) : [];
 
   async function advance(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
