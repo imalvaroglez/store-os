@@ -68,10 +68,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     expect(await stock("p-plan")).toBe(2);
     expect(await paymentCount("plan-order")).toBe(1);
 
-    // A later abono does not touch stock again.
+    // A later abono does not touch stock again — but the doc accumulator grows.
     await registerOrderPaymentTx(payment("pay_b", 500));
     expect(await stock("p-plan")).toBe(2);
     expect(await paymentCount("plan-order")).toBe(2);
+    expect((await orderDoc("plan-order"))?.paymentsReceivedCents).toBe(60000);
 
     // Concurrent abonos that together liquidan: both register, one reservation.
     await Promise.all([
@@ -80,6 +81,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     ]);
     expect(await stock("p-plan")).toBe(2);
     expect(await paymentCount("plan-order")).toBe(4); // a + b + c + d = $1,800
+    expect((await orderDoc("plan-order"))?.paymentsReceivedCents).toBe(180000);
   });
 
   it("insufficient stock at the first abono aborts explicitly: no negative stock, no payment, no silent reservation", async () => {
@@ -99,11 +101,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
       orderStatus: "cancelled",
       revision: current.revision,
     });
-    await saveOrderWithStockTx(user, cancelled, current.revision, "cancel-1", []);
+    await saveOrderWithStockTx(user, cancelled, current.revision, "cancel-1");
     expect(await stock("p-plan")).toBe(2); // sigue apartada
   });
 
-  it("blocks the delivery confirmation while money is owed — on the mutation path", async () => {
+  it("delivers a liquidated plan order from a session with NO records — the doc accumulator is the truth", async () => {
     const current = (await orderDoc("plan-order"))!;
     const owing = makeOrder("plan-order", "p-plan", 2, {
       installments: plan,
@@ -111,41 +113,81 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
       orderStatus: "ready",
       revision: current.revision,
     });
-    await saveOrderWithStockTx(user, owing, current.revision, "ready-1", []);
+    await saveOrderWithStockTx(user, owing, current.revision, "ready-1");
     const ready = (await orderDoc("plan-order"))!;
     const delivering = { ...owing, revision: ready.revision, orderStatus: "delivered" as const };
 
-    // Vista de sesión SIN cobros (p. ej. otra dispositivo): saldo $1,800 →
-    // la confirmación de entrega se rechaza en el propio camino de mutación.
-    await expect(
-      saveOrderWithStockTx(user, delivering, ready.revision, "deliver-1", [])
-    ).rejects.toBeInstanceOf(DeliveryWithBalanceError);
-    expect((await orderDoc("plan-order"))?.orderStatus).toBe("ready"); // sin cambio
-
-    // Liquidado (los 4 cobros reales suman $1,800): la entrega se CONFIRMA
-    // manualmente — liquidar por sí solo no marca nada como entregado.
-    const liquidated = [payment("pay_a", 100), payment("pay_b", 500), payment("pay_c", 600), payment("pay_d", 600)];
-    const result = await saveOrderWithStockTx(user, delivering, ready.revision, "deliver-2", liquidated);
+    // plan-order is fully liquidated on the doc ($1,800 of cobros = total):
+    // #168 — there is no session view anymore; the delivery confirmation reads
+    // the accumulated money from the order document itself.
+    const result = await saveOrderWithStockTx(user, delivering, ready.revision, "deliver-liquidated");
     expect(result.order.orderStatus).toBe("delivered");
     expect(await stock("p-plan")).toBe(2); // entregado conserva el consumo
   });
 
-  it("converting an order that already received money keeps the pieces apartadas", async () => {
-    // Orden ordinaria abierta (ya reservó 1 pieza) con un cobro registrado.
+  it("removing the plan with saldo does not enable delivering in the same save (#168 F1)", async () => {
+    // A plan order with $100 of $900 received (reserved at the first abono).
+    await saveOrderWithStockTx(user, makeOrder("gate-order", "p-plan", 1, { installments: plan }), null, "gate-create");
+    expect(await stock("p-plan")).toBe(2); // plan sin abonos: nothing apartado yet
+    await registerOrderPaymentTx(payment("pay_g", 100, "gate-order"));
+    expect(await stock("p-plan")).toBe(1); // reservada por el primer abono
+    expect((await orderDoc("gate-order"))?.paymentsReceivedCents).toBe(10000);
+
+    // Unchecking "Pagos por partes" + Estado=Entregado in the SAME save must
+    // still hit the delivery gate: money was received against these pieces.
+    const marked = (await orderDoc("gate-order"))!;
+    const planRemoved = makeOrder("gate-order", "p-plan", 1, { revision: marked.revision, orderStatus: "delivered" });
+    await expect(
+      saveOrderWithStockTx(user, planRemoved, marked.revision, "gate-deliver")
+    ).rejects.toBeInstanceOf(DeliveryWithBalanceError);
+    expect((await orderDoc("gate-order"))?.orderStatus).toBe("asked"); // sin cambio
+    expect(await stock("p-plan")).toBe(1); // las piezas siguen apartadas
+
+    // Liquidando (doc acumulado ≥ total) la entrega SÍ procede, ya sin plan.
+    await registerOrderPaymentTx(payment("pay_h", 800, "gate-order"));
+    const liquidated = (await orderDoc("gate-order"))!;
+    const deliver = makeOrder("gate-order", "p-plan", 1, { revision: liquidated.revision, orderStatus: "delivered" });
+    const ok = await saveOrderWithStockTx(user, deliver, liquidated.revision, "gate-deliver-2");
+    expect(ok.order.orderStatus).toBe("delivered");
+    expect(await stock("p-plan")).toBe(1); // entregado conserva el consumo
+  });
+
+  it("converting an order that already received money keeps the pieces apartadas (#168 F2/C1)", async () => {
+    // Ordinary open order (already holds 1 piece) that received a cobro: the
+    // accumulator lives on the DOC, so a session that never loaded the cobros
+    // still sees the money and marks the reservation. (saveOrderWithStockTx
+    // takes no records anymore — the session cannot lie about received money.)
     const ordinary = makeOrder("convert-order", "p-plan", 1);
     await saveOrderWithStockTx(user, ordinary, null, "convert-create");
-    expect(await stock("p-plan")).toBe(1); // 2 − 1 de la orden ordinaria
-    await env.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), "orders/convert-order/payments/seed_1"), payment("seed_1", 400, "convert-order"));
-    });
+    expect(await stock("p-plan")).toBe(0); // 1 − 1 de la orden ordinaria
+    await registerOrderPaymentTx(payment("seed_1", 400, "convert-order"));
     const snapshot = (await orderDoc("convert-order"))!;
+    expect(snapshot.paymentsReceivedCents).toBe(40000);
     const converted = makeOrder("convert-order", "p-plan", 1, {
       installments: plan,
       revision: snapshot.revision,
     });
-    const result = await saveOrderWithStockTx(user, converted, snapshot.revision, "convert-plan", [payment("seed_1", 400, "convert-order")]);
+    const result = await saveOrderWithStockTx(user, converted, snapshot.revision, "convert-plan");
     expect(result.order.installmentsReservedAt).toBeTruthy();
-    expect(await stock("p-plan")).toBe(1); // sin liberar: ya había dinero
+    expect(await stock("p-plan")).toBe(0); // sin liberar: ya había dinero
+  });
+
+  it("converting an order whose only received money is the legacy deposit also marks (#168 F2)", async () => {
+    // Manual line (no productId → no stock involvement) with a stored deposit.
+    const depositOrder = makeOrder("convert-deposit", "", 0, {
+      items: [{ lineId: "l1", productName: "Encargo manual", quantity: 1, unitPrice: 500, subtotal: 500 }],
+      deposit: 400,
+    });
+    await saveOrderWithStockTx(user, depositOrder, null, "convert-dep-create");
+    const snapshot = (await orderDoc("convert-deposit"))!;
+    const converted = makeOrder("convert-deposit", "", 0, {
+      items: depositOrder.items,
+      deposit: 400,
+      installments: plan,
+      revision: snapshot.revision,
+    });
+    const result = await saveOrderWithStockTx(user, converted, snapshot.revision, "convert-dep-plan");
+    expect(result.order.installmentsReservedAt).toBeTruthy(); // depósito = dinero recibido
   });
 
   it("a member of another store cannot reserve through the payment path", async () => {
@@ -158,6 +200,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     });
     const foreign = payment("pay_f", 50, "foreign-plan");
     await expect(registerOrderPaymentTx({ ...foreign, storeId: "other-store" })).rejects.toThrow();
-    expect(await stock("p-plan")).toBe(1);
+    expect(await stock("p-plan")).toBe(0);
   });
 });

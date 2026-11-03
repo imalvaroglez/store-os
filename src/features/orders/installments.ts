@@ -202,14 +202,16 @@ export function installmentPlanView(
   };
 }
 
-/** #165 delivery gate for the mutation path: an installment order may not be
- * confirmed delivered while the SAME records show a positive balance. */
-export function installmentDeliveryBlocked(
+/** #165/#168 F1 delivery gate for the mutation path: an order with a plan OR
+ * with received money (the doc accumulator) may only be confirmed delivered
+ * once its total is covered. Evaluating `docReceived` (the document's truth)
+ * means removing the plan with a saldo cannot dodge the gate in the same save.
+ */
+export function deliveryWithBalanceBlocked(
   order: Partial<Order> & Record<string, unknown>,
-  payments: OrderPayment[]
+  docReceived: number
 ): boolean {
-  if (!order.installments) return false;
-  return paymentSummary(order, payments).balanceCents > 0;
+  return (!!order.installments || docReceived > 0) && orderTotalCents(order) > docReceived;
 }
 
 /** Order total in exact cents — the same frozen-line math payments.ts uses. */

@@ -26,10 +26,11 @@ import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
-import { installmentDeliveryBlocked, sameInstallmentPlan } from "../features/orders/installments";
+import { deliveryWithBalanceBlocked, sameInstallmentPlan } from "../features/orders/installments";
 import {
   buildAdjustmentRecord,
   buildPaymentRecord,
+  docReceivedCents,
   INHERITED_DEPOSIT_PAYMENT_ID,
   mergePayments,
   orderMoneyAfterPayments,
@@ -698,13 +699,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           { ...prev.installments, replacedAt: nowIso() },
         ];
       }
-      // #165 (local mode parity): the delivery gate runs in the cloud tx; here
-      // it also guards the legacy local branch with the same session records.
+      // #168: the money truth travels on the order doc — a local save carries
+      // the accumulator through verbatim so an edit can never wipe received
+      // money, mirroring the cloud transaction's doc reconciliation.
+      if (prev?.paymentsReceivedCents != null) nextOrder.paymentsReceivedCents = prev.paymentsReceivedCents;
+      if (prev?.inheritedDepositMaterialized) nextOrder.inheritedDepositMaterialized = true;
+      const docReceived = Math.max(docReceivedCents(prev ?? {}), docReceivedCents(nextOrder));
+      // #165/#168 (local mode parity): the cloud tx enforces these on the doc;
+      // the legacy local branch follows the SAME rules — conversion with money
+      // received marks the reservation, and delivering requires the doc's
+      // received money to cover the total.
+      if (nextOrder.installments && !prev?.installments && docReceived > 0 && !nextOrder.installmentsReservedAt) {
+        nextOrder.installmentsReservedAt = nowIso();
+      }
       if (
-        nextOrder.installments &&
         effectiveOrderStatus(nextOrder) === "delivered" &&
         (!prev || effectiveOrderStatus(prev) !== "delivered") &&
-        installmentDeliveryBlocked(nextOrder, payments)
+        deliveryWithBalanceBlocked(nextOrder, docReceived)
       ) {
         throw new DeliveryWithBalanceError();
       }
@@ -728,8 +739,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           user,
           nextOrder,
           options ? options.expectedRevision : prev ? (order.revision ?? 0) : null,
-          options?.mutationId ?? uid("mutation"),
-          payments
+          options?.mutationId ?? uid("mutation")
         );
         for (const update of result.stock) {
           const product = state.products.find((p) => p.id === update.productId);

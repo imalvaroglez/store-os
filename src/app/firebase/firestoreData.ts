@@ -16,12 +16,12 @@ import {
 import { getFirebase } from "./config";
 import { applyPurchaseLines, firstInstallmentReservationDeltas, reservationDeltasForOrderChange } from "../../lib/inventory";
 import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
-import { installmentDeliveryBlocked } from "../../features/orders/installments";
+import { deliveryWithBalanceBlocked } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
+  docReceivedCents,
   inheritedDepositRecord,
   orderMoneyAfterPayments,
-  paymentSummary,
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
@@ -308,14 +308,16 @@ export function applyRelativeDeltas(
 }
 
 /**
- * #165: an installment order cannot be CONFIRMED delivered while money is
- * owed. Validated on the mutation path itself (the UI hiding buttons is not
- * the guarantee): the transition INTO "delivered" on a plan order requires the
- * SAME payment records to show zero balance.
+ * #165/#168: an order with a plan or with received money cannot be CONFIRMED
+ * delivered while money is owed. Validated on the mutation path itself (the UI
+ * hiding buttons is not the guarantee): the transition INTO "delivered"
+ * requires the doc-level accumulator to cover the order total. The message
+ * points at the cobros sheet FIRST — the saldo is doc truth, so re-registering
+ * an abono that already landed would duplicate money.
  */
 export class DeliveryWithBalanceError extends Error {
   constructor() {
-    super("No se puede confirmar la entrega: este pedido tiene saldo pendiente. Registra el último abono y vuelve a intentarlo.");
+    super("No se puede confirmar la entrega: este pedido tiene saldo pendiente. Revisa los cobros del pedido y registra solo el abono que falte.");
     this.name = "DeliveryWithBalanceError";
   }
 }
@@ -335,19 +337,17 @@ export class InsufficientStockError extends Error {
 /**
  * Save an order using canonical stock and an idempotent operation identifier.
  *
- * #165: `paymentRecords` carries the caller's view of the order's payment
- * records (the provider passes its session records). Firestore transactions
- * cannot query, so the delivery/conversion guarantees below evaluate against
- * this snapshot. Records are create-only, so a stale snapshot can only
- * UNDERCOUNT received money — the delivery gate errs toward blocking, never
- * toward allowing a delivery with balance.
+ * #165/#168 money guarantees evaluate the ORDER DOC read inside this
+ * transaction — never the caller's session: `paymentsReceivedCents` (the
+ * transactional accumulator maintained by registerOrderPaymentTx) plus the
+ * still-unmaterialized legacy deposit are the truth of received money, so a
+ * fresh session with no payment records loaded can no longer undercount them.
  */
 export async function saveOrderWithStockTx(
   _user: AppUser,
   order: Order,
   expectedRevision: number | null,
-  mutationId: string,
-  paymentRecords: OrderPayment[] = []
+  mutationId: string
 ): Promise<{ order: Order; stock: StockAdjustment[] }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
@@ -359,25 +359,36 @@ export async function saveOrderWithStockTx(
     if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
       throw new StaleOrderError();
     }
-    // #165 installment guarantees (evaluated against the caller's records):
-    let next = order;
-    if (order.installments) {
-      // Converting an order that ALREADY received money: the pieces stay
-      // apartadas (an open ordinary order already held them, so the mark
-      // lands with zero stock delta).
-      if (!previous?.installments && paymentSummary(order, paymentRecords).receivedCents > 0) {
-        next = { ...next, installmentsReservedAt: new Date().toISOString() };
-      }
-      // The transition INTO delivered requires the records to show zero
-      // balance. Validated on the mutation path — hiding buttons is not the
-      // guarantee.
-      if (
-        effectiveOrderStatus(next) === "delivered" &&
-        (!previous || effectiveOrderStatus(previous) !== "delivered") &&
-        installmentDeliveryBlocked(next, paymentRecords)
-      ) {
-        throw new DeliveryWithBalanceError();
-      }
+    // #168: the money fields belong to the payment path — an order save carries
+    // them through VERBATIM from the doc read here, so a full-document write
+    // can never wipe a concurrent abono's accumulator (Firestore retries this
+    // transaction whenever the doc changed after this read).
+    const docData = snap.data() as Record<string, unknown> | undefined;
+    const next: Order = {
+      ...order,
+      ...(typeof docData?.paymentsReceivedCents === "number" ? { paymentsReceivedCents: docData.paymentsReceivedCents } : {}),
+      ...(docData?.inheritedDepositMaterialized === true ? { inheritedDepositMaterialized: true } : {}),
+    };
+    // Received money per the doc: the stored accumulator plus the deposit in
+    // this save (a deposit captured in the same edit also counts) — the
+    // conservative max, since records are immutable evidence.
+    const docReceived = Math.max(docReceivedCents(previous ?? {}), docReceivedCents(next));
+    // #165/#168 F2: converting an ordinary order that already received money
+    // marks the reservation immediately — an open ordinary order already held
+    // the pieces, so the mark lands with zero stock delta.
+    if (next.installments && !previous?.installments && docReceived > 0 && !next.installmentsReservedAt) {
+      next.installmentsReservedAt = new Date().toISOString();
+    }
+    // #165/#168 F1: the transition INTO delivered requires the doc to show the
+    // total covered — a plan order OR any order with received money. Removing
+    // the plan with a saldo does not enable delivering in the same save.
+    // Validated on the mutation path — hiding buttons is not the guarantee.
+    if (
+      effectiveOrderStatus(next) === "delivered" &&
+      (!previous || effectiveOrderStatus(previous) !== "delivered") &&
+      deliveryWithBalanceBlocked(next, docReceived)
+    ) {
+      throw new DeliveryWithBalanceError();
     }
     const deltas = reservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
