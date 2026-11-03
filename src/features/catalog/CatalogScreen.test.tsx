@@ -120,8 +120,7 @@ describe("valores iniciales del producto", () => {
   it("guarda los cambios y al reabrir respeta Borrador, vacío y false", async () => {
     const state = fixtureState();
     state.activeStoreId = OLIVIA;
-    const Wrapper = withState(state);
-    render(<Wrapper><CatalogScreen /></Wrapper>);
+    await renderCatalog(state);
 
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar" }));
     expect(lastByLabel("Estado de publicación")).toHaveProperty("value", "published");
@@ -149,18 +148,17 @@ describe("valores iniciales del producto", () => {
     expect(lastByLabel("Color / acabado")).toHaveProperty("value", "Dorado");
   });
 
-  it("no aplica el material de Olivia al crear en Santi", () => {
+  it("no aplica el material de Olivia al crear en Santi", async () => {
     const state = fixtureState();
     state.activeStoreId = SANTI;
-    const Wrapper = withState(state);
-    render(<Wrapper><CatalogScreen /></Wrapper>);
+    await renderCatalog(state);
 
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar" }));
     expect(lastByLabel("Material")).toHaveProperty("value", "");
     expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
   });
 
-  it("al editar un producto existente conserva sus valores guardados", () => {
+  it("al editar un producto existente conserva sus valores guardados", async () => {
     const state = fixtureState();
     const existing = state.products.find((product) => product.id === "prod_olivia_1")!;
     Object.assign(existing, {
@@ -171,8 +169,7 @@ describe("valores iniciales del producto", () => {
       material: "Plata 925",
       finish: "",
     });
-    const Wrapper = withState(state);
-    render(<Wrapper><CatalogScreen /></Wrapper>);
+    await renderCatalog(state);
 
     fireEvent.click(screen.getByRole("heading", { name: existing.name }));
 
