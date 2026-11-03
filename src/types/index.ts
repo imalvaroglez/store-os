@@ -433,7 +433,7 @@ export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
   return "ready";
 }
 
-// Whole app state persisted to localStorage.
+// Administrative state held in memory from the authenticated Firestore session.
 export type AppState = {
   stores: Store[];
   activeStoreId: string | null;

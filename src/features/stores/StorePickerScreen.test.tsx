@@ -1,24 +1,34 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { StoreProvider } from "../../app/StoreProvider";
+import type { ReactNode } from "react";
 import { StorePickerScreen } from "./StorePickerScreen";
 import { fixtureState } from "../../lib/testFixtures";
 import type { AppUser } from "../../app/firebase/auth";
-import { saveState } from "../../lib/storage";
+import type { AppState } from "../../types";
 
-// StorePickerScreen reads the session via useAuth(); the real AuthProvider only
-// ever reports a user when Firebase is configured, so the tests mock the module
-// to place an owner / member / super_admin in the picker.
-let mockUser: AppUser | null = null;
+const mocks = vi.hoisted(() => ({
+  user: null as AppUser | null,
+  state: null as AppState | null,
+  setActiveStore: vi.fn(),
+}));
+
 vi.mock("../../app/firebase/AuthProvider", () => ({
-  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  AuthProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   useAuth: () => ({
-    user: mockUser,
+    user: mocks.user,
     authReady: true,
     enabled: false,
+    error: null,
     signOut: async () => {},
   }),
 }));
+vi.mock("../../app/StoreProvider", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../app/StoreProvider")>();
+  return {
+    ...actual,
+    useStore: () => ({ state: mocks.state, setActiveStore: mocks.setActiveStore }),
+  };
+});
 
 const OLIVIA = "store_olivia";
 
@@ -28,13 +38,9 @@ function renderPicker(user: AppUser | null, ownerUid?: string) {
     const olivia = state.stores.find((s) => s.id === OLIVIA)!;
     olivia.ownerUid = ownerUid;
   }
-  mockUser = user;
-  saveState(state);
-  return render(
-    <StoreProvider>
-      <StorePickerScreen />
-    </StoreProvider>
-  );
+  mocks.user = user;
+  mocks.state = state;
+  return render(<StorePickerScreen />);
 }
 
 const ownerOfOlivia: AppUser = { uid: "uid_fer", email: "fer@olivia.mx", role: "member" };
@@ -43,7 +49,8 @@ const superAdmin: AppUser = { uid: "uid_root", email: "admin@store.os", role: "s
 
 beforeEach(() => {
   localStorage.clear();
-  mockUser = null;
+  mocks.user = null;
+  mocks.state = null;
 });
 
 describe("StorePickerScreen gear de Administrar", () => {

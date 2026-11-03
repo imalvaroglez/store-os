@@ -16,9 +16,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./firebase/AuthProvider", () => ({
-  useAuth: () => ({ user: mocks.user, authReady: true, enabled: true, signOut: vi.fn() }),
+  useAuth: () => ({ user: mocks.user, authReady: true, enabled: true, error: null, signOut: vi.fn() }),
 }));
-vi.mock("./firebase/config", () => ({ isFirebaseConfigured: () => true }));
+vi.mock("./firebase/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./firebase/config")>();
+  return {
+    ...actual,
+    isFirebaseConfigured: () => true,
+  };
+});
 vi.mock("./firebase/firestoreData", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./firebase/firestoreData")>();
   return {
@@ -33,10 +39,8 @@ vi.mock("../lib/storage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/storage")>();
   return {
     ...actual,
-    loadState: () => testState,
     loadPreferredStoreId: () => null,
     savePreferredStoreId: vi.fn(),
-    saveState: vi.fn(),
   };
 });
 
@@ -191,9 +195,12 @@ describe("StoreProvider cloud hydration races", () => {
     rerender();
     await waitFor(() => expect(mocks.loadCloudState).toHaveBeenCalledTimes(2));
 
-    // A failure of the old account's read must not raise an error banner
-    // (nor trigger its reload retry) under the new session.
+    // A failure of the old account's read must not raise an error screen (the
+    // load-failure channel in the cloud-only world) nor a sync notice under
+    // the new session.
     await act(async () => rejectOldLoad(new Error("permission-denied")));
+    expect(result.current.stateError).toBeNull();
+    expect(result.current.stateStatus).not.toBe("error");
     expect(result.current.syncError).toBeNull();
   });
 });

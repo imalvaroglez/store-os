@@ -23,8 +23,7 @@ El ⚙ de cada tienda en "¿Quién opera hoy?" se muestra a:
 
 - Gate del ⚙ en `StorePickerScreen.tsx`: `!!user && (user.role === "super_admin" || s.ownerUid === user.uid)` — el `!!user` evita `undefined === undefined` (⚙ fantasma en tiendas sin `ownerUid` si algún caller montara el picker sin sesión; hoy `App.tsx` muestra AuthScreen sin user).
 - Tests UI (patrón `App.test.tsx`, `useAuth` mockeado por módulo): dueña ve ⚙,
-  member no-dueña no lo ve, super_admin lo ve en todas (regresión), sin sesión
-  (modo local) no hay ⚙.
+  member no-dueña no lo ve, super_admin lo ve en todas (regresión), sin sesión no hay ⚙.
 
 ## Alcance (out)
 

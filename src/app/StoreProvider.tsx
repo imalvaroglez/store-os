@@ -19,11 +19,11 @@ import type {
   Purchase,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
-import { loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
+import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
-import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
+import { applyPurchaseLines } from "../lib/inventory";
 import { migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
@@ -49,7 +49,6 @@ import {
   stripUndefined,
 } from "./firebase/firestoreData";
 import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
-import { isFirebaseConfigured } from "./firebase/config";
 
 // Actions: every mutation flows through here. The active store scopes normal UI
 // work; membership and super_admin access are enforced by Firebase rules.
@@ -175,7 +174,15 @@ export function reducer(state: AppState, action: Action): AppState {
 type StoreContextValue = {
   state: AppState;
   activeStore: Store | null;
-  cloud: boolean; // true when operating on Firestore (signed in)
+  cloud: boolean;
+  stateStatus: "idle" | "loading" | "ready" | "error";
+  stateError: string | null;
+  retryStateLoad: () => void;
+  /**
+   * A background WRITE that Firestore rejected (the initial LOAD failure is
+   * `stateError` instead). `retry` replays the failed operation — never a page
+   * reload — and clears the notice on success. See persist-entity-error-handling.
+   */
   syncError: { label: string; retry: () => Promise<void> } | null;
   dismissSyncError: () => void;
   draftOwnerId: string;
@@ -201,8 +208,7 @@ type StoreContextValue = {
    * One reducer action reflects the whole batch locally.
    */
   createDraftProductsForPurchase: (products: Product[], purchase: Purchase) => Promise<void>;
-  /** The ONLY operation that moves inventory. Idempotent; throws "received" softly.
-   * Takes the just-saved snapshot (local) or re-reads canonically in the cloud tx. */
+  /** The ONLY operation that moves inventory. Idempotent; throws "received" softly. */
   receivePurchase: (purchase: Purchase) => Promise<"received" | "already">;
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
@@ -215,17 +221,22 @@ const StoreContext = createContext<StoreContextValue | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const cloud = isFirebaseConfigured() && !!user;
-
-  const [state, dispatch] = useReducer(reducer, undefined, () => {
-    const initial = loadState();
-    return initial.activeStoreId ? initial : { ...initial, activeStoreId: loadPreferredStoreId() };
-  });
-  // Track whether the current dispatch originated from a cloud sync so we don't
-  // echo it back to Firestore (write loops).
-  const fromCloud = useRef(false);
+  const cloud = !!user;
+  const [state, dispatch] = useReducer(reducer, undefined, emptyAppState);
+  const [cloudLoad, setCloudLoad] = useState<{
+    uid: string | null;
+    status: "idle" | "loading" | "ready" | "error";
+    error: string | null;
+  }>({ uid: null, status: "idle", error: null });
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  // Background-write failures surface here (writes only; the initial load
+  // failure lives in stateError/stateStatus). Versioned so a retry can't clear
+  // a notice a newer failure already replaced.
   const [syncError, setSyncError] = useState<StoreContextValue["syncError"]>(null);
   const syncErrorVersion = useRef(0);
+  // Hydration-race guard: auth can change while a load/write/retry is in
+  // flight. A previous account's late landing must never reach the provider
+  // (nor its retry write) under the new session.
   const currentUid = useRef(user?.uid ?? null);
   currentUid.current = user?.uid ?? null;
 
@@ -234,6 +245,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSyncError(null);
   }, [user?.uid]);
 
+  /**
+   * Fire-and-forget write that must still be VISIBLE when Firestore rejects
+   * it: the failure raises a retryable Spanish notice (syncError) scoped to
+   * the uid that started the write. `retry` replays the operation itself.
+   */
   function persistInBackground(label: string, write: () => Promise<unknown>) {
     const ownerUid = user?.uid;
     void write().catch((error) => {
@@ -250,11 +266,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  // When auth mode changes, load the appropriate source.
+  function requireAuthenticatedUser(): AppUser {
+    if (!user) throw new Error("Inicia sesión para administrar tu tienda.");
+    return user;
+  }
+  // Administrative state exists only in memory and is hydrated from Firestore
+  // after Auth confirms a session. A signed-out provider never reads business
+  // data from browser storage.
   useEffect(() => {
-    let active = true;
     let unsub: (() => void) | undefined;
-    if (cloud && user) {
+    let active = true;
+    if (user) {
+      setCloudLoad({ uid: user.uid, status: "loading", error: null });
+      const publishCloudState = (raw: AppState) => {
+        if (!active || currentUid.current !== user.uid) return;
+        const migrated = migrateCatalog(raw);
+        dispatch({ type: "REPLACE_STATE", state: migrated });
+        setCloudLoad({ uid: user.uid, status: "ready", error: null });
+      };
       loadCloudState(user)
         .then(async (s) => {
           // Auth can change while the first cloud read is in flight. Never let
@@ -291,7 +320,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // after the user switched stores reverted their selection. Migration
           // is idempotent, so a failed background write just re-migrates on the
           // next load.
-          fromCloud.current = true;
           // Restore the latest explicitly selected store after auth hydration.
           // Read at dispatch time so a switch made while loading wins.
           const preferred = loadPreferredStoreId();
@@ -299,7 +327,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             dispatch({ type: "SET_ACTIVE_STORE", storeId: preferred });
           }
           dispatch({ type: "REPLACE_STATE", state: migrated });
-          fromCloud.current = false;
+          setCloudLoad({ uid: user.uid, status: "ready", error: null });
           void (async () => {
             try {
               await Promise.all(writes);
@@ -317,33 +345,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .catch((error) => {
           if (!active || currentUid.current !== user.uid) return;
           console.error("[Firestore] No se pudo cargar la tienda:", error);
-          setSyncError({ label: "cargar la información de la tienda", retry: async () => window.location.reload() });
+          setCloudLoad({ uid: user.uid, status: "error", error: "No se pudieron cargar tus tiendas. Revisa tu conexión e intenta de nuevo." });
         });
-      unsub = subscribeCloudState(user, (s) => {
-        fromCloud.current = true;
-        dispatch({ type: "REPLACE_STATE", state: migrateCatalog(s) });
-        fromCloud.current = false;
-      });
-    } else if (!cloud) {
-      // Local state is loaded from localStorage when no cloud session is available.
-      fromCloud.current = true;
-      dispatch({ type: "REPLACE_STATE", state: loadState() });
-      fromCloud.current = false;
+      try {
+        unsub = subscribeCloudState(
+          user,
+          publishCloudState,
+          () => {
+            if (active && currentUid.current === user.uid) {
+              setCloudLoad({ uid: user.uid, status: "error", error: "No se pudieron actualizar tus tiendas. Revisa tu conexión e intenta de nuevo." });
+            }
+          }
+        );
+      } catch {
+        setCloudLoad({ uid: user.uid, status: "error", error: "No se pudieron actualizar tus tiendas. Revisa tu conexión e intenta de nuevo." });
+      }
+    } else {
+      dispatch({ type: "REPLACE_STATE", state: emptyAppState() });
+      setCloudLoad({ uid: null, status: "idle", error: null });
     }
-    return () => {
-      active = false;
-      unsub?.();
-    };
+    return () => { active = false; unsub?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cloud, user?.uid]);
-
-  // Local mode persists every change to localStorage. Cloud mode writes through
-  // to Firestore per-action (below); REPLACE_STATE from sync doesn't write back.
-  useEffect(() => {
-    if (cloud) return;
-    if (fromCloud.current) return;
-    saveState(state);
-  }, [state, cloud]);
+  }, [user?.uid, loadAttempt]);
 
   // Cloud: backfill legacy pendingInvites to their canonical form (one batched
   // write per store, only when something actually changes) so invitations
@@ -362,8 +385,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [cloud, user?.uid, state.stores]);
 
   function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
-    if (!cloud || !user || fromCloud.current) return Promise.resolve();
-    return saveEntity(user, name, entity).catch((error) => {
+    const currentUser = requireAuthenticatedUser();
+    return saveEntity(currentUser, name, entity).catch((error) => {
       // Log with context for debugging, then re-throw so callers can surface a
       // toast instead of lying with a success. See persist-entity-error-handling.
       console.error(`[Firestore] Error al guardar ${name} (${entity.id}):`, error);
@@ -371,60 +394,66 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  const stateStatus = cloud && cloudLoad.uid === user?.uid ? cloudLoad.status : cloud ? "loading" : "idle";
+  const stateError = stateStatus === "error" ? cloudLoad.error : null;
+
   const value: StoreContextValue = {
     state,
-    syncError,
-    dismissSyncError: () => { syncErrorVersion.current += 1; setSyncError(null); },
     activeStore: state.stores.find((s) => s.id === state.activeStoreId) ?? null,
     cloud,
-    draftOwnerId: cloud && user ? user.uid : "local",
+    stateStatus,
+    stateError,
+    retryStateLoad: () => setLoadAttempt((attempt) => attempt + 1),
+    syncError,
+    dismissSyncError: () => { syncErrorVersion.current += 1; setSyncError(null); },
+    draftOwnerId: user?.uid ?? "",
     addStore: async (input) => {
+      const currentUser = requireAuthenticatedUser();
       const store: Store = { ...input, id: uid("store"), createdAt: nowIso(), updatedAt: nowIso() };
       // Claim the slug first (throws SlugTakenError on global collision) so we
       // don't create a store whose catalog can't be published.
-      if (cloud) await claimSlug(store.slug, store.id);
-      const privateStore = storeWithMembership(store, user);
+      await claimSlug(store.slug, store.id);
+      const privateStore = storeWithMembership(store, currentUser);
       // Persist before exposing the store locally: a rejected private write
       // must not leave the frontend ahead of Firestore.
       await persistEntity("stores", privateStore);
-      if (cloud) {
-        try {
-          await projectPublicForStore(store, state.products, state.categories);
-        } catch (error) {
-          throw new PublicCatalogProjectionError(error);
-        }
+      try {
+        await projectPublicForStore(store, state.products, state.categories);
+      } catch (error) {
+        throw new PublicCatalogProjectionError(error);
       }
       dispatch({ type: "ADD_STORE", store: privateStore });
       return privateStore;
     },
     updateStore: async (patch) => {
+      requireAuthenticatedUser();
       const existing = state.stores.find((s) => s.id === patch.id);
       if (!existing) return;
       const store: Store = { ...existing, ...patch, updatedAt: nowIso() };
       const slugChanged = patch.slug !== undefined && patch.slug !== existing.slug;
-      if (cloud && slugChanged) {
+      if (slugChanged) {
         // Rename: claim the new slug first (may throw SlugTakenError). The local
         // dispatch only runs if the claim succeeds, so a collision leaves nothing
         // half-renamed.
         await claimSlug(store.slug, store.id);
       }
       // Persist ONLY the patch. A full-object write replays every field of the
-      // LOCAL state, so a stale tab could clobber remote edits field by field
+      // cached state, so a stale tab could clobber remote edits field by field
       // (the 2026-08 whatsapp + storefront overwrite). Merged `store` above is
-      // still what drives claimSlug, the dispatch and the public projection;
-      // Without a cloud session, the reducer persists state through localStorage.
+      // still what drives claimSlug, the dispatch and the public projection.
       const persisted = stripUndefined({ ...patch, updatedAt: nowIso() }) as { id: string } & Record<string, unknown>;
       await persistEntity("stores", persisted);
       // Cloud state follows the private write. This prevents a rejected write
       // from leaving the UI ahead of Firestore; a later public projection error
       // still leaves the private store visible so the user can repair publishing.
       dispatch({ type: "UPDATE_STORE", store });
-      if (cloud) {
+      {
         if (slugChanged) {
           // Remove the OLD public projection (storefront + products carrying the
           // old storeSlug) and release the old slug, so /catalogo/{oldSlug}
           // stops serving after the rename. unproject also releases the slug,
-          // so no separate releaseSlug call is needed.
+          // so no separate releaseSlug call is needed. No silent catch: a
+          // failure must reach the caller, not strand the old catalog silently.
           await unprojectPublicForStore(existing);
         }
         // Always re-project: storefront content (hero, FAQ, contact, SEO) lives
@@ -441,19 +470,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     deleteStore: (storeId) => {
+      const currentUser = requireAuthenticatedUser();
       const store = state.stores.find((s) => s.id === storeId);
       dispatch({ type: "DELETE_STORE", storeId });
-      if (cloud && user && store && !fromCloud.current) {
-        persistInBackground("eliminar la tienda", () => deleteEntity(user, "stores", storeId));
+      if (store) {
+        persistInBackground("eliminar la tienda", () => deleteEntity(currentUser, "stores", storeId));
         // Best-effort: delete the store's entities + product photos in the cloud.
         state.products.filter((p) => p.storeId === storeId).forEach((p) => {
-          persistInBackground("eliminar un producto", () => deleteEntity(user, "products", p.id));
+          persistInBackground("eliminar un producto", () => deleteEntity(currentUser, "products", p.id));
           persistInBackground("eliminar una foto", () => deleteProductImage(storeId, p.id));
         });
-        state.customers.filter((c) => c.storeId === storeId).forEach((c) => persistInBackground("eliminar una clienta", () => deleteEntity(user, "customers", c.id)));
-        state.orders.filter((o) => o.storeId === storeId).forEach((o) => persistInBackground("eliminar un pedido", () => deleteEntity(user, "orders", o.id)));
-        state.suppliers.filter((s) => s.storeId === storeId).forEach((s) => persistInBackground("eliminar un proveedor", () => deleteEntity(user, "suppliers", s.id)));
-        state.purchases.filter((p) => p.storeId === storeId).forEach((p) => persistInBackground("eliminar una compra", () => deleteEntity(user, "purchases", p.id)));
+        state.customers.filter((c) => c.storeId === storeId).forEach((c) => persistInBackground("eliminar una clienta", () => deleteEntity(currentUser, "customers", c.id)));
+        state.orders.filter((o) => o.storeId === storeId).forEach((o) => persistInBackground("eliminar un pedido", () => deleteEntity(currentUser, "orders", o.id)));
+        state.suppliers.filter((s) => s.storeId === storeId).forEach((s) => persistInBackground("eliminar un proveedor", () => deleteEntity(currentUser, "suppliers", s.id)));
+        state.purchases.filter((p) => p.storeId === storeId).forEach((p) => persistInBackground("eliminar una compra", () => deleteEntity(currentUser, "purchases", p.id)));
         // Supplier PDFs are PII: delete them along with the store. Best-effort
         // (consistent with the entity deletes above) — a failure is logged so
         // orphaned files are traceable, not guaranteed cleanup.
@@ -469,6 +499,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     inviteMember: async (storeId, email) => {
+      requireAuthenticatedUser();
       const store = state.stores.find((s) => s.id === storeId);
       if (!store) return "pending";
       const normalized = email.toLowerCase().trim();
@@ -492,6 +523,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return "pending";
     },
     removeMember: async (storeId, memberUid) => {
+      requireAuthenticatedUser();
       const store = state.stores.find((s) => s.id === storeId);
       if (!store) return;
       const memberUids = (store.memberUids ?? []).filter((u) => u !== memberUid);
@@ -500,6 +532,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await persistEntity("stores", updated);
     },
     transferStoreOwnership: async (storeId, email) => {
+      requireAuthenticatedUser();
       const store = state.stores.find((s) => s.id === storeId);
       if (!store) throw new Error("Tienda no encontrada.");
       const nextOwnerUid = await findUidByEmail(email.toLowerCase().trim());
@@ -512,8 +545,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await persistEntity("stores", updated);
     },
     republishCatalog: async (storeId) => {
+      requireAuthenticatedUser();
       const store = state.stores.find((s) => s.id === storeId);
-      if (!store || !cloud) return;
+      if (!store) return;
       await claimSlug(store.slug, store.id);
       try {
         await projectPublicForStore(
@@ -526,13 +560,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     setActiveStore: (storeId) => {
+      requireAuthenticatedUser();
+      if (storeId && !state.stores.some((store) => store.id === storeId)) {
+        throw new Error("No puedes seleccionar una tienda que no está disponible en tu cuenta.");
+      }
       savePreferredStoreId(storeId);
       dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" });
     },
     upsertProduct: async (product) => {
+      requireAuthenticatedUser();
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
       await persistEntity("products", product);
-      if (cloud && !fromCloud.current) {
+      {
         const store = state.stores.find((s) => s.id === product.storeId);
         if (store) {
           // Rebuild against the post-dispatch product set so the catalog summary
@@ -546,13 +585,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     deleteProduct: async (productId) => {
+      const currentUser = requireAuthenticatedUser();
       // Look up storeId before dispatch (the reducer drops the product).
       const product = state.products.find((p) => p.id === productId);
       const storeId = product?.storeId;
       const slug = product?.slug;
       dispatch({ type: "DELETE_PRODUCT", productId });
-      if (cloud && user && !fromCloud.current) {
-        await deleteEntity(user, "products", productId);
+      {
+        // Awaited so a Firestore rejection reaches the caller (the catalog's
+        // delete dialog shows a Spanish error instead of a false success).
+        await deleteEntity(currentUser, "products", productId);
         // Drop the detail doc + rebuild the catalog summary without this product.
         if (storeId && slug) {
           persistInBackground("publicar el catálogo", () => removePublicProductDoc(storeId, slug));
@@ -566,6 +608,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     upsertCategory: async (category) => {
+      requireAuthenticatedUser();
       const next = state.categories.some((c) => c.id === category.id)
         ? state.categories.map((c) => (c.id === category.id ? category : c))
         : [...state.categories, category];
@@ -573,7 +616,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await persistEntity("categories", category);
       // Category edits reshape the storefront's category list — rebuild the
       // public catalog projection so /catalogo/:slug reflects it.
-      if (cloud && !fromCloud.current) {
+      {
         const store = state.stores.find((s) => s.id === category.storeId);
         if (store) {
           persistInBackground("publicar el catálogo", () => projectPublicForStore(
@@ -585,10 +628,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     deleteCategory: async (categoryId) => {
+      const currentUser = requireAuthenticatedUser();
       const cat = state.categories.find((c) => c.id === categoryId);
       dispatch({ type: "DELETE_CATEGORY", categoryId });
-      if (cloud && user && !fromCloud.current) {
-        await deleteEntity(user, "categories", categoryId);
+      {
+        await deleteEntity(currentUser, "categories", categoryId);
         if (cat) {
           const store = state.stores.find((s) => s.id === cat.storeId);
           if (store) {
@@ -603,34 +647,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     upsertSupplier: async (supplier) => {
+      requireAuthenticatedUser();
       dispatch({ type: state.suppliers.some((s) => s.id === supplier.id) ? "UPDATE_SUPPLIER" : "ADD_SUPPLIER", supplier });
       await persistEntity("suppliers", supplier);
     },
     deleteSupplier: async (supplierId) => {
+      const currentUser = requireAuthenticatedUser();
       dispatch({ type: "DELETE_SUPPLIER", supplierId });
-      if (cloud && user && !fromCloud.current) await deleteEntity(user, "suppliers", supplierId);
+      await deleteEntity(currentUser, "suppliers", supplierId);
     },
     upsertPurchase: async (purchase) => {
+      requireAuthenticatedUser();
       dispatch({ type: state.purchases.some((p) => p.id === purchase.id) ? "UPDATE_PURCHASE" : "ADD_PURCHASE", purchase });
       // Await so callers (PurchaseForm) can catch a Firestore rejection instead
       // of showing a false success toast. persistEntity re-throws on rejection.
       await persistEntity("purchases", purchase);
     },
     createDraftProductsForPurchase: async (products, purchase) => {
-      if (!cloud) throw new Error("La creación en lote requiere sesión (cloud).");
+      requireAuthenticatedUser();
       // One writeBatch: products + purchase in the same commit; an error
       // leaves everything untouched and re-throws (no local dispatch yet).
       await createDraftProductsForPurchaseTx(products, purchase);
       dispatch({ type: "BULK_CREATE_FOR_PURCHASE", products, purchase });
     },
     deletePurchase: (purchaseId) => {
+      const currentUser = requireAuthenticatedUser();
       // A received purchase is inventory evidence: deleting it would strand
       // stock that entered through it. Block it (no reversals in V1).
       const purchase = state.purchases.find((p) => p.id === purchaseId);
       if (purchase && effectivePurchaseStatus(purchase) === "received") return;
       dispatch({ type: "DELETE_PURCHASE", purchaseId });
-      if (cloud && user && !fromCloud.current) {
-        persistInBackground("eliminar la compra", () => deleteEntity(user, "purchases", purchaseId));
+      {
+        persistInBackground("eliminar la compra", () => deleteEntity(currentUser, "purchases", purchaseId));
         // Retention policy: the PDF lives while its purchase does.
         if (purchase?.documentPath) {
           deletePurchasePdf(purchase.documentPath).catch((e) =>
@@ -640,52 +688,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     receivePurchase: async (purchase) => {
+      requireAuthenticatedUser();
       // Both guards BEFORE any effect: legacy (status undefined) already
       // applied stock when it was saved, and receivedAt marks a prior receive.
       if (effectivePurchaseStatus(purchase) === "received" || purchase.receivedAt != null) {
         return "already";
       }
-      if (cloud) {
-        // Transactional in Firestore: stock + purchase in ONE commit, with the
-        // legacy/receivedAt guards re-checked inside.
-        try {
-          await receivePurchaseTx(purchase.id);
-        } catch (e) {
-          if (e instanceof PurchaseAlreadyReceived) return "already";
-          throw e;
-        }
-        // Reconcile local state from the transaction's outcome.
-        const at = nowIso();
-        const updated = applyPurchaseLines(state.products, purchase.lines);
-        for (const [productId, update] of updated) {
-          const p = state.products.find((x) => x.id === productId);
-          if (p) {
-            dispatch({ type: "UPDATE_PRODUCT", product: { ...p, ...update, updatedAt: at } });
-          }
-        }
-        dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
-        return "received";
+      // Transactional in Firestore: stock + purchase in ONE commit, with the
+      // legacy/receivedAt guards re-checked inside.
+      try {
+        await receivePurchaseTx(purchase.id);
+      } catch (e) {
+        if (e instanceof PurchaseAlreadyReceived) return "already";
+        throw e;
       }
-      // Local persistence: same effect, guarded by the check above. A stale or
-      // corrupt localStorage must never mix stores: every linked product must
-      // exist and belong to this purchase's store before stock moves.
-      for (const line of purchase.lines) {
-        if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
-        const product = state.products.find((p) => p.id === line.productId);
-        if (!product) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
-        if (product.storeId !== purchase.storeId) throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
-      }
+      // Reconcile in-memory state only after the transaction commits.
       const at = nowIso();
       const updated = applyPurchaseLines(state.products, purchase.lines);
       for (const [productId, update] of updated) {
         const p = state.products.find((x) => x.id === productId);
-        if (p) {
-          dispatch({ type: "UPDATE_PRODUCT", product: { ...p, ...update, updatedAt: at } });
-          persistInBackground("actualizar el inventario", () => persistEntity("products", { ...p, ...update, updatedAt: at }));
-        }
+        if (p) dispatch({ type: "UPDATE_PRODUCT", product: { ...p, ...update, updatedAt: at } });
       }
       dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
-      persistInBackground("guardar la recepción de compra", () => persistEntity("purchases", { ...purchase, status: "received", receivedAt: at, updatedAt: at }));
       return "received";
     },
     upsertCustomer: async (customer) => {
@@ -693,10 +717,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
     },
     deleteCustomer: async (customerId) => {
+      const currentUser = requireAuthenticatedUser();
       dispatch({ type: "DELETE_CUSTOMER", customerId });
-      if (cloud && user && !fromCloud.current) await deleteEntity(user, "customers", customerId);
+      await deleteEntity(currentUser, "customers", customerId);
     },
     upsertOrder: async (order, options) => {
+      const currentUser = requireAuthenticatedUser();
       // Canonical v2 snapshot before it touches either store: migration +
       // paymentStatus derivation in one place for every caller.
       const nextOrder = {
@@ -704,62 +730,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         paymentStatus: paymentStatusForOrder(order),
       };
       const prev = state.orders.find((o) => o.id === order.id);
-      const deltas = reservationDeltasForOrderChange(prev, nextOrder);
-      const stockAt = nowIso();
-      const stockWrites: Product[] = [];
-      for (const [productId, delta] of deltas) {
-        const product = state.products.find((p) => p.id === productId && p.storeId === order.storeId);
-        if (product && typeof product.quantityOnHand === "number") {
-          stockWrites.push({ ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: stockAt });
-        }
-      }
-      // Cloud: ONE transaction (order + every stock delta). Deltas are applied
+      // ONE transaction (order + every stock delta). Deltas are applied
       // RELATIVE to the canonical quantities re-read inside the transaction, so
       // concurrent orders on another device can't be silently overwritten; a
       // stale edit of THIS order aborts with StaleOrderError. Local state
       // commits only on success, so a failed save leaves no phantom order and
       // the retry the toast invites replays the FULL delta set.
-      if (cloud && user && !fromCloud.current) {
-        const result = await saveOrderWithStockTx(user, nextOrder, options ? options.expectedRevision : prev ? (order.revision ?? 0) : null, options?.mutationId ?? uid("mutation"));
-        for (const update of result.stock) {
-          const product = state.products.find((p) => p.id === update.productId);
-          if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
-        }
-        dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
-        return;
+      const result = await saveOrderWithStockTx(currentUser, nextOrder, options ? options.expectedRevision : prev ? (order.revision ?? 0) : null, options?.mutationId ?? uid("mutation"));
+      for (const update of result.stock) {
+        const product = state.products.find((p) => p.id === update.productId);
+        if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
       }
-      for (const updated of stockWrites) dispatch({ type: "UPDATE_PRODUCT", product: updated });
-      dispatch({ type: state.orders.some((o) => o.id === order.id) ? "UPDATE_ORDER" : "ADD_ORDER", order: nextOrder });
+      dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
     },
     deleteOrder: async (orderId, expectedRevision) => {
+      const currentUser = requireAuthenticatedUser();
       // Release the held stock and remove the order atomically (cancelling a
       // delivered sale also returns the goods — see reservationDeltas*).
       const existing = state.orders.find((o) => o.id === orderId);
       if (existing && (existing.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
-      const deltas = existing
-        ? reservationDeltasForOrderChange(existing, { ...existing, orderStatus: "cancelled" })
-        : new Map<string, number>();
-      if (cloud && user && !fromCloud.current) {
-        if (!existing) throw new Error("No se encontró el pedido.");
-        const updates = await deleteOrderWithStockTx(user, orderId, expectedRevision);
-        for (const update of updates) {
-          const product = state.products.find((p) => p.id === update.productId);
-          if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() } });
-        }
-        dispatch({ type: "DELETE_ORDER", orderId });
-        return;
-      }
-      const writes: Promise<void>[] = [];
-      for (const [productId, delta] of deltas) {
-        const product = state.products.find((p) => p.id === productId && p.storeId === existing?.storeId);
-        if (product && typeof product.quantityOnHand === "number") {
-          const updated = { ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: nowIso() };
-          dispatch({ type: "UPDATE_PRODUCT", product: updated });
-          writes.push(persistEntity("products", updated));
-        }
+      if (!existing) throw new Error("No se encontró el pedido.");
+      const updates = await deleteOrderWithStockTx(currentUser, orderId, expectedRevision);
+      for (const update of updates) {
+        const product = state.products.find((p) => p.id === update.productId);
+        if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() } });
       }
       dispatch({ type: "DELETE_ORDER", orderId });
-      await Promise.all(writes);
     },
   };
 
@@ -767,9 +763,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 }
 
 // New cloud stores carry ownerUid + memberUids for the signed-in creator.
-function storeWithMembership(store: Store, user: AppUser | null): Store & { ownerUid?: string; memberUids?: string[] } {
-  if (!user) return store;
+function storeWithMembership(store: Store, user: AppUser): Store & { ownerUid?: string; memberUids?: string[] } {
   return { ...store, ownerUid: user.uid, memberUids: [user.uid] };
+}
+
+export function emptyAppState(): AppState {
+  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
 }
 
 export function useStore(): StoreContextValue {

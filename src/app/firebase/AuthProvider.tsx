@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   isFirebaseConfigured,
+  getFirebaseConfigurationError,
 } from "./config";
 import {
   subscribeToAuth,
@@ -15,7 +16,8 @@ import {
 type AuthContextValue = {
   user: AppUser | null;
   authReady: boolean;
-  enabled: boolean; // false when Firebase is not configured
+  enabled: boolean;
+  error: string | null;
   signOut: () => Promise<void>;
 };
 
@@ -25,20 +27,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const enabled = isFirebaseConfigured();
   const [user, setUser] = useState<AppUser | null>(null);
   const [authReady, setAuthReady] = useState(!enabled);
+  const [error, setError] = useState<string | null>(getFirebaseConfigurationError());
 
   useEffect(() => {
     if (!enabled) return; // No Firebase session is available.
-    const unsub = subscribeToAuth((u) => {
-      setUser(u);
+    let active = true;
+    try {
+      const unsub = subscribeToAuth(
+        (u) => {
+          if (!active) return;
+          setUser(u);
+          setError(null);
+          setAuthReady(true);
+        },
+        () => {
+          if (!active) return;
+          setUser(null);
+          setError("No se pudo verificar tu sesión. Revisa tu conexión e intenta de nuevo.");
+          setAuthReady(true);
+        }
+      );
+      return () => {
+        active = false;
+        unsub();
+      };
+    } catch {
+      setError("No se pudo iniciar el acceso a Firebase. Revisa la configuración e intenta de nuevo.");
       setAuthReady(true);
-    });
-    return unsub;
+      return () => { active = false; };
+    }
   }, [enabled]);
 
   const value: AuthContextValue = {
     user,
     authReady,
     enabled,
+    error,
     signOut: async () => {
       await doSignOut();
       setUser(null);
