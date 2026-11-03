@@ -43,20 +43,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     await env?.cleanup();
   });
 
+  it("rejects the first payment on a pending deposit without the anticipo's date/method (PO 2026-11-03)", async () => {
+    await expect(registerOrderPaymentTx(payment("pay_x", 50))).rejects.toThrow(/anticipo previo/i);
+    const docs = await getDocs(collection(holder.db, "orders/pay-order/payments"));
+    expect(docs.size).toBe(0); // nothing was written
+  });
+
   it("registers a payment, materializes the inherited deposit once, and a retry never duplicates", async () => {
-    const saved = await registerOrderPaymentTx(payment("pay_a", 200));
+    const saved = await registerOrderPaymentTx(payment("pay_a", 200), { method: "cash", date: "2026-10-20" });
     expect(saved).toHaveLength(2); // inherited deposit + the payment itself
-    const retry = await registerOrderPaymentTx(payment("pay_a", 200));
+    const retry = await registerOrderPaymentTx(payment("pay_a", 200), { method: "cash", date: "2026-10-20" });
     expect(retry).toHaveLength(1); // same intent id: recognized, no second write
     const docs = await getDocs(collection(holder.db, "orders/pay-order/payments"));
     expect(docs.size).toBe(2);
     const inherited = docs.docs.find((d) => d.id === "inherited_deposit");
-    expect(inherited?.data()).toMatchObject({ method: "unknown", amount: 400 });
-    expect(inherited?.data().date).toBeUndefined(); // unknown stays unknown
+    expect(inherited?.data()).toMatchObject({ method: "cash", amount: 400, date: "2026-10-20" });
   });
 
   it("never re-materializes the inherited deposit on later payments", async () => {
-    await registerOrderPaymentTx(payment("pay_b", 100));
+    await registerOrderPaymentTx(payment("pay_b", 100), { method: "transfer", date: "2026-10-25" });
     const docs = await getDocs(collection(holder.db, "orders/pay-order/payments"));
     expect(docs.size).toBe(3); // inherited + pay_a + pay_b
   });

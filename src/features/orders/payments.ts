@@ -28,6 +28,13 @@ export type PaymentFormInput = {
   /** Raw form text; coerced via parseAmount. */
   amountText: string;
   note?: string;
+  /**
+   * Legacy deposit materialization data (#123, PO decision 2026-11-03): the
+   * operator supplies the date/method of the old anticipo (estimated when she
+   * does not remember). Required with the first payment of an order that still
+   * carries an unmaterialized deposit.
+   */
+  inherited?: { method: "cash" | "transfer"; date: string };
 };
 
 /** Form input for a correction/refund (signed amount, note = evidence). */
@@ -117,26 +124,36 @@ export function buildAdjustmentRecord(
 }
 
 /**
- * The legacy `deposit` accumulated before per-record payments existed. Its date
- * and method are genuinely unknown, so the record keeps them unknown instead of
- * inventing data (decision i on #123). Null when there is nothing to register.
+ * The legacy `deposit` accumulated before per-record payments existed. Its
+ * date and method are supplied by the operator when the first payment
+ * materializes it — estimated when she does not remember, never "unknown"
+ * (PO decision 2026-11-03, overriding the original decision i on #123).
+ * Null when there is nothing to register.
  */
 export function inheritedDepositRecord(
   orderId: string,
   storeId: string,
   deposit: number,
   by: string,
+  input: { method: "cash" | "transfer"; date: string },
   now = new Date().toISOString()
 ): OrderPayment | null {
   if (!Number.isFinite(deposit) || deposit <= 0) return null;
+  if (input.method !== "cash" && input.method !== "transfer") {
+    throw new Error("Selecciona el método del anticipo previo.");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date ?? "")) {
+    throw new Error("Captura la fecha del anticipo previo (estímala si no la recuerdas).");
+  }
   return {
     id: INHERITED_DEPOSIT_PAYMENT_ID,
     orderId,
     storeId,
-    method: "unknown",
+    date: input.date,
+    method: input.method,
     kind: "payment",
     amount: deposit,
-    note: "Anticipo heredado: sin fecha ni método conocidos.",
+    note: "Anticipo previo: fecha y método estimados por la operadora.",
     createdAt: now,
     createdBy: by,
   };

@@ -43,6 +43,11 @@ export function OrderPaymentsSheet({
   const [method, setMethod] = useState<"cash" | "transfer">("cash");
   const [date, setDate] = useState(todayIso());
   const [note, setNote] = useState("");
+  // Legacy deposit materialization (#123, PO 2026-11-03): the first payment of
+  // an order with a pending old anticipo must carry its date/method, estimated
+  // by the operator when she does not remember — never left "desconocido".
+  const [inheritedMethod, setInheritedMethod] = useState<"cash" | "transfer">("cash");
+  const [inheritedDate, setInheritedDate] = useState("");
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustAmountText, setAdjustAmountText] = useState("");
   const [adjustNote, setAdjustNote] = useState("");
@@ -81,10 +86,24 @@ export function OrderPaymentsSheet({
   }
 
   async function submitPayment() {
+    if (summary.inheritedPendingCents > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(inheritedDate)) {
+      toast.error("Captura la fecha del anticipo previo (estímala si no la recuerdas).");
+      return;
+    }
     const id = intentIdRef.current.payment ?? uid("pay");
     intentIdRef.current.payment = id;
     await save(
-      { kind: "payment", id, method, date, amountText, note: note.trim() || undefined },
+      {
+        kind: "payment",
+        id,
+        method,
+        date,
+        amountText,
+        note: note.trim() || undefined,
+        ...(summary.inheritedPendingCents > 0
+          ? { inherited: { method: inheritedMethod, date: inheritedDate } }
+          : {}),
+      },
       () => {
         setAmountText("");
         setNote("");
@@ -120,11 +139,30 @@ export function OrderPaymentsSheet({
         </div>
 
         {summary.inheritedPendingCents > 0 && (
-          <p className="text-xs text-on-surface-soft">
-            Anticipo heredado: <Money exact amount={summary.inheritedPendingCents / 100} /> con fecha
-            y método desconocidos. Se registra como desconocido junto con el primer cobro de este
-            pedido.
-          </p>
+          <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
+            <p className="text-xs text-on-surface-soft">
+              Anticipo previo: <Money exact amount={summary.inheritedPendingCents / 100} /> recibido
+              antes de llevar registro. Se materializa junto con el primer cobro — captura su fecha
+              y método (estímalos si no los recuerdas).
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <SelectField
+                label="Método del anticipo"
+                value={inheritedMethod}
+                onChange={(m) => setInheritedMethod(m)}
+                options={[
+                  { value: "cash", label: PAYMENT_METHOD_LABELS.cash },
+                  { value: "transfer", label: PAYMENT_METHOD_LABELS.transfer },
+                ]}
+              />
+              <TextField
+                label="Fecha del anticipo"
+                type="date"
+                value={inheritedDate}
+                onChange={(e) => setInheritedDate(e.target.value)}
+              />
+            </div>
+          </div>
         )}
 
         {summary.records.length > 0 ? (

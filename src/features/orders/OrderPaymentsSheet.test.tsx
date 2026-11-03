@@ -93,22 +93,32 @@ describe("OrderPaymentsSheet", () => {
     expect(first.id).toBe(second.id);
   });
 
-  it("shows an unmaterialized inherited deposit as unknown money, without inventing data", () => {
+  it("demands the anticipo's date/method on the first payment of a pending inherited deposit (PO 2026-11-03)", async () => {
     const inheritedOrder: Order = { ...order, deposit: 400 };
-    const { rerender } = render(
+    render(
       <ToastProvider>
         <OrderPaymentsSheet order={inheritedOrder} open onClose={() => {}} />
       </ToastProvider>
     );
-    expect(screen.getByText(/Anticipo heredado/i)).toBeInTheDocument();
-    expect(screen.getByText(/desconocid/i)).toBeInTheDocument();
-    // $400 appears both in the banner and as Recibido — both must exist.
-    expect(screen.getAllByText("$400.00").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("$1,100.00")).toBeInTheDocument(); // saldo 1,500 − 400
-    rerender(
-      <ToastProvider>
-        <OrderPaymentsSheet order={inheritedOrder} open={false} onClose={() => {}} />
-      </ToastProvider>
+    expect(screen.getByText(/Anticipo previo/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Método del anticipo/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Fecha del anticipo/i)).toBeInTheDocument();
+    // The pending deposit already counts as received: saldo 1,500 − 400.
+    expect(screen.getByText("$1,100.00")).toBeInTheDocument();
+
+    // Without the anticipo date the first payment is rejected — nothing saved.
+    fireEvent.change(screen.getByLabelText("Monto"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
+    expect(await screen.findByText(/estímala si no la recuerdas/i)).toBeInTheDocument();
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
+
+    // Supplying the estimated date lets the payment through, carrying it.
+    fireEvent.change(screen.getByLabelText(/Fecha del anticipo/i), { target: { value: "2026-10-20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
+    await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledTimes(1));
+    expect(store.registerOrderPayment).toHaveBeenCalledWith(
+      inheritedOrder,
+      expect.objectContaining({ kind: "payment", inherited: { method: "cash", date: "2026-10-20" } })
     );
   });
 });
