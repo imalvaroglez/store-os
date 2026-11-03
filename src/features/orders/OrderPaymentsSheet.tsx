@@ -12,6 +12,7 @@ import {
 } from "../../design-system";
 import { todayIso } from "../../lib/dates";
 import { uid } from "../../lib/ids";
+import { sanitizeMoneyInput } from "../../lib/money";
 import type { Order, OrderPayment } from "../../types";
 import { PAYMENT_METHOD_LABELS, paymentSummary } from "./payments";
 import { INSTALLMENT_FREQUENCY_LABELS, installmentPlanView } from "./installments";
@@ -264,7 +265,7 @@ export function OrderPaymentsSheet({
               inputMode="decimal"
               placeholder="0.00"
               value={amountText}
-              onChange={(e) => setAmountText(e.target.value)}
+              onChange={(e) => setAmountText(sanitizeMoneyInput(e.target.value))}
             />
             <SelectField
               label="Método"
@@ -302,7 +303,7 @@ export function OrderPaymentsSheet({
                 inputMode="decimal"
                 placeholder="-150 para devolver"
                 value={adjustAmountText}
-                onChange={(e) => setAdjustAmountText(e.target.value)}
+                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value))}
               />
               <TextField
                 label="Motivo"

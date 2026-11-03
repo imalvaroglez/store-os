@@ -79,6 +79,17 @@ describe("OrderPaymentsSheet", () => {
     );
   });
 
+  it("sanitizes the Monto field to two decimals while typing (#168 F6)", () => {
+    renderSheet();
+    const monto = screen.getByLabelText("Monto") as HTMLInputElement;
+    fireEvent.change(monto, { target: { value: "150.555" } });
+    expect(monto.value).toBe("150.55"); // what you see is what registers — no cent drift
+    const ajuste = () => screen.getByLabelText("Monto del ajuste");
+    fireEvent.click(screen.getByRole("button", { name: "Registrar ajuste o devolución" }));
+    fireEvent.change(ajuste(), { target: { value: "-99.999" } });
+    expect((ajuste() as HTMLInputElement).value).toBe("-99.99"); // ajustes con signo también
+  });
+
   it("reuses the same record id on retry so a resend never duplicates", async () => {
     store.registerOrderPayment.mockRejectedValue(new Error(""));
     renderSheet();
