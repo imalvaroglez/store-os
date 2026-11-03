@@ -137,3 +137,8 @@ test('budget failures suspend repeated scans; transient retries are bounded per 
     assert.equal(JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8')).reservedReads, 20);
   } finally { for (const [k, v] of Object.entries(original)) v === undefined ? delete process.env[k] : process.env[k] = v; }
 });
+
+test('reference remapping preserves empty Firestore maps and arrays exactly', () => {
+  const fields = { pendingInvites: { arrayValue: {} }, options: { mapValue: {} }, nested: { mapValue: { fields: { empty: { arrayValue: {} } } } }, list: { arrayValue: { values: [{ mapValue: {} }] } } };
+  assert.deepEqual(remapFields(fields, PROD, DEV), fields);
+});
