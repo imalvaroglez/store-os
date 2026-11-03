@@ -292,3 +292,10 @@ describe("safe transactional payment totals (#171)", () => {
     expect(() => orderMoneyAfterPayments({}, 0.5, false)).toThrow(RangeError);
   });
 });
+
+
+describe("canonical balance while receipt details load", () => {
+  it("keeps received money from the order instead of showing zero for an empty session", () => {
+    expect(paymentSummary(order({ paymentsReceivedCents: 40000 }), []).receivedCents).toBe(40000);
+  });
+});
