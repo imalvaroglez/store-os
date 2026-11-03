@@ -11,7 +11,7 @@ import {
   StatRow,
 } from "../../design-system";
 import { ordersForStore, lowStockProducts, customersForStore } from "../../lib/selectors";
-import { profit } from "../../lib/money";
+import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
@@ -33,12 +33,12 @@ export function HomeScreen() {
     (sum, o) => sum + orderTotals(o).balance,
     0
   );
-  // Per-line profit: lines without a known cost contribute 0 instead of
-  // blanking the whole estimate.
+  // Full-cost profit (FER-03), same rule as the order card: precio − costo de
+  // compra − gastos de venta; orders without any known cost contribute 0.
   const expectedProfit = active.reduce(
-    (sum, o) => sum + orderItems(o).reduce((itemSum, item) => itemSum + (profit(item.unitPrice, item.cost, item.quantity) ?? 0), 0),
+    (sum, o) => sum + (orderProfitBreakdown(o, state.purchases).profitCents ?? 0),
     0
-  );
+  ) / 100;
   const lowStock = isTiered ? lowStockProducts(state.products, activeStore.id) : [];
   // FER-05 aviso previo (visual only): iconic customers whose validity ends
   // within the notice window, most urgent first. Derives from synced state.
