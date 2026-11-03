@@ -15,8 +15,18 @@ test('complete encrypted backup restores raw Firestore, orphan descendants, Auth
   t.after(() => rm(root, { recursive: true, force: true }));
   const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home: path.join(root, 'home'), destination: path.join(root, 'cloud'), age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim(), maxDocuments: 1000, maxFirestoreReads: 2000, maxDailyFirestoreReads: 4000, maxStorageBytes: 100000, notifications: false };
   validateTarget(config, true); await mkdir(config.home);
-  const client = await connect(config); t.after(() => client.close());
+  const client = await connect(config); let ownsFixtures = false;
+  t.after(async () => {
+    try {
+      if (ownsFixtures) {
+        validateTarget(config, true);
+        for (const endpoint of [`http://${EMULATORS.FIRESTORE_EMULATOR_HOST}/emulator/v1/projects/${DEV}/databases/(default)/documents`, `http://${EMULATORS.FIREBASE_AUTH_EMULATOR_HOST}/emulator/v1/projects/${DEV}/accounts`]) assert((await fetch(endpoint, { method: 'DELETE' })).ok);
+        await client.bucket.deleteFiles();
+      }
+    } finally { await client.close(); }
+  });
   assert.equal((await client.documents()).length, 0); assert.equal((await client.users()).length, 0); assert.equal((await client.files()).length, 0);
+  ownsFixtures = true;
   await client.auth.createUser({ uid: 'fixture-owner', email: 'fixture@example.test', password: 'FixturePassword123!', emailVerified: true });
   await client.auth.setCustomUserClaims('fixture-owner', { fixtureRole: 'owner' });
   const fields = { ownerUid: { stringValue: 'fixture-owner' }, memberUids: { arrayValue: { values: [{ stringValue: 'fixture-owner' }] } }, reference: { referenceValue: `${client.root}/users/fixture-owner` }, integer: { integerValue: '9223372036854775807' }, double: { doubleValue: 1.25 }, nan: { doubleValue: 'NaN' }, timestamp: { timestampValue: '2026-11-03T12:00:00.123456789Z' }, bytes: { bytesValue: 'aGVsbG8=' }, boolean: { booleanValue: true }, null: { nullValue: null }, map: { mapValue: { fields: { inside: { geoPointValue: { latitude: 1, longitude: 2 } } } } } };

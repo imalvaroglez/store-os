@@ -24,7 +24,7 @@
     "deploy:rules": "firebase deploy --only firestore,storage --project store-os-dev",
     "check:rules": "node scripts/check-rules-deployed.cjs",
     "test:backup": "node --test scripts/backups/core.test.mjs",
-    "test:backup:emulator": "firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore,storage \"node --test scripts/backups/roundtrip.emulator.mjs\"",
+    "test:backup:emulator": "firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore,storage \"node --test --test-concurrency=1 scripts/backups/roundtrip.emulator.mjs scripts/backups/cli-acceptance.emulator.mjs\"",
     "backup": "node scripts/backups/cli.mjs"
   },
   "dependencies": {

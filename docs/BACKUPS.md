@@ -240,6 +240,14 @@ npm run test
 npm run build
 ```
 
+Además del ensayo de 504 documentos y objetos gzip, la aceptación ejecuta los
+comandos reales `preflight`, `run`, `verify` y `restore` con dos tiendas y 1,004
+cuentas sintéticas (paginación de Auth, contraseña, proveedor Google y cuenta
+deshabilitada). Compara datos y archivos con la fuente, comprueba saldo/existencias,
+inicio de sesión y aislamiento entre tiendas. Rechaza clave equivocada, cifrado
+truncado, datos alterados con cifrado válido y destino ocupado, verificando que
+los rechazos no creen datos ni cambien la recuperación anterior.
+
 El ensayo completo usa sólo datos sintéticos en los emuladores de `store-os-dev`;
 no accede a producción ni a iCloud. CI instala `age` y ejecuta el mismo ciclo.
 
