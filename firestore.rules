@@ -178,10 +178,16 @@ service cloud.firestore {
       // A received purchase is inventory evidence: stock was already applied,
       // so it must never be mutated or deleted by anyone (the app blocks it
       // in the UI; the rules are the real guarantee against SDK writes).
+      // FER-02 (#126) exception: appending a post-reception expense adjustment
+      // — saleCostAdjustments never feeds stock, product cost or the supplier
+      // document, so the evidence itself stays byte-identical.
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
-        && resource.data.status != 'received';
+        && (
+          resource.data.status != 'received'
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'updatedAt'])
+        );
       allow delete: if canOperateStore(resource.data.storeId)
         && resource.data.status != 'received';
     }
