@@ -10,9 +10,11 @@ import {
   Screen,
   StatRow,
 } from "../../design-system";
-import { ordersForStore, lowStockProducts } from "../../lib/selectors";
+import { ordersForStore, lowStockProducts, customersForStore } from "../../lib/selectors";
 import { profit } from "../../lib/money";
 import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
+import { iconicStatus } from "../../lib/iconic";
+import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { navigate } from "../../lib/router";
 import { useToast } from "../../design-system";
@@ -38,6 +40,14 @@ export function HomeScreen() {
     0
   );
   const lowStock = isTiered ? lowStockProducts(state.products, activeStore.id) : [];
+  // FER-05 aviso previo (visual only): iconic customers whose validity ends
+  // within the notice window, most urgent first. Derives from synced state.
+  const iconicRenewals = isTiered
+    ? customersForStore(state.customers, activeStore.id)
+        .map((customer) => ({ customer, status: iconicStatus(customer, orders) }))
+        .filter((x) => x.status?.active && x.status.expiringSoon)
+        .sort((a, b) => a.status!.until.localeCompare(b.status!.until))
+    : [];
 
   async function advance(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
@@ -85,6 +95,22 @@ export function HomeScreen() {
           </Card>
         </div>
       </Reveal>
+
+      {iconicRenewals.length > 0 && (
+        <Card className="mb-5 !bg-terracotta-soft/60 ring-terracotta/20">
+          <h3 className="font-semibold text-terracotta text-sm">⏳ Iconic por renovar</h3>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {iconicRenewals.map(({ customer, status }) => (
+              <Badge key={customer.id} tone="warning">
+                {customer.name} · vence {formatDate(status!.until)}
+              </Badge>
+            ))}
+          </div>
+          <Button variant="ghost" className="mt-2 !px-0" onClick={() => navigate("/clientes")}>
+            Ver clientas →
+          </Button>
+        </Card>
+      )}
 
       {lowStock.length > 0 && (
         <Card className="mb-5 !bg-terracotta-soft/60 ring-terracotta/20">
