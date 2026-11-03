@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   setDoc,
   deleteDoc,
@@ -477,14 +478,19 @@ export async function registerOrderPaymentTx(
   inherited?: { method: "cash" | "transfer"; date: string }
 ): Promise<OrderPayment[]> {
   const { db } = getFirebase();
-  return runTransaction(db, async (tx) => {
+  const orderRef = doc(db, "orders", payment.orderId);
+  let attempts = 0;
+  let observed: Record<string, unknown> | undefined;
+  const register = () => runTransaction(db, async (tx) => {
+    observed = undefined;
+    attempts += 1;
     // READ PHASE (Firestore requires every read before any write).
     const paymentsRef = collection(db, "orders", payment.orderId, "payments");
     const paymentRef = doc(paymentsRef, payment.id);
     const existing = await tx.get(paymentRef);
     if (existing.exists()) return [existing.data() as OrderPayment];
-    const orderRef = doc(db, "orders", payment.orderId);
     const orderSnap = await tx.get(orderRef);
+    observed = orderSnap.data();
     if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
     if ((orderSnap.data().storeId ?? "") !== payment.storeId) {
       throw new Error("El pedido pertenece a otra tienda.");
@@ -552,7 +558,27 @@ export async function registerOrderPaymentTx(
     tx.set(paymentRef, stripUndefined(receipt) as Record<string, unknown>);
     saved.push(receipt);
     return saved;
-  });
+  }, { maxAttempts: 5 - attempts });
+
+  while (attempts < 5) {
+    observed = undefined;
+    try {
+      return await register();
+    } catch (error) {
+      // A concurrent first abono can make the immutable reservation/deposit
+      // proof stale before the emulator reports ABORTED. Retry PERMISSION_DENIED
+      // only when a SERVER read proves that this transaction's parent changed.
+      // Real authorization/content failures stay failures; intent ids are stable.
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      if (code !== "permission-denied" || !observed || attempts >= 5) throw error;
+      const latest = await getDocFromServer(orderRef);
+      const current = latest.data();
+      const changed = current && ["revision", "paymentsReceivedCents", "lastPaymentId", "inheritedDepositMaterialized", "installmentsReservedAt"]
+        .some((key) => current[key] !== observed![key]);
+      if (!changed) throw error;
+    }
+  }
+  throw new Error("No se pudo registrar el cobro. Revisa los cobros guardados antes de reintentarlo.");
 }
 
 /** Release the canonical reservation and delete the matching revision atomically. */

@@ -122,19 +122,22 @@ del cliente que no envíen el enlace/centavos recibirán rechazo explícito al c
 no éxito aparente. No se ejecuta liberación desde este trabajo.
 
 Estimación conservadora actualizada (sustituye para este cambio la tabla original):
-hasta 24 lecturas por intento antes de los productos (≤20 accesos de reglas más
-3 lecturas transaccionales y margen), ≤3 escrituras por cobro confirmado antes
-de sumar la primera reserva. Con P productos: hasta 24+P lecturas por intento y
-3+P escrituras si se reserva; un rechazo no escribe. El SDK instalado usa hasta
-5 intentos por transacción (`DEFAULT_TRANSACTION_OPTIONS.maxAttempts = 5`).
-Para 100 cobros/día sin reserva: hasta 2,400 lecturas/300 escrituras sin reintentos;
-el extremo de 100 primeras reservas de 50 productos y 5 intentos usa hasta
-37,000 lecturas y 5,300 escrituras (74%/26.5% de las cuotas gratuitas diarias).
-Es presupuesto del cambio a ese volumen, no certificación del consumo total de
-la aplicación; antes de ampliar volumen se revisa el presupuesto conjunto.
-No se añaden listeners, servicios ni lecturas por render. Los límites de accesos
-de reglas se comprueban en CI con primera reserva de 50 productos y concurrencia;
-no se presume que la caché evite sobrepasarlos.
+se presupuestan hasta 48+5P lecturas por intento y 3+P escrituras confirmadas si
+se reserva. La cota cuenta por separado autorización de cada lectura del cliente,
+hasta 20 accesos del lote de escritura en reglas y una lectura excepcional del
+padre con su autorización, sin descontar caché entre solicitudes. P es el número
+de productos leídos en la primera reserva; después P=0.
+El registro limita el total a 5 ejecuciones transaccionales, compartiendo ese
+presupuesto entre reintentos del SDK y una reserva concurrente. Solo se reintenta
+un rechazo de permiso si una lectura del servidor confirma que cambió el pedido
+leído (revisión, dinero, enlace o marca). Un rechazo real no se oculta.
+Para 100 cobros/día sin reserva y sin reintentos: hasta 4,800 lecturas/300
+escrituras (9.6%/1.5% de cuotas diarias). Para 100 primeras reservas de P=2 con
+el extremo de 5 intentos: hasta 29,000 lecturas/500 escrituras (58%/2.5%), dentro
+de cuotas. Es presupuesto del cambio a ese volumen, no certificación del consumo
+total de la app. La prueba de 50 productos valida el límite técnico de accesos;
+si ese tamaño se usa habitualmente, se recalcula volumen y presupuesto conjunto
+antes de ampliarlo. No se añaden listeners, servicios ni lecturas por render.
 
 Pruebas: suma segura (dos regresiones vistas en rojo antes de corregir), reglas
 con SDK directo contra inflación/reducción/replay, registros huérfanos y lotes
@@ -144,3 +147,14 @@ Incluye un primer abono con reserva de 50 productos para validar los límites de
 accesos de reglas. Emuladores solo en CI, conforme al acuerdo del proyecto.
 
 Referencia técnica: [operaciones atómicas con getAfter](https://firebase.google.com/docs/firestore/security/rules-conditions#access_other_documents).
+
+
+El acumulado se escribe con `increment(savedCents)` y evidencia en la misma
+transacción, de modo que las reglas evalúen el incremento contra el padre
+canónico aun bajo contención. La suficiencia/precisión se comprueba antes de
+escribir y las reglas comprueban el resultado final. La marca inmutable de
+primera reserva y el heredado siguen requiriendo lectura canónica: si compiten
+dos primeros cobros, un permiso rechazado por evidencia ya cambiada se reintenta
+solo tras comprobar esa carrera en el servidor, dentro del mismo límite total.
+Pruebas de dos primeros abonos y de dos materializaciones concurrentes conservan
+ambos cobros, una sola reserva y un solo anticipo heredado.
