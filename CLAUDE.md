@@ -92,6 +92,14 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Haz commit/push solo cuando se te pida (o al cerrar un paso lógico).
 - Termina los mensajes de commit con `Co-Authored-By: Codex <noreply@anthropic.com>`. (Esta convención se mantiene idéntica en `AGENTS.md` y `CLAUDE.md` — ambos archivos deben estar a la par.)
 
+## Aplicación del feedback y continuidad
+
+- Antes de preguntar o implementar, revisa el contexto accesible del proyecto: instrucciones, specs, backlog, issues, PRs y decisiones previas. Trata las correcciones y preferencias explícitas del usuario como criterios persistentes para cambios relacionados; no vuelvas a pedir confirmación de algo ya resuelto.
+- Antes de abrir trabajo, revisa la rama y los PRs existentes. Continúa o corrige el trabajo relacionado que ya existe y evita duplicar una implementación.
+- Cuando el usuario autorice continuar, completa el trabajo hasta dejar un resultado revisable. No pauses por permisos ya concedidos; aísla únicamente la parte que dependa de una decisión de negocio sin resolver sobre dinero, existencias, acceso, privacidad o producción, y avanza el resto.
+- Valida el recorrido de la persona operadora en dev/emuladores cuando corresponda y comunica la evidencia concreta. CI en verde acredita checks técnicos, no por sí solo la aceptación funcional.
+- Mantén los avances y el cierre concisos: qué cambió, qué se verificó y qué decisión real sigue pendiente.
+
 ## Out of scope (todavía)
 
 Sin pagos/checkout/carrito, sin facturas, sin códigos de barras (la Clave/SKU de producto ya existe; proveedores y compras ya están implementados), sin ledger de inventario, sin analítica. El catálogo público cloud **ya está implementado** (`publicStores`/`publicProducts` en `firestore.rules`, lectura anónima; la proyección se mantiene al crear/editar tienda y productos, y con el botón "Republicar catálogo"). La subida de imágenes funciona pero requiere el grant IAM `roles/datastore.user` al Storage service agent (ver `docs/DEPLOYMENT.md` §4b) o las fotos fallan con 403.
