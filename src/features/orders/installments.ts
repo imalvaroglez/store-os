@@ -1,0 +1,231 @@
+// Installment plans (#165): the schedule/coverage rules layered on top of the
+// #123 payment records. Pure functions only — persistence lives in
+// firestoreData.ts. The read model ALWAYS recomputes from the order's current
+// total plus the SAME payment records payments.ts reads (received/balance come
+// from paymentSummary): there is no second money accumulator, and the number
+// of receipts is never the number of cuotas covered.
+//
+// Adopted decisions (issue #165 comment, 2026-11-02): the operator picks the
+// first due date and a configurable frequency (weekly/biweekly/monthly); later
+// dates derive from it; there is no settlement deadline separate from the
+// order's promised date; an abono covers the nearest-due cuota first and the
+// leftover flows to the next; lateness is shown without penalties; there is no
+// separate down payment — any abono reduces the same total; no interest or
+// charges of any kind exist in this model.
+import type { InstallmentFrequency, Order, OrderInstallmentPlan, OrderPayment } from "../../types";
+import { parseAmount } from "../../lib/money";
+import { orderAmountCents } from "../../lib/orderMoney";
+import { orderItems } from "../../lib/orders";
+import { paymentSummary } from "./payments";
+
+export type { InstallmentFrequency, OrderInstallmentPlan };
+
+export const INSTALLMENT_FREQUENCY_LABELS: Record<InstallmentFrequency, string> = {
+  weekly: "Semanal",
+  biweekly: "Quincenal",
+  monthly: "Mensual",
+};
+
+/** Cuota counts are operator-chosen per order; the bounds only keep the
+ * derived calendar finite. No default count exists anywhere. */
+export const MIN_INSTALLMENTS = 1;
+export const MAX_INSTALLMENTS = 99;
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A real calendar date in YYYY-MM-DD (round-trips through UTC). */
+export function isValidIsoDate(iso: string): boolean {
+  if (!ISO_DATE.test(iso)) return false;
+  const d = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
+}
+
+/**
+ * Validate the operator's plan input. Throws (es-MX) with the exact reason so
+ * forms surface it verbatim; never coerces invalid numbers into the plan.
+ */
+export function validateInstallmentPlanInput(input: {
+  countText: string;
+  frequency: string;
+  firstDueDate: string;
+  /** The order's CURRENT total in exact cents. */
+  totalCents: number;
+}): { count: number; frequency: InstallmentFrequency; firstDueDate: string } {
+  const count = parseAmount(input.countText);
+  if (
+    count == null ||
+    !Number.isSafeInteger(count) ||
+    count < MIN_INSTALLMENTS ||
+    count > MAX_INSTALLMENTS
+  ) {
+    throw new Error(`Captura un número de cuotas válido (entre ${MIN_INSTALLMENTS} y ${MAX_INSTALLMENTS}).`);
+  }
+  if (input.frequency !== "weekly" && input.frequency !== "biweekly" && input.frequency !== "monthly") {
+    throw new Error("Elige la frecuencia de los pagos.");
+  }
+  if (!isValidIsoDate(input.firstDueDate)) {
+    throw new Error("Captura la primera fecha de vencimiento.");
+  }
+  if (!Number.isSafeInteger(input.totalCents) || input.totalCents <= 0) {
+    throw new Error("El total del pedido debe ser mayor a cero para pagar por partes.");
+  }
+  return { count, frequency: input.frequency, firstDueDate: input.firstDueDate };
+}
+
+/**
+ * Exact-cents cuota split: base = ⌊total/count⌋ cents; the division remainder
+ * is assigned explicitly to the EARLIEST cuotas so Σ cuotas == total — never a
+ * rounded average, never a lost or invented cent.
+ */
+export function splitInstallmentCents(totalCents: number, count: number): number[] {
+  if (!Number.isSafeInteger(totalCents) || totalCents < 0) throw new RangeError("Invalid installment total");
+  if (!Number.isSafeInteger(count) || count < 1) throw new RangeError("Invalid installment count");
+  const base = Math.floor(totalCents / count);
+  const remainder = totalCents - base * count;
+  return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
+/** Whole days added to an ISO date, in UTC (dates never shift by time zone). */
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Calendar months added to an ISO date; nonexistent days clamp to the target
+ * month's last day (ene 31 → feb 28/29) — the dates keep existing. */
+function addMonthsIso(iso: string, months: number): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  const firstOfTarget = new Date(Date.UTC(year, month - 1 + months, 1));
+  const y = firstOfTarget.getUTCFullYear();
+  const m = firstOfTarget.getUTCMonth();
+  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const clampedDay = Math.min(day, lastDay);
+  return `${String(y).padStart(4, "0")}-${String(m + 1).padStart(2, "0")}-${String(clampedDay).padStart(2, "0")}`;
+}
+
+/** The n-th due date (0-based) derived from the first due date + frequency. */
+export function installmentDueDate(
+  firstDueDate: string,
+  frequency: InstallmentFrequency,
+  n: number
+): string {
+  if (frequency === "monthly") return addMonthsIso(firstDueDate, n);
+  return addDaysIso(firstDueDate, n * (frequency === "weekly" ? 7 : 14));
+}
+
+export type InstallmentCuotaStatus = "covered" | "partial" | "pending";
+
+export type InstallmentCuota = {
+  /** 1-based, for display only. */
+  index: number;
+  dueDate: string;
+  amountCents: number;
+  /** How much of the accumulated received money fills THIS cuota (waterfall). */
+  coveredCents: number;
+  status: InstallmentCuotaStatus;
+  /** Informative only: the due date passed and the cuota is not fully
+   * covered. No penalty/interest exists in this model. */
+  late: boolean;
+};
+
+export type InstallmentPlanView = {
+  plan: OrderInstallmentPlan;
+  cuotas: InstallmentCuota[];
+  /** FULLY covered cuotas — computed by the waterfall, never the receipt count. */
+  coveredCount: number;
+  lateCount: number;
+  lastDueDate: string;
+  /** Calendar sum == the order's CURRENT total, exact. */
+  totalCents: number;
+  receivedCents: number;
+  balanceCents: number;
+  /** Whether the first confirmed abono already reserved the pieces. */
+  reserved: boolean;
+  /** #165 delivery rule: an installment order cannot be CONFIRMED delivered
+   * while money is owed. Liquidar enables delivery; it never auto-delivers. */
+  deliveryBlocked: boolean;
+};
+
+/**
+ * Waterfall application: the accumulated received money fills the nearest-due
+ * cuota first; the leftover flows to the next. Signed adjustments participate
+ * through the accumulated total, so a refund un-covers cuotas by itself.
+ */
+function applyReceivedToSchedule(amounts: number[], receivedCents: number): number[] {
+  let remaining = Math.max(0, receivedCents);
+  return amounts.map((amount) => {
+    const covered = Math.min(amount, remaining);
+    remaining -= covered;
+    return covered;
+  });
+}
+
+/**
+ * The single read model for the installment UI. Recomputed every time from the
+ * CURRENT total and the SAME #123 records (via paymentSummary), so a total or
+ * plan change re-derives everything without touching a single payment.
+ */
+export function installmentPlanView(
+  order: Partial<Order> & Record<string, unknown>,
+  payments: OrderPayment[],
+  today: string = new Date().toISOString().slice(0, 10)
+): InstallmentPlanView | null {
+  const plan = order.installments as OrderInstallmentPlan | undefined;
+  if (!plan) return null;
+  const summary = paymentSummary(order, payments);
+  const amounts = splitInstallmentCents(summary.totalCents, plan.count);
+  const coverage = applyReceivedToSchedule(amounts, summary.receivedCents);
+  const cuotas: InstallmentCuota[] = amounts.map((amountCents, i) => {
+    const coveredCents = coverage[i];
+    const dueDate = installmentDueDate(plan.firstDueDate, plan.frequency, i);
+    return {
+      index: i + 1,
+      dueDate,
+      amountCents,
+      coveredCents,
+      status: coveredCents >= amountCents ? "covered" : coveredCents > 0 ? "partial" : "pending",
+      late: coveredCents < amountCents && dueDate < today,
+    };
+  });
+  return {
+    plan,
+    cuotas,
+    coveredCount: cuotas.filter((c) => c.status === "covered").length,
+    lateCount: cuotas.filter((c) => c.late).length,
+    lastDueDate: cuotas[cuotas.length - 1]?.dueDate ?? plan.firstDueDate,
+    totalCents: summary.totalCents,
+    receivedCents: summary.receivedCents,
+    balanceCents: summary.balanceCents,
+    reserved: !!order.installmentsReservedAt,
+    deliveryBlocked: summary.balanceCents > 0,
+  };
+}
+
+/** #165 delivery gate for the mutation path: an installment order may not be
+ * confirmed delivered while the SAME records show a positive balance. */
+export function installmentDeliveryBlocked(
+  order: Partial<Order> & Record<string, unknown>,
+  payments: OrderPayment[]
+): boolean {
+  if (!order.installments) return false;
+  return paymentSummary(order, payments).balanceCents > 0;
+}
+
+/** Order total in exact cents — the same frozen-line math payments.ts uses. */
+export function orderTotalCents(order: Partial<Order> & Record<string, unknown>): number {
+  return orderItems(order).reduce(
+    (sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity),
+    0
+  );
+}
+
+/** Same agreement (count/frequency/first date)? Agreed-at/by are metadata. */
+export function sameInstallmentPlan(
+  a: OrderInstallmentPlan | undefined,
+  b: OrderInstallmentPlan | undefined
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.count === b.count && a.frequency === b.frequency && a.firstDueDate === b.firstDueDate;
+}

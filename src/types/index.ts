@@ -231,6 +231,30 @@ export type OrderItem = {
   cost?: number;
 };
 
+/** How often cuotas come due on an installment plan (#165). */
+export type InstallmentFrequency = "weekly" | "biweekly" | "monthly";
+
+/**
+ * The per-order installment agreement (#165). Chosen on the ORDER (never on
+ * the product). Cuota amounts are NOT stored: they are suggested from the
+ * order's current total ÷ count with exact cents at display time, so the plan
+ * never carries stale money and no campaign default (count, frequency or
+ * price) exists in code, data or UI.
+ */
+export type OrderInstallmentPlan = {
+  /** Number of cuotas — operator-chosen per order, validated 1–99. */
+  count: number;
+  frequency: InstallmentFrequency;
+  /** First due date (YYYY-MM-DD); later dates derive from the frequency. */
+  firstDueDate: string;
+  /** When/who agreed the plan — evidence for post-payment edits. */
+  agreedAt: string;
+  agreedBy: string;
+};
+
+/** A replaced plan, kept verbatim as evidence when the agreement changes. */
+export type PastInstallmentPlan = OrderInstallmentPlan & { replacedAt: string };
+
 export type Order = {
   revision?: number;
   lastMutationId?: string;
@@ -247,6 +271,13 @@ export type Order = {
   schemaVersion?: number;
   createdAt: string;
   updatedAt: string;
+  // Installment plan (#165). Absent = ordinary order (behavior unchanged).
+  installments?: OrderInstallmentPlan;
+  /** Idempotency mark: set when the FIRST confirmed positive abono reserved
+   * the order's stock. One reservation ever — later abonos never re-reserve. */
+  installmentsReservedAt?: string;
+  /** Replaced plans, oldest first — evidence, never rewritten. */
+  installmentsHistory?: PastInstallmentPlan[];
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
