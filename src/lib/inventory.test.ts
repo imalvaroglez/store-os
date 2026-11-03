@@ -8,6 +8,7 @@ import {
   DEFAULT_LOW_STOCK_AT,
   effectiveLowStockAt,
   stockAlertLevel,
+  stockAlertText,
 } from "./inventory";
 import type { Product, PurchaseLine, Order } from "../types";
 
@@ -190,5 +191,11 @@ describe("stockAlertLevel", () => {
   it("ignores non-finite legacy thresholds (never NaN into the alert)", () => {
     expect(effectiveLowStockAt({ lowStockAt: Number.NaN })).toBe(DEFAULT_LOW_STOCK_AT);
     expect(stockAlertLevel(tracked(1, Number.NaN))).toBe("low");
+  });
+
+  it("renders clear Spanish text per level", () => {
+    expect(stockAlertText({ quantityOnHand: 0 })).toBe("Agotado");
+    expect(stockAlertText({ quantityOnHand: -2 })).toBe("Faltan 2");
+    expect(stockAlertText({ quantityOnHand: 2 })).toBe("Quedan 2");
   });
 });

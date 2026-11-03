@@ -194,6 +194,40 @@ describe("CatalogScreen cobertura extra de direcciones y filtro vacío", () => {
   });
 });
 
+describe("CatalogScreen alertas de existencias (FER-09)", () => {
+  it("distingue Agotado y Faltan N; umbral explícito pinta Quedan N", () => {
+    const state = sortFilterState();
+    // p1 has 5 on hand: below an explicit threshold of 6 → "Quedan 5".
+    state.products[0].lowStockAt = 6;
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <CatalogScreen />
+      </Wrapper>
+    );
+
+    expect(screen.getByText("Quedan 5")).toBeTruthy();
+    expect(screen.getByText("Agotado")).toBeTruthy(); // p2: 0 on hand
+    expect(screen.getByText("Faltan 2")).toBeTruthy(); // p3: −2 shortage
+  });
+
+  it("sin umbral guardado no alerta por encima del default conservador", () => {
+    const state = sortFilterState();
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <CatalogScreen />
+      </Wrapper>
+    );
+
+    // p1: 5 on hand, no threshold → above the default (3), no alert.
+    expect(screen.queryByText(/Quedan/)).toBeNull();
+    // Exhausted pieces still alert without any saved threshold.
+    expect(screen.getByText("Agotado")).toBeTruthy();
+    expect(screen.getByText("Faltan 2")).toBeTruthy();
+  });
+});
+
 describe("CatalogScreen en tienda on_demand", () => {
   it("no ofrece la opción Stock y ordena por precio del campo price", () => {
     const state = sortFilterState();

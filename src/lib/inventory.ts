@@ -65,6 +65,14 @@ export function stockAlertLevel(
   return p.quantityOnHand <= effectiveLowStockAt(p) ? "low" : null;
 }
 
+/** Clear Spanish (Mexico) text for a product flagged by stockAlertLevel. */
+export function stockAlertText(p: Pick<Product, "quantityOnHand">): string {
+  const qty = p.quantityOnHand ?? 0;
+  if (qty < 0) return `Faltan ${Math.abs(qty)}`;
+  if (qty === 0) return "Agotado";
+  return `Quedan ${qty}`;
+}
+
 /**
  * Compute the stock + cost updates a purchase applies to each product.
  * Returns a Map<productId, ProductStockUpdate>. Lines whose product isn't in
