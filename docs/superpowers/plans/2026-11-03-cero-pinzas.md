@@ -9,6 +9,16 @@
 > subagent-driven-development, tarea por tarea. Los pasos usan checkboxes
 > (`- [ ]`). Cada tarea declara qué NO hacer; las restricciones duras de abajo
 > prevalecen sobre cualquier atajo.
+>
+> **Ejecutado 2026-11-03** — seguimiento y evidencias en la issue #180.
+> Desviaciones respecto a este texto: (1) los artefactos de T2 se entregaron en
+> esta misma rama `docs/cero-pinzas-plan` (sin PR `ops/cero-pinzas-purge-tools`,
+> por decisión del orquestador); (2) el script de purge requería
+> `--invert-paths` (sin él, filter-repo conserva-solo-esos-paths y vacía el
+> árbol; ver `docs/history-purge-2026-11-03.md`); (3) `docs/cero-pinzas-plan`
+> es portador de la contaminación y debe fusionarse/borrarse antes del modo
+> push del purge; (4) `codex/fer-11-acabado-catalogo` rehusó `branch -d`
+> (12 commits sin fusionar) y queda como decisión del PO.
 
 **Goal:** dejar el repositorio sin pinzas: (1) triage y limpieza de worktrees
 con evidencia, (2) script verificado + runbook para que el PO purge la
@@ -128,7 +138,7 @@ conflictos vivos en `reliability` (protegido).
 
 **Files:** ninguno (estado local de git + tablero; sin diff de repo, sin PR).
 
-- [ ] **Step 1.1: Re-verificar el estado** (puede haber derivado desde el
+- [x] **Step 1.1: Re-verificar el estado** (puede haber derivado desde el
   2026-11-03). Evidencia inicial: `git worktree list` y por worktree
   `git -C <path> status --porcelain`.
 
@@ -143,7 +153,7 @@ conflictos vivos en `reliability` (protegido).
   Expected: misma foto que el mapa de arriba. Si algo cambió (worktree de más,
   rama fusionada nueva), re-triplicar con los mismos criterios antes de tocar.
 
-- [ ] **Step 1.2: Remover los 2 worktrees sin matiz** (`firebase-release`,
+- [x] **Step 1.2: Remover los 2 worktrees sin matiz** (`firebase-release`,
   `issue-121-b870`). Por cada uno: verificar limpieza, remover, borrar rama
   local (`-d` = solo si está fusionada; es el cerrojo de seguridad).
 
@@ -160,7 +170,7 @@ conflictos vivos en `reliability` (protegido).
   `--force` se justifica únicamente cuando lo sin commit es `?? node_modules`
   (regenerable con `npm install`). Ante cualquier otra línea: PARAR y reportar.
 
-- [ ] **Step 1.3: Remover `reliable-saves` tras confirmación.** La issue #117
+- [x] **Step 1.3: Remover `reliable-saves` tras confirmación.** La issue #117
   lo registra como worktree exclusivo del frente de fiabilidad
   (#96/#111/#117/#118). #96 ya está fusionado y #111 trabaja desde
   `store-os-erase-local-mode`, así que la estación quedó libre — pero se
@@ -182,7 +192,7 @@ conflictos vivos en `reliability` (protegido).
   Si el frente sigue vivo: dejar el worktree, anotarlo en la issue de T4 y
   continuar. **No forzar.**
 
-- [ ] **Step 1.4: Higiene de refs.** Prune de refs de seguimiento obsoletas
+- [x] **Step 1.4: Higiene de refs.** Prune de refs de seguimiento obsoletas
   (incluye las 2 que aún portan contaminación localmente:
   `codex/migrate-adminstores` y `fix/retirar-datos-locales`) y borrado de las
   8 ramas locales fusionadas sin worktree de la sección D:
@@ -202,7 +212,7 @@ conflictos vivos en `reliability` (protegido).
   NO fusionada → no insistir con `-D`; reportarla en la sección C/D de la
   issue de T4.
 
-- [ ] **Step 1.5: Verificación final.**
+- [x] **Step 1.5: Verificación final.**
 
   ```bash
   git worktree list
@@ -227,7 +237,7 @@ staging (T1 no commitea nada).
 - Create: `docs/history-purge-2026-11-03.md` (runbook del PO)
 - Rama propia desde main (p. ej. `ops/cero-pinzas-purge-tools`) + draft PR.
 
-- [ ] **Step 2.1: Escribir el script** con EXACTO este contenido (los guards
+- [x] **Step 2.1: Escribir el script** con EXACTO este contenido (los guards
   son parte del entregable; no "simplificar"):
 
 ```bash
@@ -319,7 +329,7 @@ else
 fi
 ```
 
-- [ ] **Step 2.2: Verificar el script en modo verify** (esto es lo que el
+- [x] **Step 2.2: Verificar el script en modo verify** (esto es lo que el
   agente SÍ puede correr; nunca `push`). Desde `$HOME` o cualquier ruta fuera
   del repo y de `/private/tmp/store-os-*`:
 
@@ -336,7 +346,7 @@ fi
     SHA original (prueba de que el remoto no cambió).
   Después de capturar la evidencia: `rm -rf "$SCRATCH"`.
 
-- [ ] **Step 2.3: Escribir el runbook** `docs/history-purge-2026-11-03.md`
+- [x] **Step 2.3: Escribir el runbook** `docs/history-purge-2026-11-03.md`
   con: prerequisitos (`brew install git-filter-repo`; ningún agente empujando),
   pasos (verify → revisar salida → push → `gh run watch` en main → resincronizar
   el repo local: `git fetch origin --prune && git switch main && git reset --hard origin/main`
@@ -347,7 +357,7 @@ fi
   forks (`gh api repos/imalvaroglez/store-os --jq .forks_count` → 0), y la nota
   de que producción NO se despliega solita (workflow_dispatch).
 
-- [ ] **Step 2.4: Rama + draft PR.**
+- [x] **Step 2.4: Rama + draft PR.**
 
   ```bash
   git switch -c ops/cero-pinzas-purge-tools origin/main
@@ -377,7 +387,7 @@ CONFLICTING`, `mergeStateStatus: DIRTY` contra main. Diff total: 42 archivos,
 +884/−529. El worktree `/private/tmp/store-os-erase-local-mode` está limpio en
 `9079ddd` = `origin/chore/eradicate-local-mode`.
 
-- [ ] **Step 3.1: Integrar main (merge, no rebase** — la rama es compartida y
+- [x] **Step 3.1: Integrar main (merge, no rebase** — la rama es compartida y
   el historial del repo ya usa merges de integración):
 
   ```bash
@@ -391,7 +401,7 @@ CONFLICTING`, `mergeStateStatus: DIRTY` contra main. Diff total: 42 archivos,
   auto-mergear). Si aparece cualquier otro conflicto, resolverlo también, pero
   reportarlo en el PR: era imprevisible desde el merge-tree.
 
-- [ ] **Step 3.2: Resolver los 2 conflictos con criterio explícito.** #111
+- [x] **Step 3.2: Resolver los 2 conflictos con criterio explícito.** #111
   reescribe ambos tests para mockear `AuthProvider`/`useAuth` con `vi.hoisted`
   y eliminar `saveState`/`storage` (parte de la erradicación). Main, por su
   lado, añadió comportamientos vía #164 (defaults de producto: Material en vez
@@ -401,7 +411,7 @@ CONFLICTING`, `mergeStateStatus: DIRTY` contra main. Diff total: 42 archivos,
   **re-aplicar encima las expectativas de comportamiento llegadas de main**.
   Los tests no deben referenciar persistencia local eliminada.
 
-- [ ] **Step 3.3: Verificación local completa** (sin emuladores — vetados):
+- [x] **Step 3.3: Verificación local completa** (sin emuladores — vetados):
 
   ```bash
   npm run typecheck && npm run test && npm run build
@@ -411,7 +421,7 @@ CONFLICTING`, `mergeStateStatus: DIRTY` contra main. Diff total: 42 archivos,
   migración/seguridad falla, la causa raíz se atiende aquí — no se salta ni se
   marca flaky sin diagnóstico.
 
-- [ ] **Step 3.4: Commit + push de la rama del PR** (permitido: es la rama del
+- [x] **Step 3.4: Commit + push de la rama del PR** (permitido: es la rama del
   PR, no main):
 
   ```bash
@@ -421,7 +431,7 @@ CONFLICTING`, `mergeStateStatus: DIRTY` contra main. Diff total: 42 archivos,
   git push origin chore/eradicate-local-mode
   ```
 
-- [ ] **Step 3.5: Cerrar con evidencia y dejarlo en manos del PO.**
+- [x] **Step 3.5: Cerrar con evidencia y dejarlo en manos del PO.**
 
   ```bash
   gh pr checks 111 --watch
@@ -443,7 +453,7 @@ ramas ajenas.
 **Files:** ninguna en el repo (la documentación viva ya viajó: este plan en su
 PR; el runbook en T2). Solo GitHub Issues + Projects.
 
-- [ ] **Step 4.1: Crear la issue de seguimiento de la limpieza** con criterios
+- [x] **Step 4.1: Crear la issue de seguimiento de la limpieza** con criterios
   de aceptación (T1 ejecutado con evidencia; script+runbook en PR; #111
   mergeable; decisiones del PO sobre secciones C/D listadas) y agregarla al
   tablero. Mutaciones de `gh project` con **pacing ≥ 4 s** entre sí (límites de
@@ -464,14 +474,14 @@ PR; el runbook en T2). Solo GitHub Issues + Projects.
   gh project item-edit --id "<ITEM_ID>" --field "Prioridad" --value "P1"
   ```
 
-- [ ] **Step 4.2: Acomodar el tablero:** #118 (erradicación del modo local) en
+- [x] **Step 4.2: Acomodar el tablero:** #118 (erradicación del modo local) en
   **En PR** mientras #111 siga abierto (verificar su estado actual con
   `gh project item-list` antes de escribir); comentar en #117 el destino del
   worktree `reliable-saves` (liberado o conservado, según T1); pegar en la
   issue nueva las evidencias de T1 (`git worktree list` final) y T2 (salida
   del modo verify).
 
-- [ ] **Step 4.3: Cierre.** Las decisiones pendientes del PO (worktrees C,
+- [x] **Step 4.3: Cierre.** Las decisiones pendientes del PO (worktrees C,
   ramas D, ejecución del purge, merge de #111) quedan enlistadas en la issue;
   este plan se marca ejecutado y la issue pasa al estado que el PO decida.
 
