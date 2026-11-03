@@ -567,6 +567,29 @@ describe("purchase-ux2 — received purchases are immutable evidence", () => {
     await assertFails(updateDoc(doc(db, "purchases/recv1"), { notes: "x" }));
   });
 
+  // FER-02 (#126): the ONLY mutation allowed on received evidence is appending
+  // a post-reception expense adjustment — a report-only field that never feeds
+  // stock, product cost or the supplier document.
+  it("member can append a post-reception expense adjustment", async () => {
+    const db = await asUser("u1");
+    await assertSucceeds(updateDoc(doc(db, "purchases/recv1"), {
+      saleCostAdjustments: [{
+        id: "adj1", at: "2026-11-02T00:00:00Z", category: "customer_delivery", amount: 25,
+        allocations: [{ lineId: "line", saleExpenseCents: 2500 }],
+      }],
+      updatedAt: "2026-11-02T00:00:00Z",
+    }));
+  });
+
+  it("an adjustment cannot smuggle changes to the received evidence", async () => {
+    const db = await asUser("u1");
+    await assertFails(updateDoc(doc(db, "purchases/recv1"), {
+      saleCostAdjustments: [{ id: "adj2", at: "2026-11-02T00:00:00Z", category: "other", amount: 1 }],
+      notes: "x",
+    }));
+    await assertFails(updateDoc(doc(db, "purchases/recv1"), { status: "draft" }));
+  });
+
   it("the receive transaction itself can mark a purchase received (update draft → received)", async () => {
     await env.withSecurityRulesDisabled(async (c) => {
       await setDoc(doc(c.firestore(), "purchases/draft1"), { storeId: "s1", status: "ready" });
