@@ -30,7 +30,10 @@ import { installmentDeliveryBlocked, sameInstallmentPlan } from "../features/ord
 import {
   buildAdjustmentRecord,
   buildPaymentRecord,
+  INHERITED_DEPOSIT_PAYMENT_ID,
   mergePayments,
+  orderMoneyAfterPayments,
+  paymentsCents,
   type PaymentRecordInput,
 } from "../features/orders/payments";
 import { useAuth } from "./firebase/AuthProvider";
@@ -788,6 +791,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         input.kind === "payment" ? input.inherited : undefined
       );
       setPayments((prev) => mergePayments(prev, saved));
+      // #168: mirror the transactional accumulator into the in-memory order so
+      // the card shows the real Recibido/Saldo immediately — the listener
+      // catches up with the same doc, so this is not a second truth.
+      const current = state.orders.find((o) => o.id === order.id);
+      if (current) {
+        const money = orderMoneyAfterPayments(
+          current,
+          paymentsCents(saved),
+          saved.some((p) => p.id === INHERITED_DEPOSIT_PAYMENT_ID)
+        );
+        dispatch({ type: "UPDATE_ORDER", order: { ...current, ...money } });
+      }
     },
   };
 
