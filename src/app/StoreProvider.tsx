@@ -25,7 +25,8 @@ import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
-import { migrateOrder, paymentStatusForOrder } from "../lib/orders";
+import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
+import { installmentDeliveryBlocked, sameInstallmentPlan } from "../features/orders/installments";
 import {
   buildAdjustmentRecord,
   buildPaymentRecord,
@@ -55,6 +56,7 @@ import {
   StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
+  DeliveryWithBalanceError,
   stripUndefined,
 } from "./firebase/firestoreData";
 import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
@@ -685,6 +687,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         paymentStatus: paymentStatusForOrder(order),
       };
       const prev = state.orders.find((o) => o.id === order.id);
+      // #165: replacing or removing an agreed plan keeps the previous one
+      // verbatim as evidence — post-payment edits never erase the agreement.
+      if (prev?.installments && !sameInstallmentPlan(prev.installments, nextOrder.installments)) {
+        nextOrder.installmentsHistory = [
+          ...(nextOrder.installmentsHistory ?? []),
+          { ...prev.installments, replacedAt: nowIso() },
+        ];
+      }
+      // #165 (local mode parity): the delivery gate runs in the cloud tx; here
+      // it also guards the legacy local branch with the same session records.
+      if (
+        nextOrder.installments &&
+        effectiveOrderStatus(nextOrder) === "delivered" &&
+        (!prev || effectiveOrderStatus(prev) !== "delivered") &&
+        installmentDeliveryBlocked(nextOrder, payments)
+      ) {
+        throw new DeliveryWithBalanceError();
+      }
       const deltas = reservationDeltasForOrderChange(prev, nextOrder);
       const stockAt = nowIso();
       const stockWrites: Product[] = [];
@@ -701,7 +721,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // commits only on success, so a failed save leaves no phantom order and
       // the retry the toast invites replays the FULL delta set.
       if (cloud && user && !fromCloud.current) {
-        const result = await saveOrderWithStockTx(user, nextOrder, options ? options.expectedRevision : prev ? (order.revision ?? 0) : null, options?.mutationId ?? uid("mutation"));
+        const result = await saveOrderWithStockTx(
+          user,
+          nextOrder,
+          options ? options.expectedRevision : prev ? (order.revision ?? 0) : null,
+          options?.mutationId ?? uid("mutation"),
+          payments
+        );
         for (const update of result.stock) {
           const product = state.products.find((p) => p.id === update.productId);
           if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });

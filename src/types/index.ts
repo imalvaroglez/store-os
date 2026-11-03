@@ -247,9 +247,10 @@ export type OrderInstallmentPlan = {
   frequency: InstallmentFrequency;
   /** First due date (YYYY-MM-DD); later dates derive from the frequency. */
   firstDueDate: string;
-  /** When/who agreed the plan — evidence for post-payment edits. */
-  agreedAt: string;
-  agreedBy: string;
+  /** When/who agreed the plan — evidence for post-payment edits. Optional so
+   * a migrated legacy plan never invents provenance it does not have. */
+  agreedAt?: string;
+  agreedBy?: string;
 };
 
 /** A replaced plan, kept verbatim as evidence when the agreement changes. */
