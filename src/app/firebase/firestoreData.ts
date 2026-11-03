@@ -377,9 +377,11 @@ export async function saveOrderWithStockTx(
     const docData = snap.data() as Record<string, unknown> | undefined;
     const next: Order = {
       ...order,
-      ...(previous?.installmentsReservedAt ? { installmentsReservedAt: previous.installmentsReservedAt } : {}),
-      ...(typeof docData?.paymentsReceivedCents === "number" ? { paymentsReceivedCents: docData.paymentsReceivedCents } : {}),
-      ...(docData?.inheritedDepositMaterialized === true ? { inheritedDepositMaterialized: true } : {}),
+      // A caller can neither erase existing evidence nor invent it on create.
+      // Only the canonical doc (or the payment transaction) owns these fields.
+      installmentsReservedAt: previous?.installmentsReservedAt,
+      paymentsReceivedCents: typeof docData?.paymentsReceivedCents === "number" ? docData.paymentsReceivedCents : undefined,
+      inheritedDepositMaterialized: docData?.inheritedDepositMaterialized === true ? true : undefined,
     };
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
