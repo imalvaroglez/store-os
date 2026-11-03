@@ -1,0 +1,2339 @@
+{
+  "customer": "Fátima Bonilla",
+  "date": "2026-10-31",
+  "declaredTotal": 1210,
+  "rows": [
+    {
+      "values": [
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "textFormat": {
+              "foregroundColor": {
+                "red": 0.3372549,
+                "green": 0.3372549,
+                "blue": 0.3372549
+              },
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "foregroundColorStyle": {
+                "rgbColor": {
+                  "red": 0.3372549,
+                  "green": 0.3372549,
+                  "blue": 0.3372549
+                }
+              }
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "Fátima Bonilla"
+          },
+          "note": "Pedido compartido por el usuario: 31 de octubre de 2026. Siete renglones; total declarado y calculado $1,210. Costos, cantidades y cobro por confirmar."
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "DATE",
+              "pattern": "d/MM/yyyy"
+            },
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "numberValue": 46326
+          },
+          "note": "Fecha del encabezado del pedido; no confirma fecha de cobro."
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "wrapStrategy": "WRAP",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "Reloj Silver caratula azul (1ro)"
+          },
+          "note": "Fuente: pedido compartido. Renglón 1: Reloj Silver caratula azul (1ro) $200. La numeración indica el orden de la lista; cantidad no explícita."
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "dataValidation": {
+            "condition": {
+              "type": "ONE_OF_LIST",
+              "values": [
+                {
+                  "userEnteredValue": "Iconic"
+                },
+                {
+                  "userEnteredValue": "Girly"
+                },
+                {
+                  "userEnteredValue": "Regular"
+                }
+              ]
+            },
+            "strict": true,
+            "showCustomUi": true
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "userEnteredValue": {
+            "numberValue": 200
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(COUNT(INDEX(H:K;ROW();0))=4;INDEX(H:H;ROW())-SUM(INDEX(I:K;ROW();0));\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*20%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*50%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*30%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "POR CONFIRMAR"
+          }
+        }
+      ]
+    },
+    {
+      "values": [
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "textFormat": {
+              "foregroundColor": {
+                "red": 0.3372549,
+                "green": 0.3372549,
+                "blue": 0.3372549
+              },
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "foregroundColorStyle": {
+                "rgbColor": {
+                  "red": 0.3372549,
+                  "green": 0.3372549,
+                  "blue": 0.3372549
+                }
+              }
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "DATE",
+              "pattern": "d/MM/yyyy"
+            },
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "wrapStrategy": "WRAP",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "Reloj Gold extendible (2do)"
+          },
+          "note": "Fuente: pedido compartido. Renglón 2: Reloj Gold extendible (2do) $160. La numeración indica el orden de la lista; cantidad no explícita."
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "dataValidation": {
+            "condition": {
+              "type": "ONE_OF_LIST",
+              "values": [
+                {
+                  "userEnteredValue": "Iconic"
+                },
+                {
+                  "userEnteredValue": "Girly"
+                },
+                {
+                  "userEnteredValue": "Regular"
+                }
+              ]
+            },
+            "strict": true,
+            "showCustomUi": true
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "userEnteredValue": {
+            "numberValue": 160
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(COUNT(INDEX(H:K;ROW();0))=4;INDEX(H:H;ROW())-SUM(INDEX(I:K;ROW();0));\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*20%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*50%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*30%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "POR CONFIRMAR"
+          }
+        }
+      ]
+    },
+    {
+      "values": [
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "textFormat": {
+              "foregroundColor": {
+                "red": 0.3372549,
+                "green": 0.3372549,
+                "blue": 0.3372549
+              },
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "foregroundColorStyle": {
+                "rgbColor": {
+                  "red": 0.3372549,
+                  "green": 0.3372549,
+                  "blue": 0.3372549
+                }
+              }
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "DATE",
+              "pattern": "d/MM/yyyy"
+            },
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "wrapStrategy": "WRAP",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "Reloj Gold Redondo con zirconias (3ro)"
+          },
+          "note": "Fuente: pedido compartido. Renglón 3: Reloj Gold Redondo con zirconias (3ro) $160. La numeración indica el orden de la lista; cantidad no explícita."
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "dataValidation": {
+            "condition": {
+              "type": "ONE_OF_LIST",
+              "values": [
+                {
+                  "userEnteredValue": "Iconic"
+                },
+                {
+                  "userEnteredValue": "Girly"
+                },
+                {
+                  "userEnteredValue": "Regular"
+                }
+              ]
+            },
+            "strict": true,
+            "showCustomUi": true
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "userEnteredValue": {
+            "numberValue": 160
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(COUNT(INDEX(H:K;ROW();0))=4;INDEX(H:H;ROW())-SUM(INDEX(I:K;ROW();0));\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*20%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*50%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*30%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "POR CONFIRMAR"
+          }
+        }
+      ]
+    },
+    {
+      "values": [
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "textFormat": {
+              "foregroundColor": {
+                "red": 0.3372549,
+                "green": 0.3372549,
+                "blue": 0.3372549
+              },
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "foregroundColorStyle": {
+                "rgbColor": {
+                  "red": 0.3372549,
+                  "green": 0.3372549,
+                  "blue": 0.3372549
+                }
+              }
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "DATE",
+              "pattern": "d/MM/yyyy"
+            },
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "wrapStrategy": "WRAP",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "Reloj tipo brazalete (4to)"
+          },
+          "note": "Fuente: pedido compartido. Renglón 4: Reloj tipo brazalete (4to) $200. La numeración indica el orden de la lista; cantidad no explícita."
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "dataValidation": {
+            "condition": {
+              "type": "ONE_OF_LIST",
+              "values": [
+                {
+                  "userEnteredValue": "Iconic"
+                },
+                {
+                  "userEnteredValue": "Girly"
+                },
+                {
+                  "userEnteredValue": "Regular"
+                }
+              ]
+            },
+            "strict": true,
+            "showCustomUi": true
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "userEnteredValue": {
+            "numberValue": 200
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(COUNT(INDEX(H:K;ROW();0))=4;INDEX(H:H;ROW())-SUM(INDEX(I:K;ROW();0));\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*20%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*50%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*30%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "POR CONFIRMAR"
+          }
+        }
+      ]
+    },
+    {
+      "values": [
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "textFormat": {
+              "foregroundColor": {
+                "red": 0.3372549,
+                "green": 0.3372549,
+                "blue": 0.3372549
+              },
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "foregroundColorStyle": {
+                "rgbColor": {
+                  "red": 0.3372549,
+                  "green": 0.3372549,
+                  "blue": 0.3372549
+                }
+              }
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "DATE",
+              "pattern": "d/MM/yyyy"
+            },
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "wrapStrategy": "WRAP",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "Reloj Gold rectangular (5to)"
+          },
+          "note": "Fuente: pedido compartido. Renglón 5: Reloj Gold rectangular (5to) $160. La numeración indica el orden de la lista; cantidad no explícita."
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "dataValidation": {
+            "condition": {
+              "type": "ONE_OF_LIST",
+              "values": [
+                {
+                  "userEnteredValue": "Iconic"
+                },
+                {
+                  "userEnteredValue": "Girly"
+                },
+                {
+                  "userEnteredValue": "Regular"
+                }
+              ]
+            },
+            "strict": true,
+            "showCustomUi": true
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "userEnteredValue": {
+            "numberValue": 160
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(COUNT(INDEX(H:K;ROW();0))=4;INDEX(H:H;ROW())-SUM(INDEX(I:K;ROW();0));\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*20%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*50%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*30%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "POR CONFIRMAR"
+          }
+        }
+      ]
+    },
+    {
+      "values": [
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "textFormat": {
+              "foregroundColor": {
+                "red": 0.3372549,
+                "green": 0.3372549,
+                "blue": 0.3372549
+              },
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "foregroundColorStyle": {
+                "rgbColor": {
+                  "red": 0.3372549,
+                  "green": 0.3372549,
+                  "blue": 0.3372549
+                }
+              }
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "DATE",
+              "pattern": "d/MM/yyyy"
+            },
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "wrapStrategy": "WRAP",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "Reloj corazón silver (6to)"
+          },
+          "note": "Fuente: pedido compartido. Renglón 6: Reloj corazón silver (6to) $160. La numeración indica el orden de la lista; cantidad no explícita."
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "dataValidation": {
+            "condition": {
+              "type": "ONE_OF_LIST",
+              "values": [
+                {
+                  "userEnteredValue": "Iconic"
+                },
+                {
+                  "userEnteredValue": "Girly"
+                },
+                {
+                  "userEnteredValue": "Regular"
+                }
+              ]
+            },
+            "strict": true,
+            "showCustomUi": true
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "userEnteredValue": {
+            "numberValue": 160
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(COUNT(INDEX(H:K;ROW();0))=4;INDEX(H:H;ROW())-SUM(INDEX(I:K;ROW();0));\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*20%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*50%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*30%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "POR CONFIRMAR"
+          }
+        }
+      ]
+    },
+    {
+      "values": [
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "textFormat": {
+              "foregroundColor": {
+                "red": 0.3372549,
+                "green": 0.3372549,
+                "blue": 0.3372549
+              },
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "foregroundColorStyle": {
+                "rgbColor": {
+                  "red": 0.3372549,
+                  "green": 0.3372549,
+                  "blue": 0.3372549
+                }
+              }
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "DATE",
+              "pattern": "d/MM/yyyy"
+            },
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9,
+              "bold": true
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "LEFT",
+            "wrapStrategy": "WRAP",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "Reloj silver brazalete delgado"
+          },
+          "note": "Fuente: pedido compartido. Renglón 7: Reloj silver brazalete delgado $170. La numeración indica el orden de la lista; cantidad no explícita."
+        },
+        {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 9
+            },
+            "backgroundColorStyle": {
+              "rgbColor": {
+                "red": 1,
+                "green": 1,
+                "blue": 1
+              }
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "dataValidation": {
+            "condition": {
+              "type": "ONE_OF_LIST",
+              "values": [
+                {
+                  "userEnteredValue": "Iconic"
+                },
+                {
+                  "userEnteredValue": "Girly"
+                },
+                {
+                  "userEnteredValue": "Regular"
+                }
+              ]
+            },
+            "strict": true,
+            "showCustomUi": true
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11,
+              "bold": true
+            }
+          },
+          "userEnteredValue": {
+            "numberValue": 170
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(COUNT(INDEX(H:K;ROW();0))=4;INDEX(H:H;ROW())-SUM(INDEX(I:K;ROW();0));\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 11
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*20%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "numberFormat": {
+              "type": "CURRENCY",
+              "pattern": "[$$]#,##0.00"
+            },
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*50%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "formulaValue": "=IF(ISNUMBER(INDEX(L:L;ROW()));INDEX(L:L;ROW())*30%;\"\")"
+          }
+        },
+        {
+          "userEnteredFormat": {
+            "horizontalAlignment": "CENTER",
+            "textFormat": {
+              "fontFamily": "Century Gothic",
+              "fontSize": 10,
+              "foregroundColorStyle": {
+                "themeColor": "TEXT"
+              }
+            }
+          },
+          "userEnteredValue": {
+            "stringValue": "POR CONFIRMAR"
+          }
+        }
+      ]
+    }
+  ]
+}

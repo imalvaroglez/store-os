@@ -1,0 +1,11 @@
+{
+  "spreadsheetId": "16fgOfQTVc648pZyT5xSq6sbv73fCQprXVGkvZQ4N23I",
+  "range": "Ventas Nov!A3:P3",
+  "customer": "Naye Mendoza",
+  "date": "2026-11-01",
+  "amount": 200,
+  "quantity": 1,
+  "status": "POR CONFIRMAR",
+  "issues": [],
+  "visual": "Comprobación de formatos y estructura mediante conector; navegador sin sesión."
+}

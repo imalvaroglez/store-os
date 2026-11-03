@@ -89,10 +89,49 @@ test("50-line review: filters, global resolution, bulk create, receive", async (
   await expect(page.getByText(/50 productos creados y vinculados/)).toBeVisible({ timeout: 30000 });
   await expect(page.getByText(/Sin vincular/)).toHaveCount(0);
 
-  // Totals reconcile (totalConfirmed was seeded to Σ sourceAmount) → receive.
+  // Extra costs are kept separate from the supplier total and must persist.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(async () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true);
+  await page.getByRole("button", { name: "+ Agregar gasto" }).click();
+  await expect(page.getByRole("button", { name: "Guardar borrador" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Recibir mercancía" })).toBeDisabled();
+  await page.getByLabel("Importe").nth(0).fill("44");
+  await page.getByLabel("Descripción (opcional)").nth(0).fill("Cuatro camiones");
+
+  await page.getByRole("button", { name: "+ Agregar gasto" }).click();
+  await page.getByLabel("Tipo de gasto").nth(1).selectOption("customer_delivery");
+  await page.getByLabel("Importe").nth(1).fill("22");
+  await page.getByLabel("Descripción (opcional)").nth(1).fill("Traslado a Santa Fe");
+
+  await page.getByRole("button", { name: "+ Agregar gasto" }).click();
+  await page.getByLabel("Tipo de gasto").nth(2).selectOption("shared_packaging");
+  await page.getByLabel("Importe").nth(2).fill("1");
+  await page.getByLabel("Descripción (opcional)").nth(2).fill("Bolsa compartida");
+  await page.getByRole("button", { name: "+ Agregar gasto" }).click();
+  await page.getByLabel("Tipo de gasto").nth(3).selectOption("other");
+  const smallExpenseAmount = page.getByLabel("Importe").nth(3);
+  await smallExpenseAmount.focus();
+  await smallExpenseAmount.pressSequentially("0.50");
+  await expect(smallExpenseAmount).toHaveValue("0.50");
+  await page.getByLabel("Descripción (opcional)").nth(3).fill("Cargo adicional");
+  await expect(page.getByText("$2,292.50").last()).toBeVisible();
+  await page.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(page.getByText("Borrador guardado.")).toBeVisible();
+
+  await page.getByRole("button", { name: "← Compras" }).click();
+  await page.getByText("#3023").first().click();
+  await expect(page.getByLabel("Tipo de gasto").nth(0)).toHaveValue("sourcing_transport");
+  await expect(page.getByLabel("Descripción (opcional)").nth(0)).toHaveValue("Cuatro camiones");
+  await expect(page.getByLabel("Importe").nth(1)).toHaveValue("22.00");
+  await expect(page.getByLabel("Importe").nth(3)).toHaveValue("0.50");
   await expect(page.getByRole("button", { name: "Recibir mercancía" })).toBeEnabled();
+
+  // Totals reconcile (totalConfirmed was seeded to Σ sourceAmount) → receive.
   await page.getByRole("button", { name: "Recibir mercancía" }).click();
   await expect(page.getByText(/el inventario se actualizó/)).toBeVisible({ timeout: 30000 });
+  await expect(page.getByText(/Gastos \$67\.50 · Total \$2,292\.50/)).toBeVisible();
 });
 
 // Negative receive paths: a missing product surfaces as a rules read error on a

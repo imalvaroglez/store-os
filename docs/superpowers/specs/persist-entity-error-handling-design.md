@@ -51,7 +51,7 @@ La operadora (Olivia/Mar en producción) no tiene forma de saber que algo no se 
 - Cola offline / persistencia de reintentos / backoff — si se necesita, otra entrega.
 - Reversión del estado local optimista (rollback del reducer).
 - Reintentos automáticos de proyecciones públicas.
-- Cambios en reglas de Firestore o en el modo demo local (sin red, no falla nada).
+- Cambios en reglas de Firestore o en el operación sin Firebase (sin red, no hay escritura remota).
 
 ## Pruebas
 

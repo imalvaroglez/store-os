@@ -3,6 +3,9 @@ import {
   derivedUnitCost,
   effectivePurchaseStatus,
   lineStatus,
+  purchaseRecordedTotal,
+  purchaseSourcingExpenseTotal,
+  purchaseTotals,
   recalcPurchaseStatus,
   type Purchase,
 } from "../../types";
@@ -26,6 +29,33 @@ describe("effectivePurchaseStatus", () => {
   });
   it("reads the explicit status when present", () => {
     expect(effectivePurchaseStatus({ ...base, status: "draft" })).toBe("draft");
+  });
+});
+
+describe("purchase sourcing expenses", () => {
+  it("treats legacy purchases without expenses as having none", () => {
+    expect(purchaseSourcingExpenseTotal(base)).toBe(0);
+    expect(purchaseRecordedTotal(base)).toBe(0);
+  });
+
+  it("adds expenses in cents without changing supplier reconciliation or receipt status", () => {
+    const purchase: Purchase = {
+      ...base,
+      status: "draft",
+      lines: [{ productId: "a", name: "A", quantity: 1, unitCost: 100 }],
+      shipping: 20,
+      subtotal: 100,
+      totalConfirmed: 120,
+      sourcingExpenses: [
+        { id: "e1", category: "sourcing_transport", amount: 0.44 },
+        { id: "e2", category: "shared_packaging", amount: 1 / 3 },
+      ],
+    };
+
+    expect(purchaseSourcingExpenseTotal(purchase)).toBe(0.77);
+    expect(purchaseRecordedTotal(purchase)).toBe(120.77);
+    expect(purchaseTotals(purchase).calculated).toBe(120);
+    expect(recalcPurchaseStatus(purchase)).toBe("ready");
   });
 });
 

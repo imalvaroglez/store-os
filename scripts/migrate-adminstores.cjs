@@ -2,7 +2,9 @@
 "use strict";
 
 const PROJECT = "store-os-f7cf8";
-const EMULATOR_PROJECT = "store-os-demo";
+// Must match FIREBASE_DEV_PROJECT_ID in src/app/firebase/projectIds.ts:
+// the app and the e2e harness run the local emulator under the dev namespace.
+const EMULATOR_PROJECT = "store-os-dev";
 
 function parseArgs(argv) {
   const known = new Set(["--emulator", "--prod", "--apply"]);

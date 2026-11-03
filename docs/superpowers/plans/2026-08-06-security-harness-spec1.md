@@ -410,9 +410,9 @@ Create `scripts/test-rules.sh` (mirror `scripts/e2e-firebase.sh`):
 #!/usr/bin/env bash
 set -euo pipefail
 # Run the Firestore rules test suite against the emulator, then tear down.
-firebase emulators:exec --config firebase.emulator.json --only firestore \
+firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only firestore \
   'vitest run --dir-name src/app/firebase --testNamePattern="rules"' 2>/dev/null || \
-firebase emulators:exec --config firebase.emulator.json --only firestore \
+firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only firestore \
   'npx vitest run src/app/firebase/firestore.rules.test.ts'
 ```
 
@@ -473,7 +473,7 @@ import { doc, setDoc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
 
 let env: RulesTestEnvironment;
 
-const PROJ = "store-os-demo";
+const PROJ = "store-os-dev";
 
 beforeAll(async () => {
   env = await initializeTestEnvironment({
