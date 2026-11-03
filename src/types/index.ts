@@ -400,6 +400,24 @@ export type PurchaseExpense = {
   includeInInventoryCost?: boolean;
 };
 
+/**
+ * Sale-side expense categories (FER-02): consumed while SELLING (delivery to a
+ * client, per-piece or shared packaging), not while acquiring stock. They are
+ * allocated per piece as a sale-cost estimate and never folded into the
+ * inventory cost — they will be charged when the piece sells (FER-03), so
+ * counting them in Product.cost today would double count tomorrow.
+ */
+export const SALE_EXPENSE_CATEGORIES: readonly PurchaseExpenseCategory[] = [
+  "customer_delivery",
+  "individual_packaging",
+  "shared_packaging",
+];
+
+/** A sale-side expense, unless the operator explicitly moved it to inventory. */
+export function isSaleExpense(expense: PurchaseExpense): boolean {
+  return SALE_EXPENSE_CATEGORIES.includes(expense.category) && expense.includeInInventoryCost !== true;
+}
+
 export type PurchaseTicket = {
   id: string;
   supplierId?: string;
@@ -418,7 +436,28 @@ export type PurchaseCostAllocation = {
   merchandiseCents: number;
   supplierAdjustmentCents: number;
   sourcingExpenseCents: number;
+  /** Sale-side expense cents allocated to this line. Intentionally EXCLUDED
+   * from totalCents: sale expenses are a sale-cost estimate, never inventory. */
+  saleExpenseCents?: number;
   totalCents: number;
+};
+
+/** Per-line allocation of a post-reception expense adjustment (FER-02). */
+export type PurchaseSaleCostAllocation = { lineId: string; saleExpenseCents: number };
+
+/**
+ * An expense appended AFTER reception (FER-02). Append-only evidence: the
+ * original tickets, lines, totals and cost allocations stay untouched. Sale
+ * categories carry their own exact per-line allocation; no adjustment ever
+ * changes stock or product costs.
+ */
+export type PurchaseExpenseAdjustment = {
+  id: string;
+  at: string;
+  category: PurchaseExpenseCategory;
+  amount: number;
+  description?: string;
+  allocations?: PurchaseSaleCostAllocation[];
 };
 
 export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, string> = {
@@ -466,6 +505,8 @@ export type Purchase = {
   // Costs around sourcing/preparing the order, kept separate from the
   // supplier document total and product unit costs (allocation is FER-02).
   sourcingExpenses?: PurchaseExpense[];
+  // Expenses appended after reception (FER-02); never mutated once written.
+  saleCostAdjustments?: PurchaseExpenseAdjustment[];
   createdAt: string;
   updatedAt: string;
 };
@@ -510,10 +551,19 @@ export function purchaseSourcingExpenseTotal(p: Pick<Purchase, "sourcingExpenses
   return cents / 100;
 }
 
-/** Actual registered outlay is the confirmed supplier amount plus extra expenses. */
-export function purchaseRecordedTotal(p: Pick<Purchase, "totalConfirmed" | "sourcingExpenses" | "tickets">): number {
+/** Late expenses appended after reception; absent data is a legacy zero. */
+export function purchaseAdjustmentTotal(p: Pick<Purchase, "saleCostAdjustments">): number {
+  const cents = (p.saleCostAdjustments ?? []).reduce((sum, entry) => {
+    if (!Number.isFinite(entry.amount) || entry.amount <= 0) return sum;
+    return sum + Math.round(entry.amount * 100);
+  }, 0);
+  return cents / 100;
+}
+
+/** Actual registered outlay is the confirmed supplier amount plus every expense. */
+export function purchaseRecordedTotal(p: Pick<Purchase, "totalConfirmed" | "sourcingExpenses" | "tickets" | "saleCostAdjustments">): number {
   const supplierTotal = purchaseConfirmedTotal(p);
-  return supplierTotal + purchaseSourcingExpenseTotal(p);
+  return supplierTotal + purchaseSourcingExpenseTotal(p) + purchaseAdjustmentTotal(p);
 }
 
 /**
