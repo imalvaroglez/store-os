@@ -56,9 +56,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
 
   it("registers a payment, materializes the inherited deposit once, and a retry never duplicates", async () => {
     const saved = await registerOrderPaymentTx(payment("pay_a", 200), { method: "cash", date: "2026-10-20" });
-    expect(saved).toHaveLength(2); // inherited deposit + the payment itself
+    expect(saved.payments).toHaveLength(2); // inherited deposit + the payment itself
     const retry = await registerOrderPaymentTx(payment("pay_a", 200), { method: "cash", date: "2026-10-20" });
-    expect(retry).toHaveLength(1); // same intent id: recognized, no second write
+    expect(retry.payments).toHaveLength(1); // same intent id: recognized, no second write
     const docs = await getDocs(collection(holder.db, "orders/pay-order/payments"));
     expect(docs.size).toBe(2);
     const inherited = docs.docs.find((d) => d.id === "inherited_deposit");
@@ -121,7 +121,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
       const record = { ...payment(test.id, 50), amountCents: 5000, ...test };
       const batch = writeBatch(holder.db);
       batch.set(doc(holder.db, "orders/pay-order/payments", test.id), record);
-      batch.update(parent, { lastPaymentId: test.id, paymentsReceivedCents: before.paymentsReceivedCents + record.amountCents });
+      batch.update(parent, { lastPaymentId: test.id, paymentsRevision: (before.paymentsRevision ?? 0) + 1, paymentsReceivedCents: before.paymentsReceivedCents + record.amountCents });
       await expect(batch.commit()).rejects.toThrow();
     }
     const docs = await getDocs(collection(holder.db, "orders/pay-order/payments"));
@@ -130,7 +130,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
 
   it("accepts a signed adjustment with its note (corrections stay valid evidence)", async () => {
     const saved = await registerOrderPaymentTx({ ...payment("adj_ok", -100), kind: "adjustment", method: "unknown", note: "Devolución en efectivo" });
-    expect(saved[0]).toMatchObject({ amount: -100, amountCents: -10000 });
+    expect(saved.payments[0]).toMatchObject({ amount: -100, amountCents: -10000 });
     expect((await getDoc(doc(holder.db, "orders/pay-order"))).data()?.paymentsReceivedCents).toBe(60000);
   });
 
@@ -159,11 +159,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     await expect(updateDoc(parent, { lastPaymentId: "pay_a", paymentsReceivedCents: before.paymentsReceivedCents + 20000 })).rejects.toThrow();
     const wrongSum = writeBatch(holder.db);
     wrongSum.set(doc(holder.db, "orders/pay-order/payments/wrong-sum"), { ...payment("wrong-sum", 10), amountCents: 1000 });
-    wrongSum.update(parent, { lastPaymentId: "wrong-sum", paymentsReceivedCents: before.paymentsReceivedCents + 999 });
+    wrongSum.update(parent, { lastPaymentId: "wrong-sum", paymentsRevision: (before.paymentsRevision ?? 0) + 1, paymentsReceivedCents: before.paymentsReceivedCents + 999 });
     await expect(wrongSum.commit()).rejects.toThrow();
     const hidden = writeBatch(holder.db);
     for (const id of ["hidden-a", "hidden-b"]) hidden.set(doc(holder.db, "orders/pay-order/payments", id), { ...payment(id, 10), amountCents: 1000 });
-    hidden.update(parent, { lastPaymentId: "hidden-a", paymentsReceivedCents: before.paymentsReceivedCents + 1000 });
+    hidden.update(parent, { lastPaymentId: "hidden-a", paymentsRevision: (before.paymentsRevision ?? 0) + 1, paymentsReceivedCents: before.paymentsReceivedCents + 1000 });
     await expect(hidden.commit()).rejects.toThrow();
     expect((await getDoc(parent)).data()).toEqual(before);
     for (const id of ["wrong-sum", "hidden-a", "hidden-b"]) expect((await getDoc(doc(holder.db, "orders/pay-order/payments", id))).exists()).toBe(false);
@@ -179,14 +179,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
       const record = { ...payment(`round-${i}`, amount), orderId, ...(amount < 0 ? { kind: "adjustment" as const, method: "unknown" as const, note: "Corrección con precisión heredada" } : {}) };
       const saved = await registerOrderPaymentTx(record);
       const cents = signedAmountCents(amount);
-      expect(saved[0]).toMatchObject({ amount, amountCents: cents });
+      expect(saved.payments[0]).toMatchObject({ amount, amountCents: cents });
       total += cents;
       expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBe(total);
       const forgedCents = cents > 0 ? cents - 1 : cents + 1;
       const forgedId = `forged-cent-${i}`;
       const batch = writeBatch(holder.db);
       batch.set(doc(holder.db, "orders", orderId, "payments", forgedId), { ...record, id: forgedId, amountCents: forgedCents });
-      batch.update(parent, { lastPaymentId: forgedId, paymentsReceivedCents: total + forgedCents });
+      batch.update(parent, { lastPaymentId: forgedId, paymentsRevision: i + 2, paymentsReceivedCents: total + forgedCents });
       await expect(batch.commit()).rejects.toThrow();
       expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBe(total);
     }
@@ -200,12 +200,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     const forged = writeBatch(holder.db);
     forged.set(doc(holder.db, "orders", orderId, "payments", "inherited_deposit"), { id: "inherited_deposit", orderId, storeId: "tx-store", createdAt: "2026-11-02", createdBy: "tx-user", kind: "payment", method: "unknown", amount: 999, amountCents: 99900 });
     forged.set(doc(holder.db, "orders", orderId, "payments", "materialize-forged"), { ...payment("materialize-forged", 1), orderId, amountCents: 100 });
-    forged.update(parent, { inheritedDepositMaterialized: true, paymentsReceivedCents: 100000, lastPaymentId: "materialize-forged" });
+    forged.update(parent, { inheritedDepositMaterialized: true, paymentsRevision: 1, paymentsReceivedCents: 100000, lastPaymentId: "materialize-forged" });
     await expect(forged.commit()).rejects.toThrow();
     expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(0);
     const saved = await registerOrderPaymentTx({ ...payment("materialize-real", 1), orderId }, { method: "cash", date: "2026-10-20" });
-    expect(saved).toHaveLength(2);
-    expect(saved[0]).toMatchObject({ id: "inherited_deposit", amount: 1.005, amountCents: 101 });
+    expect(saved.payments).toHaveLength(2);
+    expect(saved.payments[0]).toMatchObject({ id: "inherited_deposit", amount: 1.005, amountCents: 101 });
     expect((await getDoc(parent)).data()).toMatchObject({ paymentsReceivedCents: 201, lastPaymentId: "materialize-real", inheritedDepositMaterialized: true });
   });
 
@@ -285,6 +285,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     await expect(registerOrderPaymentTx({ ...payment("service-invalid-actor", 10), createdBy: "another-operator" }, { method: "cash", date: "2026-10-20" })).rejects.toMatchObject({ code: "permission-denied" });
     expect((await getDoc(parent)).data()).toEqual(before);
     expect((await getDoc(doc(holder.db, "orders/pay-order/payments/service-invalid-actor"))).exists()).toBe(false);
+  });
+
+
+  it("returns the latest canonical balance on retry without changing evidence or its version", async () => {
+    const orderId = "canonical-retry-order";
+    await setDoc(doc(holder.db, "orders", orderId), { storeId: "tx-store", deposit: 0, items: [], createdAt: "", updatedAt: "" });
+    const first = await registerOrderPaymentTx({ ...payment("canonical-first", 400), orderId });
+    expect(first.order).toMatchObject({ paymentsReceivedCents: 40000, paymentsRevision: 1 });
+    await registerOrderPaymentTx({ ...payment("canonical-adjustment", -150), orderId, kind: "adjustment", method: "unknown", note: "Corrección" });
+    const retry = await registerOrderPaymentTx({ ...payment("canonical-first", 400), orderId });
+    expect(retry.payments).toHaveLength(1);
+    expect(retry.order).toMatchObject({ paymentsReceivedCents: 25000, paymentsRevision: 2 });
+    // Adjustment date is system metadata, not a user-edited intent field.
+    const nextDay = await registerOrderPaymentTx({ ...payment("canonical-adjustment", -150), orderId, kind: "adjustment", method: "unknown", note: "Corrección", date: "2026-11-04" });
+    expect(nextDay.order).toMatchObject({ paymentsReceivedCents: 25000, paymentsRevision: 2 });
+    expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(2);
+    await expect(updateDoc(doc(holder.db, "orders", orderId), { paymentsRevision: 1 })).rejects.toThrow();
+    await expect(registerOrderPaymentTx({ ...payment("canonical-first", 900), orderId })).rejects.toThrow(/otros datos guardados/);
+    expect((await getDoc(doc(holder.db, "orders", orderId))).data()?.paymentsReceivedCents).toBe(25000);
   });
 
 });

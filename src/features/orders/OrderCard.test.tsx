@@ -11,7 +11,7 @@ const { state, activeStore, holder } = vi.hoisted(() => ({
   holder: { upsertOrder: vi.fn(), payments: [] as OrderPayment[] },
 }));
 vi.mock("../../app/StoreProvider", () => ({
-  useStore: () => ({ upsertOrder: holder.upsertOrder, activeStore, state, payments: holder.payments }),
+  useStore: () => ({ upsertOrder: holder.upsertOrder, activeStore, state, payments: holder.payments, loadOrderPayments: async () => {} }),
 }));
 const order: Order = { id: "o1", storeId: "s1", customerId: "c1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 1.25, subtotal: 1.25 }], deposit: 0, orderStatus: "asked", paymentStatus: "unpaid", createdAt: "2026-01-01", updatedAt: "" };
 
@@ -117,4 +117,24 @@ describe("installment order card (#165)", () => {
     expect(screen.getByText("Apartado")).toBeInTheDocument();
     rendered.unmount();
   });
+});
+
+it("uses recorded money for an ordinary order instead of the legacy deposit", () => {
+  const ordinary: Order = { ...order, items: [{ productName: "Pieza", quantity: 1, unitPrice: 1000, subtotal: 1000 }], paymentsReceivedCents: 40000 };
+  render(<ToastProvider><OrderCard order={ordinary} onEdit={() => {}} /></ToastProvider>);
+  expect(screen.getByText("Recibido")).toBeInTheDocument();
+  expect(screen.getByText("$400.00")).toBeInTheDocument();
+  expect(screen.getByText("$600.00")).toBeInTheDocument();
+});
+
+
+it("opens receipt capture instead of declaring a legacy deposit collection successful", async () => {
+  holder.upsertOrder.mockClear();
+  const edit = vi.fn();
+  render(<ToastProvider><OrderCard order={{ ...order, items: [{ productName: "Pieza", quantity: 1, unitPrice: 1000, subtotal: 1000 }], paymentsReceivedCents: 40000 }} onEdit={edit} /></ToastProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
+  expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeEnabled());
+  expect(holder.upsertOrder).not.toHaveBeenCalled();
+  expect(edit).not.toHaveBeenCalled();
 });

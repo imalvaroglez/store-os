@@ -1,7 +1,7 @@
 import type { InstallmentFrequency, Order, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { formatMoney } from "./money";
-import { orderAmountCents } from "./orderMoney";
+import { docReceivedCents, orderAmountCents } from "./orderMoney";
 import { LEGACY_TIER_IDS } from "./pricing";
 
 const ORDER_STATUSES: ReadonlySet<OrderStatus> = new Set([
@@ -64,7 +64,8 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
   if (!Number.isSafeInteger(totalCents)) throw new RangeError("Order total exceeds safe precision");
   const estimatedTotal = totalCents / 100;
   const pieces = items.reduce((sum, item) => sum + item.quantity, 0);
-  const paidCents = orderAmountCents(Math.max(0, finite(order.deposit)));
+  const paidCents = typeof order.paymentsReceivedCents === "number"
+    ? docReceivedCents(order) : orderAmountCents(Math.max(0, finite(order.deposit)));
   const paid = paidCents / 100;
   return { estimatedTotal, paid, balance: Math.max(0, totalCents - paidCents) / 100, pieces };
 }
@@ -189,6 +190,9 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
     ...(typeof raw.paymentsReceivedCents === "number" && Number.isFinite(raw.paymentsReceivedCents)
       ? { paymentsReceivedCents: raw.paymentsReceivedCents }
       : {}),
+    ...(typeof raw.paymentsRevision === "number" && Number.isSafeInteger(raw.paymentsRevision) && raw.paymentsRevision >= 0
+      ? { paymentsRevision: raw.paymentsRevision } : {}),
+    ...(typeof raw.lastPaymentId === "string" ? { lastPaymentId: raw.lastPaymentId } : {}),
     ...(raw.inheritedDepositMaterialized === true ? { inheritedDepositMaterialized: true } : {}),
     schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,

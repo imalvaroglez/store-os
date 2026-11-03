@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocFromServer,
   getDocs,
+  getDocsFromServer,
   setDoc,
   deleteDoc,
   deleteField,
@@ -383,6 +384,7 @@ export async function saveOrderWithStockTx(
       // Only the canonical doc (or the payment transaction) owns these fields.
       installmentsReservedAt: previous?.installmentsReservedAt,
       lastPaymentId: typeof docData?.lastPaymentId === "string" ? docData.lastPaymentId : undefined,
+      paymentsRevision: typeof docData?.paymentsRevision === "number" ? docData.paymentsRevision : undefined,
       paymentsReceivedCents: typeof docData?.paymentsReceivedCents === "number" ? docData.paymentsReceivedCents : undefined,
       inheritedDepositMaterialized: docData?.inheritedDepositMaterialized === true ? true : undefined,
     };
@@ -443,13 +445,25 @@ export async function saveOrderWithStockTx(
   });
 }
 
-/** Load an order's payment records (chronological). */
-export async function fetchOrderPayments(orderId: string): Promise<OrderPayment[]> {
+export type OrderPaymentsResult = { payments: OrderPayment[]; order: Order };
+
+/** Bracket server receipt details with a stable parent version, never cached success. */
+export async function fetchOrderPayments(orderId: string): Promise<OrderPaymentsResult> {
   const { db } = getFirebase();
-  const snap = await getDocs(collection(db, "orders", orderId, "payments"));
-  return snap.docs
-    .map((d) => ({ ...(d.data() as OrderPayment), id: d.id }))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const ref = doc(db, "orders", orderId);
+  const before = await getDocFromServer(ref);
+  if (!before.exists()) throw new Error("No se encontró el pedido.");
+  const snap = await getDocsFromServer(collection(db, "orders", orderId, "payments"));
+  const parent = await getDocFromServer(ref);
+  if (!parent.exists()) throw new Error("No se encontró el pedido.");
+  if ((before.data().paymentsRevision ?? 0) !== (parent.data().paymentsRevision ?? 0)) {
+    throw new Error("Los cobros cambiaron mientras se cargaban. Vuelve a cargar el detalle.");
+  }
+  return {
+    payments: snap.docs.map((d) => ({ ...(d.data() as OrderPayment), id: d.id }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
+    order: migrateOrder({ ...parent.data(), id: orderId }),
+  };
 }
 
 /**
@@ -476,7 +490,7 @@ export async function fetchOrderPayments(orderId: string): Promise<OrderPayment[
 export async function registerOrderPaymentTx(
   payment: OrderPayment,
   inherited?: { method: "cash" | "transfer"; date: string }
-): Promise<OrderPayment[]> {
+): Promise<OrderPaymentsResult> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", payment.orderId);
   let attempts = 0;
@@ -487,13 +501,22 @@ export async function registerOrderPaymentTx(
     // READ PHASE (Firestore requires every read before any write).
     const paymentsRef = collection(db, "orders", payment.orderId, "payments");
     const paymentRef = doc(paymentsRef, payment.id);
-    const existing = await tx.get(paymentRef);
-    if (existing.exists()) return [existing.data() as OrderPayment];
     const orderSnap = await tx.get(orderRef);
     observed = orderSnap.data();
     if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
     if ((orderSnap.data().storeId ?? "") !== payment.storeId) {
       throw new Error("El pedido pertenece a otra tienda.");
+    }
+    const order = migrateOrder({ ...orderSnap.data(), id: payment.orderId });
+    const existing = await tx.get(paymentRef);
+    if (existing.exists()) {
+      const receipt = existing.data() as OrderPayment;
+      if (receipt.amount !== payment.amount || receipt.kind !== payment.kind || receipt.method !== payment.method
+          || (payment.kind === "payment" && receipt.date !== payment.date)
+          || (receipt.note ?? "") !== (payment.note ?? "") || receipt.createdBy !== payment.createdBy) {
+        throw new Error("Este intento ya tiene otros datos guardados. Revisa los cobros antes de continuar.");
+      }
+      return { payments: [receipt], order };
     }
     // Inherited deposit materialization (#123, PO 2026-11-03): only a real
     // payment carries it, and the operator-supplied date/method is required.
@@ -520,8 +543,8 @@ export async function registerOrderPaymentTx(
     // ones — an abono no longer moves stock. The first positive abono only
     // STAMPS the `installmentsReservedAt` witness (money-backed stock is never
     // released by cancellation alone); no revision bump is needed because the
-    // reservation already happened on the order's own save.
-    const order = migrateOrder({ ...orderSnap.data(), id: payment.orderId });
+    // reservation already happened on the order's own save. (`order` comes from
+    // the early-return block above.)
     const firstPositiveAbono = payment.kind === "payment" && payment.amount > 0;
 
     // WRITE PHASE — one atomic commit: evidence, witness, and the doc-level
@@ -540,6 +563,11 @@ export async function registerOrderPaymentTx(
       throw error;
     }
     const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
+    const previousPaymentsRevision = orderSnap.data().paymentsRevision ?? 0;
+    const paymentsRevision = previousPaymentsRevision + 1;
+    if (!Number.isSafeInteger(previousPaymentsRevision) || previousPaymentsRevision < 0 || !Number.isSafeInteger(paymentsRevision)) {
+      throw new Error("La versión de cobros del pedido no es válida.");
+    }
     const receipt = { ...payment, amountCents: signedAmountCents(payment.amount) };
     const saved: OrderPayment[] = [];
     if (inheritedRecord) {
@@ -547,17 +575,26 @@ export async function registerOrderPaymentTx(
       tx.set(inheritedRef, stripUndefined(evidence) as Record<string, unknown>);
       saved.push(evidence);
     }
+    const witnessAt =
+      order.installments && !order.installmentsReservedAt && firstPositiveAbono
+        ? new Date().toISOString()
+        : undefined;
     tx.update(orderRef, {
       paymentsReceivedCents: increment(savedCents),
       lastPaymentId: payment.id,
+      paymentsRevision: increment(1),
       ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
-      ...(order.installments && !order.installmentsReservedAt && firstPositiveAbono
-        ? { installmentsReservedAt: new Date().toISOString() }
-        : {}),
+      ...(witnessAt ? { installmentsReservedAt: witnessAt } : {}),
     });
     tx.set(paymentRef, stripUndefined(receipt) as Record<string, unknown>);
     saved.push(receipt);
-    return saved;
+    return {
+      payments: saved,
+      order: {
+        ...order, ...money, lastPaymentId: payment.id, paymentsRevision,
+        ...(witnessAt ? { installmentsReservedAt: witnessAt } : {}),
+      },
+    };
   }, { maxAttempts: 5 - attempts });
 
   while (attempts < 5) {
@@ -573,7 +610,7 @@ export async function registerOrderPaymentTx(
       if (code !== "permission-denied" || !observed || attempts >= 5) throw error;
       const latest = await getDocFromServer(orderRef);
       const current = latest.data();
-      const changed = current && ["revision", "paymentsReceivedCents", "lastPaymentId", "inheritedDepositMaterialized", "installmentsReservedAt"]
+      const changed = current && ["revision", "paymentsReceivedCents", "lastPaymentId", "paymentsRevision", "inheritedDepositMaterialized", "installmentsReservedAt"]
         .some((key) => current[key] !== observed![key]);
       if (!changed) throw error;
     }

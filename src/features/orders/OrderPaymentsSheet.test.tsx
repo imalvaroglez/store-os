@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
@@ -69,6 +69,7 @@ describe("OrderPaymentsSheet", () => {
 
   it("registers a cobro with amount, method and date through the store action", async () => {
     renderSheet();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Monto"), { target: { value: "150" } });
     fireEvent.change(screen.getByLabelText("Fecha de recepción"), { target: { value: "2026-11-02" } });
     fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
@@ -79,8 +80,9 @@ describe("OrderPaymentsSheet", () => {
     );
   });
 
-  it("sanitizes the Monto field to two decimals while typing (#168 F6)", () => {
+  it("sanitizes the Monto field to two decimals while typing (#168 F6)", async () => {
     renderSheet();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar ajuste o devolución" })).toBeEnabled());
     const monto = screen.getByLabelText("Monto") as HTMLInputElement;
     fireEvent.change(monto, { target: { value: "150.555" } });
     expect(monto.value).toBe("150.55"); // what you see is what registers — no cent drift
@@ -93,6 +95,7 @@ describe("OrderPaymentsSheet", () => {
   it("reuses the same record id on retry so a resend never duplicates", async () => {
     store.registerOrderPayment.mockRejectedValue(new Error(""));
     renderSheet();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Monto"), { target: { value: "150" } });
     fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
     await waitFor(() => expect(screen.getByText(/No se pudo registrar/i)).toBeInTheDocument());
@@ -195,6 +198,7 @@ describe("OrderPaymentsSheet installment calendar (#165)", () => {
       installments: { count: 6, frequency: "monthly", firstDueDate: "2026-08-15", agreedAt: "2026-08-01", agreedBy: "u1" },
     });
     expect(screen.getAllByText("Atrasada").length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeEnabled());
   });
 
   it("keeps the plain payments sheet for ordinary orders", async () => {
@@ -202,4 +206,54 @@ describe("OrderPaymentsSheet installment calendar (#165)", () => {
     expect(await screen.findByText(/Sin cobros registrados/i)).toBeInTheDocument();
     expect(screen.queryByText("Calendario previsto")).toBeNull();
   });
+});
+
+describe("payment history loading and recovery", () => {
+  beforeEach(() => {
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+  });
+  it("keeps canonical money visible and blocks registration until the history loads", async () => {
+    let finish!: () => void;
+    store.payments = [];
+    store.loadOrderPayments.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    const canonical = { ...order, paymentsReceivedCents: 40000, paymentsRevision: 1 };
+    render(<ToastProvider><OrderPaymentsSheet order={canonical} open onClose={() => {}} /></ToastProvider>);
+    expect(screen.getByRole("status")).toHaveTextContent("Cargando cobros");
+    expect(screen.getByText("$400.00")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeDisabled();
+    expect(screen.queryByText("Sin cobros registrados.")).toBeNull();
+    await act(async () => finish());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeEnabled());
+  });
+
+  it("preserves typed input after a load error and explicitly reloads before allowing a payment", async () => {
+    store.payments = [];
+    store.loadOrderPayments.mockRejectedValueOnce(new Error("Sin conexión"));
+    renderSheet();
+    fireEvent.change(screen.getByLabelText("Monto"), { target: { value: "150" } });
+    await screen.findByText(/No se pudo cargar el detalle/);
+    expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeDisabled();
+    expect(screen.getByLabelText("Monto")).toHaveValue("150");
+    store.loadOrderPayments.mockResolvedValueOnce(undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Volver a cargar cobros" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeEnabled());
+    expect(screen.getByLabelText("Monto")).toHaveValue("150");
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
+  });
+});
+
+it("does not announce a late success after the payment sheet has been closed", async () => {
+  store.payments = [];
+  store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+  let finish!: () => void;
+  store.registerOrderPayment.mockReset().mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+  const view = renderSheet();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("Monto"), { target: { value: "150" } });
+  fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
+  view.rerender(<ToastProvider><OrderPaymentsSheet order={order} open={false} onClose={() => {}} /></ToastProvider>);
+  await act(async () => finish());
+  expect(screen.queryByText("Cobro registrado")).toBeNull();
 });

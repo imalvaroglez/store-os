@@ -244,6 +244,9 @@ service cloud.firestore {
       return paymentId is string && paymentId.size() > 0 && paymentId != 'inherited_deposit'
         && paymentId != before.get('lastPaymentId', '') && !exists(path)
         && receipt.orderId == orderId && receipt.storeId == before.storeId
+        && before.get('paymentsRevision', 0) is int && before.get('paymentsRevision', 0) >= 0
+        && after.paymentsRevision is int && after.paymentsRevision <= 9007199254740991
+        && after.paymentsRevision == before.get('paymentsRevision', 0) + 1
         && after.paymentsReceivedCents is int && math.abs(after.paymentsReceivedCents) <= 9007199254740991
         && before.get('paymentsReceivedCents', 0) is int
         && math.abs(before.get('paymentsReceivedCents', 0)) <= 9007199254740991
@@ -268,11 +271,11 @@ service cloud.firestore {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision'])
             || validMoneyUpdate(id, resource.data, request.resource.data))
         // Editing cannot strip the evidence that prevents orphaning a parent.
         && (!('paymentsReceivedCents' in resource.data)
