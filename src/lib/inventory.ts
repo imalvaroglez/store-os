@@ -70,7 +70,7 @@ const OPEN_STATUSES: ReadonlySet<OrderStatus> = new Set([
 ]);
 
 /**
- * Sum of quantities of open (non-terminal) orders for a product in a store.
+ * Sum of stock still held for pending delivery, including retained reservations.
  * Used to show "Comprometido" alongside the available quantityOnHand.
  */
 export function committedForProduct(
@@ -79,7 +79,12 @@ export function committedForProduct(
   productId: string
 ): number {
   return orders
-    .filter((o) => o.storeId === storeId && OPEN_STATUSES.has(effectiveOrderStatus(o)))
+    .filter((o) => {
+      if (o.storeId !== storeId) return false;
+      const status = effectiveOrderStatus(o);
+      if (o.installmentsReservedAt) return status !== "delivered";
+      return !o.installments && OPEN_STATUSES.has(status);
+    })
     .reduce((sum, o) => sum + orderItems(o).filter((item) => item.productId === productId).reduce((lineSum, item) => lineSum + item.quantity, 0), 0);
 }
 
@@ -112,7 +117,11 @@ export function reservationDeltas(oldItems: OrderItem[], newItems: OrderItem[]):
 export function reservationDeltasForOrderChange(previous: Order | undefined, next: Order): Map<string, number> {
   const heldItems = (order: Order | undefined): OrderItem[] => {
     if (!order) return [];
-    if (order.installments && (order.installmentsReservedAt || (order.paymentsReceivedCents ?? 0) > 0)) {
+    // The reservation survives removing the plan (#174): it is stock evidence,
+    // not a property of the currently selected payment schedule. PO 2026-11-03
+    // (R8): plans hold from creation like ordinary orders; received money
+    // keeps the pieces held even after cancellation.
+    if (order.installmentsReservedAt || (order.installments && (order.paymentsReceivedCents ?? 0) > 0)) {
       return orderItems(order);
     }
     const status = effectiveOrderStatus(order);
