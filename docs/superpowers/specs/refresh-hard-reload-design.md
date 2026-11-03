@@ -77,7 +77,7 @@ estado.
 ## Alcance (out)
 
 - Workbox/precache de rutas, estrategias por asset, offline-first de datos
-  (los datos ya son live en cloud; en demo, `localStorage`).
+  (los datos ya son live en cloud; en local, `localStorage`).
 - Reescribir `subscribeCloudState` (sólo toca si el e2e lo incrimina).
 - Telemetría de versiones.
 

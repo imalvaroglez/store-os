@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { StoreProvider } from "./StoreProvider";
-import { App } from "./App";
+import { App, SyncErrorNoticeView } from "./App";
 import { AuthProvider } from "./firebase/AuthProvider";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { fixtureState } from "../lib/testFixtures";
@@ -64,10 +64,10 @@ describe("HomeScreen store isolation render", () => {
 });
 
 describe("Root signed-out routing (production)", () => {
-  it("shows AuthScreen, not the demo, when DEV is false and there is no session", () => {
+  it("shows AuthScreen when DEV is false and there is no session", () => {
     const original = import.meta.env.DEV;
     (import.meta.env as { DEV: boolean }).DEV = false;
-    localStorage.clear(); // cold visitor: no demo seed in a built deployment
+    localStorage.clear(); // A built deployment never creates store fixtures.
     try {
       // No session, no active store -> in a built deployment this must be AuthScreen.
       // AuthProvider is in pure-local mode (no VITE_FIREBASE_* here), so user stays null.
@@ -80,11 +80,24 @@ describe("Root signed-out routing (production)", () => {
       );
       // AuthScreen renders its header subtitle.
       expect(screen.getByText("Sincroniza tus tiendas en la nube")).toBeTruthy();
-      // The demo store must NOT appear.
+      // No store data should appear before authentication.
       expect(screen.queryByText("Joyería")).toBeNull();
     } finally {
       (import.meta.env as { DEV: boolean }).DEV = original;
       localStorage.clear();
     }
+  });
+});
+
+describe("aviso de sincronización", () => {
+  it("muestra la operación fallida y ofrece reintentar o descartar", () => {
+    const retry = vi.fn(async () => {});
+    const onDismiss = vi.fn();
+    render(<SyncErrorNoticeView syncError={{ label: "guardar la compra", retry }} onDismiss={onDismiss} />);
+    expect(screen.getByRole("alert").textContent).toContain("No se pudo guardar la compra.");
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
+    expect(retry).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
   });
 });

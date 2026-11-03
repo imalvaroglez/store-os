@@ -15,7 +15,7 @@ export type Store = {
   skuPrefix?: string;
   createdAt: string;
   updatedAt: string;
-  // Cloud-only membership fields (absent in local demo mode):
+  // Cloud-only membership fields (absent from local-only state):
   ownerUid?: string;
   memberUids?: string[];
   pendingInvites?: string[]; // emails invited but not yet signed up
@@ -189,6 +189,8 @@ export type Product = {
 };
 
 export type Customer = {
+  segment?: "regular" | "entrepreneur";
+  assignedPriceTierId?: string;
   id: string;
   storeId: string;
   name: string;
@@ -212,6 +214,14 @@ export type LegacyOrderStatus = "asked" | "confirmed" | "to_buy" | "bought" | "a
 export type PaymentStatus = "unpaid" | "partial" | "paid";
 
 export type OrderItem = {
+  /** Stable line identity: expense allocations (E5+) and category grouping (E3)
+   * reference lines by id, surviving reorders and edits. Deterministic
+   * `${orderId}_L${index}` on legacy migration; uid() on new lines. */
+  lineId?: string;
+  /** OLI-008: "manual" lines keep their price when the customer/tier changes. */
+  priceSource?: "automatic" | "manual";
+  /** OLI-012: frozen category at capture time, powers grouping and the ticket. */
+  categorySnapshot?: { id: string; name: string };
   productId?: string;
   productName: string;
   quantity: number;
@@ -222,9 +232,12 @@ export type OrderItem = {
 };
 
 export type Order = {
+  revision?: number;
+  lastMutationId?: string;
   id: string;
   storeId: string;
   customerId: string;
+  customerName?: string;
   items: OrderItem[];
   deposit: number;
   orderStatus: OrderStatus;
@@ -259,6 +272,8 @@ export type Supplier = {
 
 /** One line of a purchase ticket: a product bought, how many, at what unit cost. */
 export type PurchaseLine = {
+  /** Stable line identity for expense allocations (E5+) and import matching. */
+  lineId?: string;
   productId: string;
   name: string; // snapshot at purchase time
   quantity: number;
@@ -282,6 +297,28 @@ export type PurchaseLine = {
  * `status: undefined` and MUST be treated as already received.
  */
 export type PurchaseStatus = "draft" | "needs_review" | "ready" | "received";
+
+export type PurchaseExpenseCategory =
+  | "sourcing_transport"
+  | "customer_delivery"
+  | "individual_packaging"
+  | "shared_packaging"
+  | "other";
+
+export type PurchaseExpense = {
+  id: string;
+  category: PurchaseExpenseCategory;
+  amount: number;
+  description?: string;
+};
+
+export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, string> = {
+  sourcing_transport: "Traslado para surtir",
+  customer_delivery: "Entrega a clienta",
+  individual_packaging: "Empaque individual",
+  shared_packaging: "Bolsa compartida",
+  other: "Otro gasto",
+};
 
 /** A supplier purchase (a "ticket"): one or more lines, a confirmed total. */
 export type Purchase = {
@@ -313,6 +350,9 @@ export type Purchase = {
   discount?: number;
   shipping?: number;
   tax?: number;
+  // Costs around sourcing/preparing the order, kept separate from the
+  // supplier document total and product unit costs (allocation is FER-02).
+  sourcingExpenses?: PurchaseExpense[];
   createdAt: string;
   updatedAt: string;
 };
@@ -331,6 +371,21 @@ export function purchaseTotals(p: Purchase): { merchandise: number; calculated: 
   const merchandise = p.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
   const adjustments = (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
   return { merchandise, calculated: merchandise + adjustments };
+}
+
+/** Sum additional sourcing costs in integer cents; absent data is a legacy zero. */
+export function purchaseSourcingExpenseTotal(p: Pick<Purchase, "sourcingExpenses">): number {
+  const cents = (p.sourcingExpenses ?? []).reduce((sum, expense) => {
+    if (!Number.isFinite(expense.amount) || expense.amount <= 0) return sum;
+    return sum + Math.round(expense.amount * 100);
+  }, 0);
+  return cents / 100;
+}
+
+/** Actual registered outlay is the confirmed supplier amount plus extra expenses. */
+export function purchaseRecordedTotal(p: Pick<Purchase, "totalConfirmed" | "sourcingExpenses">): number {
+  const supplierTotal = Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
+  return supplierTotal + purchaseSourcingExpenseTotal(p);
 }
 
 /**

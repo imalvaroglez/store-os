@@ -79,7 +79,7 @@ Esta entrega incluye el **port limpio de la feature completa + UX2**: rama desde
 ## Supuestos
 
 - Sin matching automático, fuzzy ni modelo de variantes (la variante vive en el nombre).
-- Bulk create y flujo PDF: cloud-only; modo demo local intacto (manual).
+- Bulk create y flujo PDF: cloud-only; captura manual disponible sin importación PDF (manual).
 - Meta de 5 min en escritorio; móvil = paridad funcional.
 
 ## Costo

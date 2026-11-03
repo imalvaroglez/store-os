@@ -11,7 +11,7 @@
 // the deploy cadence, not by this file).
 //
 // Zero cost: 1 + 2 reads per store per deploy, well inside the free tier.
-// Skipped silently (exit 0) on local/demo builds without a Firebase config or
+// Skipped silently (exit 0) on local builds without a Firebase config or
 // PUBLIC_SITE_URL.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -37,7 +37,7 @@ const PROJECT_ID = envOrDotenv("VITE_FIREBASE_PROJECT_ID");
 const SITE_URL = (envOrDotenv("PUBLIC_SITE_URL")).replace(/\/$/, "");
 
 if (!API_KEY || !PROJECT_ID || !SITE_URL) {
-  console.log("[prerender-public] sin configuración de build (apiKey/projectId/PUBLIC_SITE_URL) — omitido (build local/demo).");
+  console.log("[prerender-public] sin configuración de build (apiKey/projectId/PUBLIC_SITE_URL) — omitido (build local).");
   process.exit(0);
 }
 

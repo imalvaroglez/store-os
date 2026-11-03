@@ -12,15 +12,16 @@
  * would silently write to Olivia's real data.
  *
  * Rules:
- *   VITE_VERCEL_ENV === 'preview'     + projectId === PROD  => FAIL (preview must not touch prod)
- *   VITE_VERCEL_ENV === 'production'  + projectId !== PROD  => FAIL (prod must point at prod)
- *   (no VITE_VERCEL_ENV, i.e. local dev)                   => PASS (warns)
+ *   VITE_VERCEL_ENV === 'preview'     + projectId !== DEV   => FAIL
+ *   VITE_VERCEL_ENV === 'production'  + projectId !== PROD  => FAIL
+ *   local build without exactly the DEV project ID            => FAIL
  *
  * VITE_VERCEL_ENV is injected automatically by Vercel per deployment target.
  */
 "use strict";
 
 const PROD_PROJECT_ID = "store-os-f7cf8";
+const DEV_PROJECT_ID = "store-os-dev";
 
 function fail(msg) {
   console.error(`\x1b[31m[check-env] BLOQUEADO:\x1b[0m ${msg}`);
@@ -37,31 +38,79 @@ function pass(msg) {
   console.log(`\x1b[32m[check-env] OK:\x1b[0m ${msg}`);
 }
 
+// Vite loads .env files after npm pre-scripts run. Read them here so the guard
+// validates the same Firebase target before dev and preview servers start.
+function loadLocalEnv() {
+  const fs = require("fs");
+  const path = require("path");
+  const root = path.join(__dirname, "..");
+  const loaded = {};
+  for (const file of [".env", ".env.local"]) {
+    const fullPath = path.join(root, file);
+    if (!fs.existsSync(fullPath)) continue;
+    for (const line of fs.readFileSync(fullPath, "utf8").split(/\r?\n/)) {
+      const match = line.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (!match) continue;
+      let value = match[2];
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      } else {
+        value = value.replace(/\s+#.*$/, "").trim();
+      }
+      loaded[match[1]] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(loaded)) {
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+function checkFirebaseAliases() {
+  const path = require("path");
+  const fs = require("fs");
+  const configPath = path.join(__dirname, "..", ".firebaserc");
+  let projects;
+  try {
+    projects = JSON.parse(fs.readFileSync(configPath, "utf8")).projects;
+  } catch {
+    fail("no se pudo leer .firebaserc");
+  }
+  const allowedProjectIds = new Set([DEV_PROJECT_ID, PROD_PROJECT_ID]);
+  const aliases = Object.values(projects || {});
+  if (
+    projects?.default !== DEV_PROJECT_ID ||
+    projects?.dev !== DEV_PROJECT_ID ||
+    projects?.production !== PROD_PROJECT_ID ||
+    aliases.some((projectId) => !allowedProjectIds.has(projectId))
+  ) {
+    fail(
+      `.firebaserc debe usar ${DEV_PROJECT_ID} como predeterminado/dev y ${PROD_PROJECT_ID} como alias production.`
+    );
+  }
+  pass(`.firebaserc → dev por defecto; production → ${PROD_PROJECT_ID}.`);
+}
+
 /**
  * @param {string|null|undefined} vercelEnv
  * @param {string|null|undefined} projectId
  */
 function check(vercelEnv, projectId) {
-  // Local builds (no VITE_VERCEL_ENV): no guard, but log what we'd target.
   if (!vercelEnv) {
-    const note = projectId
-      ? `build local sin VITE_VERCEL_ENV; projectId detectado = ${projectId}`
-      : "build local sin VITE_VERCEL_ENV ni projectId (modo demo/emulador)";
-    console.log(`[check-env] ${note}`);
+    if (projectId !== DEV_PROJECT_ID) {
+      fail(`desarrollo local con projectId '${projectId || "sin configurar"}'. Debe usar ${DEV_PROJECT_ID}.`);
+    }
+    pass(`desarrollo local → ${DEV_PROJECT_ID}`);
     return;
   }
 
-  if (vercelEnv === "preview") {
-    // Preview MUST point at the dev project: anything else is a misconfiguration.
-    // The empty/undefined case is the spec's dominant-risk scenario (a Vercel env
-    // var missing or mis-scoped), so we block it rather than pass silently.
-    if (!projectId || projectId === PROD_PROJECT_ID) {
+  if (vercelEnv === "preview" || vercelEnv === "development") {
+    if (projectId !== DEV_PROJECT_ID) {
       fail(
-        `deploy de Preview con projectId '${projectId}' (vacío o producción). ` +
-          "Preview debe apuntar a store-os-dev con VITE_FIREBASE_PROJECT_ID definido."
+        `deploy de ${vercelEnv} con projectId '${projectId}'. ` +
+          `Preview y Development deben apuntar a ${DEV_PROJECT_ID}.`
       );
     }
-    pass(`Preview → projectId ${projectId} (correcto: no es prod).`);
+    pass(`${vercelEnv} → projectId ${projectId}.`);
     return;
   }
 
@@ -75,8 +124,7 @@ function check(vercelEnv, projectId) {
     return;
   }
 
-  // Any other VITE_VERCEL_ENV value (e.g. 'development'): permissive.
-  console.log(`[check-env] VITE_VERCEL_ENV='${vercelEnv}'; sin regla de bloqueo.`);
+  fail(`VITE_VERCEL_ENV='${vercelEnv}' no es un destino reconocido.`);
 }
 
 // --- Entry point ---
@@ -84,7 +132,11 @@ if (require.main === module) {
   if (process.argv.includes("--test")) {
     runSelfTest();
   } else {
-    check(process.env.VITE_VERCEL_ENV, process.env.VITE_FIREBASE_PROJECT_ID);
+    loadLocalEnv();
+    checkFirebaseAliases();
+    const localCommand = process.argv.includes("--local");
+    const vercelEnv = localCommand ? undefined : process.env.VITE_VERCEL_ENV;
+    check(vercelEnv, process.env.VITE_FIREBASE_PROJECT_ID);
   }
 }
 
@@ -125,10 +177,20 @@ function runSelfTest() {
     assert.ok(blocked, "debería bloquear");
   });
 
+  it("preview + unrelated projectId => blocked", () => {
+    blocked = false;
+    try {
+      check("preview", "another-project");
+    } catch (e) {
+      /* expected */
+    }
+    assert.ok(blocked, "Preview debe usar exactamente store-os-dev");
+  });
+
   it("preview + dev projectId => not blocked", () => {
     blocked = false;
     try {
-      check("preview", "store-os-dev");
+      check("preview", DEV_PROJECT_ID);
     } catch (e) {
       /* expected */
     }
@@ -155,7 +217,7 @@ function runSelfTest() {
   it("production + dev projectId => blocked", () => {
     blocked = false;
     try {
-      check("production", "store-os-dev");
+      check("production", DEV_PROJECT_ID);
     } catch (e) {
       /* expected */
     }
@@ -172,14 +234,54 @@ function runSelfTest() {
     assert.ok(!blocked, "NO debería bloquear");
   });
 
-  it("no vercelEnv (local) => not blocked", () => {
+  it("local + production projectId => blocked", () => {
     blocked = false;
     try {
       check(undefined, PROD_PROJECT_ID);
     } catch (e) {
       /* expected */
     }
-    assert.ok(!blocked, "build local nunca se bloquea");
+    assert.ok(blocked, "El desarrollo local no debe apuntar a producción");
+  });
+
+  it("local + dev projectId => not blocked", () => {
+    blocked = false;
+    try {
+      check(undefined, DEV_PROJECT_ID);
+    } catch (e) {
+      /* expected */
+    }
+    assert.ok(!blocked, "El desarrollo local debe aceptar store-os-dev");
+  });
+
+  it("local without dev project configured => blocked", () => {
+    blocked = false;
+    try {
+      check(undefined, undefined);
+    } catch (e) {
+      /* expected */
+    }
+    assert.ok(blocked, "El desarrollo local debe exigir store-os-dev");
+  });
+
+  it("unknown Vercel environment => blocked", () => {
+    blocked = false;
+    try {
+      check("staging", DEV_PROJECT_ID);
+    } catch (e) {
+      /* expected */
+    }
+    assert.ok(blocked, "Un destino sin regla explícita debe bloquearse");
+  });
+
+  it("Firebase CLI aliases point to dev by default and production explicitly", () => {
+    blocked = false;
+    try {
+      checkFirebaseAliases();
+    } catch (e) {
+      /* expected */
+    }
+    assert.ok(!blocked, ".firebaserc debe mantener los destinos aprobados");
   });
 
   process.exit = origExit;
@@ -190,4 +292,4 @@ function runSelfTest() {
   console.log("\x1b[32mself-test OK\x1b[0m");
 }
 
-module.exports = { check, PROD_PROJECT_ID, runSelfTest };
+module.exports = { check, checkFirebaseAliases, DEV_PROJECT_ID, PROD_PROJECT_ID, runSelfTest };
