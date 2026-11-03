@@ -90,9 +90,14 @@ export function SuppliersScreen({ storeId }: { storeId: string }) {
             <Button variant="ghost" onClick={() => setDeleting(null)}>Cancelar</Button>
             <Button
               variant="danger"
-              onClick={() => {
+              onClick={async () => {
                 if (deleting) {
-                  deleteSupplier(deleting.id);
+                  try {
+                    await deleteSupplier(deleting.id);
+                  } catch {
+                    toast.error("No se pudo eliminar el proveedor. Intenta de nuevo.");
+                    return;
+                  }
                   toast.success(`«${deleting.name}» eliminado`);
                 }
                 setDeleting(null);
