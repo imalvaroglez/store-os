@@ -23,6 +23,7 @@ const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
       id: "prod_olivia_1",
       storeId: "store_olivia",
       name: "Arete dorado",
+      imageUrl: "https://example.test/arete.jpg",
       category: "jewelry" as const,
       categoryIds: ["cat_rings"],
       isPublic: true,
@@ -41,6 +42,41 @@ const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
     }],
   },
 }));
+
+describe("foto del producto en la línea", () => {
+  it("muestra la portada de la pieza seleccionada y la quita al dejar la captura libre", () => {
+    state.products.push({
+      ...state.products[0],
+      id: "prod_olivia_2",
+      name: "Collar azul",
+      imageUrl: "https://example.test/collar.jpg",
+    } as typeof state.products[number]);
+    const order = {
+      id: "photo-order",
+      storeId: "store_olivia",
+      customerId: "customer_1",
+      items: [{ productId: "prod_olivia_1", productName: "Arete dorado", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      deposit: 0,
+      orderStatus: "asked" as const,
+      paymentStatus: "unpaid" as const,
+      schemaVersion: 2,
+      createdAt: "",
+      updatedAt: "",
+    };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+
+    expect(screen.getByRole("img", { name: "Foto de Arete dorado" })).toHaveAttribute("src", "https://example.test/arete.jpg");
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Collar azul" } });
+    fireEvent.click(screen.getByRole("option", { name: /Collar azul/ }));
+    const collarPhoto = screen.getByRole("img", { name: "Foto de Collar azul" });
+    expect(collarPhoto).toHaveAttribute("src", "https://example.test/collar.jpg");
+    fireEvent.error(collarPhoto);
+    expect(screen.getByRole("img", { name: "Foto de Collar azul" })).not.toHaveAttribute("src");
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Pieza personalizada" } });
+    expect(screen.queryByRole("img", { name: /Collar azul/ })).not.toBeInTheDocument();
+    state.products.pop();
+  });
+});
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../app/StoreProvider")>();

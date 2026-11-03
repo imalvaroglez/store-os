@@ -12,6 +12,7 @@ import {
   StatRow,
   TextArea,
   TextField,
+  ProductImage,
   useToast,
 } from "../../design-system";
 import { customersForStore } from "../../lib/selectors";
@@ -539,6 +540,7 @@ export function OrderForm({
                   if (product) selectProduct(line, product);
                 }}
               />
+              <OrderLinePhoto products={products} productId={line.productId} />
               {line.priceSource === "manual" && <p className="text-xs text-on-surface-soft">Precio ajustado manualmente.</p>}
               {line.productId && !line.unitPriceText && <p className="text-danger">Falta capturar el precio de este producto.</p>}
               <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(7rem,0.65fr)_minmax(10rem,1fr)_minmax(11rem,1fr)]">
@@ -639,5 +641,20 @@ export function OrderForm({
       </Dialog>
       </fieldset>
     </div>
+  );
+}
+
+function OrderLinePhoto({ products, productId }: { products: Product[]; productId?: string }) {
+  const product = products.find((candidate) => candidate.id === productId);
+  if (!product) return null;
+  const cover = product.images?.find((image) => image.isPrimary) ?? product.images?.[0];
+  const src = cover?.url ?? product.imageUrl;
+  return (
+    <ProductImage
+      src={src}
+      alt={src ? `Foto de ${product.name}` : `Foto no disponible de ${product.name}`}
+      size="thumb"
+      className="h-20 w-20"
+    />
   );
 }
