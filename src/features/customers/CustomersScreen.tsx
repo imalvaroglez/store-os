@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useStore, newCustomer } from "../../app/StoreProvider";
 import {
+  Badge,
   Button,
   Card,
   Dialog,
@@ -21,6 +22,8 @@ import {
 import { CustomerForm } from "./CustomerForm";
 import { customersForStore, ordersForStore } from "../../lib/selectors";
 import { orderBucket, orderCountsTowardToPay, orderTotals } from "../../lib/orders";
+import { formatDate } from "../../lib/dates";
+import { iconicStatus, type IconicStatus } from "../../lib/iconic";
 import type { Customer } from "../../types";
 
 export function CustomersScreen() {
@@ -38,6 +41,15 @@ export function CustomersScreen() {
     const needle = query.trim().toLocaleLowerCase("es-MX");
     return !needle || [customer.name, customer.phone, customer.instagram].filter(Boolean).join(" ").toLocaleLowerCase("es-MX").includes(needle);
   });
+  // FER-05 aviso previo: visual-only renewal alert, most urgent first. No
+  // external notifications (zero-cost rule) — Fer sees it when opening Clientes.
+  const renewalAlerts = customers
+    .map((customer) => ({ customer, status: iconicStatus(customer, orders) }))
+    .filter(
+      (x): x is { customer: Customer; status: IconicStatus } =>
+        x.status != null && x.status.active && x.status.expiringSoon
+    )
+    .sort((a, b) => a.status.until.localeCompare(b.status.until));
 
   return (
     <Screen>
@@ -50,6 +62,22 @@ export function CustomersScreen() {
           </Button>
         }
       />
+
+      {renewalAlerts.length > 0 && (
+        <Card className="mb-5 !bg-terracotta-soft/60 ring-terracotta/20">
+          <h3 className="font-semibold text-terracotta text-sm">⏳ Renovación próxima de Iconic</h3>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {renewalAlerts.map(({ customer, status }) => (
+              <Badge key={customer.id} tone="warning">
+                {customer.name} · vence {formatDate(status.until)}
+              </Badge>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-ink-soft">
+            Un pedido mayor a $1,000 dentro de la vigencia renueva el beneficio 30 días más.
+          </p>
+        </Card>
+      )}
 
       <div className="mb-5">
         <TextField label="Buscar clientes" placeholder="Nombre, teléfono o Instagram" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -65,6 +93,7 @@ export function CustomersScreen() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {visibleCustomers.map((c) => {
             const cOrders = orders.filter((o) => o.customerId === c.id);
+            const iconic = iconicStatus(c, orders);
             const totalSold = cOrders
               .filter((o) => orderBucket(o) !== "pending" && orderBucket(o) !== "cancelled")
               .reduce((sum, o) => sum + orderTotals(o).estimatedTotal, 0);
@@ -79,6 +108,15 @@ export function CustomersScreen() {
                     <p className="text-xs text-ink-soft truncate">
                       {c.phone ?? "Sin teléfono"} · {cOrders.length} {cOrders.length === 1 ? "pedido" : "pedidos"}
                     </p>
+                    {iconic && (
+                      <div className="mt-1.5">
+                        <Badge tone={iconic.active ? (iconic.expiringSoon ? "warning" : "accent") : "neutral"}>
+                          {iconic.active
+                            ? `Iconic · vence ${formatDate(iconic.until)}`
+                            : `Iconic · venció ${formatDate(iconic.until)}`}
+                        </Badge>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <div className="text-right space-y-1">

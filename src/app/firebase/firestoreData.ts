@@ -248,6 +248,11 @@ export async function saveEntity(
   if (name === "customers" && Object.prototype.hasOwnProperty.call(data, "assignedPriceTierId") && data.assignedPriceTierId === undefined) {
     clean.assignedPriceTierId = deleteField();
   }
+  // Same rule for a removed manual Iconic grant (FER-05): clearing both dates
+  // in the form must actually delete the field, not silently keep the old one.
+  if (name === "customers" && Object.prototype.hasOwnProperty.call(data, "iconic") && data.iconic === undefined) {
+    clean.iconic = deleteField();
+  }
 
   // G-P02: a store write MUST also write its adminStores control doc in the SAME
   // batched write — the rules resolve membership/ownership exclusively from
