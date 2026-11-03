@@ -16,14 +16,18 @@ nada); el modo `push` REESCRIBE `origin/main` con force y es decisión humana.
 
 1. `brew install git-filter-repo` (verificado con 2.47.0).
 2. Ningún agente empujando ramas mientras se ejecuta.
-3. **Precondición de portadores (hallazgo 2026-11-03):** el script aborta si
-   alguna rama remota distinta de `main` desciende del merge contaminado
-   `ab4f51d`. La rama `docs/cero-pinzas-plan` (la de este mismo cambio) cae en
-   ese caso: se creó desde el `main` contaminado. Antes del `push` hay que
-   **fusionar su PR y borrar la rama en GitHub** (igual que cualquier otra rama
-   que se corte del `main` actual antes del purge). El guard es intencional:
-   mientras una rama viva apunte al historial viejo, los objetos contaminados
-   siguen alcanzables en GitHub.
+3. **Precondición de portadores (hallazgo 2026-11-03, corregido tras auditoría):**
+   el script aborta si alguna rama remota distinta de `main` desciende del merge
+   contaminado `ab4f51d`. Hoy hay exactamente **dos** portadores y ambos deben
+   resolverse antes del `push`:
+   - `docs/cero-pinzas-plan` (la de este mismo cambio): fusionar su PR y borrar
+     la rama en GitHub.
+   - `chore/eradicate-local-mode` (PR #111): se volvió portadora al integrar
+     `main` en ella. Hay que **fusionar el PR #111** (o cerrarlo y borrar la
+     rama — con el costo de re-aplicar el trabajo). El orden natural es:
+     PR de purge-tools → PR #111 → purge.
+   El guard es intencional: mientras una rama viva apunte al historial viejo,
+   los objetos contaminados siguen alcanzables en GitHub.
 4. Verificar que no hay forks (si hubiera, avisar a los forks antes de reescribir):
    `gh api repos/imalvaroglez/store-os --jq .forks_count` → debe ser `0`.
 
@@ -40,7 +44,9 @@ bash /Users/imalvaroglez/Documents/GitHub/store-os/scripts/history-purge-2026-11
 ```
 
 Salida esperada (evidencia de la ejecución del 2026-11-03, réplica con la
-precondición 3 satisfecha):
+precondición 3 satisfecha; nota de auditoría: este bloque es una
+reconstrucción legible, no salida literal — las cifras sí son exactas, y con
+los portadores activos el script imprime `ABORT` en vez de continuar):
 
 ```
 == tip actual de main: 09f50c5f932002050450ca401d498f8f24ca65a5 (523 commits)
@@ -97,8 +103,11 @@ gh pr list --json number,mergeable
 ```
 
 (Los PRs abiertos cuyos commits son previos a la contaminación conservan sus
-SHA; los posteriores pueden requerir rebase — el plan lo verificó: ninguna rama
-de PR abierto desciende de `ab4f51d`.)
+SHA. El plan lo verificó originalmente como "ninguna rama de PR abierto
+desciende de `ab4f51d`", pero la auditoría corrigió ese dato: **el PR #111 sí
+desciende** (por la integración de `main` del 2026-11-03) — por eso es
+precondición del purge. Los demás 16 PRs abiertos no descienden y no requieren
+rebase.)
 
 ### 5. Purga de vistas cacheadas en GitHub (OBLIGATORIO)
 
