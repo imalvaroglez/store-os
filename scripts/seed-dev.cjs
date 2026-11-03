@@ -13,9 +13,8 @@
  * (a browser login; no password, no committed secret, no `.env.seed-dev`). If
  * ADC is absent the script prints the gcloud command and exits.
  *
- * This script is now the ONLY owner of the Olivia fixture: the client demo
- * seed (src/lib/seed.ts) was removed (delivery remove-client-demo-seed). What
- * stays is a self-contained CommonJS object with deterministic fixed ids for
+ * This script owns the Olivia fixture for the development backend. Client-side
+ * seeded stores are retired. This self-contained CommonJS object uses fixed ids for
  * idempotent re-run — evolve the DEV fixture here, not in the client.
  *
  * LOAD-BEARING GUARD: this script aborts unless projectId === 'store-os-dev'.
@@ -301,7 +300,7 @@ function primaryImage(product) {
  * (ordered by the fixture's own tiers) maps to visible tier i, ids that
  * already match keep their value, and extra visible tiers reuse the deepest
  * level. Identical config is a no-op — the owner's real products are never
- * touched, only the fixed demo docs the seed rewrites anyway.
+ * touched, only the fixed fixture documents this seed rewrites.
  */
 function alignFixturePrices(products, visibleTiers) {
   if (!visibleTiers.length) return products;
@@ -579,7 +578,7 @@ async function run() {
     seedTiers.find((t) => t.id === storeToWrite.defaultTierId)?.id ?? seedTiers[0]?.id;
 
   // The fixture ships fixture-tier price ids; when the store declares other
-  // tiers the demo pieces must still carry a price for every advertised tier.
+  // tiers each fixture product must still carry a price for every advertised tier.
   const products = alignFixturePrices(enrichProducts(baseProducts), seedTiers);
 
   // 1. Write Olivia store (data plane) + adminStores (control plane) + categories

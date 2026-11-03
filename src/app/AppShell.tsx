@@ -26,12 +26,14 @@ import { OrderEditorScreen } from "../features/orders/OrderEditorScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
 import { PurchasesScreen } from "../features/inventory/PurchasesScreen";
 import { StoreSettingsScreen } from "../features/stores/StoreSettingsScreen";
+import { PlatformUsersScreen } from "../features/users/PlatformUsersScreen";
 
 const TAB_FOR_PATH: Record<string, Tab> = {
   "": "inicio",
   productos: "productos",
   pedidos: "pedidos",
   clientes: "clientes",
+  usuarios: "usuarios",
 };
 
 export function AppShell() {
@@ -84,10 +86,22 @@ export function AppShell() {
     );
   }
 
+  if (tab === "usuarios" && user?.role !== "super_admin") {
+    return (
+      <Screen>
+        <EmptyState
+          title="No tienes permiso"
+          subtitle="Solo la administración de la plataforma puede consultar esta lista."
+          action={<Button variant="secondary" onClick={() => navigate("/")}>Volver al inicio</Button>}
+        />
+      </Screen>
+    );
+  }
+
   const commands: CommandGroup[] = [
     {
       group: "Ir a",
-      items: visibleNavItems(activeStore.type).map((t) => ({
+      items: visibleNavItems(activeStore.type, user?.role).map((t) => ({
         id: t.id,
         label: t.label,
         onSelect: () => navigate(t.path),
@@ -114,6 +128,9 @@ export function AppShell() {
     case "clientes":
       screen = <CustomersScreen />;
       break;
+    case "usuarios":
+      screen = <PlatformUsersScreen userRole={user?.role} />;
+      break;
     case "tienda":
       screen = (
         <Screen>
@@ -138,6 +155,7 @@ export function AppShell() {
       <Sidebar
         active={tab}
         storeType={activeStore.type}
+        userRole={user?.role}
         switcher={<StoreSwitcher stores={state.stores} activeStore={activeStore} onSelect={setActiveStore} />}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenStoreSettings={canManageStore ? () => navigate("/tienda/configuracion") : undefined}
@@ -172,7 +190,7 @@ export function AppShell() {
         <main className="flex-1 overflow-y-auto pb-24 md:pb-8">{screen}</main>
 
         {/* Mobile-only bottom nav */}
-        <BottomNav active={tab} storeType={activeStore.type} />
+        <BottomNav active={tab} storeType={activeStore.type} userRole={user?.role} />
       </div>
 
       <Sheet open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Opciones">

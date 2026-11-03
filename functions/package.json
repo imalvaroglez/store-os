@@ -5,8 +5,8 @@
   "type": "module",
   "engines": { "node": "22" },
   "scripts": {
-    "serve": "firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions"
+    "serve": "firebase emulators:start --project store-os-dev --only functions",
+    "deploy": "firebase deploy --only functions --project store-os-dev"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0",

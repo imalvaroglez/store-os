@@ -7,7 +7,7 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 ## [0.5.0] — 2026-08-11 (mergeado a main, deployado a producción)
 
 > PR #12 mergeado (`7645b73`). Production deploy vía CI (gate verde). Reglas
-> de Firestore deployadas a los 3 ambientes (dev, prod) para eliminar el drift
+> de Firestore deployadas a los dos proyectos Firebase (dev y producción) para eliminar el drift
 > estructural. Olivia visible y operable en `store-os-alpha.vercel.app`.
 
 ### Added — CI/CD y cableado de ambientes
@@ -15,11 +15,12 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
   **solo si** `build-test` + `rules-and-e2e` pasan. Vercel auto-deploy OFF
   (Ignored Build Step `exit 0`). Captura correcta de la URL de preview y
   comment automático en el PR.
-- **Cableado de 3 ambientes:** **Local + Preview** = `store-os-dev` (mismo
+- **Cableado de Firebase:** **Desarrollo local + Preview** = `store-os-dev` (mismo
   backend); **Producción** = `store-os-f7cf8` (aislado). GitHub es la fuente
   única de `VITE_FIREBASE_*` (las vars de Vercel se eliminaron para evitar drift).
-- **Policy estricta de sincronización** (`docs/LOOPS.md` §4): datos aislados
-  dev↔preview; estructura (reglas, schema, IAM) fluye a los 3 ambientes;
+- **Policy estricta de sincronización** (`docs/LOOPS.md` §4): desarrollo y
+  producción usan proyectos separados; estructura (reglas, schema, IAM) se
+  mantiene compatible en ambos proyectos;
   promoción local→preview→prod solo con aprobación humana.
 
 ### Added — Flujo de compra rediseñado
@@ -56,15 +57,14 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
   llegaba a Firestore y rechazaba el ticket completo ("Unsupported field value").
 - **Preview de foto en el modal de producto** no se sale del tile (wrapper
   `absolute inset-0`).
-- **Reglas de Firestore deployadas a los 3 ambientes** (dev, prod): el drift
+- **Reglas de Firestore deployadas a los dos proyectos Firebase** (dev, prod): el drift
   estructural (reglas del repo vs deployadas) era la causa raíz de "Olivia no
   aparece" en dev y prod. Ahora en sync.
 
 ### Removed
-- **Modo demo eliminado:** nada visible sin login. La app ya no auto-carga tiendas
-  demo (Olivia/Santi/Joyería) en el navegador ni siembra demos en cuentas cloud
-  nuevas (`seedCloudIfEmpty` es no-op). Un visitante sin sesión ve solo la
-  pantalla de login.
+- **Acceso protegido:** el panel requiere iniciar sesión. La app no crea tiendas
+  ficticias en el navegador ni carga fixtures en cuentas cloud nuevas
+  (`seedCloudIfEmpty` es no-op). Un visitante sin sesión ve la pantalla de acceso.
 
 ### Docs
 - `docs/LOOPS.md` §4 + §8: policy de sincronización de ambientes.
@@ -83,7 +83,7 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 ### Added
 - **Firebase foundation:** Auth (email/password + Google), Firestore (colecciones raíz
   + membresía), reglas de seguridad (super-admin + miembros por tienda), primer
-  usuario → super_admin. Modo demo local (sin sesión) intacto; modo cloud al iniciar sesión.
+  usuario → super_admin. Al cerrar sesión se vuelve a la pantalla de acceso.
 - **Selector de tienda "¿Quién opera hoy?"** (lista compacta) tras iniciar sesión;
   "Cambiar tienda" regresa a él.
 - **Gestión completa de tiendas:** renombrar, cambiar tipo (Bajo pedido ↔ Inventario
@@ -94,13 +94,13 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 - **ErrorBoundary** para recuperación ante fallos en producción.
 - **Listo para Vercel:** `vercel.json` (SPA rewrite, cache de assets) + guía de
   despliegue (`docs/DEPLOYMENT.md`).
-- Pruebas e2e contra el emulador Firebase (signup → admin + seed; sign out → demo;
+- Pruebas e2e contra el emulador Firebase (signup → admin + seed; sign out → acceso;
   member sin tiendas; picker + crear tienda).
 
 ### Changed
 - `npm run e2e` ahora excluye las pruebas de Firebase (requieren emulador); usa
   `npm run e2e:firebase`. Nuevos scripts `emulators` y `e2e:firebase`.
-- `StoreProvider` es auth-aware: localStorage (demo) o Firestore (cloud); escrituras
+- `StoreProvider` es auth-aware: estado local o Firestore según la sesión; escrituras
   optimistas + sincronización por `onSnapshot`.
 
 ## [0.3.0] — 2026-06-27
