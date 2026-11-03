@@ -757,7 +757,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         input.kind === "payment"
           ? buildPaymentRecord(order, input, user.uid)
           : buildAdjustmentRecord(order, input, user.uid);
-      const saved = await registerOrderPaymentTx(record);
+      const saved = await registerOrderPaymentTx(
+        record,
+        input.kind === "payment" ? input.inherited : undefined
+      );
       setPayments((prev) => mergePayments(prev, saved));
     },
   };

@@ -350,12 +350,17 @@ export async function fetchOrderPayments(orderId: string): Promise<OrderPayment[
  * Register one payment on its order, idempotently (#123). The record id is
  * stable per user intent: a retry first re-reads the doc and returns it without
  * writing, so resends never duplicate. In the SAME transaction, the legacy
- * `deposit` is materialized once as an inherited record (deterministic id) with
- * unknown date/method — no invented data, no parallel accumulator. Payment docs
- * are create-only evidence (see firestore.rules); corrections are new signed
- * records, which is why this path never updates an existing doc.
+ * `deposit` is materialized once as an inherited record (deterministic id)
+ * carrying the date/method supplied by the operator — estimated when unknown,
+ * never left as "unknown" (PO decision 2026-11-03). Materialization only rides
+ * along a real payment, never an adjustment. Payment docs are create-only
+ * evidence (see firestore.rules); corrections are new signed records, which is
+ * why this path never updates an existing doc.
  */
-export async function registerOrderPaymentTx(payment: OrderPayment): Promise<OrderPayment[]> {
+export async function registerOrderPaymentTx(
+  payment: OrderPayment,
+  inherited?: { method: "cash" | "transfer"; date: string }
+): Promise<OrderPayment[]> {
   const { db } = getFirebase();
   return runTransaction(db, async (tx) => {
     const paymentsRef = collection(db, "orders", payment.orderId, "payments");
@@ -368,19 +373,26 @@ export async function registerOrderPaymentTx(payment: OrderPayment): Promise<Ord
       throw new Error("El pedido pertenece a otra tienda.");
     }
     const saved: OrderPayment[] = [];
-    const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
-    const inheritedSnap = await tx.get(inheritedRef);
-    if (!inheritedSnap.exists()) {
-      const deposit = orderSnap.data().deposit;
-      const inherited = inheritedDepositRecord(
-        payment.orderId,
-        payment.storeId,
-        typeof deposit === "number" ? deposit : 0,
-        payment.createdBy
-      );
-      if (inherited) {
-        tx.set(inheritedRef, stripUndefined(inherited) as Record<string, unknown>);
-        saved.push(inherited);
+    if (payment.kind === "payment") {
+      const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
+      const inheritedSnap = await tx.get(inheritedRef);
+      if (!inheritedSnap.exists()) {
+        const deposit = orderSnap.data().deposit;
+        const pending = typeof deposit === "number" ? deposit : 0;
+        if (pending > 0 && !inherited) {
+          throw new Error("Captura la fecha y el método del anticipo previo.");
+        }
+        const record = inheritedDepositRecord(
+          payment.orderId,
+          payment.storeId,
+          pending,
+          payment.createdBy,
+          inherited as { method: "cash" | "transfer"; date: string }
+        );
+        if (record) {
+          tx.set(inheritedRef, stripUndefined(record) as Record<string, unknown>);
+          saved.push(record);
+        }
       }
     }
     tx.set(paymentRef, stripUndefined(payment) as Record<string, unknown>);

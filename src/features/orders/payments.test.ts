@@ -173,21 +173,27 @@ describe("inherited deposit (decision i)", () => {
     expect(summary.records).toHaveLength(0);
   });
 
-  it("builds the inherited record with unknown date/method — no invented data", () => {
-    const record = inheritedDepositRecord("o1", "s1", 400, "u1", "2026-11-02T10:00:00.000Z");
+  it("builds the inherited record with the operator-supplied date/method (PO 2026-11-03)", () => {
+    const record = inheritedDepositRecord("o1", "s1", 400, "u1", { method: "cash", date: "2026-10-20" }, "2026-11-02T10:00:00.000Z");
     expect(record).toMatchObject({
       id: INHERITED_DEPOSIT_PAYMENT_ID,
       orderId: "o1",
       storeId: "s1",
-      method: "unknown",
+      date: "2026-10-20",
+      method: "cash",
       kind: "payment",
       amount: 400,
     });
-    expect(record?.date).toBeUndefined();
+  });
+
+  it("rejects materialization without a real method or a valid date", () => {
+    expect(() => inheritedDepositRecord("o1", "s1", 400, "u1", { method: "unknown" as unknown as "cash", date: "2026-10-20" })).toThrow(/método del anticipo/i);
+    expect(() => inheritedDepositRecord("o1", "s1", 400, "u1", { method: "cash", date: "" })).toThrow(/fecha del anticipo/i);
+    expect(() => inheritedDepositRecord("o1", "s1", 400, "u1", { method: "cash", date: "20-10-2026" })).toThrow(/fecha del anticipo/i);
   });
 
   it("returns null for a zero deposit so nothing phantom is registered", () => {
-    expect(inheritedDepositRecord("o1", "s1", 0, "u1")).toBeNull();
+    expect(inheritedDepositRecord("o1", "s1", 0, "u1", { method: "cash", date: "2026-10-20" })).toBeNull();
   });
 
   it("once materialized, the deposit counts once — never twice", () => {

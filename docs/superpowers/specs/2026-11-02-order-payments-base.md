@@ -7,12 +7,16 @@ reversibles; registradas como comentarios en #123 y #165.
 
 ## Reglas adoptadas
 
-1. **Anticipo heredado.** El `deposit` previo a los registros por cobro se
-   materializa UNA vez como registro acumulado con fecha y método
-   **desconocidos** (`method: "unknown"`, sin `date`). No se inventan datos.
-   Mientras no exista ningún registro, el resumen lo cuenta como recibido
-   pendiente de materializar; el primer cobro lo registra en la misma
-   transacción (id determinista `inherited_deposit`, sin doble conteo).
+1. **Anticipo heredado** (revisada por el PO, 2026-11-03). El `deposit`
+   previo a los registros por cobro se materializa UNA vez como registro
+   acumulado con la **fecha y método que captura la operadora** — estimados
+   cuando no los recuerda; ya NO se registran como "desconocidos". Mientras
+   no exista ningún registro, el resumen lo cuenta como recibido pendiente de
+   materializar; el primer cobro exige esos datos y lo registra en la misma
+   transacción (id determinista `inherited_deposit`, sin doble conteo). Un
+   ajuste como primer registro NO materializa: solo un cobro real lo hace.
+   (`method: "unknown"` queda reservado a los ajustes internos, que no son
+   recepciones de dinero.)
 2. **Fecha real.** Cada cobro guarda la fecha de recepción que captura la
    operadora (por defecto hoy), independiente del estado logístico. `createdAt`
    conserva el momento de registro como evidencia adicional.
