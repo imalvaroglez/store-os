@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { StoreProvider } from "./StoreProvider";
-import { App } from "./App";
+import { App, SyncErrorNoticeView } from "./App";
 import { AuthProvider } from "./firebase/AuthProvider";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { fixtureState } from "../lib/testFixtures";
@@ -86,5 +86,18 @@ describe("Root signed-out routing (production)", () => {
       (import.meta.env as { DEV: boolean }).DEV = original;
       localStorage.clear();
     }
+  });
+});
+
+describe("aviso de sincronización", () => {
+  it("muestra la operación fallida y ofrece reintentar o descartar", () => {
+    const retry = vi.fn(async () => {});
+    const onDismiss = vi.fn();
+    render(<SyncErrorNoticeView syncError={{ label: "guardar la compra", retry }} onDismiss={onDismiss} />);
+    expect(screen.getByRole("alert").textContent).toContain("No se pudo guardar la compra.");
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
+    expect(retry).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
   });
 });
