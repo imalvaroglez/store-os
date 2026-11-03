@@ -3,10 +3,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderCard } from "./OrderCard";
-import type { Order, OrderPayment } from "../../types";
+import type { Order, OrderPayment, Purchase } from "../../types";
 
 const { state, activeStore, holder } = vi.hoisted(() => ({
-  state: { customers: [{ id: "c1", storeId: "s1", name: "Sofía" }], products: [] },
+  state: { customers: [{ id: "c1", storeId: "s1", name: "Sofía" }], products: [], purchases: [] as Purchase[] },
   activeStore: { name: "Olivia" },
   holder: { upsertOrder: vi.fn(), payments: [] as OrderPayment[] },
 }));
@@ -137,4 +137,47 @@ it("opens receipt capture instead of declaring a legacy deposit collection succe
   await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeEnabled());
   expect(holder.upsertOrder).not.toHaveBeenCalled();
   expect(edit).not.toHaveBeenCalled();
+});
+/** A received trip for store "s1": 10 anillos with $3.00 of delivery → 30¢ per piece. */
+const tripWithDelivery: Purchase = {
+  id: "trip", storeId: "s1", date: "2026-10-30", status: "received", costingMethod: "latest_purchase",
+  receivedAt: "2026-11-01T00:00:00.000Z", subtotal: 100, totalConfirmed: 100, createdAt: "", updatedAt: "",
+  lines: [{ lineId: "line", productId: "p1", name: "Anillo", quantity: 10, unitCost: 10 }],
+  costAllocations: [{ lineId: "line", merchandiseCents: 10000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 300, totalCents: 10000 }],
+};
+
+const withCost: Order = {
+  ...order, orderStatus: "delivered",
+  items: [{ productId: "p1", productName: "Anillo", quantity: 3, unitPrice: 25, subtotal: 75, cost: 10 }],
+};
+
+describe("estimated profit on the order card", () => {
+  it("shows profit = precio − costo de compra − gastos de venta, once each", () => {
+    state.purchases = [tripWithDelivery];
+    render(<ToastProvider><OrderCard order={withCost} onEdit={() => {}} /></ToastProvider>);
+    // $75.00 − $30.00 − $0.90 (3 × 30¢ de entrega) = $44.10.
+    expect(screen.getByText("$44.10")).toBeInTheDocument();
+    expect(screen.getByText("$30.00")).toBeInTheDocument();
+    expect(screen.getByText("$0.90")).toBeInTheDocument();
+  });
+
+  it("keeps cash collected separate from profit (Saldo stays its own row)", () => {
+    state.purchases = [tripWithDelivery];
+    render(<ToastProvider><OrderCard order={withCost} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.getByText("Saldo")).toBeInTheDocument();
+    expect(screen.getByText("Pagado")).toBeInTheDocument();
+  });
+
+  it("admits 'sin costo registrado' instead of inventing a profit", () => {
+    state.purchases = [tripWithDelivery];
+    const noCost = { ...withCost, items: [{ ...withCost.items[0], cost: undefined }] };
+    render(<ToastProvider><OrderCard order={noCost} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.getByText(/sin costo registrado/)).toBeInTheDocument();
+  });
+
+  it("hides the estimate on a cancelled order (devolución total)", () => {
+    state.purchases = [tripWithDelivery];
+    render(<ToastProvider><OrderCard order={{ ...withCost, orderStatus: "cancelled" }} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.queryByText(/Ganancia estimada/)).toBeNull();
+  });
 });
