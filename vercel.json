@@ -5,6 +5,7 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "rewrites": [
+    { "source": "/catalogo/(.*)/editar", "destination": "/index.html" },
     { "source": "/catalogo/(.*)", "destination": "/public.html" },
     { "source": "/((?!assets/).*)", "destination": "/index.html" }
   ],

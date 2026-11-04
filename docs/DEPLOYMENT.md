@@ -355,3 +355,9 @@ The build guard exists precisely so this is caught at build time, not after.
   the projection on demand.
 - **Member invites:** invitees who don't have an account yet receive a Firebase
   email sign-in link; once they sign up they're added to the store.
+
+## Respaldos y recuperación
+
+La herramienta local de respaldo cifrado, permisos de lectura, retención y prueba
+de recuperación está documentada en [BACKUPS.md](BACKUPS.md). Integrar código o
+liberar la app no activa esa tarea ni acredita respaldo operativo.

@@ -41,14 +41,12 @@ export default {
           soft: "var(--on-surface-soft)",
         },
         edge: "var(--border)",
-        danger: "var(--danger)",
-        success: "var(--success)",
         "on-accent": "var(--on-accent)",
         // Semantic aliases also follow the theme.
         brand: { 50: "var(--paper)", 100: "var(--paper-2)", 900: "var(--ink)", 950: "var(--ink)" },
-        success: { 50: "var(--forest-soft)", 100: "var(--forest-soft)", 600: "var(--forest)", 700: "var(--forest)" },
-        danger: { 50: "var(--rose-soft)", 100: "var(--rose-soft)", 600: "var(--rose)", 700: "var(--rose)" },
-        warning: { 50: "var(--terracotta-soft)", 100: "var(--terracotta-soft)", 500: "var(--terracotta)", 700: "var(--terracotta)" },
+        success: { DEFAULT: "var(--success)", 50: "var(--forest-soft)", 100: "var(--forest-soft)", 600: "var(--forest)", 700: "var(--forest)" },
+        danger: { DEFAULT: "var(--danger)", 50: "var(--rose-soft)", 100: "var(--rose-soft)", 600: "var(--rose)", 700: "var(--rose)" },
+        warning: { DEFAULT: "var(--terracotta)", 50: "var(--terracotta-soft)", 100: "var(--terracotta-soft)", 500: "var(--terracotta)", 700: "var(--terracotta)" },
       },
       borderRadius: {
         card: "var(--radius-lg)",

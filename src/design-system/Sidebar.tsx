@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { navigate, visibleNavItems, parentActive, type Tab } from "./navItems";
+import { navigate, visibleNavItems, parentActive, type PlatformRole, type Tab } from "./navItems";
 import type { StoreType } from "../types";
 
 // Desktop navigation: a fixed left rail. Mobile uses BottomNav instead.
@@ -10,6 +10,7 @@ import type { StoreType } from "../types";
 export function Sidebar({
   active,
   storeType,
+  userRole,
   switcher,
   onOpenSettings,
   onOpenStoreSettings,
@@ -17,12 +18,13 @@ export function Sidebar({
 }: {
   active: Tab;
   storeType: StoreType;
+  userRole?: PlatformRole;
   switcher?: ReactNode;
   onOpenSettings: () => void;
   onOpenStoreSettings?: () => void;
   onChangeStore?: () => void;
 }) {
-  const tabs = visibleNavItems(storeType);
+  const tabs = visibleNavItems(storeType, userRole);
   // Productos parent expands inline. Open by default when a child is active so
   // deep-linking to /productos/categorias shows the open group. The label
   // navigates; the chevron is a separate expand control (unified-products).
@@ -103,6 +105,7 @@ export function Sidebar({
           return (
             <button
               key={t.id}
+              aria-label={t.id === "usuarios" ? "Usuarios" : undefined}
               onClick={() => navigate(t.path)}
               className={`w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold transition-colors ${
                 isActive
