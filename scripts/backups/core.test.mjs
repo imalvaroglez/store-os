@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileSync, spawn } from 'node:child_process';
+import childProcess, { execFileSync, spawn } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
 import { DEV, PROD } from './core.mjs';
 import { capture, restore, remapFields, validateTarget, validateUsers, EMULATORS } from './cloud.mjs';
@@ -245,4 +246,21 @@ test('restoration rejects lost MFA enrollments even when counts and other profil
   const saved = Object.fromEntries(Object.keys(EMULATORS).map(k => [k, process.env[k]])); Object.assign(process.env, EMULATORS);
   try { await assert.rejects(restore(fake, { projectId: DEV, bucket: `${DEV}.firebasestorage.app` }, dir, { projectId: PROD, counts: { documents: 0, users: 1, objects: 0 } }), /AUTH_MFA_VERIFY_FAILED/); }
   finally { for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : process.env[k] = v; }
+});
+
+test('startup without capture workspaces does not inspect processes', async t => {
+  const dir = await workspace(t); await writeFile(path.join(dir, 'config.json'), '{}');
+  const original = childProcess.execFileSync;
+  childProcess.execFileSync = () => { throw new Error('UNEXPECTED_PROCESS_INSPECTION'); };
+  syncBuiltinESMExports();
+  try { await cleanupStaleWorkspaces(dir); }
+  finally { childProcess.execFileSync = original; syncBuiltinESMExports(); }
+});
+test('timed-out process inspection reports a safe code and preserves unclassified workspaces', async t => {
+  const dir = await workspace(t); const capture = path.join(dir, 'capture-unclassified'); await mkdir(capture);
+  const original = childProcess.execFileSync;
+  childProcess.execFileSync = () => { throw Object.assign(new Error('private fixture details'), { code: 'ETIMEDOUT' }); };
+  syncBuiltinESMExports();
+  try { await assert.rejects(cleanupStaleWorkspaces(dir), { message: 'PROCESS_INSPECTION_TIMEOUT' }); assert.equal(await exists(capture), true); }
+  finally { childProcess.execFileSync = original; syncBuiltinESMExports(); }
 });
