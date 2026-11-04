@@ -216,7 +216,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     const foreign = payment("pay_f", 50, "foreign-plan");
     await expect(registerOrderPaymentTx({ ...foreign, storeId: "other-store" })).rejects.toThrow();
     // The rejected payment must not move anyone's stock.
-    expect(await stock("p-plan")).toBe(-1); // ledger: 5 −2 plan −1 ordinary −1 gate −1 confirm
+    expect(await stock("p-plan")).toBe(0); // ledger: 5 −2 plan −1 ordinary −1 gate −1 confirm
   });
 
   it("keeps reserved stock and evidence through edits, plan removal and rejected deletion (#171 C2/C4)", async () => {
