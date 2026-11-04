@@ -45,7 +45,7 @@ export function OrderPaymentsSheet({
   open: boolean;
   onClose: () => void;
 }) {
-  const { payments, loadOrderPayments, registerOrderPayment } = useStore();
+  const { payments, loadOrderPayments, registerOrderPayment, draftOwnerId } = useStore();
   const toast = useToast();
   const [amountText, setAmountText] = useState("");
   const [method, setMethod] = useState<"cash" | "transfer">("cash");
@@ -60,6 +60,18 @@ export function OrderPaymentsSheet({
   const [adjustAmountText, setAdjustAmountText] = useState("");
   const [adjustNote, setAdjustNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reload, setReload] = useState(0);
+  const view = useRef({ open, orderId: order.id, owner: draftOwnerId, generation: 0, mounted: true });
+  if (view.current.open !== open || view.current.orderId !== order.id || view.current.owner !== draftOwnerId) {
+    view.current = { ...view.current, open, orderId: order.id, owner: draftOwnerId, generation: view.current.generation + 1 };
+  }
+  useEffect(() => {
+    view.current.mounted = true;
+    return () => { view.current.mounted = false; view.current.generation += 1; };
+  }, []);
+
   // One stable record id per user intent: a retry after an error reuses it, so
   // the same cobro can never be registered twice (idempotent registration).
   const intentIdRef = useRef<{ payment: string | null; adjust: string | null }>({
@@ -69,9 +81,17 @@ export function OrderPaymentsSheet({
 
   useEffect(() => {
     if (!open) return;
-    loadOrderPayments(order.id).catch(() => toast.error("No se pudieron cargar los cobros."));
+    let active = true;
+    setLoading(true);
+    setLoadFailed(false);
+    loadOrderPayments(order.id).catch(() => {
+      if (!active) return;
+      setLoadFailed(true);
+      toast.error("No se pudieron cargar los cobros.");
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, order.id]);
+  }, [open, order.id, order.paymentsRevision, draftOwnerId, reload]);
 
   const summary = paymentSummary(order, payments);
   const owed = summary.balanceCents > 0;
@@ -81,19 +101,23 @@ export function OrderPaymentsSheet({
   const plan = installmentPlanView(order);
 
   async function save(input: Parameters<typeof registerOrderPayment>[1], onDone: () => void) {
+    const generation = view.current.generation;
+    const active = () => view.current.mounted && view.current.open && view.current.generation === generation;
     setSaving(true);
     try {
       await registerOrderPayment(order, input);
+      if (!active()) return;
       toast.success("Cobro registrado");
       onDone();
     } catch (error) {
+      if (!active()) return;
       toast.error(
         error instanceof Error && error.message
           ? error.message
           : "No se pudo registrar el cobro."
       );
     } finally {
-      setSaving(false);
+      if (view.current.mounted) setSaving(false);
     }
   }
 
@@ -227,7 +251,14 @@ export function OrderPaymentsSheet({
           </section>
         )}
 
-        {summary.records.length > 0 ? (
+        {loading ? (
+          <p role="status" className="text-sm text-on-surface-soft">Cargando cobros…</p>
+        ) : loadFailed ? (
+          <div className="space-y-2">
+            <p role="alert" className="text-sm text-danger">No se pudo cargar el detalle. Vuelve a cargarlo antes de registrar otro cobro.</p>
+            <Button variant="secondary" onClick={() => setReload((value) => value + 1)}>Volver a cargar cobros</Button>
+          </div>
+        ) : summary.records.length > 0 ? (
           <ul className="divide-y divide-edge" aria-label="Cobros registrados">
             {summary.records.map((p) => (
               <li key={p.id} className="py-2 flex items-start justify-between gap-3">
@@ -289,7 +320,7 @@ export function OrderPaymentsSheet({
             onChange={(e) => setNote(e.target.value)}
             placeholder="p. ej. abono en efectivo"
           />
-          <Button full disabled={saving} onClick={submitPayment}>
+          <Button full disabled={saving || loading || loadFailed} onClick={submitPayment}>
             Registrar cobro
           </Button>
 
@@ -315,13 +346,13 @@ export function OrderPaymentsSheet({
                 <Button variant="secondary" full disabled={saving} onClick={() => setAdjustOpen(false)}>
                   Cancelar
                 </Button>
-                <Button full disabled={saving} onClick={submitAdjustment}>
+                <Button full disabled={saving || loading || loadFailed} onClick={submitAdjustment}>
                   Guardar ajuste
                 </Button>
               </div>
             </div>
           ) : (
-            <Button variant="ghost" full disabled={saving} onClick={() => setAdjustOpen(true)}>
+            <Button variant="ghost" full disabled={saving || loading || loadFailed} onClick={() => setAdjustOpen(true)}>
               Registrar ajuste o devolución
             </Button>
           )}

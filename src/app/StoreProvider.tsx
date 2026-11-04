@@ -31,10 +31,8 @@ import {
   buildAdjustmentRecord,
   buildPaymentRecord,
   docReceivedCents,
-  INHERITED_DEPOSIT_PAYMENT_ID,
   mergePayments,
-  orderMoneyAfterPayments,
-  paymentsCents,
+  reconcileOrderPayments,
   type PaymentRecordInput,
 } from "../features/orders/payments";
 import { useAuth } from "./firebase/AuthProvider";
@@ -90,6 +88,8 @@ type Action =
   | { type: "DELETE_CUSTOMER"; customerId: string }
   | { type: "ADD_ORDER"; order: Order }
   | { type: "UPDATE_ORDER"; order: Order }
+  | { type: "APPLY_ORDER_PAYMENTS"; order: Order }
+  | { type: "REPLACE_CLOUD_STATE"; state: AppState }
   | { type: "DELETE_ORDER"; orderId: string }
   // cloud sync pushes a whole state
   | { type: "REPLACE_STATE"; state: AppState }
@@ -156,16 +156,28 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, orders: [...state.orders, action.order] };
     case "UPDATE_ORDER":
       return { ...state, orders: state.orders.map((o) => (o.id === action.order.id ? action.order : o)) };
+    case "APPLY_ORDER_PAYMENTS":
+      return { ...state, orders: state.orders.map((order) => reconcileOrderPayments(order, action.order)) };
     case "DELETE_ORDER":
       return { ...state, orders: state.orders.filter((o) => o.id !== action.orderId) };
-    case "REPLACE_STATE":
+    case "REPLACE_CLOUD_STATE":
+    case "REPLACE_STATE": {
       // A cloud sync must never move the user to another store: on slow
       // backends the snapshot can land after the user switched/created one,
       // reverting their selection (and the screen they're looking at).
-      return state.activeStoreId &&
-        action.state.stores.some((s) => s.id === state.activeStoreId)
-        ? { ...action.state, activeStoreId: state.activeStoreId }
-        : action.state;
+      const currentOrders = new Map(state.orders.map((order) => [order.id, order]));
+      const incoming = action.type === "REPLACE_CLOUD_STATE" ? {
+        ...action.state,
+        orders: action.state.orders.map((order) => {
+          const current = currentOrders.get(order.id);
+          if (!current || current.storeId !== order.storeId) return order;
+          const business = (current.revision ?? 0) > (order.revision ?? 0) ? current : order;
+          return reconcileOrderPayments(business, current);
+        }),
+      } : action.state;
+      return state.activeStoreId && incoming.stores.some((s) => s.id === state.activeStoreId)
+        ? { ...incoming, activeStoreId: state.activeStoreId } : incoming;
+    }
     case "BULK_CREATE_FOR_PURCHASE": {
       const products = [...state.products];
       for (const product of action.products) {
@@ -274,7 +286,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Payment records (#123): session-scoped cloud reads under each order's own
   // subcollection. Deliberately NOT part of the legacy local AppState — money
   // records are administrative data and live only in Firestore.
-  const [payments, setPayments] = useState<OrderPayment[]>([]);
+  const paymentUid = cloud && user ? user.uid : null;
+  const paymentSession = useRef({ uid: paymentUid, generation: 0, mounted: true });
+  if (paymentSession.current.uid !== paymentUid) {
+    paymentSession.current.uid = paymentUid;
+    paymentSession.current.generation += 1;
+  }
+  const [paymentCache, setPaymentCache] = useState({ uid: paymentUid, generation: paymentSession.current.generation, records: [] as OrderPayment[] });
+  const payments = paymentCache.uid === paymentUid && paymentCache.generation === paymentSession.current.generation
+    ? paymentCache.records : [];
+  useEffect(() => {
+    setPaymentCache({ uid: paymentUid, generation: paymentSession.current.generation, records: [] });
+  }, [paymentUid]);
+  useEffect(() => {
+    paymentSession.current.mounted = true;
+    return () => { paymentSession.current.mounted = false; paymentSession.current.generation += 1; };
+  }, []);
+
 
   // When auth mode changes, load the appropriate source.
   useEffect(() => {
@@ -324,7 +352,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (preferred && migrated.stores.some((store) => store.id === preferred)) {
             dispatch({ type: "SET_ACTIVE_STORE", storeId: preferred });
           }
-          dispatch({ type: "REPLACE_STATE", state: migrated });
+          dispatch({ type: "REPLACE_CLOUD_STATE", state: migrated });
           fromCloud.current = false;
           void (async () => {
             try {
@@ -347,7 +375,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
       unsub = subscribeCloudState(user, (s) => {
         fromCloud.current = true;
-        dispatch({ type: "REPLACE_STATE", state: migrateCatalog(s) });
+        dispatch({ type: "REPLACE_CLOUD_STATE", state: migrateCatalog(s) });
         fromCloud.current = false;
       });
     } else if (!cloud) {
@@ -831,37 +859,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await Promise.all(writes);
     },
     loadOrderPayments: async (orderId) => {
-      // Without a session there is nothing to load (and no false success: the
-      // registration action is the one that must fail explicitly).
-      if (!cloud || !user) return;
-      const rows = await fetchOrderPayments(orderId);
-      setPayments((prev) => mergePayments(prev, rows));
+      if (!cloud || !user || paymentSession.current.uid !== user.uid) return;
+      const generation = paymentSession.current.generation;
+      const result = await fetchOrderPayments(orderId);
+      if (!paymentSession.current.mounted || paymentSession.current.uid !== user.uid || paymentSession.current.generation !== generation) return;
+      setPaymentCache((prev) => ({
+        uid: user.uid, generation,
+        records: mergePayments(prev.uid === user.uid && prev.generation === generation ? prev.records : [], result.payments),
+      }));
+      dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
     },
     registerOrderPayment: async (order, input) => {
-      if (!cloud || !user) {
-        throw new Error("Registrar cobros requiere iniciar sesión.");
-      }
-      const record =
-        input.kind === "payment"
-          ? buildPaymentRecord(order, input, user.uid)
-          : buildAdjustmentRecord(order, input, user.uid);
-      const saved = await registerOrderPaymentTx(
+      if (!cloud || !user) throw new Error("Registrar cobros requiere iniciar sesión.");
+      if (paymentSession.current.uid !== user.uid) throw new Error("La sesión cambió. Vuelve a abrir el pedido.");
+      const generation = paymentSession.current.generation;
+      const record = input.kind === "payment"
+        ? buildPaymentRecord(order, input, user.uid) : buildAdjustmentRecord(order, input, user.uid);
+      const result = await registerOrderPaymentTx(
         record,
         input.kind === "payment" ? input.inherited : undefined
       );
-      setPayments((prev) => mergePayments(prev, saved));
-      // #168: mirror the transactional accumulator into the in-memory order so
-      // the card shows the real Recibido/Saldo immediately — the listener
-      // catches up with the same doc, so this is not a second truth.
-      const current = state.orders.find((o) => o.id === order.id);
-      if (current) {
-        const money = orderMoneyAfterPayments(
-          current,
-          paymentsCents(saved),
-          saved.some((p) => p.id === INHERITED_DEPOSIT_PAYMENT_ID)
-        );
-        dispatch({ type: "UPDATE_ORDER", order: { ...current, ...money } });
-      }
+      if (!paymentSession.current.mounted || paymentSession.current.uid !== user.uid || paymentSession.current.generation !== generation) return;
+      setPaymentCache((prev) => ({
+        uid: user.uid, generation,
+        records: mergePayments(prev.uid === user.uid && prev.generation === generation ? prev.records : [], result.payments),
+      }));
+      // Canonical amounts replace a versioned snapshot; a retried receipt is
+      // never added to the local accumulator and late responses cannot undo it.
+      dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
     },
   };
 

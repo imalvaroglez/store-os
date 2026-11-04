@@ -158,3 +158,56 @@ dos primeros cobros, un permiso rechazado por evidencia ya cambiada se reintenta
 solo tras comprobar esa carrera en el servidor, dentro del mismo límite total.
 Pruebas de dos primeros abonos y de dos materializaciones concurrentes conservan
 ambos cobros, una sola reserva y un solo anticipo heredado.
+
+
+## Saldo confirmado en la interfaz y reintentos (#171, cambio 3)
+
+El servicio devuelve comprobantes y el pedido canónico de la transacción, incluso
+si reconoce un intento ya registrado. El cliente no suma otra vez esos importes.
+`paymentsRevision` aumenta una vez por registro nuevo (no por reintento), queda
+protegida por reglas junto con el acumulado y permite descartar respuestas viejas
+sin comparar importes: un ajuste negativo válido también debe aplicarse. Un
+intento estable reutilizado con importe/método/fecha de recepción/motivo distintos se rechaza
+sin modificar la evidencia ni aparentar éxito.
+
+El proveedor reconcilia versiones de negocio y de cobros de forma independiente:
+conserva notas/cantidades más recientes y no revierte dinero por una respuesta o
+snapshot antiguo. No reinserta pedidos ausentes ni mezcla IDs de tiendas. Estas
+garantías se aplican a respuestas de cobros y snapshots cloud; no amplían la rama
+administrativa local heredada. La caché de comprobantes se etiqueta por UID y generación y se filtra desde el
+primer render de otra cuenta, además de limpiarse; respuestas de un UID anterior
+o tras desmontar el proveedor se descartan. Una hoja cerrada o de otro dueño no
+anuncia éxitos tardíos ni borra la captura de otra vista.
+Los guards generales de hidratación/acceso de #96/#111 siguen siendo una
+integración necesaria; esta corrección no sustituye esa revisión de fiabilidad.
+
+La carga de detalle usa servidor: lee la versión del padre, los comprobantes y
+el padre otra vez. Si la versión cambió, rechaza el detalle intercalado y permite
+volver a cargar; no lo presenta como una lista completa. La hoja muestra estado
+de carga/error y bloquea el registro hasta recuperarse, conservando la captura.
+La versión se refresca solo con la hoja abierta. El saldo viene del acumulado
+canónico, no de una lista aún vacía o incompleta en la sesión.
+
+Tarjeta ordinaria, listado e Inicio usan el recibido canónico cuando existen
+comprobantes. Los pedidos sin comprobantes conservan el anticipo heredado. En
+pedidos con cobros, «Cobrar» abre la hoja: no cambia solo `deposit` ni anuncia
+«Pedido cobrado» sin comprobante. Saldos a favor se muestran en la tarjeta/hoja;
+los agregados de deuda mantienen saldo no negativo por pedido y no compensan
+saldos de otras ventas por inferencia.
+
+Validación proporcional: regresiones vistas en rojo de duplicación $400→$800,
+respuesta de cuenta anterior, resumen sin registros en sesión y vistas ordinarias
+que ignoraban cobros. Pruebas del proveedor para respuestas invertidas/ajustes,
+ediciones recientes, pedido removido y cambio de sesión; hoja con carga/error y
+recuperación; reglas/servicio de versión canónica y reintento sin escrituras;
+recorrido Playwright abono→recarga→ajuste en móvil/escritorio. Emuladores en CI.
+
+Consumo: mismas escrituras por cobro; el replay lee pedido+comprobante, sin
+escribir. Abrir/refrescar la hoja lee N comprobantes y dos padres más sus reglas.
+Para 100 cobros y 200 cargas/refrescos con N≈20 se presupuesta hasta 8,000 lecturas
+adicionales, con autorizaciones y margen. Sumado al extremo habitual de 29,000
+lecturas/500 escrituras de la corrección anterior para P=2 y cinco intentos,
+permanece bajo las cuotas gratuitas (hasta 37,000/500 al volumen supuesto). Un
+historial o volumen mayor requiere revisar presupuesto conjunto. Sin listeners
+nuevos, servicios pagados ni consultas por render/línea. App/reglas del mismo
+commit se promueven juntas solo tras aprobación humana.
