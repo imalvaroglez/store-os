@@ -20,6 +20,7 @@ import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { orderAmountCents } from "../../lib/orderMoney";
+import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
 import { DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
@@ -307,6 +308,23 @@ export function OrderForm({
       throw error;
     }
   }, [deposit, lines]);
+  // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
+  // pieza. Only lines with content enter the estimate; an empty placeholder
+  // line is not "sin costo".
+  const profitView = useMemo(() => itemsProfitBreakdown(
+    lines
+      .filter((line) => line.productId || line.productName.trim())
+      .map((line) => ({
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
+        unitPrice: numberFromText(line.unitPriceText),
+        subtotal: 0,
+        ...(line.cost != null && line.cost >= 0 ? { cost: line.cost } : {}),
+      })),
+    order.storeId,
+    state.purchases,
+  ), [lines, order.storeId, state.purchases]);
 
   // #165: the agreement preview — derived live from the order total ÷ cuotas
   // with exact cents, dates derived from the first due date + frequency. Shown
@@ -787,7 +805,16 @@ export function OrderForm({
           <StatRow label="Total">{totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</StatRow>
           <StatRow label="Anticipo">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
           <StatRow label="Saldo" tone={totals && totals.balance > 0 ? "danger" : "success"}>{totals ? <Money exact amount={totals.balance} /> : "—"}</StatRow>
+          <StatRow
+            label="Ganancia"
+            tone={profitView.profitCents != null && profitView.profitCents < 0 ? "danger" : "default"}
+          >{profitView.profitCents == null ? "—" : <Money exact amount={profitView.profitCents / 100} />}</StatRow>
         </div>
+        {profitView.profitCents != null && profitView.linesWithoutCost > 0 && (
+          <p className="text-xs text-on-surface-soft mt-1">
+            {profitView.linesWithoutCost} {profitView.linesWithoutCost === 1 ? "línea sin costo no cuenta" : "líneas sin costo no cuentan"} en la ganancia.
+          </p>
+        )}
         {!totals && <p className="text-danger">Revisa los importes o cantidades demasiado grandes.</p>}
         <div className="flex gap-2 mt-4">
           {onCancel && <Button variant="ghost" full onClick={onCancel}>Cancelar</Button>}
