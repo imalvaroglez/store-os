@@ -295,11 +295,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     expect(saved.order.installmentsReservedAt).toBeUndefined();
     expect(saved.order.paymentsReceivedCents).toBeUndefined();
     expect(saved.order.inheritedDepositMaterialized).toBeUndefined();
-    expect(await stock("p-res-forged")).toBe(5);
+    expect(await stock("p-res-forged")).toBe(4); // R8: la creación aparta 1 pieza
     expect(await paymentCount("res-forged")).toBe(0);
     await expect(saveOrderWithStockTx(user, { ...saved.order, orderStatus: "delivered", paymentsReceivedCents: 90000 }, saved.order.revision!, "res-forged-deliver")).rejects.toBeInstanceOf(DeliveryWithBalanceError);
     expect((await orderDoc("res-forged"))?.orderStatus).toBe("asked");
-    expect(await stock("p-res-forged")).toBe(5);
+    expect(await stock("p-res-forged")).toBe(4);
   });
 
 });
