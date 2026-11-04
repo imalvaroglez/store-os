@@ -261,8 +261,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
       registerOrderPaymentTx({ ...payment("first-race-a", 100), orderId }),
       registerOrderPaymentTx({ ...payment("first-race-b", 200), orderId }),
     ]);
-    expect((await getDoc(doc(holder.db, "orders", orderId))).data()).toMatchObject({ paymentsReceivedCents: 30000, revision: 2 });
-    expect((await getDoc(doc(holder.db, "products/ledger-first-race-product"))).data()?.quantityOnHand).toBe(1);
+    expect((await getDoc(doc(holder.db, "orders", orderId))).data()).toMatchObject({ paymentsReceivedCents: 30000, revision: 1 }); // R8: sin bump de reserva
+    expect((await getDoc(doc(holder.db, "products/ledger-first-race-product"))).data()?.quantityOnHand).toBe(1); // apartada desde la creación
     expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(2);
   });
 
