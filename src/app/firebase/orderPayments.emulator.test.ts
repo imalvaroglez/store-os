@@ -203,7 +203,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     forged.update(parent, { inheritedDepositMaterialized: true, paymentsReceivedCents: 100000, lastPaymentId: "materialize-forged" });
     await expect(forged.commit()).rejects.toThrow();
     expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(0);
-    const saved = await registerOrderPaymentTx({ ...payment("materialize-real", 1), orderId });
+    const saved = await registerOrderPaymentTx({ ...payment("materialize-real", 1), orderId }, { method: "cash", date: "2026-10-20" });
     expect(saved).toHaveLength(2);
     expect(saved[0]).toMatchObject({ id: "inherited_deposit", amount: 1.005, amountCents: 101 });
     expect((await getDoc(parent)).data()).toMatchObject({ paymentsReceivedCents: 201, lastPaymentId: "materialize-real", inheritedDepositMaterialized: true });
@@ -271,8 +271,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     const orderId = "ledger-inherited-race";
     await setDoc(doc(holder.db, "orders", orderId), { storeId: "tx-store", deposit: 400, items: [], createdAt: "", updatedAt: "" });
     await Promise.all([
-      registerOrderPaymentTx({ ...payment("inherited-race-a", 100), orderId }),
-      registerOrderPaymentTx({ ...payment("inherited-race-b", 200), orderId }),
+      registerOrderPaymentTx({ ...payment("inherited-race-a", 100), orderId }, { method: "cash", date: "2026-10-20" }),
+      registerOrderPaymentTx({ ...payment("inherited-race-b", 200), orderId }, { method: "transfer", date: "2026-10-21" }),
     ]);
     expect((await getDoc(doc(holder.db, "orders", orderId))).data()).toMatchObject({ paymentsReceivedCents: 70000, inheritedDepositMaterialized: true });
     expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(3);
@@ -282,7 +282,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
   it("propagates a real content rejection without writing a receipt or changing the balance", async () => {
     const parent = doc(holder.db, "orders/pay-order");
     const before = (await getDoc(parent)).data();
-    await expect(registerOrderPaymentTx({ ...payment("service-invalid-actor", 10), createdBy: "another-operator" })).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(registerOrderPaymentTx({ ...payment("service-invalid-actor", 10), createdBy: "another-operator" }, { method: "cash", date: "2026-10-20" })).rejects.toMatchObject({ code: "permission-denied" });
     expect((await getDoc(parent)).data()).toEqual(before);
     expect((await getDoc(doc(holder.db, "orders/pay-order/payments/service-invalid-actor"))).exists()).toBe(false);
   });
