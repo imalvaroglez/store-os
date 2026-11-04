@@ -14,15 +14,22 @@ import {
   useToast,
 } from "../../design-system";
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
-import { todayIso, nowIso, parseSpanishDate } from "../../lib/dates";
+import { todayIso, nowIso, parseSpanishDate, formatDate } from "../../lib/dates";
 import { formatMoney, formatMoneyExact, parseAmount } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
 import { uid } from "../../lib/ids";
-import { legacyPurchaseTicket, purchaseCostAllocation, purchaseProductCosts } from "../../lib/purchases";
+import {
+  legacyPurchaseTicket,
+  purchaseCostAllocation,
+  purchaseProductCosts,
+  purchaseProductSaleCosts,
+  purchaseSaleExpenseTotalCents,
+} from "../../lib/purchases";
 import { openPurchasePdf } from "../../app/firebase/pdfImport";
 import {
   effectivePurchaseStatus,
+  isSaleExpense,
   lineStatus,
   purchaseTotals,
   purchaseRecordedTotal,
@@ -71,7 +78,7 @@ const EXPENSE_CATEGORY_OPTIONS = Object.entries(PURCHASE_EXPENSE_CATEGORY_LABEL)
 type Filter = "all" | PurchaseLineStatus;
 
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
-  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, cloud } = useStore();
+  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, adjustReceivedPurchase, cloud } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<Purchase>(() => {
     const editable = effectivePurchaseStatus(purchase) !== "received";
@@ -91,6 +98,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const [bulkCreating, setBulkCreating] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [expenseAmountDrafts, setExpenseAmountDrafts] = useState<Record<string, string>>({});
+  // Post-reception expense capture (FER-02): append-only, never inventory.
+  const [lateExpense, setLateExpense] = useState<PurchaseExpense | null>(null);
+  const [lateAmountDraft, setLateAmountDraft] = useState("");
+  const [savingLate, setSavingLate] = useState(false);
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
   const [productQueries, setProductQueries] = useState<Record<string, string>>({});
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -137,6 +148,13 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     catch (error) { allocationError = error instanceof Error ? error.message : "Revisa los costos de los productos y los gastos."; }
   }
   const canReceive = !locked && status === "ready" && draft.lines.length > 0 && !allocationError && !invalidInput;
+  // Sale-side allocation for the cost card: live while editing; once received,
+  // the persisted snapshot plus every post-reception adjustment (FER-02).
+  const saleCentsTotal = locked ? purchaseSaleExpenseTotalCents(draft)
+    : allocations.reduce((sum, allocation) => sum + (allocation.saleExpenseCents ?? 0), 0);
+  const saleByProduct = locked ? purchaseProductSaleCosts(draft)
+    : purchaseProductSaleCosts({ ...draft, costAllocations: allocations });
+  const quantityByLineId = new Map(draft.lines.map((line) => [line.lineId ?? "", line.quantity]));
   const incompleteTickets = tickets.filter((ticket) => {
     if (!draft.tickets) return false;
     return !draft.lines.some((line) => line.ticketId === ticket.id)
@@ -406,6 +424,35 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       toast.error(e instanceof Error && !("code" in e) && e.message ? e.message : "No se pudo recibir la mercancía. Intenta de nuevo.");
     } finally {
       setReceiving(false);
+    }
+  }
+
+  // Post-reception expense (FER-02): append-only evidence via its own cloud
+  // transaction; the received inventory snapshot never changes.
+  async function saveLateExpense() {
+    if (!lateExpense) return;
+    const parsed = parseAmount(lateAmountDraft);
+    if (parsed == null || parsed <= 0) {
+      toast.error("Escribe un importe mayor que cero.");
+      return;
+    }
+    const amount = Math.round(parsed * 100) / 100;
+    setSavingLate(true);
+    try {
+      const updated = await adjustReceivedPurchase(draft, { ...lateExpense, amount });
+      setDraft((d) => ({
+        ...d,
+        sourcingExpenses: updated.sourcingExpenses,
+        saleCostAdjustments: updated.saleCostAdjustments,
+        updatedAt: updated.updatedAt,
+      }));
+      setLateExpense(null);
+      setLateAmountDraft("");
+      toast.success("Gasto agregado a la compra recibida.");
+    } catch (e) {
+      toast.error(e instanceof Error && !("code" in e) && e.message ? e.message : "No se pudo guardar el gasto. Revisa tu conexión e intenta de nuevo.");
+    } finally {
+      setSavingLate(false);
     }
   }
 
@@ -833,7 +880,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           <div>
             <h3 className="font-semibold text-ink">Gastos de surtido</h3>
             <p className="text-xs text-ink-soft mt-1">
-              {draft.costingMethod === "latest_purchase" ? "Marca los gastos que se repartirán entre todas las piezas del viaje. El envío del proveedor se captura en su ticket." : "Se registran aparte del total del proveedor y no cambian el costo por pieza."}
+              {draft.costingMethod === "latest_purchase" ? "Marca los gastos que se repartirán entre todas las piezas del viaje. La entrega y los empaques son gastos de venta: se reparten aparte y se cuentan al vender. El envío del proveedor se captura en su ticket." : "Se registran aparte del total del proveedor y no cambian el costo por pieza."}
             </p>
           </div>
           {!locked && (
@@ -880,10 +927,16 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                     Quitar
                   </Button>
                 )}
-                {draft.costingMethod === "latest_purchase" && <div className="sm:col-span-2 lg:col-span-4"><CheckboxField label="Costo del inventario" caption="Repartir este gasto entre las piezas del viaje"
-                  disabled={locked}
-                  checked={expense.includeInInventoryCost ?? expense.category === "sourcing_transport"}
-                  onChange={(includeInInventoryCost) => { if (!locked) updateExpense(expense.id, { includeInInventoryCost }); }} /></div>}
+                {draft.costingMethod === "latest_purchase" && (isSaleExpense(expense) ? (
+                  <p className="sm:col-span-2 lg:col-span-4 text-xs text-on-surface-soft">
+                    Se reparte entre las piezas del viaje y se cuenta al vender; no entra al costo del inventario.
+                  </p>
+                ) : (
+                  <div className="sm:col-span-2 lg:col-span-4"><CheckboxField label="Costo del inventario" caption="Repartir este gasto entre las piezas del viaje"
+                    disabled={locked}
+                    checked={expense.includeInInventoryCost ?? expense.category === "sourcing_transport"}
+                    onChange={(includeInInventoryCost) => { if (!locked) updateExpense(expense.id, { includeInInventoryCost }); }} /></div>
+                ))}
               </Card>
             ))}
           </div>
@@ -901,6 +954,83 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </div>
       </div>
 
+      {/* ── Gastos agregados después de recibir (FER-02, solo compras recibidas) ── */}
+      {locked && draft.costingMethod === "latest_purchase" && (
+        <div className="border-t border-edge pt-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="font-semibold text-ink">Gastos agregados después de recibir</h3>
+              <p className="text-xs text-ink-soft mt-1">
+                Se suman al total desembolsado y, si son de venta, se reparten entre las piezas. El costo del inventario ya recibido no cambia.
+              </p>
+            </div>
+            {!lateExpense && (
+              <Button size="sm" variant="secondary" onClick={() => setLateExpense({ id: uid("pe"), category: "customer_delivery", amount: 0 })}>
+                + Agregar gasto después de recibir
+              </Button>
+            )}
+          </div>
+          {(draft.saleCostAdjustments ?? []).length === 0 && !lateExpense && (
+            <p className="text-sm text-on-surface-soft">Ningún gasto agregado después de recibir.</p>
+          )}
+          {(draft.saleCostAdjustments ?? []).map((entry) => {
+            const pieces = (entry.allocations ?? []).reduce((sum, allocation) => sum + (quantityByLineId.get(allocation.lineId) ?? 0), 0);
+            return (
+              <div key={entry.id} className="rounded-lg border border-edge p-3 text-sm space-y-1">
+                <div className="flex flex-wrap justify-between gap-2">
+                  <span className="font-medium text-ink">{PURCHASE_EXPENSE_CATEGORY_LABEL[entry.category]}{entry.description ? ` · ${entry.description}` : ""}</span>
+                  <span>{formatMoneyExact(entry.amount)}</span>
+                </div>
+                <p className="text-xs text-on-surface-soft">
+                  {formatDate(entry.at)}
+                  {entry.allocations ? ` · repartido entre ${pieces} ${pieces === 1 ? "pieza" : "piezas"} como gasto de venta` : " · sin reparto: solo se registra el desembolso"}
+                </p>
+              </div>
+            );
+          })}
+          {lateExpense && (
+            <Card className="!p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.2fr_0.7fr_1.2fr_auto] gap-3 items-end">
+              <SelectField
+                label="Tipo de gasto"
+                value={lateExpense.category}
+                onChange={(category) => setLateExpense({ ...lateExpense!, category })}
+                options={EXPENSE_CATEGORY_OPTIONS}
+              />
+              <TextField
+                label="Importe"
+                inputMode="decimal"
+                placeholder="0.00"
+                required
+                value={lateAmountDraft}
+                onChange={(e) => {
+                  setLateAmountDraft(e.target.value);
+                  const parsed = parseAmount(e.target.value);
+                  setLateExpense({ ...lateExpense!, amount: parsed == null ? 0 : Math.round(parsed * 100) / 100 });
+                }}
+              />
+              <TextField
+                label="Descripción (opcional)"
+                value={lateExpense.description ?? ""}
+                onChange={(e) => setLateExpense({ ...lateExpense!, description: e.target.value || undefined })}
+              />
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" disabled={savingLate} onClick={() => { setLateExpense(null); setLateAmountDraft(""); }}>
+                  Cancelar
+                </Button>
+                <Button size="sm" disabled={savingLate} onClick={() => void saveLateExpense()}>
+                  {savingLate ? "Guardando…" : "Guardar gasto"}
+                </Button>
+              </div>
+              <p className="sm:col-span-2 lg:col-span-4 text-xs text-on-surface-soft">
+                {isSaleExpense(lateExpense)
+                  ? "Se repartirá entre las piezas del viaje como gasto de venta, con centavos exactos."
+                  : "Se registrará en el total desembolsado; no cambia el costo del inventario."}
+              </p>
+            </Card>
+          )}
+        </div>
+      )}
+
       {draft.costingMethod === "latest_purchase" && (
         <Card className="!bg-surface-muted space-y-3">
           <h3 className="font-semibold text-ink">Costo del inventario de esta compra</h3>
@@ -909,8 +1039,18 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             <div className="flex justify-between gap-3 text-sm"><span>Productos de todos los tickets</span><span>{formatMoneyExact(merchandise)}</span></div>
             <div className="flex justify-between gap-3 text-sm"><span>Envío y ajustes de los tickets</span><span>{formatMoneyExact(allocations.reduce((sum, allocation) => sum + allocation.supplierAdjustmentCents, 0) / 100)}</span></div>
             <div className="flex justify-between gap-3 text-sm"><span>Gastos del viaje repartidos</span><span>{formatMoneyExact(allocations.reduce((sum, allocation) => sum + allocation.sourcingExpenseCents, 0) / 100)}</span></div>
+            {saleCentsTotal > 0 && <div className="flex justify-between gap-3 text-sm"><span>Gastos de venta repartidos</span><span>{formatMoneyExact(saleCentsTotal / 100)}</span></div>}
             <div className="flex justify-between gap-3 font-semibold"><span>Costo completo de las piezas</span><span>{formatMoneyExact(allocations.reduce((sum, allocation) => sum + allocation.totalCents, 0) / 100)}</span></div>
-            {[...productCosts].map(([id, cost]) => <div key={id} className="flex justify-between gap-3 text-sm"><span className="min-w-0 truncate">{products.find((product) => product.id === id)?.name ?? draft.lines.find((line) => line.productId === id)?.name} · {cost.quantity} piezas</span><span className="shrink-0">{formatMoneyExact(cost.cents / 100 / cost.quantity)} por pieza</span></div>)}
+            {[...productCosts].map(([id, cost]) => {
+              const sale = saleByProduct.get(id);
+              return (
+                <div key={id} className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-sm">
+                  <span className="min-w-0 truncate">{products.find((product) => product.id === id)?.name ?? draft.lines.find((line) => line.productId === id)?.name} · {cost.quantity} piezas</span>
+                  <span className="shrink-0">{formatMoneyExact(cost.cents / 100 / cost.quantity)} por pieza</span>
+                  {sale && sale.cents > 0 && <span className="w-full text-right text-on-surface-soft">más {formatMoneyExact(sale.cents / 100 / sale.quantity)} de gasto de venta por pieza</span>}
+                </div>
+              );
+            })}
           </>}
         </Card>
       )}

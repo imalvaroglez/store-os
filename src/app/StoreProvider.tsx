@@ -18,6 +18,7 @@ import type {
   Supplier,
   Purchase,
   OrderPayment,
+  PurchaseExpense,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
@@ -50,6 +51,7 @@ import {
   removePublicProductDoc,
   rebuildPublicCatalog,
   receivePurchaseTx,
+  appendPurchaseExpenseTx,
   createDraftProductsForPurchaseTx,
   saveOrderWithStockTx,
   deleteOrderWithStockTx,
@@ -231,6 +233,12 @@ type StoreContextValue = {
   /** The ONLY operation that moves inventory. Idempotent; throws "received" softly.
    * Takes the just-saved snapshot (local) or re-reads canonically in the cloud tx. */
   receivePurchase: (purchase: Purchase) => Promise<"received" | "already">;
+  /**
+   * Append ONE post-reception expense to a received journey purchase
+   * (FER-02): cloud-only, append-only evidence; never touches inventory.
+   * Returns the canonical updated purchase.
+   */
+  adjustReceivedPurchase: (purchase: Purchase, expense: PurchaseExpense) => Promise<Purchase>;
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => Promise<void>;
@@ -749,6 +757,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
       persistInBackground("guardar la recepción de compra", () => persistEntity("purchases", { ...purchase, status: "received", receivedAt: at, updatedAt: at }));
       return "received";
+    },
+    adjustReceivedPurchase: async (purchase, expense) => {
+      if (!cloud || !user) {
+        throw new Error("Inicia sesión y conecta Firebase para guardar el gasto.");
+      }
+      // The transaction is the single authority: it re-reads the canonical
+      // purchase and enforces received + latest_purchase before appending.
+      const updated = await appendPurchaseExpenseTx(purchase.id, expense);
+      dispatch({ type: "UPDATE_PURCHASE", purchase: updated });
+      return updated;
     },
     upsertCustomer: async (customer) => {
       await persistEntity("customers", customer);

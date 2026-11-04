@@ -1,4 +1,13 @@
-import { recalcPurchaseStatus, type Product, type Purchase, type PurchaseCostAllocation, type PurchaseTicket } from "../types";
+import {
+  isSaleExpense,
+  recalcPurchaseStatus,
+  type Product,
+  type Purchase,
+  type PurchaseCostAllocation,
+  type PurchaseExpense,
+  type PurchaseExpenseAdjustment,
+  type PurchaseTicket,
+} from "../types";
 import { applyPurchaseLines, type ProductStockUpdate } from "./inventory";
 
 export function legacyPurchaseTicket(purchase: Purchase): PurchaseTicket {
@@ -71,13 +80,81 @@ export function purchaseCostAllocation(purchase: Purchase): PurchaseCostAllocati
     const amount = cents(expense.amount);
     return sum + ((expense.includeInInventoryCost ?? expense.category === "sourcing_transport") ? amount : 0);
   }, 0);
+  // Sale-side expenses (delivery, packaging) get their own per-piece allocation
+  // that NEVER enters totalCents — counting them in the inventory cost would
+  // double count once they are charged at sale time (FER-02).
+  const saleCents = (purchase.sourcingExpenses ?? []).reduce((sum, expense) => sum + (isSaleExpense(expense) ? cents(expense.amount) : 0), 0);
   const weights = purchase.lines.map((line) => ({ id: line.lineId!, weight: line.quantity }));
   const expenses = allocateCents(expenseCents, weights);
+  const saleExpenses = allocateCents(saleCents, weights);
   return allocations.map((allocation, index) => ({
     ...allocation,
     sourcingExpenseCents: expenses[index],
+    saleExpenseCents: saleExpenses[index],
     totalCents: allocation.merchandiseCents + allocation.supplierAdjustmentCents + expenses[index],
   }));
+}
+
+/**
+ * Build an append-only post-reception adjustment entry (FER-02). Pure: the
+ * caller owns persistence. Sale categories carry an exact per-line allocation;
+ * every other category is outlay evidence only and allocates nothing.
+ */
+export function purchaseExpenseAdjustment(purchase: Purchase, expense: PurchaseExpense, at: string): PurchaseExpenseAdjustment {
+  if (!expense.id) throw new Error("Falta identificar el gasto.");
+  // A late adjustment records real money out: zero or empty is a capture error.
+  if (!Number.isFinite(expense.amount) || expense.amount <= 0) {
+    throw new Error("Revisa los importes del gasto: deben ser cantidades válidas y positivas.");
+  }
+  const amountCents = cents(expense.amount);
+  const entry: PurchaseExpenseAdjustment = {
+    id: expense.id,
+    at,
+    category: expense.category,
+    amount: expense.amount,
+    ...(expense.description ? { description: expense.description } : {}),
+  };
+  if (!isSaleExpense(expense)) return entry;
+  if (purchase.lines.some((line) => !line.lineId)) throw new Error("Esta compra tiene líneas sin identidad; no se puede repartir el gasto.");
+  const weights = purchase.lines.map((line) => ({ id: line.lineId!, weight: line.quantity }));
+  const values = allocateCents(amountCents, weights);
+  entry.allocations = purchase.lines.map((line, index) => ({ lineId: line.lineId!, saleExpenseCents: values[index] }));
+  return entry;
+}
+
+/** Sale-side cents per line: the reception allocation plus every adjustment. */
+export function effectiveSaleExpenseCents(purchase: Purchase): Map<string, number> {
+  const totals = new Map<string, number>();
+  const add = (lineId: string, value: number) => totals.set(lineId, (totals.get(lineId) ?? 0) + value);
+  for (const allocation of purchase.costAllocations ?? []) {
+    if (allocation.saleExpenseCents) add(allocation.lineId, allocation.saleExpenseCents);
+  }
+  for (const adjustment of purchase.saleCostAdjustments ?? []) {
+    for (const allocation of adjustment.allocations ?? []) add(allocation.lineId, allocation.saleExpenseCents);
+  }
+  return totals;
+}
+
+/** Exact total of sale-side cents attributed to pieces (reception + adjustments). */
+export function purchaseSaleExpenseTotalCents(purchase: Purchase): number {
+  let sum = 0;
+  for (const value of effectiveSaleExpenseCents(purchase).values()) sum += value;
+  return sum;
+}
+
+/** Sale-side cents per product across the trip (folds repeated product lines). */
+export function purchaseProductSaleCosts(purchase: Purchase): Map<string, { quantity: number; cents: number }> {
+  const saleByLine = effectiveSaleExpenseCents(purchase);
+  const byProduct = new Map<string, { quantity: number; cents: number }>();
+  purchase.lines.forEach((line) => {
+    if (!line.productId) return;
+    const current = byProduct.get(line.productId) ?? { quantity: 0, cents: 0 };
+    byProduct.set(line.productId, {
+      quantity: current.quantity + line.quantity,
+      cents: current.cents + (saleByLine.get(line.lineId ?? "") ?? 0),
+    });
+  });
+  return byProduct;
 }
 
 /** Latest purchase is one journey: repeated product lines fold within that purchase only. */
