@@ -1,0 +1,17 @@
+{
+  "projectId": "store-os-f7cf8",
+  "bucket": "store-os-f7cf8.firebasestorage.app",
+  "home": "/Users/imalvaroglez/Library/Application Support/Store OS Backups",
+  "destination": "/Users/imalvaroglez/Library/Mobile Documents/com~apple~CloudDocs/Olivia/cio/backups",
+  "credentials": "/Users/imalvaroglez/Library/Application Support/Store OS Backups/credentials.json",
+  "recipient": "REEMPLAZAR_POR_CLAVE_PUBLICA_AGE",
+  "firebase": "/opt/homebrew/bin/firebase",
+  "age": "/opt/homebrew/bin/age",
+  "productionReadApproved": false,
+  "reviewedPreflightSha256": "REEMPLAZAR_DESPUES_DE_REVISAR_PREFLIGHT",
+  "maxDocuments": 0,
+  "maxStorageBytes": 0,
+  "maxFirestoreReads": 0,
+  "maxDailyFirestoreReads": 0,
+  "notifications": true
+}
