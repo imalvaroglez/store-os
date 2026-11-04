@@ -196,3 +196,30 @@ describe("installment-order stock holding (#165)", () => {
     expect(reservationDeltasForOrderChange(ordinary, planOrder())).toEqual(new Map());
   });
 });
+
+describe("installment reservation visibility and identity (#171 C3)", () => {
+  const plan = { count: 2, frequency: "monthly" as const, firstDueDate: "2026-11-15", agreedAt: "2026-11-01", agreedBy: "u1" };
+  const make = (overrides: Partial<Order> = {}): Order => ({
+    id: "reserved", storeId: "s1", customerId: "c1", deposit: 0,
+    items: [{ lineId: "line", productId: "p1", productName: "Caja", quantity: 2, unitPrice: 50, subtotal: 100 }],
+    orderStatus: "asked", paymentStatus: "unpaid", createdAt: "", updatedAt: "",
+    installments: plan, ...overrides,
+  });
+  it("does not commit stock before the first abono", () => {
+    expect(committedForProduct([make()], "s1", "p1")).toBe(0);
+  });
+  it("shows retained cancelled reservations but excludes delivered and foreign orders", () => {
+    const reserved = { installmentsReservedAt: "2026-11-02" };
+    expect(committedForProduct([
+      make({ ...reserved, orderStatus: "cancelled" }),
+      make({ ...reserved, id: "delivered", orderStatus: "delivered" }),
+      make({ ...reserved, id: "foreign", storeId: "s2" }),
+    ], "s1", "p1")).toBe(2);
+  });
+  it("removing the plan keeps the reservation's identity and quantity", () => {
+    const previous = make({ installmentsReservedAt: "2026-11-02", orderStatus: "cancelled" });
+    const next = { ...previous, installments: undefined };
+    expect(reservationDeltasForOrderChange(previous, next).size).toBe(0);
+    expect(committedForProduct([next], "s1", "p1")).toBe(2);
+  });
+});
