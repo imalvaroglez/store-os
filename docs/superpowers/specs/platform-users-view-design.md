@@ -1,6 +1,6 @@
 ---
 Delivery-ID: platform-users-view
-Delivery-Status: Pending approval
+Delivery-Status: Draft implementation
 specPath: docs/superpowers/specs/platform-users-view-design.md
 ---
 
@@ -193,7 +193,7 @@ Los selectores asumen contract creado por esta entrega: la implementación **deb
     {
       "description": "El tab \"Usuarios\" aparece en navegación móvil (bottom) y desktop (sidebar)",
       "type": "visual",
-      "selector": "[aria-label=\"Usuarios\"], nav a[href=\"/usuarios\"]",
+      "selector": "[aria-label=\"Usuarios\"], nav button",
       "expected": "visible"
     },
     {
@@ -205,13 +205,13 @@ Los selectores asumen contract creado por esta entrega: la implementación **deb
     {
       "description": "Cada tarjeta muestra email, rol (badge) y fecha de creación",
       "type": "visual",
-      "selector": ".card",
-      "expected": "contains-text: @, super_admin|member, 20"
+      "selector": "[data-testid=\"user-card\"]",
+      "expected": "contains-text: @, Administración|Miembro, 20"
     },
     {
       "description": "La búsqueda por email filtra la lista",
       "type": "interaction",
-      "selector": "input[placeholder*=\"email\" i]",
+      "selector": "input[placeholder*=\"correo\" i]",
       "action": "type admin@store.os",
       "expected": "exactly-one"
     }
@@ -221,15 +221,20 @@ Los selectores asumen contract creado por esta entrega: la implementación **deb
 
 ## Riesgos
 
-- **Postura de privacidad preexistente (informada, no regresión):** la regla actual `users: allow read if isSignedIn()` significa que **cualquier miembro de cualquier tienda ya puede leer el email de todos los usuarios** vía SDK. Esta vista no cambia eso, pero el super_admin debe saberlo: la única protección es la puerta de UI. Endurecer la regla (lectura solo super_admin + propio doc) es trabajo futuro; hacerlo aquí rompería el bootstrap de primer usuario.
+- **Postura de privacidad preexistente (bloqueador antes de producción):** la regla actual `users: allow read if isSignedIn()` significa que cualquier miembro puede leer el correo de todos los usuarios con el SDK. La pantalla y la navegación se limitan a `super_admin`, pero eso no protege la colección frente a acceso directo. La pantalla no cambia las reglas ni amplía el permiso de Firestore. Antes de liberar se debe resolver el acceso global sin romper el inicio de sesión, el primer usuario ni la búsqueda exacta usada por invitaciones. Este punto requiere un diseño de seguridad separado y pruebas de reglas; no se declara resuelto por el control visual.
 - **Riesgo bajo:** La colección `users` puede crecer más de 100 usuarios en producción, lo que haría la lista lenta. Si esto ocurre, se necesitará paginación en una iteración futura (fuera del alcance de V1).
-- **Riesgo mitigado:** Las reglas de Firestore ya permiten la lectura (`allow read: if isSignedIn()`), así que no hay cambios de seguridad necesarios.
-- **Riesgo nulo:** Al ser solo lectura, no hay riesgo de corrupción de datos.
+- **Integridad:** Al ser solo lectura, esta pantalla no puede modificar cuentas.
 
 ## Dependencias
 
 - **Dependencia de feature:** Esta vista es un prerrequisito para la feature de invitación por selector (elegir usuario existente en lugar de escribir email).
 - **Dependencia técnica:** El existente `getDocs(collection(db, "users"))` en `auth.ts` demuestra que el patrón funciona; esta pantalla reutiliza el mismo enfoque.
+
+## Costo Firebase
+
+- Cada apertura de la pantalla hace una consulta global de una sola vez; Firestore cobra una lectura por cada documento de usuario devuelto (`N` lecturas, sin listeners ni lecturas al buscar localmente).
+- No hay escrituras ni documentos nuevos. Con la hipótesis de menos de 100 cuentas indicada arriba, la consulta usa menos de 100 lecturas por apertura, muy por debajo de 50,000 lecturas diarias; la frecuencia de uso sigue siendo proporcional a las aperturas.
+- E2E corre únicamente con `store-os-demo`. Preview debe apuntar a `store-os-dev`; producción `store-os-f7cf8` no se usa para validar.
 
 ## Notas de implementación
 

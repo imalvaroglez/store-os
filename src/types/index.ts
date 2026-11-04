@@ -191,6 +191,10 @@ export type Product = {
 export type Customer = {
   segment?: "regular" | "entrepreneur";
   assignedPriceTierId?: string;
+  // FER-05 Iconic benefit: a manually granted validity (day-granularity ISO
+  // dates). The automatic window derives from saved orders (see lib/iconic);
+  // this grant only ever ADDS to it, it never blocks the automatic renewal.
+  iconic?: { since: string; until: string };
   id: string;
   storeId: string;
   name: string;
@@ -231,6 +235,31 @@ export type OrderItem = {
   cost?: number;
 };
 
+/** How often cuotas come due on an installment plan (#165). */
+export type InstallmentFrequency = "weekly" | "biweekly" | "monthly";
+
+/**
+ * The per-order installment agreement (#165). Chosen on the ORDER (never on
+ * the product). Cuota amounts are NOT stored: they are suggested from the
+ * order's current total ÷ count with exact cents at display time, so the plan
+ * never carries stale money and no campaign default (count, frequency or
+ * price) exists in code, data or UI.
+ */
+export type OrderInstallmentPlan = {
+  /** Number of cuotas — operator-chosen per order, validated 1–99. */
+  count: number;
+  frequency: InstallmentFrequency;
+  /** First due date (YYYY-MM-DD); later dates derive from the frequency. */
+  firstDueDate: string;
+  /** When/who agreed the plan — evidence for post-payment edits. Optional so
+   * a migrated legacy plan never invents provenance it does not have. */
+  agreedAt?: string;
+  agreedBy?: string;
+};
+
+/** A replaced plan, kept verbatim as evidence when the agreement changes. */
+export type PastInstallmentPlan = OrderInstallmentPlan & { replacedAt: string };
+
 export type Order = {
   revision?: number;
   lastMutationId?: string;
@@ -247,6 +276,36 @@ export type Order = {
   schemaVersion?: number;
   createdAt: string;
   updatedAt: string;
+  // Installment plan (#165). Absent = ordinary order (behavior unchanged).
+  installments?: OrderInstallmentPlan;
+  /** Witness set when the FIRST confirmed positive abono landed (PO 2026-11-03
+   * R8: plan orders reserve stock AT CREATION like ordinary ones; this mark now
+   * only certifies the reservation is money-backed — money-backed stock is
+   * never released by cancellation alone). */
+  installmentsReservedAt?: string;
+  /** Replaced plans, oldest first — evidence, never rewritten. */
+  installmentsHistory?: PastInstallmentPlan[];
+  /** #168: Σ signed cents of this order's payment records (cobros positive,
+   * adjustments signed), maintained by registerOrderPaymentTx in the SAME
+   * transaction as each record — the money truth of the ORDER DOC. Gates and
+   * displays read this, never the session's records: a fresh session can no
+   * longer undercount received money. Absent = no records were ever written. */
+  paymentsReceivedCents?: number;
+  /** Monotonic receipt version; orders late responses without comparing money. */
+  paymentsRevision?: number;
+  /** New payment evidence linked atomically to the accumulator by rules. */
+  lastPaymentId?: string;
+  /** #168: set (same transaction) once the legacy `deposit` materialized as
+   * the inherited payment record, so the doc never counts that deposit twice
+   * (accumulator + pending deposit). */
+  inheritedDepositMaterialized?: boolean;
+  /** PO 2026-11-03 R9: evidence stamped when the operator explicitly confirmed
+   * delivering with an uncovered balance (retroactive / cash-on-delivery
+   * flows). The delivery gate still fires by default — this is the recorded
+   * authorization, never a silent pass. */
+  deliveredWithBalanceCents?: number;
+  deliveredWithBalanceConfirmedAt?: string;
+  deliveredWithBalanceConfirmedBy?: string;
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
@@ -257,6 +316,33 @@ export type Order = {
   price?: number;
   priceTier?: string;
   status?: LegacyOrderStatus;
+};
+
+/** How money was received. "unknown" is ONLY for the inherited legacy deposit
+ * (decision i on #123): real receptions always carry cash or transfer. */
+export type OrderPaymentMethod = "cash" | "transfer" | "unknown";
+
+/** One money reception registered on an order (#123). Immutable evidence:
+ * corrections/refunds are NEW records with a signed amount, never edits. */
+export type OrderPayment = {
+  /** Stable per user intent: a retry after an error reuses it so the Firestore
+   * create is recognized as the same operation (idempotent registration). */
+  id: string;
+  orderId: string;
+  storeId: string;
+  /** Real reception date (YYYY-MM-DD). Absent = genuinely unknown (inherited
+   * deposit); never invented. */
+  date?: string;
+  method: OrderPaymentMethod;
+  kind: "payment" | "adjustment";
+  /** Signed decimal money units; negative = refund / correction down. */
+  amount: number;
+  /** Exact rounded cents on new evidence; old records remain readable. */
+  amountCents?: number;
+  /** Why the record exists. Required on adjustments (evidence). */
+  note?: string;
+  createdAt: string;
+  createdBy: string;
 };
 
 /** A supplier Fer buys stock from. Per-store, like Category. */
@@ -274,6 +360,7 @@ export type Supplier = {
 export type PurchaseLine = {
   /** Stable line identity for expense allocations (E5+) and import matching. */
   lineId?: string;
+  ticketId?: string;
   productId: string;
   name: string; // snapshot at purchase time
   quantity: number;
@@ -310,6 +397,67 @@ export type PurchaseExpense = {
   category: PurchaseExpenseCategory;
   amount: number;
   description?: string;
+  includeInInventoryCost?: boolean;
+};
+
+/**
+ * Sale-side expense categories (FER-02): consumed while SELLING (delivery to a
+ * client, per-piece or shared packaging), not while acquiring stock. They are
+ * allocated per piece as a sale-cost estimate and never folded into the
+ * inventory cost — they will be charged when the piece sells (FER-03), so
+ * counting them in Product.cost today would double count tomorrow.
+ */
+export const SALE_EXPENSE_CATEGORIES: readonly PurchaseExpenseCategory[] = [
+  "customer_delivery",
+  "individual_packaging",
+  "shared_packaging",
+];
+
+/** A sale-side expense, unless the operator explicitly moved it to inventory. */
+export function isSaleExpense(expense: PurchaseExpense): boolean {
+  return SALE_EXPENSE_CATEGORIES.includes(expense.category) && expense.includeInInventoryCost !== true;
+}
+
+export type PurchaseTicket = {
+  id: string;
+  supplierId?: string;
+  supplierName?: string;
+  folio?: string;
+  totalConfirmed: number;
+  discount?: number;
+  shipping?: number;
+  tax?: number;
+  documentPath?: string;
+  documentFingerprint?: string;
+};
+
+export type PurchaseCostAllocation = {
+  lineId: string;
+  merchandiseCents: number;
+  supplierAdjustmentCents: number;
+  sourcingExpenseCents: number;
+  /** Sale-side expense cents allocated to this line. Intentionally EXCLUDED
+   * from totalCents: sale expenses are a sale-cost estimate, never inventory. */
+  saleExpenseCents?: number;
+  totalCents: number;
+};
+
+/** Per-line allocation of a post-reception expense adjustment (FER-02). */
+export type PurchaseSaleCostAllocation = { lineId: string; saleExpenseCents: number };
+
+/**
+ * An expense appended AFTER reception (FER-02). Append-only evidence: the
+ * original tickets, lines, totals and cost allocations stay untouched. Sale
+ * categories carry their own exact per-line allocation; no adjustment ever
+ * changes stock or product costs.
+ */
+export type PurchaseExpenseAdjustment = {
+  id: string;
+  at: string;
+  category: PurchaseExpenseCategory;
+  amount: number;
+  description?: string;
+  allocations?: PurchaseSaleCostAllocation[];
 };
 
 export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, string> = {
@@ -324,6 +472,10 @@ export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, st
 export type Purchase = {
   id: string;
   storeId: string;
+  name?: string;
+  tickets?: PurchaseTicket[];
+  costingMethod?: "latest_purchase";
+  costAllocations?: PurchaseCostAllocation[];
   supplierId?: string;
   date: string; // purchase date (default today)
   // purchase-ux2: true while `date` came from an inferred PDF date label
@@ -353,6 +505,8 @@ export type Purchase = {
   // Costs around sourcing/preparing the order, kept separate from the
   // supplier document total and product unit costs (allocation is FER-02).
   sourcingExpenses?: PurchaseExpense[];
+  // Expenses appended after reception (FER-02); never mutated once written.
+  saleCostAdjustments?: PurchaseExpenseAdjustment[];
   createdAt: string;
   updatedAt: string;
 };
@@ -369,8 +523,23 @@ export function effectivePurchaseStatus(p: Purchase): PurchaseStatus {
  */
 export function purchaseTotals(p: Purchase): { merchandise: number; calculated: number } {
   const merchandise = p.lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
-  const adjustments = (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
+  const adjustments = p.tickets?.length
+    ? p.tickets.reduce((sum, ticket) => sum + (ticket.shipping ?? 0) + (ticket.tax ?? 0) - (ticket.discount ?? 0), 0)
+    : (p.shipping ?? 0) + (p.tax ?? 0) - (p.discount ?? 0);
   return { merchandise, calculated: merchandise + adjustments };
+}
+
+export function purchaseTicketTotals(p: Purchase, ticketId: string): { merchandise: number; calculated: number } {
+  const ticket = p.tickets?.find((item) => item.id === ticketId);
+  const merchandise = p.lines.filter((line) => line.ticketId === ticketId)
+    .reduce((sum, line) => sum + line.quantity * (line.unitCost ?? 0), 0);
+  return { merchandise, calculated: merchandise - (ticket?.discount ?? 0) + (ticket?.shipping ?? 0) + (ticket?.tax ?? 0) };
+}
+
+export function purchaseConfirmedTotal(p: Pick<Purchase, "totalConfirmed" | "tickets">): number {
+  return p.tickets?.length
+    ? p.tickets.reduce((sum, ticket) => sum + (Number.isFinite(ticket.totalConfirmed) ? ticket.totalConfirmed : 0), 0)
+    : Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
 }
 
 /** Sum additional sourcing costs in integer cents; absent data is a legacy zero. */
@@ -382,10 +551,19 @@ export function purchaseSourcingExpenseTotal(p: Pick<Purchase, "sourcingExpenses
   return cents / 100;
 }
 
-/** Actual registered outlay is the confirmed supplier amount plus extra expenses. */
-export function purchaseRecordedTotal(p: Pick<Purchase, "totalConfirmed" | "sourcingExpenses">): number {
-  const supplierTotal = Number.isFinite(p.totalConfirmed) ? p.totalConfirmed : 0;
-  return supplierTotal + purchaseSourcingExpenseTotal(p);
+/** Late expenses appended after reception; absent data is a legacy zero. */
+export function purchaseAdjustmentTotal(p: Pick<Purchase, "saleCostAdjustments">): number {
+  const cents = (p.saleCostAdjustments ?? []).reduce((sum, entry) => {
+    if (!Number.isFinite(entry.amount) || entry.amount <= 0) return sum;
+    return sum + Math.round(entry.amount * 100);
+  }, 0);
+  return cents / 100;
+}
+
+/** Actual registered outlay is the confirmed supplier amount plus every expense. */
+export function purchaseRecordedTotal(p: Pick<Purchase, "totalConfirmed" | "sourcingExpenses" | "tickets" | "saleCostAdjustments">): number {
+  const supplierTotal = purchaseConfirmedTotal(p);
+  return supplierTotal + purchaseSourcingExpenseTotal(p) + purchaseAdjustmentTotal(p);
 }
 
 /**
@@ -419,6 +597,20 @@ export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
   if (p.lines.length === 0) return "draft";
   const unknownAmount = p.lines.some((l) => l.sourceAmountType === "unknown");
   const unlinked = p.lines.some((l) => !l.productId);
+  if (p.tickets) {
+    const ticketIds = new Set(p.tickets.map((ticket) => ticket.id));
+    const invalid = ticketIds.size !== p.tickets.length || p.tickets.length === 0
+      || p.lines.some((line) => !ticketIds.has(line.ticketId ?? "") || !Number.isSafeInteger(line.quantity) || line.quantity <= 0 || !Number.isFinite(line.unitCost) || line.unitCost < 0)
+      || p.tickets.some((ticket) => {
+        const totals = purchaseTicketTotals(p, ticket.id);
+        return !p.lines.some((line) => line.ticketId === ticket.id)
+          || !Number.isFinite(ticket.totalConfirmed) || ticket.totalConfirmed < 0
+          || [ticket.discount ?? 0, ticket.shipping ?? 0, ticket.tax ?? 0].some((amount) => !Number.isFinite(amount) || amount < 0)
+          || (ticket.discount ?? 0) - totals.merchandise > 0.005
+          || Math.abs(totals.calculated - ticket.totalConfirmed) > 0.005;
+      });
+    return invalid || unlinked || unknownAmount ? "needs_review" : "ready";
+  }
   const { calculated } = purchaseTotals(p);
   // The confirmed total is THE paid amount. Missing/non-finite (legacy data)
   // never auto-reconciles to the calculated total — it reads as 0 so a

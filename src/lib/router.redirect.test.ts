@@ -32,6 +32,13 @@ describe("order routes", () => {
   });
 });
 
+describe("storefront editor route", () => {
+  it("routes the authenticated owner editor separately from the public storefront", () => {
+    expect(matchRoute("/catalogo/olivia/editar")).toEqual({ name: "storefront_editor", params: { slug: "olivia" } });
+    expect(matchRoute("/catalogo/otra/editar")).toEqual({ name: "storefront_editor", params: { slug: "otra" } });
+  });
+});
+
 describe("store management routes", () => {
   it("matches the store management screen", () => {
     expect(matchRoute("/tienda/configuracion")).toEqual({ name: "admin", params: { tab: "tienda", sub: "configuracion" } });

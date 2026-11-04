@@ -6,7 +6,9 @@ import { AppShell } from "./AppShell";
 import { AuthScreen } from "./firebase/AuthScreen";
 import { StoresScreen } from "../features/stores/StoresScreen";
 import { StorePickerScreen } from "../features/stores/StorePickerScreen";
-import { ToastProvider, OLIVIA_SLUG } from "../design-system";
+import { Button, ToastProvider, OLIVIA_SLUG, useToast } from "../design-system";
+import type { Storefront } from "../types";
+import { canEditOliviaStorefront } from "./storefrontAccess";
 
 // Lazy-load the public storefront so the storefront code (sections, gallery,
 // SEO) lives in its own chunk, separate from admin forms.
@@ -24,8 +26,29 @@ const PublicCatalogScreen = lazy(() =>
 
 function Root() {
   const route = useRoute();
-  const { activeStore, state } = useStore();
-  const { user } = useAuth();
+  const { activeStore, state, saveStorefront } = useStore();
+  const { user, authReady } = useAuth();
+  const toast = useToast();
+  const candidateStore = state.stores.find((store) => store.slug === OLIVIA_SLUG);
+  const storefrontOwner = canEditOliviaStorefront(route, user, candidateStore) ? candidateStore : undefined;
+  const storefrontEditor = storefrontOwner ? {
+    storeId: storefrontOwner.id,
+    storefront: storefrontOwner.storefront ?? {},
+    save: (storeId: string, storefront: Storefront) => saveStorefront(storeId, storefront),
+    notifySuccess: toast.success,
+    notifyError: toast.error,
+  } : undefined;
+
+  // The owner editor uses the authenticated app entry so the anonymous
+  // storefront bundle never contains Auth or private store data.
+  if (route.name === "storefront_editor") {
+    if (!authReady) return <div className="min-h-full" role="status" aria-label="Cargando sesión…" />;
+    if (!user) return <AuthScreen />;
+    if (!storefrontOwner || !storefrontEditor) {
+      return <div className="min-h-full flex items-center justify-center p-6"><div className="space-y-3 text-center"><h1 className="text-lg font-semibold text-on-surface">No tienes acceso a este editor</h1><a className="text-primary underline" href="/catalogo/olivia">Volver al catálogo público</a></div></div>;
+    }
+    return <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}><OliviaStorefront route={{ name: "storefront_editor", params: { slug: OLIVIA_SLUG } }} editor={storefrontEditor} /></Suspense>;
+  }
 
   // Public storefront routes take over the whole viewport: no shell, no private
   // data. Anonymous-readable. A single component handles all three sub-routes.
@@ -38,7 +61,7 @@ function Root() {
     const slug = route.params.slug;
     return (
       <Suspense fallback={<div className="min-h-full" role="status" aria-label="Cargando…" />}>
-        {slug === OLIVIA_SLUG ? <OliviaStorefront route={route} /> : <PublicCatalogScreen slug={slug} />}
+        {slug === OLIVIA_SLUG ? <OliviaStorefront route={route} editor={storefrontEditor} /> : <PublicCatalogScreen slug={slug} />}
       </Suspense>
     );
   }
@@ -77,11 +100,36 @@ export function App() {
   return (
     <ToastProvider>
       <Root />
+      <SyncErrorNotice />
       {/* Build marker for the refresh-hard-reload previewCheck/repro: visible text
           carrying the served deploy's SHA. Reads the same meta the Vite plugin injects. */}
       <BuildMarker />
     </ToastProvider>
   );
+}
+
+export function SyncErrorNoticeView({
+  syncError,
+  onDismiss,
+}: {
+  syncError: { label: string; retry: () => Promise<void> } | null;
+  onDismiss: () => void;
+}) {
+  if (!syncError) return null;
+  return (
+    <div role="alert" className="fixed inset-x-3 top-3 z-[100] mx-auto flex max-w-xl flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/30 bg-surface p-3 text-danger shadow-lg">
+      <span className="text-sm">No se pudo {syncError.label}.</span>
+      <div className="flex gap-2">
+        <Button size="sm" variant="secondary" onClick={() => { void syncError.retry().catch(() => {}); }}>Reintentar</Button>
+        <Button size="sm" variant="ghost" onClick={onDismiss}>Descartar</Button>
+      </div>
+    </div>
+  );
+}
+
+function SyncErrorNotice() {
+  const { syncError, dismissSyncError } = useStore();
+  return <SyncErrorNoticeView syncError={syncError} onDismiss={dismissSyncError} />;
 }
 
 // ponytail: reads the x-build meta at runtime instead of duplicating the SHA at

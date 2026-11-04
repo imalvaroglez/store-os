@@ -40,12 +40,18 @@ export function CategoriesScreen() {
   const usageCount = (catId: string) =>
     products.filter((p) => (p.categoryIds ?? []).includes(catId)).length;
 
-  const move = (cat: Category, dir: -1 | 1) => {
+  const move = async (cat: Category, dir: -1 | 1) => {
     const idx = categories.findIndex((c) => c.id === cat.id);
     const swapWith = categories[idx + dir];
     if (!swapWith) return;
-    upsertCategory({ ...cat, sortOrder: swapWith.sortOrder, updatedAt: nowIso() });
-    upsertCategory({ ...swapWith, sortOrder: cat.sortOrder, updatedAt: nowIso() });
+    try {
+      await Promise.all([
+        upsertCategory({ ...cat, sortOrder: swapWith.sortOrder, updatedAt: nowIso() }),
+        upsertCategory({ ...swapWith, sortOrder: cat.sortOrder, updatedAt: nowIso() }),
+      ]);
+    } catch {
+      toast.error("No se pudo reordenar las categorías. Intenta de nuevo.");
+    }
   };
 
   return (
@@ -139,12 +145,17 @@ export function CategoriesScreen() {
             <Button variant="ghost" onClick={() => setDeleting(null)}>Cancelar</Button>
             <Button
               variant="danger"
-              onClick={() => {
+              onClick={async () => {
                 if (deleting) {
                   if (usageCount(deleting.id) > 0) {
                     toast.error("Esta categoría tiene productos. Ocúltala en su lugar.");
                   } else {
-                    deleteCategory(deleting.id);
+                    try {
+                      await deleteCategory(deleting.id);
+                    } catch {
+                      toast.error("No se pudo eliminar la categoría. Intenta de nuevo.");
+                      return;
+                    }
                     toast.success(`«${deleting.name}» eliminada`);
                   }
                 }
@@ -175,18 +186,27 @@ export function CategoriesScreen() {
 
 function CategoryForm({ category, onDone }: { category: Category; onDone: () => void }) {
   const { upsertCategory } = useStore();
+  const toast = useToast();
   const [draft, setDraft] = useState<Category>(category);
+  const [saving, setSaving] = useState(false);
 
-  function submit() {
+  async function submit() {
     if (!draft.name.trim()) return;
     const slug = draft.slug || slugify(draft.name);
-    upsertCategory({
-      ...draft,
-      name: draft.name.trim(),
-      slug,
-      id: `${draft.storeId}__${slug}`,
-      updatedAt: nowIso(),
-    });
+    setSaving(true);
+    try {
+      await upsertCategory({
+        ...draft,
+        name: draft.name.trim(),
+        slug,
+        id: `${draft.storeId}__${slug}`,
+        updatedAt: nowIso(),
+      });
+    } catch {
+      toast.error("No se pudo guardar la categoría. Intenta de nuevo.");
+      setSaving(false);
+      return;
+    }
     onDone();
   }
 
@@ -230,7 +250,7 @@ function CategoryForm({ category, onDone }: { category: Category; onDone: () => 
           { value: "hidden", label: "Oculta" },
         ]}
       />
-      <Button full size="lg" onClick={submit} disabled={!draft.name.trim()}>
+          <Button full size="lg" onClick={() => void submit()} disabled={!draft.name.trim() || saving}>
         Guardar categoría
       </Button>
     </div>

@@ -10,6 +10,7 @@ export const paper: Theme = {
   name: "Paper Ledger",
   blurb: "Cálido y tranquilo. Como una libreta.",
   vars: {
+    "--color-scheme": "light",
     "--paper": "#f6f1e7",
     "--paper-2": "#efe7d6",
     "--ink": "#1c1917",

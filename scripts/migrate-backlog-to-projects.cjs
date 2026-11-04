@@ -1,0 +1,470 @@
+#!/usr/bin/env node
+// Migrate docs/backlog.json (reconciled by PR #116) to a GitHub Projects V2
+// board ("Store OS"). Idempotent: existing issues are detected by their
+// "[<id>] <title>" prefix and skipped. Pure transforms are unit-tested from
+// src/lib/backlog-migration.test.ts (createRequire pattern).
+//
+// Usage:
+//   node scripts/migrate-backlog-to-projects.cjs --dry-run
+//   node scripts/migrate-backlog-to-projects.cjs --setup
+//   node scripts/migrate-backlog-to-projects.cjs --project <number> --migrate
+//   node scripts/migrate-backlog-to-projects.cjs --project <number> --verify
+
+"use strict";
+
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+
+const OWNER = "imalvaroglez";
+const PROJECT_TITLE = "Store OS";
+const BACKLOG_PATH = path.join(__dirname, "..", "docs", "backlog.json");
+// Immutable migration input, retained in Git after the live JSON is removed.
+const BACKLOG_SOURCE = "7e3126b55e79a56ee58b3b4d028ce0498067bc4d:docs/backlog.json";
+
+// ---------------------------------------------------------------------------
+// LIB — pure transforms (exported for tests)
+
+const ESTADO_OPTIONS = ["Backlog", "Especificado", "En curso", "En PR", "Hecho"];
+
+// Ciclo values mirror the action plan ordering (docs/fer-action-plan-2026-11-01.md).
+const CICLO_OPTIONS = [
+  "—",
+  "0 · Integridad",
+  "Paralelo · Corte octubre",
+  "1 · Captura",
+  "2 · Cobros",
+  "3 · Variantes",
+  "4 · Compras",
+  "5 · Costo y ganancia",
+  "6 · Cierre mensual",
+  "7 · Iconic y reposición",
+  "8 · Catálogo y solicitudes",
+  "Complementario",
+  "Evolutivo",
+];
+
+// id → { ciclo, tipo }. Derived from the action plan's order table; "—" marks
+// delivered/historical entries with no forward-looking cycle.
+const ITEM_META = {
+  "persist-entity-error-handling": { ciclo: "0 · Integridad", tipo: "deuda" },
+  "eradicate-local-admin-mode": { ciclo: "0 · Integridad", tipo: "deuda" },
+  "assisted-october-close": { ciclo: "Paralelo · Corte octubre", tipo: "ops" },
+  "fer-order-product-photo": { ciclo: "1 · Captura", tipo: "feature" },
+  "fer-product-entry-defaults": { ciclo: "1 · Captura", tipo: "feature" },
+  "fer-capture-stack": { ciclo: "1 · Captura", tipo: "feature" },
+  "fer-order-payments": { ciclo: "2 · Cobros", tipo: "feature" },
+  "fer-product-variants": { ciclo: "3 · Variantes", tipo: "feature" },
+  "fer-purchase-trip-cost": { ciclo: "4 · Compras", tipo: "feature" },
+  "fer-cost-allocation": { ciclo: "4 · Compras", tipo: "feature" },
+  "fer-sale-profit": { ciclo: "5 · Costo y ganancia", tipo: "feature" },
+  "fer-profit-distribution": { ciclo: "6 · Cierre mensual", tipo: "feature" },
+  "fer-monthly-close": { ciclo: "6 · Cierre mensual", tipo: "feature" },
+  "fer-iconic-renewal": { ciclo: "7 · Iconic y reposición", tipo: "feature" },
+  "fer-low-stock-alerts": { ciclo: "7 · Iconic y reposición", tipo: "feature" },
+  "fer-monthly-reseller-ranking": { ciclo: "7 · Iconic y reposición", tipo: "feature" },
+  "wysiwyg-catalog": { ciclo: "8 · Catálogo y solicitudes", tipo: "feature" },
+  "fer-catalog-visual-home": { ciclo: "8 · Catálogo y solicitudes", tipo: "feature" },
+  "fer-catalog-subcategories": { ciclo: "8 · Catálogo y solicitudes", tipo: "feature" },
+  "fer-catalog-cohesion": { ciclo: "8 · Catálogo y solicitudes", tipo: "feature" },
+  "fer-public-product-variants": { ciclo: "8 · Catálogo y solicitudes", tipo: "feature" },
+  "fer-catalog-order-request": { ciclo: "8 · Catálogo y solicitudes", tipo: "feature" },
+  "migrate-adminstores": { ciclo: "Complementario", tipo: "deuda" },
+  "platform-users-view": { ciclo: "Complementario", tipo: "feature" },
+  "privacy-arco-v1": { ciclo: "Complementario", tipo: "feature" },
+  receipts: { ciclo: "Evolutivo", tipo: "feature" },
+  "member-roles": { ciclo: "Evolutivo", tipo: "feature" },
+  "productos-sort-filter": { ciclo: "—", tipo: "feature" },
+  "purchase-ux2-fast-receive": { ciclo: "—", tipo: "feature" },
+  "refresh-hard-reload": { ciclo: "—", tipo: "deuda" },
+  "pnpm-lockfile": { ciclo: "—", tipo: "deuda" },
+  "unified-products": { ciclo: "—", tipo: "feature" },
+  "reliable-member-invitations": { ciclo: "—", tipo: "feature" },
+  "scalable-pricing": { ciclo: "—", tipo: "feature" },
+  "fer-purchase-expenses": { ciclo: "—", tipo: "feature" },
+  "fer-customer-price-tier": { ciclo: "—", tipo: "feature" },
+  "fer-order-prepend": { ciclo: "—", tipo: "feature" },
+  "fer-order-category-groups": { ciclo: "—", tipo: "feature" },
+  "public-product-detail": { ciclo: "—", tipo: "deuda" },
+  "carrito-publico": { ciclo: "—", tipo: "feature" },
+  "store-settings-owner-entry": { ciclo: "—", tipo: "feature" },
+};
+
+function cicloOf(id) {
+  return (ITEM_META[id] || {}).ciclo || "—";
+}
+
+function tipoOf(id) {
+  return (ITEM_META[id] || {}).tipo || "feature";
+}
+
+function buildIssueTitle(item) {
+  return `[${item.id}] ${item.title}`;
+}
+
+function buildIssueBody(item, titles) {
+  const lines = [];
+  if (item.discoveryId) lines.push(`**${item.discoveryId}**`, "");
+  if (item.acceptanceCriteria && item.acceptanceCriteria.length) {
+    lines.push("### Criterios de aceptación", "");
+    for (const c of item.acceptanceCriteria) lines.push(`- ${c}`);
+    lines.push("");
+  }
+  const ctx = [];
+  if (item.specPath) ctx.push(`- Spec: ${item.specPath}`);
+  if (item.planPath) ctx.push(`- Plan: ${item.planPath}`);
+  if (item.pullRequests && item.pullRequests.length)
+    ctx.push(`- PRs: ${item.pullRequests.map((n) => `#${n}`).join(", ")}`);
+  if (item.dependsOn && item.dependsOn.length)
+    ctx.push(
+      `- Depende de: ${item.dependsOn.map((d) => `${d} (${(titles && titles.get(d)) || "?"})`).join(", ")}`
+    );
+  if (item.resolvedBlockers && item.resolvedBlockers.length)
+    ctx.push(`- Bloqueos resueltos: ${item.resolvedBlockers.join("; ")}`);
+  if (item.blockedBy && item.blockedBy.length) ctx.push(`- Bloqueado por: ${item.blockedBy.join(", ")}`);
+  if (ctx.length) lines.push("### Contexto", "", ...ctx, "");
+  const meta = [`prioridad original: ${item.priority}`];
+  if (item.proposedPriority) meta.push(`propuesta: ${item.proposedPriority}`);
+  if (item.executionLane) meta.push(`lane: ${item.executionLane}`);
+  lines.push("---", "", `Migrado desde \`docs/backlog.json\` (PR #116) · ${meta.join(" · ")}`);
+  return lines.join("\n");
+}
+
+function estadoColumn(item, openPrs) {
+  if (item.status === "done") return "Hecho";
+  if (item.status === "awaiting-approval") return "Especificado";
+  if (item.status === "in-progress") {
+    const hasOpenPr = (item.pullRequests || []).some((n) => openPrs.has(n));
+    return hasOpenPr ? "En PR" : "En curso";
+  }
+  return "Backlog"; // needs-spec, frozen y cualquier otro estado futuro
+}
+
+module.exports = { ESTADO_OPTIONS, CICLO_OPTIONS, buildIssueTitle, buildIssueBody, estadoColumn, cicloOf, tipoOf, readBacklog, planIssues, validateBoard, normalizeBoardItem };
+
+// ---------------------------------------------------------------------------
+// CLI
+
+function gh(args, opts) {
+  return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], ...opts });
+}
+
+function ghJson(args, opts) {
+  return JSON.parse(gh(args, opts));
+}
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// gh's project mutations fail under GitHub's secondary rate limit when fired
+// in bursts ("Something went wrong…" / "API rate limit exceeded"), even with
+// primary quota left. Pace every mutation and back off exponentially.
+// Retries are safe: item-add is idempotent (adding an existing item returns
+// it) and item-edit sets absolute values.
+function ghRetry(args, tries = 6) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return gh(args);
+    } catch (err) {
+      lastErr = err;
+      const waitMs = 2000 * 2 ** i;
+      console.error(`  (reintento ${i + 1}/${tries} en ${waitMs / 1000}s: ${args.slice(0, 3).join(" ")})`);
+      sleep(waitMs);
+    }
+  }
+  throw lastErr;
+}
+
+function ghJsonRetry(args) {
+  return JSON.parse(ghRetry(args));
+}
+
+function readBacklog() {
+  const source = fs.existsSync(BACKLOG_PATH)
+    ? fs.readFileSync(BACKLOG_PATH, "utf8")
+    : execFileSync("git", ["show", BACKLOG_SOURCE], { cwd: path.join(__dirname, ".."), encoding: "utf8" });
+  return JSON.parse(source).items;
+}
+
+function openPrs() {
+  const prs = ghJson(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,url"]);
+  return { numbers: new Set(prs.map((p) => p.number)), list: prs };
+}
+
+function planIssues(items, prs) {
+  const titles = new Map(items.map((i) => [i.id, i.title]));
+  const issues = items.map((item) => ({
+    id: item.id,
+    title: buildIssueTitle(item),
+    body: buildIssueBody(item, titles),
+    estado: estadoColumn(item, prs.numbers),
+    prioridad: item.proposedPriority || null,
+    tipo: tipoOf(item.id),
+    ciclo: cicloOf(item.id),
+    done: item.status === "done",
+    frozen: item.status === "frozen",
+  }));
+  // Open PRs enter as items too; cycle resolved from the entry that tracks them.
+  const prItems = prs.list.map((p) => {
+    const owner = items.find((i) => (i.pullRequests || []).includes(p.number));
+    return {
+      number: p.number,
+      url: p.url,
+      title: p.title,
+      ciclo: owner ? cicloOf(owner.id) : "Complementario",
+      tipo: owner ? tipoOf(owner.id) : "ops",
+      prioridad: owner?.proposedPriority || null,
+    };
+  });
+  return { issues, prItems };
+}
+
+function summary(planned) {
+  const byEstado = {};
+  for (const i of planned.issues) byEstado[i.estado] = (byEstado[i.estado] || 0) + 1;
+  const byCiclo = {};
+  for (const i of planned.issues) byCiclo[i.ciclo] = (byCiclo[i.ciclo] || 0) + 1;
+  return { issues: planned.issues.length, byEstado, byCiclo, prs: planned.prItems.length };
+}
+
+// item-edit by name: --url points at the issue/PR, --field names the field,
+// --value is the single-select option name (per `gh project item-edit --help`).
+// Direct node IDs avoid repeated name discovery. Pace writes conservatively;
+// GitHub's secondary limits are dynamic, not a guaranteed requests/min quota.
+const MUTATION_PACE_MS = 4000;
+let projectMetadata;
+
+function setField(project, url, field, value) {
+  // Resolve metadata once; name-based edits otherwise repeat discovery calls.
+  if (!projectMetadata) {
+    projectMetadata = {
+      project: ghJson(["project", "view", String(project), "--owner", OWNER, "--format", "json"]),
+      fields: ghJson(["project", "field-list", String(project), "--owner", OWNER, "--format", "json"]).fields,
+      items: new Map(ghJson(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"]).items.map((i) => [i.content?.url, i.id])),
+    };
+  }
+  const definition = projectMetadata.fields.find((f) => f.name === (field === "Estado" ? "Status" : field));
+  const option = definition?.options.find((o) => o.name === value);
+  const itemId = projectMetadata.items.get(url);
+  if (!itemId || !option) throw new Error(`Unknown project item/field/option: ${field}=${value}`);
+  sleep(MUTATION_PACE_MS);
+  ghRetry([
+    "project", "item-edit", "--project-id", projectMetadata.project.id, "--id", itemId,
+    "--field-id", definition.id, "--single-select-option-id", option.id,
+  ]);
+}
+
+function addItem(project, url) {
+  sleep(MUTATION_PACE_MS);
+  const added = ghJsonRetry(["project", "item-add", String(project), "--owner", OWNER, "--url", url, "--format", "json"]);
+  if (projectMetadata) projectMetadata.items.set(url, added.id);
+}
+
+function main() {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--dry-run")) {
+    const planned = planIssues(readBacklog(), openPrs());
+    console.log(JSON.stringify(summary(planned), null, 2));
+    console.log("\nMuestra de issues proyectadas:");
+    for (const i of planned.issues.slice(0, 5)) console.log(`  [${i.estado}] ${i.title}`);
+    console.log("PRs como items:", planned.prItems.map((p) => `#${p.number}`).join(", "));
+    return;
+  }
+  if (argv.includes("--setup")) {
+    const proj = ghJson(["project", "create", "--owner", OWNER, "--title", PROJECT_TITLE, "--format", "json"]);
+    console.log(`Proyecto creado: número ${proj.number} — ${proj.url}`);
+    const native = ghJson(["project", "field-list", String(proj.number), "--owner", OWNER, "--format", "json"]).fields.find((f) => f.name === "Status");
+    const aliases = { Backlog: "Todo", "En curso": "In Progress", Hecho: "Done" };
+    const colors = { Backlog: "GRAY", Especificado: "BLUE", "En curso": "YELLOW", "En PR": "PURPLE", Hecho: "GREEN" };
+    sleep(MUTATION_PACE_MS);
+    ghJson(["api", "graphql", "--input", "-"], {
+      input: JSON.stringify({
+        query: "mutation($input:UpdateProjectV2FieldInput!){updateProjectV2Field(input:$input){projectV2Field{... on ProjectV2SingleSelectField{id}}}}",
+        variables: { input: { fieldId: native.id, singleSelectOptions: ESTADO_OPTIONS.map((name) => ({
+          id: native.options.find((o) => o.name === aliases[name])?.id,
+          name, color: colors[name], description: "",
+        })) } },
+      }),
+    });
+    for (const field of [
+      { name: "Prioridad", options: "P0,P1,P2,P3" },
+      { name: "Tipo", options: "feature,deuda,ops" },
+      { name: "Ciclo", options: CICLO_OPTIONS.join(",") },
+    ]) {
+      sleep(MUTATION_PACE_MS);
+      gh([
+        "project", "field-create", String(proj.number), "--owner", OWNER, "--name", field.name,
+        "--data-type", "SINGLE_SELECT", "--single-select-options", field.options,
+      ]);
+      console.log(`Campo creado: ${field.name}`);
+    }
+    console.log(`\nSiguiente: node scripts/migrate-backlog-to-projects.cjs --project ${proj.number} --migrate`);
+    return;
+  }
+  const projectFlag = argv.indexOf("--project");
+  const project = projectFlag >= 0 ? argv[projectFlag + 1] : null;
+  if (!project) {
+    console.error("Falta --project <number> (o usa --setup / --dry-run).");
+    process.exit(1);
+  }
+  if (argv.includes("--migrate")) {
+    if (!fs.existsSync(BACKLOG_PATH)) {
+      console.error("Migración cerrada: el JSON se retiró. Actualiza el tablero; no repongas estados históricos.");
+      process.exit(1);
+    }
+    runMigrate(project);
+  } else if (argv.includes("--verify")) {
+    runVerify(project);
+  } else {
+    console.error("Nada que hacer: usa --dry-run, --setup, --project N --migrate o --project N --verify.");
+    process.exit(1);
+  }
+}
+
+function runMigrate(project) {
+  const items = readBacklog();
+  const prs = openPrs();
+  const planned = planIssues(items, prs);
+  // Idempotencia: issues existentes se detectan por su título exacto "[<id>] <título>".
+  const existing = ghJson(["issue", "list", "--state", "all", "--limit", "300", "--json", "number,title,url,state"]);
+  const existingByTitle = new Map(existing.map((i) => [i.title, i]));
+
+  for (const label of ["congelado"]) {
+    try {
+      gh(["label", "create", label, "--color", "bfd4f2", "--description", "Item congelado (decisión PO)"]);
+    } catch {
+      /* ya existe */
+    }
+  }
+
+  const created = { issues: 0, skipped: 0 };
+  const failures = [];
+  // Board snapshot: skip item-add for items already present and field edits
+  // whose value already matches (fewer mutations, fewer secondary-limit trips).
+  // item-list exposes custom fields flattened as lowercase keys (estado, tipo…).
+  const board = new Map(
+    ghJsonRetry(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"])
+      .items.map(normalizeBoardItem).map((i) => [((i.content || {}).url || ""), { estado: i.estado, prioridad: i.prioridad, tipo: i.tipo, ciclo: i.ciclo }])
+  );
+  for (const issue of planned.issues) {
+    try {
+      let rec = existingByTitle.get(issue.title);
+      if (!rec) {
+        const bodyFile = path.join(require("node:os").tmpdir(), `backlog-${issue.id}.md`);
+        fs.writeFileSync(bodyFile, issue.body);
+        const args = ["issue", "create", "--title", issue.title, "--body-file", bodyFile];
+        if (issue.frozen) args.push("--label", "congelado");
+        const url = ghRetry(args).trim();
+        fs.unlinkSync(bodyFile);
+        rec = { url, number: Number(url.match(/issues\/(\d+)/)[1]) };
+        existingByTitle.set(issue.title, rec);
+        created.issues++;
+      } else {
+        created.skipped++;
+      }
+      const cur = board.get(rec.url);
+      if (!cur) addItem(project, rec.url);
+      for (const [field, key, value] of [
+        ["Estado", "estado", issue.estado],
+        ["Prioridad", "prioridad", issue.prioridad],
+        ["Tipo", "tipo", issue.tipo],
+        ["Ciclo", "ciclo", issue.ciclo],
+      ]) {
+        if (!value || (cur && cur[key] === value)) continue;
+        setField(project, rec.url, field, value);
+      }
+      if (issue.done && rec.state !== "CLOSED") {
+        sleep(MUTATION_PACE_MS);
+        ghRetry(["issue", "close", String(rec.number), "--reason", "completed"]);
+      }
+      console.log(`issue ${issue.estado.padEnd(13)} ${issue.title}`);
+    } catch (err) {
+      failures.push(`${issue.title}: ${String(err).split("\n")[0]}`);
+      console.error(`FALLO ${issue.title}`);
+    }
+  }
+
+  for (const p of planned.prItems) {
+    try {
+      const cur = board.get(p.url);
+      if (!cur) addItem(project, p.url);
+      if (!cur || cur.estado !== "En PR") setField(project, p.url, "Estado", "En PR");
+      if (!cur || cur.ciclo !== p.ciclo) setField(project, p.url, "Ciclo", p.ciclo);
+      if (!cur || cur.tipo !== p.tipo) setField(project, p.url, "Tipo", p.tipo);
+      if (p.prioridad && (!cur || cur.prioridad !== p.prioridad)) setField(project, p.url, "Prioridad", p.prioridad);
+      console.log(`pr    En PR         #${p.number} ${p.title}`);
+    } catch (err) {
+      failures.push(`PR #${p.number}: ${String(err).split("\n")[0]}`);
+      console.error(`FALLO PR #${p.number}`);
+    }
+  }
+  console.log(`\nCreadas: ${created.issues}, omitidas (ya existían): ${created.skipped}. Verifica con --verify.`);
+  if (failures.length) {
+    console.error(`\n${failures.length} fallos (re-ejecuta --migrate; es idempotente):`);
+    for (const f of failures) console.error(`  - ${f}`);
+    process.exit(1);
+  }
+}
+
+function runVerify(project) {
+  const res = ghJson(["project", "item-list", String(project), "--owner", OWNER, "--format", "json", "--limit", "200"]);
+  res.items = res.items.map(normalizeBoardItem);
+  const issues = res.items.filter((i) => ((i.content || {}).type || "") === "Issue");
+  const prs = res.items.filter((i) => ((i.content || {}).type || "") === "PullRequest");
+  const estados = {};
+  for (const i of issues) {
+    const name = i.estado || "(sin estado)";
+    estados[name] = (estados[name] || 0) + 1;
+  }
+  const sinCiclo = issues.filter((i) => !i.ciclo).length;
+  console.log(JSON.stringify({ issues: issues.length, prs: prs.length, estados, sinCiclo }, null, 2));
+  const planned = planIssues(readBacklog(), openPrs());
+  const records = ghJson(["issue", "list", "--state", "all", "--limit", "300", "--json", "number,state"]);
+  const problems = validateBoard(planned, res.items, records);
+  if (problems.length) {
+    console.error(problems.join("\n"));
+    process.exit(1);
+  }
+  console.log(`OK: ${issues.length + prs.length} items en el tablero.`);
+}
+
+function validateBoard(planned, items, records) {
+  items = items.map(normalizeBoardItem);
+  const problems = [];
+  for (const item of items) {
+    for (const field of ["estado", "tipo", "ciclo"]) {
+      if (!item[field]) problems.push(`${item.content?.url}: missing ${field}`);
+    }
+  }
+  for (const expected of [...planned.issues, ...planned.prItems]) {
+    const matches = items.filter((item) => expected.id
+      ? item.content?.type === "Issue" && item.content.title.startsWith(`[${expected.id}] `)
+      : item.content?.url === expected.url);
+    if (matches.length !== 1) {
+      problems.push(`Expected one item for ${expected.id || expected.url}, found ${matches.length}`);
+      continue;
+    }
+    const item = matches[0];
+    for (const field of ["estado", "prioridad", "tipo", "ciclo"]) {
+      const value = field === "estado" && !expected.id ? "En PR" : expected[field];
+      if (value && item[field] !== value) problems.push(`${item.content.url}: ${field} should be ${value}`);
+    }
+    if (expected.id && !expected.body.split("\n").filter((l) => l.startsWith("- ")).every((l) => item.content.body?.includes(l))) {
+      problems.push(`${item.content.url}: migrated criteria/context missing`);
+    }
+    if (expected.done && !records.some((r) => r.number === item.content.number && r.state === "CLOSED")) {
+      problems.push(`${item.content.url}: delivered issue is not closed`);
+    }
+  }
+  return problems;
+}
+
+function normalizeBoardItem(item) {
+  // GitHub keeps its native field named Status. It is the sole live state,
+  // with Spanish options; the imported custom field is not authoritative.
+  return { ...item, estado: item.status ?? item.estado };
+}
+
+if (require.main === module) main();

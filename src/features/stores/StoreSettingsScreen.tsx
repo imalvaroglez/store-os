@@ -7,6 +7,7 @@ import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { PublicCatalogProjectionError, SlugTakenError } from "../../app/firebase/firestoreData";
 import { createWhatsAppShareCatalogUrl } from "../../lib/whatsapp";
 import { slugify } from "../../lib/catalog";
+import { navigate } from "../../lib/router";
 import { StorefrontEditor } from "../catalog/StorefrontEditor";
 import { normalizeSkuPrefixToken } from "../../lib/catalog";
 import { CANONICAL_TIERS } from "../../lib/pricing";
@@ -305,7 +306,13 @@ export function StoreSettingsScreen({
           <div key={uid} className="flex items-center justify-between bg-surface rounded-md px-3 py-2 ring-1 ring-edge">
             <span className="text-sm text-ink">{uid === user?.uid ? "Tú" : uid.slice(0, 8)}</span>
             {isOwnerOrAdmin && uid !== user?.uid && (
-              <Button size="sm" variant="ghost" onClick={() => removeMember(store!.id, uid)}>
+              <Button size="sm" variant="ghost" onClick={async () => {
+                try {
+                  await removeMember(store!.id, uid);
+                } catch {
+                  toast.error("No se pudo quitar a la persona de la tienda. Intenta de nuevo.");
+                }
+              }}>
                 Quitar
               </Button>
             )}
@@ -362,6 +369,11 @@ export function StoreSettingsScreen({
           <p className="text-sm text-ink-soft break-all">{catalogUrl}</p>
           <Button full onClick={copyCatalogUrl}>Copiar enlace</Button>
           <Button full variant="success" onClick={shareOnWhatsApp}>Compartir por WhatsApp</Button>
+          {store.slug === "olivia" && store.ownerUid === user?.uid && (
+            <Button full variant="secondary" onClick={() => navigate("/catalogo/olivia/editar")}>
+              Editar textos sobre la vista pública
+            </Button>
+          )}
           <Button full variant="secondary" onClick={() => setEditSite(true)}>
             Editar sitio público
           </Button>
