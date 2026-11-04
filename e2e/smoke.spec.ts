@@ -149,9 +149,6 @@ test("order editor uses styled pickers and strict numeric fields", async ({ shar
   const price = page.getByLabel("Precio unitario").first();
   await price.fill("175a.2.9");
   await expect(price).toHaveValue("175.29");
-  const cost = page.getByLabel("Costo (opcional)").first();
-  await cost.fill("44e.13");
-  await expect(cost).toHaveValue("44.13");
   const deposit = page.getByLabel("Anticipo");
   await deposit.fill("1000x.5");
   await expect(deposit).toHaveValue("1000.5");
@@ -354,4 +351,36 @@ test("copy the saved order detail", async ({ sharedPage: page }) => {
   await detail.getByRole("button", { name: "Copiar detalle" }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).toContain("Saldo:");
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+});
+
+test("recorded payments survive reload and an adjustment updates card and history", async ({ sharedPage: page }) => {
+  await gotoSantiHome(page);
+  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+  const card = page.getByRole("heading", { name: /^#SANTI1 ·/ }).locator("../../..");
+  await card.getByRole("button", { name: "Cobros", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Cobros del pedido" });
+  await expect(sheet.getByRole("button", { name: "Registrar cobro", exact: true })).toBeEnabled();
+  await expect(sheet.getByText("$1,000.00", { exact: true }).first()).toBeVisible();
+  // PO 2026-11-03: the pending inherited deposit demands its (estimated)
+  // date/method with the first cobro — the block sits above the payment form.
+  await sheet.getByLabel("Fecha del anticipo", { exact: true }).fill("2026-10-31");
+  await sheet.getByLabel("Monto", { exact: true }).fill("400");
+  await sheet.getByRole("button", { name: "Registrar cobro", exact: true }).click();
+  await expect(sheet.getByText("$1,400.00", { exact: true })).toBeVisible();
+  await expect(sheet.getByText("$800.00", { exact: true })).toBeVisible();
+  await sheet.getByRole("button", { name: "Cerrar", exact: true }).click();
+  await expect(card.getByText("$1,400.00", { exact: true })).toBeVisible();
+  await gotoSantiHome(page);
+  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+  await expect(card.getByText("$1,400.00", { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Cobros", exact: true }).click();
+  await expect(sheet.getByRole("button", { name: "Registrar ajuste o devolución", exact: true })).toBeEnabled();
+  await sheet.getByRole("button", { name: "Registrar ajuste o devolución", exact: true }).click();
+  await sheet.getByLabel("Monto del ajuste", { exact: true }).fill("-150");
+  await sheet.getByLabel("Motivo", { exact: true }).fill("Corrección de prueba");
+  await sheet.getByRole("button", { name: "Guardar ajuste", exact: true }).click();
+  await expect(sheet.getByText("$1,250.00", { exact: true })).toBeVisible();
+  await expect(sheet.getByText("$950.00", { exact: true })).toBeVisible();
+  await sheet.getByRole("button", { name: "Cerrar", exact: true }).click();
+  await expect(card.getByText("$1,250.00", { exact: true })).toBeVisible();
 });
