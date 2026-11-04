@@ -1,19 +1,21 @@
+import { trash } from './trash.mjs';
 import { gzipSync } from 'node:zlib';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readdir, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, mkdir, writeFile, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DEV, command, decryptArchive, fileHash, json, readJson } from './core.mjs';
 import { capture, connect, restore, validateTarget, EMULATORS } from './cloud.mjs';
+import { checkRecoveryIdentity } from './verification.mjs';
 import { preflight, runBackup } from './cli.mjs';
 
 test('complete encrypted backup restores raw Firestore, orphan descendants, Auth and Storage on fresh emulators', async t => {
   Object.assign(process.env, EMULATORS);
   const root = await mkdtemp(path.join(os.tmpdir(), 'store-os-backup-roundtrip-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home: path.join(root, 'home'), destination: path.join(root, 'cloud'), age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim(), maxDocuments: 1000, maxFirestoreReads: 2000, maxDailyFirestoreReads: 4000, maxStorageBytes: 100000, notifications: false };
+  t.after(() => trash(root));
+  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home: path.join(root, 'home'), destination: path.join(root, 'cloud'), firebase: execFileSync('/usr/bin/which', ['firebase'], { encoding: 'utf8' }).trim(), age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim(), maxDocuments: 1000, maxFirestoreReads: 2000, maxDailyFirestoreReads: 4000, maxStorageBytes: 100000, notifications: false };
   validateTarget(config, true); await mkdir(config.home);
   const client = await connect(config); let ownsFixtures = false;
   t.after(async () => {
@@ -43,6 +45,7 @@ test('complete encrypted backup restores raw Firestore, orphan descendants, Auth
   config.recipient = execFileSync('age-keygen', ['-y', key], { encoding: 'utf8' }).trim();
   await assert.rejects(client.documents({ maxDocuments: 2, maxReads: 2000 }), /DOCUMENT_LIMIT/);
   await assert.rejects(client.documents({ maxReads: 1 }), /FIRESTORE_READ_LIMIT/);
+  await checkRecoveryIdentity(config, key);
   const report = await preflight(config, client);
   assert.equal(report.documents, 504); assert.equal(report.users, 1); assert.equal(report.objects, 2);
   config.reviewedPreflightSha256 = await fileHash(path.join(config.home, 'preflight.json'));

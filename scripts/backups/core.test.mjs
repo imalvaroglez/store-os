@@ -1,16 +1,19 @@
+import { trash } from './trash.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
-import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, json, manifest, prune, publish, retention, sha256, verifyDirectory, DEFAULT_DESTINATION } from './core.mjs';
+import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
 import { DEV, PROD } from './core.mjs';
-import { capture, remapFields, validateTarget, validateUsers, EMULATORS } from './cloud.mjs';
+import { capture, restore, remapFields, validateTarget, validateUsers, EMULATORS } from './cloud.mjs';
+import { startSupervisor, stopSupervisor, supervisedCommand, cleanupStaleWorkspaces } from './supervisor.mjs';
 import { launchAgent } from './install.mjs';
+import { checkRecoveryIdentity, hasVerifiedBackup, recoveryKeyProof, verificationEnvironment, verifyCandidate } from './verification.mjs';
 import { parseArgs, preflight, runBackup, safeCode } from './cli.mjs';
 
-async function workspace(t) { const dir = await mkdtemp(path.join(os.tmpdir(), 'store-os-backup-test-')); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
+async function workspace(t) { const dir = await mkdtemp(path.join(os.tmpdir(), 'store-os-backup-test-')); t.after(() => trash(dir)); return dir; }
 const name = date => `backup-${date.toISOString().replace(/[:.]/g, '-')}.tar.gz.age`;
 test('schedule follows Mexico City 21:00 across sleep, restart and timezone changes', () => {
   assert.equal(isDue(new Date('2026-11-04T02:59:00Z'), '2026-11-03T03:00:00Z'), false);
@@ -98,8 +101,9 @@ test('CLI rejects unknown options and sanitizes personal error text', () => {
 test('failed capture preserves last successful backup, cleans staging and releases lock', async t => {
   const dir = await workspace(t); const home = path.join(dir, 'home'); await mkdir(home); const destination = path.join(dir, 'icloud'); await mkdir(destination);
   const last = { lastSuccess: '2026-11-01T03:00:00Z', ownedArchives: ['prior.age'] }; await json(path.join(home, 'state.json'), last);
-  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home, destination, notifications: false, recipient: 'test', age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim() };
+  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home, destination, notifications: false, recipient: 'test', firebase: process.execPath, age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim() };
   const fake = { settings: async () => ({}), documents: async () => [], users: async () => [], authConfig: async () => ({ hashConfig: {} }), files: async () => [] };
+  const recoveryKey = path.join(dir, 'recovery-key'); await command('age-keygen', ['-o', recoveryKey]); config.recipient = execFileSync('age-keygen', ['-y', recoveryKey], { encoding: 'utf8' }).trim(); await checkRecoveryIdentity(config, recoveryKey);
   await preflight(config, fake); config.reviewedPreflightSha256 = await fileHash(path.join(home, 'preflight.json')); config.maxDocuments = 10; config.maxStorageBytes = 100; config.maxFirestoreReads = 100; config.maxDailyFirestoreReads = 200;
   const original = Object.fromEntries(Object.keys(EMULATORS).map(k => [k, process.env[k]])); Object.assign(process.env, EMULATORS);
   try { await assert.rejects(runBackup(config, async () => ({ ...fake, documents: async () => { throw new Error('private account'); }, close: async () => {} })), /private account/); }
@@ -121,8 +125,9 @@ test('a killed process cannot leave a lock that blocks the next scheduled backup
 
 test('budget failures suspend repeated scans; transient retries are bounded per day', async t => {
   const dir = await workspace(t); const home = path.join(dir, 'home'); await mkdir(home);
-  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home, destination: path.join(dir, 'cloud'), recipient: 'fixture', age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim(), notifications: false, maxDocuments: 0, maxStorageBytes: 0, maxFirestoreReads: 10, maxDailyFirestoreReads: 20 };
+  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home, destination: path.join(dir, 'cloud'), recipient: 'fixture', firebase: process.execPath, age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim(), notifications: false, maxDocuments: 0, maxStorageBytes: 0, maxFirestoreReads: 10, maxDailyFirestoreReads: 20 };
   const fake = { settings: async () => ({}), documents: async () => [], users: async () => [], authConfig: async () => ({ hashConfig: {} }), files: async () => [], close: async () => {} };
+  const recoveryKey = path.join(dir, 'recovery-key'); await command('age-keygen', ['-o', recoveryKey]); config.recipient = execFileSync('age-keygen', ['-y', recoveryKey], { encoding: 'utf8' }).trim(); await checkRecoveryIdentity(config, recoveryKey);
   await preflight(config, fake); config.reviewedPreflightSha256 = await fileHash(path.join(home, 'preflight.json'));
   const original = Object.fromEntries(Object.keys(EMULATORS).map(k => [k, process.env[k]])); Object.assign(process.env, EMULATORS);
   try {
@@ -141,4 +146,103 @@ test('budget failures suspend repeated scans; transient retries are bounded per 
 test('reference remapping preserves empty Firestore maps and arrays exactly', () => {
   const fields = { pendingInvites: { arrayValue: {} }, options: { mapValue: {} }, nested: { mapValue: { fields: { empty: { arrayValue: {} } } } }, list: { arrayValue: { values: [{ mapValue: {} }] } } };
   assert.deepEqual(remapFields(fields, PROD, DEV), fields);
+});
+
+test('a failed candidate check cannot publish a final archive or remove the previous copy', async t => {
+  const dir = await workspace(t); const source = path.join(dir, 'encrypted'); const destination = path.join(dir, 'copies');
+  await writeFile(source, 'ciphertext'); await mkdir(destination);
+  const prior = name(new Date('2026-11-01T03:00:00Z')); const next = name(new Date('2026-11-02T03:00:00Z'));
+  await writeFile(path.join(destination, prior), 'previous');
+  await assert.rejects(publish(source, destination, next, async () => { throw new Error('VERIFICATION_FAILED'); }), /VERIFICATION_FAILED/);
+  assert.deepEqual(await readdir(destination), [prior]);
+});
+test('an old success without an actual restore proof is not a verified backup', () => {
+  assert.equal(hasVerifiedBackup({ lastSuccess: new Date().toISOString(), lastArchive: 'legacy.age', sha256: 'hash' }), false);
+});
+test('verification subprocesses cannot inherit source endpoints or credentials', () => {
+  const env = verificationEnvironment({ FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080', GOOGLE_APPLICATION_CREDENTIALS: '/private/source.json', FIREBASE_TOKEN: 'secret', NODE_TEST_CONTEXT: 'child-v8' });
+  assert.equal(env.GOOGLE_APPLICATION_CREDENTIALS, undefined); assert.equal(env.FIRESTORE_EMULATOR_HOST, undefined);
+  assert.equal(env.FIREBASE_TOKEN, undefined); assert.equal(env.NODE_TEST_CONTEXT, undefined); assert.equal(env.GCLOUD_PROJECT, DEV);
+});
+test('automatic verification requires a previously checked recovery recipient', async t => {
+  const dir = await workspace(t); const config = { projectId: DEV, home: dir, recipient: 'unapproved' };
+  await assert.rejects(recoveryKeyProof(config), /RECOVERY_KEY_CHECK_REQUIRED/);
+});
+
+test('a verifier process exiting successfully without a restore receipt is rejected', async t => {
+  const dir = await workspace(t); const archive = path.join(dir, 'candidate.age'); await writeFile(archive, 'not a backup');
+  const noop = path.join(dir, 'noop-verifier'); await writeFile(noop, '#!/bin/sh\nexit 0\n'); await chmod(noop, 0o700);
+  const work = path.join(dir, 'work'); await mkdir(work); const session = await startSupervisor(work);
+  try { await assert.rejects(verifyCandidate({ firebase: noop, age: 'age' }, archive, '/unused/identity', path.join(work, 'verify'), undefined, session), /VERIFICATION_RECEIPT_REQUIRED/); } finally { await stopSupervisor(session); }
+});
+
+async function until(predicate, timeout = 10000) {
+  const end = Date.now() + timeout;
+  while (!await predicate()) { if (Date.now() > end) throw new Error('condition timed out'); await new Promise(resolve => setTimeout(resolve, 50)); }
+}
+function isRunning(pid) {
+  try { const state = execFileSync('/bin/ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); return Boolean(state && !state.startsWith('Z')); } catch { return false; }
+}
+test('supervision survives parent SIGKILL, kills detached descendants and removes private workspace', { timeout: 15000 }, async t => {
+  const dir = await workspace(t); const root = path.join(dir, 'capture-job'); await mkdir(root);
+  const pids = path.join(dir, 'owned-pids.json'); const launcher = path.join(dir, 'launcher.mjs');
+  await writeFile(launcher, `import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs'; const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' }); writeFileSync(${JSON.stringify(pids)}, JSON.stringify([process.pid, child.pid])); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);`);
+  const module = new URL('./supervisor.mjs', import.meta.url).href;
+  const code = `import { startSupervisor, supervisedCommand } from ${JSON.stringify(module)}; import { writeFile } from 'node:fs/promises'; const s = await startSupervisor(${JSON.stringify(root)}); await writeFile(${JSON.stringify(path.join(root, 'temporary-private-key'))}, 'private fixture'); await supervisedCommand(s, process.execPath, [${JSON.stringify(launcher)}], { cwd: ${JSON.stringify(root)}, env: process.env });`;
+  const parent = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: 'ignore' });
+  let owned = [];
+  t.after(() => { parent.kill('SIGKILL'); for (const pid of owned) if (isRunning(pid)) try { process.kill(pid, 'SIGKILL'); } catch {} });
+  await until(() => exists(pids)); owned = JSON.parse(await readFile(pids, 'utf8'));
+  const exited = new Promise(resolve => parent.once('exit', resolve)); parent.kill('SIGKILL'); await exited;
+  await until(async () => !await exists(root) && owned.every(pid => !isRunning(pid)));
+});
+test('supervision owns a detached child after its launcher exits between scans', { timeout: 12000 }, async t => {
+  const dir = await workspace(t); const root = path.join(dir, 'capture-orphan'); await mkdir(root);
+  const pidFile = path.join(dir, 'pid'); const launcher = path.join(dir, 'launcher.mjs');
+  await writeFile(launcher, `import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs'; const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' }); writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); child.unref();`);
+  const session = await startSupervisor(root);
+  let pid;
+  try { await supervisedCommand(session, process.execPath, [launcher], { cwd: root, env: process.env }); pid = Number(await readFile(pidFile, 'utf8')); assert.equal(isRunning(pid), false); }
+  finally { await stopSupervisor(session); if (pid && isRunning(pid)) process.kill(pid, 'SIGKILL'); }
+});
+test('interrupted pending copy and private workspace are moved to Trash', { timeout: 12000 }, async t => {
+  const dir = await workspace(t); const root = path.join(dir, 'capture-cleanup'); await mkdir(root);
+  const candidate = path.join(dir, `${name(new Date())}.partial`); await mkdir(candidate);
+  const session = await startSupervisor(root, 180000, dir);
+  await json(path.join(root, 'pending-publication.json'), { candidate });
+  await writeFile(path.join(root, 'secret'), 'fixture'); session.child.kill('SIGTERM');
+  await assert.rejects(stopSupervisor(session), /VERIFICATION_CLEANUP_FAILED/);
+  assert.equal(await exists(root), false); assert.equal(await exists(candidate), false);
+});
+test('a hung verifier is forcibly terminated within the supervised deadline', { timeout: 12000 }, async t => {
+  const dir = await workspace(t); const root = path.join(dir, 'capture-job'); await mkdir(root);
+  const session = await startSupervisor(root, 1000);
+  try {
+    await assert.rejects(supervisedCommand(session, process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], { cwd: root, env: process.env }), /VERIFICATION_TIMEOUT/);
+  } finally { await stopSupervisor(session); }
+  assert.equal(await exists(root), false);
+});
+test('a cleanup failure cannot publish a backup and private scratch is removed before final naming', async t => {
+  const dir = await workspace(t); const root = path.join(dir, 'private'); await mkdir(root);
+  const encrypted = path.join(root, 'encrypted'); await writeFile(encrypted, 'ciphertext');
+  const destination = path.join(dir, 'copies'); const archive = name(new Date());
+  await assert.rejects(publish(encrypted, destination, archive, async () => { throw new Error('VERIFICATION_CLEANUP_FAILED'); }), /VERIFICATION_CLEANUP_FAILED/);
+  assert.deepEqual(await readdir(destination), []);
+  await publish(encrypted, destination, archive, async () => { assert.equal(await exists(path.join(destination, archive)), false); await trash(root); return { verified: true }; });
+  assert.equal(await exists(root), false); assert.equal((await readFile(path.join(destination, archive), 'utf8')), 'ciphertext');
+});
+test('stale private scratch is cleaned without requiring a working runtime or preflight', async t => {
+  const dir = await workspace(t); const stale = path.join(dir, 'capture-stale'); await mkdir(stale); await writeFile(path.join(stale, 'private-key'), 'fixture');
+  await cleanupStaleWorkspaces(dir); assert.equal(await exists(stale), false);
+});
+test('restoration rejects lost MFA enrollments even when counts and other profile data match', async t => {
+  const dir = await workspace(t);
+  const user = { uid: 'mfa-fixture', email: 'mfa@example.test', providerData: [], multiFactor: { enrolledFactors: [{ uid: 'factor-fixture', factorId: 'phone', phoneNumber: '+15555550100', enrollmentTime: '2026-11-03T12:00:00Z' }] } };
+  await json(path.join(dir, 'firestore.json'), []); await json(path.join(dir, 'storage.json'), []); await json(path.join(dir, 'auth.json'), [user]);
+  await json(path.join(dir, 'auth-config.json'), { hashConfig: { algorithm: 'SCRYPT', signerKey: 'AQID', rounds: 8, memoryCost: 14 } });
+  let imported = false;
+  const fake = { documents: async () => [], files: async () => [], users: async () => imported ? [{ ...user, multiFactor: { enrolledFactors: [] } }] : [], auth: { importUsers: async () => { imported = true; return { failureCount: 0 }; } } };
+  const saved = Object.fromEntries(Object.keys(EMULATORS).map(k => [k, process.env[k]])); Object.assign(process.env, EMULATORS);
+  try { await assert.rejects(restore(fake, { projectId: DEV, bucket: `${DEV}.firebasestorage.app` }, dir, { projectId: PROD, counts: { documents: 0, users: 1, objects: 0 } }), /AUTH_MFA_VERIFY_FAILED/); }
+  finally { for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : process.env[k] = v; }
 });
