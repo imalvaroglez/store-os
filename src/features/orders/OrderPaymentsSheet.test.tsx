@@ -121,6 +121,8 @@ describe("OrderPaymentsSheet", () => {
     expect(screen.getByText("$1,100.00")).toBeInTheDocument();
 
     // Without the anticipo date the first payment is rejected — nothing saved.
+    // (#177 gates the button behind the initial load; wait for it to enable.)
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar cobro" })).not.toBeDisabled());
     fireEvent.change(screen.getByLabelText("Monto"), { target: { value: "100" } });
     fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
     expect(await screen.findByText(/estímala si no la recuerdas/i)).toBeInTheDocument();
