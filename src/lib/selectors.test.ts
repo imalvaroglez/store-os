@@ -6,9 +6,10 @@ import {
   customersForStore,
   suppliersForStore,
   purchasesForStore,
+  productsToRestock,
 } from "./selectors";
 import { fixtureState } from "./testFixtures";
-import type { Supplier, Purchase } from "../types";
+import type { Supplier, Purchase, Product } from "../types";
 
 describe("store isolation", () => {
   const state = fixtureState();
@@ -76,3 +77,41 @@ describe("suppliers / purchases isolation", () => {
   });
 });
 
+
+describe("productsToRestock (stock alerts)", () => {
+  const stock = (
+    id: string,
+    storeId: string,
+    quantityOnHand: number | undefined,
+    lowStockAt?: number
+  ): Product => ({ id, storeId, name: id, quantityOnHand, lowStockAt }) as Product;
+
+  it("includes agotado and low stock, worst first", () => {
+    const all = [
+      stock("healthy", "s1", 10),
+      stock("low_default", "s1", 2), // no threshold saved → default applies
+      stock("out", "s1", 0),
+      stock("shortage", "s1", -3),
+      stock("low_explicit", "s1", 5, 5),
+      stock("above_explicit", "s1", 5, 2),
+    ];
+    expect(productsToRestock(all, "s1").map((p) => p.id)).toEqual([
+      "shortage",
+      "out",
+      "low_default",
+      "low_explicit",
+    ]);
+  });
+
+  it("no alert for untracked stock (on-demand stores) and other stores' products", () => {
+    const state = fixtureState(); // Santi is on_demand
+    const all = [
+      ...state.products, // includes Santi's untracked product
+      stock("olivia_out", "store_olivia", 0),
+    ];
+    const restock = productsToRestock(all, "store_olivia");
+    expect(restock.map((p) => p.id)).toEqual(["olivia_out"]);
+    // The on-demand store itself derives nothing.
+    expect(productsToRestock(all, "store_santi")).toEqual([]);
+  });
+});

@@ -10,7 +10,8 @@ import {
   Screen,
   StatRow,
 } from "../../design-system";
-import { ordersForStore, lowStockProducts, customersForStore } from "../../lib/selectors";
+import { ordersForStore, productsToRestock, customersForStore } from "../../lib/selectors";
+import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
 import { iconicStatus } from "../../lib/iconic";
@@ -39,7 +40,9 @@ export function HomeScreen() {
     (sum, o) => sum + (orderProfitBreakdown(o, state.purchases).profitCents ?? 0),
     0
   ) / 100;
-  const lowStock = isTiered ? lowStockProducts(state.products, activeStore.id) : [];
+  // FER-09 restock alerts, derived from synced state (no extra Firestore reads).
+  // On-demand stores track no stock, so only tiered stores can alert.
+  const restock = isTiered ? productsToRestock(state.products, activeStore.id) : [];
   // FER-05 aviso previo (visual only): iconic customers whose validity ends
   // within the notice window, most urgent first. Derives from synced state.
   const iconicRenewals = isTiered
@@ -112,16 +115,22 @@ export function HomeScreen() {
         </Card>
       )}
 
-      {lowStock.length > 0 && (
-        <Card className="mb-5 !bg-terracotta-soft/60 ring-terracotta/20">
-          <h3 className="font-semibold text-terracotta text-sm">⚠️ Baja existencia</h3>
+      {restock.length > 0 && (
+        <Card className="mb-5">
+          <div className="flex items-baseline justify-between">
+            <h3 className="font-semibold text-ink text-sm">⚠️ Por surtir</h3>
+            <span className="text-xs text-ink-soft/70">{restock.length}</span>
+          </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {lowStock.map((p) => (
-              <Badge key={p.id} tone="warning">
-                {p.name} ({p.quantityOnHand})
+            {restock.map((p) => (
+              <Badge key={p.id} tone={stockAlertLevel(p) === "out" ? "danger" : "warning"}>
+                {p.name} · {stockAlertText(p)}
               </Badge>
             ))}
           </div>
+          <Button variant="ghost" full onClick={() => navigate("/productos")} className="py-2 mt-3">
+            Ver catálogo →
+          </Button>
         </Card>
       )}
 
