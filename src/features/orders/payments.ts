@@ -54,7 +54,8 @@ export type PaymentRecordInput = PaymentFormInput | AdjustmentFormInput;
 export function signedAmountCents(amount: number): number {
   if (!Number.isFinite(amount)) throw new RangeError("Monto inválido");
   const sign = amount < 0 ? -1 : 1;
-  return sign * orderAmountCents(Math.abs(amount));
+  const cents = orderAmountCents(Math.abs(amount));
+  return cents === 0 ? 0 : sign * cents;
 }
 
 function finiteCents(amount: number): number {
@@ -216,12 +217,13 @@ export function orderMoneyAfterPayments(
   savedCents: number,
   materializesInherited: boolean
 ): OrderMoneyFields {
-  const acc =
-    typeof order.paymentsReceivedCents === "number" && Number.isFinite(order.paymentsReceivedCents)
-      ? order.paymentsReceivedCents
-      : 0;
+  const acc = order.paymentsReceivedCents ?? 0;
+  const total = acc + savedCents;
+  if (!Number.isSafeInteger(acc) || !Number.isSafeInteger(savedCents) || !Number.isSafeInteger(total)) {
+    throw new RangeError("El total de cobros excede la precisión admitida o contiene centavos inválidos.");
+  }
   return {
-    paymentsReceivedCents: acc + savedCents,
+    paymentsReceivedCents: total,
     ...(order.inheritedDepositMaterialized === true || materializesInherited
       ? { inheritedDepositMaterialized: true as const }
       : {}),
