@@ -14,7 +14,7 @@ import {
 } from "../../design-system";
 import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
 import { orderTicketText } from "./orderTicket";
-import { profit } from "../../lib/money";
+import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
 import { installmentPlanView } from "./installments";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
@@ -39,11 +39,10 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const hasPaymentRecords = typeof order.paymentsReceivedCents === "number";
   const owed = planView ? planView.balanceCents > 0 : totals.balance > 0;
   const deliveryHeld = !!planView?.deliveryBlocked && verb === "Entregar";
-  // Per-line profit: lines without a known cost contribute 0 instead of
-  // blanking the whole order's estimate.
-  const knownProfit = items.some((item) => item.cost != null)
-    ? items.reduce((sum, item) => sum + (profit(item.unitPrice, item.cost, item.quantity) ?? 0), 0)
-    : undefined;
+  // Full-cost profit (FER-03): precio − costo de compra − gastos de venta por
+  // pieza. A cancelled order is a full return: its profit is not realized, so
+  // no estimate is shown. Cash collected (Total/Pagado/Saldo) stays separate.
+  const profitView = status === "cancelled" ? undefined : orderProfitBreakdown(order, state.purchases);
   const shortageByProduct = new Map<string, number>();
   items.forEach((item) => {
     if (!item.productId) return;
@@ -139,7 +138,15 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           </>
         )}
       </div>
-      {knownProfit != null && <p className="text-xs text-ink-soft mt-2">Ganancia estimada: <Money amount={knownProfit} /></p>}
+      {profitView && profitView.profitCents != null && (
+        <p className="text-xs text-ink-soft mt-2">
+          Ganancia estimada: <Money exact className={profitView.profitCents < 0 ? "text-danger" : ""} amount={profitView.profitCents / 100} />
+          {" "}· costo de compra <Money exact amount={profitView.acquisitionCents / 100} />
+          {profitView.saleExpenseCents > 0 && <> · gastos de venta <Money exact amount={profitView.saleExpenseCents / 100} /></>}
+          {profitView.linesWithoutCost > 0 && ` · ${profitView.linesWithoutCost} ${profitView.linesWithoutCost === 1 ? "línea sin costo" : "líneas sin costo"}`}
+        </p>
+      )}
+      {profitView && profitView.profitCents == null && <p className="text-xs text-ink-soft mt-2">Ganancia estimada: sin costo registrado.</p>}
       {shortages.length > 0 && <Badge tone="warning">Faltan {shortages.reduce((sum, n) => sum + n, 0)} piezas</Badge>}
 
       <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>

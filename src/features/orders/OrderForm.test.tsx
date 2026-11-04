@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderForm } from "./OrderForm";
+import type { Purchase } from "../../types";
 
 const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
   mockUpsertOrder: vi.fn().mockResolvedValue(undefined),
@@ -39,6 +40,7 @@ const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
       createdAt: "",
       updatedAt: "",
     }],
+    purchases: [] as Purchase[],
   },
 }));
 
@@ -492,6 +494,35 @@ describe("installment plan capture (#165)", () => {
     expect(screen.getByLabelText("Anticipo")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: /pagos por partes/i }));
     expect(screen.queryByLabelText("Anticipo")).toBeNull();
+    rendered.unmount();
+  });
+});
+
+describe("estimated profit while registering a sale", () => {
+  it("previews precio − costo − gastos de venta in the totals bar", () => {
+    state.products.push({ ...state.products[0], id: "prod_cost", name: "Collar con costo", cost: 40 } as typeof state.products[number]);
+    state.purchases.push({
+      id: "trip_profit", storeId: "store_olivia", date: "2026-10-30", status: "received", costingMethod: "latest_purchase",
+      receivedAt: "2026-11-01T00:00:00.000Z", subtotal: 400, totalConfirmed: 400, createdAt: "", updatedAt: "",
+      lines: [{ lineId: "line", productId: "prod_cost", name: "Collar con costo", quantity: 10, unitCost: 40 }],
+      costAllocations: [{ lineId: "line", merchandiseCents: 40000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 500, totalCents: 40000 }],
+    });
+    const order = { id: "profit-order", storeId: "store_olivia", customerId: "customer_1", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Collar con costo" } });
+    // $100.00 (precio Iconic) − $40.00 (costo) − $0.50 (entrega 50¢/pieza) = $59.50.
+    expect(screen.getByText("Ganancia")).toBeInTheDocument();
+    expect(screen.getByText("$59.50")).toBeInTheDocument();
+    rendered.unmount();
+    state.products.pop();
+    state.purchases.pop();
+  });
+
+  it("keeps the estimate honest when no line has a cost", () => {
+    const order = { id: "no-cost-order", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo sin costo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    expect(screen.getByText("Ganancia")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
     rendered.unmount();
   });
 });
