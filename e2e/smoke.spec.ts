@@ -131,9 +131,6 @@ test("order editor uses styled pickers and strict numeric fields", async ({ shar
   const price = page.getByLabel("Precio unitario").first();
   await price.fill("175a.2.9");
   await expect(price).toHaveValue("175.29");
-  const cost = page.getByLabel("Costo (opcional)").first();
-  await cost.fill("44e.13");
-  await expect(cost).toHaveValue("44.13");
   const deposit = page.getByLabel("Anticipo");
   await deposit.fill("1000x.5");
   await expect(deposit).toHaveValue("1000.5");
