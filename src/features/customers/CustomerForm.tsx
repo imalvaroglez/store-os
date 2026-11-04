@@ -99,7 +99,7 @@ export function CustomerForm({
             />
           </div>
           <p className="text-xs text-on-surface-soft mt-1.5">
-            El beneficio Iconic se renueva solo con cada pedido mayor a $1,000 dentro de la vigencia
+            El beneficio Iconic se activa al liquidar un pedido de $1,000 o más, y se renueva con cualquier pedido liquidado dentro de la vigencia
             (30 días más). Estas fechas solo agregan una vigencia manual, por ejemplo para otorgarlo a mano.
           </p>
         </div>

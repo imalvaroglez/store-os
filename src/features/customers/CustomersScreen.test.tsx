@@ -22,11 +22,12 @@ const customer = (id: string, name: string, storeId = OLIVIA): Customer => ({
   id, storeId, name, createdAt: daysAgo(90), updatedAt: daysAgo(90),
 });
 
-// A captured (delivered) order strictly above $1,000 at `daysAgo`.
+// A LIQUIDATED order above $1,000 at `daysAgo` (money is the event, PO 2026-11-03).
 const qualifyingOrder = (id: string, customerId: string, days: number, storeId = OLIVIA): Order => ({
   id, storeId, customerId,
   items: [{ lineId: "L0", productName: "Collar", quantity: 2, unitPrice: 600, subtotal: 1200 }],
   deposit: 0, orderStatus: "delivered", paymentStatus: "paid",
+  paymentsReceivedCents: 120000,
   createdAt: daysAgo(days), updatedAt: daysAgo(days), schemaVersion: 2,
 });
 
