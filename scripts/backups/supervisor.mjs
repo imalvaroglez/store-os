@@ -7,8 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { atomicJson, BACKUP_NAME, exists, readJson } from './core.mjs';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function processListing(args, maxBuffer) {
+  try {
+    return execFileSync('/bin/ps', args, { encoding: 'utf8', timeout: 5000, maxBuffer, env: { ...process.env, TZ: 'UTC', LC_ALL: 'C' } });
+  } catch (error) {
+    if (error.code === 'ETIMEDOUT') throw new Error('PROCESS_INSPECTION_TIMEOUT');
+    throw error;
+  }
+}
 function processes() {
-  const text = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,stat=,lstart='], { encoding: 'utf8', timeout: 1000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, TZ: 'UTC', LC_ALL: 'C' } });
+  const text = processListing(['-axo', 'pid=,ppid=,stat=,lstart='], 4 * 1024 * 1024);
   return new Map(text.split('\n').flatMap(row => {
     const match = row.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
     return match ? [[Number(match[1]), { parent: Number(match[2]), state: match[3], born: match[4].trim() }]] : [];
@@ -24,7 +32,7 @@ export async function startSupervisor(root, timeoutMs = 180000, destination) {
   let exitCode;
   const ended = new Promise(resolve => { child.once('error', () => { exitCode = 1; resolve(1); }); child.once('exit', code => { exitCode = code ?? 1; resolve(exitCode); }); });
   const session = { root, child, ended, exitCode: () => exitCode, stopped: false };
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 300; i++) {
     if (await exists(path.join(root, 'supervisor-ready.json'))) return session;
     if (exitCode !== undefined) throw new Error('VERIFICATION_SUPERVISOR_FAILED');
     await delay(50);
@@ -51,9 +59,10 @@ export async function stopSupervisor(session) {
 }
 export async function cleanupStaleWorkspaces(home) {
   const { readdir } = await import('node:fs/promises');
+  const candidates = (await readdir(home)).filter(name => name.startsWith('capture-'));
+  if (!candidates.length) return;
   const live = processes();
-  for (const name of await readdir(home)) {
-    if (!name.startsWith('capture-')) continue;
+  for (const name of candidates) {
     const root = path.join(home, name);
     let owner;
     try { owner = await readJson(path.join(root, 'supervisor-ready.json')); } catch { /* Interrupted before supervision or an older version. */ }
@@ -73,7 +82,7 @@ async function supervise(bootstrap) {
   function track() {
     const snapshot = processes();
     // Environment tagging also finds detached children whose launcher already exited.
-    const tagged = execFileSync('/bin/ps', ['axeww', '-o', 'pid=,command='], { encoding: 'utf8', timeout: 1000, maxBuffer: 32 * 1024 * 1024 });
+    const tagged = processListing(['axeww', '-o', 'pid=,command='], 32 * 1024 * 1024);
     for (const row of tagged.split('\n')) {
       const match = row.match(/^\s*(\d+)\s+(.+)$/);
       if (match && match[2].split(/\s+/).includes(token) && snapshot.has(Number(match[1]))) owned.set(Number(match[1]), snapshot.get(Number(match[1])).born);
