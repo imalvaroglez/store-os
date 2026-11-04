@@ -90,6 +90,25 @@ function checkFirebaseAliases() {
   pass(`.firebaserc → dev por defecto; production → ${PROD_PROJECT_ID}.`);
 }
 
+function checkFirebaseConfig(env) {
+  const required = [
+    "VITE_FIREBASE_API_KEY",
+    "VITE_FIREBASE_AUTH_DOMAIN",
+    "VITE_FIREBASE_PROJECT_ID",
+    "VITE_FIREBASE_STORAGE_BUCKET",
+    "VITE_FIREBASE_SENDER_ID",
+    "VITE_FIREBASE_APP_ID",
+  ];
+  const missing = required.filter((key) => !String(env[key] || "").trim());
+  if (missing.length) fail(`faltan variables públicas de Firebase: ${missing.join(", ")}.`);
+  if (env.VITE_FIREBASE_EMULATOR && !["true", "false"].includes(env.VITE_FIREBASE_EMULATOR)) {
+    fail("VITE_FIREBASE_EMULATOR solo puede ser 'true' o 'false'.");
+  }
+  if (env.VITE_FIREBASE_EMULATOR === "true" && env.VITE_VERCEL_ENV) {
+    fail("El emulador solo puede usarse en desarrollo local, no en Preview ni producción.");
+  }
+}
+
 /**
  * @param {string|null|undefined} vercelEnv
  * @param {string|null|undefined} projectId
@@ -134,6 +153,7 @@ if (require.main === module) {
   } else {
     loadLocalEnv();
     checkFirebaseAliases();
+    checkFirebaseConfig(process.env);
     const localCommand = process.argv.includes("--local");
     const vercelEnv = localCommand ? undefined : process.env.VITE_VERCEL_ENV;
     check(vercelEnv, process.env.VITE_FIREBASE_PROJECT_ID);

@@ -1,42 +1,53 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { AppShell } from "./AppShell";
 import { StoreProvider } from "./StoreProvider";
 import { fixtureState } from "../lib/testFixtures";
-import { saveState } from "../lib/storage";
 import { ToastProvider } from "../design-system";
 import { ThemeProvider } from "../design-system/theme";
-import type { AppUser } from "./firebase/auth";
 
-const authState: { user: AppUser } = { user: { uid: "uid_fer", email: "fer@olivia.mx", role: "member" } };
-vi.mock("./firebase/config", () => ({
-  isFirebaseConfigured: () => false,
-  getFirebase: () => { throw new Error("Firebase no está configurado en esta prueba."); },
+const mocks = vi.hoisted(() => ({
+  user: { uid: "uid_fer", email: "fer@olivia.mx", role: "member" as "member" | "super_admin" },
+  loadCloudState: vi.fn(),
 }));
 vi.mock("./firebase/AuthProvider", () => ({
+  AuthProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   useAuth: () => ({
-    user: authState.user,
+    user: mocks.user,
     authReady: true,
-    enabled: false,
+    enabled: true,
+    error: null,
     signOut: async () => {},
   }),
 }));
+vi.mock("./firebase/firestoreData", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./firebase/firestoreData")>();
+  return {
+    ...actual,
+    loadCloudState: mocks.loadCloudState,
+    subscribeCloudState: vi.fn(() => () => {}),
+    saveEntity: vi.fn(async () => {}),
+    projectPublicForStore: vi.fn(async () => {}),
+  };
+});
 
 beforeEach(() => {
   const state = fixtureState();
-  state.stores[0].ownerUid = authState.user.uid;
+  state.stores[0].ownerUid = mocks.user.uid;
   window.history.replaceState({}, "", "/productos");
-  saveState(state);
+  mocks.loadCloudState.mockReset();
+  mocks.loadCloudState.mockImplementation(async () => state);
 });
 
 afterEach(() => {
-  authState.user = { uid: "uid_fer", email: "fer@olivia.mx", role: "member" };
+  mocks.user = { uid: "uid_fer", email: "fer@olivia.mx", role: "member" };
 });
 
 describe("AppShell configuración de tienda", () => {
-  it("abre Administrar tienda como vista propia y deja Opciones para cuenta/tema", () => {
+  it("abre Administrar tienda como vista propia y deja Opciones para cuenta/tema", async () => {
     render(
       <ThemeProvider>
         <ToastProvider>
@@ -46,6 +57,8 @@ describe("AppShell configuración de tienda", () => {
         </ToastProvider>
       </ThemeProvider>
     );
+
+    await waitFor(() => expect(screen.getAllByText("Olivia").length).toBeGreaterThan(0));
 
     fireEvent.click(screen.getAllByRole("button", { name: "Tienda" })[0]);
 
@@ -57,11 +70,11 @@ describe("AppShell configuración de tienda", () => {
     expect(screen.getByText("Tema")).toBeTruthy();
   });
 
-  it("también permite administrar cualquier tienda a un superadministrador", () => {
-    authState.user = { uid: "uid_admin", email: "admin@store.os", role: "super_admin" };
+  it("también permite administrar cualquier tienda a un superadministrador", async () => {
+    mocks.user = { uid: "uid_admin", email: "admin@store.os", role: "super_admin" };
     const state = fixtureState();
     state.stores[0].ownerUid = "uid_fer";
-    saveState(state);
+    mocks.loadCloudState.mockImplementation(async () => state);
 
     render(
       <ThemeProvider>
@@ -73,13 +86,15 @@ describe("AppShell configuración de tienda", () => {
       </ThemeProvider>
     );
 
+    await waitFor(() => expect(screen.getAllByText("Olivia").length).toBeGreaterThan(0));
+
     fireEvent.click(screen.getAllByRole("button", { name: "Tienda" })[0]);
 
     expect(screen.getByText("Teléfono de WhatsApp")).toBeTruthy();
   });
 
-  it("bloquea la ruta directa a un member que no es dueño", () => {
-    authState.user = { uid: "uid_mar", email: "mar@olivia.mx", role: "member" };
+  it("bloquea la ruta directa a un member que no es dueño", async () => {
+    mocks.user = { uid: "uid_mar", email: "mar@olivia.mx", role: "member" };
     window.history.replaceState({}, "", "/tienda/configuracion");
 
     render(
@@ -92,12 +107,14 @@ describe("AppShell configuración de tienda", () => {
       </ThemeProvider>
     );
 
+    await waitFor(() => expect(screen.getByRole("heading", { name: "No tienes permiso" })).toBeTruthy());
+
     expect(screen.getByRole("heading", { name: "No tienes permiso" })).toBeTruthy();
     expect(screen.queryByText("Teléfono de WhatsApp")).toBeNull();
   });
 
-  it("oculta Usuarios a member y bloquea la ruta directa", () => {
-    authState.user = { uid: "uid_mar", email: "mar@olivia.mx", role: "member" };
+  it("oculta Usuarios a member y bloquea la ruta directa", async () => {
+    mocks.user = { uid: "uid_mar", email: "mar@olivia.mx", role: "member" };
     window.history.replaceState({}, "", "/productos");
 
     render(
@@ -110,20 +127,21 @@ describe("AppShell configuración de tienda", () => {
       </ThemeProvider>
     );
 
+    await waitFor(() => expect(screen.getAllByText("Olivia").length).toBeGreaterThan(0));
     expect(screen.queryByRole("button", { name: "Usuarios" })).toBeNull();
     act(() => {
       window.history.replaceState({}, "", "/usuarios");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    expect(screen.getByRole("heading", { name: "No tienes permiso" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "No tienes permiso" })).toBeTruthy());
   });
 
   it("expone la ruta Usuarios a super_admin en navegación móvil y de escritorio", async () => {
-    authState.user = { uid: "uid_admin", email: "admin@store.os", role: "super_admin" };
+    mocks.user = { uid: "uid_admin", email: "admin@store.os", role: "super_admin" };
     window.history.replaceState({}, "", "/usuarios");
     const state = fixtureState();
     state.stores[0].ownerUid = "uid_fer";
-    saveState(state);
+    mocks.loadCloudState.mockImplementation(async () => state);
 
     render(
       <ThemeProvider>
@@ -135,7 +153,7 @@ describe("AppShell configuración de tienda", () => {
       </ThemeProvider>
     );
 
-    expect(screen.getAllByRole("button", { name: "Usuarios" })).toHaveLength(2);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Usuarios" })).toHaveLength(2));
     expect(await screen.findByRole("heading", { name: "No se pudo cargar la lista" })).toBeTruthy();
   });
 });

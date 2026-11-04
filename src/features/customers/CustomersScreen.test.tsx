@@ -1,12 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import { StoreProvider } from "../../app/StoreProvider";
-import { AuthProvider } from "../../app/firebase/AuthProvider";
 import { ToastProvider } from "../../design-system";
 import { CustomersScreen } from "./CustomersScreen";
 import { fixtureState } from "../../lib/testFixtures";
-import { saveState } from "../../lib/storage";
 import type { AppState, Customer, Order } from "../../types";
 
 // FER-05 panel visibility: the Clientes screen must answer "quién está Iconic,
@@ -31,16 +28,23 @@ const qualifyingOrder = (id: string, customerId: string, days: number, storeId =
   createdAt: daysAgo(days), updatedAt: daysAgo(days), schemaVersion: 2,
 });
 
+// Direct useStore mock: synchronous mount, no hydration race (#111 removed
+// browser-storage state; the cloud mount is async and these are view tests).
+const mocks = vi.hoisted(() => ({ state: null as null | AppState, deleteCustomer: vi.fn() }));
+vi.mock("../../app/StoreProvider", () => ({
+  useStore: () => ({
+    state: mocks.state,
+    activeStore: mocks.state?.stores.find((st) => st.id === mocks.state!.activeStoreId) ?? null,
+    deleteCustomer: mocks.deleteCustomer,
+  }),
+}));
+
 function renderClientes(state: AppState) {
-  saveState(state);
+  mocks.state = state;
   return render(
-    <AuthProvider>
-      <StoreProvider>
-        <ToastProvider>
-          <CustomersScreen />
-        </ToastProvider>
-      </StoreProvider>
-    </AuthProvider>
+    <ToastProvider>
+      <CustomersScreen />
+    </ToastProvider>
   );
 }
 

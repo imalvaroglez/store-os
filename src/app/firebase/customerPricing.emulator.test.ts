@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
-vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
+vi.mock("./config", () => ({ FIREBASE_EMULATOR_ENABLED: false, getFirebase: () => ({ db: holder.db }) }));
 import { saveEntity } from "./firestoreData";
 let env: RulesTestEnvironment;
 

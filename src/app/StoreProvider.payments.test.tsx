@@ -10,7 +10,7 @@ const hooks = vi.hoisted(() => ({
   snapshot: null as ((state: AppState) => void) | null,
 }));
 vi.mock("./firebase/AuthProvider", () => ({ useAuth: () => ({ user: hooks.user }) }));
-vi.mock("./firebase/config", () => ({ isFirebaseConfigured: () => true }));
+vi.mock("./firebase/config", () => ({ isFirebaseConfigured: () => true, FIREBASE_EMULATOR_ENABLED: false }));
 vi.mock("../lib/storage", () => ({
   loadState: () => ({ stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] }),
   loadPreferredStoreId: () => null, savePreferredStoreId: vi.fn(), saveState: vi.fn(),
