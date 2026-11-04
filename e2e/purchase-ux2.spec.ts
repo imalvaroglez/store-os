@@ -180,10 +180,12 @@ test("one journey receives two suppliers and distributes 44 pesos over 70 pieces
   const allocations = saved.fields.costAllocations.arrayValue.values;
   expect(allocations.reduce((sum: number, entry: { mapValue: { fields: { sourcingExpenseCents: { integerValue: string } } } }) => sum + Number(entry.mapValue.fields.sourcingExpenseCents.integerValue), 0)).toBe(4400);
   // The purchase form freezes its draft at mount; the listener delivers the
-  // received status asynchronously, so wait for the LIST to show "Recibida"
+  // received status asynchronously, so wait for THIS journey's row to show its
+  // "Recibida" badge (a bare text match can hit another seeded purchase)
   // before reopening — otherwise the form can mount from a stale snapshot.
-  await expect(page.getByText("Recibida").first()).toBeVisible();
-  await page.getByRole("heading", { name: "Centro joyero QA", exact: true }).click();
+  const journeyHeading = page.getByRole("heading", { name: "Centro joyero QA", exact: true });
+  await expect(journeyHeading.locator("xpath=..").getByText("Recibida")).toBeVisible();
+  await journeyHeading.click();
   await expect(page.getByRole("button", { name: "Recibir mercancía" })).toHaveCount(0);
   await page.getByLabel("Ticket que estás revisando").selectOption({ label: "#QA-T-A · Proveedor Centro QA" });
   await expect(page.getByLabel("Folio del ticket")).toHaveValue("QA-T-A");
