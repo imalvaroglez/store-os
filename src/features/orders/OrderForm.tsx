@@ -317,21 +317,30 @@ export function OrderForm({
   }, [deposit, lines]);
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
   // pieza. Only lines with content enter the estimate; an empty placeholder
-  // line is not "sin costo".
-  const profitView = useMemo(() => itemsProfitBreakdown(
-    lines
-      .filter((line) => line.productId || line.productName.trim())
-      .map((line) => ({
-        ...(line.productId ? { productId: line.productId } : {}),
-        productName: line.productName,
-        quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
-        unitPrice: numberFromText(line.unitPriceText),
-        subtotal: 0,
-        ...(line.cost != null && line.cost >= 0 ? { cost: line.cost } : {}),
-      })),
-    order.storeId,
-    state.purchases,
-  ), [lines, order.storeId, state.purchases]);
+  // line is not "sin costo". An unsafe amount throws RangeError here too —
+  // swallow it exactly like `totals` does so the form stays mounted and the
+  // existing warning (plus the disabled Guardar) covers the operator.
+  const profitView = useMemo(() => {
+    try {
+      return itemsProfitBreakdown(
+        lines
+          .filter((line) => line.productId || line.productName.trim())
+          .map((line) => ({
+            ...(line.productId ? { productId: line.productId } : {}),
+            productName: line.productName,
+            quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
+            unitPrice: numberFromText(line.unitPriceText),
+            subtotal: 0,
+            ...(line.cost != null && line.cost >= 0 ? { cost: line.cost } : {}),
+          })),
+        order.storeId,
+        state.purchases,
+      );
+    } catch (error) {
+      if (error instanceof RangeError) return null;
+      throw error;
+    }
+  }, [lines, order.storeId, state.purchases]);
 
   // #165: the agreement preview — derived live from the order total ÷ cuotas
   // with exact cents, dates derived from the first due date + frequency. Shown
@@ -811,10 +820,10 @@ export function OrderForm({
           <StatRow label="Saldo" tone={totals && totals.balance > 0 ? "danger" : "success"}>{totals ? <Money exact amount={totals.balance} /> : "—"}</StatRow>
           <StatRow
             label="Ganancia"
-            tone={profitView.profitCents != null && profitView.profitCents < 0 ? "danger" : "default"}
-          >{profitView.profitCents == null ? "—" : <Money exact amount={profitView.profitCents / 100} />}</StatRow>
+            tone={profitView?.profitCents != null && profitView.profitCents < 0 ? "danger" : "default"}
+          >{profitView?.profitCents == null ? "—" : <Money exact amount={profitView.profitCents / 100} />}</StatRow>
         </div>
-        {profitView.profitCents != null && profitView.linesWithoutCost > 0 && (
+        {profitView?.profitCents != null && profitView.linesWithoutCost > 0 && (
           <p className="text-xs text-on-surface-soft mt-1">
             {profitView.linesWithoutCost} {profitView.linesWithoutCost === 1 ? "línea sin costo no cuenta" : "líneas sin costo no cuentan"} en la ganancia.
           </p>
