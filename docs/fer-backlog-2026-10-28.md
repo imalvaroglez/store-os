@@ -1,8 +1,9 @@
 # Olivia: necesidades de Fer y backlog de trabajo
 
-> Antecedente al 28 de octubre. El orden y los estados vigentes se encuentran en
-> [el plan del 1 de noviembre](fer-action-plan-2026-11-01.md) y
-> [backlog.json](backlog.json). No usar las prioridades originales como una cola paralela.
+> Antecedente al 28 de octubre. El estado y la cola viven en el
+> [tablero Store OS](https://github.com/users/imalvaroglez/projects/1). El
+> [plan del 1 de noviembre](fer-action-plan-2026-11-01.md) conserva decisiones
+> y secuencia de ciclos; no actualizar los estados históricos de este documento.
 
 Fecha: 28 de octubre de 2026. Fuente: entrevista dictada por Álvaro y Fer en
 este chat. Fer es la dueña y operadora principal de Olivia.

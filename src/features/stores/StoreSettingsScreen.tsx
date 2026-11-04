@@ -305,7 +305,13 @@ export function StoreSettingsScreen({
           <div key={uid} className="flex items-center justify-between bg-surface rounded-md px-3 py-2 ring-1 ring-edge">
             <span className="text-sm text-ink">{uid === user?.uid ? "Tú" : uid.slice(0, 8)}</span>
             {isOwnerOrAdmin && uid !== user?.uid && (
-              <Button size="sm" variant="ghost" onClick={() => removeMember(store!.id, uid)}>
+              <Button size="sm" variant="ghost" onClick={async () => {
+                try {
+                  await removeMember(store!.id, uid);
+                } catch {
+                  toast.error("No se pudo quitar a la persona de la tienda. Intenta de nuevo.");
+                }
+              }}>
                 Quitar
               </Button>
             )}

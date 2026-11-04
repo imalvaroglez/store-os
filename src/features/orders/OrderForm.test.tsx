@@ -148,6 +148,23 @@ describe("retrying a new order after an interruption", () => {
     expect(mockUpsertOrder.mock.calls[1][1].mutationId).toBe(firstOptions.mutationId);
     again.unmount();
   });
+
+  it("shows the failure in Spanish, keeps the capture and never claims success", async () => {
+    localStorage.clear();
+    mockUpsertOrder.mockReset().mockRejectedValueOnce(new Error("offline"));
+    const onDone = vi.fn();
+    const order = { id: "failed-save", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    const rendered = render(<ToastProvider><OrderForm order={order} isNew onDone={onDone} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(screen.getByText(/No se pudo guardar el pedido/)).toBeInTheDocument());
+    // No false success: the saved toast never appears and the editor stays open.
+    expect(screen.queryByText("Pedido guardado")).toBeNull();
+    expect(onDone).not.toHaveBeenCalled();
+    // The captured line is still on screen, ready to retry.
+    expect(screen.getByDisplayValue("Anillo")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeEnabled());
+    rendered.unmount();
+  });
 });
 
 describe("acknowledged order drafts", () => {
