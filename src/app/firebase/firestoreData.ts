@@ -514,7 +514,7 @@ export async function registerOrderPaymentTx(
     // Unsafe precision aborts the whole registration (fail-closed on writes).
     let savedCents: number;
     try {
-      savedCents = signedAmountCents(payment.amount) + (inherited ? signedAmountCents(inherited.amount) : 0);
+      savedCents = signedAmountCents(payment.amount) + (inheritedRecord ? signedAmountCents(inheritedRecord.amount) : 0);
     } catch (error) {
       if (error instanceof RangeError) {
         throw new Error("El monto del cobro excede la precisión admitida.");
