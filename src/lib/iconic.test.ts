@@ -53,6 +53,29 @@ describe("iconic activation", () => {
     });
   });
 
+  it("a fully refunded materialized deposit leaves the order NOT liquidated (Codex repro 1)", () => {
+    // $1,200 order, $1,200 inherited deposit already materialized, then a
+    // -$1,200 adjustment: the canonical saldo sees $0 received — no Iconic.
+    const refunded = order({
+      deposit: 1200,
+      paymentsReceivedCents: 0,
+      inheritedDepositMaterialized: true,
+    });
+    expect(iconicStatus(customer(), [refunded], NOW)).toBeNull();
+  });
+
+  it("a PENDING inherited deposit plus a positive adjustment can liquidate (Codex repro 2)", () => {
+    // $1,200 order, $1,100 deposit pending materialization + $100 adjustment
+    // in the accumulator: canonical received = $1,200 → Iconic activates.
+    const liquidatedByMix = order({
+      deposit: 1100,
+      paymentsReceivedCents: 10000,
+      inheritedDepositMaterialized: undefined,
+    });
+    const status = iconicStatus(customer(), [liquidatedByMix], NOW);
+    expect(status?.active).toBe(true);
+  });
+
   it("capturing WITHOUT money does NOT activate (PO 2026-11-03: money is the event)", () => {
     const unpaid = order({ orderStatus: "asked", paymentStatus: "unpaid", paymentsReceivedCents: 0 });
     expect(iconicStatus(customer(), [unpaid], NOW)).toBeNull();

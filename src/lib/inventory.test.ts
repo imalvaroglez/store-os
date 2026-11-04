@@ -121,6 +121,28 @@ describe("committedForProduct", () => {
     const orders = [order({ storeId: "s2", productId: "p1", quantity: 7, status: "asked" })];
     expect(committedForProduct(orders, "s1", "p1")).toBe(0);
   });
+  it("counts a plan WITHOUT abonos as committed — creation reserves (R8, Codex repro)", () => {
+    // 10 on hand, plan order for 2, no money: the shelf deducted 2 at
+    // creation, so Disponible 8 / Comprometido 2 / Físico 10.
+    const plan: Order = {
+      id: "plan", storeId: "s1", customerId: "c1", deposit: 0,
+      items: [{ lineId: "l1", productId: "p1", productName: "X", quantity: 2, unitPrice: 10, subtotal: 20 }],
+      orderStatus: "asked", paymentStatus: "unpaid", createdAt: "", updatedAt: "",
+      installments: { count: 3, frequency: "monthly", firstDueDate: "2026-11-15", agreedAt: "", agreedBy: "u1" },
+    };
+    expect(committedForProduct([plan], "s1", "p1")).toBe(2);
+  });
+  it("keeps counting money-backed pieces after cancellation; delivered leaves the count", () => {
+    const backed = (orderStatus: Order["orderStatus"]): Order => ({
+      id: "backed", storeId: "s1", customerId: "c1", deposit: 0,
+      items: [{ lineId: "l1", productId: "p1", productName: "X", quantity: 2, unitPrice: 10, subtotal: 20 }],
+      orderStatus, paymentStatus: "unpaid", createdAt: "", updatedAt: "",
+      installments: { count: 2, frequency: "monthly", firstDueDate: "2026-11-15", agreedAt: "", agreedBy: "u1" },
+      installmentsReservedAt: "2026-11-02T10:00:00.000Z",
+    });
+    expect(committedForProduct([backed("cancelled")], "s1", "p1")).toBe(2); // dinero las sostiene
+    expect(committedForProduct([backed("delivered")], "s1", "p1")).toBe(0); // ya consumidas
+  });
 });
 
 describe("multi-product order reservations", () => {
@@ -246,8 +268,8 @@ describe("installment reservation visibility and identity (#171 C3)", () => {
     orderStatus: "asked", paymentStatus: "unpaid", createdAt: "", updatedAt: "",
     installments: plan, ...overrides,
   });
-  it("does not commit stock before the first abono", () => {
-    expect(committedForProduct([make()], "s1", "p1")).toBe(0);
+  it("commits stock from creation — R8 reserves early (Codex repro)", () => {
+    expect(committedForProduct([make()], "s1", "p1")).toBe(2);
   });
   it("shows retained cancelled reservations but excludes delivered and foreign orders", () => {
     const reserved = { installmentsReservedAt: "2026-11-02" };
