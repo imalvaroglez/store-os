@@ -101,10 +101,20 @@ export function reservationDeltas(oldItems: OrderItem[], newItems: OrderItem[]):
  * either way it is out of the shelf); cancelled orders hold none. Cancelling a
  * delivered sale returns the goods; re-delivering takes them again, so every
  * cycle nets to exactly one consumption. Stateless — no provenance flag.
+ *
+ * Installment orders (PO decision 2026-11-03 R8, replacing the #165 deferral):
+ * a plan reserves AT CREATION exactly like an ordinary order. Once money backs
+ * the pieces (`installmentsReservedAt` witness or `paymentsReceivedCents` > 0)
+ * they STAY held — even after cancellation — because money was received
+ * against them: releasing stock or refunding is an explicit human action,
+ * never an inference.
  */
 export function reservationDeltasForOrderChange(previous: Order | undefined, next: Order): Map<string, number> {
   const heldItems = (order: Order | undefined): OrderItem[] => {
     if (!order) return [];
+    if (order.installments && (order.installmentsReservedAt || (order.paymentsReceivedCents ?? 0) > 0)) {
+      return orderItems(order);
+    }
     const status = effectiveOrderStatus(order);
     return orderStatusIsOpen(status) || status === "delivered" ? orderItems(order) : [];
   };

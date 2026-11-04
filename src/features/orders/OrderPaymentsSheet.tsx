@@ -12,16 +12,24 @@ import {
 } from "../../design-system";
 import { todayIso } from "../../lib/dates";
 import { uid } from "../../lib/ids";
+import { sanitizeMoneyInput } from "../../lib/money";
 import type { Order, OrderPayment } from "../../types";
 import { PAYMENT_METHOD_LABELS, paymentSummary } from "./payments";
+import { INSTALLMENT_FREQUENCY_LABELS, installmentPlanView } from "./installments";
 
 function paymentDateLabel(p: OrderPayment): string {
   if (!p.date) return "Fecha desconocida";
-  // "T00:00:00" is load-bearing: a bare yyyy-mm-dd parses as UTC and shows the
-  // previous day in Mexico (UTC-6), same trap OrderCard documents.
-  const d = new Date(`${p.date}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? "Fecha desconocida" : d.toLocaleDateString("es-MX");
+  return formatDateLabel(p.date);
 }
+
+// "T00:00:00" is load-bearing: a bare yyyy-mm-dd parses as UTC and shows the
+// previous day in Mexico (UTC-6), same trap OrderCard documents.
+function formatDateLabel(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("es-MX");
+}
+
+const CUOTA_LABELS = { covered: "Cubierta", partial: "Parcial", pending: "Pendiente" } as const;
 
 /**
  * Per-order payments (#123): chronological evidence + received/balance and a
@@ -67,6 +75,10 @@ export function OrderPaymentsSheet({
 
   const summary = paymentSummary(order, payments);
   const owed = summary.balanceCents > 0;
+  // #165/#168: the expected calendar for plan orders. The calendar's money
+  // comes from the order DOC (transactional accumulator) — by construction the
+  // same Σ as the records listed below; the breakdown loads with this sheet.
+  const plan = installmentPlanView(order);
 
   async function save(input: Parameters<typeof registerOrderPayment>[1], onDone: () => void) {
     setSaving(true);
@@ -165,6 +177,56 @@ export function OrderPaymentsSheet({
           </div>
         )}
 
+        {plan && (
+          <section className="space-y-2" aria-label="Calendario previsto">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-sm font-semibold text-on-surface">Calendario previsto</h4>
+              <Badge tone={plan.coveredCount === plan.cuotas.length ? "success" : "neutral"}>
+                {plan.coveredCount} de {plan.cuotas.length} cubiertas
+              </Badge>
+            </div>
+            <p className="text-xs text-on-surface-soft">
+              {INSTALLMENT_FREQUENCY_LABELS[plan.plan.frequency]} · última fecha {formatDateLabel(plan.lastDueDate)}
+              {plan.lateCount > 0 && ` · ${plan.lateCount} ${plan.lateCount === 1 ? "cuota atrasada" : "cuotas atrasadas"} (informativo)`}
+            </p>
+            <ul className="divide-y divide-edge">
+              {plan.cuotas.map((cuota) => (
+                <li key={cuota.index} className="py-2 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm text-on-surface">
+                      Cuota {cuota.index} · {formatDateLabel(cuota.dueDate)}
+                    </p>
+                    <p className="text-xs text-on-surface-soft">
+                      Cubierto: <Money exact amount={cuota.coveredCents / 100} /> de{" "}
+                      <Money exact amount={cuota.amountCents / 100} />
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="serif-display tnum">
+                      <Money exact amount={cuota.amountCents / 100} />
+                    </span>
+                    {cuota.late ? (
+                      <Badge tone="warning">Atrasada</Badge>
+                    ) : (
+                      <Badge tone={cuota.status === "covered" ? "success" : cuota.status === "partial" ? "warning" : "neutral"}>
+                        {CUOTA_LABELS[cuota.status]}
+                      </Badge>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-on-surface-soft">
+              {plan.reserved
+                ? "Piezas apartadas desde el primer abono confirmado."
+                : "El pedido se aparta con el primer abono confirmado."}
+              {plan.deliveryBlocked
+                ? " La entrega se habilita al liquidar el total."
+                : " Total liquidado: puedes confirmar la entrega manualmente."}
+            </p>
+          </section>
+        )}
+
         {summary.records.length > 0 ? (
           <ul className="divide-y divide-edge" aria-label="Cobros registrados">
             {summary.records.map((p) => (
@@ -203,7 +265,7 @@ export function OrderPaymentsSheet({
               inputMode="decimal"
               placeholder="0.00"
               value={amountText}
-              onChange={(e) => setAmountText(e.target.value)}
+              onChange={(e) => setAmountText(sanitizeMoneyInput(e.target.value))}
             />
             <SelectField
               label="Método"
@@ -241,7 +303,7 @@ export function OrderPaymentsSheet({
                 inputMode="decimal"
                 placeholder="-150 para devolver"
                 value={adjustAmountText}
-                onChange={(e) => setAdjustAmountText(e.target.value)}
+                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value))}
               />
               <TextField
                 label="Motivo"

@@ -208,12 +208,25 @@ service cloud.firestore {
     // but the parent is the trustworthy scope, so a payment can never attach to
     // another store's order. Records are immutable evidence (corrections are NEW
     // signed docs): update/delete are denied to everyone, super_admin included.
+    // #168 F5: create also validates CONTENT — a real amount inside safe cents
+    // precision (|amount| ≤ 9e12), known method/kind enums, cobros strictly
+    // positive, adjustments non-zero and signed WITH their note (the evidence).
     // Each rule get() of the parent order counts as one Firestore read.
     match /orders/{orderId}/payments/{paymentId} {
       allow get, list: if canOperateStore(get(/databases/$(database)/documents/orders/$(orderId)).data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
         && request.resource.data.orderId == orderId
-        && request.resource.data.storeId == get(/databases/$(database)/documents/orders/$(orderId)).data.storeId;
+        && request.resource.data.storeId == get(/databases/$(database)/documents/orders/$(orderId)).data.storeId
+        && request.resource.data.amount is number
+        && request.resource.data.amount >= -9000000000000
+        && request.resource.data.amount <= 9000000000000
+        && request.resource.data.amount != 0
+        && request.resource.data.method in ['cash', 'transfer', 'unknown']
+        && request.resource.data.kind in ['payment', 'adjustment']
+        && (request.resource.data.kind == 'adjustment'
+            || request.resource.data.amount > 0)
+        && (request.resource.data.kind != 'adjustment'
+            || (request.resource.data.note is string && request.resource.data.note.size() > 0));
       allow update: if false;
       allow delete: if false;
     }

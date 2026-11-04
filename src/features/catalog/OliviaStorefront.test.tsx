@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { OliviaStorefront } from "./OliviaStorefront";
 import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
 import type {
@@ -111,7 +111,9 @@ describe("filtro por acabado", () => {
     expect(screen.getByLabelText("Acabado")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Acabado"), { target: { value: "plateado" } });
     expect(screen.getByRole("article", { name: "Aretes Luna" })).toBeTruthy();
-    expect(screen.queryByRole("article", { name: "Anillo Blossom" })).toBeNull();
+    // The list re-renders asynchronously after the filter change — wait for the
+    // filtered-out card to leave the DOM instead of asserting synchronously.
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Anillo Blossom" })).toBeNull());
   });
 });
 
