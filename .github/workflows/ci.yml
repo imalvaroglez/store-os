@@ -83,7 +83,7 @@ jobs:
       - name: Lint (typecheck)
         run: npm run typecheck
       - name: Install backup encryption
-        run: sudo apt-get update && sudo apt-get install -y age
+        run: sudo apt-get update && sudo apt-get install -y age trash-cli
       - name: Unit + static gates
         run: npm run test
       - name: Build (${{ needs.env-select.outputs.env-name }})
@@ -139,7 +139,7 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
       - name: Backup roundtrip (local emulators only)
         run: |
-          sudo apt-get update && sudo apt-get install -y age
+          sudo apt-get update && sudo apt-get install -y age trash-cli
           npm run test:backup:emulator
       - name: Firestore rules tests (emulator)
         run: npm run test:rules

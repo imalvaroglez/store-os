@@ -1,12 +1,14 @@
+import { trash } from './trash.mjs';
+import { createServer } from 'node:net';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, cp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { DEV, command, decryptArchive, encryptDirectory, fileHash, json, readJson } from './core.mjs';
+import { DEV, PROD, command, decryptArchive, encryptDirectory, fileHash, exists, json, manifest, readJson } from './core.mjs';
 import { connect, EMULATORS, validateTarget } from './cloud.mjs';
 
 const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url));
@@ -62,6 +64,10 @@ async function invoke(config, action, args = [], env = process.env) {
   const result = await runNode([cli, action, '--config', config, ...args], env);
   return { ...result, result: result.code === 0 && result.stdout.trim() ? JSON.parse(result.stdout) : null };
 }
+async function until(predicate, timeout = 90000) {
+  const end = Date.now() + timeout;
+  while (!await predicate()) { if (Date.now() > end) throw new Error('verification checkpoint timed out'); await new Promise(resolve => setTimeout(resolve, 10)); }
+}
 async function success(config, action, args) {
   const result = await invoke(config, action, args); assert.equal(result.code, 0, result.stderr); return result.result;
 }
@@ -69,14 +75,14 @@ async function signIn(email) {
   return fetch(`http://${EMULATORS.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fixture`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }) });
 }
 
-test('operator CLI creates a usable backup and safely rejects damaged recovery attempts', { timeout: 120000 }, async t => {
+test('operator CLI creates a usable backup and safely rejects damaged recovery attempts', { timeout: 240000 }, async t => {
   Object.assign(process.env, EMULATORS);
   const root = await mkdtemp(path.join(os.tmpdir(), 'store-os-backup-cli-'));
   const home = path.join(root, 'operator-home'); await mkdir(home);
-  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home, destination: path.join(root, 'copies'), age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim(), notifications: false };
+  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home, destination: path.join(root, 'copies'), firebase: execFileSync('/usr/bin/which', ['firebase'], { encoding: 'utf8' }).trim(), age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim(), notifications: false };
   validateTarget(config, true);
   const client = await connect(config); await assertEmpty(client);
-  t.after(async () => { try { await reset(client, config); } finally { await client.close(); await rm(root, { recursive: true, force: true }); } });
+  t.after(async () => { try { await reset(client, config); } finally { await client.close(); await trash(root); } });
   const configPath = path.join(root, 'config.json');
   const recoveryHome = path.join(root, 'recovery-home'); await mkdir(recoveryHome);
   const recoveryConfig = path.join(root, 'recovery-config.json');
@@ -129,11 +135,19 @@ test('operator CLI creates a usable backup and safely rejects damaged recovery a
 
   await t.test('preflight, run and verify use the real commands, including Auth pagination', async () => {
     await json(configPath, config);
+    const mismatch = await invoke(configPath, 'check-key', ['--identity', wrongKey]); assert.equal(mismatch.code, 1); assert.match(mismatch.stderr, /RECOVERY_KEY_MISMATCH/);
+    assert.equal((await success(configPath, 'check-key', ['--identity', key])).recoveryRecipientVerified, true);
     const report = await success(configPath, 'preflight');
     assert.equal(report.users, 1004); assert.equal(report.documents, Object.keys(records).length); assert.equal(report.objects, 2);
     Object.assign(config, { reviewedPreflightSha256: report.approvalSha256, maxDocuments: 30, maxFirestoreReads: report.firestoreReadOperations + 50, maxDailyFirestoreReads: (report.firestoreReadOperations + 50) * 3, maxStorageBytes: 10000 });
     await json(configPath, config);
-    const result = await success(configPath, 'run'); assert.equal(result.completed, true);
+    const hubFile = path.join(os.tmpdir(), `hub-${DEV}.json`); const hubBefore = await readFile(hubFile, 'utf8');
+    const vaultKey = path.join(root, 'vault-identity'); await rename(key, vaultKey);
+    let result; try { result = await success(configPath, 'run'); } finally { await rename(vaultKey, key); } assert.equal(result.completed, true);
+    assert.equal(result.verification.restoreVerified, true); assert.equal(result.verification.sourceSnapshotVerified, true); assert.equal(result.verification.recoveryRecipientVerified, true);
+    assert.equal(await readFile(hubFile, 'utf8'), hubBefore, 'automatic emulators must not alter the source hub locator');
+    assert.deepEqual(documentSnapshot(await client.documents()), expectedDocs);
+    assert(!(await readdir(home)).some(name => name.startsWith('capture-')));
     archive = path.join(config.destination, result.archive);
     assert.deepEqual(await readdir(config.destination), [result.archive]);
     const bytes = await readFile(archive); assert(bytes.subarray(0, 50).toString().includes('age-encryption.org/v1'));
@@ -145,6 +159,55 @@ test('operator CLI creates a usable backup and safely rejects damaged recovery a
     await reset(client, config); await assertEmpty(client);
   });
   if (!archive || !unpacked) return;
+
+  await t.test('killing run during actual decryption cleans private material and preserves the last backup', { timeout: 120000 }, async () => {
+    await success(recoveryConfig, 'restore', ['--archive', archive, '--identity', key]);
+    const before = await readJson(path.join(home, 'state.json'));
+    await json(path.join(home, 'state.json'), { ...before, lastScheduledDate: '2000-01-01' });
+    const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+    const child = spawn(process.execPath, [cli, 'run', '--config', configPath], { env, stdio: 'ignore' });
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    let scratch;
+    try {
+      await until(async () => {
+        if (child.exitCode !== null) throw new Error('backup finished before crash checkpoint');
+        for (const entry of await readdir(home)) {
+          if (entry.startsWith('capture-')) {
+            const candidate = path.join(home, entry);
+            if (await exists(path.join(candidate, 'verification/emulators/payload/firestore.json'))) { scratch = candidate; return true; }
+          }
+        }
+        return false;
+      });
+      child.kill('SIGKILL'); await exited;
+      await until(async () => !await exists(scratch), 15000);
+      const after = await readJson(path.join(home, 'state.json'));
+      assert.equal(after.lastSuccess, before.lastSuccess); assert.deepEqual(after.verification, before.verification);
+      assert.deepEqual(await readdir(config.destination), [before.lastArchive]);
+      assert.deepEqual(documentSnapshot(await client.documents()), expectedDocs);
+      assert.equal((await client.users()).length, 1004); assert.equal((await client.files()).length, 2);
+    } finally { child.kill('SIGKILL'); await exited; }
+  });
+
+  await t.test('failed automatic restoration never publishes or replaces the last verified backup', async () => {
+    const before = await readJson(path.join(home, 'state.json'));
+    // Force a due cycle without changing its previous successful proof.
+    const originalSource = await readJson(path.join(unpacked, 'firestore.json'));
+    await client.request(`${client.base}/projects/${DEV}/databases/(default)/documents:commit`, { writes: originalSource.map(doc => ({ update: { name: `${client.root}/${doc.path}`, fields: doc.fields } })) });
+    await json(path.join(home, 'state.json'), { ...before, lastScheduledDate: '2000-01-01' });
+    const blocker = createServer(socket => socket.destroy());
+    await new Promise((resolve, reject) => { blocker.once('error', reject); blocker.listen(18080, '127.0.0.1', resolve); });
+    try {
+      const attempt = await invoke(configPath, 'run'); assert.equal(attempt.code, 1);
+    } finally { await new Promise(resolve => blocker.close(resolve)); }
+    const after = await readJson(path.join(home, 'state.json'));
+    assert.equal(after.lastScheduledDate, '2000-01-01'); assert.equal(after.lastSuccess, before.lastSuccess); assert.equal(after.lastArchive, before.lastArchive);
+    assert.deepEqual(after.verification, before.verification); assert.deepEqual(after.ownedArchives, before.ownedArchives);
+    assert.deepEqual(await readdir(config.destination), [before.lastArchive]);
+    assert(!(await readdir(home)).some(name => name.startsWith('capture-')));
+    assert.deepEqual(documentSnapshot(await client.documents()), expectedDocs);
+    await reset(client, config); await assertEmpty(client);
+  });
 
   await t.test('wrong key and truncated ciphertext reject recovery without creating data', async () => {
     const wrong = await invoke(recoveryConfig, 'restore', ['--archive', archive, '--identity', wrongKey]);
@@ -218,4 +281,19 @@ test('operator CLI creates a usable backup and safely rejects damaged recovery a
     assert.equal((await client.users()).length, 1004); assert.equal((await client.files()).length, 2);
     assert(!(await readdir(recoveryHome)).some(name => name.startsWith('capture-') || name === 'run.lock'));
   });
+  await t.test('production-shaped password material is restored and checked without production access', async () => {
+    const fixture = path.join(root, 'synthetic-scrypt'); await cp(unpacked, fixture, { recursive: true });
+    const users = await readJson(path.join(fixture, 'auth.json'));
+    for (const user of users) if (user.passwordHash) { user.passwordHash = Buffer.alloc(64, 7).toString('base64'); user.passwordSalt = Buffer.alloc(16, 9).toString('base64'); }
+    await json(path.join(fixture, 'auth.json'), users);
+    await json(path.join(fixture, 'auth-config.json'), { hashConfig: { algorithm: 'SCRYPT', signerKey: Buffer.alloc(64, 3).toString('base64'), saltSeparator: Buffer.alloc(4, 2).toString('base64'), rounds: 8, memoryCost: 14 } });
+    const prior = await readJson(path.join(fixture, 'manifest.json')); await trash(path.join(fixture, 'manifest.json'));
+    await manifest(fixture, { projectId: PROD, bucket: `${PROD}.firebasestorage.app`, counts: prior.counts });
+    const candidate = path.join(root, 'synthetic-scrypt.age'); await encryptDirectory(fixture, candidate, config.recipient, config.age);
+    const result = await success(recoveryConfig, 'verify', ['--archive', candidate, '--identity', key]);
+    assert.equal(result.verification.restoreVerified, true); assert.equal(result.verification.sourceProjectId, PROD);
+    assert.equal(result.verification.authPasswordHashesVerified, true); assert.equal(result.verification.authPasswordLoginVerified, false);
+    assert.deepEqual(documentSnapshot(await client.documents()), expectedDocs);
+  });
+
 });
