@@ -1,7 +1,8 @@
+import { trash } from './trash.mjs';
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { homedir } from 'node:os';
@@ -62,10 +63,10 @@ export async function acquireLock(home) {
       server.listen({ host: '127.0.0.1', port: LOCK_PORT, exclusive: true }, resolve);
     });
     const lock = path.join(home, 'run.lock');
-    await rm(lock, { recursive: true, force: true });
+    await trash(lock);
     await mkdir(lock, { mode: 0o700 });
     await json(path.join(lock, 'owner.json'), { pid: process.pid, startedAt: new Date().toISOString() });
-    return async () => { try { await rm(lock, { recursive: true, force: true }); } finally { await new Promise(resolve => server.close(resolve)); } };
+    return async () => { try { await trash(lock); } finally { await new Promise(resolve => server.close(resolve)); } };
   } catch (error) { server.close(); throw error; }
 }
 // Never include child stderr in exceptions: cloud errors may contain private resource names.
@@ -78,17 +79,19 @@ export async function command(executable, args, options = {}) {
   });
 }
 export function assertRecipient(recipient) { if (!/^age1[0-9a-z]{58}$/.test(recipient ?? '')) throw new Error('INVALID_RECIPIENT'); }
-export async function encryptDirectory(dir, output, recipient, age = 'age') {
-  assertRecipient(recipient);
+export async function encryptDirectory(dir, output, recipient, age = 'age', run = command) {
+  if (!Array.isArray(recipient)) assertRecipient(recipient);
   // No shell interpolation, and neither archive nor plaintext is published to iCloud.
   const archive = `${dir}.tar.gz`;
   try {
-    await command('/usr/bin/tar', ['-czf', archive, '-C', dir, '.']);
+    await run('/usr/bin/tar', ['-czf', archive, '-C', dir, '.']);
     await chmod(archive, 0o600);
-    await command(age, ['-r', recipient, '-o', output, archive]);
+    const recipients = Array.isArray(recipient) ? recipient : [recipient];
+    for (const key of recipients) assertRecipient(key);
+    await run(age, [...recipients.flatMap(key => ['-r', key]), '-o', output, archive]);
     await chmod(output, 0o600);
     const handle = await open(output, 'r'); try { await handle.sync(); } finally { await handle.close(); }
-  } finally { await rm(archive, { force: true }); }
+  } finally { await trash(archive); }
 }
 export async function safeEntries(dir) {
   const files = [];
@@ -133,18 +136,22 @@ export async function decryptArchive(input, dir, identity, age = 'age') {
     if (rows.some(row => !/^[d-]/.test(row) || !/ \.\/(?:$|manifest\.json$|firestore\.json$|auth\.json$|auth-config\.json$|storage\.json$|objects\/$|objects\/[a-f0-9]{64}$)/.test(row))) throw new Error('UNSAFE_ARCHIVE_ENTRY');
     await command('/usr/bin/tar', ['-xzf', archive, '-C', dir]);
     return await verifyDirectory(dir);
-  } finally { await rm(archive, { force: true }); }
+  } finally { await trash(archive); }
 }
-export async function publish(encrypted, destination, name) {
+export async function publish(encrypted, destination, name, verify) {
   if (!BACKUP_NAME.test(name)) throw new Error('INVALID_BACKUP_NAME');
   await privateDirectory(destination);
+  const encryptedHash = await fileHash(encrypted);
   const partial = path.join(destination, `${name}.partial`);
   try {
     await pipeline(createReadStream(encrypted), createWriteStream(partial, { flags: 'wx', mode: 0o600 }));
-    if (await fileHash(partial) !== await fileHash(encrypted)) throw new Error('COPY_FAILED');
+    if (await fileHash(partial) !== encryptedHash) throw new Error('COPY_FAILED');
     const handle = await open(partial, 'r'); try { await handle.sync(); } finally { await handle.close(); }
+    const verification = verify ? await verify(partial) : undefined;
+    if (await fileHash(partial) !== encryptedHash) throw new Error('COPY_FAILED');
     await rename(partial, path.join(destination, name));
-  } finally { await rm(partial, { force: true }); }
+    return verification;
+  } finally { await trash(partial); }
 }
 export async function prune(destination, ownedNames) {
   // Local ledger of this installation prevents deletion of unrelated or unowned iCloud files.
@@ -152,7 +159,7 @@ export async function prune(destination, ownedNames) {
   const { remove } = retention(available);
   for (const name of remove) {
     if (!(await lstat(path.join(destination, name))).isFile()) throw new Error('UNSAFE_RETENTION_ENTRY');
-    await rm(path.join(destination, name));
+    await trash(path.join(destination, name));
   }
   return ownedNames.filter(name => !remove.includes(name));
 }

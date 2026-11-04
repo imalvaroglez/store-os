@@ -2,19 +2,22 @@ import { cert, initializeApp, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 import path from 'node:path';
-import { stat } from 'node:fs/promises';
-import { DEV, PROD, fileHash, json, privateDirectory, readJson, sha256 } from './core.mjs';
+import { VERIFICATION_EMULATORS } from './verification.mjs';
+import { realpath, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { DEFAULT_HOME, DEV, PROD, fileHash, json, privateDirectory, readJson, sha256 } from './core.mjs';
 
 export const EMULATORS = { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080', FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099', FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:9199' };
 export function validateTarget(config, restore = false, env = process.env) {
   if (![DEV, PROD].includes(config.projectId) || !new RegExp(`^${config.projectId}\\.(?:firebasestorage\\.app|appspot\\.com)$`).test(config.bucket ?? '')) throw new Error('INVALID_TARGET');
+  const hosts = config.localVerification === true ? VERIFICATION_EMULATORS : EMULATORS;
   const emulatorKeys = Object.keys(env).filter(key => /EMULATOR/.test(key) && env[key]);
   if (config.projectId === PROD) {
     if (restore || emulatorKeys.length) throw new Error('PRODUCTION_TARGET_BLOCKED');
     if (!config.credentials || !config.productionReadApproved) throw new Error('PRODUCTION_APPROVAL_REQUIRED');
   } else {
-    for (const [key, value] of Object.entries(EMULATORS)) if (env[key] !== value) throw new Error('LOCAL_EMULATORS_REQUIRED');
-    const aliases = { STORAGE_EMULATOR_HOST: 'http://127.0.0.1:9199', FIREBASE_EMULATOR_HUB: '127.0.0.1:4400', FIREBASE_FIRESTORE_EMULATOR_ADDRESS: '127.0.0.1:8080' };
+    for (const [key, value] of Object.entries(hosts)) if (env[key] !== value) throw new Error('LOCAL_EMULATORS_REQUIRED');
+    const aliases = { STORAGE_EMULATOR_HOST: `http://${hosts.FIREBASE_STORAGE_EMULATOR_HOST}`, FIREBASE_EMULATOR_HUB: config.localVerification === true ? '127.0.0.1:14400' : '127.0.0.1:4400', FIREBASE_FIRESTORE_EMULATOR_ADDRESS: hosts.FIRESTORE_EMULATOR_HOST };
     if (emulatorKeys.some(k => !(k in EMULATORS) && env[k] !== aliases[k])) throw new Error('UNEXPECTED_EMULATOR');
   }
 }
@@ -22,13 +25,17 @@ export async function connect(config, restore = false) {
   validateTarget(config, restore);
   let credential;
   if (config.projectId === PROD) {
-    const serviceAccount = await readJson(config.credentials);
+    const home = await realpath(config.home); const credentialFile = await realpath(config.credentials);
+    const cloudHome = path.join(homedir(), 'Library/Mobile Documents');
+    if (home !== DEFAULT_HOME || credentialFile.startsWith(`${cloudHome}/`) || !credentialFile.startsWith(`${home}/`) || (await stat(credentialFile)).mode & 0o077) throw new Error('UNSAFE_CREDENTIAL_LOCATION');
+    const serviceAccount = await readJson(credentialFile);
     if (serviceAccount.project_id !== PROD) throw new Error('CREDENTIAL_PROJECT_MISMATCH');
     credential = cert(serviceAccount);
   }
   const app = initializeApp({ projectId: config.projectId, storageBucket: config.bucket, ...(credential ? { credential } : {}) }, `backup-${Date.now()}`);
   const auth = getAuth(app); const bucket = getStorage(app).bucket();
-  const base = config.projectId === DEV ? `http://${EMULATORS.FIRESTORE_EMULATOR_HOST}/v1` : 'https://firestore.googleapis.com/v1';
+  const hosts = config.localVerification === true ? VERIFICATION_EMULATORS : EMULATORS;
+  const base = config.projectId === DEV ? `http://${hosts.FIRESTORE_EMULATOR_HOST}/v1` : 'https://firestore.googleapis.com/v1';
   const root = `projects/${config.projectId}/databases/(default)/documents`;
   async function request(url, body, method = body ? 'POST' : 'GET') {
     const token = credential ? (await credential.getAccessToken()).access_token : 'owner';
@@ -188,7 +195,14 @@ export async function restore(client, config, dir, manifest) {
   if (actualUsers.length !== users.length || actualObjects.length !== objects.length) throw new Error('RESTORE_COUNT_MISMATCH');
   for (const user of users) {
     const actual = actualUsers.find(u => u.uid === user.uid);
-    if (!actual || user.email !== actual.email || Boolean(user.disabled) !== Boolean(actual.disabled) || JSON.stringify(sortObject(user.customClaims ?? {})) !== JSON.stringify(sortObject(actual.customClaims ?? {})) || JSON.stringify(sortObject(user.providerData ?? [])) !== JSON.stringify(sortObject(actual.providerData ?? []))) throw new Error('AUTH_VERIFY_FAILED');
+    if (actual) {
+      for (const field of ['emailVerified', 'displayName', 'phoneNumber', 'photoURL']) if ((user[field] ?? null) !== (actual[field] ?? null)) throw new Error('AUTH_VERIFY_FAILED');
+      const factors = record => (record.multiFactor?.enrolledFactors ?? []).toSorted((a, b) => a.uid.localeCompare(b.uid));
+      if (JSON.stringify(sortObject(factors(user))) !== JSON.stringify(sortObject(factors(actual)))) throw new Error('AUTH_MFA_VERIFY_FAILED');
+      for (const field of ['creationTime', 'lastSignInTime']) if (user.metadata?.[field] && user.metadata[field] !== actual.metadata?.[field]) throw new Error('AUTH_METADATA_VERIFY_FAILED');
+      if (manifest.projectId === PROD) for (const field of ['passwordHash', 'passwordSalt']) if (user[field] && !Buffer.from(user[field], 'base64').equals(Buffer.from(actual[field] ?? '', 'base64'))) throw new Error('AUTH_HASH_VERIFY_FAILED');
+    }
+    if (!actual || user.email !== actual.email || Boolean(user.disabled) !== Boolean(actual.disabled) || JSON.stringify(sortObject(user.customClaims ?? {})) !== JSON.stringify(sortObject(actual.customClaims ?? {})) || JSON.stringify(sortObject((user.providerData ?? []).toSorted((a, b) => a.providerId.localeCompare(b.providerId)))) !== JSON.stringify(sortObject((actual.providerData ?? []).toSorted((a, b) => a.providerId.localeCompare(b.providerId))))) throw new Error('AUTH_VERIFY_FAILED');
   }
   for (const entry of objects) {
     const [buffer] = await client.bucket.file(entry.metadata.name).download({ decompress: false });
@@ -196,7 +210,7 @@ export async function restore(client, config, dir, manifest) {
     const actual = actualObjects.find(m => m.name === entry.metadata.name);
     for (const key of mutableMetadata) if (entry.metadata[key] !== undefined && JSON.stringify(sortObject(actual[key])) !== JSON.stringify(sortObject(entry.metadata[key]))) throw new Error('STORAGE_METADATA_VERIFY_FAILED');
   }
-  return { verified: true, counts: manifest.counts, authPasswordLoginVerified: false };
+  return { verified: true, counts: manifest.counts, authPasswordHashesVerified: manifest.projectId === PROD, authPasswordLoginVerified: false };
 }
 function sortObject(value) {
   if (Array.isArray(value)) return value.map(sortObject);

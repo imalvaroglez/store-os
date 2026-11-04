@@ -4,6 +4,7 @@
   "stage": "GA",
   "includedPermissions": [
     "datastore.databases.get",
+    "datastore.databases.getMetadata",
     "datastore.entities.get",
     "datastore.entities.list",
     "datastore.backupSchedules.list",
