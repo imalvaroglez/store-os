@@ -16,6 +16,7 @@ import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effecti
 import { orderTicketText } from "./orderTicket";
 import { profit } from "../../lib/money";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
+import { installmentPlanView } from "./installments";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
 import type { Order } from "../../types";
 
@@ -31,6 +32,12 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const paymentStatus = paymentStatusForOrder(order);
   const status = effectiveOrderStatus(order);
   const verb = nextActionVerb(status);
+  // #165/#168 read model for plan orders: Recibido/Saldo come from the order
+  // doc's transactional accumulator, so the card is correct right after a
+  // reload. The per-cobro breakdown still only loads when Cobros opens.
+  const planView = order.installments ? installmentPlanView(order) : null;
+  const owed = planView ? planView.balanceCents > 0 : totals.balance > 0;
+  const deliveryHeld = !!planView?.deliveryBlocked && verb === "Entregar";
   // Per-line profit: lines without a known cost contribute 0 instead of
   // blanking the whole order's estimate.
   const knownProfit = items.some((item) => item.cost != null)
@@ -94,7 +101,14 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           <Badge tone={ORDER_STATUS_TONE[status]}>{ORDER_STATUS_LABELS[status]}</Badge>
-          <Badge tone={PAYMENT_STATUS_TONE[paymentStatus]}>{PAYMENT_STATUS_LABELS[paymentStatus]}</Badge>
+          {planView ? (
+            <>
+              <Badge tone="info">Pagos por partes</Badge>
+              {planView.reserved && <Badge tone="success">Apartado</Badge>}
+            </>
+          ) : (
+            <Badge tone={PAYMENT_STATUS_TONE[paymentStatus]}>{PAYMENT_STATUS_LABELS[paymentStatus]}</Badge>
+          )}
         </div>
       </div>
 
@@ -108,8 +122,19 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
 
       <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
         <StatRow label="Total"><Money exact amount={totals.estimatedTotal} /></StatRow>
-        <StatRow label="Pagado"><Money exact amount={totals.paid} /></StatRow>
-        <StatRow label="Saldo" tone={totals.balance > 0 ? "danger" : "success"}><Money exact amount={totals.balance} /></StatRow>
+        {planView ? (
+          <>
+            <StatRow label="Recibido"><Money exact amount={planView.receivedCents / 100} /></StatRow>
+            <StatRow label={planView.balanceCents > 0 ? "Saldo" : "A favor"} tone={planView.balanceCents > 0 ? "danger" : "success"}>
+              <Money exact amount={Math.abs(planView.balanceCents) / 100} />
+            </StatRow>
+          </>
+        ) : (
+          <>
+            <StatRow label="Pagado"><Money exact amount={totals.paid} /></StatRow>
+            <StatRow label="Saldo" tone={totals.balance > 0 ? "danger" : "success"}><Money exact amount={totals.balance} /></StatRow>
+          </>
+        )}
       </div>
       {knownProfit != null && <p className="text-xs text-ink-soft mt-2">Ganancia estimada: <Money amount={knownProfit} /></p>}
       {shortages.length > 0 && <Badge tone="warning">Faltan {shortages.reduce((sum, n) => sum + n, 0)} piezas</Badge>}
@@ -118,11 +143,22 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
         <Button variant="ghost" onClick={() => setPaymentsOpen(true)}>Cobros</Button>
       </div>
-      {(verb || totals.balance > 0) && (
-        <div className="mt-3 flex gap-2" onClick={(event) => event.stopPropagation()}>
-          {verb && <Button full onClick={advance}>{verb}</Button>}
-          {totals.balance > 0 && (
-            <Button variant="secondary" full onClick={collect}>Cobrar</Button>
+      {(verb || owed) && (
+        <div className="mt-3 flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
+          <div className="flex gap-2">
+            {verb && <Button full disabled={deliveryHeld} onClick={advance}>{verb}</Button>}
+            {planView ? (
+              owed && (
+                <Button variant="secondary" full onClick={() => setPaymentsOpen(true)}>Abonar</Button>
+              )
+            ) : (
+              totals.balance > 0 && (
+                <Button variant="secondary" full onClick={collect}>Cobrar</Button>
+              )
+            )}
+          </div>
+          {deliveryHeld && (
+            <p className="text-xs text-on-surface-soft">La entrega se habilita al liquidar el total.</p>
           )}
         </div>
       )}

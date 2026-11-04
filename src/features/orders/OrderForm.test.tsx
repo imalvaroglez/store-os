@@ -383,3 +383,115 @@ describe("cent precision when saving", () => {
     rendered.unmount();
   });
 });
+
+describe("installment plan capture (#165)", () => {
+  beforeEach(() => {
+    // All new-order editors share one draft key; keep each case isolated.
+    localStorage.clear();
+  });
+
+  const baseOrder = {
+    id: "order_plan",
+    storeId: "store_olivia",
+    customerId: "customer_1",
+    items: [{ lineId: "l1", productId: "prod_olivia_1", productName: "Arete dorado", quantity: 1, unitPrice: 1800, subtotal: 1800 }],
+    deposit: 0,
+    orderStatus: "asked" as const,
+    paymentStatus: "unpaid" as const,
+    schemaVersion: 2,
+    createdAt: "",
+    updatedAt: "",
+  };
+
+  function fillPlan(cuotas: string, frequency: string, firstDueDate: string) {
+    fireEvent.click(screen.getByRole("checkbox", { name: /pagos por partes/i }));
+    fireEvent.change(screen.getByLabelText("Número de cuotas"), { target: { value: cuotas } });
+    fireEvent.change(screen.getByLabelText("Frecuencia"), { target: { value: frequency } });
+    fireEvent.change(screen.getByLabelText("Primera fecha de vencimiento"), { target: { value: firstDueDate } });
+  }
+
+  it("shows the derived agreement before confirming and saves the plan", async () => {
+    mockUpsertOrder.mockClear();
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={{ ...baseOrder }} isNew onDone={() => {}} />
+      </ToastProvider>
+    );
+    fillPlan("6", "monthly", "2026-11-15");
+    // Acuerdo visible ANTES de guardar: importes exactos y última fecha.
+    expect(screen.getByText(/6 cuotas/i)).toBeInTheDocument();
+    expect(screen.getAllByText("$300.00").length).toBeGreaterThanOrEqual(6);
+    expect(screen.getByText(/última/i).textContent).toMatch(/2027/);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0];
+    expect(saved.installments).toMatchObject({ count: 6, frequency: "monthly", firstDueDate: "2026-11-15" });
+    expect(saved.deposit).toBe(0); // sin anticipo separado (decisión iii)
+    rendered.unmount();
+  });
+
+  it("rejects an invalid cuota count without saving", async () => {
+    mockUpsertOrder.mockClear();
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={{ ...baseOrder }} isNew onDone={() => {}} />
+      </ToastProvider>
+    );
+    fillPlan("0", "monthly", "2026-11-15");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(screen.getByText(/cuotas válido/i)).toBeInTheDocument());
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+    rendered.unmount();
+  });
+
+  it("requires frequency and first due date — nothing is defaulted", async () => {
+    mockUpsertOrder.mockClear();
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={{ ...baseOrder }} isNew onDone={() => {}} />
+      </ToastProvider>
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /pagos por partes/i }));
+    fireEvent.change(screen.getByLabelText("Número de cuotas"), { target: { value: "6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(screen.getByText(/elige la frecuencia/i)).toBeInTheDocument());
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+    rendered.unmount();
+  });
+
+  it("keeps the reservation mark and plan history when editing a plan order", async () => {
+    mockUpsertOrder.mockClear();
+    const withPlan = {
+      ...baseOrder,
+      installments: { count: 6, frequency: "monthly" as const, firstDueDate: "2026-11-15", agreedAt: "2026-11-01", agreedBy: "u1" },
+      installmentsReservedAt: "2026-11-02T10:00:00.000Z",
+      installmentsHistory: [{ count: 3, frequency: "monthly" as const, firstDueDate: "2026-11-15", agreedAt: "2026-10-01", agreedBy: "u1", replacedAt: "2026-11-01T09:00:00.000Z" }],
+    };
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={withPlan} onDone={() => {}} />
+      </ToastProvider>
+    );
+    // El interruptor llega prendido y el anticipo heredado se conserva oculto.
+    expect((screen.getByRole("checkbox", { name: /pagos por partes/i }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0];
+    expect(saved.installmentsReservedAt).toBe("2026-11-02T10:00:00.000Z");
+    expect(saved.installmentsHistory).toHaveLength(1);
+    expect(saved.installments?.count).toBe(6);
+    rendered.unmount();
+  });
+
+  it("hides the anticipo field while the plan is on (no separate down payment)", () => {
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={{ ...baseOrder }} isNew onDone={() => {}} />
+      </ToastProvider>
+    );
+    expect(screen.getByLabelText("Anticipo")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /pagos por partes/i }));
+    expect(screen.queryByLabelText("Anticipo")).toBeNull();
+    rendered.unmount();
+  });
+});

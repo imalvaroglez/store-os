@@ -231,6 +231,31 @@ export type OrderItem = {
   cost?: number;
 };
 
+/** How often cuotas come due on an installment plan (#165). */
+export type InstallmentFrequency = "weekly" | "biweekly" | "monthly";
+
+/**
+ * The per-order installment agreement (#165). Chosen on the ORDER (never on
+ * the product). Cuota amounts are NOT stored: they are suggested from the
+ * order's current total ÷ count with exact cents at display time, so the plan
+ * never carries stale money and no campaign default (count, frequency or
+ * price) exists in code, data or UI.
+ */
+export type OrderInstallmentPlan = {
+  /** Number of cuotas — operator-chosen per order, validated 1–99. */
+  count: number;
+  frequency: InstallmentFrequency;
+  /** First due date (YYYY-MM-DD); later dates derive from the frequency. */
+  firstDueDate: string;
+  /** When/who agreed the plan — evidence for post-payment edits. Optional so
+   * a migrated legacy plan never invents provenance it does not have. */
+  agreedAt?: string;
+  agreedBy?: string;
+};
+
+/** A replaced plan, kept verbatim as evidence when the agreement changes. */
+export type PastInstallmentPlan = OrderInstallmentPlan & { replacedAt: string };
+
 export type Order = {
   revision?: number;
   lastMutationId?: string;
@@ -247,6 +272,32 @@ export type Order = {
   schemaVersion?: number;
   createdAt: string;
   updatedAt: string;
+  // Installment plan (#165). Absent = ordinary order (behavior unchanged).
+  installments?: OrderInstallmentPlan;
+  /** Witness set when the FIRST confirmed positive abono landed (PO 2026-11-03
+   * R8: plan orders reserve stock AT CREATION like ordinary ones; this mark now
+   * only certifies the reservation is money-backed — money-backed stock is
+   * never released by cancellation alone). */
+  installmentsReservedAt?: string;
+  /** Replaced plans, oldest first — evidence, never rewritten. */
+  installmentsHistory?: PastInstallmentPlan[];
+  /** #168: Σ signed cents of this order's payment records (cobros positive,
+   * adjustments signed), maintained by registerOrderPaymentTx in the SAME
+   * transaction as each record — the money truth of the ORDER DOC. Gates and
+   * displays read this, never the session's records: a fresh session can no
+   * longer undercount received money. Absent = no records were ever written. */
+  paymentsReceivedCents?: number;
+  /** #168: set (same transaction) once the legacy `deposit` materialized as
+   * the inherited payment record, so the doc never counts that deposit twice
+   * (accumulator + pending deposit). */
+  inheritedDepositMaterialized?: boolean;
+  /** PO 2026-11-03 R9: evidence stamped when the operator explicitly confirmed
+   * delivering with an uncovered balance (retroactive / cash-on-delivery
+   * flows). The delivery gate still fires by default — this is the recorded
+   * authorization, never a silent pass. */
+  deliveredWithBalanceCents?: number;
+  deliveredWithBalanceConfirmedAt?: string;
+  deliveredWithBalanceConfirmedBy?: string;
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.

@@ -25,11 +25,16 @@ import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
-import { migrateOrder, paymentStatusForOrder } from "../lib/orders";
+import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
+import { deliveryWithBalanceBlocked, orderTotalCents, sameInstallmentPlan } from "../features/orders/installments";
 import {
   buildAdjustmentRecord,
   buildPaymentRecord,
+  docReceivedCents,
+  INHERITED_DEPOSIT_PAYMENT_ID,
   mergePayments,
+  orderMoneyAfterPayments,
+  paymentsCents,
   type PaymentRecordInput,
 } from "../features/orders/payments";
 import { useAuth } from "./firebase/AuthProvider";
@@ -55,6 +60,7 @@ import {
   StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
+  DeliveryWithBalanceError,
   stripUndefined,
 } from "./firebase/firestoreData";
 import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
@@ -216,7 +222,7 @@ type StoreContextValue = {
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => Promise<void>;
-  upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
+  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<void>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
   /** Payment records loaded this session (cloud reads; not local legacy state). */
   payments: OrderPayment[];
@@ -725,6 +731,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         paymentStatus: paymentStatusForOrder(order),
       };
       const prev = state.orders.find((o) => o.id === order.id);
+      // #165: replacing or removing an agreed plan keeps the previous one
+      // verbatim as evidence — post-payment edits never erase the agreement.
+      if (prev?.installments && !sameInstallmentPlan(prev.installments, nextOrder.installments)) {
+        nextOrder.installmentsHistory = [
+          ...(nextOrder.installmentsHistory ?? []),
+          { ...prev.installments, replacedAt: nowIso() },
+        ];
+      }
+      // #168: the money truth travels on the order doc — a local save carries
+      // the accumulator through verbatim so an edit can never wipe received
+      // money, mirroring the cloud transaction's doc reconciliation.
+      if (prev?.paymentsReceivedCents != null) nextOrder.paymentsReceivedCents = prev.paymentsReceivedCents;
+      if (prev?.inheritedDepositMaterialized) nextOrder.inheritedDepositMaterialized = true;
+      const docMoney = {
+        accumulatorCents: Math.max(prev?.paymentsReceivedCents ?? 0, nextOrder.paymentsReceivedCents ?? 0),
+        receivedCents: Math.max(docReceivedCents(prev ?? {}), docReceivedCents(nextOrder)),
+      };
+      // #165/#168 (local mode parity): the cloud tx enforces these on the doc;
+      // the legacy local branch follows the SAME rules — conversion with money
+      // received marks the reservation, and delivering with a saldo requires
+      // the operator's explicit confirmation (PO 2026-11-03 R9).
+      if (nextOrder.installments && !prev?.installments && docMoney.receivedCents > 0 && !nextOrder.installmentsReservedAt) {
+        nextOrder.installmentsReservedAt = nowIso();
+      }
+      if (
+        effectiveOrderStatus(nextOrder) === "delivered" &&
+        (!prev || effectiveOrderStatus(prev) !== "delivered") &&
+        deliveryWithBalanceBlocked(nextOrder, docMoney)
+      ) {
+        if (!options?.confirmDeliveredWithBalance) {
+          throw new DeliveryWithBalanceError(orderTotalCents(nextOrder) - docMoney.receivedCents);
+        }
+        nextOrder.deliveredWithBalanceCents = orderTotalCents(nextOrder) - docMoney.receivedCents;
+        nextOrder.deliveredWithBalanceConfirmedAt = nowIso();
+        nextOrder.deliveredWithBalanceConfirmedBy = user?.uid ?? "local";
+      }
       const deltas = reservationDeltasForOrderChange(prev, nextOrder);
       const stockAt = nowIso();
       const stockWrites: Product[] = [];
@@ -741,7 +783,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // commits only on success, so a failed save leaves no phantom order and
       // the retry the toast invites replays the FULL delta set.
       if (cloud && user && !fromCloud.current) {
-        const result = await saveOrderWithStockTx(user, nextOrder, options ? options.expectedRevision : prev ? (order.revision ?? 0) : null, options?.mutationId ?? uid("mutation"));
+        const result = await saveOrderWithStockTx(
+          user,
+          nextOrder,
+          options?.expectedRevision ?? (prev ? (order.revision ?? 0) : null),
+          options?.mutationId ?? uid("mutation"),
+          { confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance }
+        );
         for (const update of result.stock) {
           const product = state.products.find((p) => p.id === update.productId);
           if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
@@ -802,6 +850,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         input.kind === "payment" ? input.inherited : undefined
       );
       setPayments((prev) => mergePayments(prev, saved));
+      // #168: mirror the transactional accumulator into the in-memory order so
+      // the card shows the real Recibido/Saldo immediately — the listener
+      // catches up with the same doc, so this is not a second truth.
+      const current = state.orders.find((o) => o.id === order.id);
+      if (current) {
+        const money = orderMoneyAfterPayments(
+          current,
+          paymentsCents(saved),
+          saved.some((p) => p.id === INHERITED_DEPOSIT_PAYMENT_ID)
+        );
+        dispatch({ type: "UPDATE_ORDER", order: { ...current, ...money } });
+      }
     },
   };
 

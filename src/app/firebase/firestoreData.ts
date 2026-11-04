@@ -15,10 +15,14 @@ import {
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
-import { migrateOrder } from "../../lib/orders";
+import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
+import { deliveryWithBalanceBlocked, orderTotalCents } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
+  docReceivedCents,
   inheritedDepositRecord,
+  orderMoneyAfterPayments,
+  signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment } from "../../types";
@@ -303,12 +307,50 @@ export function applyRelativeDeltas(
   return { updates, skipped };
 }
 
-/** Save an order using canonical stock and an idempotent operation identifier. */
+/**
+ * #165/#168 → PO 2026-11-03 (R9): delivering with an uncovered balance is
+ * ALLOWED when the operator explicitly confirms it (retroactive capture /
+ * cash-on-delivery). Without the confirmation the mutation path rejects the
+ * transition (the UI hiding buttons is not the guarantee); WITH it, the save
+ * stamps the recorded authorization on the order doc. The message points at
+ * the cobros sheet first — the saldo is doc truth, so re-registering an abono
+ * that already landed would duplicate money.
+ */
+export class DeliveryWithBalanceError extends Error {
+  constructor(public readonly balanceCents: number) {
+    super("No se puede confirmar la entrega: este pedido tiene saldo pendiente. Revisa los cobros del pedido y registra solo el abono que falte.");
+    this.name = "DeliveryWithBalanceError";
+  }
+}
+
+/**
+ * Stock shortage on the canonical shelf. NOTE (PO 2026-11-03 R8): order saves
+ * do NOT hard-block on shelf quantity — plan orders reserve at creation exactly
+ * like ordinary ones, and the shelf may go negative (the UI surfaces the
+ * existence). Retained for callers that pre-validate.
+ */
+export class InsufficientStockError extends Error {
+  constructor(public readonly shortages: { productId: string; missing: number }[]) {
+    super("No hay existencias suficientes para apartar las piezas de este pedido. Surte inventario y vuelve a intentar.");
+    this.name = "InsufficientStockError";
+  }
+}
+
+/**
+ * Save an order using canonical stock and an idempotent operation identifier.
+ *
+ * #165/#168 money guarantees evaluate the ORDER DOC read inside this
+ * transaction — never the caller's session: `paymentsReceivedCents` (the
+ * transactional accumulator maintained by registerOrderPaymentTx) plus the
+ * still-unmaterialized legacy deposit are the truth of received money, so a
+ * fresh session with no payment records loaded can no longer undercount them.
+ */
 export async function saveOrderWithStockTx(
-  _user: AppUser,
+  user: AppUser,
   order: Order,
   expectedRevision: number | null,
-  mutationId: string
+  mutationId: string,
+  options?: { confirmDeliveredWithBalance?: boolean }
 ): Promise<{ order: Order; stock: StockAdjustment[] }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
@@ -320,7 +362,49 @@ export async function saveOrderWithStockTx(
     if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
       throw new StaleOrderError();
     }
-    const deltas = reservationDeltasForOrderChange(previous, order);
+    // #168: the money fields belong to the payment path — an order save carries
+    // them through VERBATIM from the doc read here, so a full-document write
+    // can never wipe a concurrent abono's accumulator (Firestore retries this
+    // transaction whenever the doc changed after this read).
+    const docData = snap.data() as Record<string, unknown> | undefined;
+    const next: Order = {
+      ...order,
+      ...(typeof docData?.paymentsReceivedCents === "number" ? { paymentsReceivedCents: docData.paymentsReceivedCents } : {}),
+      ...(docData?.inheritedDepositMaterialized === true ? { inheritedDepositMaterialized: true } : {}),
+    };
+    // Received money per the doc: the stored accumulator plus the deposit in
+    // this save (a deposit captured in the same edit also counts) — the
+    // conservative max, since records are immutable evidence. The accumulator
+    // alone is what TRIGGERS the delivery gate for plan-less orders (#168 F1).
+    const docMoney = {
+      accumulatorCents: Math.max(previous?.paymentsReceivedCents ?? 0, next.paymentsReceivedCents ?? 0),
+      receivedCents: Math.max(docReceivedCents(previous ?? {}), docReceivedCents(next)),
+    };
+    // #165/#168 F2: converting an ordinary order that already received money
+    // marks the reservation immediately — an open ordinary order already held
+    // the pieces, so the mark lands with zero stock delta.
+    if (next.installments && !previous?.installments && docMoney.receivedCents > 0 && !next.installmentsReservedAt) {
+      next.installmentsReservedAt = new Date().toISOString();
+    }
+    // #165/#168 F1 → PO 2026-11-03 (R9): the transition INTO delivered still
+    // fires the gate for a plan order or any order with registered cobros
+    // whose doc money does not cover the total — but the operator may now
+    // EXPLICITLY confirm delivering with a saldo (retroactive capture /
+    // contraentrega). Unconfirmed → reject; confirmed → stamp the recorded
+    // authorization. Removing the plan with a saldo changes nothing.
+    const delivering =
+      effectiveOrderStatus(next) === "delivered" &&
+      (!previous || effectiveOrderStatus(previous) !== "delivered");
+    if (delivering && deliveryWithBalanceBlocked(next, docMoney)) {
+      const saldoCents = orderTotalCents(next) - docMoney.receivedCents;
+      if (!options?.confirmDeliveredWithBalance) {
+        throw new DeliveryWithBalanceError(saldoCents);
+      }
+      next.deliveredWithBalanceCents = saldoCents;
+      next.deliveredWithBalanceConfirmedAt = new Date().toISOString();
+      next.deliveredWithBalanceConfirmedBy = user.uid;
+    }
+    const deltas = reservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
       const product = await tx.get(doc(db, "products", productId));
@@ -329,7 +413,7 @@ export async function saveOrderWithStockTx(
     }
     const { updates } = applyRelativeDeltas(canonical, deltas);
     const at = new Date().toISOString();
-    const saved = { ...order, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
+    const saved = { ...next, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
     for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
     const { id, ...data } = saved;
     tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
@@ -353,9 +437,19 @@ export async function fetchOrderPayments(orderId: string): Promise<OrderPayment[
  * `deposit` is materialized once as an inherited record (deterministic id)
  * carrying the date/method supplied by the operator — estimated when unknown,
  * never left as "unknown" (PO decision 2026-11-03). Materialization only rides
- * along a real payment, never an adjustment. Payment docs are create-only
- * evidence (see firestore.rules); corrections are new signed records, which is
- * why this path never updates an existing doc.
+ * along a real payment, never an adjustment — and the order's doc-level money
+ * accumulator `paymentsReceivedCents` absorbs the registration's signed cents
+ * (#168), so the document is always the truth of received money. Payment docs
+ * are create-only evidence (see firestore.rules); corrections are new signed
+ * records, which is why this path never updates an existing PAYMENT doc (the
+ * parent order doc only gains the accumulator + reservation fields).
+ *
+ * #165 → PO 2026-11-03 (R8): plan orders reserve their quantities AT CREATION
+ * (same contribution model as ordinary orders), so an abono never moves stock
+ * here. The FIRST confirmed positive abono still stamps the
+ * `installmentsReservedAt` witness on the order doc — money-backed stock is
+ * never released by cancellation alone. Insufficient stock surfaces at order
+ * creation, not at payment time.
  */
 export async function registerOrderPaymentTx(
   payment: OrderPayment,
@@ -363,38 +457,74 @@ export async function registerOrderPaymentTx(
 ): Promise<OrderPayment[]> {
   const { db } = getFirebase();
   return runTransaction(db, async (tx) => {
+    // READ PHASE (Firestore requires every read before any write).
     const paymentsRef = collection(db, "orders", payment.orderId, "payments");
     const paymentRef = doc(paymentsRef, payment.id);
     const existing = await tx.get(paymentRef);
     if (existing.exists()) return [existing.data() as OrderPayment];
-    const orderSnap = await tx.get(doc(db, "orders", payment.orderId));
+    const orderRef = doc(db, "orders", payment.orderId);
+    const orderSnap = await tx.get(orderRef);
     if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
     if ((orderSnap.data().storeId ?? "") !== payment.storeId) {
       throw new Error("El pedido pertenece a otra tienda.");
     }
-    const saved: OrderPayment[] = [];
-    if (payment.kind === "payment") {
-      const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
-      const inheritedSnap = await tx.get(inheritedRef);
-      if (!inheritedSnap.exists()) {
-        const deposit = orderSnap.data().deposit;
-        const pending = typeof deposit === "number" ? deposit : 0;
-        if (pending > 0 && !inherited) {
-          throw new Error("Captura la fecha y el método del anticipo previo.");
-        }
-        const record = inheritedDepositRecord(
-          payment.orderId,
-          payment.storeId,
-          pending,
-          payment.createdBy,
-          inherited as { method: "cash" | "transfer"; date: string }
-        );
-        if (record) {
-          tx.set(inheritedRef, stripUndefined(record) as Record<string, unknown>);
-          saved.push(record);
-        }
+    // Inherited deposit materialization (#123, PO 2026-11-03): only a real
+    // payment carries it, and the operator-supplied date/method is required.
+    const inheritedInput = payment.kind === "payment" ? inherited : undefined;
+    const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
+    const inheritedSnap = await tx.get(inheritedRef);
+    let inheritedRecord: OrderPayment | null = null;
+    if (payment.kind === "payment" && !inheritedSnap.exists()) {
+      const deposit = orderSnap.data().deposit;
+      const pending = typeof deposit === "number" ? deposit : 0;
+      if (pending > 0 && !inheritedInput) {
+        throw new Error("Captura la fecha y el método del anticipo previo.");
       }
+      inheritedRecord = inheritedDepositRecord(
+        payment.orderId,
+        payment.storeId,
+        pending,
+        payment.createdBy,
+        inheritedInput as { method: "cash" | "transfer"; date: string }
+      );
     }
+
+    // PO 2026-11-03 (R8): plan orders reserve stock AT CREATION like ordinary
+    // ones — an abono no longer moves stock. The first positive abono only
+    // STAMPS the `installmentsReservedAt` witness (money-backed stock is never
+    // released by cancellation alone); no revision bump is needed because the
+    // reservation already happened on the order's own save.
+    const order = migrateOrder({ ...orderSnap.data(), id: payment.orderId });
+    const firstPositiveAbono = payment.kind === "payment" && payment.amount > 0;
+
+    // WRITE PHASE — one atomic commit: evidence, witness, and the doc-level
+    // money accumulator (#168). The accumulator folds this registration's
+    // signed cents (and the inherited deposit's, exactly once when it
+    // materializes) into `paymentsReceivedCents`, so the ORDER DOC is the
+    // truth of received money — a fresh session cannot undercount it.
+    // Unsafe precision aborts the whole registration (fail-closed on writes).
+    let savedCents: number;
+    try {
+      savedCents = signedAmountCents(payment.amount) + (inheritedRecord ? signedAmountCents(inheritedRecord.amount) : 0);
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw new Error("El monto del cobro excede la precisión admitida.");
+      }
+      throw error;
+    }
+    const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
+    const saved: OrderPayment[] = [];
+    if (inheritedRecord) {
+      tx.set(inheritedRef, stripUndefined(inheritedRecord) as Record<string, unknown>);
+      saved.push(inheritedRecord);
+    }
+    tx.update(orderRef, {
+      paymentsReceivedCents: money.paymentsReceivedCents,
+      ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
+      ...(order.installments && !order.installmentsReservedAt && firstPositiveAbono
+        ? { installmentsReservedAt: new Date().toISOString() }
+        : {}),
+    });
     tx.set(paymentRef, stripUndefined(payment) as Record<string, unknown>);
     saved.push(payment);
     return saved;
