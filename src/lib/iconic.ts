@@ -1,6 +1,6 @@
 import type { Customer, Order } from "../types";
 import { effectiveOrderStatus, orderTotals } from "./orders";
-import { orderAmountCents } from "./orderMoney";
+import { docReceivedCents, orderAmountCents } from "./orderMoney";
 
 // FER-05 · Iconic benefit: obtención, renovación y vencimiento.
 //
@@ -82,27 +82,21 @@ function manualWindow(customer: Customer): Window | null {
 }
 
 /**
- * Received money in exact cents for the liquidation test. The doc accumulator
- * (#168) is the truth when payment records exist (any record implies the
- * inherited deposit materialized); a legacy order captured with only a deposit
- * counts it — paid-on-capture flows. Cancelled/garbage values never produce
- * NaN: the accumulator is an integer, the deposit coerces via parseAmount's
- * exact-cents helper.
+ * Order total in exact cents from the frozen-line snapshots (never NaN).
  */
-function receivedCents(o: Order): number {
-  const acc = o.paymentsReceivedCents ?? 0;
-  if (acc > 0) return acc;
-  return orderAmountCents(Math.max(0, o.deposit ?? 0));
-}
-
-/** Order total in exact cents from the frozen-line snapshots (never NaN). */
 function totalCents(o: Order): number {
   return orderAmountCents(orderTotals(o).estimatedTotal);
 }
 
-/** LIQUIDATED = received money covers the total (PO 2026-11-03: money, not capture). */
+/**
+ * LIQUIDATED = the CANONICAL received money covers the total (PO 2026-11-03:
+ * money, not capture). `docReceivedCents` is the same read model the saldo
+ * uses — accumulator plus the still-unmaterialized legacy deposit — so a
+ * fully refunded materialized deposit counts as $0 and a pending deposit plus
+ * adjustments can liquidate (Codex review 2026-11-04).
+ */
 function isLiquidated(o: Order): boolean {
-  return receivedCents(o) >= totalCents(o) && totalCents(o) > 0;
+  return docReceivedCents(o) >= totalCents(o) && totalCents(o) > 0;
 }
 
 /**
