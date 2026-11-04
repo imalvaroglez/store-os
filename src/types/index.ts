@@ -191,6 +191,10 @@ export type Product = {
 export type Customer = {
   segment?: "regular" | "entrepreneur";
   assignedPriceTierId?: string;
+  // FER-05 Iconic benefit: a manually granted validity (day-granularity ISO
+  // dates). The automatic window derives from saved orders (see lib/iconic);
+  // this grant only ever ADDS to it, it never blocks the automatic renewal.
+  iconic?: { since: string; until: string };
   id: string;
   storeId: string;
   name: string;
