@@ -5,6 +5,10 @@ import {
   committedForProduct,
   reservationDeltas,
   reservationDeltasForOrderChange,
+  DEFAULT_LOW_STOCK_AT,
+  effectiveLowStockAt,
+  stockAlertLevel,
+  stockAlertText,
 } from "./inventory";
 import type { Product, PurchaseLine, Order } from "../types";
 
@@ -156,6 +160,43 @@ describe("multi-product order reservations", () => {
     ];
     const net = [...cycle.flatMap((m) => [...m]).reduce((map, [id, delta]) => map.set(id, (map.get(id) ?? 0) + delta), new Map<string, number>())];
     expect(net).toEqual([["p1", -2]]);
+  });
+});
+
+describe("stockAlertLevel", () => {
+  const tracked = (quantityOnHand: number | undefined, lowStockAt?: number): Product =>
+    ({ quantityOnHand, lowStockAt }) as Product;
+
+  it("flags stock at or below the explicit per-product threshold as low", () => {
+    expect(stockAlertLevel(tracked(5, 5))).toBe("low");
+    expect(stockAlertLevel(tracked(2, 5))).toBe("low");
+  });
+
+  it("does not alert when stock is above the explicit threshold", () => {
+    expect(stockAlertLevel(tracked(6, 5))).toBeNull();
+  });
+
+  it("falls back to the default threshold when the product has none saved", () => {
+    expect(stockAlertLevel(tracked(DEFAULT_LOW_STOCK_AT))).toBe("low");
+    expect(stockAlertLevel(tracked(DEFAULT_LOW_STOCK_AT + 1))).toBeNull();
+    expect(stockAlertLevel(tracked(undefined, 5))).toBeNull(); // no tracking, no alert
+  });
+
+  it("flags zero and negative stock as out even without a threshold", () => {
+    expect(stockAlertLevel(tracked(0))).toBe("out");
+    expect(stockAlertLevel(tracked(-2))).toBe("out");
+    expect(stockAlertLevel(tracked(0, 100))).toBe("out");
+  });
+
+  it("ignores non-finite legacy thresholds (never NaN into the alert)", () => {
+    expect(effectiveLowStockAt({ lowStockAt: Number.NaN })).toBe(DEFAULT_LOW_STOCK_AT);
+    expect(stockAlertLevel(tracked(1, Number.NaN))).toBe("low");
+  });
+
+  it("renders clear Spanish text per level", () => {
+    expect(stockAlertText({ quantityOnHand: 0 })).toBe("Agotado");
+    expect(stockAlertText({ quantityOnHand: -2 })).toBe("Faltan 2");
+    expect(stockAlertText({ quantityOnHand: 2 })).toBe("Quedan 2");
   });
 });
 
