@@ -74,7 +74,7 @@ export function CustomersScreen() {
             ))}
           </div>
           <p className="mt-2 text-xs text-ink-soft">
-            Un pedido mayor a $1,000 dentro de la vigencia renueva el beneficio 30 días más.
+            Cualquier pedido liquidado dentro de la vigencia renueva el beneficio 30 días más.
           </p>
         </Card>
       )}

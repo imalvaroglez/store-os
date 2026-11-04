@@ -21,6 +21,9 @@ const customer = (patch: Partial<Customer> = {}): Customer => ({
   ...patch,
 });
 
+// Liquidated by default: the doc accumulator covers the $1,200 total (the
+// activation event is MONEY, PO 2026-11-03). `unpaid: false` money → override
+// with paymentsReceivedCents: 0 or omit it.
 const order = (patch: Partial<Order> = {}): Order => ({
   id: "o1",
   storeId: "s1",
@@ -28,7 +31,8 @@ const order = (patch: Partial<Order> = {}): Order => ({
   items: [{ lineId: "L0", productName: "Collar", quantity: 2, unitPrice: 600, subtotal: 1200 }],
   deposit: 0,
   orderStatus: "delivered",
-  paymentStatus: "unpaid",
+  paymentStatus: "paid",
+  paymentsReceivedCents: 120000,
   createdAt: daysAgo(10),
   updatedAt: daysAgo(10),
   schemaVersion: 2,
@@ -36,7 +40,7 @@ const order = (patch: Partial<Order> = {}): Order => ({
 });
 
 describe("iconic activation", () => {
-  it("a first order strictly above $1,000 activates Iconic for 30 days from that order", () => {
+  it("a first LIQUIDATED order at or above $1,000 activates Iconic for 30 days from that order", () => {
     const status = iconicStatus(customer(), [order()], NOW);
     expect(status).toEqual({
       active: true,
@@ -49,16 +53,22 @@ describe("iconic activation", () => {
     });
   });
 
-  it("an order captured but not yet paid/delivered counts (capture is the event)", () => {
-    const status = iconicStatus(customer(), [order({ orderStatus: "asked", paymentStatus: "unpaid" })], NOW);
-    expect(status?.active).toBe(true);
+  it("capturing WITHOUT money does NOT activate (PO 2026-11-03: money is the event)", () => {
+    const unpaid = order({ orderStatus: "asked", paymentStatus: "unpaid", paymentsReceivedCents: 0 });
+    expect(iconicStatus(customer(), [unpaid], NOW)).toBeNull();
+    // A partial payment (installment plan) is still not liquidation.
+    const partial = order({ orderStatus: "asked", paymentsReceivedCents: 50000 });
+    expect(iconicStatus(customer(), [partial], NOW)).toBeNull();
   });
 
-  it("exactly $1,000 does NOT qualify ('supere'); $1,000.01 does", () => {
-    const exact = order({ items: [{ lineId: "L0", productName: "Collar", quantity: 1, unitPrice: 1000, subtotal: 1000 }] });
-    expect(iconicStatus(customer(), [exact], NOW)).toBeNull();
-    const cent = order({ items: [{ lineId: "L0", productName: "Collar", quantity: 1, unitPrice: 1000.01, subtotal: 1000.01 }] });
-    expect(iconicStatus(customer(), [cent], NOW)?.active).toBe(true);
+  it("a legacy order paid on capture (deposit covers the total) counts as liquidated", () => {
+    const contraentrega = order({ deposit: 1200, paymentsReceivedCents: 0 });
+    expect(iconicStatus(customer(), [contraentrega], NOW)?.active).toBe(true);
+  });
+
+  it("exactly $1,000 QUALIFIES (PO 2026-11-03: 'desde $1,000', incluye justo)", () => {
+    const exact = order({ items: [{ lineId: "L0", productName: "Collar", quantity: 1, unitPrice: 1000, subtotal: 1000 }], paymentsReceivedCents: 100000 });
+    expect(iconicStatus(customer(), [exact], NOW)?.active).toBe(true);
     expect(ICONIC_MIN_TOTAL).toBe(1000);
   });
 
@@ -71,7 +81,7 @@ describe("iconic activation", () => {
       productName: "Aretes",
       quantity: 2,
       price: 600,
-      deposit: 0,
+      deposit: 1200, // paid on capture — liquidated without payment records
       status: "delivered",
       createdAt: daysAgo(3),
       updatedAt: daysAgo(3),
@@ -81,13 +91,27 @@ describe("iconic activation", () => {
 });
 
 describe("iconic renewal (30-day mobile window)", () => {
-  it("a qualifying order inside the window renews it: new expiry = renewal date + 30 days", () => {
+  it("ANY liquidated order inside the window renews it — no minimum (PO 2026-11-03)", () => {
     const activation = order({ id: "o_a", createdAt: daysAgo(25), updatedAt: daysAgo(25) });
-    const renewal = order({ id: "o_b", createdAt: daysAgo(5), updatedAt: daysAgo(5) });
+    const renewal = order({
+      id: "o_b",
+      createdAt: daysAgo(5),
+      updatedAt: daysAgo(5),
+      items: [{ lineId: "L0", productName: "Aretes", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      paymentsReceivedCents: 10000, // $100 liquidados: renueva igual
+    });
     const status = iconicStatus(customer(), [activation, renewal], NOW);
     expect(status?.active).toBe(true);
     expect(status?.since).toBe("2026-10-08"); // original activation date
     expect(status?.until).toBe("2026-11-27"); // 5 days ago + 30 days
+  });
+
+  it("a small liquidated order OUTSIDE any window opens nothing", () => {
+    const small = order({
+      items: [{ lineId: "L0", productName: "Aretes", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      paymentsReceivedCents: 10000,
+    });
+    expect(iconicStatus(customer(), [small], NOW)).toBeNull();
   });
 
   it("a qualifying order AFTER the window lapsed starts a fresh window (re-activation)", () => {
@@ -176,8 +200,8 @@ describe("store isolation and defensive data", () => {
 
   it("a customer with no qualifying history has no Iconic status at all", () => {
     expect(iconicStatus(customer(), [], NOW)).toBeNull();
-    const small = order({ items: [{ lineId: "L0", productName: "X", quantity: 1, unitPrice: 999.99, subtotal: 999.99 }] });
-    expect(iconicStatus(customer(), [small], NOW)).toBeNull();
+    const smallUnpaid = order({ items: [{ lineId: "L0", productName: "X", quantity: 1, unitPrice: 999.99, subtotal: 999.99 }], paymentsReceivedCents: 0 });
+    expect(iconicStatus(customer(), [smallUnpaid], NOW)).toBeNull();
   });
 
   it("orders with unusable dates are skipped instead of producing NaN", () => {

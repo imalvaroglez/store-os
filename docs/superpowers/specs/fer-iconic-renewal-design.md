@@ -7,6 +7,14 @@ automática. Cada decisión está marcada **adoptada por autonomía del PO —
 reversible**: son las respuestas más conservadoras posibles con los datos que
 ya existen en el sistema, y el PO puede cambiarlas sin migración de datos.
 
+> **Revisión del PO (2026-11-03, ronda regla por regla):** el umbral pasó a
+> **≥ $1,000 exactos** (antes estrictamente mayor); el evento de activación es
+> el **cobro** — un pedido activa Iconic al quedar LIQUIDADO (contraentrega: al
+> recibir el dinero al entregar; cuotas: al liquidar), no al capturarse; y la
+> renovación dentro de la vigencia acepta **cualquier pedido liquidado, sin
+> monto mínimo**. La ventana sigue siendo móvil de 30 días desde la fecha del
+> pedido que activa/renueva. Vigencia manual y Girly quedan como estaban.
+
 ## Reglas vigentes (implementadas)
 
 1. **Umbral (bloqueo 1).** Un pedido con total **estrictamente mayor a $1,000
