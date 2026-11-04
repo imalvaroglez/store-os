@@ -259,6 +259,31 @@ export type Order = {
   status?: LegacyOrderStatus;
 };
 
+/** How money was received. "unknown" is ONLY for the inherited legacy deposit
+ * (decision i on #123): real receptions always carry cash or transfer. */
+export type OrderPaymentMethod = "cash" | "transfer" | "unknown";
+
+/** One money reception registered on an order (#123). Immutable evidence:
+ * corrections/refunds are NEW records with a signed amount, never edits. */
+export type OrderPayment = {
+  /** Stable per user intent: a retry after an error reuses it so the Firestore
+   * create is recognized as the same operation (idempotent registration). */
+  id: string;
+  orderId: string;
+  storeId: string;
+  /** Real reception date (YYYY-MM-DD). Absent = genuinely unknown (inherited
+   * deposit); never invented. */
+  date?: string;
+  method: OrderPaymentMethod;
+  kind: "payment" | "adjustment";
+  /** Signed decimal money units; negative = refund / correction down. */
+  amount: number;
+  /** Why the record exists. Required on adjustments (evidence). */
+  note?: string;
+  createdAt: string;
+  createdBy: string;
+};
+
 /** A supplier Fer buys stock from. Per-store, like Category. */
 export type Supplier = {
   id: string;

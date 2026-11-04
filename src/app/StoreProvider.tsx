@@ -17,6 +17,7 @@ import type {
   Category,
   Supplier,
   Purchase,
+  OrderPayment,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, loadState, savePreferredStoreId, saveState } from "../lib/storage";
@@ -25,6 +26,12 @@ import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
 import { migrateOrder, paymentStatusForOrder } from "../lib/orders";
+import {
+  buildAdjustmentRecord,
+  buildPaymentRecord,
+  mergePayments,
+  type PaymentRecordInput,
+} from "../features/orders/payments";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
@@ -43,6 +50,8 @@ import {
   createDraftProductsForPurchaseTx,
   saveOrderWithStockTx,
   deleteOrderWithStockTx,
+  fetchOrderPayments,
+  registerOrderPaymentTx,
   StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
@@ -209,6 +218,12 @@ type StoreContextValue = {
   deleteCustomer: (customerId: string) => Promise<void>;
   upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
+  /** Payment records loaded this session (cloud reads; not local legacy state). */
+  payments: OrderPayment[];
+  /** Load one order's payment records from Firestore. Rejects on failure. */
+  loadOrderPayments: (orderId: string) => Promise<void>;
+  /** Register a cobro/adjustment idempotently; requires a session. */
+  registerOrderPayment: (order: Order, input: PaymentRecordInput) => Promise<void>;
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -249,6 +264,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       } });
     });
   }
+
+  // Payment records (#123): session-scoped cloud reads under each order's own
+  // subcollection. Deliberately NOT part of the legacy local AppState — money
+  // records are administrative data and live only in Firestore.
+  const [payments, setPayments] = useState<OrderPayment[]>([]);
 
   // When auth mode changes, load the appropriate source.
   useEffect(() => {
@@ -378,6 +398,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     activeStore: state.stores.find((s) => s.id === state.activeStoreId) ?? null,
     cloud,
     draftOwnerId: cloud && user ? user.uid : "local",
+    payments,
     addStore: async (input) => {
       const store: Store = { ...input, id: uid("store"), createdAt: nowIso(), updatedAt: nowIso() };
       // Claim the slug first (throws SlugTakenError on global collision) so we
@@ -760,6 +781,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       dispatch({ type: "DELETE_ORDER", orderId });
       await Promise.all(writes);
+    },
+    loadOrderPayments: async (orderId) => {
+      // Without a session there is nothing to load (and no false success: the
+      // registration action is the one that must fail explicitly).
+      if (!cloud || !user) return;
+      const rows = await fetchOrderPayments(orderId);
+      setPayments((prev) => mergePayments(prev, rows));
+    },
+    registerOrderPayment: async (order, input) => {
+      if (!cloud || !user) {
+        throw new Error("Registrar cobros requiere iniciar sesión.");
+      }
+      const record =
+        input.kind === "payment"
+          ? buildPaymentRecord(order, input, user.uid)
+          : buildAdjustmentRecord(order, input, user.uid);
+      const saved = await registerOrderPaymentTx(
+        record,
+        input.kind === "payment" ? input.inherited : undefined
+      );
+      setPayments((prev) => mergePayments(prev, saved));
     },
   };
 
