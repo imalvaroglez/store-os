@@ -191,6 +191,10 @@ export type Product = {
 export type Customer = {
   segment?: "regular" | "entrepreneur";
   assignedPriceTierId?: string;
+  // FER-05 Iconic benefit: a manually granted validity (day-granularity ISO
+  // dates). The automatic window derives from saved orders (see lib/iconic);
+  // this grant only ever ADDS to it, it never blocks the automatic renewal.
+  iconic?: { since: string; until: string };
   id: string;
   storeId: string;
   name: string;
@@ -231,6 +235,31 @@ export type OrderItem = {
   cost?: number;
 };
 
+/** How often cuotas come due on an installment plan (#165). */
+export type InstallmentFrequency = "weekly" | "biweekly" | "monthly";
+
+/**
+ * The per-order installment agreement (#165). Chosen on the ORDER (never on
+ * the product). Cuota amounts are NOT stored: they are suggested from the
+ * order's current total ÷ count with exact cents at display time, so the plan
+ * never carries stale money and no campaign default (count, frequency or
+ * price) exists in code, data or UI.
+ */
+export type OrderInstallmentPlan = {
+  /** Number of cuotas — operator-chosen per order, validated 1–99. */
+  count: number;
+  frequency: InstallmentFrequency;
+  /** First due date (YYYY-MM-DD); later dates derive from the frequency. */
+  firstDueDate: string;
+  /** When/who agreed the plan — evidence for post-payment edits. Optional so
+   * a migrated legacy plan never invents provenance it does not have. */
+  agreedAt?: string;
+  agreedBy?: string;
+};
+
+/** A replaced plan, kept verbatim as evidence when the agreement changes. */
+export type PastInstallmentPlan = OrderInstallmentPlan & { replacedAt: string };
+
 export type Order = {
   revision?: number;
   lastMutationId?: string;
@@ -247,6 +276,36 @@ export type Order = {
   schemaVersion?: number;
   createdAt: string;
   updatedAt: string;
+  // Installment plan (#165). Absent = ordinary order (behavior unchanged).
+  installments?: OrderInstallmentPlan;
+  /** Witness set when the FIRST confirmed positive abono landed (PO 2026-11-03
+   * R8: plan orders reserve stock AT CREATION like ordinary ones; this mark now
+   * only certifies the reservation is money-backed — money-backed stock is
+   * never released by cancellation alone). */
+  installmentsReservedAt?: string;
+  /** Replaced plans, oldest first — evidence, never rewritten. */
+  installmentsHistory?: PastInstallmentPlan[];
+  /** #168: Σ signed cents of this order's payment records (cobros positive,
+   * adjustments signed), maintained by registerOrderPaymentTx in the SAME
+   * transaction as each record — the money truth of the ORDER DOC. Gates and
+   * displays read this, never the session's records: a fresh session can no
+   * longer undercount received money. Absent = no records were ever written. */
+  paymentsReceivedCents?: number;
+  /** Monotonic receipt version; orders late responses without comparing money. */
+  paymentsRevision?: number;
+  /** New payment evidence linked atomically to the accumulator by rules. */
+  lastPaymentId?: string;
+  /** #168: set (same transaction) once the legacy `deposit` materialized as
+   * the inherited payment record, so the doc never counts that deposit twice
+   * (accumulator + pending deposit). */
+  inheritedDepositMaterialized?: boolean;
+  /** PO 2026-11-03 R9: evidence stamped when the operator explicitly confirmed
+   * delivering with an uncovered balance (retroactive / cash-on-delivery
+   * flows). The delivery gate still fires by default — this is the recorded
+   * authorization, never a silent pass. */
+  deliveredWithBalanceCents?: number;
+  deliveredWithBalanceConfirmedAt?: string;
+  deliveredWithBalanceConfirmedBy?: string;
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
@@ -257,6 +316,33 @@ export type Order = {
   price?: number;
   priceTier?: string;
   status?: LegacyOrderStatus;
+};
+
+/** How money was received. "unknown" is ONLY for the inherited legacy deposit
+ * (decision i on #123): real receptions always carry cash or transfer. */
+export type OrderPaymentMethod = "cash" | "transfer" | "unknown";
+
+/** One money reception registered on an order (#123). Immutable evidence:
+ * corrections/refunds are NEW records with a signed amount, never edits. */
+export type OrderPayment = {
+  /** Stable per user intent: a retry after an error reuses it so the Firestore
+   * create is recognized as the same operation (idempotent registration). */
+  id: string;
+  orderId: string;
+  storeId: string;
+  /** Real reception date (YYYY-MM-DD). Absent = genuinely unknown (inherited
+   * deposit); never invented. */
+  date?: string;
+  method: OrderPaymentMethod;
+  kind: "payment" | "adjustment";
+  /** Signed decimal money units; negative = refund / correction down. */
+  amount: number;
+  /** Exact rounded cents on new evidence; old records remain readable. */
+  amountCents?: number;
+  /** Why the record exists. Required on adjustments (evidence). */
+  note?: string;
+  createdAt: string;
+  createdBy: string;
 };
 
 /** A supplier Fer buys stock from. Per-store, like Category. */
