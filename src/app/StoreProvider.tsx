@@ -26,7 +26,7 @@ import { uid } from "../lib/ids";
 import { nowIso } from "../lib/dates";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
-import { deliveryWithBalanceBlocked, sameInstallmentPlan } from "../features/orders/installments";
+import { deliveryWithBalanceBlocked, orderTotalCents, sameInstallmentPlan } from "../features/orders/installments";
 import {
   buildAdjustmentRecord,
   buildPaymentRecord,
@@ -220,7 +220,7 @@ type StoreContextValue = {
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => void;
-  upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
+  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<void>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
   /** Payment records loaded this session (cloud reads; not local legacy state). */
   payments: OrderPayment[];
@@ -710,8 +710,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
       // #165/#168 (local mode parity): the cloud tx enforces these on the doc;
       // the legacy local branch follows the SAME rules — conversion with money
-      // received marks the reservation, and delivering requires the doc's
-      // received money to cover the total.
+      // received marks the reservation, and delivering with a saldo requires
+      // the operator's explicit confirmation (PO 2026-11-03 R9).
       if (nextOrder.installments && !prev?.installments && docMoney.receivedCents > 0 && !nextOrder.installmentsReservedAt) {
         nextOrder.installmentsReservedAt = nowIso();
       }
@@ -720,7 +720,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         (!prev || effectiveOrderStatus(prev) !== "delivered") &&
         deliveryWithBalanceBlocked(nextOrder, docMoney)
       ) {
-        throw new DeliveryWithBalanceError();
+        if (!options?.confirmDeliveredWithBalance) {
+          throw new DeliveryWithBalanceError(orderTotalCents(nextOrder) - docMoney.receivedCents);
+        }
+        nextOrder.deliveredWithBalanceCents = orderTotalCents(nextOrder) - docMoney.receivedCents;
+        nextOrder.deliveredWithBalanceConfirmedAt = nowIso();
+        nextOrder.deliveredWithBalanceConfirmedBy = user?.uid ?? "local";
       }
       const deltas = reservationDeltasForOrderChange(prev, nextOrder);
       const stockAt = nowIso();
@@ -741,8 +746,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const result = await saveOrderWithStockTx(
           user,
           nextOrder,
-          options ? options.expectedRevision : prev ? (order.revision ?? 0) : null,
-          options?.mutationId ?? uid("mutation")
+          options?.expectedRevision ?? (prev ? (order.revision ?? 0) : null),
+          options?.mutationId ?? uid("mutation"),
+          { confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance }
         );
         for (const update of result.stock) {
           const product = state.products.find((p) => p.id === update.productId);

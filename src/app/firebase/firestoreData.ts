@@ -14,9 +14,9 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { applyPurchaseLines, firstInstallmentReservationDeltas, reservationDeltasForOrderChange } from "../../lib/inventory";
+import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
 import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
-import { deliveryWithBalanceBlocked } from "../../features/orders/installments";
+import { deliveryWithBalanceBlocked, orderTotalCents } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -308,28 +308,30 @@ export function applyRelativeDeltas(
 }
 
 /**
- * #165/#168: an order with a plan or with received money cannot be CONFIRMED
- * delivered while money is owed. Validated on the mutation path itself (the UI
- * hiding buttons is not the guarantee): the transition INTO "delivered"
- * requires the doc-level accumulator to cover the order total. The message
- * points at the cobros sheet FIRST — the saldo is doc truth, so re-registering
- * an abono that already landed would duplicate money.
+ * #165/#168 → PO 2026-11-03 (R9): delivering with an uncovered balance is
+ * ALLOWED when the operator explicitly confirms it (retroactive capture /
+ * cash-on-delivery). Without the confirmation the mutation path rejects the
+ * transition (the UI hiding buttons is not the guarantee); WITH it, the save
+ * stamps the recorded authorization on the order doc. The message points at
+ * the cobros sheet first — the saldo is doc truth, so re-registering an abono
+ * that already landed would duplicate money.
  */
 export class DeliveryWithBalanceError extends Error {
-  constructor() {
+  constructor(public readonly balanceCents: number) {
     super("No se puede confirmar la entrega: este pedido tiene saldo pendiente. Revisa los cobros del pedido y registra solo el abono que falte.");
     this.name = "DeliveryWithBalanceError";
   }
 }
 
 /**
- * #165: the first confirmed abono found not enough pieces on the shelf. The
- * registration aborts — no negative stock, no silent skip. Whether an abono
- * without stock should be allowed (bajo pedido) is pending the PO.
+ * Stock shortage on the canonical shelf. NOTE (PO 2026-11-03 R8): order saves
+ * do NOT hard-block on shelf quantity — plan orders reserve at creation exactly
+ * like ordinary ones, and the shelf may go negative (the UI surfaces the
+ * existence). Retained for callers that pre-validate.
  */
 export class InsufficientStockError extends Error {
   constructor(public readonly shortages: { productId: string; missing: number }[]) {
-    super("No hay existencias suficientes para apartar las piezas de este pedido. Surte inventario y vuelve a registrar el abono.");
+    super("No hay existencias suficientes para apartar las piezas de este pedido. Surte inventario y vuelve a intentar.");
     this.name = "InsufficientStockError";
   }
 }
@@ -344,10 +346,11 @@ export class InsufficientStockError extends Error {
  * fresh session with no payment records loaded can no longer undercount them.
  */
 export async function saveOrderWithStockTx(
-  _user: AppUser,
+  user: AppUser,
   order: Order,
   expectedRevision: number | null,
-  mutationId: string
+  mutationId: string,
+  options?: { confirmDeliveredWithBalance?: boolean }
 ): Promise<{ order: Order; stock: StockAdjustment[] }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
@@ -383,17 +386,23 @@ export async function saveOrderWithStockTx(
     if (next.installments && !previous?.installments && docMoney.receivedCents > 0 && !next.installmentsReservedAt) {
       next.installmentsReservedAt = new Date().toISOString();
     }
-    // #165/#168 F1: the transition INTO delivered requires the doc to show the
-    // total covered — a plan order OR any order with registered cobros.
-    // Removing the plan with a saldo does not enable delivering in the same
-    // save; a deposit-only ordinary order keeps its legacy behavior.
-    // Validated on the mutation path — hiding buttons is not the guarantee.
-    if (
+    // #165/#168 F1 → PO 2026-11-03 (R9): the transition INTO delivered still
+    // fires the gate for a plan order or any order with registered cobros
+    // whose doc money does not cover the total — but the operator may now
+    // EXPLICITLY confirm delivering with a saldo (retroactive capture /
+    // contraentrega). Unconfirmed → reject; confirmed → stamp the recorded
+    // authorization. Removing the plan with a saldo changes nothing.
+    const delivering =
       effectiveOrderStatus(next) === "delivered" &&
-      (!previous || effectiveOrderStatus(previous) !== "delivered") &&
-      deliveryWithBalanceBlocked(next, docMoney)
-    ) {
-      throw new DeliveryWithBalanceError();
+      (!previous || effectiveOrderStatus(previous) !== "delivered");
+    if (delivering && deliveryWithBalanceBlocked(next, docMoney)) {
+      const saldoCents = orderTotalCents(next) - docMoney.receivedCents;
+      if (!options?.confirmDeliveredWithBalance) {
+        throw new DeliveryWithBalanceError(saldoCents);
+      }
+      next.deliveredWithBalanceCents = saldoCents;
+      next.deliveredWithBalanceConfirmedAt = new Date().toISOString();
+      next.deliveredWithBalanceConfirmedBy = user.uid;
     }
     const deltas = reservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
@@ -435,13 +444,12 @@ export async function fetchOrderPayments(orderId: string): Promise<OrderPayment[
  * records, which is why this path never updates an existing PAYMENT doc (the
  * parent order doc only gains the accumulator + reservation fields).
  *
- * #165: for an installment order, the FIRST confirmed positive abono reserves
- * the order's quantities ONCE, in this same transaction: the canonical product
- * stock is re-read, insufficient stock aborts the whole registration with an
- * explicit error (no negative stock, no silent skip), and the order doc gets
- * `installmentsReservedAt` + a revision bump so a concurrent/stale editor save
- * is rejected instead of silently un-reserving. Later abonos (and retries of
- * the first one) are recognized by the mark and never reserve again.
+ * #165 → PO 2026-11-03 (R8): plan orders reserve their quantities AT CREATION
+ * (same contribution model as ordinary orders), so an abono never moves stock
+ * here. The FIRST confirmed positive abono still stamps the
+ * `installmentsReservedAt` witness on the order doc — money-backed stock is
+ * never released by cancellation alone. Insufficient stock surfaces at order
+ * creation, not at payment time.
  */
 export async function registerOrderPaymentTx(
   payment: OrderPayment,
@@ -481,36 +489,19 @@ export async function registerOrderPaymentTx(
       );
     }
 
-    // #165 first-abono reservation reads (canonical stock + sufficiency).
+    // PO 2026-11-03 (R8): plan orders reserve stock AT CREATION like ordinary
+    // ones — an abono no longer moves stock. The first positive abono only
+    // STAMPS the `installmentsReservedAt` witness (money-backed stock is never
+    // released by cancellation alone); no revision bump is needed because the
+    // reservation already happened on the order's own save.
     const order = migrateOrder({ ...orderSnap.data(), id: payment.orderId });
     const firstPositiveAbono = payment.kind === "payment" && payment.amount > 0;
-    let reservation: { updates: StockAdjustment[]; at: string } | null = null;
-    if (order.installments && !order.installmentsReservedAt && firstPositiveAbono) {
-      const deltas = firstInstallmentReservationDeltas(order);
-      const canonical = new Map<string, number | undefined>();
-      const shortages: { productId: string; missing: number }[] = [];
-      for (const [productId, delta] of deltas) {
-        const product = await tx.get(doc(db, "products", productId));
-        if (product.exists() && product.data().storeId !== payment.storeId) {
-          throw new Error("El producto pertenece a otra tienda.");
-        }
-        const current = product.exists() ? (product.data().quantityOnHand as number | undefined) : undefined;
-        canonical.set(productId, current);
-        // Untracked products (no quantityOnHand) cannot go negative; tracked
-        // ones must cover the reservation — explicit abort otherwise.
-        if (typeof current === "number" && current + delta < 0) {
-          shortages.push({ productId, missing: -(current + delta) });
-        }
-      }
-      if (shortages.length > 0) throw new InsufficientStockError(shortages);
-      reservation = { updates: applyRelativeDeltas(canonical, deltas).updates, at: new Date().toISOString() };
-    }
 
-    // WRITE PHASE — one atomic commit: evidence, reservation, mark, and the
-    // doc-level money accumulator (#168). The accumulator folds this
-    // registration's signed cents (and the inherited deposit's, exactly once
-    // when it materializes) into `paymentsReceivedCents`, so the ORDER DOC is
-    // the truth of received money — a fresh session cannot undercount it.
+    // WRITE PHASE — one atomic commit: evidence, witness, and the doc-level
+    // money accumulator (#168). The accumulator folds this registration's
+    // signed cents (and the inherited deposit's, exactly once when it
+    // materializes) into `paymentsReceivedCents`, so the ORDER DOC is the
+    // truth of received money — a fresh session cannot undercount it.
     // Unsafe precision aborts the whole registration (fail-closed on writes).
     let savedCents: number;
     try {
@@ -521,30 +512,19 @@ export async function registerOrderPaymentTx(
       }
       throw error;
     }
-    const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inherited);
+    const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
     const saved: OrderPayment[] = [];
     if (inheritedRecord) {
       tx.set(inheritedRef, stripUndefined(inheritedRecord) as Record<string, unknown>);
       saved.push(inheritedRecord);
     }
-    if (reservation) {
-      for (const update of reservation.updates) {
-        tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: reservation.at });
-      }
-      tx.update(orderRef, {
-        installmentsReservedAt: reservation.at,
-        revision: (order.revision ?? 0) + 1,
-        lastMutationId: `installment_reservation_${payment.id}`,
-        updatedAt: reservation.at,
-        paymentsReceivedCents: money.paymentsReceivedCents,
-        ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
-      });
-    } else {
-      tx.update(orderRef, {
-        paymentsReceivedCents: money.paymentsReceivedCents,
-        ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
-      });
-    }
+    tx.update(orderRef, {
+      paymentsReceivedCents: money.paymentsReceivedCents,
+      ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
+      ...(order.installments && !order.installmentsReservedAt && firstPositiveAbono
+        ? { installmentsReservedAt: new Date().toISOString() }
+        : {}),
+    });
     tx.set(paymentRef, stripUndefined(payment) as Record<string, unknown>);
     saved.push(payment);
     return saved;

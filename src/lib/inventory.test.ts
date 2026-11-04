@@ -3,7 +3,6 @@ import {
   weightedAverageCost,
   applyPurchaseLines,
   committedForProduct,
-  firstInstallmentReservationDeltas,
   reservationDeltas,
   reservationDeltasForOrderChange,
 } from "./inventory";
@@ -170,31 +169,30 @@ describe("installment-order stock holding (#165)", () => {
     ...o,
   });
 
-  it("a plan WITHOUT abonos holds nothing — no early reservation", () => {
-    expect(reservationDeltasForOrderChange(undefined, planOrder())).toEqual(new Map());
+  it("a plan order reserves AT CREATION like an ordinary one (PO 2026-11-03 R8)", () => {
+    expect(reservationDeltasForOrderChange(undefined, planOrder())).toEqual(new Map([["p1", -2]]));
+    // Open-status churn moves nothing while held.
     expect(reservationDeltasForOrderChange(planOrder(), planOrder({ orderStatus: "ready" }))).toEqual(new Map());
-    // Item edits on an unreserved plan order still move no stock.
-    expect(reservationDeltasForOrderChange(planOrder(), planOrder({ items: [item("p1", 5)] }))).toEqual(new Map());
+    // Item edits move only the difference.
+    expect(reservationDeltasForOrderChange(planOrder(), planOrder({ items: [item("p1", 5)] }))).toEqual(new Map([["p1", -3]]));
+    // Cancelling a plan order WITHOUT received money releases the pieces.
+    expect(reservationDeltasForOrderChange(planOrder(), { ...planOrder(), orderStatus: "cancelled" })).toEqual(new Map([["p1", 2]]));
   });
 
-  it("once reserved (first abono), the pieces stay held — even on cancellation", () => {
+  it("money-backed pieces stay held — even on cancellation (witness or accumulator)", () => {
     const reserved = planOrder({ installmentsReservedAt: "2026-11-02T10:00:00.000Z" });
     // Cancelling must not release stock by inference: money was received.
     expect(reservationDeltasForOrderChange(reserved, { ...reserved, orderStatus: "cancelled" })).toEqual(new Map());
     expect(reservationDeltasForOrderChange(reserved, { ...reserved, orderStatus: "delivered" })).toEqual(new Map());
     // Item changes while held still apply the difference.
     expect(reservationDeltasForOrderChange(reserved, planOrder({ installmentsReservedAt: "2026-11-02T10:00:00.000Z", items: [item("p1", 3)] }))).toEqual(new Map([["p1", -1]]));
+    // Money in the accumulator holds the pieces even without the witness.
+    const paid = planOrder({ paymentsReceivedCents: 10000 });
+    expect(reservationDeltasForOrderChange(paid, { ...paid, orderStatus: "cancelled" })).toEqual(new Map());
   });
 
-  it("converting an ordinary open order to a plan without abonos releases the early reservation", () => {
+  it("converting an ordinary open order to a plan keeps holding the pieces (R8)", () => {
     const ordinary = { ...planOrder(), installments: undefined } as Order;
-    expect(reservationDeltasForOrderChange(ordinary, planOrder())).toEqual(new Map([["p1", 2]]));
-  });
-
-  it("firstInstallmentReservationDeltas aggregates the order quantities once", () => {
-    const multi = planOrder({ items: [item("p1", 2), item("p2", 1), item("p1", 3)] });
-    expect(firstInstallmentReservationDeltas(multi)).toEqual(new Map([["p1", -5], ["p2", -1]]));
-    // Lines without a productId are manual captures — nothing to reserve.
-    expect(firstInstallmentReservationDeltas(planOrder({ items: [{ productName: "Envío", quantity: 1, unitPrice: 5, subtotal: 5 }] }))).toEqual(new Map());
+    expect(reservationDeltasForOrderChange(ordinary, planOrder())).toEqual(new Map());
   });
 });
