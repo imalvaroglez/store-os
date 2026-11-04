@@ -43,6 +43,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
       await setDoc(doc(ctx.firestore(), "adminStores/tx-store"), { ownerUid: "tx-user", memberUids: ["tx-user"] });
       await setDoc(doc(ctx.firestore(), "products/p-plan"), { storeId: "tx-store", quantityOnHand: 5 });
       await setDoc(doc(ctx.firestore(), "products/p-short"), { storeId: "tx-store", quantityOnHand: 1 });
+      await setDoc(doc(ctx.firestore(), "products/p-conv"), { storeId: "tx-store", quantityOnHand: 1 });
     });
     holder.db = env.authenticatedContext("tx-user").firestore();
   });
@@ -166,21 +167,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
   it("converting an order that already received money keeps the pieces apartadas (#168 F2/C1)", async () => {
     // Ordinary open order (already holds 1 piece) that received a cobro: the
     // accumulator lives on the DOC, so a session that never loaded the cobros
-    // still sees the money and marks the reservation. (saveOrderWithStockTx
-    // takes no records anymore — the session cannot lie about received money.)
-    const ordinary = makeOrder("convert-order", "p-plan", 1);
+    // still sees the money and marks the reservation. Own product: independent
+    // of the p-plan ledger shared by the earlier tests.
+    const ordinary = makeOrder("convert-order", "p-conv", 1);
     await saveOrderWithStockTx(user, ordinary, null, "convert-create");
-    expect(await stock("p-plan")).toBe(0); // 1 − 1 de la orden ordinaria
+    expect(await stock("p-conv")).toBe(0); // 1 − 1 de la orden ordinaria
     await registerOrderPaymentTx(payment("seed_1", 400, "convert-order"));
     const snapshot = (await orderDoc("convert-order"))!;
     expect(snapshot.paymentsReceivedCents).toBe(40000);
-    const converted = makeOrder("convert-order", "p-plan", 1, {
+    const converted = makeOrder("convert-order", "p-conv", 1, {
       installments: plan,
       revision: snapshot.revision,
     });
     const result = await saveOrderWithStockTx(user, converted, snapshot.revision, "convert-plan");
     expect(result.order.installmentsReservedAt).toBeTruthy();
-    expect(await stock("p-plan")).toBe(0); // sin liberar: ya había dinero
+    expect(await stock("p-conv")).toBe(0); // sin liberar: ya había dinero
   });
 
   it("converting an order whose only received money is the legacy deposit also marks (#168 F2)", async () => {
@@ -211,6 +212,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     });
     const foreign = payment("pay_f", 50, "foreign-plan");
     await expect(registerOrderPaymentTx({ ...foreign, storeId: "other-store" })).rejects.toThrow();
-    expect(await stock("p-plan")).toBe(0);
+    // The rejected payment must not move anyone's stock.
+    expect(await stock("p-plan")).toBe(-1); // ledger: 5 −2 plan −1 ordinary −1 gate −1 confirm
   });
 });
