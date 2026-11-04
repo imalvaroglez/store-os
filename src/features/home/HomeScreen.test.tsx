@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
@@ -111,6 +111,36 @@ describe("HomeScreen alertas de existencias (FER-09)", () => {
     // The cobros sheet opens; NO order write, NO success toast.
     expect(await screen.findByRole("dialog", { name: "Cobros del pedido" })).toBeTruthy();
     expect(mocks.upsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("the sheet shows the CANONICAL order after an abono updates it (Codex P1 regression)", async () => {
+    const state = fixtureState();
+    const order: Order = {
+      ...state.orders[0],
+      orderStatus: "delivered",
+      paymentsReceivedCents: 40000,
+      inheritedDepositMaterialized: true,
+      items: [{ lineId: "l1", productName: "Pieza", quantity: 1, unitPrice: 1000, subtotal: 1000 }],
+    };
+    state.orders = [order];
+    const Wrapper = withState(state);
+    const view = render(<Wrapper><HomeScreen /></Wrapper>);
+
+    await screen.findByText("Cobrar");
+    fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
+    const sheet = await screen.findByRole("dialog", { name: "Cobros del pedido" });
+    expect(within(sheet).getByText("$400.00")).toBeTruthy(); // Recibido inicial
+
+    // The canonical order updates (an abono landed elsewhere / sync arrived).
+    mocks.state = { ...state, orders: [{ ...order, paymentsReceivedCents: 70000 }] };
+    view.rerender(<Wrapper><HomeScreen /></Wrapper>);
+    expect(screen.getByText("$700.00")).toBeTruthy(); // Recibido canónico
+    expect(screen.getByText("$300.00")).toBeTruthy(); // Saldo recalculado
+
+    // If the order leaves the current store context, the sheet closes.
+    mocks.state = { ...state, orders: [] };
+    view.rerender(<Wrapper><HomeScreen /></Wrapper>);
+    expect(screen.queryByRole("dialog", { name: "Cobros del pedido" })).toBeNull();
   });
 
   it("Cobrar on a legacy deposit-only order keeps the one-tap collect", async () => {

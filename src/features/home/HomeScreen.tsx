@@ -20,18 +20,21 @@ import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { OrderPaymentsSheet } from "../orders/OrderPaymentsSheet";
 import { navigate } from "../../lib/router";
-import type { Order } from "../../types";
 import { useToast } from "../../design-system";
 
 export function HomeScreen() {
   const { state, activeStore, upsertOrder } = useStore();
   const toast = useToast();
   // Cobros sheet for orders in the payments model (#123+): Inicio rows must
-  // register real receipts, never bump the deposit silently (Codex P1).
-  const [paymentsOrder, setPaymentsOrder] = useState<Order | null>(null);
+  // register real receipts, never bump the deposit silently. Only the ID is
+  // stored; the CANONICAL order is resolved on every render so an abono or
+  // sync refreshes what the sheet shows — and the sheet simply closes if the
+  // order leaves the current store context (Codex review of #186).
+  const [paymentsOrderId, setPaymentsOrderId] = useState<string | null>(null);
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const orders = ordersForStore(state.orders, activeStore.id);
+  const paymentsOrder = paymentsOrderId ? orders.find((o) => o.id === paymentsOrderId) ?? null : null;
   // Inicio keeps every actionable unpaid order visible, including asked/quoted
   // orders. Completed and cancelled orders belong in the dedicated list only.
   const active = orders.filter(orderCountsTowardToPay);
@@ -181,7 +184,7 @@ export function HomeScreen() {
                       </Button>
                     ) : o.installments ? (
                       totals.balance > 0 && (
-                        <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => setPaymentsOrder(o)}>
+                        <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => setPaymentsOrderId(o.id)}>
                           Abonar
                         </Button>
                       )
@@ -191,7 +194,7 @@ export function HomeScreen() {
                         variant="secondary"
                         className="shrink-0 whitespace-nowrap"
                         onClick={() =>
-                          typeof o.paymentsReceivedCents === "number" ? setPaymentsOrder(o) : collect(o.id)
+                          typeof o.paymentsReceivedCents === "number" ? setPaymentsOrderId(o.id) : collect(o.id)
                         }
                       >
                         Cobrar
@@ -226,7 +229,7 @@ export function HomeScreen() {
 
     </Screen>
     {paymentsOrder && (
-      <OrderPaymentsSheet order={paymentsOrder} open onClose={() => setPaymentsOrder(null)} />
+      <OrderPaymentsSheet order={paymentsOrder} open onClose={() => setPaymentsOrderId(null)} />
     )}
     </>
   );
