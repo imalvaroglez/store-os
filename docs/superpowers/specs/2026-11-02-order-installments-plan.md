@@ -184,12 +184,23 @@ calendario y la tarjeta se derivan en memoria desde el documento.
   (p. ej. entregado → listo → entregado) pasa por la compuerta otra vez —
   correcto: cada confirmación exige saldo cero.
 - Quitar el plan no borra la reserva ni el historial: son evidencia.
-- Condiciones abiertas de la revisión #168 (fuera del alcance de estas
-  correcciones, registradas en #171): (C2) borrar un pedido reservado con
-  `deleteOrderWithStockTx` deja las piezas apartadas sin pedido que las
-  referencie (latente: sin caller UI); (C3) las piezas retenidas por cuotas no
-  aparecen en "Comprometido"; (C4) editar un pedido reservado agregando líneas
-  puede dejar stock negativo (la validación de suficiencia solo existe al
-  primer abono).
+- Corrección incremental de integridad (#171 C2/C3/C4): la marca de reserva
+  persiste al quitar el plan; Comprometido cuenta solo reservas efectivas o
+  pedidos ordinarios abiertos y conserva visibles las reservas canceladas hasta
+  una resolución explícita. Una entrega sale de Comprometido, sin devolver stock.
+  Borrar el padre de una reserva o un acumulado de cobros (incluso neto cero)
+  se rechaza en la transacción y en las reglas: no se huérfana evidencia. El
+  guardado solo toma acumulado, materialización y marca de reserva del documento
+  canónico; ignora valores inventados por el llamador, incluso al crear. Las
+  reglas impiden quitar los campos protectores antes de borrar el padre y
+  reemplazar una marca de reserva ya persistida. Ampliar
+  una reserva verifica existencias canónicas antes de escribir, igual que el
+  primer abono; el rechazo no cambia pedido, productos ni cobros. No se define
+  aquí cómo cancelar/devolver o permitir sobreventa.
+  Pruebas: `inventory.test.ts` (incluye rojo previo en tres regresiones) e
+  `installments.emulator.test.ts` (editar, cancelar/quitar plan, borrar por
+  servicio/SDK y neto cero). Sin lecturas/escrituras nuevas: reutiliza las del
+  guardado/borrado; Comprometido se calcula en memoria. El costo continúa dentro
+  de la estimación original del free tier. Emuladores se ejecutan solo en CI.
 - El PO decidirá (pendiente, reversible): abono bajo pedido sin existencias
   (hoy bloquea) y si la entrega con saldo debe permitirse alguna vez (hoy no).

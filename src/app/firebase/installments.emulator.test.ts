@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, deleteField, doc, getDoc, getDocs, setDoc, updateDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import type { Order, OrderPayment } from "../../types";
 
@@ -8,6 +8,9 @@ const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
 import {
   DeliveryWithBalanceError,
+  OrderEvidenceDeletionError,
+  deleteOrderWithStockTx,
+  InsufficientStockError,
   registerOrderPaymentTx,
   saveOrderWithStockTx,
 } from "./firestoreData";
@@ -215,4 +218,88 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     // The rejected payment must not move anyone's stock.
     expect(await stock("p-plan")).toBe(0); // ledger: 5 −2 plan −1 ordinary −1 gate −1 confirm
   });
+
+  it("keeps reserved stock and evidence through edits, plan removal and rejected deletion (#171 C2/C4)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/p-res-edit"), { storeId: "tx-store", quantityOnHand: 3 });
+    });
+    const created = await saveOrderWithStockTx(user, makeOrder("res-edit", "p-res-edit", 2, { installments: plan }), null, "res-create");
+    await registerOrderPaymentTx(payment("res-first", 100, "res-edit"));
+    const reserved = (await orderDoc("res-edit"))!;
+    expect(await stock("p-res-edit")).toBe(1);
+    // A stale form can omit the mark; the canonical document must preserve it.
+    const tooLarge = { ...created.order, items: makeOrder("res-edit", "p-res-edit", 4).items };
+    await expect(saveOrderWithStockTx(user, tooLarge, reserved.revision, "res-too-large")).rejects.toBeInstanceOf(InsufficientStockError);
+    expect(await stock("p-res-edit")).toBe(1);
+    expect((await orderDoc("res-edit"))?.revision).toBe(reserved.revision);
+    expect(await paymentCount("res-edit")).toBe(1);
+
+    const expanded = await saveOrderWithStockTx(user, { ...created.order, items: makeOrder("res-edit", "p-res-edit", 3).items }, reserved.revision, "res-expand");
+    expect(await stock("p-res-edit")).toBe(0);
+    expect(expanded.order.installmentsReservedAt).toBe(reserved.installmentsReservedAt);
+    const cancelled = await saveOrderWithStockTx(user, { ...expanded.order, installments: undefined, installmentsReservedAt: undefined, orderStatus: "cancelled" }, expanded.order.revision!, "res-no-plan");
+    expect(cancelled.order.installmentsReservedAt).toBe(reserved.installmentsReservedAt);
+    expect(await stock("p-res-edit")).toBe(0);
+    await expect(deleteOrderWithStockTx(user, "res-edit", cancelled.order.revision!)).rejects.toBeInstanceOf(OrderEvidenceDeletionError);
+    await expect(deleteDoc(doc(holder.db, "orders/res-edit"))).rejects.toThrow();
+    // A raw client cannot first erase the fields and then delete the parent.
+    await expect(updateDoc(doc(holder.db, "orders/res-edit"), { installmentsReservedAt: deleteField(), paymentsReceivedCents: deleteField() })).rejects.toThrow();
+    await expect(updateDoc(doc(holder.db, "orders/res-edit"), { installmentsReservedAt: "replacement" })).rejects.toThrow();
+    expect((await orderDoc("res-edit"))?.revision).toBe(cancelled.order.revision);
+    expect(await stock("p-res-edit")).toBe(0);
+    expect(await paymentCount("res-edit")).toBe(1);
+  });
+
+  it("preserves a net-zero payment history when deleting an ordinary order (#171 C2)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/p-res-zero"), { storeId: "tx-store", quantityOnHand: 5 });
+    });
+    const created = await saveOrderWithStockTx(user, makeOrder("res-zero-history", "p-res-zero", 1), null, "zero-create");
+    await registerOrderPaymentTx(payment("zero-paid", 100, "res-zero-history"));
+    await registerOrderPaymentTx({ ...payment("zero-adjust", -100, "res-zero-history"), kind: "adjustment", note: "Corrección del cobro" });
+    expect((await orderDoc("res-zero-history"))?.paymentsReceivedCents).toBe(0);
+    await expect(deleteOrderWithStockTx(user, "res-zero-history", created.order.revision!)).rejects.toBeInstanceOf(OrderEvidenceDeletionError);
+    await expect(deleteDoc(doc(holder.db, "orders/res-zero-history"))).rejects.toThrow();
+    await expect(updateDoc(doc(holder.db, "orders/res-zero-history"), { paymentsReceivedCents: deleteField() })).rejects.toThrow();
+    expect(await paymentCount("res-zero-history")).toBe(2);
+  });
+
+  it("concurrent expansions compete for canonical stock without overselling (#171 C4)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/p-res-race"), { storeId: "tx-store", quantityOnHand: 5 });
+    });
+    for (const id of ["res-race-a", "res-race-b"]) {
+      await saveOrderWithStockTx(user, makeOrder(id, "p-res-race", 2, { installments: plan }), null, `${id}-create`);
+      await registerOrderPaymentTx(payment(`${id}-pay`, 100, id));
+    }
+    expect(await stock("p-res-race")).toBe(1);
+    const results = await Promise.allSettled(["res-race-a", "res-race-b"].map(async (id) => {
+      const current = (await orderDoc(id))!;
+      return saveOrderWithStockTx(user, makeOrder(id, "p-res-race", 3, { installments: plan }), current.revision, `${id}-expand`);
+    }));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toBeInstanceOf(InsufficientStockError);
+    expect(await stock("p-res-race")).toBe(0);
+    expect(await paymentCount("res-race-a")).toBe(1);
+    expect(await paymentCount("res-race-b")).toBe(1);
+  });
+
+  it("ignores caller-invented money and reservation fields on creation (#171)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/p-res-forged"), { storeId: "tx-store", quantityOnHand: 5 });
+    });
+    const saved = await saveOrderWithStockTx(user, makeOrder("res-forged", "p-res-forged", 1, {
+      installments: plan, installmentsReservedAt: "invented", paymentsReceivedCents: 90000, inheritedDepositMaterialized: true,
+    }), null, "res-forged-create");
+    expect(saved.order.installmentsReservedAt).toBeUndefined();
+    expect(saved.order.paymentsReceivedCents).toBeUndefined();
+    expect(saved.order.inheritedDepositMaterialized).toBeUndefined();
+    expect(await stock("p-res-forged")).toBe(4); // R8: la creación aparta 1 pieza
+    expect(await paymentCount("res-forged")).toBe(0);
+    await expect(saveOrderWithStockTx(user, { ...saved.order, orderStatus: "delivered", paymentsReceivedCents: 90000 }, saved.order.revision!, "res-forged-deliver")).rejects.toBeInstanceOf(DeliveryWithBalanceError);
+    expect((await orderDoc("res-forged"))?.orderStatus).toBe("asked");
+    expect(await stock("p-res-forged")).toBe(4);
+  });
+
 });

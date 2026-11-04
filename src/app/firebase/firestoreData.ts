@@ -323,6 +323,14 @@ export class DeliveryWithBalanceError extends Error {
   }
 }
 
+/** Preserve the parent of immutable payment evidence and retained reservations. */
+export class OrderEvidenceDeletionError extends Error {
+  constructor() {
+    super("Este pedido conserva cobros o piezas apartadas y no se puede eliminar. Conserva el pedido para revisar su historial.");
+    this.name = "OrderEvidenceDeletionError";
+  }
+}
+
 /**
  * Stock shortage on the canonical shelf. NOTE (PO 2026-11-03 R8): order saves
  * do NOT hard-block on shelf quantity — plan orders reserve at creation exactly
@@ -369,8 +377,11 @@ export async function saveOrderWithStockTx(
     const docData = snap.data() as Record<string, unknown> | undefined;
     const next: Order = {
       ...order,
-      ...(typeof docData?.paymentsReceivedCents === "number" ? { paymentsReceivedCents: docData.paymentsReceivedCents } : {}),
-      ...(docData?.inheritedDepositMaterialized === true ? { inheritedDepositMaterialized: true } : {}),
+      // A caller can neither erase existing evidence nor invent it on create.
+      // Only the canonical doc (or the payment transaction) owns these fields.
+      installmentsReservedAt: previous?.installmentsReservedAt,
+      paymentsReceivedCents: typeof docData?.paymentsReceivedCents === "number" ? docData.paymentsReceivedCents : undefined,
+      inheritedDepositMaterialized: docData?.inheritedDepositMaterialized === true ? true : undefined,
     };
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
@@ -406,11 +417,19 @@ export async function saveOrderWithStockTx(
     }
     const deltas = reservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
-    for (const productId of deltas.keys()) {
+    const shortages: { productId: string; missing: number }[] = [];
+    for (const [productId, delta] of deltas) {
       const product = await tx.get(doc(db, "products", productId));
       if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
-      canonical.set(productId, product.exists() ? product.data().quantityOnHand as number | undefined : undefined);
+      const current = product.exists() ? product.data().quantityOnHand as number | undefined : undefined;
+      canonical.set(productId, current);
+      // Expanding an existing reservation uses the same sufficiency guarantee
+      // as its first abono. Releases remain possible even with a prior shortage.
+      if (next.installmentsReservedAt && delta < 0 && typeof current === "number" && current + delta < 0) {
+        shortages.push({ productId, missing: -(current + delta) });
+      }
     }
+    if (shortages.length > 0) throw new InsufficientStockError(shortages);
     const { updates } = applyRelativeDeltas(canonical, deltas);
     const at = new Date().toISOString();
     const saved = { ...next, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
@@ -544,6 +563,12 @@ export async function deleteOrderWithStockTx(
     if (!snap.exists()) return [];
     const previous = migrateOrder({ ...snap.data(), id: orderId });
     if ((previous.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
+    // A zero accumulator can still have payments and offsetting adjustments.
+    // Deleting the parent would orphan immutable evidence and retained stock.
+    const data = snap.data();
+    if (previous.installmentsReservedAt || "paymentsReceivedCents" in data || data.inheritedDepositMaterialized === true) {
+      throw new OrderEvidenceDeletionError();
+    }
     const deltas = reservationDeltasForOrderChange(previous, { ...previous, orderStatus: "cancelled" });
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
