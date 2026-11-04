@@ -222,6 +222,12 @@ La retención sólo envía a la Papelera nombres registrados por esta instalaci�
 crear una copia nueva restaurada correctamente. Archivos ajenos nunca se podan.
 No borrar `state.json`: contiene el inventario y el comprobante de la última copia.
 
+La limpieza de arranque omite consultas de procesos si no hay temporales `capture-*`.
+Las consultas de procesos tienen un plazo máximo de cinco segundos para tolerar
+la ejecución en segundo plano; si se agota, se informa `PROCESS_INSPECTION_TIMEOUT`
+y se conservan los temporales cuya propiedad no pudo determinarse. El supervisor
+dispone de hasta quince segundos para iniciar.
+
 La exclusión mutua reserva el puerto local 43827 mientras corre la tarea. Al
 terminar, morir el proceso o reiniciar la Mac, el sistema libera el puerto. El
 archivo `run.lock` es sólo diagnóstico: se reemplaza al obtener exclusividad.
