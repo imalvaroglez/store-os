@@ -3,6 +3,7 @@ import { Button, Card, EmptyState, Badge } from "../../design-system";
 import { purchasesForStore, suppliersForStore } from "../../lib/selectors";
 import { formatMoneyExact } from "../../lib/money";
 import { formatDate } from "../../lib/dates";
+import { purchaseSaleExpenseTotalCents } from "../../lib/purchases";
 import {
   effectivePurchaseStatus,
   purchaseRecordedTotal,
@@ -61,6 +62,8 @@ export function PurchaseList({
           const status = effectivePurchaseStatus(p);
           const pieces = p.lines.reduce((s, l) => s + l.quantity, 0);
           const sourcingExpenseTotal = purchaseSourcingExpenseTotal(p);
+          // FER-02: sale-side expenses attributed per piece (delivery, packaging).
+          const saleCents = purchaseSaleExpenseTotalCents(p);
           return (
             <Card key={p.id} className="cursor-pointer" onClick={() => onOpen(p)}>
               <div className="flex items-start justify-between gap-2">
@@ -90,6 +93,9 @@ export function PurchaseList({
                     <p className="mt-1 text-xs text-ink-soft">
                       Gastos {formatMoneyExact(sourcingExpenseTotal)} · Total {formatMoneyExact(purchaseRecordedTotal(p))}
                     </p>
+                  )}
+                  {saleCents > 0 && (
+                    <p className="mt-1 text-xs text-ink-soft">Gastos de venta {formatMoneyExact(saleCents / 100)}</p>
                   )}
                 </div>
               </div>

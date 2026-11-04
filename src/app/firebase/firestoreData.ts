@@ -18,8 +18,8 @@ import {
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange } from "../../lib/inventory";
-import { purchaseInventoryUpdates } from "../../lib/purchases";
-import { recalcPurchaseStatus } from "../../types";
+import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
+import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
 import { deliveryWithBalanceBlocked, orderTotalCents } from "../../features/orders/installments";
 import {
@@ -808,6 +808,46 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
       ...(result.costAllocations ? { costAllocations: result.costAllocations } : {}),
     });
     return result;
+  });
+}
+
+/**
+ * Append ONE post-reception expense adjustment to a received journey purchase
+ * (FER-02, #126). Append-only evidence: the update touches exactly
+ * `saleCostAdjustments` + `updatedAt` — the fields the security rules allow on
+ * received evidence. Sale categories get their exact per-piece allocation;
+ * nothing here changes stock, product costs, tickets or the original
+ * costAllocations. Returns the canonical updated purchase for app state.
+ */
+export async function appendPurchaseExpenseTx(
+  purchaseId: string,
+  expense: PurchaseExpense
+): Promise<Purchase> {
+  const { db } = getFirebase();
+  const purchaseRef = doc(db, "purchases", purchaseId);
+  const snap = await getDoc(purchaseRef);
+  if (!snap.exists()) throw new Error("No se encontró la compra.");
+  const purchase = snap.data() as Purchase;
+  if (effectivePurchaseStatus(purchase) !== "received" || purchase.receivedAt == null) {
+    throw new Error("Solo se pueden agregar gastos a compras ya recibidas.");
+  }
+  if (purchase.costingMethod !== "latest_purchase") {
+    throw new Error("Esta compra no admite gastos posteriores a su recepción.");
+  }
+  const at = new Date().toISOString();
+  // May throw a Spanish validation error (amount, identity) before any write.
+  const entry = purchaseExpenseAdjustment({ ...purchase, id: snap.id }, expense, at);
+  return runTransaction(db, async (tx) => {
+    const txSnap = await tx.get(purchaseRef);
+    if (!txSnap.exists()) throw new Error("No se encontró la compra.");
+    const current = txSnap.data() as Purchase;
+    if (effectivePurchaseStatus(current) !== "received" || current.costingMethod !== "latest_purchase") {
+      throw new Error("Esta compra ya no admite gastos posteriores.");
+    }
+    const saleCostAdjustments = [...(current.saleCostAdjustments ?? []), entry];
+    tx.update(purchaseRef, { saleCostAdjustments, updatedAt: at });
+    // Canonical document for the in-memory state (entity writes omit the id).
+    return { ...current, id: txSnap.id, saleCostAdjustments, updatedAt: at };
   });
 }
 
