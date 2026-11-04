@@ -7,6 +7,7 @@ import {
   parseAmount,
   sanitizeDecimalInput,
   sanitizeIntegerInput,
+  sanitizeMoneyInput,
 } from "./money";
 import type { Product } from "../types";
 
@@ -79,6 +80,16 @@ describe("numeric form input", () => {  it("keeps only digits for integer fields
     expect(sanitizeDecimalInput("$1a.2.5")).toBe("1.25");
     expect(sanitizeDecimalInput(".5")).toBe("0.5");
     expect(sanitizeDecimalInput(".")).toBe("0.");
+  });
+  it("keeps money fields at two decimals — what you see is what registers (#168 F6)", () => {
+    expect(sanitizeMoneyInput("150.555")).toBe("150.55");
+    expect(sanitizeMoneyInput("$1a.2.5")).toBe("1.25");
+    expect(sanitizeMoneyInput(".5")).toBe("0.5");
+    expect(sanitizeMoneyInput(".")).toBe("0.");
+    expect(sanitizeMoneyInput("0.009")).toBe("0.00");
+    // Adjustments are signed ("-150 para devolver"): the leading minus survives.
+    expect(sanitizeMoneyInput("-150.999")).toBe("-150.99");
+    expect(sanitizeMoneyInput("-")).toBe("");
   });
 });
 

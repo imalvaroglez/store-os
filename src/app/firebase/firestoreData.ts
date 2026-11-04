@@ -2,7 +2,9 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
+  getDocsFromServer,
   setDoc,
   deleteDoc,
   deleteField,
@@ -10,14 +12,25 @@ import {
   query,
   where,
   runTransaction,
+  increment,
   writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
-import { migrateOrder } from "../../lib/orders";
+import { reservationDeltasForOrderChange } from "../../lib/inventory";
+import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
+import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
+import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
+import { deliveryWithBalanceBlocked, orderTotalCents } from "../../features/orders/installments";
+import {
+  INHERITED_DEPOSIT_PAYMENT_ID,
+  docReceivedCents,
+  inheritedDepositRecord,
+  orderMoneyAfterPayments,
+  signedAmountCents,
+} from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment } from "../../types";
 import { publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -237,6 +250,11 @@ export async function saveEntity(
   if (name === "customers" && Object.prototype.hasOwnProperty.call(data, "assignedPriceTierId") && data.assignedPriceTierId === undefined) {
     clean.assignedPriceTierId = deleteField();
   }
+  // Same rule for a removed manual Iconic grant (FER-05): clearing both dates
+  // in the form must actually delete the field, not silently keep the old one.
+  if (name === "customers" && Object.prototype.hasOwnProperty.call(data, "iconic") && data.iconic === undefined) {
+    clean.iconic = deleteField();
+  }
 
   // G-P02: a store write MUST also write its adminStores control doc in the SAME
   // batched write — the rules resolve membership/ownership exclusively from
@@ -310,12 +328,58 @@ export function applyRelativeDeltas(
   return { updates, skipped };
 }
 
-/** Save an order using canonical stock and an idempotent operation identifier. */
+/**
+ * #165/#168 → PO 2026-11-03 (R9): delivering with an uncovered balance is
+ * ALLOWED when the operator explicitly confirms it (retroactive capture /
+ * cash-on-delivery). Without the confirmation the mutation path rejects the
+ * transition (the UI hiding buttons is not the guarantee); WITH it, the save
+ * stamps the recorded authorization on the order doc. The message points at
+ * the cobros sheet first — the saldo is doc truth, so re-registering an abono
+ * that already landed would duplicate money.
+ */
+export class DeliveryWithBalanceError extends Error {
+  constructor(public readonly balanceCents: number) {
+    super("No se puede confirmar la entrega: este pedido tiene saldo pendiente. Revisa los cobros del pedido y registra solo el abono que falte.");
+    this.name = "DeliveryWithBalanceError";
+  }
+}
+
+/** Preserve the parent of immutable payment evidence and retained reservations. */
+export class OrderEvidenceDeletionError extends Error {
+  constructor() {
+    super("Este pedido conserva cobros o piezas apartadas y no se puede eliminar. Conserva el pedido para revisar su historial.");
+    this.name = "OrderEvidenceDeletionError";
+  }
+}
+
+/**
+ * Stock shortage on the canonical shelf. NOTE (PO 2026-11-03 R8): order saves
+ * do NOT hard-block on shelf quantity — plan orders reserve at creation exactly
+ * like ordinary ones, and the shelf may go negative (the UI surfaces the
+ * existence). Retained for callers that pre-validate.
+ */
+export class InsufficientStockError extends Error {
+  constructor(public readonly shortages: { productId: string; missing: number }[]) {
+    super("No hay existencias suficientes para apartar las piezas de este pedido. Surte inventario y vuelve a intentar.");
+    this.name = "InsufficientStockError";
+  }
+}
+
+/**
+ * Save an order using canonical stock and an idempotent operation identifier.
+ *
+ * #165/#168 money guarantees evaluate the ORDER DOC read inside this
+ * transaction — never the caller's session: `paymentsReceivedCents` (the
+ * transactional accumulator maintained by registerOrderPaymentTx) plus the
+ * still-unmaterialized legacy deposit are the truth of received money, so a
+ * fresh session with no payment records loaded can no longer undercount them.
+ */
 export async function saveOrderWithStockTx(
-  _user: AppUser,
+  user: AppUser,
   order: Order,
   expectedRevision: number | null,
-  mutationId: string
+  mutationId: string,
+  options?: { confirmDeliveredWithBalance?: boolean }
 ): Promise<{ order: Order; stock: StockAdjustment[] }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
@@ -327,21 +391,249 @@ export async function saveOrderWithStockTx(
     if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
       throw new StaleOrderError();
     }
-    const deltas = reservationDeltasForOrderChange(previous, order);
+    // #168: the money fields belong to the payment path — an order save carries
+    // them through VERBATIM from the doc read here, so a full-document write
+    // can never wipe a concurrent abono's accumulator (Firestore retries this
+    // transaction whenever the doc changed after this read).
+    const docData = snap.data() as Record<string, unknown> | undefined;
+    const next: Order = {
+      ...order,
+      // A caller can neither erase existing evidence nor invent it on create.
+      // Only the canonical doc (or the payment transaction) owns these fields.
+      installmentsReservedAt: previous?.installmentsReservedAt,
+      lastPaymentId: typeof docData?.lastPaymentId === "string" ? docData.lastPaymentId : undefined,
+      paymentsRevision: typeof docData?.paymentsRevision === "number" ? docData.paymentsRevision : undefined,
+      paymentsReceivedCents: typeof docData?.paymentsReceivedCents === "number" ? docData.paymentsReceivedCents : undefined,
+      inheritedDepositMaterialized: docData?.inheritedDepositMaterialized === true ? true : undefined,
+    };
+    // Received money per the doc: the stored accumulator plus the deposit in
+    // this save (a deposit captured in the same edit also counts) — the
+    // conservative max, since records are immutable evidence. The accumulator
+    // alone is what TRIGGERS the delivery gate for plan-less orders (#168 F1).
+    const docMoney = {
+      accumulatorCents: Math.max(previous?.paymentsReceivedCents ?? 0, next.paymentsReceivedCents ?? 0),
+      receivedCents: Math.max(docReceivedCents(previous ?? {}), docReceivedCents(next)),
+    };
+    // #165/#168 F2: converting an ordinary order that already received money
+    // marks the reservation immediately — an open ordinary order already held
+    // the pieces, so the mark lands with zero stock delta.
+    if (next.installments && !previous?.installments && docMoney.receivedCents > 0 && !next.installmentsReservedAt) {
+      next.installmentsReservedAt = new Date().toISOString();
+    }
+    // #165/#168 F1 → PO 2026-11-03 (R9): the transition INTO delivered still
+    // fires the gate for a plan order or any order with registered cobros
+    // whose doc money does not cover the total — but the operator may now
+    // EXPLICITLY confirm delivering with a saldo (retroactive capture /
+    // contraentrega). Unconfirmed → reject; confirmed → stamp the recorded
+    // authorization. Removing the plan with a saldo changes nothing.
+    const delivering =
+      effectiveOrderStatus(next) === "delivered" &&
+      (!previous || effectiveOrderStatus(previous) !== "delivered");
+    if (delivering && deliveryWithBalanceBlocked(next, docMoney)) {
+      const saldoCents = orderTotalCents(next) - docMoney.receivedCents;
+      if (!options?.confirmDeliveredWithBalance) {
+        throw new DeliveryWithBalanceError(saldoCents);
+      }
+      next.deliveredWithBalanceCents = saldoCents;
+      next.deliveredWithBalanceConfirmedAt = new Date().toISOString();
+      next.deliveredWithBalanceConfirmedBy = user.uid;
+    }
+    const deltas = reservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
-    for (const productId of deltas.keys()) {
+    const shortages: { productId: string; missing: number }[] = [];
+    for (const [productId, delta] of deltas) {
       const product = await tx.get(doc(db, "products", productId));
       if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
-      canonical.set(productId, product.exists() ? product.data().quantityOnHand as number | undefined : undefined);
+      const current = product.exists() ? product.data().quantityOnHand as number | undefined : undefined;
+      canonical.set(productId, current);
+      // Expanding an existing reservation uses the same sufficiency guarantee
+      // as its first abono. Releases remain possible even with a prior shortage.
+      if (next.installmentsReservedAt && delta < 0 && typeof current === "number" && current + delta < 0) {
+        shortages.push({ productId, missing: -(current + delta) });
+      }
     }
+    if (shortages.length > 0) throw new InsufficientStockError(shortages);
     const { updates } = applyRelativeDeltas(canonical, deltas);
     const at = new Date().toISOString();
-    const saved = { ...order, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
+    const saved = { ...next, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
     for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
     const { id, ...data } = saved;
     tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
     return { order: saved, stock: updates };
   });
+}
+
+export type OrderPaymentsResult = { payments: OrderPayment[]; order: Order };
+
+/** Bracket server receipt details with a stable parent version, never cached success. */
+export async function fetchOrderPayments(orderId: string): Promise<OrderPaymentsResult> {
+  const { db } = getFirebase();
+  const ref = doc(db, "orders", orderId);
+  const before = await getDocFromServer(ref);
+  if (!before.exists()) throw new Error("No se encontró el pedido.");
+  const snap = await getDocsFromServer(collection(db, "orders", orderId, "payments"));
+  const parent = await getDocFromServer(ref);
+  if (!parent.exists()) throw new Error("No se encontró el pedido.");
+  if ((before.data().paymentsRevision ?? 0) !== (parent.data().paymentsRevision ?? 0)) {
+    throw new Error("Los cobros cambiaron mientras se cargaban. Vuelve a cargar el detalle.");
+  }
+  return {
+    payments: snap.docs.map((d) => ({ ...(d.data() as OrderPayment), id: d.id }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
+    order: migrateOrder({ ...parent.data(), id: orderId }),
+  };
+}
+
+/**
+ * Register one payment on its order, idempotently (#123). The record id is
+ * stable per user intent: a retry first re-reads the doc and returns it without
+ * writing, so resends never duplicate. In the SAME transaction, the legacy
+ * `deposit` is materialized once as an inherited record (deterministic id)
+ * carrying the date/method supplied by the operator — estimated when unknown,
+ * never left as "unknown" (PO decision 2026-11-03). Materialization only rides
+ * along a real payment, never an adjustment — and the order's doc-level money
+ * accumulator `paymentsReceivedCents` absorbs the registration's signed cents
+ * (#168), so the document is always the truth of received money. Payment docs
+ * are create-only evidence (see firestore.rules); corrections are new signed
+ * records, which is why this path never updates an existing PAYMENT doc (the
+ * parent order doc only gains the accumulator + reservation fields).
+ *
+ * #165 → PO 2026-11-03 (R8): plan orders reserve their quantities AT CREATION
+ * (same contribution model as ordinary orders), so an abono never moves stock
+ * here. The FIRST confirmed positive abono still stamps the
+ * `installmentsReservedAt` witness on the order doc — money-backed stock is
+ * never released by cancellation alone. Insufficient stock surfaces at order
+ * creation, not at payment time.
+ */
+export async function registerOrderPaymentTx(
+  payment: OrderPayment,
+  inherited?: { method: "cash" | "transfer"; date: string }
+): Promise<OrderPaymentsResult> {
+  const { db } = getFirebase();
+  const orderRef = doc(db, "orders", payment.orderId);
+  let attempts = 0;
+  let observed: Record<string, unknown> | undefined;
+  const register = () => runTransaction(db, async (tx) => {
+    observed = undefined;
+    attempts += 1;
+    // READ PHASE (Firestore requires every read before any write).
+    const paymentsRef = collection(db, "orders", payment.orderId, "payments");
+    const paymentRef = doc(paymentsRef, payment.id);
+    const orderSnap = await tx.get(orderRef);
+    observed = orderSnap.data();
+    if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
+    if ((orderSnap.data().storeId ?? "") !== payment.storeId) {
+      throw new Error("El pedido pertenece a otra tienda.");
+    }
+    const order = migrateOrder({ ...orderSnap.data(), id: payment.orderId });
+    const existing = await tx.get(paymentRef);
+    if (existing.exists()) {
+      const receipt = existing.data() as OrderPayment;
+      if (receipt.amount !== payment.amount || receipt.kind !== payment.kind || receipt.method !== payment.method
+          || (payment.kind === "payment" && receipt.date !== payment.date)
+          || (receipt.note ?? "") !== (payment.note ?? "") || receipt.createdBy !== payment.createdBy) {
+        throw new Error("Este intento ya tiene otros datos guardados. Revisa los cobros antes de continuar.");
+      }
+      return { payments: [receipt], order };
+    }
+    // Inherited deposit materialization (#123, PO 2026-11-03): only a real
+    // payment carries it, and the operator-supplied date/method is required.
+    const inheritedInput = payment.kind === "payment" ? inherited : undefined;
+    const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
+    const inheritedSnap = await tx.get(inheritedRef);
+    let inheritedRecord: OrderPayment | null = null;
+    if (payment.kind === "payment" && !inheritedSnap.exists()) {
+      const deposit = orderSnap.data().deposit;
+      const pending = typeof deposit === "number" ? deposit : 0;
+      if (pending > 0 && !inheritedInput) {
+        throw new Error("Captura la fecha y el método del anticipo previo.");
+      }
+      inheritedRecord = inheritedDepositRecord(
+        payment.orderId,
+        payment.storeId,
+        pending,
+        payment.createdBy,
+        inheritedInput as { method: "cash" | "transfer"; date: string }
+      );
+    }
+
+    // PO 2026-11-03 (R8): plan orders reserve stock AT CREATION like ordinary
+    // ones — an abono no longer moves stock. The first positive abono only
+    // STAMPS the `installmentsReservedAt` witness (money-backed stock is never
+    // released by cancellation alone); no revision bump is needed because the
+    // reservation already happened on the order's own save. (`order` comes from
+    // the early-return block above.)
+    const firstPositiveAbono = payment.kind === "payment" && payment.amount > 0;
+
+    // WRITE PHASE — one atomic commit: evidence, witness, and the doc-level
+    // money accumulator (#168). The accumulator folds this registration's
+    // signed cents (and the inherited deposit's, exactly once when it
+    // materializes) into `paymentsReceivedCents`, so the ORDER DOC is the
+    // truth of received money — a fresh session cannot undercount it.
+    // Unsafe precision aborts the whole registration (fail-closed on writes).
+    let savedCents: number;
+    try {
+      savedCents = signedAmountCents(payment.amount) + (inheritedRecord ? signedAmountCents(inheritedRecord.amount) : 0);
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw new Error("El monto del cobro excede la precisión admitida.");
+      }
+      throw error;
+    }
+    const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
+    const previousPaymentsRevision = orderSnap.data().paymentsRevision ?? 0;
+    const paymentsRevision = previousPaymentsRevision + 1;
+    if (!Number.isSafeInteger(previousPaymentsRevision) || previousPaymentsRevision < 0 || !Number.isSafeInteger(paymentsRevision)) {
+      throw new Error("La versión de cobros del pedido no es válida.");
+    }
+    const receipt = { ...payment, amountCents: signedAmountCents(payment.amount) };
+    const saved: OrderPayment[] = [];
+    if (inheritedRecord) {
+      const evidence = { ...inheritedRecord, amountCents: signedAmountCents(inheritedRecord.amount) };
+      tx.set(inheritedRef, stripUndefined(evidence) as Record<string, unknown>);
+      saved.push(evidence);
+    }
+    const witnessAt =
+      order.installments && !order.installmentsReservedAt && firstPositiveAbono
+        ? new Date().toISOString()
+        : undefined;
+    tx.update(orderRef, {
+      paymentsReceivedCents: increment(savedCents),
+      lastPaymentId: payment.id,
+      paymentsRevision: increment(1),
+      ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
+      ...(witnessAt ? { installmentsReservedAt: witnessAt } : {}),
+    });
+    tx.set(paymentRef, stripUndefined(receipt) as Record<string, unknown>);
+    saved.push(receipt);
+    return {
+      payments: saved,
+      order: {
+        ...order, ...money, lastPaymentId: payment.id, paymentsRevision,
+        ...(witnessAt ? { installmentsReservedAt: witnessAt } : {}),
+      },
+    };
+  }, { maxAttempts: 5 - attempts });
+
+  while (attempts < 5) {
+    observed = undefined;
+    try {
+      return await register();
+    } catch (error) {
+      // A concurrent first abono can make the immutable reservation/deposit
+      // proof stale before the emulator reports ABORTED. Retry PERMISSION_DENIED
+      // only when a SERVER read proves that this transaction's parent changed.
+      // Real authorization/content failures stay failures; intent ids are stable.
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      if (code !== "permission-denied" || !observed || attempts >= 5) throw error;
+      const latest = await getDocFromServer(orderRef);
+      const current = latest.data();
+      const changed = current && ["revision", "paymentsReceivedCents", "lastPaymentId", "paymentsRevision", "inheritedDepositMaterialized", "installmentsReservedAt"]
+        .some((key) => current[key] !== observed![key]);
+      if (!changed) throw error;
+    }
+  }
+  throw new Error("No se pudo registrar el cobro. Revisa los cobros guardados antes de reintentarlo.");
 }
 
 /** Release the canonical reservation and delete the matching revision atomically. */
@@ -357,6 +649,12 @@ export async function deleteOrderWithStockTx(
     if (!snap.exists()) return [];
     const previous = migrateOrder({ ...snap.data(), id: orderId });
     if ((previous.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
+    // A zero accumulator can still have payments and offsetting adjustments.
+    // Deleting the parent would orphan immutable evidence and retained stock.
+    const data = snap.data();
+    if (previous.installmentsReservedAt || "paymentsReceivedCents" in data || data.inheritedDepositMaterialized === true) {
+      throw new OrderEvidenceDeletionError();
+    }
     const deltas = reservationDeltasForOrderChange(previous, { ...previous, orderStatus: "cancelled" });
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
@@ -432,8 +730,9 @@ export class PurchaseAlreadyReceived extends Error {
 }
 
 /**
- * Atomically receive a purchase into inventory: products get stock + weighted
- * average cost, the purchase gets status "received" + receivedAt — all in ONE
+ * Atomically receive a purchase into inventory: products get stock and the
+ * selected cost policy; legacy is weighted, new journeys use acquisition cost.
+ * The purchase gets status "received" + receivedAt — all in ONE
  * Firestore commit. Idempotency guards, checked INSIDE the transaction:
  *   - `receivedAt` already set → already received through the lifecycle
  *   - `status === undefined` → legacy purchase whose stock was applied on save
@@ -441,7 +740,7 @@ export class PurchaseAlreadyReceived extends Error {
  * the public-catalog republish that upsertProduct performs, so prices stay
  * untouched (editable later from the product form).
  */
-export async function receivePurchaseTx(purchaseId: string): Promise<void> {
+export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<typeof purchaseInventoryUpdates>> {
   const { db } = getFirebase();
   // Pre-validate OUTSIDE the transaction: errors thrown inside runTransaction
   // reach the caller with an emptied message on the emulator, so the UI toast
@@ -451,6 +750,15 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
     if (!snap.exists()) throw new Error("No se encontró la compra.");
     const purchase = snap.data() as Purchase;
     if (purchase.receivedAt != null || purchase.status === undefined) throw new PurchaseAlreadyReceived();
+    if (purchase.costingMethod === "latest_purchase" && recalcPurchaseStatus(purchase) !== "ready") {
+      throw new Error("Revisa los productos y los totales de cada ticket antes de recibir.");
+    }
+    for (const supplierId of new Set((purchase.tickets ?? []).map((ticket) => ticket.supplierId).filter((id): id is string => !!id))) {
+      let supplier;
+      try { supplier = await getDoc(doc(db, "suppliers", supplierId)); }
+      catch { throw new Error("No se pudo consultar uno de los proveedores de esta tienda."); }
+      if (!supplier.exists() || supplier.data().storeId !== purchase.storeId) throw new Error("Uno de los proveedores no pertenece a esta tienda.");
+    }
     for (const line of purchase.lines) {
       if (!line.productId) throw new Error("Hay líneas sin producto vinculado.");
       let pSnap;
@@ -468,7 +776,7 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
       }
     }
   }
-  await runTransaction(db, async (tx) => {
+  return runTransaction(db, async (tx) => {
     const purchaseRef = doc(db, "purchases", purchaseId);
     const snap = await tx.get(purchaseRef);
     if (!snap.exists()) throw new Error("No se encontró la compra.");
@@ -477,6 +785,10 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
       throw new PurchaseAlreadyReceived();
     }
     const at = new Date().toISOString();
+    for (const supplierId of new Set((purchase.tickets ?? []).map((ticket) => ticket.supplierId).filter((id): id is string => !!id))) {
+      const supplier = await tx.get(doc(db, "suppliers", supplierId));
+      if (!supplier.exists() || supplier.data().storeId !== purchase.storeId) throw new Error("Uno de los proveedores no pertenece a esta tienda.");
+    }
     const productRefs = new Map<string, ReturnType<typeof doc>>();
     const productDocs = new Map<string, Product>();
     for (const line of purchase.lines) {
@@ -486,24 +798,67 @@ export async function receivePurchaseTx(purchaseId: string): Promise<void> {
       productRefs.set(line.productId, ref);
       const snapP = await tx.get(ref);
       if (!snapP.exists()) throw new Error(`No se encontró el producto de la línea "${line.name}".`);
-      const product = snapP.data() as Product;
+      // Entity writes omit the id field; use the canonical document identity
+      // so applyPurchaseLines can match this product to its purchase lines.
+      const product = { ...snapP.data(), id: snapP.id } as Product;
       if (product.storeId !== purchase.storeId) {
         throw new Error(`El producto de la línea "${line.name}" pertenece a otra tienda.`);
       }
       productDocs.set(line.productId, product);
     }
-    const stockUpdates = applyPurchaseLines(
-      [...productDocs.values()].filter(Boolean),
-      purchase.lines
-    );
-    for (const [productId, update] of stockUpdates) {
+    const result = purchaseInventoryUpdates([...productDocs.values()], purchase);
+    for (const [productId, update] of result.stockUpdates) {
       tx.update(productRefs.get(productId)!, {
         quantityOnHand: update.quantityOnHand,
         cost: update.cost,
         updatedAt: at,
       });
     }
-    tx.update(purchaseRef, { status: "received", receivedAt: at, updatedAt: at });
+    tx.update(purchaseRef, {
+      status: "received", receivedAt: at, updatedAt: at,
+      ...(result.costAllocations ? { costAllocations: result.costAllocations } : {}),
+    });
+    return result;
+  });
+}
+
+/**
+ * Append ONE post-reception expense adjustment to a received journey purchase
+ * (FER-02, #126). Append-only evidence: the update touches exactly
+ * `saleCostAdjustments` + `updatedAt` — the fields the security rules allow on
+ * received evidence. Sale categories get their exact per-piece allocation;
+ * nothing here changes stock, product costs, tickets or the original
+ * costAllocations. Returns the canonical updated purchase for app state.
+ */
+export async function appendPurchaseExpenseTx(
+  purchaseId: string,
+  expense: PurchaseExpense
+): Promise<Purchase> {
+  const { db } = getFirebase();
+  const purchaseRef = doc(db, "purchases", purchaseId);
+  const snap = await getDoc(purchaseRef);
+  if (!snap.exists()) throw new Error("No se encontró la compra.");
+  const purchase = snap.data() as Purchase;
+  if (effectivePurchaseStatus(purchase) !== "received" || purchase.receivedAt == null) {
+    throw new Error("Solo se pueden agregar gastos a compras ya recibidas.");
+  }
+  if (purchase.costingMethod !== "latest_purchase") {
+    throw new Error("Esta compra no admite gastos posteriores a su recepción.");
+  }
+  const at = new Date().toISOString();
+  // May throw a Spanish validation error (amount, identity) before any write.
+  const entry = purchaseExpenseAdjustment({ ...purchase, id: snap.id }, expense, at);
+  return runTransaction(db, async (tx) => {
+    const txSnap = await tx.get(purchaseRef);
+    if (!txSnap.exists()) throw new Error("No se encontró la compra.");
+    const current = txSnap.data() as Purchase;
+    if (effectivePurchaseStatus(current) !== "received" || current.costingMethod !== "latest_purchase") {
+      throw new Error("Esta compra ya no admite gastos posteriores.");
+    }
+    const saleCostAdjustments = [...(current.saleCostAdjustments ?? []), entry];
+    tx.update(purchaseRef, { saleCostAdjustments, updatedAt: at });
+    // Canonical document for the in-memory state (entity writes omit the id).
+    return { ...current, id: txSnap.id, saleCostAdjustments, updatedAt: at };
   });
 }
 
