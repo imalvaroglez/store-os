@@ -220,7 +220,8 @@ service cloud.firestore {
         && (data.kind == 'adjustment' || data.amount > 0)
         && (data.kind != 'adjustment' || (data.note is string && data.note.trim().size() > 0))
         && ((paymentId == 'inherited_deposit' && data.kind == 'payment'
-              && data.method == 'unknown' && !data.keys().hasAny(['date']))
+              && data.method in ['cash', 'transfer']
+              && data.date is string && data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}'))
             || (paymentId != 'inherited_deposit'
               && ((data.kind == 'adjustment' && data.method in ['cash', 'transfer', 'unknown'])
                 || (data.kind == 'payment' && data.method in ['cash', 'transfer']
