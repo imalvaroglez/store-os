@@ -25,6 +25,7 @@ import { orderBucket, orderCountsTowardToPay, orderTotals } from "../../lib/orde
 import { formatDate } from "../../lib/dates";
 import { iconicStatus, type IconicStatus } from "../../lib/iconic";
 import type { Customer } from "../../types";
+import { defaultTier, tiersForStore } from "../../lib/pricing";
 
 export function CustomersScreen() {
   const { state, activeStore, deleteCustomer } = useStore();
@@ -108,6 +109,10 @@ export function CustomersScreen() {
                     <p className="text-xs text-ink-soft truncate">
                       {c.phone ?? "Sin teléfono"} · {cOrders.length} {cOrders.length === 1 ? "pedido" : "pedidos"}
                     </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-soft">
+                      <Badge tone={c.segment === "entrepreneur" ? "info" : "neutral"}>{c.segment === "entrepreneur" ? "Emprendedora" : "Regular"}</Badge>
+                      {activeStore.type === "inventory_tiered" && <span>Precio: {c.assignedPriceTierId ? tiersForStore(activeStore).find((tier) => tier.id === c.assignedPriceTierId)?.label ?? "Nivel no disponible" : defaultTier(activeStore)?.label ?? "Sin nivel"}</span>}
+                    </div>
                     {iconic && (
                       <div className="mt-1.5">
                         <Badge tone={iconic.active ? (iconic.expiringSoon ? "warning" : "accent") : "neutral"}>
