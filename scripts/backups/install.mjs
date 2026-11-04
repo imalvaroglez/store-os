@@ -1,7 +1,8 @@
 #!/usr/bin/env node
+import { trash } from './trash.mjs';
 // Run only after human integration. Does not create credentials, keys or backups.
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -48,6 +49,6 @@ async function main() {
     if (await exists(plist)) throw new Error('El agente ya existe. Sigue la guía de actualización.');
     await writeFile(plist, launchAgent(process.execPath, path.join(destination, 'scripts/backups/cli.mjs'), configFile), { mode: 0o600, flag: 'wx' });
     console.log('Runtime y agente preparados. Revisa config.json, ejecuta el preflight y activa con launchctl según docs/BACKUPS.md.');
-  } finally { await rm(stage, { recursive: true, force: true }); }
+  } finally { await trash(stage); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(() => { console.error('No se pudo instalar. Revisa requisitos y directorios en docs/BACKUPS.md; no se activó la tarea.'); process.exitCode = 1; });
