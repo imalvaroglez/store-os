@@ -28,7 +28,11 @@ async function sha256Hex(file: File): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayload) => void }) {
+export function PurchasePdfImport({ onApply, existingFingerprints = [], onBusyChange }: {
+  onApply: (payload: PdfApplyPayload) => void;
+  existingFingerprints?: string[];
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const { activeStore, cloud, state } = useStore();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -39,11 +43,16 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
   async function onFile(file: File, skipDuplicateCheck = false) {
     if (!activeStore) return;
     setBusy(true);
+    onBusyChange?.(true);
     try {
       const fingerprint = await sha256Hex(file);
+      if (existingFingerprints.includes(fingerprint)) {
+        toast.error("Este PDF ya está agregado a uno de los tickets de esta compra.");
+        return;
+      }
       if (!skipDuplicateCheck) {
         const existing = purchasesForStore(state.purchases, activeStore.id).find(
-          (p) => p.documentFingerprint === fingerprint
+          (p) => p.documentFingerprint === fingerprint || p.tickets?.some((ticket) => ticket.documentFingerprint === fingerprint)
         );
         if (existing) {
           setDuplicate(true);
@@ -68,6 +77,7 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
         throw e;
       }
       if (!result.lines.length) {
+        await deletePurchasePdf(storagePath).catch(() => {});
         toast.error("No pudimos leer el pedido. Captura la compra a mano.");
         return;
       }
@@ -96,6 +106,7 @@ export function PurchasePdfImport({ onApply }: { onApply: (payload: PdfApplyPayl
       toast.error("No se pudo importar el PDF. Intenta de nuevo o captura a mano.");
     } finally {
       setBusy(false);
+      onBusyChange?.(false);
     }
   }
 

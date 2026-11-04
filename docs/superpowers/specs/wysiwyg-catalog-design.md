@@ -67,10 +67,13 @@ dependencias nuevas.
    escrituras); **solo el botón "Guardar" persiste**, con una sola escritura
    batch (§Persistencia). Compatible con el patrón de `StorefrontEditor` hoy:
    N ediciones = 1 guardado. El draft se descarta al salir sin guardar.
-4. **Permisos V1: solo la dueña** (`ownerUid` de la tienda). Miembros y
-   `super_admin` sin ser dueños no ven el chip "Editar" ni controles inline.
-   Nota: el editor de Ajustes (`StorefrontEditor`) es **owner-only** hoy y V1 lo
-   mantiene así. La clienta anónima nunca ve el modo edición.
+4. **Permisos V1: solo la dueña** (`ownerUid` de la tienda) para el modo
+   inline. Miembros y `super_admin` sin ser dueños no ven el chip "Editar" ni
+   controles inline. En Ajustes se conservan ambos accesos: la dueña puede abrir
+   la edición sobre la vista pública o el formulario completo
+   (`StorefrontEditor`), que también permite administrar imágenes. El formulario
+   existente sigue sujeto a sus permisos actuales de tienda. La clienta anónima
+   nunca ve controles de edición.
 
 ## Diseño técnico
 
@@ -166,11 +169,30 @@ adicionales anónimas (la clienta no cambia). Cabe holgado en el free tier.
   3 documentos al guardar; batch fallido → error propagado, sin éxito falso.
 - **Gate de design system:** sin `<input>` crudo en los componentes nuevos
   (corre en `npm run test`).
-- **E2E (Playwright, emulador/preview):** flujo dueña: login → `/catalogo/olivia`
-  → chip "Editar" → editar hero.body → Guardar → toast de éxito → recargar →
-  texto persistido (proyección). Flujos negativos: miembro (no dueño) y anónimo
-  en `/catalogo/olivia` → sin chip ni contornos de edición; y guardado con error
-  (emulador offline/fallo inyectado) → toast de error, draft intacto.
+- **E2E (Playwright, emulador/preview):** flujo dueña: login →
+  `/catalogo/olivia/editar` → editar hero.body → Guardar → toast de éxito →
+  recargar → texto persistido (proyección). Flujos negativos: miembro (no dueño)
+  en la ruta de edición → sin controles ni posibilidad de guardar; anónimo en
+  `/catalogo/olivia` → sin controles ni contornos de edición; y guardado con
+  error (emulador offline/fallo inyectado) → toast de error, draft intacto.
+
+## Implementación de esta entrega
+
+- La entrada pública `/catalogo/olivia` sigue usando `public.html` y no carga
+  Auth ni StoreProvider. La ruta privada `/catalogo/olivia/editar` usa la entrada
+  autenticada; `App` comprueba `ownerUid` y pasa a la vitrina solo la tienda, el
+  borrador y la acción de guardado de la dueña. El guard `check-public-bundle`
+  confirma que Firebase no entra al paquete anónimo.
+- `InlineEditable` edita los campos escalares con `TextField`/`TextArea`; las
+  listas se editan una entrada por línea y `InlineFaqEditor` conserva el flujo
+  de preguntas.
+- `saveStorefrontBatch` actualiza `stores`, `adminStores` y `publicStores` en
+  un único `writeBatch`. Sólo cambia `storefront` y `updatedAt` en el negocio y
+  la proyección; no lee ni republica productos. El borrador permanece visible
+  si falla el guardado.
+- Las pruebas cubren campos, preguntas, permiso solo para la dueña,
+  reintento, forma exacta de las tres escrituras y persistencia pública tras
+  recargar en Firebase Emulator.
 
 ## previewChecks
 
@@ -180,8 +202,8 @@ adicionales anónimas (la clienta no cambia). Cabe holgado en el free tier.
 ]
 ```
 
-(La clienta anónima ve el sitio público; el flujo de edición de la dueña corre
-en e2e con emulador — requiere sesión.)
+(La clienta anónima ve el sitio público sin cargar Firebase. La edición usa la
+ruta privada `/catalogo/olivia/editar` en la misma vista, con sesión autenticada.)
 
 ## Out of scope (explícito)
 
@@ -190,3 +212,17 @@ en e2e con emulador — requiere sesión.)
 - Multi-idioma, Rich text/markdown, carga de imágenes inline (el flujo de
   imágenes ya existe en el formulario y en productos).
 - Render del storefront en tiendas genéricas.
+
+
+## Ajuste de entrada autenticada (2026-10-30)
+
+La implementación inicial intentó mostrar el control de edición directamente
+en `/catalogo/olivia`, pero esa URL sirve `public.html`/`public-main.tsx`, una
+entrada deliberadamente separada que no monta Auth ni carga documentos privados.
+El E2E contra `store-os-demo` confirmó que la tienda pública se renderizaba,
+pero el control nunca podía aparecer.
+
+La dueña abre la misma vista desde `/catalogo/olivia/editar`, que sirve la
+entrada autenticada. La ruta valida `ownerUid` antes de ofrecer controles. El
+catálogo público anónimo conserva su entrada y su bundle sin Firebase; el acceso
+Firestore sigue sujeto a las reglas existentes.

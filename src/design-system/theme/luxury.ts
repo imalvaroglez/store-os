@@ -9,6 +9,7 @@ export const luxury: Theme = {
   name: "Lujo",
   blurb: "Negro, oro y serenidad. Boutique.",
   vars: {
+    "--color-scheme": "dark",
     "--paper": "#0b0b0d",
     "--paper-2": "#141417",
     "--ink": "#f5f1e6",

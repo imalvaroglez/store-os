@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { OliviaStorefront } from "./OliviaStorefront";
 import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
 import type {
@@ -8,6 +8,7 @@ import type {
   PublicProductDetail,
 } from "../../app/firebase/publicCatalog";
 import type { RouteMatch } from "../../lib/router";
+import type { Storefront } from "../../types";
 
 // The storefront loads its data from the anonymous public-catalog loaders; the
 // tests mock that module (no Firebase in jsdom) with a 3-tier Olivia fixture
@@ -16,6 +17,13 @@ import type { RouteMatch } from "../../lib/router";
 const mocks = vi.hoisted(() => ({
   loadPublicCatalog: vi.fn(),
   loadPublicProduct: vi.fn(),
+  saveStorefront: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
+}));
+vi.mock("../../design-system", async (importOriginal) => ({
+  ...await importOriginal<object>(),
+  useToast: () => ({ success: mocks.toastSuccess, error: mocks.toastError, info: vi.fn() }),
 }));
 vi.mock("../../app/firebase/publicCatalog", () => ({
   loadPublicCatalog: mocks.loadPublicCatalog,
@@ -79,8 +87,8 @@ const categoryRoute: RouteMatch = {
 
 const cartKey = "store-os:cart:olivia";
 
-async function renderStore() {
-  render(<OliviaStorefront route={storeRoute} />);
+async function renderStore(editor?: { storeId: string; storefront: Storefront; save: (storeId: string, storefront: Storefront) => Promise<void>; notifySuccess: (message: string) => void; notifyError: (message: string) => void }) {
+  render(<OliviaStorefront route={storeRoute} editor={editor} />);
   // Wait for the grid to be ready.
   await screen.findAllByRole("button", { name: "Agregar al carrito" });
 }
@@ -91,7 +99,21 @@ async function openDrawer() {
 }
 
 beforeEach(() => {
+  if (typeof globalThis.localStorage === "undefined") {
+    const entries = new Map<string, string>();
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+      get length() { return entries.size; },
+      clear: () => entries.clear(),
+      getItem: (key: string) => entries.get(key) ?? null,
+      key: (index: number) => Array.from(entries.keys())[index] ?? null,
+      removeItem: (key: string) => entries.delete(key),
+      setItem: (key: string, value: string) => entries.set(key, String(value)),
+    } });
+  }
   localStorage.clear();
+  mocks.saveStorefront.mockReset().mockResolvedValue(undefined);
+  mocks.toastSuccess.mockReset();
+  mocks.toastError.mockReset();
   mocks.loadPublicCatalog.mockReset().mockResolvedValue({ store, catalog });
   mocks.loadPublicProduct.mockReset().mockResolvedValue({ product: detail, store });
 });
@@ -111,7 +133,9 @@ describe("filtro por acabado", () => {
     expect(screen.getByLabelText("Acabado")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Acabado"), { target: { value: "plateado" } });
     expect(screen.getByRole("article", { name: "Aretes Luna" })).toBeTruthy();
-    expect(screen.queryByRole("article", { name: "Anillo Blossom" })).toBeNull();
+    // The list re-renders asynchronously after the filter change — wait for the
+    // filtered-out card to leave the DOM instead of asserting synchronously.
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Anillo Blossom" })).toBeNull());
   });
 });
 
@@ -145,6 +169,85 @@ describe("tarjetas — jerarquía de precios", () => {
     const card = screen.getByRole("article", { name: "Anillo Blossom" });
     expect(within(card).queryByText(/Hasta .* al desbloquear Iconic/)).toBeNull();
     expect(card.querySelector(".olv-price-savings--empty")).toBeTruthy();
+  });
+});
+
+describe("portada — acceso visual por categoría", () => {
+  it("usa la foto configurada y, si falta, la primera foto pública de una pieza", async () => {
+    const visualCatalog: PublicCatalog = {
+      categories: [
+        { id: "c1", name: "Anillos", slug: "anillos", imageUrl: "/anillos-cover.jpg", sortOrder: 0 },
+        { id: "c2", name: "Aretes", slug: "aretes", sortOrder: 1 },
+        { id: "c3", name: "Collares", slug: "collares", sortOrder: 2 },
+      ],
+      products: [
+        { ...catalog.products[0], categoryIds: ["c1"], images: [{ url: "/pieza-anillo.jpg" }] },
+        { ...catalog.products[1], categoryIds: ["c2"], imageUrl: "/pieza-arete.jpg" },
+        { ...catalog.products[2], categoryIds: ["c3"] },
+      ],
+    };
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: visualCatalog });
+    render(<OliviaStorefront route={storeRoute} />);
+
+    const rings = await screen.findByRole("link", { name: /Anillos.*1 pieza/ });
+    expect(rings).toHaveAttribute("href", "/catalogo/olivia/categoria/anillos");
+    expect(rings.querySelector("img")).toHaveAttribute("src", "/anillos-cover.jpg");
+    const earrings = screen.getByRole("link", { name: /Aretes.*1 pieza/ });
+    expect(earrings.querySelector("img")).toHaveAttribute("src", "/pieza-arete.jpg");
+    const necklaces = screen.getByRole("link", { name: /Collares.*1 pieza/ });
+    expect(within(necklaces).getByRole("img", { name: "Imagen de Collares no disponible" })).toBeTruthy();
+  });
+
+  it("omite categorías sin piezas visibles cuando la tienda oculta los agotados", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { showSoldOut: false } },
+      catalog: {
+        categories: [catalog.categories[0], { id: "c3", name: "Collares", slug: "collares", sortOrder: 1 }],
+        products: [{ ...catalog.products[0], categoryIds: ["c1"] }, { ...catalog.products[2], categoryIds: ["c3"] }],
+      },
+    });
+    render(<OliviaStorefront route={storeRoute} />);
+
+    expect(await screen.findByRole("link", { name: /Anillos.*1 pieza/ })).toBeTruthy();
+    expect(document.querySelector('.olv-category-grid a[href$="collares"]')).toBeNull();
+  });
+});
+
+describe("edición pública in-place", () => {
+  it("does not expose controls to anonymous visitors", async () => {
+    await renderStore();
+    expect(screen.queryByRole("button", { name: "Editar sitio" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Editar Título principal/ })).toBeNull();
+  });
+
+  it("lets only the owner edit, saves the draft and keeps it visible", async () => {
+    await renderStore({ storeId: "store_olivia", storefront: { hero: { body: "Antes" } }, save: mocks.saveStorefront, notifySuccess: mocks.toastSuccess, notifyError: mocks.toastError });
+    fireEvent.click(await screen.findByRole("button", { name: "Editar sitio" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar Mensaje principal" }));
+    fireEvent.change(screen.getByLabelText("Mensaje principal"), { target: { value: "Texto actualizado" } });
+    fireEvent.click(screen.getByRole("button", { name: "Listo" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Guardar$/ }));
+
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Sitio público actualizado"));
+    expect(mocks.saveStorefront).toHaveBeenCalledWith("store_olivia", expect.objectContaining({ hero: { body: "Texto actualizado" } }));
+    expect(screen.getByText("Texto actualizado")).toBeTruthy();
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("keeps the draft visible after a failed save and allows retry", async () => {
+    mocks.saveStorefront.mockRejectedValueOnce(new Error("offline"));
+    await renderStore({ storeId: "store_olivia", storefront: {}, save: mocks.saveStorefront, notifySuccess: mocks.toastSuccess, notifyError: mocks.toastError });
+    fireEvent.click(await screen.findByRole("button", { name: "Editar sitio" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar Mensaje principal" }));
+    fireEvent.change(screen.getByLabelText("Mensaje principal"), { target: { value: "Texto pendiente" } });
+    fireEvent.click(screen.getByRole("button", { name: "Listo" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Guardar$/ }));
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalled());
+    expect(screen.getByText("Texto pendiente")).toBeTruthy();
+    expect(screen.getByText("Estás editando tu sitio público")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Guardar$/ }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Sitio público actualizado"));
   });
 });
 
@@ -196,7 +299,7 @@ describe("carrito del storefront — acumular y pedir", () => {
     const row = within(list).getByText("Anillo Blossom").closest("li")!;
     fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
     expect(within(row).getByText("2")).toBeTruthy();
-    expect(screen.getByText("2 piezas")).toBeTruthy();
+    expect(within(screen.getByRole("dialog", { name: "Tu pedido" })).getByText("2 piezas")).toBeTruthy();
     expect(within(row).queryByRole("button", { name: "Quitar" })).toBeNull();
 
     fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));

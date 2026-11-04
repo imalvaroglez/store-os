@@ -51,6 +51,11 @@ export type OrderDraftSnapshot = {
   promisedDate: string;
   orderStatus: OrderStatus;
   notes: string;
+  /** #165 installment capture (optional: absent in pre-plan drafts). */
+  installmentsOn?: boolean;
+  cuotasText?: string;
+  frequency?: string;
+  firstDueDate?: string;
 };
 
 export function orderDraftKey(storeId: string, orderId: string, isNew: boolean, userId: string): string {

@@ -2,7 +2,10 @@
 
 export function formatDate(iso?: string): string {
   if (!iso) return "";
-  const d = new Date(iso);
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  // Calendar dates have no instant or offset. Parse them at local noon so
+  // neither UTC conversion nor a midnight transition changes their day.
+  const d = new Date(dateOnly ? `${iso}T12:00:00` : iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString("es-MX", {
     day: "numeric",
@@ -11,8 +14,8 @@ export function formatDate(iso?: string): string {
   });
 }
 
-export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+export function todayIso(now = new Date()): string {
+  return isoOf(now.getFullYear(), now.getMonth() + 1, now.getDate());
 }
 
 export function nowIso(): string {
@@ -22,7 +25,6 @@ export function nowIso(): string {
 // Spanish-month date labels ("ago 19", "12 may 25") → ISO dates.
 // Single client-side authority: the parser only emits the raw label.
 // No Date.parse — Spanish month names are not reliably locale-parsed.
-// Mexico City is a flat UTC-6 (no DST since 2022).
 const MONTHS: Record<string, number> = {
   ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6,
   jul: 7, ago: 8, sep: 9, oct: 10, nov: 11, dic: 12,
@@ -30,7 +32,7 @@ const MONTHS: Record<string, number> = {
 
 /**
  * Parse "ago 19" / "12 may 25" / "ene 15 2024" style labels.
- * Without a year, picks the MOST RECENT PAST occurrence in Mexico City time
+ * Without a year, picks the MOST RECENT PAST occurrence in the device's local time
  * (supplier receipts are for goods already purchased).
  * Returns ISO "YYYY-MM-DD" and whether the year was inferred.
  */
@@ -55,10 +57,7 @@ export function parseSpanishDate(label: string, now = new Date()): { iso: string
   const inferredYear = year === undefined;
   if (year !== undefined && year < 100) year += 2000;
 
-  // "Now" in Mexico City terms: straight from the UTC epoch (never mix in the
-  // host machine's local offset), then read with UTC getters.
-  const nowMx = new Date(now.getTime() - 360 * 60000);
-  const yNow = nowMx.getUTCFullYear();
+  const yNow = now.getFullYear();
 
   if (!inferredYear) {
     if (!probe(year!)) return null;
@@ -70,7 +69,7 @@ export function parseSpanishDate(label: string, now = new Date()): { iso: string
     return { iso: isoOf(yNow - 1, month, day), inferredYear };
   }
   const thisYear = isoOf(yNow, month, day);
-  const today = isoOf(yNow, nowMx.getUTCMonth() + 1, nowMx.getUTCDate());
+  const today = todayIso(now);
   if (thisYear <= today) return { iso: thisYear, inferredYear };
   return { iso: isoOf(yNow - 1, month, day), inferredYear };
 }

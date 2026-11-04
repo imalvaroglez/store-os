@@ -10,9 +10,12 @@ import {
   Screen,
   StatRow,
 } from "../../design-system";
-import { ordersForStore, lowStockProducts } from "../../lib/selectors";
-import { profit } from "../../lib/money";
+import { ordersForStore, productsToRestock, customersForStore } from "../../lib/selectors";
+import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
+import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
+import { iconicStatus } from "../../lib/iconic";
+import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { navigate } from "../../lib/router";
 import { useToast } from "../../design-system";
@@ -31,13 +34,23 @@ export function HomeScreen() {
     (sum, o) => sum + orderTotals(o).balance,
     0
   );
-  // Per-line profit: lines without a known cost contribute 0 instead of
-  // blanking the whole estimate.
+  // Full-cost profit (FER-03), same rule as the order card: precio − costo de
+  // compra − gastos de venta; orders without any known cost contribute 0.
   const expectedProfit = active.reduce(
-    (sum, o) => sum + orderItems(o).reduce((itemSum, item) => itemSum + (profit(item.unitPrice, item.cost, item.quantity) ?? 0), 0),
+    (sum, o) => sum + (orderProfitBreakdown(o, state.purchases).profitCents ?? 0),
     0
-  );
-  const lowStock = isTiered ? lowStockProducts(state.products, activeStore.id) : [];
+  ) / 100;
+  // FER-09 restock alerts, derived from synced state (no extra Firestore reads).
+  // On-demand stores track no stock, so only tiered stores can alert.
+  const restock = isTiered ? productsToRestock(state.products, activeStore.id) : [];
+  // FER-05 aviso previo (visual only): iconic customers whose validity ends
+  // within the notice window, most urgent first. Derives from synced state.
+  const iconicRenewals = isTiered
+    ? customersForStore(state.customers, activeStore.id)
+        .map((customer) => ({ customer, status: iconicStatus(customer, orders) }))
+        .filter((x) => x.status?.active && x.status.expiringSoon)
+        .sort((a, b) => a.status!.until.localeCompare(b.status!.until))
+    : [];
 
   async function advance(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
@@ -86,16 +99,38 @@ export function HomeScreen() {
         </div>
       </Reveal>
 
-      {lowStock.length > 0 && (
+      {iconicRenewals.length > 0 && (
         <Card className="mb-5 !bg-terracotta-soft/60 ring-terracotta/20">
-          <h3 className="font-semibold text-terracotta text-sm">⚠️ Baja existencia</h3>
+          <h3 className="font-semibold text-terracotta text-sm">⏳ Iconic por renovar</h3>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {lowStock.map((p) => (
-              <Badge key={p.id} tone="warning">
-                {p.name} ({p.quantityOnHand})
+            {iconicRenewals.map(({ customer, status }) => (
+              <Badge key={customer.id} tone="warning">
+                {customer.name} · vence {formatDate(status!.until)}
               </Badge>
             ))}
           </div>
+          <Button variant="ghost" className="mt-2 !px-0" onClick={() => navigate("/clientes")}>
+            Ver clientas →
+          </Button>
+        </Card>
+      )}
+
+      {restock.length > 0 && (
+        <Card className="mb-5">
+          <div className="flex items-baseline justify-between">
+            <h3 className="font-semibold text-ink text-sm">⚠️ Por surtir</h3>
+            <span className="text-xs text-ink-soft/70">{restock.length}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {restock.map((p) => (
+              <Badge key={p.id} tone={stockAlertLevel(p) === "out" ? "danger" : "warning"}>
+                {p.name} · {stockAlertText(p)}
+              </Badge>
+            ))}
+          </div>
+          <Button variant="ghost" full onClick={() => navigate("/productos")} className="py-2 mt-3">
+            Ver catálogo →
+          </Button>
         </Card>
       )}
 
