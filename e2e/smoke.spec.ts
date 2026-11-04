@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { loginAsFirstAdmin, gotoSantiHome, openCatalog } from "./helpers";
+import { loginAsFirstAdmin, gotoSantiHome, openCatalog, gotoClean } from "./helpers";
 
 // Real end-to-end smoke against the Firebase Emulator. Firebase Auth persists to
 // indexedDB, which Playwright's storageState does NOT capture — so the session
@@ -26,6 +26,24 @@ test.beforeAll(async ({ browser }) => {
 test.afterAll(async () => {
   await sharedPage?.context().close();
   sharedPage = null;
+});
+
+test("store owner edits Olivia's storefront in place and the public projection survives reload", async ({ sharedPage: page }) => {
+  const body = `Mensaje WYSIWYG ${Date.now()}`;
+  await gotoClean(page, "/catalogo/olivia/editar");
+  await page.getByRole("button", { name: "Editar sitio" }).click();
+  await page.getByRole("button", { name: "Editar Mensaje principal" }).click();
+  await page.getByLabel("Mensaje principal").fill(body);
+  await page.getByRole("button", { name: "Listo" }).click();
+  await page.getByRole("button", { name: /^Guardar$/ }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Sitio público actualizado" })).toBeVisible();
+  await expect(page.getByText(body)).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText(body)).toBeVisible();
+
+  await gotoClean(page, "/catalogo/olivia");
+  await expect(page.getByRole("button", { name: "Editar sitio" })).toHaveCount(0);
 });
 
 test("home renders seeded store with primary action", async ({ sharedPage: page }) => {
