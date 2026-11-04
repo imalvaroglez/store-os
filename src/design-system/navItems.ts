@@ -12,7 +12,10 @@ export type Tab =
   | "productos_compras"
   | "pedidos"
   | "clientes"
+  | "usuarios"
   | "tienda";
+
+export type PlatformRole = "super_admin" | "member";
 
 export type NavItem = { id: Tab; label: string; path: string; children?: NavItem[] };
 
@@ -31,6 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
   },
   { id: "pedidos", label: "Pedidos", path: "/pedidos" },
   { id: "clientes", label: "Clientes", path: "/clientes" },
+  { id: "usuarios", label: "Usuarios", path: "/usuarios" },
 ];
 
 // The productos parent is highlighted when itself or any of its children is active.
@@ -39,8 +43,8 @@ export function parentActive(active: Tab): boolean {
 }
 
 // Compras child only exists for inventory-tiered stores.
-export function visibleNavItems(storeType: StoreType) {
-  return NAV_ITEMS.map((t) =>
+export function visibleNavItems(storeType: StoreType, userRole?: PlatformRole) {
+  return NAV_ITEMS.filter((item) => item.id !== "usuarios" || userRole === "super_admin").map((t) =>
     t.children
       ? {
           ...t,

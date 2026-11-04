@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { Button, TextField, TextArea } from "../../design-system";
+import { Button, TextField, TextArea, useToast } from "../../design-system";
 import { nowIso } from "../../lib/dates";
 import type { Supplier } from "../../types";
 
@@ -8,9 +8,20 @@ import type { Supplier } from "../../types";
 // SuppliersScreen (full CRUD) and PurchaseForm (inline create). The caller owns
 // the draft lifecycle via the `supplier` prop; on save the supplier is upserted
 // and onDone fires.
-export function SupplierForm({ supplier, onDone }: { supplier: Supplier; onDone: () => void }) {
+export function SupplierForm({ supplier, onDone }: { supplier: Supplier; onDone: (saved: Supplier) => void }) {
   const { upsertSupplier } = useStore();
   const [draft, setDraft] = useState<Supplier>(supplier);
+  const [saving, setSaving] = useState(false);
+  const toast = useToast();
+
+  async function save() {
+    if (!draft.name.trim() || saving) return;
+    const saved = { ...draft, name: draft.name.trim(), updatedAt: nowIso() };
+    setSaving(true);
+    try { await upsertSupplier(saved); onDone(saved); }
+    catch { toast.error("No se pudo guardar el proveedor. Revisa tu conexión e intenta de nuevo."); }
+    finally { setSaving(false); }
+  }
 
   return (
     <div className="space-y-4">
@@ -35,14 +46,10 @@ export function SupplierForm({ supplier, onDone }: { supplier: Supplier; onDone:
       <Button
         full
         size="lg"
-        onClick={() => {
-          if (!draft.name.trim()) return;
-          upsertSupplier({ ...draft, name: draft.name.trim(), updatedAt: nowIso() });
-          onDone();
-        }}
-        disabled={!draft.name.trim()}
+        onClick={() => void save()}
+        disabled={saving || !draft.name.trim()}
       >
-        Guardar proveedor
+        {saving ? "Guardando…" : "Guardar proveedor"}
       </Button>
     </div>
   );

@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderForm } from "./OrderForm";
+import type { Purchase } from "../../types";
 
 const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
   mockUpsertOrder: vi.fn().mockResolvedValue(undefined),
@@ -23,6 +24,7 @@ const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
       id: "prod_olivia_1",
       storeId: "store_olivia",
       name: "Arete dorado",
+      imageUrl: "https://example.test/arete.jpg",
       category: "jewelry" as const,
       categoryIds: ["cat_rings"],
       isPublic: true,
@@ -39,8 +41,44 @@ const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
       createdAt: "",
       updatedAt: "",
     }],
+    purchases: [] as Purchase[],
   },
 }));
+
+describe("foto del producto en la línea", () => {
+  it("muestra la portada de la pieza seleccionada y la quita al dejar la captura libre", () => {
+    state.products.push({
+      ...state.products[0],
+      id: "prod_olivia_2",
+      name: "Collar azul",
+      imageUrl: "https://example.test/collar.jpg",
+    } as typeof state.products[number]);
+    const order = {
+      id: "photo-order",
+      storeId: "store_olivia",
+      customerId: "customer_1",
+      items: [{ productId: "prod_olivia_1", productName: "Arete dorado", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      deposit: 0,
+      orderStatus: "asked" as const,
+      paymentStatus: "unpaid" as const,
+      schemaVersion: 2,
+      createdAt: "",
+      updatedAt: "",
+    };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+
+    expect(screen.getByRole("img", { name: "Foto de Arete dorado" })).toHaveAttribute("src", "https://example.test/arete.jpg");
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Collar azul" } });
+    fireEvent.click(screen.getByRole("option", { name: /Collar azul/ }));
+    const collarPhoto = screen.getByRole("img", { name: "Foto de Collar azul" });
+    expect(collarPhoto).toHaveAttribute("src", "https://example.test/collar.jpg");
+    fireEvent.error(collarPhoto);
+    expect(screen.getByRole("img", { name: "Foto de Collar azul" })).not.toHaveAttribute("src");
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Pieza personalizada" } });
+    expect(screen.queryByRole("img", { name: /Collar azul/ })).not.toBeInTheDocument();
+    state.products.pop();
+  });
+});
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../app/StoreProvider")>();
@@ -148,6 +186,23 @@ describe("retrying a new order after an interruption", () => {
     expect(mockUpsertOrder.mock.calls[1][1].mutationId).toBe(firstOptions.mutationId);
     again.unmount();
   });
+
+  it("shows the failure in Spanish, keeps the capture and never claims success", async () => {
+    localStorage.clear();
+    mockUpsertOrder.mockReset().mockRejectedValueOnce(new Error("offline"));
+    const onDone = vi.fn();
+    const order = { id: "failed-save", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    const rendered = render(<ToastProvider><OrderForm order={order} isNew onDone={onDone} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(screen.getByText(/No se pudo guardar el pedido/)).toBeInTheDocument());
+    // No false success: the saved toast never appears and the editor stays open.
+    expect(screen.queryByText("Pedido guardado")).toBeNull();
+    expect(onDone).not.toHaveBeenCalled();
+    // The captured line is still on screen, ready to retry.
+    expect(screen.getByDisplayValue("Anillo")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeEnabled());
+    rendered.unmount();
+  });
 });
 
 describe("acknowledged order drafts", () => {
@@ -176,9 +231,10 @@ describe("customer price assignment", () => {
     fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "Sofía" } });
     expect(screen.getByText("Cambiar cliente")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Aplicar precios de Sofía" }));
+    // Stack view: the LAST captured item (manual 123) renders on top.
     const prices = screen.getAllByLabelText(/Precio unitario/);
-    expect(prices[0]).toHaveValue("70");
-    expect(prices[1]).toHaveValue("123");
+    expect(prices[0]).toHaveValue("123");
+    expect(prices[1]).toHaveValue("70");
     fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
     await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
     expect(mockUpsertOrder.mock.calls[0][0].items.map((item: { unitPrice: number }) => item.unitPrice)).toEqual([70, 123]);
@@ -266,9 +322,14 @@ describe("new order lines prepend (OLI-011)", () => {
     expect(after).toHaveLength(2);
     expect((after[0] as HTMLInputElement).value).toBe(""); // fresh empty line first
     expect((after[1] as HTMLInputElement).value).toBe("Arete dorado"); // captured content preserved below
-    // Line numbering follows the visual order.
-    expect(screen.getByText("Línea 1")).toBeInTheDocument();
-    expect(screen.getByText("Línea 2")).toBeInTheDocument();
+    // Article numbers follow CAPTURE order (stable): the saved article keeps
+    // "Artículo 1" (rendered BELOW), the fresh one is "Artículo 2" on top.
+    expect(screen.getByText("Artículo 1")).toBeInTheDocument();
+    expect(screen.getByText("Artículo 2")).toBeInTheDocument();
+    // The stack view shows the NEWEST first; "Artículo 1" is the second card.
+    const labels = screen.getAllByText(/^Artículo \d+$/);
+    expect(labels[0]).toHaveTextContent("Artículo 2");
+    expect(labels[1]).toHaveTextContent("Artículo 1");
   });
 });
 
@@ -282,10 +343,10 @@ describe("fast order capture", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar línea" }));
     const products = Array.from(document.querySelectorAll<HTMLInputElement>("input[role=combobox]")).slice(1);
     expect(products).toHaveLength(50);
-    expect(products[0]).toHaveFocus();
-    expect(products[1]).toHaveValue("Anillo");
-    expect(screen.getAllByLabelText("Cantidad")[1]).toHaveValue("2");
-    expect(screen.getAllByLabelText(/Precio unitario/)[1]).toHaveValue("50");
+    expect(products[0]).toHaveFocus(); // fresh line on top of the stack
+    expect(products[49]).toHaveValue("Anillo"); // first captured stays at the bottom
+    expect(screen.getAllByLabelText("Cantidad")[49]).toHaveValue("2");
+    expect(screen.getAllByLabelText(/Precio unitario/)[49]).toHaveValue("50");
   });
 });
 
@@ -363,6 +424,147 @@ describe("cent precision when saving", () => {
     await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
     expect(mockUpsertOrder.mock.calls[0][0].items[0].subtotal).toBe(1.01);
     expect(mockUpsertOrder.mock.calls[0][0].deposit).toBe(0.34);
+    rendered.unmount();
+  });
+});
+
+describe("installment plan capture (#165)", () => {
+  beforeEach(() => {
+    // All new-order editors share one draft key; keep each case isolated.
+    localStorage.clear();
+  });
+
+  const baseOrder = {
+    id: "order_plan",
+    storeId: "store_olivia",
+    customerId: "customer_1",
+    items: [{ lineId: "l1", productId: "prod_olivia_1", productName: "Arete dorado", quantity: 1, unitPrice: 1800, subtotal: 1800 }],
+    deposit: 0,
+    orderStatus: "asked" as const,
+    paymentStatus: "unpaid" as const,
+    schemaVersion: 2,
+    createdAt: "",
+    updatedAt: "",
+  };
+
+  function fillPlan(cuotas: string, frequency: string, firstDueDate: string) {
+    fireEvent.click(screen.getByRole("checkbox", { name: /pagos por partes/i }));
+    fireEvent.change(screen.getByLabelText("Número de cuotas"), { target: { value: cuotas } });
+    fireEvent.change(screen.getByLabelText("Frecuencia"), { target: { value: frequency } });
+    fireEvent.change(screen.getByLabelText("Primera fecha de vencimiento"), { target: { value: firstDueDate } });
+  }
+
+  it("shows the derived agreement before confirming and saves the plan", async () => {
+    mockUpsertOrder.mockClear();
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={{ ...baseOrder }} isNew onDone={() => {}} />
+      </ToastProvider>
+    );
+    fillPlan("6", "monthly", "2026-11-15");
+    // Acuerdo visible ANTES de guardar: importes exactos y última fecha.
+    expect(screen.getByText(/6 cuotas/i)).toBeInTheDocument();
+    expect(screen.getAllByText("$300.00").length).toBeGreaterThanOrEqual(6);
+    expect(screen.getByText(/última/i).textContent).toMatch(/2027/);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0];
+    expect(saved.installments).toMatchObject({ count: 6, frequency: "monthly", firstDueDate: "2026-11-15" });
+    expect(saved.deposit).toBe(0); // sin anticipo separado (decisión iii)
+    rendered.unmount();
+  });
+
+  it("rejects an invalid cuota count without saving", async () => {
+    mockUpsertOrder.mockClear();
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={{ ...baseOrder }} isNew onDone={() => {}} />
+      </ToastProvider>
+    );
+    fillPlan("0", "monthly", "2026-11-15");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(screen.getByText(/cuotas válido/i)).toBeInTheDocument());
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+    rendered.unmount();
+  });
+
+  it("requires frequency and first due date — nothing is defaulted", async () => {
+    mockUpsertOrder.mockClear();
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={{ ...baseOrder }} isNew onDone={() => {}} />
+      </ToastProvider>
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /pagos por partes/i }));
+    fireEvent.change(screen.getByLabelText("Número de cuotas"), { target: { value: "6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(screen.getByText(/elige la frecuencia/i)).toBeInTheDocument());
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+    rendered.unmount();
+  });
+
+  it("keeps the reservation mark and plan history when editing a plan order", async () => {
+    mockUpsertOrder.mockClear();
+    const withPlan = {
+      ...baseOrder,
+      installments: { count: 6, frequency: "monthly" as const, firstDueDate: "2026-11-15", agreedAt: "2026-11-01", agreedBy: "u1" },
+      installmentsReservedAt: "2026-11-02T10:00:00.000Z",
+      installmentsHistory: [{ count: 3, frequency: "monthly" as const, firstDueDate: "2026-11-15", agreedAt: "2026-10-01", agreedBy: "u1", replacedAt: "2026-11-01T09:00:00.000Z" }],
+    };
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={withPlan} onDone={() => {}} />
+      </ToastProvider>
+    );
+    // El interruptor llega prendido y el anticipo heredado se conserva oculto.
+    expect((screen.getByRole("checkbox", { name: /pagos por partes/i }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0];
+    expect(saved.installmentsReservedAt).toBe("2026-11-02T10:00:00.000Z");
+    expect(saved.installmentsHistory).toHaveLength(1);
+    expect(saved.installments?.count).toBe(6);
+    rendered.unmount();
+  });
+
+  it("hides the anticipo field while the plan is on (no separate down payment)", () => {
+    const rendered = render(
+      <ToastProvider>
+        <OrderForm order={{ ...baseOrder }} isNew onDone={() => {}} />
+      </ToastProvider>
+    );
+    expect(screen.getByLabelText("Anticipo")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /pagos por partes/i }));
+    expect(screen.queryByLabelText("Anticipo")).toBeNull();
+    rendered.unmount();
+  });
+});
+
+describe("estimated profit while registering a sale", () => {
+  it("previews precio − costo − gastos de venta in the totals bar", () => {
+    state.products.push({ ...state.products[0], id: "prod_cost", name: "Collar con costo", cost: 40 } as typeof state.products[number]);
+    state.purchases.push({
+      id: "trip_profit", storeId: "store_olivia", date: "2026-10-30", status: "received", costingMethod: "latest_purchase",
+      receivedAt: "2026-11-01T00:00:00.000Z", subtotal: 400, totalConfirmed: 400, createdAt: "", updatedAt: "",
+      lines: [{ lineId: "line", productId: "prod_cost", name: "Collar con costo", quantity: 10, unitCost: 40 }],
+      costAllocations: [{ lineId: "line", merchandiseCents: 40000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 500, totalCents: 40000 }],
+    });
+    const order = { id: "profit-order", storeId: "store_olivia", customerId: "customer_1", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Collar con costo" } });
+    // $100.00 (precio Iconic) − $40.00 (costo) − $0.50 (entrega 50¢/pieza) = $59.50.
+    expect(screen.getByText("Ganancia")).toBeInTheDocument();
+    expect(screen.getByText("$59.50")).toBeInTheDocument();
+    rendered.unmount();
+    state.products.pop();
+    state.purchases.pop();
+  });
+
+  it("keeps the estimate honest when no line has a cost", () => {
+    const order = { id: "no-cost-order", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo sin costo", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    expect(screen.getByText("Ganancia")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
     rendered.unmount();
   });
 });
