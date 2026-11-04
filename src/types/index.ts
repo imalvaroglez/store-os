@@ -287,6 +287,8 @@ export type Order = {
    * displays read this, never the session's records: a fresh session can no
    * longer undercount received money. Absent = no records were ever written. */
   paymentsReceivedCents?: number;
+  /** New payment evidence linked atomically to the accumulator by rules. */
+  lastPaymentId?: string;
   /** #168: set (same transaction) once the legacy `deposit` materialized as
    * the inherited payment record, so the doc never counts that deposit twice
    * (accumulator + pending deposit). */
@@ -329,6 +331,8 @@ export type OrderPayment = {
   kind: "payment" | "adjustment";
   /** Signed decimal money units; negative = refund / correction down. */
   amount: number;
+  /** Exact rounded cents on new evidence; old records remain readable. */
+  amountCents?: number;
   /** Why the record exists. Required on adjustments (evidence). */
   note?: string;
   createdAt: string;

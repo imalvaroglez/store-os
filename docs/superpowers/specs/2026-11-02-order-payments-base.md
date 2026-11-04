@@ -2,10 +2,11 @@
 
 Fecha: 2026-11-02 · Rama: `codex/issue-123-payments` · Refs #123 (define también #165)
 
-Decisiones adoptadas por autonomía del PO (2026-11-02, "continúa sin pausa") —
-reversibles; registradas como comentarios en #123 y #165.
+Propuestas implementadas el 2 de noviembre, registradas en #123/#165.
+La autonomía de implementación no acredita aprobación de reglas comerciales;
+el ledger #171 mantiene sus condiciones pendientes.
 
-## Reglas adoptadas
+## Reglas propuestas, pendientes de aprobación
 
 1. **Anticipo heredado** (revisada por el PO, 2026-11-03). El `deposit`
    previo a los registros por cobro se materializa UNA vez como registro
@@ -79,7 +80,81 @@ hoja del pedido.
 - El botón heredado "Cobrar" de la tarjeta sigue escribiendo `deposit` de un
   golpe (comportamiento previo conservado para no romper flujos existentes);
   retirarlo/deprecarlo es trabajo posterior una vez integrada la base.
-- Borrar un pedido deja huérfanos sus documentos de cobro: son ilegibles (la
-  regla depende del pedido padre) y de tamaño despreciable, pero persisten.
+- #174 impide borrar pedidos con cobros o reservas y protege sus campos de
+  evidencia; el historial no se pierde ni se elimina por inferencia.
 - `OrderForm` sigue permitiendo editar `deposit`; una vez materializado el
   heredado, ese campo queda congelado como dato heredado (#165 lo retoma).
+
+
+## Integridad del acumulado y comprobantes nuevos (#171, corrección incremental)
+
+El registro transaccional añade `lastPaymentId` al padre y `amountCents` al
+comprobante nuevo (también al heredado). `amount` conserva su precisión original.
+Las reglas validan las dos direcciones: cambiar acumulado/materialización/enlace
+requiere un comprobante ordinario NUEVO en la misma transacción, con suma exacta;
+crear comprobantes requiere que el padre los incorpore. El heredado se añade solo
+al materializar el anticipo existente, una vez y con su importe original. Un lote
+no puede introducir un segundo comprobante normal que quede fuera de la suma.
+El enlace apunta a un registro que antes no existía, por lo que un replay no
+vuelve a sumarlo. Crear un pedido con acumulado/enlace/materialización se rechaza.
+Guardar el formulario conserva el enlace canónico; los lectores anteriores no
+necesitan el campo para mostrar los registros existentes.
+
+Para comprobar el redondeo simétrico exacto, las reglas convierten el importe
+numérico a su texto decimal canónico (`string(amount)`), separan coeficiente y
+exponente y extraen los dígitos de centavos y el primer dígito descartado. Es la
+misma regla decimal de `orderAmountCents`, aplicada sin multiplicación binaria ni
+tolerancias. Se conserva `amount` original. La alternativa por intervalos de
+medio centavo se descartó: una comparación diferencial de 9,000 valores contra
+el helper encontró 48 discrepancias cerca de 9e12. No se reduce el rango admitido
+para ocultarlas. La matriz de emulador incluye esos casos grandes, notación
+científica, valores junto al límite y simetría negativa.
+La suma acumulada también exige enteros seguros; ante datos corruptos o desborde
+se aborta sin reemplazarlos por cero ni cambiar el saldo.
+
+Comprobantes antiguos permanecen legibles. Un pedido con acumulado anterior pero
+sin enlace incorpora su siguiente comprobante sin reescribir históricos. Esta
+garantía valida las transiciones nuevas; no certifica que datos anteriores
+manipulados ya estuvieran conciliados. Cualquier conciliación de datos existentes
+requiere evidencia y autorización propias; este cambio no migra ni toca datos.
+App y reglas deben liberarse juntas tras aprobación humana: versiones anteriores
+del cliente que no envíen el enlace/centavos recibirán rechazo explícito al cobrar,
+no éxito aparente. No se ejecuta liberación desde este trabajo.
+
+Estimación conservadora actualizada (sustituye para este cambio la tabla original):
+se presupuestan hasta 48+5P lecturas por intento y 3+P escrituras confirmadas si
+se reserva. La cota cuenta por separado autorización de cada lectura del cliente,
+hasta 20 accesos del lote de escritura en reglas y una lectura excepcional del
+padre con su autorización, sin descontar caché entre solicitudes. P es el número
+de productos leídos en la primera reserva; después P=0.
+El registro limita el total a 5 ejecuciones transaccionales, compartiendo ese
+presupuesto entre reintentos del SDK y una reserva concurrente. Solo se reintenta
+un rechazo de permiso si una lectura del servidor confirma que cambió el pedido
+leído (revisión, dinero, enlace o marca). Un rechazo real no se oculta.
+Para 100 cobros/día sin reserva y sin reintentos: hasta 4,800 lecturas/300
+escrituras (9.6%/1.5% de cuotas diarias). Para 100 primeras reservas de P=2 con
+el extremo de 5 intentos: hasta 29,000 lecturas/500 escrituras (58%/2.5%), dentro
+de cuotas. Es presupuesto del cambio a ese volumen, no certificación del consumo
+total de la app. La prueba de 50 productos valida el límite técnico de accesos;
+si ese tamaño se usa habitualmente, se recalcula volumen y presupuesto conjunto
+antes de ampliarlo. No se añaden listeners, servicios ni lecturas por render.
+
+Pruebas: suma segura (dos regresiones vistas en rojo antes de corregir), reglas
+con SDK directo contra inflación/reducción/replay, registros huérfanos y lotes
+con suma incorrecta, redondeo positivo/negativo y subcentavos heredados, anticipo
+fraccionario y falso heredado, concurrencia y guardado con enlace inventado.
+Incluye un primer abono con reserva de 50 productos para validar los límites de
+accesos de reglas. Emuladores solo en CI, conforme al acuerdo del proyecto.
+
+Referencia técnica: [operaciones atómicas con getAfter](https://firebase.google.com/docs/firestore/security/rules-conditions#access_other_documents).
+
+
+El acumulado se escribe con `increment(savedCents)` y evidencia en la misma
+transacción, de modo que las reglas evalúen el incremento contra el padre
+canónico aun bajo contención. La suficiencia/precisión se comprueba antes de
+escribir y las reglas comprueban el resultado final. La marca inmutable de
+primera reserva y el heredado siguen requiriendo lectura canónica: si compiten
+dos primeros cobros, un permiso rechazado por evidencia ya cambiada se reintenta
+solo tras comprobar esa carrera en el servidor, dentro del mismo límite total.
+Pruebas de dos primeros abonos y de dos materializaciones concurrentes conservan
+ambos cobros, una sola reserva y un solo anticipo heredado.

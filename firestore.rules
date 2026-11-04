@@ -193,13 +193,87 @@ service cloud.firestore {
         && resource.data.storeId == request.resource.data.storeId;
       allow delete: if canOperateStore(resource.data.storeId);
     }
+    // Mirror orderAmountCents using the canonical decimal text, including
+    // scientific notation. Neither multiplication nor half-cent float bounds
+    // preserve rounding at both 1.005 and large historical decimal amounts.
+    function receiptCents(amount) {
+      let parts = string(math.abs(amount)).lower().split('e');
+      let coefficient = parts[0].split('[.]');
+      let exponent = parts.size() > 1 ? int(parts[1]) : 0;
+      let digits = parts[0].replace('[.]', '');
+      let at = coefficient[0].size() + exponent + 2;
+      let prefix = at <= 0 ? '0' : (at < digits.size() ? digits[0:at]
+        : (at == digits.size() ? digits : digits + '000000000000000'[0:at - digits.size()]));
+      let next = at >= 0 && at < digits.size() ? digits[at] : '0';
+      let magnitude = int(prefix) + (next >= '5' ? 1 : 0);
+      return amount < 0 ? -magnitude : magnitude;
+    }
+    function validReceipt(data, orderId, paymentId) {
+      return data.id == paymentId && data.orderId == orderId
+        && data.createdBy == request.auth.uid
+        && data.createdAt is string && data.createdAt.size() > 0
+        && data.amount is number && data.amount != 0
+        && math.abs(data.amount) <= 9000000000000
+        && data.amountCents is int && math.abs(data.amountCents) <= 900000000000000
+        && data.amountCents == receiptCents(data.amount)
+        && data.kind in ['payment', 'adjustment']
+        && (data.kind == 'adjustment' || data.amount > 0)
+        && (data.kind != 'adjustment' || (data.note is string && data.note.trim().size() > 0))
+        && ((paymentId == 'inherited_deposit' && data.kind == 'payment'
+              && data.method in ['cash', 'transfer']
+              && data.date is string && data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}'))
+            || (paymentId != 'inherited_deposit'
+              && ((data.kind == 'adjustment' && data.method in ['cash', 'transfer', 'unknown'])
+                || (data.kind == 'payment' && data.method in ['cash', 'transfer']
+                  && data.date is string && data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')))));
+    }
+    function validInheritedReceipt(orderId, before, after) {
+      let path = /databases/$(database)/documents/orders/$(orderId)/payments/inherited_deposit;
+      let receipt = getAfter(path).data;
+      return before.get('inheritedDepositMaterialized', false) == false
+        && after.get('inheritedDepositMaterialized', false) == true
+        && !exists(path)
+        && before.get('deposit', 0) > 0 && receipt.amount == before.deposit
+        && receipt.storeId == before.storeId;
+    }
+    function validMoneyUpdate(orderId, before, after) {
+      let paymentId = after.get('lastPaymentId', '');
+      let path = /databases/$(database)/documents/orders/$(orderId)/payments/$(paymentId);
+      let receipt = getAfter(path).data;
+      let inheritedChanged = before.get('inheritedDepositMaterialized', false) != after.get('inheritedDepositMaterialized', false);
+      return paymentId is string && paymentId.size() > 0 && paymentId != 'inherited_deposit'
+        && paymentId != before.get('lastPaymentId', '') && !exists(path)
+        && receipt.orderId == orderId && receipt.storeId == before.storeId
+        && after.paymentsReceivedCents is int && math.abs(after.paymentsReceivedCents) <= 9007199254740991
+        && before.get('paymentsReceivedCents', 0) is int
+        && math.abs(before.get('paymentsReceivedCents', 0)) <= 9007199254740991
+        && (!inheritedChanged || validInheritedReceipt(orderId, before, after))
+        && after.paymentsReceivedCents == before.get('paymentsReceivedCents', 0) + receipt.amountCents
+          + (inheritedChanged
+            ? getAfter(/databases/$(database)/documents/orders/$(orderId)/payments/inherited_deposit).data.amountCents : 0);
+    }
+    function receiptUpdatesParent(orderId, paymentId, receipt) {
+      let path = /databases/$(database)/documents/orders/$(orderId);
+      let before = get(path).data;
+      let after = getAfter(path).data;
+      return receipt.storeId == before.storeId
+        && after.get('lastPaymentId', '') != before.get('lastPaymentId', '')
+        && (paymentId == 'inherited_deposit'
+          ? (before.get('inheritedDepositMaterialized', false) == false
+              && after.get('inheritedDepositMaterialized', false) == true
+              && after.lastPaymentId != 'inherited_deposit' && receipt.amount == before.get('deposit', 0))
+          : after.lastPaymentId == paymentId);
+    }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
-      allow create: if canOperateStore(request.resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId'])
+            || validMoneyUpdate(id, resource.data, request.resource.data))
         // Editing cannot strip the evidence that prevents orphaning a parent.
         && (!('paymentsReceivedCents' in resource.data)
             || 'paymentsReceivedCents' in request.resource.data)
@@ -227,18 +301,8 @@ service cloud.firestore {
     match /orders/{orderId}/payments/{paymentId} {
       allow get, list: if canOperateStore(get(/databases/$(database)/documents/orders/$(orderId)).data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && request.resource.data.orderId == orderId
-        && request.resource.data.storeId == get(/databases/$(database)/documents/orders/$(orderId)).data.storeId
-        && request.resource.data.amount is number
-        && request.resource.data.amount >= -9000000000000
-        && request.resource.data.amount <= 9000000000000
-        && request.resource.data.amount != 0
-        && request.resource.data.method in ['cash', 'transfer', 'unknown']
-        && request.resource.data.kind in ['payment', 'adjustment']
-        && (request.resource.data.kind == 'adjustment'
-            || request.resource.data.amount > 0)
-        && (request.resource.data.kind != 'adjustment'
-            || (request.resource.data.note is string && request.resource.data.note.size() > 0));
+        && validReceipt(request.resource.data, orderId, paymentId)
+        && receiptUpdatesParent(orderId, paymentId, request.resource.data);
       allow update: if false;
       allow delete: if false;
     }
