@@ -61,8 +61,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
 
   it("abonos never move stock; the first positive one stamps the money-backed witness (R8)", async () => {
     const saved = await registerOrderPaymentTx(payment("pay_a", 100));
-    expect(saved).toHaveLength(1);
-    expect(await stock("p-plan")).toBe(2); // sin movimiento de stock
+    expect(saved.payments).toHaveLength(1);
+    expect(await stock("p-plan")).toBe(2); // sin movimiento de stock (R8)
     expect((await orderDoc("plan-order"))?.installmentsReservedAt).toBeTruthy();
     expect((await orderDoc("plan-order"))?.revision).toBe(1); // sin bump: la reserva ya vivió en la creación
 

@@ -287,6 +287,8 @@ export type Order = {
    * displays read this, never the session's records: a fresh session can no
    * longer undercount received money. Absent = no records were ever written. */
   paymentsReceivedCents?: number;
+  /** Monotonic receipt version; orders late responses without comparing money. */
+  paymentsRevision?: number;
   /** New payment evidence linked atomically to the accumulator by rules. */
   lastPaymentId?: string;
   /** #168: set (same transaction) once the legacy `deposit` materialized as

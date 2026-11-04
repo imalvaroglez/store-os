@@ -36,6 +36,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   // doc's transactional accumulator, so the card is correct right after a
   // reload. The per-cobro breakdown still only loads when Cobros opens.
   const planView = order.installments ? installmentPlanView(order) : null;
+  const hasPaymentRecords = typeof order.paymentsReceivedCents === "number";
   const owed = planView ? planView.balanceCents > 0 : totals.balance > 0;
   const deliveryHeld = !!planView?.deliveryBlocked && verb === "Entregar";
   // Per-line profit: lines without a known cost contribute 0 instead of
@@ -131,8 +132,10 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           </>
         ) : (
           <>
-            <StatRow label="Pagado"><Money exact amount={totals.paid} /></StatRow>
-            <StatRow label="Saldo" tone={totals.balance > 0 ? "danger" : "success"}><Money exact amount={totals.balance} /></StatRow>
+            <StatRow label={hasPaymentRecords ? "Recibido" : "Pagado"}><Money exact amount={totals.paid} /></StatRow>
+            <StatRow label={hasPaymentRecords && totals.paid > totals.estimatedTotal ? "A favor" : "Saldo"} tone={totals.balance > 0 ? "danger" : "success"}>
+              <Money exact amount={hasPaymentRecords && totals.paid > totals.estimatedTotal ? totals.paid - totals.estimatedTotal : totals.balance} />
+            </StatRow>
           </>
         )}
       </div>
@@ -153,7 +156,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
               )
             ) : (
               totals.balance > 0 && (
-                <Button variant="secondary" full onClick={collect}>Cobrar</Button>
+                <Button variant="secondary" full onClick={hasPaymentRecords ? () => setPaymentsOpen(true) : collect}>Cobrar</Button>
               )
             )}
           </div>

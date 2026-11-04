@@ -8,7 +8,8 @@
 // exact-cents helpers; NaN never enters the state.
 import type { Order, OrderPayment, OrderPaymentMethod } from "../../types";
 import { parseAmount } from "../../lib/money";
-import { orderAmountCents } from "../../lib/orderMoney";
+import { docReceivedCents, orderAmountCents } from "../../lib/orderMoney";
+export { docReceivedCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
 
 /** Deterministic id of the one-time materialization of the legacy `deposit`. */
@@ -180,28 +181,6 @@ export function paymentsCents(payments: OrderPayment[] | undefined | null): numb
   return (payments ?? []).reduce((sum, p) => sum + finiteCents(p.amount), 0);
 }
 
-/**
- * #168: the money truth of the ORDER DOCUMENT — the transactional accumulator
- * (`paymentsReceivedCents`, Σ signed cents of the payment records, maintained
- * by registerOrderPaymentTx in the same transaction as each record) plus the
- * legacy `deposit` while it is still pending materialization. Gates and the
- * order card read THIS, never the session's records: a fresh session can no
- * longer undercount received money. Corrupt fields read as zero, never NaN.
- */
-export function docReceivedCents(order: Partial<Order> & Record<string, unknown>): number {
-  const acc =
-    typeof order.paymentsReceivedCents === "number" && Number.isFinite(order.paymentsReceivedCents)
-      ? order.paymentsReceivedCents
-      : 0;
-  if (order.inheritedDepositMaterialized === true) return acc;
-  const deposit = typeof order.deposit === "number" && Number.isFinite(order.deposit) ? Math.max(0, order.deposit) : 0;
-  try {
-    return acc + orderAmountCents(deposit);
-  } catch {
-    return acc; // a deposit beyond safe precision is corrupt, not money
-  }
-}
-
 /** The doc-money fields a successful payment registration writes (#168). */
 export type OrderMoneyFields = { paymentsReceivedCents: number; inheritedDepositMaterialized?: true };
 
@@ -275,15 +254,34 @@ export function paymentSummary(
   const records = orderPaymentsFor(payments, String(order.id ?? ""), String(order.storeId ?? "")).sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
   );
-  const inheritedMaterialized = records.some((p) => p.id === INHERITED_DEPOSIT_PAYMENT_ID);
+  const inheritedMaterialized = order.inheritedDepositMaterialized === true || records.some((p) => p.id === INHERITED_DEPOSIT_PAYMENT_ID);
   const deposit = typeof order.deposit === "number" && Number.isFinite(order.deposit) ? order.deposit : 0;
   const inheritedPendingCents = inheritedMaterialized ? 0 : orderAmountCents(Math.max(0, deposit));
-  const receivedCents = paymentsCents(records) + inheritedPendingCents;
+  const receivedCents = typeof order.paymentsReceivedCents === "number" && Number.isFinite(order.paymentsReceivedCents)
+    ? docReceivedCents(order)
+    : paymentsCents(records) + inheritedPendingCents;
   return {
     totalCents,
     receivedCents,
     balanceCents: totalCents - receivedCents,
     inheritedPendingCents,
     records,
+  };
+}
+
+
+/** Reconcile independent business and receipt revisions without undoing either. */
+export function reconcileOrderPayments(current: Order, canonical: Order): Order {
+  if (current.id !== canonical.id || current.storeId !== canonical.storeId) return current;
+  const business = (canonical.revision ?? 0) > (current.revision ?? 0) ? canonical : current;
+  const money = (canonical.paymentsRevision ?? 0) > (current.paymentsRevision ?? 0) ? canonical : current;
+  if (business === current && money === current) return current;
+  return {
+    ...business,
+    paymentsReceivedCents: money.paymentsReceivedCents,
+    paymentsRevision: money.paymentsRevision,
+    lastPaymentId: money.lastPaymentId,
+    inheritedDepositMaterialized: money.inheritedDepositMaterialized,
+    installmentsReservedAt: business.installmentsReservedAt ?? money.installmentsReservedAt,
   };
 }
