@@ -346,6 +346,9 @@ test("recorded payments survive reload and an adjustment updates card and histor
   const sheet = page.getByRole("dialog", { name: "Cobros del pedido" });
   await expect(sheet.getByRole("button", { name: "Registrar cobro", exact: true })).toBeEnabled();
   await expect(sheet.getByText("$1,000.00", { exact: true }).first()).toBeVisible();
+  // PO 2026-11-03: the pending inherited deposit demands its (estimated)
+  // date/method with the first cobro — the block sits above the payment form.
+  await sheet.getByLabel("Fecha del anticipo", { exact: true }).fill("2026-10-31");
   await sheet.getByLabel("Monto", { exact: true }).fill("400");
   await sheet.getByRole("button", { name: "Registrar cobro", exact: true }).click();
   await expect(sheet.getByText("$1,400.00", { exact: true })).toBeVisible();
