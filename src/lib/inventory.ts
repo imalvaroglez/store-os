@@ -1,4 +1,4 @@
-import type { Product, PurchaseLine, Order, OrderItem, OrderStatus } from "../types";
+import type { Product, PurchaseLine, Order, OrderItem } from "../types";
 import { effectiveOrderStatus, orderItems, orderStatusIsOpen } from "./orders";
 
 // Inventory math — pure functions used by the StoreProvider (to apply purchases
@@ -101,19 +101,11 @@ export function applyPurchaseLines(
   return updates;
 }
 
-// Order statuses that are "still open" — the stock is still committed.
-// Once delivered/cancelled, the stock is no longer committed.
-const OPEN_STATUSES: ReadonlySet<OrderStatus> = new Set([
-  "asked",
-  "quoted",
-  "confirmed",
-  "preparing",
-  "ready",
-]);
-
 /**
- * Sum of stock still held for pending delivery, including retained reservations.
- * Used to show "Comprometido" alongside the available quantityOnHand.
+ * Sum of stock still held for PENDING delivery — the "Comprometido" the
+ * product card shows next to the available quantityOnHand. Mirrors
+ * `holdsPieces` exactly (creation-time plan reservations included, R8) minus
+ * delivered orders, whose pieces are consumed rather than committed.
  */
 export function committedForProduct(
   orders: Order[],
@@ -121,12 +113,7 @@ export function committedForProduct(
   productId: string
 ): number {
   return orders
-    .filter((o) => {
-      if (o.storeId !== storeId) return false;
-      const status = effectiveOrderStatus(o);
-      if (o.installmentsReservedAt) return status !== "delivered";
-      return !o.installments && OPEN_STATUSES.has(status);
-    })
+    .filter((o) => o.storeId === storeId && holdsPieces(o) && effectiveOrderStatus(o) !== "delivered")
     .reduce((sum, o) => sum + orderItems(o).filter((item) => item.productId === productId).reduce((lineSum, item) => lineSum + item.quantity, 0), 0);
 }
 
@@ -143,31 +130,34 @@ export function reservationDeltas(oldItems: OrderItem[], newItems: OrderItem[]):
 }
 
 /**
+ * Does this order currently hold pieces out of the shelf (reserved or
+ * consumed)? The ONE truth shared by the reservation model and the
+ * "Comprometido" count — they must never diverge again (Codex review
+ * 2026-11-04 found the selector still excluding creation-time reservations).
+ *
+ * The reservation survives removing the plan (#174): it is stock evidence,
+ * not a property of the currently selected payment schedule. Money-backed
+ * pieces (witness or accumulator) stay held even after cancellation.
+ * Everything else — ordinary orders and plans without money (PO decision
+ * 2026-11-03 R8: plans reserve AT CREATION) — holds while open or delivered.
+ */
+function holdsPieces(o: Order): boolean {
+  if (o.installmentsReservedAt || (o.installments && (o.paymentsReceivedCents ?? 0) > 0)) {
+    return true;
+  }
+  const status = effectiveOrderStatus(o);
+  return orderStatusIsOpen(status) || status === "delivered";
+}
+
+/**
  * Reservation delta for a lifecycle transition, expressed as a contribution
- * model: open AND delivered orders both hold stock (reserved or consumed —
- * either way it is out of the shelf); cancelled orders hold none. Cancelling a
+ * model over `holdsPieces`: open AND delivered orders both hold stock
+ * (reserved or consumed — either way it is out of the shelf). Cancelling a
  * delivered sale returns the goods; re-delivering takes them again, so every
  * cycle nets to exactly one consumption. Stateless — no provenance flag.
- *
- * Installment orders (PO decision 2026-11-03 R8, replacing the #165 deferral):
- * a plan reserves AT CREATION exactly like an ordinary order. Once money backs
- * the pieces (`installmentsReservedAt` witness or `paymentsReceivedCents` > 0)
- * they STAY held — even after cancellation — because money was received
- * against them: releasing stock or refunding is an explicit human action,
- * never an inference.
  */
 export function reservationDeltasForOrderChange(previous: Order | undefined, next: Order): Map<string, number> {
-  const heldItems = (order: Order | undefined): OrderItem[] => {
-    if (!order) return [];
-    // The reservation survives removing the plan (#174): it is stock evidence,
-    // not a property of the currently selected payment schedule. PO 2026-11-03
-    // (R8): plans hold from creation like ordinary orders; received money
-    // keeps the pieces held even after cancellation.
-    if (order.installmentsReservedAt || (order.installments && (order.paymentsReceivedCents ?? 0) > 0)) {
-      return orderItems(order);
-    }
-    const status = effectiveOrderStatus(order);
-    return orderStatusIsOpen(status) || status === "delivered" ? orderItems(order) : [];
-  };
+  const heldItems = (order: Order | undefined): OrderItem[] =>
+    order && holdsPieces(order) ? orderItems(order) : [];
   return reservationDeltas(heldItems(previous), heldItems(next));
 }

@@ -165,6 +165,19 @@ describe("order amount limits", () => {
     expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeDisabled();
     rendered.unmount();
   });
+
+  it("survives an unsafe amount on a line WITH known cost (Codex repro)", () => {
+    // The profit preview computes with the line's cost; an excessive price
+    // used to throw RangeError during render and unmount the whole form.
+    const order = { id: "large_cost", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50, cost: 20 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText(/Precio unitario/), { target: { value: "900719925474099100" } });
+    expect(screen.getByText(/importes o cantidades demasiado grandes/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeDisabled();
+    // The capture stays editable, not exploded.
+    expect((screen.getByLabelText(/Precio unitario/) as HTMLInputElement).value).toBe("900719925474099100");
+    rendered.unmount();
+  });
 });
 
 describe("retrying a new order after an interruption", () => {
