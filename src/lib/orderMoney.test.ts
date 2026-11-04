@@ -18,3 +18,12 @@ describe("order money", () => {
     expect(() => orderAmountCents(1, Number.MAX_SAFE_INTEGER + 1)).toThrow(RangeError);
   });
 });
+
+it("uses the order's canonical receipts in list and home balances", () => {
+  expect(orderTotals({ items: [{ productName: "Pieza", quantity: 1, unitPrice: 1000, subtotal: 1000 }], deposit: 0, paymentsReceivedCents: 40000 })).toMatchObject({ paid: 400, balance: 600 });
+});
+
+it("keeps receipt version and canonical link through order normalization", async () => {
+  const { migrateOrder } = await import("./orders");
+  expect(migrateOrder({ id: "o1", storeId: "s1", deposit: 0, items: [], paymentsReceivedCents: 40000, paymentsRevision: 2, lastPaymentId: "p2" })).toMatchObject({ paymentsRevision: 2, lastPaymentId: "p2" });
+});

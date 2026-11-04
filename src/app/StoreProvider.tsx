@@ -17,14 +17,26 @@ import type {
   Category,
   Supplier,
   Purchase,
+  OrderPayment,
+  PurchaseExpense,
+  Storefront,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
-import { nowIso } from "../lib/dates";
-import { applyPurchaseLines } from "../lib/inventory";
-import { migrateOrder, paymentStatusForOrder } from "../lib/orders";
+import { nowIso, todayIso } from "../lib/dates";
+import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
+import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
+import { deliveryWithBalanceBlocked, orderTotalCents, sameInstallmentPlan } from "../features/orders/installments";
+import {
+  buildAdjustmentRecord,
+  buildPaymentRecord,
+  docReceivedCents,
+  mergePayments,
+  reconcileOrderPayments,
+  type PaymentRecordInput,
+} from "../features/orders/payments";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
@@ -32,6 +44,7 @@ import {
   loadCloudState,
   subscribeCloudState,
   saveEntity,
+  saveStorefrontBatch,
   deleteEntity,
   claimSlug,
   projectPublicForStore,
@@ -40,12 +53,16 @@ import {
   removePublicProductDoc,
   rebuildPublicCatalog,
   receivePurchaseTx,
+  appendPurchaseExpenseTx,
   createDraftProductsForPurchaseTx,
   saveOrderWithStockTx,
   deleteOrderWithStockTx,
+  fetchOrderPayments,
+  registerOrderPaymentTx,
   StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
+  DeliveryWithBalanceError,
   stripUndefined,
 } from "./firebase/firestoreData";
 import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
@@ -74,6 +91,8 @@ type Action =
   | { type: "DELETE_CUSTOMER"; customerId: string }
   | { type: "ADD_ORDER"; order: Order }
   | { type: "UPDATE_ORDER"; order: Order }
+  | { type: "APPLY_ORDER_PAYMENTS"; order: Order }
+  | { type: "REPLACE_CLOUD_STATE"; state: AppState }
   | { type: "DELETE_ORDER"; orderId: string }
   // cloud sync pushes a whole state
   | { type: "REPLACE_STATE"; state: AppState }
@@ -140,16 +159,28 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, orders: [...state.orders, action.order] };
     case "UPDATE_ORDER":
       return { ...state, orders: state.orders.map((o) => (o.id === action.order.id ? action.order : o)) };
+    case "APPLY_ORDER_PAYMENTS":
+      return { ...state, orders: state.orders.map((order) => reconcileOrderPayments(order, action.order)) };
     case "DELETE_ORDER":
       return { ...state, orders: state.orders.filter((o) => o.id !== action.orderId) };
-    case "REPLACE_STATE":
+    case "REPLACE_CLOUD_STATE":
+    case "REPLACE_STATE": {
       // A cloud sync must never move the user to another store: on slow
       // backends the snapshot can land after the user switched/created one,
       // reverting their selection (and the screen they're looking at).
-      return state.activeStoreId &&
-        action.state.stores.some((s) => s.id === state.activeStoreId)
-        ? { ...action.state, activeStoreId: state.activeStoreId }
-        : action.state;
+      const currentOrders = new Map(state.orders.map((order) => [order.id, order]));
+      const incoming = action.type === "REPLACE_CLOUD_STATE" ? {
+        ...action.state,
+        orders: action.state.orders.map((order) => {
+          const current = currentOrders.get(order.id);
+          if (!current || current.storeId !== order.storeId) return order;
+          const business = (current.revision ?? 0) > (order.revision ?? 0) ? current : order;
+          return reconcileOrderPayments(business, current);
+        }),
+      } : action.state;
+      return state.activeStoreId && incoming.stores.some((s) => s.id === state.activeStoreId)
+        ? { ...incoming, activeStoreId: state.activeStoreId } : incoming;
+    }
     case "BULK_CREATE_FOR_PURCHASE": {
       const products = [...state.products];
       for (const product of action.products) {
@@ -188,6 +219,7 @@ type StoreContextValue = {
   draftOwnerId: string;
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
+  saveStorefront: (storeId: string, storefront: Storefront) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"invited" | "pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
@@ -210,11 +242,23 @@ type StoreContextValue = {
   createDraftProductsForPurchase: (products: Product[], purchase: Purchase) => Promise<void>;
   /** The ONLY operation that moves inventory. Idempotent; throws "received" softly. */
   receivePurchase: (purchase: Purchase) => Promise<"received" | "already">;
+  /**
+   * Append ONE post-reception expense to a received journey purchase
+   * (FER-02): cloud-only, append-only evidence; never touches inventory.
+   * Returns the canonical updated purchase.
+   */
+  adjustReceivedPurchase: (purchase: Purchase, expense: PurchaseExpense) => Promise<Purchase>;
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => Promise<void>;
-  upsertOrder: (order: Order, options?: { expectedRevision: number | null; mutationId: string }) => Promise<void>;
+  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<void>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
+  /** Payment records loaded this session (cloud reads; not local legacy state). */
+  payments: OrderPayment[];
+  /** Load one order's payment records from Firestore. Rejects on failure. */
+  loadOrderPayments: (orderId: string) => Promise<void>;
+  /** Register a cobro/adjustment idempotently; requires a session. */
+  registerOrderPayment: (order: Order, input: PaymentRecordInput) => Promise<void>;
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -273,6 +317,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Administrative state exists only in memory and is hydrated from Firestore
   // after Auth confirms a session. A signed-out provider never reads business
   // data from browser storage.
+  // Payment records (#123): session-scoped cloud reads under each order's own
+  // subcollection. Deliberately NOT part of the legacy local AppState — money
+  // records are administrative data and live only in Firestore.
+  const paymentUid = cloud && user ? user.uid : null;
+  const paymentSession = useRef({ uid: paymentUid, generation: 0, mounted: true });
+  if (paymentSession.current.uid !== paymentUid) {
+    paymentSession.current.uid = paymentUid;
+    paymentSession.current.generation += 1;
+  }
+  const [paymentCache, setPaymentCache] = useState({ uid: paymentUid, generation: paymentSession.current.generation, records: [] as OrderPayment[] });
+  const payments = paymentCache.uid === paymentUid && paymentCache.generation === paymentSession.current.generation
+    ? paymentCache.records : [];
+  useEffect(() => {
+    setPaymentCache({ uid: paymentUid, generation: paymentSession.current.generation, records: [] });
+  }, [paymentUid]);
+  useEffect(() => {
+    paymentSession.current.mounted = true;
+    return () => { paymentSession.current.mounted = false; paymentSession.current.generation += 1; };
+  }, []);
+
+
+  // When auth mode changes, load the appropriate source.
   useEffect(() => {
     let unsub: (() => void) | undefined;
     let active = true;
@@ -281,7 +347,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const publishCloudState = (raw: AppState) => {
         if (!active || currentUid.current !== user.uid) return;
         const migrated = migrateCatalog(raw);
-        dispatch({ type: "REPLACE_STATE", state: migrated });
+        // Cloud snapshots reconcile per order (never clobber newer business
+        // revisions or payment accumulators with a stale load) — the same
+        // guarantee #177 gave the listener before the eradication merge.
+        dispatch({ type: "REPLACE_CLOUD_STATE", state: migrated });
         setCloudLoad({ uid: user.uid, status: "ready", error: null });
       };
       loadCloudState(user)
@@ -407,6 +476,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     syncError,
     dismissSyncError: () => { syncErrorVersion.current += 1; setSyncError(null); },
     draftOwnerId: user?.uid ?? "",
+    payments,
     addStore: async (input) => {
       const currentUser = requireAuthenticatedUser();
       const store: Store = { ...input, id: uid("store"), createdAt: nowIso(), updatedAt: nowIso() };
@@ -468,6 +538,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           throw new PublicCatalogProjectionError(error);
         }
       }
+    },
+    saveStorefront: async (storeId, storefront) => {
+      const existing = state.stores.find((store) => store.id === storeId);
+      if (!existing) throw new Error("No se encontró la tienda.");
+      const updatedAt = nowIso();
+      if (cloud) await saveStorefrontBatch(existing, storefront, updatedAt);
+      dispatch({ type: "UPDATE_STORE", store: { ...existing, storefront, updatedAt } });
     },
     deleteStore: (storeId) => {
       const currentUser = requireAuthenticatedUser();
@@ -680,8 +757,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       {
         persistInBackground("eliminar la compra", () => deleteEntity(currentUser, "purchases", purchaseId));
         // Retention policy: the PDF lives while its purchase does.
-        if (purchase?.documentPath) {
-          deletePurchasePdf(purchase.documentPath).catch((e) =>
+        const paths = new Set([purchase?.documentPath, ...(purchase?.tickets ?? []).map((ticket) => ticket.documentPath)].filter((path): path is string => !!path && path.startsWith(`purchases/${purchase?.storeId}/`)));
+        for (const path of paths) {
+          deletePurchasePdf(path).catch((e) =>
             console.error(`[Storage] No se pudo borrar el PDF de la compra ${purchaseId}:`, e)
           );
         }
@@ -712,6 +790,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
       return "received";
     },
+    adjustReceivedPurchase: async (purchase, expense) => {
+      if (!cloud || !user) {
+        throw new Error("Inicia sesión y conecta Firebase para guardar el gasto.");
+      }
+      // The transaction is the single authority: it re-reads the canonical
+      // purchase and enforces received + latest_purchase before appending.
+      const updated = await appendPurchaseExpenseTx(purchase.id, expense);
+      dispatch({ type: "UPDATE_PURCHASE", purchase: updated });
+      return updated;
+    },
     upsertCustomer: async (customer) => {
       await persistEntity("customers", customer);
       dispatch({ type: state.customers.some((c) => c.id === customer.id) ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer });
@@ -730,13 +818,64 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         paymentStatus: paymentStatusForOrder(order),
       };
       const prev = state.orders.find((o) => o.id === order.id);
-      // ONE transaction (order + every stock delta). Deltas are applied
+      // #165: replacing or removing an agreed plan keeps the previous one
+      // verbatim as evidence — post-payment edits never erase the agreement.
+      if (prev?.installments && !sameInstallmentPlan(prev.installments, nextOrder.installments)) {
+        nextOrder.installmentsHistory = [
+          ...(nextOrder.installmentsHistory ?? []),
+          { ...prev.installments, replacedAt: nowIso() },
+        ];
+      }
+      // #168: the money truth travels on the order doc — a local save carries
+      // the accumulator through verbatim so an edit can never wipe received
+      // money, mirroring the cloud transaction's doc reconciliation.
+      if (prev?.paymentsReceivedCents != null) nextOrder.paymentsReceivedCents = prev.paymentsReceivedCents;
+      if (prev?.inheritedDepositMaterialized) nextOrder.inheritedDepositMaterialized = true;
+      const docMoney = {
+        accumulatorCents: Math.max(prev?.paymentsReceivedCents ?? 0, nextOrder.paymentsReceivedCents ?? 0),
+        receivedCents: Math.max(docReceivedCents(prev ?? {}), docReceivedCents(nextOrder)),
+      };
+      // #165/#168 (local mode parity): the cloud tx enforces these on the doc;
+      // the legacy local branch follows the SAME rules — conversion with money
+      // received marks the reservation, and delivering with a saldo requires
+      // the operator's explicit confirmation (PO 2026-11-03 R9).
+      if (nextOrder.installments && !prev?.installments && docMoney.receivedCents > 0 && !nextOrder.installmentsReservedAt) {
+        nextOrder.installmentsReservedAt = nowIso();
+      }
+      if (
+        effectiveOrderStatus(nextOrder) === "delivered" &&
+        (!prev || effectiveOrderStatus(prev) !== "delivered") &&
+        deliveryWithBalanceBlocked(nextOrder, docMoney)
+      ) {
+        if (!options?.confirmDeliveredWithBalance) {
+          throw new DeliveryWithBalanceError(orderTotalCents(nextOrder) - docMoney.receivedCents);
+        }
+        nextOrder.deliveredWithBalanceCents = orderTotalCents(nextOrder) - docMoney.receivedCents;
+        nextOrder.deliveredWithBalanceConfirmedAt = nowIso();
+        nextOrder.deliveredWithBalanceConfirmedBy = user?.uid ?? "local";
+      }
+      const deltas = reservationDeltasForOrderChange(prev, nextOrder);
+      const stockAt = nowIso();
+      const stockWrites: Product[] = [];
+      for (const [productId, delta] of deltas) {
+        const product = state.products.find((p) => p.id === productId && p.storeId === order.storeId);
+        if (product && typeof product.quantityOnHand === "number") {
+          stockWrites.push({ ...product, quantityOnHand: product.quantityOnHand + delta, updatedAt: stockAt });
+        }
+      }
+      // Cloud: ONE transaction (order + every stock delta). Deltas are applied
       // RELATIVE to the canonical quantities re-read inside the transaction, so
       // concurrent orders on another device can't be silently overwritten; a
       // stale edit of THIS order aborts with StaleOrderError. Local state
       // commits only on success, so a failed save leaves no phantom order and
       // the retry the toast invites replays the FULL delta set.
-      const result = await saveOrderWithStockTx(currentUser, nextOrder, options ? options.expectedRevision : prev ? (order.revision ?? 0) : null, options?.mutationId ?? uid("mutation"));
+      const result = await saveOrderWithStockTx(
+        currentUser,
+        nextOrder,
+        options?.expectedRevision ?? (prev ? (order.revision ?? 0) : null),
+        options?.mutationId ?? uid("mutation"),
+        { confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance }
+      );
       for (const update of result.stock) {
         const product = state.products.find((p) => p.id === update.productId);
         if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
@@ -756,6 +895,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() } });
       }
       dispatch({ type: "DELETE_ORDER", orderId });
+    },
+    loadOrderPayments: async (orderId) => {
+      if (!cloud || !user || paymentSession.current.uid !== user.uid) return;
+      const generation = paymentSession.current.generation;
+      const result = await fetchOrderPayments(orderId);
+      if (!paymentSession.current.mounted || paymentSession.current.uid !== user.uid || paymentSession.current.generation !== generation) return;
+      setPaymentCache((prev) => ({
+        uid: user.uid, generation,
+        records: mergePayments(prev.uid === user.uid && prev.generation === generation ? prev.records : [], result.payments),
+      }));
+      dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
+    },
+    registerOrderPayment: async (order, input) => {
+      if (!cloud || !user) throw new Error("Registrar cobros requiere iniciar sesión.");
+      if (paymentSession.current.uid !== user.uid) throw new Error("La sesión cambió. Vuelve a abrir el pedido.");
+      const generation = paymentSession.current.generation;
+      const record = input.kind === "payment"
+        ? buildPaymentRecord(order, input, user.uid) : buildAdjustmentRecord(order, input, user.uid);
+      const result = await registerOrderPaymentTx(
+        record,
+        input.kind === "payment" ? input.inherited : undefined
+      );
+      if (!paymentSession.current.mounted || paymentSession.current.uid !== user.uid || paymentSession.current.generation !== generation) return;
+      setPaymentCache((prev) => ({
+        uid: user.uid, generation,
+        records: mergePayments(prev.uid === user.uid && prev.generation === generation ? prev.records : [], result.payments),
+      }));
+      // Canonical amounts replace a versioned snapshot; a retried receipt is
+      // never added to the local accumulator and late responses cannot undo it.
+      dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
     },
   };
 
@@ -813,5 +982,5 @@ export function newSupplier(storeId: string): Supplier {
 }
 export function newPurchase(storeId: string): Purchase {
   const now = nowIso();
-  return { id: uid("purchase"), storeId, date: now.slice(0, 10), lines: [], subtotal: 0, totalConfirmed: 0, status: "draft", origin: "manual", createdAt: now, updatedAt: now };
+  return { id: uid("purchase"), storeId, date: todayIso(), lines: [], subtotal: 0, totalConfirmed: 0, status: "draft", origin: "manual", tickets: [{ id: uid("pt"), totalConfirmed: 0 }], costingMethod: "latest_purchase", createdAt: now, updatedAt: now };
 }

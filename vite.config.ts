@@ -42,6 +42,11 @@ function publicEntryRewrite(): Plugin {
   const rewrite = (middlewares: Connect.Server) => {
     middlewares.use((req, _res, next) => {
       const pathname = (req.url ?? "").split("?")[0];
+      if (/^\/catalogo\/[^/]+\/editar\/?$/.test(pathname)) {
+        req.url = "/index.html";
+        next();
+        return;
+      }
       if (!/^\/catalogo\/[^/]+/.test(pathname)) {
         next();
         return;

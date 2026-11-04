@@ -68,3 +68,17 @@ export function sanitizeDecimalInput(input: string): string {
   if (dot < 0) return cleaned;
   return `${cleaned.slice(0, dot) || "0"}.${cleaned.slice(dot + 1).replace(/\./g, "")}`;
 }
+
+/**
+ * Keep a MONEY form value at one dot and at most two decimals (cents), with an
+ * optional leading minus (adjustments are signed). What the operator sees is
+ * exactly what the record registers — no third decimal silently rounded a cent
+ * at registration time (#168 F6).
+ */
+export function sanitizeMoneyInput(input: string): string {
+  const negative = input.trim().startsWith("-");
+  const cleaned = sanitizeDecimalInput(input);
+  const dot = cleaned.indexOf(".");
+  const capped = dot < 0 ? cleaned : `${cleaned.slice(0, dot) || "0"}.${cleaned.slice(dot + 1, dot + 3)}`;
+  return negative && capped !== "" ? `-${capped}` : capped;
+}

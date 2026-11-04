@@ -136,3 +136,29 @@ describe("lineId — identidad estable de línea (E1)", () => {
     expect(withIds.items[0].lineId).toBe("custom_9");
   });
 });
+
+describe("installment fields survive migration (#165)", () => {
+  const plan = { count: 6, frequency: "monthly" as const, firstDueDate: "2026-11-15", agreedAt: "2026-11-01", agreedBy: "u1" };
+
+  it("keeps the plan, the reservation mark and the history verbatim", () => {
+    const migrated = migrateOrder(base({
+      installments: plan,
+      installmentsReservedAt: "2026-11-02T10:00:00.000Z",
+      installmentsHistory: [{ ...plan, count: 3, replacedAt: "2026-11-02T09:00:00.000Z" }],
+    }));
+    expect(migrated.installments).toEqual(plan);
+    expect(migrated.installmentsReservedAt).toBe("2026-11-02T10:00:00.000Z");
+    expect(migrated.installmentsHistory).toEqual([{ ...plan, count: 3, replacedAt: "2026-11-02T09:00:00.000Z" }]);
+  });
+
+  it("drops a corrupt plan instead of inventing one", () => {
+    for (const bad of [{ count: 0, frequency: "monthly", firstDueDate: "2026-11-15" }, { count: 2, frequency: "daily", firstDueDate: "2026-11-15" }, { count: 2, frequency: "monthly", firstDueDate: "" }]) {
+      const migrated = migrateOrder(base({ installments: bad as Order["installments"] }));
+      expect(migrated.installments).toBeUndefined();
+    }
+  });
+
+  it("ordinary orders stay plan-free", () => {
+    expect(migrateOrder(base()).installments).toBeUndefined();
+  });
+});
