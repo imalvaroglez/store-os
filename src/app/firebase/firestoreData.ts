@@ -16,8 +16,12 @@ import {
 import { getFirebase } from "./config";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../../lib/inventory";
 import { migrateOrder } from "../../lib/orders";
+import {
+  INHERITED_DEPOSIT_PAYMENT_ID,
+  inheritedDepositRecord,
+} from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase } from "../../types";
+import type { AppState, Store, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment } from "../../types";
 import { publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -330,6 +334,70 @@ export async function saveOrderWithStockTx(
     const { id, ...data } = saved;
     tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
     return { order: saved, stock: updates };
+  });
+}
+
+/** Load an order's payment records (chronological). */
+export async function fetchOrderPayments(orderId: string): Promise<OrderPayment[]> {
+  const { db } = getFirebase();
+  const snap = await getDocs(collection(db, "orders", orderId, "payments"));
+  return snap.docs
+    .map((d) => ({ ...(d.data() as OrderPayment), id: d.id }))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+/**
+ * Register one payment on its order, idempotently (#123). The record id is
+ * stable per user intent: a retry first re-reads the doc and returns it without
+ * writing, so resends never duplicate. In the SAME transaction, the legacy
+ * `deposit` is materialized once as an inherited record (deterministic id)
+ * carrying the date/method supplied by the operator — estimated when unknown,
+ * never left as "unknown" (PO decision 2026-11-03). Materialization only rides
+ * along a real payment, never an adjustment. Payment docs are create-only
+ * evidence (see firestore.rules); corrections are new signed records, which is
+ * why this path never updates an existing doc.
+ */
+export async function registerOrderPaymentTx(
+  payment: OrderPayment,
+  inherited?: { method: "cash" | "transfer"; date: string }
+): Promise<OrderPayment[]> {
+  const { db } = getFirebase();
+  return runTransaction(db, async (tx) => {
+    const paymentsRef = collection(db, "orders", payment.orderId, "payments");
+    const paymentRef = doc(paymentsRef, payment.id);
+    const existing = await tx.get(paymentRef);
+    if (existing.exists()) return [existing.data() as OrderPayment];
+    const orderSnap = await tx.get(doc(db, "orders", payment.orderId));
+    if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
+    if ((orderSnap.data().storeId ?? "") !== payment.storeId) {
+      throw new Error("El pedido pertenece a otra tienda.");
+    }
+    const saved: OrderPayment[] = [];
+    if (payment.kind === "payment") {
+      const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
+      const inheritedSnap = await tx.get(inheritedRef);
+      if (!inheritedSnap.exists()) {
+        const deposit = orderSnap.data().deposit;
+        const pending = typeof deposit === "number" ? deposit : 0;
+        if (pending > 0 && !inherited) {
+          throw new Error("Captura la fecha y el método del anticipo previo.");
+        }
+        const record = inheritedDepositRecord(
+          payment.orderId,
+          payment.storeId,
+          pending,
+          payment.createdBy,
+          inherited as { method: "cash" | "transfer"; date: string }
+        );
+        if (record) {
+          tx.set(inheritedRef, stripUndefined(record) as Record<string, unknown>);
+          saved.push(record);
+        }
+      }
+    }
+    tx.set(paymentRef, stripUndefined(payment) as Record<string, unknown>);
+    saved.push(payment);
+    return saved;
   });
 }
 

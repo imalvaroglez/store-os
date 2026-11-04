@@ -203,6 +203,21 @@ service cloud.firestore {
       allow delete: if canOperateStore(resource.data.storeId);
     }
 
+    // orders/{orderId}/payments/{paymentId} — per-order money receptions (#123).
+    // Scoped by the PARENT order's storeId: the payment doc also carries storeId,
+    // but the parent is the trustworthy scope, so a payment can never attach to
+    // another store's order. Records are immutable evidence (corrections are NEW
+    // signed docs): update/delete are denied to everyone, super_admin included.
+    // Each rule get() of the parent order counts as one Firestore read.
+    match /orders/{orderId}/payments/{paymentId} {
+      allow get, list: if canOperateStore(get(/databases/$(database)/documents/orders/$(orderId)).data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && request.resource.data.orderId == orderId
+        && request.resource.data.storeId == get(/databases/$(database)/documents/orders/$(orderId)).data.storeId;
+      allow update: if false;
+      allow delete: if false;
+    }
+
     // --- Public catalog (anonymous-readable projections) ---
     // Private fields are NEVER written here, so anonymous reads physically cannot
     // see cost, profit, privateNotes, inventory, or membership data.
