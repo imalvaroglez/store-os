@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  CheckboxField,
   Dialog,
   IconButton,
   Money,
@@ -12,6 +13,7 @@ import {
   StatRow,
   TextArea,
   TextField,
+  ProductImage,
   useToast,
 } from "../../design-system";
 import { customersForStore } from "../../lib/selectors";
@@ -19,11 +21,19 @@ import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { orderAmountCents } from "../../lib/orderMoney";
+import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
-import { StaleOrderError } from "../../app/firebase/firestoreData";
+import { DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
 import { groupOrderLines } from "./orderGrouping";
 import { ORDER_STATUS_LABELS } from "./orderStatus";
+import {
+  INSTALLMENT_FREQUENCY_LABELS,
+  installmentDueDate,
+  splitInstallmentCents,
+  validateInstallmentPlanInput,
+  type InstallmentFrequency,
+} from "./installments";
 import { CustomerForm } from "../customers/CustomerForm";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../../types";
 import type { Customer, Order, OrderItem, OrderStatus, Product } from "../../types";
@@ -64,6 +74,15 @@ function lineFromItem(item?: OrderItem): DraftLine {
 
 function numberFromText(value: string): number {
   return Math.max(0, parseAmount(value) ?? 0);
+}
+
+// "T00:00:00" is load-bearing: a bare yyyy-mm-dd parses as UTC and shows the
+// previous day in Mexico (UTC-6) — the same trap OrderCard documents.
+function formatPlanDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
 }
 
 export function OrderForm({
@@ -109,6 +128,20 @@ export function OrderForm({
     () => restoredDraft?.customerQuery ?? customers.find((c) => c.id === order.customerId)?.name ?? ""
   );
   const [deposit, setDeposit] = useState(restoredDraft?.deposit ?? String(order.deposit ?? 0));
+  // #165 installment capture. Nothing is defaulted: the count, the frequency
+  // and the first due date are the operator's agreement, per order.
+  const [installmentsOn, setInstallmentsOn] = useState(
+    restoredDraft?.installmentsOn ?? !!order.installments
+  );
+  const [cuotasText, setCuotasText] = useState(
+    restoredDraft?.cuotasText ?? (order.installments ? String(order.installments.count) : "")
+  );
+  const [frequency, setFrequency] = useState<InstallmentFrequency | "">(
+    (restoredDraft?.frequency as InstallmentFrequency | undefined) ?? order.installments?.frequency ?? ""
+  );
+  const [firstDueDate, setFirstDueDate] = useState(
+    restoredDraft?.firstDueDate ?? order.installments?.firstDueDate ?? ""
+  );
   const [promisedDate, setPromisedDate] = useState(restoredDraft?.promisedDate ?? order.promisedDate ?? "");
   const [orderStatus, setOrderStatus] = useState<OrderStatus>(
     restoredDraft?.orderStatus ?? effectiveOrderStatus(order)
@@ -116,6 +149,10 @@ export function OrderForm({
   const [notes, setNotes] = useState(restoredDraft?.notes ?? order.notes ?? "");
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  // R9 (PO 2026-11-03): delivering with an uncovered saldo waits here for the
+  // operator's explicit confirmation; the confirmed save records the evidence.
+  const [pendingDeliveryCents, setPendingDeliveryCents] = useState<number | null>(null);
+  const pendingOrderRef = useRef<Order | null>(null);
   const savingRef = useRef(false);
   const expectedRevision = useRef(restoredDraft?.expectedRevision !== undefined ? restoredDraft.expectedRevision : isNew ? null : (order.revision ?? 0));
   const mutationId = useRef(restoredDraft?.mutationId ?? uid("mutation"));
@@ -127,7 +164,7 @@ export function OrderForm({
   // as the baseline: an untouched editor never (re)writes a draft, so simply
   // opening an order never raises the "recovered draft" banner next time.
   const snapshotDraft = () =>
-    JSON.stringify({ orderUpdatedAt: loadedUpdatedAt.current, orderId: restoredDraft?.orderId ?? order.id, orderCreatedAt: restoredDraft?.orderCreatedAt ?? order.createdAt, expectedRevision: expectedRevision.current, mutationId: mutationId.current, mutationPayload: mutationPayload.current, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes });
+    JSON.stringify({ orderUpdatedAt: loadedUpdatedAt.current, orderId: restoredDraft?.orderId ?? order.id, orderCreatedAt: restoredDraft?.orderCreatedAt ?? order.createdAt, expectedRevision: expectedRevision.current, mutationId: mutationId.current, mutationPayload: mutationPayload.current, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes, installmentsOn, cuotasText, frequency, firstDueDate });
   const baselineSnapshot = useRef(snapshotDraft());
   const discardedDraft = useRef(false);
   useEffect(() => {
@@ -144,7 +181,7 @@ export function OrderForm({
       savedAt: new Date().toISOString(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes, conflictingDraft]);
+  }, [draftKey, customerId, customerQuery, lines, deposit, promisedDate, orderStatus, notes, installmentsOn, cuotasText, frequency, firstDueDate, conflictingDraft]);
 
   function discardDraft() {
     if (!clearOrderDraft(draftKey)) {
@@ -157,6 +194,10 @@ export function OrderForm({
     setCustomerId(order.customerId);
     setCustomerQuery(customers.find((c) => c.id === order.customerId)?.name ?? "");
     setDeposit(String(order.deposit ?? 0));
+    setInstallmentsOn(!!order.installments);
+    setCuotasText(order.installments ? String(order.installments.count) : "");
+    setFrequency(order.installments?.frequency ?? "");
+    setFirstDueDate(order.installments?.firstDueDate ?? "");
     setPromisedDate(order.promisedDate ?? "");
     setOrderStatus(effectiveOrderStatus(order));
     setNotes(order.notes ?? "");
@@ -177,7 +218,11 @@ export function OrderForm({
 
   function addLine() {
     focusNewLine.current = true;
-    setLines((current) => [lineFromItem(), ...current]);
+    // Capture order stays stable in the data (first captured = first saved);
+    // only the VIEW is a stack — the fresh line renders on top (see below).
+    const fresh = lineFromItem();
+    setEnteringKey(fresh.key);
+    setLines((current) => [...current, fresh]);
   }
 
   // OLI-008 (#92): the customer's assigned tier drives automatic pricing;
@@ -221,6 +266,8 @@ export function OrderForm({
 
   // OLI-012 (#93): category review mode with per-line focus recovery.
   const [reviewing, setReviewing] = useState(false);
+  // The just-added line plays the theme's riseIn entrance once (mount only).
+  const [enteringKey, setEnteringKey] = useState<string | null>(null);
   const [focusLine, setFocusLine] = useState<string | null>(null);
   const productInputs = useRef<Record<string, HTMLInputElement | null>>({});
   useLayoutEffect(() => {
@@ -268,6 +315,47 @@ export function OrderForm({
       throw error;
     }
   }, [deposit, lines]);
+  // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
+  // pieza. Only lines with content enter the estimate; an empty placeholder
+  // line is not "sin costo".
+  const profitView = useMemo(() => itemsProfitBreakdown(
+    lines
+      .filter((line) => line.productId || line.productName.trim())
+      .map((line) => ({
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
+        unitPrice: numberFromText(line.unitPriceText),
+        subtotal: 0,
+        ...(line.cost != null && line.cost >= 0 ? { cost: line.cost } : {}),
+      })),
+    order.storeId,
+    state.purchases,
+  ), [lines, order.storeId, state.purchases]);
+
+  // #165: the agreement preview — derived live from the order total ÷ cuotas
+  // with exact cents, dates derived from the first due date + frequency. Shown
+  // BEFORE saving so the operator confirms exactly what was agreed.
+  const planPreview = useMemo(() => {
+    if (!installmentsOn || !totals) return null;
+    try {
+      const input = validateInstallmentPlanInput({
+        countText: cuotasText,
+        frequency,
+        firstDueDate,
+        totalCents: orderAmountCents(totals.estimatedTotal),
+      });
+      const amounts = splitInstallmentCents(orderAmountCents(totals.estimatedTotal), input.count);
+      return {
+        ...input,
+        amounts,
+        dueDates: amounts.map((_, i) => installmentDueDate(input.firstDueDate, input.frequency, i)),
+      };
+    } catch {
+      return null; // incomplete capture: no preview, no invented agreement
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [installmentsOn, cuotasText, frequency, firstDueDate, totals?.estimatedTotal]);
 
   function updateLine(key: string, patch: Partial<DraftLine>) {
     setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -359,7 +447,32 @@ export function OrderForm({
       toast.error("Revisa el anticipo.");
       return;
     }
-    const paid = orderAmountCents(numberFromText(deposit)) / 100;
+    // #165: validate the whole agreement before saving anything. Errors are
+    // the operator's exact reason, in Spanish.
+    let installments: Order["installments"];
+    if (installmentsOn) {
+      try {
+        const input = validateInstallmentPlanInput({
+          countText: cuotasText,
+          frequency,
+          firstDueDate,
+          totalCents: orderAmountCents(totals.estimatedTotal),
+        });
+        installments = {
+          ...input,
+          // Preserve the original agreement moment across edits (evidence).
+          agreedAt: order.installments?.agreedAt ?? new Date().toISOString(),
+          agreedBy: order.installments?.agreedBy ?? draftOwnerId,
+        };
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Revisa el plan de pagos.");
+        return;
+      }
+    }
+    // No separate down payment exists (decision iii): a NEW plan order starts
+    // with zero anticipo and money arrives as registered cobros. An existing
+    // order's stored deposit is evidence and is never zeroed here.
+    const paid = installmentsOn && isNew ? 0 : orderAmountCents(numberFromText(deposit)) / 100;
     const customerName = customerId === order.customerId && order.customerName
       ? order.customerName
       : customers.find((customer) => customer.id === customerId)?.name;
@@ -374,6 +487,11 @@ export function OrderForm({
       paymentStatus: paymentStatusForOrder({ ...order, items: normalizedItems, deposit: paid }),
       ...(promisedDate ? { promisedDate } : {}),
       ...(notes.trim() ? { notes: notes.trim() } : {}),
+      // #165: the plan + its one-shot reservation mark + edit evidence travel
+      // with the order; dropping them on edit would un-reserve by accident.
+      ...(installments ? { installments } : {}),
+      ...(order.installmentsReservedAt ? { installmentsReservedAt: order.installmentsReservedAt } : {}),
+      ...(order.installmentsHistory?.length ? { installmentsHistory: order.installmentsHistory } : {}),
       schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
       createdAt: restoredDraft?.orderCreatedAt ?? order.createdAt,
       updatedAt: new Date().toISOString(),
@@ -385,18 +503,36 @@ export function OrderForm({
       ...(JSON.parse(snapshotDraft()) as Omit<OrderDraftSnapshot, "savedAt">),
       savedAt: new Date().toISOString(),
     });
+    await persist(next);
+  }
+
+  /** Shared persistence tail: one place for the success path and the
+   * delivery-with-balance confirmation (PO 2026-11-03 R9). */
+  async function persist(next: Order, confirmDeliveredWithBalance = false) {
     try {
       savingRef.current = true;
       setSaving(true);
-      await upsertOrder(next, { expectedRevision: expectedRevision.current, mutationId: mutationId.current });
+      await upsertOrder(next, {
+        expectedRevision: expectedRevision.current,
+        mutationId: mutationId.current,
+        ...(confirmDeliveredWithBalance ? { confirmDeliveredWithBalance: true } : {}),
+      });
       const cleared = clearOrderDraft(draftKey);
       toast.success("Pedido guardado");
       if (!cleared) toast.error("No se pudo borrar el borrador de este dispositivo.");
+      setPendingDeliveryCents(null);
       onDone();
     } catch (error) {
       if (error instanceof StaleOrderError) {
         toast.error(error.message);
         return; // keep the editor open — the operator reconciles from the fresh copy
+      }
+      // R9: delivering with an uncovered saldo needs an explicit confirmation
+      // that gets RECORDED on the order (retroactive / contraentrega flows).
+      if (error instanceof DeliveryWithBalanceError) {
+        pendingOrderRef.current = next;
+        setPendingDeliveryCents(error.balanceCents);
+        return;
       }
       // The capture is NOT lost: it lives on as a local draft (persisted by the
       // effect above) and will be offered again on the next visit.
@@ -454,6 +590,7 @@ export function OrderForm({
           }}
         />
         <Button variant="ghost" size="sm" onClick={() => setNewCustomerOpen(true)}>+ Nuevo cliente</Button>
+        {isTiered && selectedCustomer && !missingTier && <p className="text-sm text-ink-soft" aria-live="polite">Precio para este pedido: <strong className="text-ink">{tiers.find((tier) => tier.id === currentTier)?.label ?? "Precio de la tienda"}</strong>. Se aplica a los productos nuevos; los precios ajustados a mano se conservan.</p>}
         {missingTier && <p className="text-danger">El nivel de precio de esta clienta ya no está disponible. Elige uno para este pedido.</p>}
         {isTiered && assignedTier && !tiers.some((tier) => tier.id === assignedTier) && (
           <SelectField label="Nivel de precio para el pedido" value={orderTierOverride} onChange={resolveMissingTier} options={[{ value: "", label: "Selecciona un nivel" }, ...tiers.map((tier) => ({ value: tier.id, label: tier.label }))]} />
@@ -486,7 +623,7 @@ export function OrderForm({
           </div>
           <Button variant="secondary" size="sm" onClick={addLine}>+ Agregar línea</Button>
         </div>
-        {lines.map((line, index) => {
+        {lines.map((line, captureIndex) => ({ line, captureIndex })).reverse().map(({ line, captureIndex }) => {
           const currentQuantity = Math.max(0, Math.round(numberFromText(line.quantityText)));
           const currentPrice = numberFromText(line.unitPriceText);
           let lineSubtotal: number | null;
@@ -498,13 +635,18 @@ export function OrderForm({
           const selectedTier = tiers.find((tier) => tier.id === line.priceTier);
           const warning = selectedTier ? tierWarning({ quantity: currentQuantity, subtotal: lineSubtotal ?? 0 }, selectedTier) : null;
           return (
-            <Card key={line.key} className="space-y-4 p-4 md:p-5 shadow-none">
+            <Card
+              key={line.key}
+              className={`space-y-4 p-4 md:p-5 shadow-none${line.key === enteringKey ? " animate-[riseIn_var(--motion-base)_var(--ease-smooth)]" : ""}`}
+            >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Línea {index + 1}</span>
+                {/* Article numbers follow CAPTURE order (stable per article);
+                    the stack view shows the newest on top without renumbering. */}
+                <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Artículo {captureIndex + 1}</span>
                 {lines.length > 1 && (
                   <IconButton
                     variant="ghost"
-                    aria-label={`Eliminar línea ${index + 1}`}
+                    aria-label={`Eliminar artículo ${captureIndex + 1}`}
                     onClick={() => setLines((current) => current.filter((item) => item.key !== line.key))}
                     className="text-lg"
                   >
@@ -515,7 +657,7 @@ export function OrderForm({
               <SearchSelect
                 inputRef={(input) => {
                   productInputs.current[line.key] = input;
-                  if (index === 0) newProductInput.current = input; // addLine focuses the top line
+                  if (captureIndex === lines.length - 1) newProductInput.current = input; // addLine focuses the newest (rendered on top)
                 }}
                 label="Producto"
                 placeholder="Busca o escribe un producto"
@@ -528,6 +670,7 @@ export function OrderForm({
                   if (product) selectProduct(line, product);
                 }}
               />
+              <OrderLinePhoto products={products} productId={line.productId} />
               {line.priceSource === "manual" && <p className="text-xs text-on-surface-soft">Precio ajustado manualmente.</p>}
               {line.productId && !line.unitPriceText && <p className="text-danger">Falta capturar el precio de este producto.</p>}
               <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(7rem,0.65fr)_minmax(10rem,1fr)_minmax(11rem,1fr)]">
@@ -567,21 +710,12 @@ export function OrderForm({
                 )}
                 {!isTiered && <div className="hidden md:block" aria-hidden />}
               </div>
-              <div className="grid grid-cols-2 items-end gap-3">
-                <TextField
-                  label="Costo (opcional)"
-                  type="text"
-                  inputMode="decimal"
-                  pattern="[0-9]*[.]?[0-9]*"
-                  value={line.costText}
-                  onChange={(event) => {
-                    const value = sanitizeDecimalInput(event.target.value);
-                    updateLine(line.key, { costText: value, cost: parseAmount(value) });
-                  }}
-                />
-                <div className="rounded-md bg-surface-muted px-3 py-2.5 min-h-[3.25rem] flex items-center">
-                  <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
-                </div>
+              {/* No cost INPUT here: cost is catalog data that rides along in the
+                  line snapshot to feed the saved order's estimated profit — it is
+                  not something the operator captures, and an editable field with
+                  no visible effect was noise (field feedback, dev trial). */}
+              <div className="rounded-md bg-surface-muted px-3 py-2.5 min-h-[3.25rem] flex items-center">
+                <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
               </div>
               {warning && <Badge tone="warning">{warning}</Badge>}
             </Card>
@@ -589,15 +723,81 @@ export function OrderForm({
         })}
       </div>}
 
+      <CheckboxField
+        label="Pagos por partes"
+        hint="Cuotas y fechas acordadas en este pedido, sin intereses. La pieza se aparta con el primer abono y se entrega al liquidar."
+        checked={installmentsOn}
+        onChange={setInstallmentsOn}
+      />
+      {installmentsOn && (
+        <Card className="space-y-3 p-4 md:p-5 shadow-none">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <TextField
+              label="Número de cuotas"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={cuotasText}
+              onChange={(event) => setCuotasText(sanitizeIntegerInput(event.target.value))}
+            />
+            <SelectField
+              label="Frecuencia"
+              value={frequency}
+              onChange={(value) => setFrequency(value as InstallmentFrequency)}
+              placeholder="Selecciona la frecuencia"
+              options={(Object.keys(INSTALLMENT_FREQUENCY_LABELS) as InstallmentFrequency[]).map((value) => ({
+                value,
+                label: INSTALLMENT_FREQUENCY_LABELS[value],
+              }))}
+            />
+            <TextField
+              label="Primera fecha de vencimiento"
+              type="date"
+              value={firstDueDate}
+              onChange={(event) => setFirstDueDate(event.target.value)}
+            />
+          </div>
+          {planPreview && totals ? (
+            <div className="space-y-2" aria-label="Acuerdo de pagos">
+              <p className="text-sm font-medium text-on-surface">
+                {planPreview.count} {planPreview.count === 1 ? "cuota" : "cuotas"} ·{" "}
+                {INSTALLMENT_FREQUENCY_LABELS[planPreview.frequency]}
+              </p>
+              <ul className="max-h-48 overflow-y-auto divide-y divide-edge" aria-label="Calendario de cuotas">
+                {planPreview.amounts.map((amountCents, i) => (
+                  <li key={i} className="flex items-center justify-between gap-3 py-1 text-sm">
+                    <span className="min-w-0 text-on-surface-soft">
+                      Cuota {i + 1} · {formatPlanDate(planPreview.dueDates[i])}
+                    </span>
+                    <span className="serif-display tnum shrink-0">
+                      <Money exact amount={amountCents / 100} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-on-surface-soft">
+                Última fecha: {formatPlanDate(planPreview.dueDates[planPreview.dueDates.length - 1])}. La suma del
+                plan es exactamente el total: <Money exact amount={totals.estimatedTotal} />.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-on-surface-soft">
+              Captura cuotas, frecuencia y primera fecha para ver el acuerdo antes de guardar.
+            </p>
+          )}
+        </Card>
+      )}
       <div className="grid grid-cols-2 gap-2">
-        <TextField
-          label="Anticipo"
-          type="text"
-          inputMode="decimal"
-          pattern="[0-9]*[.]?[0-9]*"
-          value={deposit}
-          onChange={(event) => setDeposit(sanitizeDecimalInput(event.target.value))}
-        />
+        {!installmentsOn && (
+          <TextField
+            label="Anticipo"
+            type="text"
+            inputMode="decimal"
+            pattern="[0-9]*[.]?[0-9]*"
+            value={deposit}
+            onChange={(event) => setDeposit(sanitizeDecimalInput(event.target.value))}
+          />
+        )}
         <TextField label="Fecha prometida" type="date" value={promisedDate} onChange={(event) => setPromisedDate(event.target.value)} />
       </div>
       <SelectField label="Estado del pedido" value={orderStatus} onChange={setOrderStatus} options={STATUS_OPTIONS} />
@@ -609,7 +809,16 @@ export function OrderForm({
           <StatRow label="Total">{totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</StatRow>
           <StatRow label="Anticipo">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
           <StatRow label="Saldo" tone={totals && totals.balance > 0 ? "danger" : "success"}>{totals ? <Money exact amount={totals.balance} /> : "—"}</StatRow>
+          <StatRow
+            label="Ganancia"
+            tone={profitView.profitCents != null && profitView.profitCents < 0 ? "danger" : "default"}
+          >{profitView.profitCents == null ? "—" : <Money exact amount={profitView.profitCents / 100} />}</StatRow>
         </div>
+        {profitView.profitCents != null && profitView.linesWithoutCost > 0 && (
+          <p className="text-xs text-on-surface-soft mt-1">
+            {profitView.linesWithoutCost} {profitView.linesWithoutCost === 1 ? "línea sin costo no cuenta" : "líneas sin costo no cuentan"} en la ganancia.
+          </p>
+        )}
         {!totals && <p className="text-danger">Revisa los importes o cantidades demasiado grandes.</p>}
         <div className="flex gap-2 mt-4">
           {onCancel && <Button variant="ghost" full onClick={onCancel}>Cancelar</Button>}
@@ -636,6 +845,50 @@ export function OrderForm({
         />
       </Dialog>
       </fieldset>
+      {pendingDeliveryCents != null && (
+        <Dialog
+          open
+          title="Entregar con saldo pendiente"
+          onClose={() => setPendingDeliveryCents(null)}
+        >
+          <p className="text-sm text-on-surface-soft space-y-2">
+            Este pedido quedará entregado con un saldo de{" "}
+            <Money exact amount={pendingDeliveryCents / 100} /> por cobrar. La entrega queda
+            registrada a tu nombre como autorización explícita. Si la clienta paga al entregar
+            (contraentrega), registra el cobro después de guardar.
+          </p>
+          <div className="flex gap-2 pt-4">
+            <Button variant="secondary" full disabled={saving} onClick={() => setPendingDeliveryCents(null)}>
+              Volver a revisar
+            </Button>
+            <Button
+              full
+              disabled={saving}
+              onClick={() => {
+                const order = pendingOrderRef.current;
+                if (order) void persist(order, true);
+              }}
+            >
+              Entregar con saldo
+            </Button>
+          </div>
+        </Dialog>
+      )}
     </div>
+  );
+}
+
+function OrderLinePhoto({ products, productId }: { products: Product[]; productId?: string }) {
+  const product = products.find((candidate) => candidate.id === productId);
+  if (!product) return null;
+  const cover = product.images?.find((image) => image.isPrimary) ?? product.images?.[0];
+  const src = cover?.url ?? product.imageUrl;
+  return (
+    <ProductImage
+      src={src}
+      alt={src ? `Foto de ${product.name}` : `Foto no disponible de ${product.name}`}
+      size="thumb"
+      className="h-20 w-20"
+    />
   );
 }

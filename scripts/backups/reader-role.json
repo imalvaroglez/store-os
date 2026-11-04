@@ -1,0 +1,15 @@
+{
+  "title": "Store OS backup reader",
+  "description": "Read-only export of Firestore, Auth password material and backup configuration. No data mutation or managed exports.",
+  "stage": "GA",
+  "includedPermissions": [
+    "datastore.databases.get",
+    "datastore.databases.getMetadata",
+    "datastore.entities.get",
+    "datastore.entities.list",
+    "datastore.backupSchedules.list",
+    "firebaseauth.users.get",
+    "firebaseauth.configs.get",
+    "firebaseauth.configs.getHashConfig"
+  ]
+}

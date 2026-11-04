@@ -1,8 +1,11 @@
+// @vitest-environment jsdom
+
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { StoreProvider } from "../../app/StoreProvider";
 import { AuthProvider } from "../../app/firebase/AuthProvider";
-import { ToastProvider } from "../../design-system";
+import { Button, ToastProvider } from "../../design-system";
+import { useStore } from "../../app/StoreProvider";
 import { CatalogScreen } from "./CatalogScreen";
 import { fixtureState } from "../../lib/testFixtures";
 import type { AppState, Product } from "../../types";
@@ -74,6 +77,16 @@ function changeSelect(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
+function StoreToggleButton() {
+  const { activeStore, setActiveStore } = useStore();
+  return <Button onClick={() => setActiveStore(activeStore?.id === OLIVIA ? SANTI : OLIVIA)}>Cambiar tienda</Button>;
+}
+
+function lastByLabel(label: string) {
+  const fields = screen.getAllByLabelText(label);
+  return fields[fields.length - 1];
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
@@ -95,6 +108,117 @@ describe("CatalogScreen filtro por categoría real", () => {
     fireEvent.click(screen.getByText("Limpiar"));
     expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]);
     expect(screen.queryByText("Limpiar")).toBeNull();
+  });
+
+  it("muestra solo productos por surtir según el umbral o si están agotados", () => {
+    const state = sortFilterState();
+    state.products[0].lowStockAt = 3;
+    state.products[1].lowStockAt = 0;
+    // An exhausted product remains visible for restocking even without a saved threshold.
+    state.products[2].lowStockAt = undefined;
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <CatalogScreen />
+      </Wrapper>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
+    expect(cardNames()).toEqual(["Aretes Luna", "anillo perla"]);
+    expect(screen.getByText("2 de 3 piezas")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByText("Limpiar"));
+    expect(cardNames()).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("limpia Por surtir al cambiar de tienda", () => {
+    const state = sortFilterState();
+    state.stores.find((store) => store.id === SANTI)!.type = "on_demand";
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <StoreToggleButton />
+        <CatalogScreen />
+      </Wrapper>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar tienda" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar tienda" }));
+    expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("valores iniciales del producto", () => {
+  it("guarda los cambios y al reabrir respeta Borrador, vacío y false", async () => {
+    const state = fixtureState();
+    state.activeStoreId = OLIVIA;
+    const Wrapper = withState(state);
+    render(<Wrapper><CatalogScreen /></Wrapper>);
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar" }));
+    expect(lastByLabel("Estado de publicación")).toHaveProperty("value", "published");
+    expect(lastByLabel("Permite pedir info")).toHaveProperty("checked", true);
+    expect(lastByLabel("Novedad")).toHaveProperty("checked", false);
+    expect(lastByLabel("Destacado")).toHaveProperty("checked", false);
+    expect(lastByLabel("Material")).toHaveProperty("value", "Acero inoxidable");
+    expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
+
+    fireEvent.change(screen.getByLabelText("Estado de publicación"), { target: { value: "draft" } });
+    expect(lastByLabel("Estado de publicación")).toHaveProperty("value", "draft");
+    fireEvent.click(screen.getByLabelText("Permite pedir info"));
+    fireEvent.change(screen.getByLabelText("Material"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Color / acabado"), { target: { value: "Dorado" } });
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "Producto de prueba" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "+ Agregar" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("heading", { name: "Producto de prueba" }));
+    expect(lastByLabel("Estado de publicación")).toHaveProperty("value", "draft");
+    expect(lastByLabel("Permite pedir info")).toHaveProperty("checked", false);
+    expect(lastByLabel("Novedad")).toHaveProperty("checked", false);
+    expect(lastByLabel("Destacado")).toHaveProperty("checked", false);
+    expect(lastByLabel("Material")).toHaveProperty("value", "");
+    expect(lastByLabel("Color / acabado")).toHaveProperty("value", "Dorado");
+  });
+
+  it("no aplica el material de Olivia al crear en Santi", () => {
+    const state = fixtureState();
+    state.activeStoreId = SANTI;
+    const Wrapper = withState(state);
+    render(<Wrapper><CatalogScreen /></Wrapper>);
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar" }));
+    expect(lastByLabel("Material")).toHaveProperty("value", "");
+    expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
+  });
+
+  it("al editar un producto existente conserva sus valores guardados", () => {
+    const state = fixtureState();
+    const existing = state.products.find((product) => product.id === "prod_olivia_1")!;
+    Object.assign(existing, {
+      status: "draft",
+      canInquire: false,
+      isNew: true,
+      isFeatured: true,
+      material: "Plata 925",
+      finish: "",
+    });
+    const Wrapper = withState(state);
+    render(<Wrapper><CatalogScreen /></Wrapper>);
+
+    fireEvent.click(screen.getByRole("heading", { name: existing.name }));
+
+    expect(lastByLabel("Estado de publicación")).toHaveProperty("value", "draft");
+    expect(lastByLabel("Permite pedir info")).toHaveProperty("checked", false);
+    expect(lastByLabel("Novedad")).toHaveProperty("checked", true);
+    expect(lastByLabel("Destacado")).toHaveProperty("checked", true);
+    expect(lastByLabel("Material")).toHaveProperty("value", "Plata 925");
+    expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
   });
 });
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useStore, newProduct } from "../../app/StoreProvider";
 import {
   Button,
@@ -19,6 +19,7 @@ import {
   useToast,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
+import { productCreationDefaults } from "./productDefaults";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
 import { committedForProduct } from "../../lib/inventory";
@@ -230,6 +231,8 @@ export function CatalogScreen() {
   const [sortKey, setSortKey] = useState<SortKey>("createdAt");
   const [sortDesc, setSortDesc] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [restockOnly, setRestockOnly] = useState(false);
+  useEffect(() => setRestockOnly(false), [activeStore?.id, activeStore?.type]);
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
@@ -243,15 +246,21 @@ export function CatalogScreen() {
   // Filter matches REAL categories (categoryIds, primary or secondary) — not
   // the legacy `category` enum the badges paint. Sorting is local to this
   // screen; productsForStore (shared selector) stays untouched.
-  const filtered = categoryFilter
-    ? products.filter((p) => (p.categoryIds ?? []).includes(categoryFilter))
-    : products;
+  const filtered = products.filter((product) =>
+    (!categoryFilter || (product.categoryIds ?? []).includes(categoryFilter)) &&
+    (!isTiered || !restockOnly || (
+      typeof product.quantityOnHand === "number" && (
+        product.quantityOnHand <= 0 ||
+        (typeof product.lowStockAt === "number" && product.quantityOnHand <= product.lowStockAt)
+      )
+    ))
+  );
   const sorted = [...filtered].sort((a, b) => {
     const cmp = compareBy(effectiveSortKey, a, b, defaultId);
     if (cmp !== 0) return sortDesc ? -cmp : cmp;
     return a.name.localeCompare(b.name, "es");
   });
-  const filterActive = categoryFilter !== "";
+  const filterActive = categoryFilter !== "" || (isTiered && restockOnly);
   const sortOptions = (Object.keys(SORT_DEFAULTS) as SortKey[])
     .filter((k) => k !== "stock" || isTiered)
     .map((k) => ({ value: k, label: SORT_DEFAULTS[k].label }));
@@ -306,6 +315,16 @@ export function CatalogScreen() {
               options={sortOptions}
             />
           </div>
+          {isTiered && (
+            <Button
+              variant={restockOnly ? "primary" : "secondary"}
+              size="sm"
+              aria-pressed={restockOnly}
+              onClick={() => setRestockOnly((value) => !value)}
+            >
+              Por surtir
+            </Button>
+          )}
           <IconButton
             variant="secondary"
             aria-label={sortDesc ? "Orden descendente" : "Orden ascendente"}
@@ -314,7 +333,7 @@ export function CatalogScreen() {
             {sortDesc ? "↓" : "↑"}
           </IconButton>
           {filterActive && (
-            <Button variant="ghost" size="sm" onClick={() => setCategoryFilter("")}>
+            <Button variant="ghost" size="sm" onClick={() => { setCategoryFilter(""); setRestockOnly(false); }}>
               Limpiar
             </Button>
           )}
@@ -366,7 +385,7 @@ export function CatalogScreen() {
         title="Agregar producto"
       >
         <ProductForm
-          product={newProduct(activeStore.id)}
+          product={productCreationDefaults(newProduct(activeStore.id), activeStore.slug)}
           onDone={() => setCreating(false)}
         />
       </Sheet>
@@ -385,7 +404,18 @@ export function CatalogScreen() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setDeleting(null)}>Cancelar</Button>
-            <Button variant="danger" onClick={() => { if (deleting) { deleteProduct(deleting.id); toast.success(`«${deleting.name}» eliminado`); } setDeleting(null); }}>Eliminar</Button>
+            <Button variant="danger" onClick={async () => {
+              if (deleting) {
+                try {
+                  await deleteProduct(deleting.id);
+                } catch {
+                  toast.error("No se pudo eliminar el producto. Intenta de nuevo.");
+                  return;
+                }
+                toast.success(`«${deleting.name}» eliminado`);
+              }
+              setDeleting(null);
+            }}>Eliminar</Button>
           </>
         }
       >

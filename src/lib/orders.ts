@@ -1,7 +1,7 @@
-import type { Order, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
+import type { InstallmentFrequency, Order, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { formatMoney } from "./money";
-import { orderAmountCents } from "./orderMoney";
+import { docReceivedCents, orderAmountCents } from "./orderMoney";
 import { LEGACY_TIER_IDS } from "./pricing";
 
 const ORDER_STATUSES: ReadonlySet<OrderStatus> = new Set([
@@ -64,7 +64,8 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
   if (!Number.isSafeInteger(totalCents)) throw new RangeError("Order total exceeds safe precision");
   const estimatedTotal = totalCents / 100;
   const pieces = items.reduce((sum, item) => sum + item.quantity, 0);
-  const paidCents = orderAmountCents(Math.max(0, finite(order.deposit)));
+  const paidCents = typeof order.paymentsReceivedCents === "number"
+    ? docReceivedCents(order) : orderAmountCents(Math.max(0, finite(order.deposit)));
   const paid = paidCents / 100;
   return { estimatedTotal, paid, balance: Math.max(0, totalCents - paidCents) / 100, pieces };
 }
@@ -110,6 +111,42 @@ function migratedStatus(raw: unknown): OrderStatus {
   return "asked";
 }
 
+const FREQUENCIES: ReadonlySet<string> = new Set(["weekly", "biweekly", "monthly"]);
+
+/**
+ * #165: pass the installment agreement through migration VERBATIM when it is
+ * well-formed; drop it when corrupt (never invent or repair money agreements).
+ */
+function migratedInstallments(raw: unknown): Order["installments"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const plan = raw as Record<string, unknown>;
+  const count = plan.count;
+  const frequency = plan.frequency;
+  const firstDueDate = plan.firstDueDate;
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 1) return undefined;
+  if (typeof frequency !== "string" || !FREQUENCIES.has(frequency)) return undefined;
+  if (typeof firstDueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(firstDueDate)) return undefined;
+  return {
+    count,
+    frequency: frequency as InstallmentFrequency,
+    firstDueDate,
+    ...(typeof plan.agreedAt === "string" ? { agreedAt: plan.agreedAt } : {}),
+    ...(typeof plan.agreedBy === "string" ? { agreedBy: plan.agreedBy } : {}),
+  };
+}
+
+function migratedInstallmentHistory(raw: unknown): Order["installmentsHistory"] {
+  if (!Array.isArray(raw)) return undefined;
+  const history = raw
+    .map((entry) => {
+      const plan = migratedInstallments(entry);
+      const replacedAt = (entry as Record<string, unknown> | null)?.replacedAt;
+      return plan && typeof replacedAt === "string" ? { ...plan, replacedAt } : null;
+    })
+    .filter((entry): entry is NonNullable<Order["installmentsHistory"]>[number] => entry != null);
+  return history.length > 0 ? history : undefined;
+}
+
 export function effectiveOrderStatus(order: Partial<Order> & Record<string, unknown>): OrderStatus {
   return migratedStatus(order.orderStatus ?? order.status);
 }
@@ -143,6 +180,20 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
     paymentStatus: "unpaid" as PaymentStatus,
     ...(typeof raw.promisedDate === "string" && raw.promisedDate ? { promisedDate: raw.promisedDate } : {}),
     ...(typeof raw.notes === "string" && raw.notes ? { notes: raw.notes } : {}),
+    ...(migratedInstallments(raw.installments) ? { installments: migratedInstallments(raw.installments) } : {}),
+    ...(typeof raw.installmentsReservedAt === "string" && raw.installmentsReservedAt
+      ? { installmentsReservedAt: raw.installmentsReservedAt }
+      : {}),
+    ...(migratedInstallmentHistory(raw.installmentsHistory) ? { installmentsHistory: migratedInstallmentHistory(raw.installmentsHistory) } : {}),
+    // #168 doc-level money truth: passed verbatim when well-formed, dropped
+    // when corrupt — money fields are never repaired or invented here.
+    ...(typeof raw.paymentsReceivedCents === "number" && Number.isFinite(raw.paymentsReceivedCents)
+      ? { paymentsReceivedCents: raw.paymentsReceivedCents }
+      : {}),
+    ...(typeof raw.paymentsRevision === "number" && Number.isSafeInteger(raw.paymentsRevision) && raw.paymentsRevision >= 0
+      ? { paymentsRevision: raw.paymentsRevision } : {}),
+    ...(typeof raw.lastPaymentId === "string" ? { lastPaymentId: raw.lastPaymentId } : {}),
+    ...(raw.inheritedDepositMaterialized === true ? { inheritedDepositMaterialized: true } : {}),
     schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,
