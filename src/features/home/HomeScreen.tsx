@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   AnimatedNumber,
@@ -17,12 +18,17 @@ import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals }
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
+import { OrderPaymentsSheet } from "../orders/OrderPaymentsSheet";
 import { navigate } from "../../lib/router";
+import type { Order } from "../../types";
 import { useToast } from "../../design-system";
 
 export function HomeScreen() {
   const { state, activeStore, upsertOrder } = useStore();
   const toast = useToast();
+  // Cobros sheet for orders in the payments model (#123+): Inicio rows must
+  // register real receipts, never bump the deposit silently (Codex P1).
+  const [paymentsOrder, setPaymentsOrder] = useState<Order | null>(null);
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const orders = ordersForStore(state.orders, activeStore.id);
@@ -64,7 +70,10 @@ export function HomeScreen() {
     }
   }
 
-  /** One-tap collection from the home row: deposit rises to the total. */
+  /** One-tap collection from the home row: LEGACY deposit-only orders only.
+   * Orders in the payments model (#123+) must register a real receipt — the
+   * button opens the Cobros sheet instead (Codex review 2026-11-04: the old
+   * shortcut announced "Pedido cobrado" while the canonical saldo stood). */
   async function collect(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
     if (!o) return;
@@ -77,6 +86,7 @@ export function HomeScreen() {
   }
 
   return (
+    <>
     <Screen>
       <ScreenHeader
         title="Inicio"
@@ -169,8 +179,21 @@ export function HomeScreen() {
                       <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => advance(o.id)}>
                         {verb}
                       </Button>
+                    ) : o.installments ? (
+                      totals.balance > 0 && (
+                        <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => setPaymentsOrder(o)}>
+                          Abonar
+                        </Button>
+                      )
                     ) : totals.balance > 0 ? (
-                      <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => collect(o.id)}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="shrink-0 whitespace-nowrap"
+                        onClick={() =>
+                          typeof o.paymentsReceivedCents === "number" ? setPaymentsOrder(o) : collect(o.id)
+                        }
+                      >
                         Cobrar
                       </Button>
                     ) : null}
@@ -202,5 +225,9 @@ export function HomeScreen() {
       )}
 
     </Screen>
+    {paymentsOrder && (
+      <OrderPaymentsSheet order={paymentsOrder} open onClose={() => setPaymentsOrder(null)} />
+    )}
+    </>
   );
 }
