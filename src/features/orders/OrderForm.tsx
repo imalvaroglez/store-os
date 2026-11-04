@@ -21,7 +21,7 @@ import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } 
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { uid } from "../../lib/ids";
-import { StaleOrderError } from "../../app/firebase/firestoreData";
+import { DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
 import { groupOrderLines } from "./orderGrouping";
 import { ORDER_STATUS_LABELS } from "./orderStatus";
@@ -147,6 +147,10 @@ export function OrderForm({
   const [notes, setNotes] = useState(restoredDraft?.notes ?? order.notes ?? "");
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  // R9 (PO 2026-11-03): delivering with an uncovered saldo waits here for the
+  // operator's explicit confirmation; the confirmed save records the evidence.
+  const [pendingDeliveryCents, setPendingDeliveryCents] = useState<number | null>(null);
+  const pendingOrderRef = useRef<Order | null>(null);
   const savingRef = useRef(false);
   const expectedRevision = useRef(restoredDraft?.expectedRevision !== undefined ? restoredDraft.expectedRevision : isNew ? null : (order.revision ?? 0));
   const mutationId = useRef(restoredDraft?.mutationId ?? uid("mutation"));
@@ -474,18 +478,36 @@ export function OrderForm({
       ...(JSON.parse(snapshotDraft()) as Omit<OrderDraftSnapshot, "savedAt">),
       savedAt: new Date().toISOString(),
     });
+    await persist(next);
+  }
+
+  /** Shared persistence tail: one place for the success path and the
+   * delivery-with-balance confirmation (PO 2026-11-03 R9). */
+  async function persist(next: Order, confirmDeliveredWithBalance = false) {
     try {
       savingRef.current = true;
       setSaving(true);
-      await upsertOrder(next, { expectedRevision: expectedRevision.current, mutationId: mutationId.current });
+      await upsertOrder(next, {
+        expectedRevision: expectedRevision.current,
+        mutationId: mutationId.current,
+        ...(confirmDeliveredWithBalance ? { confirmDeliveredWithBalance: true } : {}),
+      });
       const cleared = clearOrderDraft(draftKey);
       toast.success("Pedido guardado");
       if (!cleared) toast.error("No se pudo borrar el borrador de este dispositivo.");
+      setPendingDeliveryCents(null);
       onDone();
     } catch (error) {
       if (error instanceof StaleOrderError) {
         toast.error(error.message);
         return; // keep the editor open — the operator reconciles from the fresh copy
+      }
+      // R9: delivering with an uncovered saldo needs an explicit confirmation
+      // that gets RECORDED on the order (retroactive / contraentrega flows).
+      if (error instanceof DeliveryWithBalanceError) {
+        pendingOrderRef.current = next;
+        setPendingDeliveryCents(error.balanceCents);
+        return;
       }
       // The capture is NOT lost: it lives on as a local draft (persisted by the
       // effect above) and will be offered again on the next visit.
@@ -791,6 +813,35 @@ export function OrderForm({
         />
       </Dialog>
       </fieldset>
+      {pendingDeliveryCents != null && (
+        <Dialog
+          open
+          title="Entregar con saldo pendiente"
+          onClose={() => setPendingDeliveryCents(null)}
+        >
+          <p className="text-sm text-on-surface-soft space-y-2">
+            Este pedido quedará entregado con un saldo de{" "}
+            <Money exact amount={pendingDeliveryCents / 100} /> por cobrar. La entrega queda
+            registrada a tu nombre como autorización explícita. Si la clienta paga al entregar
+            (contraentrega), registra el cobro después de guardar.
+          </p>
+          <div className="flex gap-2 pt-4">
+            <Button variant="secondary" full disabled={saving} onClick={() => setPendingDeliveryCents(null)}>
+              Volver a revisar
+            </Button>
+            <Button
+              full
+              disabled={saving}
+              onClick={() => {
+                const order = pendingOrderRef.current;
+                if (order) void persist(order, true);
+              }}
+            >
+              Entregar con saldo
+            </Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }

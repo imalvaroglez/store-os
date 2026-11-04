@@ -102,36 +102,21 @@ export function reservationDeltas(oldItems: OrderItem[], newItems: OrderItem[]):
  * delivered sale returns the goods; re-delivering takes them again, so every
  * cycle nets to exactly one consumption. Stateless — no provenance flag.
  *
- * #165 extension for installment orders: the plan is an agreement, not a
- * reservation. Before the first confirmed abono the order holds NOTHING (no
- * early reservation); once `installmentsReservedAt` is set the pieces are
- * apartadas and STAY held — even after cancellation — because money was
- * received against them: releasing stock or refunding is an explicit human
- * action, never an inference. Ordinary orders keep the original model.
+ * Installment orders (PO decision 2026-11-03 R8, replacing the #165 deferral):
+ * a plan reserves AT CREATION exactly like an ordinary order. Once money backs
+ * the pieces (`installmentsReservedAt` witness or `paymentsReceivedCents` > 0)
+ * they STAY held — even after cancellation — because money was received
+ * against them: releasing stock or refunding is an explicit human action,
+ * never an inference.
  */
 export function reservationDeltasForOrderChange(previous: Order | undefined, next: Order): Map<string, number> {
   const heldItems = (order: Order | undefined): OrderItem[] => {
     if (!order) return [];
-    if (order.installments) {
-      return order.installmentsReservedAt ? orderItems(order) : [];
+    if (order.installments && (order.installmentsReservedAt || (order.paymentsReceivedCents ?? 0) > 0)) {
+      return orderItems(order);
     }
     const status = effectiveOrderStatus(order);
     return orderStatusIsOpen(status) || status === "delivered" ? orderItems(order) : [];
   };
   return reservationDeltas(heldItems(previous), heldItems(next));
-}
-
-/**
- * The stock the FIRST confirmed positive abono reserves on an installment
- * order (#165): the order's full quantities, applied exactly once (the caller
- * marks `installmentsReservedAt` in the same transaction, so later abonos and
- * retries never re-reserve). Products without an id (manual lines) reserve
- * nothing — there is no shelf entry to decrement.
- */
-export function firstInstallmentReservationDeltas(order: Order): Map<string, number> {
-  const deltas = new Map<string, number>();
-  for (const item of orderItems(order)) {
-    if (item.productId) deltas.set(item.productId, (deltas.get(item.productId) ?? 0) - item.quantity);
-  }
-  return new Map([...deltas].filter(([, delta]) => delta !== 0));
 }

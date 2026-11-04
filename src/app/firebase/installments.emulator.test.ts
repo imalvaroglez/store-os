@@ -8,7 +8,6 @@ const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
 import {
   DeliveryWithBalanceError,
-  InsufficientStockError,
   registerOrderPaymentTx,
   saveOrderWithStockTx,
 } from "./firestoreData";
@@ -49,32 +48,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
   });
   afterAll(async () => { await env?.cleanup(); });
 
-  it("a plan without abonos never reserves — ordinary orders still do", async () => {
+  it("a plan order reserves AT CREATION exactly like an ordinary one (PO 2026-11-03 R8)", async () => {
     await saveOrderWithStockTx(user, makeOrder("plan-order", "p-plan", 2, { installments: plan }), null, "create-1");
-    expect(await stock("p-plan")).toBe(5); // nothing apartado yet
+    expect(await stock("p-plan")).toBe(3); // apartadas desde la creación
     await saveOrderWithStockTx(user, makeOrder("ordinary-order", "p-plan", 1), null, "create-2");
-    expect(await stock("p-plan")).toBe(4); // early reservation intact
+    expect(await stock("p-plan")).toBe(2);
   });
 
-  it("the first abono reserves ONCE: retry, second abono and concurrency never re-reserve", async () => {
+  it("abonos never move stock; the first positive one stamps the money-backed witness (R8)", async () => {
     const saved = await registerOrderPaymentTx(payment("pay_a", 100));
     expect(saved).toHaveLength(1);
-    expect(await stock("p-plan")).toBe(2); // 4 − 2 piezas del pedido a plazos
+    expect(await stock("p-plan")).toBe(2); // sin movimiento de stock
     expect((await orderDoc("plan-order"))?.installmentsReservedAt).toBeTruthy();
-    expect((await orderDoc("plan-order"))?.revision).toBe(2); // create=1, reserva=2
+    expect((await orderDoc("plan-order"))?.revision).toBe(1); // sin bump: la reserva ya vivió en la creación
 
     // Double click: same intent id → recognized, no second write.
     await registerOrderPaymentTx(payment("pay_a", 100));
     expect(await stock("p-plan")).toBe(2);
     expect(await paymentCount("plan-order")).toBe(1);
 
-    // A later abono does not touch stock again — but the doc accumulator grows.
+    // A later abono does not touch stock either — the doc accumulator grows.
     await registerOrderPaymentTx(payment("pay_b", 500));
     expect(await stock("p-plan")).toBe(2);
     expect(await paymentCount("plan-order")).toBe(2);
     expect((await orderDoc("plan-order"))?.paymentsReceivedCents).toBe(60000);
 
-    // Concurrent abonos that together liquidan: both register, one reservation.
+    // Concurrent abonos that together liquidan: both register, no stock effect.
     await Promise.all([
       registerOrderPaymentTx(payment("pay_c", 600)),
       registerOrderPaymentTx(payment("pay_d", 600)),
@@ -82,15 +81,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     expect(await stock("p-plan")).toBe(2);
     expect(await paymentCount("plan-order")).toBe(4); // a + b + c + d = $1,800
     expect((await orderDoc("plan-order"))?.paymentsReceivedCents).toBe(180000);
-  });
-
-  it("insufficient stock at the first abono aborts explicitly: no negative stock, no payment, no silent reservation", async () => {
-    await saveOrderWithStockTx(user, makeOrder("short-order", "p-short", 2, { installments: plan }), null, "create-3");
-    expect(await stock("p-short")).toBe(1); // plan sin abonos no reserva
-    await expect(registerOrderPaymentTx(payment("pay_s", 100, "short-order"))).rejects.toBeInstanceOf(InsufficientStockError);
-    expect(await stock("p-short")).toBe(1);
-    expect(await paymentCount("short-order")).toBe(0);
-    expect((await orderDoc("short-order"))?.installmentsReservedAt).toBeUndefined();
   });
 
   it("cancelling a reserved plan order does not release the pieces (money was received)", async () => {
@@ -128,9 +118,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
   it("removing the plan with saldo does not enable delivering in the same save (#168 F1)", async () => {
     // A plan order with $100 of $900 received (reserved at the first abono).
     await saveOrderWithStockTx(user, makeOrder("gate-order", "p-plan", 1, { installments: plan }), null, "gate-create");
-    expect(await stock("p-plan")).toBe(2); // plan sin abonos: nothing apartado yet
+    expect(await stock("p-plan")).toBe(1); // apartada desde la creación (R8)
     await registerOrderPaymentTx(payment("pay_g", 100, "gate-order"));
-    expect(await stock("p-plan")).toBe(1); // reservada por el primer abono
+    expect(await stock("p-plan")).toBe(1); // el abono no mueve stock
     expect((await orderDoc("gate-order"))?.paymentsReceivedCents).toBe(10000);
 
     // Unchecking "Pagos por partes" + Estado=Entregado in the SAME save must
@@ -150,6 +140,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     const ok = await saveOrderWithStockTx(user, deliver, liquidated.revision, "gate-deliver-2");
     expect(ok.order.orderStatus).toBe("delivered");
     expect(await stock("p-plan")).toBe(1); // entregado conserva el consumo
+  });
+
+  it("delivering with saldo is allowed ONLY with the recorded confirmation (PO 2026-11-03 R9)", async () => {
+    await saveOrderWithStockTx(user, makeOrder("confirm-order", "p-plan", 1, { installments: plan }), null, "confirm-create");
+    await registerOrderPaymentTx(payment("pay_q", 100, "confirm-order"));
+    const marked = (await orderDoc("confirm-order"))!;
+    const delivering = makeOrder("confirm-order", "p-plan", 1, {
+      revision: marked.revision, orderStatus: "delivered",
+      installmentsReservedAt: marked.installmentsReservedAt,
+    });
+    // Without confirmation the gate still rejects — never a silent pass.
+    await expect(
+      saveOrderWithStockTx(user, delivering, marked.revision, "confirm-deliver-1")
+    ).rejects.toBeInstanceOf(DeliveryWithBalanceError);
+    // With the explicit confirmation the delivery lands AND is recorded.
+    const confirmed = await saveOrderWithStockTx(user, delivering, marked.revision, "confirm-deliver-2", {
+      confirmDeliveredWithBalance: true,
+    });
+    expect(confirmed.order.orderStatus).toBe("delivered");
+    expect(confirmed.order.deliveredWithBalanceCents).toBeGreaterThan(0);
+    expect(confirmed.order.deliveredWithBalanceConfirmedBy).toBe(user.uid);
   });
 
   it("converting an order that already received money keeps the pieces apartadas (#168 F2/C1)", async () => {

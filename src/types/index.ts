@@ -274,8 +274,10 @@ export type Order = {
   updatedAt: string;
   // Installment plan (#165). Absent = ordinary order (behavior unchanged).
   installments?: OrderInstallmentPlan;
-  /** Idempotency mark: set when the FIRST confirmed positive abono reserved
-   * the order's stock. One reservation ever — later abonos never re-reserve. */
+  /** Witness set when the FIRST confirmed positive abono landed (PO 2026-11-03
+   * R8: plan orders reserve stock AT CREATION like ordinary ones; this mark now
+   * only certifies the reservation is money-backed — money-backed stock is
+   * never released by cancellation alone). */
   installmentsReservedAt?: string;
   /** Replaced plans, oldest first — evidence, never rewritten. */
   installmentsHistory?: PastInstallmentPlan[];
@@ -289,6 +291,13 @@ export type Order = {
    * the inherited payment record, so the doc never counts that deposit twice
    * (accumulator + pending deposit). */
   inheritedDepositMaterialized?: boolean;
+  /** PO 2026-11-03 R9: evidence stamped when the operator explicitly confirmed
+   * delivering with an uncovered balance (retroactive / cash-on-delivery
+   * flows). The delivery gate still fires by default — this is the recorded
+   * authorization, never a silent pass. */
+  deliveredWithBalanceCents?: number;
+  deliveredWithBalanceConfirmedAt?: string;
+  deliveredWithBalanceConfirmedBy?: string;
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.

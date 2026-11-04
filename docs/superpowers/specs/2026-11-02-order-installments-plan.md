@@ -15,6 +15,18 @@ Decisiones adoptadas por autonomía del PO (comentario en #165, 2026-11-02) —
 rigen; no se re-preguntan. Este documento es la spec excepcional de reglas de
 dinero/stock que viaja dentro del PR de código.
 
+
+
+> **Revisión del PO (2026-11-03, ronda regla por regla):** R8 — la reserva
+> pasó AL CREAR el pedido: un pedido con plan aparta sus piezas desde la
+> creación exactamente como uno ordinario; el abono ya no mueve stock y
+> `installmentsReservedAt` queda solo como testigo "respaldado por dinero"
+> (dinero recibido jamás libera piezas por cancelación implícita). R9 —
+> entregar con saldo pendiente es posible CON confirmación explícita de la
+> operadora, que queda grabada en el pedido (`deliveredWithBalanceCents/At/By`);
+> sin confirmación, el guardavía rechaza igual que antes. El bloqueo de abono
+> sin existencias desaparece con la reserva temprana (la escasez se ve al
+> crear, como en los pedidos ordinarios).
 ## Reglas adoptadas
 
 1. **La modalidad vive en el pedido.** Interruptor "Pagos por partes" en
