@@ -1,24 +1,24 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { StoreProvider } from "../../app/StoreProvider";
-import { AuthProvider } from "../../app/firebase/AuthProvider";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
 import type { AppState, Product } from "../../types";
-import { saveState } from "../../lib/storage";
 
-// Same runtime-mount pattern as src/app/App.test.tsx: the provider loads the
-// exact saved state; AuthProvider stays pure-local without VITE_FIREBASE_*.
+// Direct useStore mock: synchronous mount, no hydration race (#111 removed
+// browser-storage state; the cloud mount is async and these are view tests).
+const mocks = vi.hoisted(() => ({ state: null as null | AppState, upsertOrder: vi.fn() }));
+vi.mock("../../app/StoreProvider", () => ({
+  useStore: () => ({
+    state: mocks.state,
+    activeStore: mocks.state?.stores.find((st) => st.id === mocks.state!.activeStoreId) ?? null,
+    upsertOrder: mocks.upsertOrder,
+  }),
+}));
+
 function withState(state: AppState) {
-  saveState(state);
-  return ({ children }: { children: React.ReactNode }) => (
-    <AuthProvider>
-      <StoreProvider>
-        <ToastProvider>{children}</ToastProvider>
-      </StoreProvider>
-    </AuthProvider>
-  );
+  mocks.state = state;
+  return ({ children }: { children: React.ReactNode }) => <ToastProvider>{children}</ToastProvider>;
 }
 
 const OLIVIA = "store_olivia";

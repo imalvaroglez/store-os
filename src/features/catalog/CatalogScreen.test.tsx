@@ -1,28 +1,39 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { StoreProvider } from "../../app/StoreProvider";
-import { AuthProvider } from "../../app/firebase/AuthProvider";
 import { Button, ToastProvider } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
 import { CatalogScreen } from "./CatalogScreen";
 import { fixtureState } from "../../lib/testFixtures";
 import type { AppState, Product } from "../../types";
-import { saveState } from "../../lib/storage";
+const mocks = vi.hoisted(() => ({
+  user: { uid: "uid_test", email: "test@store-os.mx", role: "super_admin" as const },
+  state: null as AppState | null,
+  loadCloudState: vi.fn(),
+}));
 
-// Same runtime-mount pattern as src/app/App.test.tsx: save the exact state so
-// the provider loads it, then mount the screen under the real providers
-// (AuthProvider stays pure-local without VITE_FIREBASE_* in the test env).
+vi.mock("../../app/firebase/AuthProvider", () => ({
+  useAuth: () => ({ user: mocks.user, authReady: true, enabled: true, error: null, signOut: async () => {} }),
+}));
+vi.mock("../../app/firebase/firestoreData", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../app/firebase/firestoreData")>();
+  return {
+    ...actual,
+    loadCloudState: mocks.loadCloudState,
+    subscribeCloudState: vi.fn(() => () => {}),
+    saveEntity: vi.fn(async () => {}),
+    projectPublicForStore: vi.fn(async () => {}),
+  };
+});
+
+// Mount the real provider with an explicit authenticated cloud-state mock.
 function withState(state: AppState) {
-  saveState(state);
-  return ({ children }: { children: React.ReactNode }) => (
-    <AuthProvider>
-      <StoreProvider>
-        <ToastProvider>{children}</ToastProvider>
-      </StoreProvider>
-    </AuthProvider>
-  );
+  mocks.state = state;
+  mocks.loadCloudState.mockImplementation(async () => state);
+  return ({ children }: { children: ReactNode }) => <StoreProvider><ToastProvider>{children}</ToastProvider></StoreProvider>;
 }
 
 const OLIVIA = "store_olivia";
@@ -77,6 +88,13 @@ function changeSelect(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
+async function renderCatalog(state: AppState) {
+  const Wrapper = withState(state);
+  const view = render(<Wrapper><CatalogScreen /></Wrapper>);
+  await waitFor(() => expect(screen.getByLabelText("Categoría")).toBeTruthy());
+  return view;
+}
+
 function StoreToggleButton() {
   const { activeStore, setActiveStore } = useStore();
   return <Button onClick={() => setActiveStore(activeStore?.id === OLIVIA ? SANTI : OLIVIA)}>Cambiar tienda</Button>;
@@ -92,13 +110,8 @@ beforeEach(() => {
 });
 
 describe("CatalogScreen filtro por categoría real", () => {
-  it("filtra por categoría activa, muestra 'N de M piezas' y Limpiar restaura", () => {
-    const Wrapper = withState(sortFilterState());
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+  it("filtra por categoría activa, muestra 'N de M piezas' y Limpiar restaura", async () => {
+    await renderCatalog(sortFilterState());
 
     changeSelect("Categoría", CAT_ANILLOS);
     // Filter keeps the active sort (default: Fecha, recientes primero).
@@ -110,18 +123,13 @@ describe("CatalogScreen filtro por categoría real", () => {
     expect(screen.queryByText("Limpiar")).toBeNull();
   });
 
-  it("muestra solo productos por surtir según el umbral o si están agotados", () => {
+  it("muestra solo productos por surtir según el umbral o si están agotados", async () => {
     const state = sortFilterState();
     state.products[0].lowStockAt = 3;
     state.products[1].lowStockAt = 0;
     // An exhausted product remains visible for restocking even without a saved threshold.
     state.products[2].lowStockAt = undefined;
-    const Wrapper = withState(state);
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+    await renderCatalog(state);
 
     fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
     expect(cardNames()).toEqual(["Aretes Luna", "anillo perla"]);
@@ -133,7 +141,7 @@ describe("CatalogScreen filtro por categoría real", () => {
     expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("limpia Por surtir al cambiar de tienda", () => {
+  it("limpia Por surtir al cambiar de tienda", async () => {
     const state = sortFilterState();
     state.stores.find((store) => store.id === SANTI)!.type = "on_demand";
     const Wrapper = withState(state);
@@ -143,6 +151,7 @@ describe("CatalogScreen filtro por categoría real", () => {
         <CatalogScreen />
       </Wrapper>
     );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Por surtir" })).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
     expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("true");
@@ -157,8 +166,7 @@ describe("valores iniciales del producto", () => {
   it("guarda los cambios y al reabrir respeta Borrador, vacío y false", async () => {
     const state = fixtureState();
     state.activeStoreId = OLIVIA;
-    const Wrapper = withState(state);
-    render(<Wrapper><CatalogScreen /></Wrapper>);
+    await renderCatalog(state);
 
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar" }));
     expect(lastByLabel("Estado de publicación")).toHaveProperty("value", "published");
@@ -186,18 +194,17 @@ describe("valores iniciales del producto", () => {
     expect(lastByLabel("Color / acabado")).toHaveProperty("value", "Dorado");
   });
 
-  it("no aplica el material de Olivia al crear en Santi", () => {
+  it("no aplica el material de Olivia al crear en Santi", async () => {
     const state = fixtureState();
     state.activeStoreId = SANTI;
-    const Wrapper = withState(state);
-    render(<Wrapper><CatalogScreen /></Wrapper>);
+    await renderCatalog(state);
 
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar" }));
     expect(lastByLabel("Material")).toHaveProperty("value", "");
     expect(lastByLabel("Color / acabado")).toHaveProperty("value", "");
   });
 
-  it("al editar un producto existente conserva sus valores guardados", () => {
+  it("al editar un producto existente conserva sus valores guardados", async () => {
     const state = fixtureState();
     const existing = state.products.find((product) => product.id === "prod_olivia_1")!;
     Object.assign(existing, {
@@ -208,8 +215,7 @@ describe("valores iniciales del producto", () => {
       material: "Plata 925",
       finish: "",
     });
-    const Wrapper = withState(state);
-    render(<Wrapper><CatalogScreen /></Wrapper>);
+    await renderCatalog(state);
 
     fireEvent.click(screen.getByRole("heading", { name: existing.name }));
 
@@ -223,23 +229,13 @@ describe("valores iniciales del producto", () => {
 });
 
 describe("CatalogScreen orden", () => {
-  it("por defecto ordena por fecha, recientes primero", () => {
-    const Wrapper = withState(sortFilterState());
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+  it("por defecto ordena por fecha, recientes primero", async () => {
+    await renderCatalog(sortFilterState());
     expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]);
   });
 
-  it("ordena por nombre en ambas direcciones (localeCompare es, sin importar mayúsculas)", () => {
-    const Wrapper = withState(sortFilterState());
-    const { container } = render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+  it("ordena por nombre en ambas direcciones (localeCompare es, sin importar mayúsculas)", async () => {
+    const { container } = await renderCatalog(sortFilterState());
 
     changeSelect("Ordenar por", "name");
     expect(cardNames()).toEqual(["Anillo Blossom", "anillo perla", "Aretes Luna"]);
@@ -250,13 +246,8 @@ describe("CatalogScreen orden", () => {
     expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]);
   });
 
-  it("ordena por precio efectivo del tier default; empates se resuelven por nombre", () => {
-    const Wrapper = withState(sortFilterState());
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+  it("ordena por precio efectivo del tier default; empates se resuelven por nombre", async () => {
+    await renderCatalog(sortFilterState());
 
     changeSelect("Ordenar por", "price");
     expect(cardNames()).toEqual(["Aretes Luna", "Anillo Blossom", "anillo perla"]);
@@ -265,13 +256,8 @@ describe("CatalogScreen orden", () => {
     expect(cardNames()).toEqual(["Anillo Blossom", "anillo perla", "Aretes Luna"]);
   });
 
-  it("ordena por stock ascendente, negativos y cero primero", () => {
-    const Wrapper = withState(sortFilterState());
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+  it("ordena por stock ascendente, negativos y cero primero", async () => {
+    await renderCatalog(sortFilterState());
 
     changeSelect("Ordenar por", "stock");
     expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]);
@@ -279,36 +265,21 @@ describe("CatalogScreen orden", () => {
 });
 
 describe("CatalogScreen cobertura extra de direcciones y filtro vacío", () => {
-  it("cambiar la dirección en el orden por defecto muestra los más antiguos primero", () => {
-    const Wrapper = withState(sortFilterState());
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+  it("cambiar la dirección en el orden por defecto muestra los más antiguos primero", async () => {
+    await renderCatalog(sortFilterState());
     fireEvent.click(screen.getByLabelText("Orden descendente"));
     expect(cardNames()).toEqual(["Anillo Blossom", "anillo perla", "Aretes Luna"]);
   });
 
-  it("orden por stock en descendente: mayores existencias primero", () => {
-    const Wrapper = withState(sortFilterState());
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+  it("orden por stock en descendente: mayores existencias primero", async () => {
+    await renderCatalog(sortFilterState());
     changeSelect("Ordenar por", "stock");
     fireEvent.click(screen.getByLabelText("Orden ascendente"));
     expect(cardNames()).toEqual(["Anillo Blossom", "anillo perla", "Aretes Luna"]);
   });
 
-  it("filtro sin coincidencias muestra 'Sin resultados' y Limpiar restaura", () => {
-    const Wrapper = withState(sortFilterState());
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+  it("filtro sin coincidencias muestra 'Sin resultados' y Limpiar restaura", async () => {
+    await renderCatalog(sortFilterState());
     changeSelect("Categoría", CAT_BOLSAS);
     expect(screen.getByText("Sin resultados")).toBeTruthy();
     expect(screen.getByText("Ningún producto en esta categoría.")).toBeTruthy();
@@ -319,7 +290,7 @@ describe("CatalogScreen cobertura extra de direcciones y filtro vacío", () => {
 });
 
 describe("CatalogScreen alertas de existencias (FER-09)", () => {
-  it("distingue Agotado y Faltan N; umbral explícito pinta Quedan N", () => {
+  it("distingue Agotado y Faltan N; umbral explícito pinta Quedan N", async () => {
     const state = sortFilterState();
     // p1 has 5 on hand: below an explicit threshold of 6 → "Quedan 5".
     state.products[0].lowStockAt = 6;
@@ -330,12 +301,13 @@ describe("CatalogScreen alertas de existencias (FER-09)", () => {
       </Wrapper>
     );
 
-    expect(screen.getByText("Quedan 5")).toBeTruthy();
+    // Cloud mount hydrates asynchronously — wait for the first alert.
+    expect(await screen.findByText("Quedan 5")).toBeTruthy();
     expect(screen.getByText("Agotado")).toBeTruthy(); // p2: 0 on hand
     expect(screen.getByText("Faltan 2")).toBeTruthy(); // p3: −2 shortage
   });
 
-  it("sin umbral guardado no alerta por encima del default conservador", () => {
+  it("sin umbral guardado no alerta por encima del default conservador", async () => {
     const state = sortFilterState();
     const Wrapper = withState(state);
     render(
@@ -344,28 +316,25 @@ describe("CatalogScreen alertas de existencias (FER-09)", () => {
       </Wrapper>
     );
 
+    // Cloud mount hydrates asynchronously — anchor on an always-present alert
+    // before asserting the negative.
+    expect(await screen.findByText("Agotado")).toBeTruthy();
     // p1: 5 on hand, no threshold → above the default (3), no alert.
     expect(screen.queryByText(/Quedan/)).toBeNull();
     // Exhausted pieces still alert without any saved threshold.
-    expect(screen.getByText("Agotado")).toBeTruthy();
     expect(screen.getByText("Faltan 2")).toBeTruthy();
   });
 });
 
 describe("CatalogScreen en tienda on_demand", () => {
-  it("no ofrece la opción Stock y ordena por precio del campo price", () => {
+  it("no ofrece la opción Stock y ordena por precio del campo price", async () => {
     const state = sortFilterState();
     state.activeStoreId = SANTI;
     state.products = [
       tieredProduct({ id: "s1", storeId: SANTI, name: "Perfume Alfa", price: 200, prices: undefined, quantityOnHand: undefined, createdAt: "2026-08-01T00:00:00.000Z" }),
       tieredProduct({ id: "s2", storeId: SANTI, name: "Perfume Beta", price: 100, prices: undefined, quantityOnHand: undefined, createdAt: "2026-08-02T00:00:00.000Z" }),
     ];
-    const Wrapper = withState(state);
-    render(
-      <Wrapper>
-        <CatalogScreen />
-      </Wrapper>
-    );
+    await renderCatalog(state);
 
     const orderSelect = screen.getByLabelText("Ordenar por") as HTMLSelectElement;
     const options = Array.from(orderSelect.options).map((o) => o.value);
