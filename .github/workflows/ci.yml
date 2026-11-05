@@ -125,6 +125,8 @@ jobs:
           key: firestore-emulator-${{ runner.os }}
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+      - name: Install PDF text extractor
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Build (${{ needs.env-select.outputs.env-name }} preview for e2e)
         run: npm run build
         env:
