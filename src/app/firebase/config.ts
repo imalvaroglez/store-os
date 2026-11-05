@@ -134,7 +134,7 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
 // guard) and turn on Firestore debug logging. No passwords, no bundle secrets.
 if (import.meta.env.VITE_FIREBASE_PROJECT_ID === FIREBASE_DEV_PROJECT_ID) {
   if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("measure")) {
-    void import("firebase/firestore").then(({ setLogLevel }) => setLogLevel("debug"));
+    void import("firebase/firestore").then(({ setLogLevel }) => setLogLevel("debug")).catch(console.error);
     void import("firebase/auth").then(({ signInWithCustomToken, onAuthStateChanged }) => {
       const { auth: measureAuth } = getFirebase();
       (window as unknown as { __storeOsMeasure?: object }).__storeOsMeasure = {
@@ -143,6 +143,6 @@ if (import.meta.env.VITE_FIREBASE_PROJECT_ID === FIREBASE_DEV_PROJECT_ID) {
         onUser: (callback: (email: string | null) => void) =>
           onAuthStateChanged(measureAuth, (user) => callback(user?.email ?? null)),
       };
-    });
+    }).catch(console.error);
   }
 }
