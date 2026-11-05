@@ -1,12 +1,15 @@
 import { defineConfig, type Connect, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 
 // Injects the building commit's short SHA into every HTML entry. The A→B stale
 // repro (scripts/repro-stale.mjs) and the refresh-hard-reload previewCheck read
 // this meta to know WHICH deploy was served — the direct evidence the spec requires.
+// The same marker also stamps the release version (src/releases/releases.json)
+// so scripts/check-release.cjs can compare what production ALREADY serves
+// against the candidate release before deploying.
 function buildMarker(): Plugin {
   // STORE_OS_BUILD_SHA overrides the git SHA so the refresh e2e can fabricate
   // two distinct "deploys" (A/B) from one working tree without fake commits.
@@ -19,6 +22,13 @@ function buildMarker(): Plugin {
     }
   }
   if (!sha) sha = "dev";
+  let version = "";
+  try {
+    version = JSON.parse(readFileSync(resolve(__dirname, "src/releases/releases.json"), "utf8"))[0]?.version ?? "";
+  } catch {
+    version = "";
+  }
+  if (!version) throw new Error("src/releases/releases.json falta o su primera entrada no tiene versión.");
   return {
     name: "store-os-build-marker",
     transformIndexHtml(html) {
@@ -29,7 +39,10 @@ function buildMarker(): Plugin {
         process.env.VITE_VERCEL_ENV === "preview"
           ? `<meta name="robots" content="noindex, nofollow">`
           : "";
-      return html.replace(/<head>/i, `<head><meta name="x-build" content="${sha}">${noindex}`);
+      return html.replace(
+        /<head>/i,
+        `<head><meta name="x-build" content="${sha}"><meta name="store-os-version" content="${version}">`
+      ).replace(/<\/head>/i, `${noindex}</head>`);
     },
   };
 }
@@ -77,6 +90,12 @@ function publicEntryRewrite(): Plugin {
 
 export default defineConfig({
   plugins: [react(), buildMarker(), publicEntryRewrite()],
+  // Build identity for the version footer (#179). Tests (vitest) run without
+  // these defines, so consumers must guard with typeof.
+  define: {
+    __BUILD_SHA__: JSON.stringify(process.env.STORE_OS_BUILD_SHA?.trim() || "dev"),
+    __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10).replace(/-/g, ".")),
+  },
   build: { rollupOptions: { input: { main: resolve(__dirname, "index.html"), public: resolve(__dirname, "public.html") } } },
   // SPA: every unknown route falls back to index.html so client-side routes
   // (/catalogo-admin, /pedidos, /catalogo/:slug) resolve on hard reload / preview / static hosts.

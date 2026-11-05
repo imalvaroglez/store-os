@@ -236,6 +236,12 @@ jobs:
             echo "vercel_env=preview" >> "$GITHUB_OUTPUT"
             echo "prod_flag=" >> "$GITHUB_OUTPUT"
           fi
+      - name: Release guard — versión incrementada y con notas (solo producción)
+        # #179: before every production deploy, the candidate release must beat
+        # what production ALREADY serves (stamped as <meta store-os-version> in
+        # its HTML). Fails closed: no probe → no release.
+        if: steps.target.outputs.vercel_env == 'production'
+        run: node scripts/check-release.cjs --probe-url https://store-os-alpha.vercel.app
       - name: Pull Vercel project config
         run: vercel pull --yes --environment=${{ steps.target.outputs.env }} --token=${{ secrets.VERCEL_TOKEN }}
       - name: Prerender service account (production release only)
