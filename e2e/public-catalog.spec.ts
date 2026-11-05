@@ -14,6 +14,32 @@ import { ADMIN_EMAIL, FIRESTORE_REST as FS, gotoClean, mintUserToken, toFields, 
 // VITE_FIREBASE_EMULATOR=true. globalSetup wipes Auth + Firestore before run.
 
 
+
+// Storage-emulator images occasionally fail their FIRST decode with
+// EncodingError (CI run 41954047219; the SAME SHA passed on rerun, so the
+// failure is nondeterministic and the emulator logs nothing per test). Instead
+// of failing blind, capture what the URL actually served and retry once — if
+// it still fails, the report carries the evidence needed for a root cause.
+async function decodeWithEvidence(locator: import("@playwright/test").Locator) {
+  const attempt = () => locator.evaluate(async (image: HTMLImageElement) => { await image.decode(); });
+  try {
+    await attempt();
+  } catch (error) {
+    const evidence = await locator.evaluate(async (image: HTMLImageElement) => {
+      const src = image.currentSrc || image.src;
+      try {
+        const response = await fetch(src);
+        const bytes = Array.from(new Uint8Array(await response.arrayBuffer()).subarray(0, 16));
+        return { src, status: response.status, contentType: response.headers.get("content-type"), firstBytes: bytes };
+      } catch (fetchError) {
+        return { src, fetchError: String(fetchError) };
+      }
+    });
+    console.error(`[decode-evidence] ${JSON.stringify(evidence)} (decode error: ${String(error)})`);
+    await attempt(); // one retry: a transient emulator hiccup must not fail the suite silently
+  }
+}
+
 // Wipe the public projection collections so the REST seed below is the ONLY
 // source of public docs. firebase.spec (which runs before this file in the
 // foundation project) seeds via the app and writes publicProducts/publicStores
@@ -391,7 +417,7 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
   await editor.getByLabel("Descripción de la portada").fill("Colección de prueba");
   await editor.getByLabel("Título principal").fill("Tu nueva pieza favorita está aquí");
   await editor.getByLabel("Mensaje principal").fill("");
-  await editor.getByRole("img", { name: "Vista previa: Portada de celular" }).evaluate(async (img: HTMLImageElement) => { await img.decode(); });
+  await decodeWithEvidence(editor.getByRole("img", { name: "Vista previa: Portada de celular" }));
   await editor.evaluate((el) => { el.scrollTop = 0; });
   await page.screenshot({ path: testInfo.outputPath("olivia-editor.png") });
   await editor.getByRole("button", { name: "Guardar sitio público" }).click();
@@ -407,17 +433,17 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
     await catalog.setViewportSize({ width, height: 844 });
     await expect(catalog.locator(".olv-intro")).toHaveCount(0);
     const banner = catalog.getByRole("img", { name: "Colección de prueba" });
-    await banner.evaluate(async (image: HTMLImageElement) => { await image.decode(); });
+    await decodeWithEvidence(banner);
     const bannerBox = (await banner.boundingBox())!;
     const headingBox = (await catalog.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" }).boundingBox())!;
     expect(bannerBox.y + bannerBox.height).toBeLessThan(headingBox.y);
     await expect(catalog.locator(".olv-hero-copy .olv-link-button")).toHaveCSS("margin-top", "26px");
     await catalog.screenshot({ path: testInfo.outputPath(`olivia-banner-${width}.png`), fullPage: true });
   }
-  const dimensions = await logo.evaluate(async (image: HTMLImageElement) => {
-    await image.decode();
-    return { width: image.naturalWidth, height: image.naturalHeight };
-  });
+  await decodeWithEvidence(logo);
+  const dimensions = await logo.evaluate((image: HTMLImageElement) =>
+    ({ width: image.naturalWidth, height: image.naturalHeight })
+  );
   expect(dimensions).toEqual({ width: 600, height: 150 });
   expect((await catalog.request.get(oldLogo)).headers()["content-type"]).toContain("image/png");
   await page.getByRole("button", { name: "Editar sitio público" }).click();
