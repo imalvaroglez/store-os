@@ -83,7 +83,7 @@ jobs:
       - name: Lint (typecheck)
         run: npm run typecheck
       - name: Install backup encryption
-        run: sudo apt-get update && sudo apt-get install -y age trash-cli
+        run: sudo apt-get update && sudo apt-get install -y age trash-cli poppler-utils
       - name: Unit + static gates
         run: npm run test
       - name: Build (${{ needs.env-select.outputs.env-name }})
@@ -155,6 +155,8 @@ jobs:
           VITE_FIREBASE_SENDER_ID: ${{ secrets.VITE_FIREBASE_SENDER_ID }}
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
         run: npm run e2e
+      - name: E2E receipt PDF pagination
+        run: npm run e2e:receipt
       - name: E2E with Firebase Emulator
         env:
           # The dev server still needs a complete Firebase config to initialize

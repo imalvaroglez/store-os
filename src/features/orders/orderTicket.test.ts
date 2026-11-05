@@ -13,6 +13,7 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
     expect(ticket).toContain("1. Reloj Silver caratula azul $200.00");
     expect(ticket).toContain("2. 3 × Anillo $1.01");
     expect(ticket).toContain("Total $201.01");
+    expect(ticket).toContain("Cobrado $0.00");
     expect(ticket).toContain("Saldo $201.01");
     expect(ticket).not.toContain("Privado");
     expect(ticket).not.toContain("Olivia"); // el mensaje es para la clienta, la tienda sobra
@@ -28,6 +29,7 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
     const order: Order = { id: "o1", storeId: "s1", customerId: "c1", items: [{ productName: "A", quantity: 1, unitPrice: 40, subtotal: 40 }], deposit: 50, orderStatus: "asked", paymentStatus: "paid", createdAt: "2026-11-04", updatedAt: "" };
     const ticket = orderTicketText(order, "Olivia");
     expect(ticket).toContain("Total $40.00");
+    expect(ticket).toContain("Cobrado $50.00");
     expect(ticket).not.toContain("Saldo");
   });
 
@@ -43,6 +45,7 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
     };
     const ticket = orderTicketText(order, "Olivia");
     expect(ticket).toContain("Total $1,800.00");
+    expect(ticket).toContain("Cobrado $1,500.00");
     expect(ticket).toContain("Saldo $300.00");
   });
 
@@ -54,8 +57,10 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
       paymentsReceivedCents: 10000,
       createdAt: "2026-11-04", updatedAt: "",
     };
-    expect(orderTicketText(order, "Olivia")).toContain("Saldo $500.00"); // $100 cobros + $400 anticipo aún sin materializar
+    expect(orderTicketText(order, "Olivia")).toContain("Cobrado $500.00"); // $100 cobros + $400 anticipo aún sin materializar
+    expect(orderTicketText(order, "Olivia")).toContain("Saldo $500.00");
     const materialized = { ...order, paymentsReceivedCents: 50000, inheritedDepositMaterialized: true as const };
+    expect(orderTicketText(materialized, "Olivia")).toContain("Cobrado $500.00");
     expect(orderTicketText(materialized, "Olivia")).toContain("Saldo $500.00"); // ya dentro del acumulado
   });
 });

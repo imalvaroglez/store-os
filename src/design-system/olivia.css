@@ -217,21 +217,3 @@
 @media (prefers-reduced-motion: reduce) {
   .olivia-root *, .olivia-root *::before, .olivia-root *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
-
-/* ── Printable receipt (#139) ─────────────────────────────────────────────
-   On paper, everything but the receipt disappears. visibility (not display)
-   keeps the portal layout intact while blanking the rest of the page, so the
-   browser's "Save as PDF" yields a clean letter-size receipt. */
-@media print {
-  body.receipt-print-scope * { visibility: hidden; }
-  #receipt-print-root, #receipt-print-root * { visibility: visible; }
-  #receipt-print-root {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    max-width: none;
-    margin: 0;
-    box-shadow: none;
-  }
-  @page { size: letter; margin: 14mm; }
-}

@@ -6,8 +6,8 @@ import { docReceivedCents } from "./payments";
 
 /**
  * Canonical order ticket (PO 2026-11-04): client name + order date, numbered
- * pieces with line totals, Total — plus a single "Saldo" line ONLY when money
- * is still owed, using the canonical received amount (transactional
+ * pieces with line totals, Total, Cobrado, and a single "Saldo" line ONLY
+ * when money is still owed, using the canonical received amount (transactional
  * accumulator + still-unmaterialized legacy deposit, #168 F4). Private notes
  * and costs never appear. ONE data builder feeds both the WhatsApp text
  * (copy from the order card) and the printable receipt (#139): the PDF can
@@ -20,6 +20,8 @@ export type OrderTicketData = {
   dateLabel: string;
   lines: OrderTicketLine[];
   total: string;
+  /** Canonical amount received, including an unmaterialized legacy deposit. */
+  cobrado: string;
   /** Present ONLY when money is still owed — mirrors the text format. */
   saldo?: string;
 };
@@ -44,6 +46,7 @@ export function orderTicketData(order: Order, storeName: string, currentCustomer
       amount: formatMoneyExact(orderAmountCents(item.unitPrice, item.quantity) / 100),
     })),
     total: formatMoneyExact(totalCents / 100),
+    cobrado: formatMoneyExact(receivedCents / 100),
     ...(balanceCents > 0 ? { saldo: formatMoneyExact(balanceCents / 100) } : {}),
   };
 }
@@ -55,6 +58,7 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
     data.dateLabel ? `${data.customer} ${data.dateLabel}` : data.customer,
     ...data.lines.map((line) => `${line.index}. ${line.label} ${line.amount}`),
     `Total ${data.total}`,
+    `Cobrado ${data.cobrado}`,
     ...(data.saldo ? [`Saldo ${data.saldo}`] : []),
   ].join("\n");
 }
