@@ -217,3 +217,41 @@
 @media (prefers-reduced-motion: reduce) {
   .olivia-root *, .olivia-root *::before, .olivia-root *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* ── #136 · Propuesta visual v1 — VISTA PREVIA, no fusionar sin Fer ──────────
+   Composición propia con las referencias confirmadas (GANNI: jerarquía y
+   tipografía protagonista; Coutumes: distribución espaciosa y pie con
+   presencia). Solo tokens existentes de Olivia: sin colores, activos ni
+   fuentes nuevos. Pendiente de Fer: ritmo tipográfico final, tono de la banda
+   del pie y tratamiento fotográfico (grano/acabado — no hay filtro definido).
+   Bloque separado y al final para revisión/reversa sencilla. */
+.olivia-root h1, .olivia-root h2 { font-weight: 700; letter-spacing: -.035em; }
+.olv-hero h1 { font-size: clamp(2.75rem, 6.4vw, 5.75rem); }
+.olv-section-heading h2 { font-size: clamp(1.75rem, 3.2vw, 2.6rem); line-height: 1.12; }
+.olv-how h2, .olv-about-grid h2 { font-size: clamp(1.6rem, 2.8vw, 2.3rem); line-height: 1.15; }
+.olv-hero-copy { padding-block: 64px 72px; }
+.olv-intro { font-size: 13px; }
+.olv-category-card-name { font-size: 19px; font-weight: 600; }
+.olv-grid { gap: 36px 14px; }
+.olv-product-info { padding: 14px 0 18px; }
+
+/* Pie con presencia cromática dentro de la paleta (Coutumes pide el papel
+   visual del pie, no copiar su amarillo): banda terracota con texto claro,
+   contraste verificado sobre #8C4550. */
+.olv-footer { background: var(--olv-accent); padding: 56px 0 96px; }
+.olv-footer .olv-footer-brand, .olv-footer p:not(.olv-footer-brand), .olv-footer h2 { color: var(--olv-surface); }
+.olv-footer p:not(.olv-footer-brand) { color: rgba(255, 253, 249, .82); }
+.olv-footer .olv-text-link { color: var(--olv-accent-soft); }
+.olv-footer-links a { color: var(--olv-surface); }
+.olv-footer-bottom { border-top: 1px solid rgba(255, 253, 249, .35); color: var(--olv-accent-soft); }
+
+@media (min-width: 1024px) {
+  .olv-grid { gap: 56px 28px; }
+}
+
+/* Zoom suave de escritorio como mejora, nunca única vía (la tarjeta navega
+   por tap; sin hover todo funciona igual). */
+@media (prefers-reduced-motion: no-preference) {
+  .olv-category-image { transition: transform var(--motion-slow) var(--ease-smooth); }
+  .olv-category-card:hover .olv-category-image { transform: scale(1.03); }
+}
