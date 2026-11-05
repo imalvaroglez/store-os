@@ -117,6 +117,42 @@ describe("saleExpensePeriodTotals (#184)", () => {
     expect(saleExpensePeriodTotals([trip], 2026, 11).totalCents).toBe(0);
   });
 
+  it("una copia heredada del mismo id no vuelve a contar en otro mes (review ronda 2)", () => {
+    // Reproducción del review: original de $80 en la compra de octubre y una
+    // copia heredada del mismo id como ajuste de noviembre. Sin la identidad
+    // canónica, octubre sumaba $80 y noviembre otros $80 ($160 por un solo gasto).
+    const withCopy = purchase({
+      id: "p_oct",
+      date: "2026-10-28",
+      sourcingExpenses: [{ id: "e1", category: "customer_delivery", amount: 80 }],
+      saleCostAdjustments: [
+        { id: "e1", at: "2026-11-04T18:00:00.000Z", category: "customer_delivery", amount: 80 },
+      ],
+    });
+    expect(saleExpensePeriodTotals([withCopy], 2026, 10).totalCents).toBe(8000);
+    expect(saleExpensePeriodTotals([withCopy], 2026, 11).totalCents).toBe(0);
+
+    // Misma forma con la copia en OTRA compra: el resultado canónico no cambia.
+    const octoberTrip = purchase({ id: "p_oct2", date: "2026-10-20", sourcingExpenses: [{ id: "e1", category: "customer_delivery", amount: 80 }] });
+    const novemberTrip = purchase({
+      id: "p_nov2",
+      date: "2026-11-04",
+      saleCostAdjustments: [{ id: "e1", at: "2026-11-10T18:00:00.000Z", category: "customer_delivery", amount: 80 }],
+    });
+    expect(saleExpensePeriodTotals([octoberTrip, novemberTrip], 2026, 10).totalCents).toBe(8000);
+    expect(saleExpensePeriodTotals([octoberTrip, novemberTrip], 2026, 11).totalCents).toBe(0);
+  });
+
+  it("un gasto tardío genuino (sin original) conserva su propio mes", () => {
+    const trip = purchase({
+      id: "p_late",
+      date: "2026-10-28",
+      saleCostAdjustments: [{ id: "e9", at: "2026-11-04T18:00:00.000Z", category: "customer_delivery", amount: 80 }],
+    });
+    expect(saleExpensePeriodTotals([trip], 2026, 11).totalCents).toBe(8000);
+    expect(saleExpensePeriodTotals([trip], 2026, 10).totalCents).toBe(0);
+  });
+
   it("mes sin gastos devuelve ceros y filas completas para la vista", () => {
     const totals = saleExpensePeriodTotals([], 2026, 11);
     expect(totals.totalCents).toBe(0);
