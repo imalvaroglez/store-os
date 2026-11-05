@@ -25,7 +25,7 @@ describe("sharing a saved order", () => {
     expect(edit).not.toHaveBeenCalled();
     const text = screen.getByLabelText("Detalle del pedido") as HTMLTextAreaElement;
     expect(text.value).toContain("Anillo");
-    expect(text.value).toContain("Total: $1.25");
+    expect(text.value).toContain("Total $1.25");
     fireEvent.click(screen.getByRole("button", { name: "Copiar detalle" }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith(text.value));
     rendered.unmount();
