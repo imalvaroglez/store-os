@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { OrderReceipt } from "./OrderReceipt";
 import { OrderCard } from "./OrderCard";
@@ -33,39 +33,55 @@ const order = {
   createdAt2: "",
 } as unknown as Order;
 
-beforeEach(() => localStorage.clear());
-
 describe("OrderReceipt (#139)", () => {
   it("muestra el recibo con el dinero canónico del ticket de texto", () => {
     const data = orderTicketData(order, "Olivia");
     render(<OrderReceipt data={data} whatsapp="5215512345678" />);
-    // Raíz de impresión: el CSS @media print aísla exactamente este nodo.
-    expect(document.getElementById("receipt-print-root")).toBeTruthy();
-    expect(screen.getByText("Olivia")).toBeTruthy();
-    expect(screen.getByText("Recibo de pedido")).toBeTruthy();
-    expect(screen.getByText("Linda")).toBeTruthy();
+    const preview = within(screen.getByTestId("receipt-preview"));
+    const printRoot = document.getElementById("receipt-print-root");
+    expect(printRoot?.parentElement).toBe(document.body);
+    expect(preview.getByText("Olivia")).toBeTruthy();
+    expect(preview.getByText("Recibo de pedido")).toBeTruthy();
+    expect(preview.getByText("Linda")).toBeTruthy();
     // Cada línea numerada con su total (la cantidad viaja en la etiqueta)…
-    const row = (label: string) => screen.getByText(label).closest("li")!.textContent;
+    const row = (label: string) => preview.getByText(label).closest("li")!.textContent;
     expect(row("2 × Aretes Luna")).toContain("1.");
     expect(row("Anillo Sol")).toContain("2.");
-    expect(screen.getByText("$301.00")).toBeTruthy();
-    expect(screen.getByText("$320.00")).toBeTruthy();
+    expect(preview.getByText("$301.00")).toBeTruthy();
+    expect(preview.getByText("$320.00")).toBeTruthy();
     // …y el dinero coincide EXACTO con el texto que Fer manda por WhatsApp.
-    expect(screen.getByText("$621.00").textContent).toBe(data.total);
+    expect(preview.getByText(data.total).textContent).toBe(data.total);
+    expect(preview.getByText("Cobrado").parentElement?.textContent).toContain(data.cobrado);
+    expect(data.cobrado).toBe("$400.00");
     expect(data.saldo).toBeDefined(); // 621 − 400 abonados
-    expect(screen.getByText(data.saldo!)).toBeTruthy();
+    expect(preview.getByText(data.saldo!)).toBeTruthy();
     const text = orderTicketText(order, "Olivia");
     expect(text).toContain(`Total ${data.total}`);
+    expect(text).toContain(`Cobrado ${data.cobrado}`);
     expect(text).toContain(`Saldo ${data.saldo}`);
-    expect(screen.getByText(/Pedidos por WhatsApp/)).toBeTruthy();
+    expect(preview.getByText(/Pedidos por WhatsApp/)).toBeTruthy();
   });
 
   it("sin saldo pendiente no imprime línea de Saldo (espejo del formato de texto)", () => {
-    const paid = { ...order, deposit: 621, paymentsReceivedCents: 62100 } as unknown as Order;
+    const paid = { ...order, deposit: 621, paymentsReceivedCents: 62100, inheritedDepositMaterialized: true } as unknown as Order;
     const data = orderTicketData(paid, "Olivia");
     render(<OrderReceipt data={data} />);
     expect(data.saldo).toBeUndefined();
-    expect(screen.queryByText("Saldo")).toBeNull();
+    const preview = within(screen.getByTestId("receipt-preview"));
+    expect(preview.queryByText("Saldo")).toBeNull();
+    expect(preview.getByText("Cobrado").parentElement?.textContent).toContain("$621.00");
+    expect(orderTicketText(paid, "Olivia")).toContain("Cobrado $621.00");
+  });
+
+  it("muestra $0.00 cobrado y el saldo completo si no hay anticipos ni pagos", () => {
+    const unpaid = { ...order, deposit: 0, paymentsReceivedCents: 0 } as unknown as Order;
+    const data = orderTicketData(unpaid, "Olivia");
+    render(<OrderReceipt data={data} />);
+    const preview = within(screen.getByTestId("receipt-preview"));
+    expect(data.cobrado).toBe("$0.00");
+    expect(data.saldo).toBe(data.total);
+    expect(preview.getByText("Cobrado").parentElement?.textContent).toContain("$0.00");
+    expect(orderTicketText(unpaid, "Olivia")).toContain("Cobrado $0.00");
   });
 
   it("el botón del Sheet dispara la impresión del navegador", () => {
@@ -78,10 +94,9 @@ describe("OrderReceipt (#139)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ver detalle para compartir" }));
     fireEvent.click(screen.getByRole("button", { name: "Imprimir / Guardar PDF" }));
     expect(print).toHaveBeenCalled();
-    // En el Sheet también vive el recibo imprimible (raíz del CSS de impresión)
-    // y el alcance de impresión solo existe mientras el recibo está montado:
-    // un Ctrl+P fuera del recibo imprime la página normal, no una hoja en blanco.
-    expect(document.getElementById("receipt-print-root")).toBeTruthy();
+    // The print-only document escapes the Sheet's clipping and scroll parent.
+    const printRoot = document.getElementById("receipt-print-root");
+    expect(printRoot?.parentElement).toBe(document.body);
     expect(document.body.classList.contains("receipt-print-scope")).toBe(true);
   });
 });
