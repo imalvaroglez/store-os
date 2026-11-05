@@ -310,6 +310,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Release guard — versión incrementada y con notas (solo producción)
+        # #179/#194-F1: this job deploys RULES first and `deploy` (the app) needs
+        # this job — so guarding HERE is the single choke point that runs before
+        # ANY production mutation. The candidate release must beat what production
+        # ALREADY serves (stamped as <meta store-os-version> in its HTML). Fails
+        # closed: no verified reference → no rules deploy, no app deploy.
+        if: github.event_name == 'workflow_dispatch' && inputs.release_production == true
+        run: node scripts/check-release.cjs --probe-url https://store-os-alpha.vercel.app
       - name: Install Firebase CLI
         run: npm i -g firebase-tools
       - name: Deploy rules to the selected Firebase project
