@@ -11,7 +11,7 @@ import { navigate } from "../../lib/router";
 import { StorefrontEditor } from "../catalog/StorefrontEditor";
 import { normalizeSkuPrefixToken } from "../../lib/catalog";
 import { CANONICAL_TIERS } from "../../lib/pricing";
-import { parseAmount } from "../../lib/money";
+import { parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { uid } from "../../lib/ids";
 import { IconButton } from "../../design-system";
 import type { PriceTierDef } from "../../types";
@@ -61,6 +61,10 @@ export function StoreSettingsScreen({
   const [markupPercent, setMarkupPercent] = useState(store?.pricingRule?.percent?.toString() ?? "");
   const [tierError, setTierError] = useState<string | null>(null);
   const [confirmTierDelete, setConfirmTierDelete] = useState<string | null>(null);
+  // Raw editing text for tier minimums (#188): the input keeps what the operator
+  // types — including a trailing "." — and the integer coercion happens once, at
+  // save. Re-parsing on every keystroke silently turned "12.34" into "1234".
+  const [minimumDrafts, setMinimumDrafts] = useState<Record<string, { pieces?: string; amount?: string }>>({});
 
   if (!store) {
     return <p className="text-sm text-ink-soft">Tienda no encontrada.</p>;
@@ -186,8 +190,20 @@ export function StoreSettingsScreen({
       setTierError("El nivel al público debe ser un nivel visible.");
       return;
     }
-    // Re-index order 0..n so moves are stable.
-    const priceTiers = tiersDraft.map((t, i) => ({ ...t, label: t.label.trim() || t.label, order: i }));
+    // Re-index order 0..n so moves are stable. Minimums coerce from the raw
+    // edit text here — never per keystroke (#188). An untouched tier keeps its
+    // stored value; a cleared draft clears the minimum ("sin mínimo").
+    const priceTiers = tiersDraft.map((t, i) => {
+      const draft = minimumDrafts[t.id];
+      const minPieces = draft && "pieces" in draft ? parseMinimum(draft.pieces ?? "") : t.minPieces;
+      const minAmount = draft && "amount" in draft ? parseMinimum(draft.amount ?? "") : t.minAmount;
+      const next: PriceTierDef = { ...t, label: t.label.trim() || t.label, order: i };
+      if (minPieces != null) next.minPieces = minPieces;
+      else delete next.minPieces;
+      if (minAmount != null) next.minAmount = minAmount;
+      else delete next.minAmount;
+      return next;
+    });
     const percent = parseAmount(markupPercent);
     try {
       await updateStore({
@@ -200,6 +216,9 @@ export function StoreSettingsScreen({
           ? { pricingRule: { kind: "markup", percent } }
           : { pricingRule: undefined }),
       });
+      // Show exactly what was registered: coerced integers, no edit residue.
+      setTiersDraft(priceTiers.map((t) => ({ ...t })));
+      setMinimumDrafts({});
       toast.success("Niveles de precio guardados");
     } catch (error) {
       setTierError(
@@ -463,19 +482,19 @@ export function StoreSettingsScreen({
                   hint={i === 0 ? "Piezas que necesita el pedido. Vacío = sin mínimo." : undefined}
                   inputMode="numeric"
                   placeholder="5"
-                  value={t.minPieces != null ? String(t.minPieces) : ""}
+                  value={minimumDrafts[t.id]?.pieces ?? (t.minPieces != null ? String(t.minPieces) : "")}
                   onChange={(e) =>
-                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, minPieces: parseMinimum(e.target.value) } : x)))
+                    setMinimumDrafts((prev) => ({ ...prev, [t.id]: { ...prev[t.id], pieces: sanitizeIntegerInput(e.target.value) } }))
                   }
                 />
                 <TextField
                   label={i === 0 ? "Mínimo de compra" : " "}
                   hint={i === 0 ? "A precio del propio nivel. Vacío = sin mínimo." : undefined}
-                  inputMode="numeric"
+                  inputMode="decimal"
                   placeholder="1000"
-                  value={t.minAmount != null ? String(t.minAmount) : ""}
+                  value={minimumDrafts[t.id]?.amount ?? (t.minAmount != null ? String(t.minAmount) : "")}
                   onChange={(e) =>
-                    setTiersDraft((list) => list.map((x) => (x.id === t.id ? { ...x, minAmount: parseMinimum(e.target.value) } : x)))
+                    setMinimumDrafts((prev) => ({ ...prev, [t.id]: { ...prev[t.id], amount: sanitizeDecimalInput(e.target.value) } }))
                   }
                 />
               </div>
