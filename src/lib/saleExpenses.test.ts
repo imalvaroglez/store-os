@@ -89,6 +89,34 @@ describe("saleExpensePeriodTotals (#184)", () => {
     expect(totals.lines.map((l) => l.category)).toEqual(["individual_packaging"]);
   });
 
+  it("un gasto tardío cuenta en el mes de su registro, no en el del viaje (review #196 F4)", () => {
+    const trip = purchase({
+      id: "p_oct",
+      date: "2026-10-28",
+      saleCostAdjustments: [
+        // Registrado el 4 de noviembre al mediodía CDMX.
+        { id: "late1", at: "2026-11-04T18:00:00.000Z", category: "customer_delivery", amount: 80 },
+      ],
+    });
+    const november = saleExpensePeriodTotals([trip], 2026, 11);
+    expect(november.totalCents).toBe(8000);
+    expect(november.lines[0].date).toBe("2026-11-04");
+    const october = saleExpensePeriodTotals([trip], 2026, 10);
+    expect(october.totalCents).toBe(0); // el viaje de octubre no absorbe el desembolso de noviembre
+  });
+
+  it("convierte el instante al calendario de CDMX antes de agrupar", () => {
+    // 2026-11-01T02:30Z son las 20:30 del 31 de octubre en CDMX.
+    const trip = purchase({
+      date: "2026-11-05",
+      saleCostAdjustments: [
+        { id: "tz1", at: "2026-11-01T02:30:00.000Z", category: "shared_packaging", amount: 40 },
+      ],
+    });
+    expect(saleExpensePeriodTotals([trip], 2026, 10).totalCents).toBe(4000);
+    expect(saleExpensePeriodTotals([trip], 2026, 11).totalCents).toBe(0);
+  });
+
   it("mes sin gastos devuelve ceros y filas completas para la vista", () => {
     const totals = saleExpensePeriodTotals([], 2026, 11);
     expect(totals.totalCents).toBe(0);

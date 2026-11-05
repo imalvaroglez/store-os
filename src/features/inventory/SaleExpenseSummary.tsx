@@ -95,8 +95,8 @@ export function SaleExpenseSummary() {
       )}
 
       <p className="mt-3 text-xs text-on-surface-soft/70">
-        Se registran junto a cada compra. Los traslados para surtir y los gastos movidos al costo de inventario no
-        aparecen aquí.
+        Cada gasto se cuenta en el mes en que se registró (los tardíos, con su propia fecha). Los traslados para
+        surtir y los gastos movidos al costo de inventario no aparecen aquí.
       </p>
     </Card>
   );
