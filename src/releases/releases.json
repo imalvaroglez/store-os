@@ -1,0 +1,11 @@
+[
+  {
+    "version": "1.5.0",
+    "date": "2026.11.06",
+    "title": "Versión visible y captura de dinero confiable",
+    "notes": [
+      "La versión de la app ahora se lee al pie del panel y sus notas se abren dentro de la app.",
+      "Se corrige la pérdida del punto decimal al capturar mínimos de nivel y dinero de productos."
+    ]
+  }
+]
