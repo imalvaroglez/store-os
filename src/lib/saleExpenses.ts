@@ -50,21 +50,24 @@ function inPeriod(date: string, year: number, month: number): boolean {
  * late adjustments count in their OWN month (`at`, converted to the Mexico
  * City calendar), because that is when the outlay actually happened for the
  * monthly close. The per-piece allocations are the SAME money spread over
- * pieces, so they are never added again here; an expense id is counted once
- * even if a legacy copy appears in both places. Expenses moved to inventory
+ * pieces, so they are never added again here. Expenses moved to inventory
  * cost are excluded — they stopped being sale expenses.
+ *
+ * Identity is resolved BEFORE any period filter (review #196, round 2): each
+ * expense id yields ONE canonical entry over all loaded records — the trip
+ * registration wins over a legacy adjustment copy of the same id and keeps
+ * the trip's date; a genuinely-new late adjustment keeps its own date. That
+ * way a copy can never re-count in another month: October + its November
+ * copy still total one $80, not $160.
  */
 export function saleExpensePeriodTotals(
   purchases: Purchase[],
   year: number,
   month: number
 ): SaleExpensePeriodTotals {
-  const byCategoryCents: Partial<Record<PurchaseExpenseCategory, number>> = {};
-  const lines: SaleExpenseLine[] = [];
-  const seen = new Set<string>();
-  let totalCents = 0;
-
-  const add = (
+  // Pass 1 — canonical identity per expense id, across ALL months.
+  const canonical = new Map<string, SaleExpenseLine>();
+  const record = (
     purchase: Purchase,
     date: string,
     category: PurchaseExpenseCategory,
@@ -72,25 +75,30 @@ export function saleExpensePeriodTotals(
     id: string,
     description?: string
   ) => {
-    if (seen.has(id)) return; // "sin duplicar": one peso, one count.
-    seen.add(id);
-    byCategoryCents[category] = (byCategoryCents[category] ?? 0) + amountCents;
-    totalCents += amountCents;
-    lines.push({ purchaseId: purchase.id, date, category, description, amountCents });
+    if (canonical.has(id)) return; // "sin duplicar": one peso, one count, one month.
+    canonical.set(id, { purchaseId: purchase.id, date, category, description, amountCents });
   };
-
   for (const purchase of purchases) {
+    // Trip registrations first: an original wins over a same-id legacy copy.
     for (const expense of purchase.sourcingExpenses ?? []) {
       if (!isSaleExpense(expense)) continue;
-      if (!inPeriod(purchase.date, year, month)) continue;
-      add(purchase, purchase.date, expense.category, cents(expense.amount), expense.id, expense.description);
+      record(purchase, purchase.date, expense.category, cents(expense.amount), expense.id, expense.description);
     }
     for (const adjustment of purchase.saleCostAdjustments ?? []) {
       if (!SALE_EXPENSE_CATEGORIES.includes(adjustment.category)) continue;
-      const registered = dateCdmx(adjustment.at);
-      if (!inPeriod(registered, year, month)) continue;
-      add(purchase, registered, adjustment.category, cents(adjustment.amount), adjustment.id, adjustment.description);
+      record(purchase, dateCdmx(adjustment.at), adjustment.category, cents(adjustment.amount), adjustment.id, adjustment.description);
     }
+  }
+
+  // Pass 2 — aggregate the CANONICAL set for the requested month.
+  const byCategoryCents: Partial<Record<PurchaseExpenseCategory, number>> = {};
+  const lines: SaleExpenseLine[] = [];
+  let totalCents = 0;
+  for (const line of canonical.values()) {
+    if (!inPeriod(line.date, year, month)) continue;
+    byCategoryCents[line.category] = (byCategoryCents[line.category] ?? 0) + line.amountCents;
+    totalCents += line.amountCents;
+    lines.push(line);
   }
 
   lines.sort((a, b) => a.date.localeCompare(b.date));
