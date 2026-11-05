@@ -13,7 +13,8 @@ import {
   useToast,
 } from "../../design-system";
 import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
-import { orderTicketText } from "./orderTicket";
+import { orderTicketData, orderTicketText } from "./orderTicket";
+import { OrderReceipt } from "./OrderReceipt";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
 import { installmentPlanView } from "./installments";
@@ -177,7 +178,18 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       <div className="space-y-4">
         <TextArea label="Detalle del pedido" value={ticket} readOnly rows={Math.min(16, Math.max(6, ticket.split("\n").length))} />
         {copyFailed && <p className="text-danger">No se pudo copiar. Selecciona el texto y cópialo manualmente.</p>}
-        <Button full onClick={copyTicket}>Copiar detalle</Button>
+        {/* Printable receipt (#139): same canonical money as the text above. */}
+        <OrderReceipt
+          data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)}
+          whatsapp={activeStore?.whatsappPhone}
+        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <Button full onClick={copyTicket}>Copiar detalle</Button>
+          <Button full variant="secondary" onClick={() => window.print()}>Imprimir / Guardar PDF</Button>
+        </div>
+        <p className="text-xs text-on-surface-soft">
+          Al imprimir elige «Guardar como PDF» para compartirlo por WhatsApp. Solo el recibo sale en papel.
+        </p>
       </div>
     </Sheet>
     <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
