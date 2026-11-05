@@ -132,15 +132,19 @@ describe("saleExpensePeriodTotals (#184)", () => {
     expect(saleExpensePeriodTotals([withCopy], 2026, 10).totalCents).toBe(8000);
     expect(saleExpensePeriodTotals([withCopy], 2026, 11).totalCents).toBe(0);
 
-    // Misma forma con la copia en OTRA compra: el resultado canónico no cambia.
+    // Misma forma con la copia en OTRA compra: el resultado canónico no cambia,
+    // en AMBAS permutaciones de carga (review ronda 3: si la compra de la copia
+    // cargaba primero, ocupaba el id y movía los $80 a noviembre).
     const octoberTrip = purchase({ id: "p_oct2", date: "2026-10-20", sourcingExpenses: [{ id: "e1", category: "customer_delivery", amount: 80 }] });
     const novemberTrip = purchase({
       id: "p_nov2",
       date: "2026-11-04",
       saleCostAdjustments: [{ id: "e1", at: "2026-11-10T18:00:00.000Z", category: "customer_delivery", amount: 80 }],
     });
-    expect(saleExpensePeriodTotals([octoberTrip, novemberTrip], 2026, 10).totalCents).toBe(8000);
-    expect(saleExpensePeriodTotals([octoberTrip, novemberTrip], 2026, 11).totalCents).toBe(0);
+    for (const [label, order] of [["original→copia", [octoberTrip, novemberTrip]], ["copia→original", [novemberTrip, octoberTrip]]] as const) {
+      expect(saleExpensePeriodTotals([...order], 2026, 10).totalCents, `${label}: octubre`).toBe(8000);
+      expect(saleExpensePeriodTotals([...order], 2026, 11).totalCents, `${label}: noviembre`).toBe(0);
+    }
   });
 
   it("un gasto tardío genuino (sin original) conserva su propio mes", () => {
