@@ -63,16 +63,22 @@ function validateLocal(root) {
   return { errors, releases };
 }
 
+/** Extracts a meta tag's content from served HTML. null = meta absent. */
+function extractMeta(html, name) {
+  const m = new RegExp(`<meta\\s+name="${name}"\\s+content="([^"]*)"\\s*/?>`, "i").exec(html);
+  return m ? m[1] : null;
+}
+
 /** Extracts the served version from production HTML. null = meta absent. */
 function extractServedVersion(html) {
-  const m = /<meta\s+name="store-os-version"\s+content="([^"]*)"\s*\/?>/i.exec(html);
-  return m ? m[1] : null;
+  return extractMeta(html, "store-os-version");
 }
 
 async function probe(url) {
   const response = await fetch(url, { redirect: "follow", headers: { "cache-control": "no-cache" } });
   if (!response.ok) throw new Error(`production respondió ${response.status} al pedir ${url}`);
-  return extractServedVersion(await response.text());
+  const html = await response.text();
+  return { html, version: extractServedVersion(html), hasBuildId: extractMeta(html, "x-build") != null };
 }
 
 async function main() {
@@ -85,10 +91,18 @@ async function main() {
   if (probeUrl) {
     try {
       const served = await probe(probeUrl);
-      if (served == null) {
-        console.warn(`⚠ Producción aún no publica <meta store-os-version> (build anterior a #179). No hay referencia; se permite esta liberación.`);
-      } else if (parseSemver(latest) && compareSemver(latest, served) <= 0) {
-        errors.push(`Producción ya sirve ${served} y esta liberación llevaría ${latest}: incrementa la versión y agrega sus notas.`);
+      if (served.version == null) {
+        // Transition window, tightly bounded (review #194 F2): a legacy Store OS
+        // artifact proves itself with <meta x-build> (stamped since the refresh
+        // work). Anything else — a maintenance page, a proxy error with HTTP
+        // 200 — has NO Store OS identity and blocks the release.
+        if (!served.hasBuildId) {
+          errors.push(`La respuesta de producción no tiene identidad de Store OS (sin store-os-version ni x-build). No se libera contra una página desconocida.`);
+        } else {
+          console.warn(`⚠ Producción sirve un build legado sin <meta store-os-version> (anterior a #194). Única transición permitida: este release estrena el meta; el próximo sondeo exigirá versión.`);
+        }
+      } else if (parseSemver(latest) && compareSemver(latest, served.version) <= 0) {
+        errors.push(`Producción ya sirve ${served.version} y esta liberación llevaría ${latest}: incrementa la versión y agrega sus notas.`);
       }
     } catch (err) {
       errors.push(`No se pudo verificar la versión viva de producción (${err.message}). No se libera a ciegas.`);
@@ -104,4 +118,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { parseSemver, compareSemver, validateLocal, extractServedVersion, probe };
+module.exports = { parseSemver, compareSemver, validateLocal, extractMeta, extractServedVersion, probe };
