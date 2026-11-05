@@ -4,6 +4,7 @@ import { Button, Screen, ScreenHeader } from "../../design-system";
 import { navigate } from "../../lib/router";
 import { PurchaseForm } from "./PurchaseForm";
 import { PurchaseList } from "./PurchaseList";
+import { SaleExpenseSummary } from "./SaleExpenseSummary";
 import { effectivePurchaseStatus, type Purchase } from "../../types";
 
 // Compras: the purchase ledger + entry into the shared editor (manual or PDF
@@ -43,7 +44,11 @@ export function PurchasesScreen() {
           </Button>
         }
       />
-      <PurchaseList onBack={() => navigate("/productos")} onOpen={setEditing} />
+      <div className="space-y-3">
+        {/* #184 (corte ejecutable): visibilidad de gastos de venta del periodo. */}
+        <SaleExpenseSummary />
+        <PurchaseList onBack={() => navigate("/productos")} onOpen={setEditing} />
+      </div>
     </Screen>
   );
 }
