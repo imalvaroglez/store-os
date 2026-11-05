@@ -4,6 +4,22 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 
+// Single resolution of the build identity (review #194 F3): the HTML marker
+// and __BUILD_SHA__ MUST agree — one function, both consumers.
+export function resolveBuildSha(env: NodeJS.ProcessEnv = process.env): string {
+  // STORE_OS_BUILD_SHA overrides the git SHA so the refresh e2e can fabricate
+  // two distinct "deploys" (A/B) from one working tree without fake commits.
+  let sha = env.STORE_OS_BUILD_SHA?.trim() || "";
+  if (!sha && env.NODE_ENV === "production") {
+    try {
+      sha = execSync("git rev-parse --short HEAD").toString().trim();
+    } catch {
+      sha = "unknown";
+    }
+  }
+  return sha || "dev";
+}
+
 // Injects the building commit's short SHA into every HTML entry. The A→B stale
 // repro (scripts/repro-stale.mjs) and the refresh-hard-reload previewCheck read
 // this meta to know WHICH deploy was served — the direct evidence the spec requires.
@@ -11,17 +27,7 @@ import { execSync } from "node:child_process";
 // so scripts/check-release.cjs can compare what production ALREADY serves
 // against the candidate release before deploying.
 function buildMarker(): Plugin {
-  // STORE_OS_BUILD_SHA overrides the git SHA so the refresh e2e can fabricate
-  // two distinct "deploys" (A/B) from one working tree without fake commits.
-  let sha = process.env.STORE_OS_BUILD_SHA?.trim() || "";
-  if (!sha && process.env.NODE_ENV === "production") {
-    try {
-      sha = execSync("git rev-parse --short HEAD").toString().trim();
-    } catch {
-      sha = "unknown";
-    }
-  }
-  if (!sha) sha = "dev";
+  const sha = resolveBuildSha();
   let version = "";
   try {
     version = JSON.parse(readFileSync(resolve(__dirname, "src/releases/releases.json"), "utf8"))[0]?.version ?? "";
@@ -90,10 +96,11 @@ function publicEntryRewrite(): Plugin {
 
 export default defineConfig({
   plugins: [react(), buildMarker(), publicEntryRewrite()],
-  // Build identity for the version footer (#179). Tests (vitest) run without
-  // these defines, so consumers must guard with typeof.
+  // Build identity for the version footer (#179). Same resolution as the HTML
+  // marker — resolveBuildSha — so the footer can never disagree with the meta.
+  // Tests (vitest) run without these defines, so consumers must guard with typeof.
   define: {
-    __BUILD_SHA__: JSON.stringify(process.env.STORE_OS_BUILD_SHA?.trim() || "dev"),
+    __BUILD_SHA__: JSON.stringify(resolveBuildSha()),
     __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10).replace(/-/g, ".")),
   },
   build: { rollupOptions: { input: { main: resolve(__dirname, "index.html"), public: resolve(__dirname, "public.html") } } },
