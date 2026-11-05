@@ -346,10 +346,10 @@ test("copy the saved order detail", async ({ sharedPage: page }) => {
   });
   await page.getByRole("button", { name: "Ver detalle para compartir" }).first().click();
   const detail = page.getByRole("dialog", { name: "Detalle para compartir" });
-  await expect(detail.getByLabel("Detalle del pedido")).toHaveValue(/Total: \$/);
+  await expect(detail.getByLabel("Detalle del pedido")).toHaveValue(/Total \$/);
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
   await detail.getByRole("button", { name: "Copiar detalle" }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).toContain("Saldo:");
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).toContain("Saldo ");
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
 });
 
