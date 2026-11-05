@@ -92,14 +92,22 @@ async function main() {
     try {
       const served = await probe(probeUrl);
       if (served.version == null) {
-        // Transition window, tightly bounded (review #194 F2): a legacy Store OS
-        // artifact proves itself with <meta x-build> (stamped since the refresh
-        // work). Anything else — a maintenance page, a proxy error with HTTP
-        // 200 — has NO Store OS identity and blocks the release.
-        if (!served.hasBuildId) {
-          errors.push(`La respuesta de producción no tiene identidad de Store OS (sin store-os-version ni x-build). No se libera contra una página desconocida.`);
+        // Explicit, bounded bootstrap (review #194 F2, round 2). Releasing
+        // without a version reference is allowed ONLY while the candidate is
+        // the FIRST versioned release ever (history has exactly one entry) and
+        // the page proves a real Store OS build identity: an x-build that is a
+        // plausible git SHA. Once 1.5.0 ships, every later candidate carries
+        // ≥2 entries, so any version-less response — a lost meta, a proxy
+        // page, a stale artifact — is rejected from then on.
+        const buildSha = extractMeta(served.html, "x-build") ?? "";
+        const looksLikeSha = /^[0-9a-f]{7,40}$/i.test(buildSha);
+        const isFirstVersionedRelease = Array.isArray(releases) && releases.length === 1;
+        if (!looksLikeSha) {
+          errors.push(`La respuesta de producción no tiene identidad de Store OS (sin store-os-version ni x-build con SHA). No se libera contra una página desconocida.`);
+        } else if (!isFirstVersionedRelease) {
+          errors.push(`Producción sirve un build sin <meta store-os-version> pero la transición inicial ya pasó (el historial local tiene ${releases.length} versiones). Verifica la URL de producción: no se libera sin referencia de versión.`);
         } else {
-          console.warn(`⚠ Producción sirve un build legado sin <meta store-os-version> (anterior a #194). Única transición permitida: este release estrena el meta; el próximo sondeo exigirá versión.`);
+          console.warn(`⚠ Producción sirve el build legado ${buildSha} sin <meta store-os-version>. Ventana de bootstrap (primer release versionado): se permite esta única liberación sin referencia; a partir de la siguiente, el sondeo exigirá versión.`);
         }
       } else if (parseSemver(latest) && compareSemver(latest, served.version) <= 0) {
         errors.push(`Producción ya sirve ${served.version} y esta liberación llevaría ${latest}: incrementa la versión y agrega sus notas.`);

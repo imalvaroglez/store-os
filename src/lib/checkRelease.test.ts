@@ -109,7 +109,7 @@ describe("check-release CLI", () => {
   });
 
   it("aprueba (con aviso) una producción sin meta — transición de #179", async () => {
-    const serve = await startServer('<html><head><meta name="x-build" content="abc"></head></html>');
+    const serve = await startServer('<html><head><meta name="x-build" content="7449779"></head></html>');
     try {
       const root = fixture(); clean(root);
       const r = await run(root, ["--probe-url", serve.url]);
@@ -131,6 +131,40 @@ describe("check-release CLI", () => {
       expect(r.out).toContain("sin store-os-version ni x-build");
     } finally {
       serve.close();
+    }
+  });
+
+  it("rechaza un x-build sin versión cuando la transición inicial ya pasó (ronda 2)", async () => {
+    // Reproducción del review: un build POSTERIOR a versiones que perdió su
+    // meta no puede autorizarse como "legado". Solo el primer release
+    // versionado (historial de 1 entrada) tiene ventana de bootstrap.
+    const serve = await startServer('<html><head><meta name="x-build" content="1df12fb"></head></html>');
+    try {
+      const root = fixture({
+        releases: [
+          { version: "1.6.0", date: "2026.11.20", title: "Nueva", notes: ["n"] },
+          { version: "1.5.0", date: "2026.11.05", title: "X", notes: ["n"] },
+        ],
+      }); clean(root);
+      const r = await run(root, ["--probe-url", serve.url]);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("la transición inicial ya pasó");
+    } finally {
+      serve.close();
+    }
+  });
+
+  it("rechaza un x-build que no es un SHA plausible (dev, vacío)", async () => {
+    for (const content of ["dev", ""]) {
+      const serve = await startServer(`<html><head><meta name="x-build" content="${content}"></head></html>`);
+      try {
+        const root = fixture(); clean(root);
+        const r = await run(root, ["--probe-url", serve.url]);
+        expect(r.code).toBe(1);
+        expect(r.out).toContain("sin store-os-version ni x-build con SHA");
+      } finally {
+        serve.close();
+      }
     }
   });
 
