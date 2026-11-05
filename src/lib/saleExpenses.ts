@@ -53,12 +53,13 @@ function inPeriod(date: string, year: number, month: number): boolean {
  * pieces, so they are never added again here. Expenses moved to inventory
  * cost are excluded — they stopped being sale expenses.
  *
- * Identity is resolved BEFORE any period filter (review #196, round 2): each
- * expense id yields ONE canonical entry over all loaded records — the trip
- * registration wins over a legacy adjustment copy of the same id and keeps
- * the trip's date; a genuinely-new late adjustment keeps its own date. That
- * way a copy can never re-count in another month: October + its November
- * copy still total one $80, not $160.
+ * Identity is resolved BEFORE any period filter (review #196, rounds 2-3):
+ * each expense id yields ONE canonical entry over all loaded records — the
+ * trip registration wins over a legacy adjustment copy of the same id and
+ * keeps the trip's date, REGARDLESS of the order purchases load in; a
+ * genuinely-new late adjustment keeps its own date. That way a copy can never
+ * re-count in another month: October + its November copy still total one
+ * $80, not $160 — in either load order.
  */
 export function saleExpensePeriodTotals(
   purchases: Purchase[],
@@ -78,12 +79,19 @@ export function saleExpensePeriodTotals(
     if (canonical.has(id)) return; // "sin duplicar": one peso, one count, one month.
     canonical.set(id, { purchaseId: purchase.id, date, category, description, amountCents });
   };
+  // ALL trip registrations first, then ALL late adjustments — as separate
+  // passes over every purchase (review #196, round 3): processing a whole
+  // purchase before the next one made a legacy same-id copy win whenever its
+  // purchase loaded before the original's, moving the expense to the copy's
+  // month. With originals guaranteed to enter the map first, the winner never
+  // depends on purchase order.
   for (const purchase of purchases) {
-    // Trip registrations first: an original wins over a same-id legacy copy.
     for (const expense of purchase.sourcingExpenses ?? []) {
       if (!isSaleExpense(expense)) continue;
       record(purchase, purchase.date, expense.category, cents(expense.amount), expense.id, expense.description);
     }
+  }
+  for (const purchase of purchases) {
     for (const adjustment of purchase.saleCostAdjustments ?? []) {
       if (!SALE_EXPENSE_CATEGORIES.includes(adjustment.category)) continue;
       record(purchase, dateCdmx(adjustment.at), adjustment.category, cents(adjustment.amount), adjustment.id, adjustment.description);
