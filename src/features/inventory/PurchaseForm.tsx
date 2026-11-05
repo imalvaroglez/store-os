@@ -15,7 +15,7 @@ import {
 } from "../../design-system";
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
 import { todayIso, nowIso, parseSpanishDate, formatDate } from "../../lib/dates";
-import { formatMoney, formatMoneyExact, parseAmount } from "../../lib/money";
+import { formatMoney, formatMoneyExact, parseAmount, sanitizeDecimalInput } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
 import { uid } from "../../lib/ids";
@@ -1212,7 +1212,7 @@ function ProductMiniForm({
         onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
         autoFocus
       />
-      <TextField label="Costo" inputMode="decimal" placeholder="0" value={cost} onChange={(e) => setCost(e.target.value)} />
+      <TextField label="Costo" inputMode="decimal" placeholder="0" value={cost} onChange={(e) => setCost(sanitizeDecimalInput(e.target.value))} />
       {isTiered ? (
         <div className={tiers.length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
           {tiers.map((t) => (
@@ -1222,12 +1222,12 @@ function ProductMiniForm({
               inputMode="decimal"
               placeholder="0"
               value={tierPrices[t.id] ?? ""}
-              onChange={(e) => setTierPrices((m) => ({ ...m, [t.id]: e.target.value }))}
+              onChange={(e) => setTierPrices((m) => ({ ...m, [t.id]: sanitizeDecimalInput(e.target.value) }))}
             />
           ))}
         </div>
       ) : (
-        <TextField label="Precio de venta" inputMode="decimal" placeholder="0" value={price} onChange={(e) => setPrice(e.target.value)} />
+        <TextField label="Precio de venta" inputMode="decimal" placeholder="0" value={price} onChange={(e) => setPrice(sanitizeDecimalInput(e.target.value))} />
       )}
       <CheckboxField
         label="Publicar en el catálogo"

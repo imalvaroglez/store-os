@@ -13,7 +13,7 @@ import {
   MultiPhotoPicker,
   type GalleryTile,
 } from "../../design-system";
-import { parseAmount, formatMoney } from "../../lib/money";
+import { parseAmount, formatMoney, sanitizeDecimalInput } from "../../lib/money";
 import { DEFAULT_LOW_STOCK_AT } from "../../lib/inventory";
 import { defaultTier, suggestedPrice, tiersForStore } from "../../lib/pricing";
 import { slugify, uniqueProductSlug, suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
@@ -408,7 +408,7 @@ export function ProductForm({
         inputMode="decimal"
         placeholder="0"
         value={cost}
-        onChange={(e) => setCost(e.target.value)}
+        onChange={(e) => setCost(sanitizeDecimalInput(e.target.value))}
       />
 
       {isTiered ? (
@@ -424,7 +424,7 @@ export function ProductForm({
                     inputMode="decimal"
                     placeholder="0"
                     value={tierPrices[t.id] ?? ""}
-                    onChange={(e) => setTierPrices((m) => ({ ...m, [t.id]: e.target.value }))}
+                    onChange={(e) => setTierPrices((m) => ({ ...m, [t.id]: sanitizeDecimalInput(e.target.value) }))}
                     hint={suggested != null ? `Sugerido: ${formatMoney(suggested)}` : undefined}
                   />
                   {suggested != null && (
@@ -459,7 +459,7 @@ export function ProductForm({
           inputMode="decimal"
           placeholder="0"
           value={price}
-          onChange={(e) => setPrice(e.target.value)}
+          onChange={(e) => setPrice(sanitizeDecimalInput(e.target.value))}
         />
       )}
 
