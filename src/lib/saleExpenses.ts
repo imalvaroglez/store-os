@@ -14,7 +14,7 @@ import {
 
 export type SaleExpenseLine = {
   purchaseId: string;
-  /** Purchase date (ISO) — the trip is the accounting unit of the expense. */
+  /** When the money was registered: trip date, or the late expense's own date. */
   date: string;
   category: PurchaseExpenseCategory;
   description?: string;
@@ -33,18 +33,26 @@ export type SaleExpensePeriodTotals = {
 
 const cents = (pesos: number) => Math.round(pesos * 100);
 
+/** "YYYY-MM-DD" of an ISO instant in the Mexico City calendar (business tz). */
+function dateCdmx(iso: string): string {
+  // en-CA yields ISO-like YYYY-MM-DD regardless of the runtime's locale.
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+}
+
 function inPeriod(date: string, year: number, month: number): boolean {
   const prefix = `${year}-${String(month).padStart(2, "0")}`;
   return date.slice(0, 7) === prefix;
 }
 
 /**
- * Sale-side expenses of one month: the amounts REGISTERED with each purchase
- * (plus late ones recorded after reception — immutable, real money out). The
- * per-piece allocations are the SAME money spread over pieces, so they are
- * never added again here; an expense id is counted once even if a legacy copy
- * appears in both places. Expenses moved to inventory cost are excluded — they
- * stopped being sale expenses.
+ * Sale-side expenses of one month, by when the money was REGISTERED (review
+ * #196 F4): expenses captured with the trip count in the purchase's month;
+ * late adjustments count in their OWN month (`at`, converted to the Mexico
+ * City calendar), because that is when the outlay actually happened for the
+ * monthly close. The per-piece allocations are the SAME money spread over
+ * pieces, so they are never added again here; an expense id is counted once
+ * even if a legacy copy appears in both places. Expenses moved to inventory
+ * cost are excluded — they stopped being sale expenses.
  */
 export function saleExpensePeriodTotals(
   purchases: Purchase[],
@@ -58,6 +66,7 @@ export function saleExpensePeriodTotals(
 
   const add = (
     purchase: Purchase,
+    date: string,
     category: PurchaseExpenseCategory,
     amountCents: number,
     id: string,
@@ -67,24 +76,20 @@ export function saleExpensePeriodTotals(
     seen.add(id);
     byCategoryCents[category] = (byCategoryCents[category] ?? 0) + amountCents;
     totalCents += amountCents;
-    lines.push({
-      purchaseId: purchase.id,
-      date: purchase.date,
-      category,
-      description,
-      amountCents,
-    });
+    lines.push({ purchaseId: purchase.id, date, category, description, amountCents });
   };
 
   for (const purchase of purchases) {
-    if (!inPeriod(purchase.date, year, month)) continue;
     for (const expense of purchase.sourcingExpenses ?? []) {
       if (!isSaleExpense(expense)) continue;
-      add(purchase, expense.category, cents(expense.amount), expense.id, expense.description);
+      if (!inPeriod(purchase.date, year, month)) continue;
+      add(purchase, purchase.date, expense.category, cents(expense.amount), expense.id, expense.description);
     }
     for (const adjustment of purchase.saleCostAdjustments ?? []) {
       if (!SALE_EXPENSE_CATEGORIES.includes(adjustment.category)) continue;
-      add(purchase, adjustment.category, cents(adjustment.amount), adjustment.id, adjustment.description);
+      const registered = dateCdmx(adjustment.at);
+      if (!inPeriod(registered, year, month)) continue;
+      add(purchase, registered, adjustment.category, cents(adjustment.amount), adjustment.id, adjustment.description);
     }
   }
 
