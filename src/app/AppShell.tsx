@@ -18,6 +18,7 @@ import {
   type Tab,
 } from "../design-system";
 import { visibleNavItems, navigate } from "../design-system/navItems";
+import { VersionFooter } from "./VersionFooter";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { CatalogScreen } from "../features/catalog/CatalogScreen";
 import { CategoriesScreen } from "../features/catalog/CategoriesScreen";
@@ -188,6 +189,9 @@ export function AppShell() {
         </header>
 
         <main className="flex-1 overflow-y-auto pb-24 md:pb-8">{screen}</main>
+
+        {/* Version + release notes at the panel footer (#179) */}
+        <VersionFooter />
 
         {/* Mobile-only bottom nav */}
         <BottomNav active={tab} storeType={activeStore.type} userRole={user?.role} />
