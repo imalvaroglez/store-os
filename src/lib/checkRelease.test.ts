@@ -17,6 +17,7 @@ const SCRIPT = join(here, "..", "..", "scripts", "check-release.cjs");
 const logic = require(SCRIPT) as {
   parseSemver: (v: unknown) => number[] | null;
   compareSemver: (a: unknown, b: unknown) => number | null;
+  extractMeta: (html: string, name: string) => string | null;
   extractServedVersion: (html: string) => string | null;
 };
 
@@ -114,6 +115,20 @@ describe("check-release CLI", () => {
       const r = await run(root, ["--probe-url", serve.url]);
       expect(r.code).toBe(0);
       expect(r.out).toContain("⚠");
+    } finally {
+      serve.close();
+    }
+  });
+
+  it("bloquea una respuesta 200 sin identidad de Store OS (página de mantenimiento)", async () => {
+    // Reproducción del review (#194 F2): antes, cualquier 200 sin el meta de
+    // versión pasaba con aviso. Ahora exige identidad legada verificable.
+    const serve = await startServer("<html><head><title>Mantenimiento</title></head><body>En breve regresamos</body></html>");
+    try {
+      const root = fixture(); clean(root);
+      const r = await run(root, ["--probe-url", serve.url]);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("sin store-os-version ni x-build");
     } finally {
       serve.close();
     }
