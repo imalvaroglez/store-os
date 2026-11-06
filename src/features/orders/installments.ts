@@ -176,7 +176,7 @@ export function installmentPlanView(
   const plan = order.installments as OrderInstallmentPlan | undefined;
   if (!plan) return null;
   // #203: effective total, same as every other read model (#212 F3).
-  const totalCents = orderTotalCents(order) + incidentsSaleAdjustmentCents(order.incidents);
+  const totalCents = Math.max(0, orderTotalCents(order) + incidentsSaleAdjustmentCents(order.incidents));
   const receivedCents = docReceivedCents(order);
   // #189: the NET balance — saldo a favor applied from sister orders counts
   // as covered (the clienta's money already arrived, on another order). Cuota

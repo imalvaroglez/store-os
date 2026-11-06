@@ -1440,8 +1440,10 @@ export async function applyIncidentEventTx(params: {
     if (kind === "refund_executed" && (!state.confirmed || incidentsRefundPendingCentsOf(incident) <= 0)) {
       throw new Error("Confirma la recepción de la pieza y entrega del reembolso antes de liquidarlo.");
     }
-    if (kind === "provider_compensation"
-      && (!state.confirmed || (incident.events ?? []).some((saved) => saved.kind === "provider_compensation"))) {
+    if (kind === "provider_compensation" && !state.confirmed) {
+      throw new Error("Confirma la incidencia antes de registrar al proveedor.");
+    }
+    if (kind === "provider_compensation" && (incident.events ?? []).some((saved) => saved.kind === "provider_compensation")) {
       throw new Error("La compensación del proveedor ya está registrada en esta incidencia.");
     }
     // ── Inventory effects (same commit; shortages abort the whole event).
