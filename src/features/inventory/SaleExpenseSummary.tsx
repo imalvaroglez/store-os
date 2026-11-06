@@ -91,12 +91,12 @@ export function SaleExpenseSummary() {
         </ul>
       )}
       {totals.lines.length === 0 && (
-        <p className="mt-3 text-xs text-on-surface-soft/80">Sin gastos de venta en este periodo.</p>
+        <p className="mt-3 text-xs text-on-surface-soft/80">No hay gastos de empaque o entrega registrados en este periodo.</p>
       )}
 
       <p className="mt-3 text-xs text-on-surface-soft/70">
-        Cada gasto se cuenta en el mes en que se registró (los tardíos, con su propia fecha). Los traslados para
-        surtir y los gastos movidos al costo de inventario no aparecen aquí.
+        Este resumen solo incluye gastos de venta registrados: empaques y entregas a clientas. Comprar mercancía
+        o pagar el traslado para surtir no aumenta este total. Cada gasto se cuenta en su mes de registro.
       </p>
     </Card>
   );

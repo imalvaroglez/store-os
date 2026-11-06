@@ -63,6 +63,7 @@ describe("sale expenses and post-reception adjustments (FER-02)", () => {
 
   it("explains a sale expense per piece without offering it as inventory cost", async () => {
     open();
+    fireEvent.click(screen.getByRole("tab", { name: "Revisión general" }));
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto" }));
     fireEvent.change(screen.getByLabelText("Tipo de gasto"), { target: { value: "customer_delivery" } });
     fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "25" } });
@@ -81,6 +82,7 @@ describe("sale expenses and post-reception adjustments (FER-02)", () => {
       saleCostAdjustments: [{ id: "adj1", at: "2026-11-02T12:00:00Z", category: "customer_delivery", amount: 25, allocations: [{ lineId: "line", saleExpenseCents: 2500 }] }],
     });
     open(value);
+    fireEvent.click(screen.getByRole("tab", { name: "Revisión general" }));
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto después de recibir" }));
     fireEvent.change(screen.getByLabelText("Tipo de gasto"), { target: { value: "customer_delivery" } });
     fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "25" } });
@@ -100,6 +102,7 @@ describe("sale expenses and post-reception adjustments (FER-02)", () => {
 
   it("rejects a late expense without a positive amount", async () => {
     open(receivedPurchase());
+    fireEvent.click(screen.getByRole("tab", { name: "Revisión general" }));
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto después de recibir" }));
     fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
@@ -110,6 +113,7 @@ describe("sale expenses and post-reception adjustments (FER-02)", () => {
   it("explains a Firestore failure when saving the late expense", async () => {
     adjustReceivedPurchase.mockRejectedValueOnce(Object.assign(new Error("Missing or insufficient permissions"), { code: "permission-denied" }));
     open(receivedPurchase());
+    fireEvent.click(screen.getByRole("tab", { name: "Revisión general" }));
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto después de recibir" }));
     fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "7" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
@@ -265,11 +269,115 @@ describe("purchase amount entry", () => {
     const first = upsertPurchase.mock.calls[0][0] as Purchase;
     expect(first.lines[0]).toMatchObject({ unitCost: 20, sourceAmountType: "unit" });
     expect(first.lines[1]).toMatchObject({ unitCost: 0, sourceAmountType: "unknown" });
-    fireEvent.change(screen.getByLabelText("Ticket que estás capturando"), { target: { value: "b" } });
+    fireEvent.click(screen.getByRole("tab", { name: /#B/ }));
     fireEvent.click(screen.getByRole("button", { name: "Total por línea" }));
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
     await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(2));
     expect(upsertPurchase.mock.calls[1][0].lines[0].unitCost).toBe(20);
     expect(upsertPurchase.mock.calls[1][0].lines[1]).toMatchObject({ unitCost: 10, sourceAmountType: "line" });
   });
+});
+
+describe("ticket capture and journey review (#206)", () => {
+  const journey = (): Purchase => ({
+    ...purchase(), totalConfirmed: 30,
+    tickets: [{ id: "a", folio: "A", totalConfirmed: 10 }, { id: "b", folio: "B", totalConfirmed: 20 }],
+    lines: [
+      { lineId: "a1", ticketId: "a", productId: "ring", name: "Pieza A", quantity: 1, unitCost: 10 },
+      { lineId: "b1", ticketId: "b", productId: "ring", name: "Pieza B", quantity: 2, unitCost: 10 },
+    ],
+  });
+
+  it("captures only the active ticket, preserves its money text and saves every ticket", async () => {
+    open(journey());
+    expect(screen.getAllByLabelText("Producto", { exact: true })).toHaveLength(1);
+    expect(screen.getByLabelText("Producto", { exact: true })).toHaveValue("Pieza A");
+    expect(screen.queryByLabelText("Ticket de esta línea")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Total pagado", { exact: true }), { target: { value: "10." } });
+    fireEvent.click(screen.getByRole("tab", { name: /#B/ }));
+    expect(screen.getByLabelText("Producto", { exact: true })).toHaveValue("Pieza B");
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar línea" }));
+    fireEvent.click(screen.getByRole("tab", { name: /#A/ }));
+    expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveValue("10.");
+    expect(screen.getAllByLabelText("Producto", { exact: true })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    expect(upsertPurchase.mock.calls[0][0].lines.map((line: { ticketId: string }) => line.ticketId)).toEqual(["a", "b", "b"]);
+  });
+
+  it("preserves invalid ticket text across tabs and takes review errors to the exact field", async () => {
+    open(journey());
+    fireEvent.change(screen.getByLabelText("Total pagado", { exact: true }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("tab", { name: /#B/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    expect(upsertPurchase).not.toHaveBeenCalled();
+    const fix = screen.getByRole("button", { name: /#A.*Total pagado/ });
+    fireEvent.click(fix);
+    await waitFor(() => expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveFocus());
+    expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveValue("");
+    expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveAttribute("aria-invalid", "true");
+    fireEvent.change(screen.getByLabelText("Total pagado", { exact: true }), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+  });
+
+  it("separates global filters from capture and does not show a blank PDF amount column", () => {
+    open(journey());
+    expect(screen.queryByText("Importe", { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Todas (2)" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Revisión general" }));
+    fireEvent.click(screen.getByText("Revisar productos (2 renglones)", { exact: true }));
+    expect(screen.getByRole("button", { name: "Todas (2)" })).toBeVisible();
+    expect(screen.getAllByLabelText("Producto", { exact: true })).toHaveLength(2);
+    expect(screen.getByRole("region", { name: "Resumen de tickets" })).toHaveTextContent("#A");
+    expect(screen.getByRole("region", { name: "Resumen de tickets" })).toHaveTextContent("#B");
+  });
+
+  it("does not announce a saved draft until persistence resolves, and retains data after rejection", async () => {
+    let reject!: (error: Error) => void;
+    upsertPurchase.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    open(journey());
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    expect(screen.queryByText("Borrador guardado.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardando…" })).toBeDisabled();
+    reject(new Error("offline"));
+    await waitFor(() => expect(screen.getByText("No se pudo guardar la compra. Revisa tu conexión e intenta de nuevo.")).toBeVisible());
+    expect(screen.getByLabelText("Producto", { exact: true })).toHaveValue("Pieza A");
+  });
+});
+
+it("importing a new ticket preserves invalid text in the previous ticket", async () => {
+  open();
+  fireEvent.change(screen.getByLabelText("Total pagado", { exact: true }), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ Agregar ticket" }));
+  pdfPayloads.push({ supplierOrder: "PDF-NEW", total: 15, lines: [{ productId: "ring", name: "PDF piece", quantity: 3, unitCost: 5 }] });
+  fireEvent.click(screen.getByRole("button", { name: "Importar PDF de prueba" }));
+  expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveValue("15");
+  fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+  expect(upsertPurchase).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: /Ticket 1.*Total pagado: escribe/ }));
+  await waitFor(() => expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveFocus());
+  expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveValue("");
+});
+
+it("does not let bulk product creation persist an invalid amount hidden in another ticket", () => {
+  open();
+  fireEvent.change(screen.getByLabelText("Total pagado", { exact: true }), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ Agregar ticket" }));
+  fireEvent.click(screen.getByRole("button", { name: "+ Agregar línea" }));
+  fireEvent.click(screen.getByRole("button", { name: "+ Agregar línea" }));
+  expect(screen.getByRole("button", { name: "Crear 2 productos" })).toBeDisabled();
+});
+
+it("locks adding and removing trip expenses while a draft save is pending", async () => {
+  let finish!: () => void;
+  upsertPurchase.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+  open({ ...purchase(), sourcingExpenses: [{ id: "transport", category: "sourcing_transport", amount: 44 }] });
+  fireEvent.click(screen.getByRole("tab", { name: "Revisión general" }));
+  fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+  expect(screen.getByRole("button", { name: "+ Agregar gasto" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /^Quitar$/ })).toBeDisabled();
+  finish();
+  await waitFor(() => expect(screen.getByRole("button", { name: "+ Agregar gasto" })).not.toBeDisabled());
+  expect(upsertPurchase.mock.calls[0][0].sourcingExpenses).toEqual([{ id: "transport", category: "sourcing_transport", amount: 44 }]);
 });
