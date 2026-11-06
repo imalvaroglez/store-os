@@ -33,6 +33,8 @@ import {
 import type { AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
+import { incidentState } from "../../features/orders/incidents";
+import type { OrderIncident, OrderIncidentEvent } from "../../types";
 import { publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -417,6 +419,9 @@ export async function saveOrderWithStockTx(
       creditAppliedCents: typeof docData?.creditAppliedCents === "number" ? docData.creditAppliedCents : undefined,
       creditConsumedCents: typeof docData?.creditConsumedCents === "number" ? docData.creditConsumedCents : undefined,
       creditLedger: Array.isArray(docData?.creditLedger) ? (docData.creditLedger as Order["creditLedger"]) : undefined,
+      // #203: same verbatim discipline — incidents (append-only evidence on
+      // this order) belong to the incident transactions, never to a form save.
+      incidents: Array.isArray(docData?.incidents) ? (docData.incidents as Order["incidents"]) : undefined,
     };
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
@@ -796,6 +801,17 @@ export async function deleteOrderWithStockTx(
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(orderRef);
     if (!snap.exists()) return [];
+    // #203: an order with a confirmed incident still holding quarantined
+    // pieces cannot be deleted — the quarantine release lives on this ficha
+    // (deleting it would orphan quantityQuarantined forever; review #212 F5).
+    const orderIncidents = Array.isArray(snap.data().incidents) ? (snap.data().incidents as OrderIncident[]) : [];
+    if (orderIncidents.some((incident) => {
+      const quarantined = (incident.events ?? []).some((event) => event.kind === "confirmed")
+        && !(incident.events ?? []).some((event) => event.kind === "repaired" || event.kind === "provider_replacement" || event.kind === "returned_to_sale" || event.kind === "written_off");
+      return quarantined;
+    })) {
+      throw new Error("El pedido tiene una incidencia con pieza en cuarentena. Líbrala (reparar, baja, reemplazo o venta) antes de borrar el pedido.");
+    }
     const previous = migrateOrder({ ...snap.data(), id: orderId });
     if ((previous.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
     // A zero accumulator can still have payments and offsetting adjustments.
@@ -1332,4 +1348,170 @@ export async function rebuildPublicCatalog(
     },
     { merge: true }
   );
+}
+
+/**
+ * #203: open an incident on an order — appends the incident (with its
+ * `opened` event) atomically. No inventory effect yet: the piece is still
+ * with the clienta. Idempotent by incident id.
+ */
+export async function openIncidentTx(params: {
+  orderId: string;
+  storeId: string;
+  incident: OrderIncident;
+}): Promise<Order> {
+  const { db } = getFirebase();
+  const { orderId, storeId, incident } = params;
+  const orderRef = doc(db, "orders", orderId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) throw new Error("No se encontró el pedido.");
+    const data = snap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    if (data.orderStatus === "cancelled") throw new Error("Un pedido cancelado no admite incidencias.");
+    const incidents = Array.isArray(data.incidents) ? [...(data.incidents as OrderIncident[])] : [];
+    if (incidents.some((existing) => existing.id === incident.id)) return migrateOrder({ ...data, id: orderId });
+    if (!incident.events?.some((event) => event.kind === "opened")) {
+      throw new Error("La incidencia debe abrirse con su evento de registro.");
+    }
+    incidents.push(incident);
+    const updatedAt = new Date().toISOString();
+    tx.update(orderRef, { incidents: stripUndefined(incidents), updatedAt });
+    return migrateOrder({ ...data, id: orderId, incidents, updatedAt });
+  });
+}
+
+/**
+ * #203: append ONE event to an incident and apply its effects atomically.
+ * Validity is derived from the FRESH order document (the incident's own
+ * history), so a repeated or out-of-order action aborts instead of inventing
+ * state. Inventory effects, when the event has them, land in the SAME commit:
+ * - confirmed: the damaged piece enters quarantine (not sellable) and the
+ *   replacement leaves stock at its real cost (shortage aborts the event).
+ * - repaired / provider_replacement / returned_to_sale: quarantine → sellable.
+ * - written_off: the piece leaves quarantine (identifiable loss, no cash).
+ * - refund_executed / provider_compensation: evidence only (money and its
+ *   valuation belong to #123/#128-#129, never duplicated here).
+ * `resolution`/`replacement` ride along ONLY for resolution_agreed.
+ */
+export async function applyIncidentEventTx(params: {
+  orderId: string;
+  storeId: string;
+  incidentId: string;
+  event: OrderIncidentEvent;
+  resolution?: OrderIncident["resolution"];
+  replacement?: OrderIncident["replacement"];
+}): Promise<{ order: Order }> {
+  const { db } = getFirebase();
+  const { orderId, storeId, incidentId, event, resolution, replacement } = params;
+  const orderRef = doc(db, "orders", orderId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) throw new Error("No se encontró el pedido.");
+    const data = snap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    const incidents = Array.isArray(data.incidents) ? (data.incidents as OrderIncident[]) : [];
+    const index = incidents.findIndex((existing) => existing.id === incidentId);
+    if (index < 0) throw new Error("No se encontró la incidencia.");
+    if (incidents.some((existing) => existing.events?.some((saved) => saved.id === event.id))) {
+      return { order: migrateOrder({ ...data, id: orderId }) }; // idempotent retry
+    }
+    const incident = incidents[index];
+    const state = incidentState(incident);
+    const quantity = Math.max(1, Math.round(incident.quantity || 1));
+    // ── Validity from derived state (fail closed on nonsense sequences). ──
+    const kind = event.kind;
+    if (kind === "resolution_agreed" && (state.resolution || !state.opened)) {
+      throw new Error("Esta incidencia ya tiene una resolución acordada.");
+    }
+    // #212 F2 defense in depth: a replacement resolution MUST name the real
+    // piece leaving stock — no stock-less defaults, no invented costs.
+    if (kind === "resolution_agreed" && (resolution?.kind === "replacement_equivalent" || resolution?.kind === "replacement_with_difference")
+      && !replacement?.productId) {
+      throw new Error("Elige la pieza que entregas como reemplazo.");
+    }
+    if (kind === "confirmed" && (!state.resolution || state.confirmed)) {
+      throw new Error("Confirma la resolución con la clienta antes de registrar recepción y entrega.");
+    }
+    if (["repaired", "provider_replacement", "returned_to_sale", "written_off"].includes(kind)
+      && state.pieceLocation !== "quarantined") {
+      throw new Error("La pieza no está en cuarentena; registra primero su recepción.");
+    }
+    if (kind === "refund_executed" && (!state.confirmed || incidentsRefundPendingCentsOf(incident) <= 0)) {
+      throw new Error("Confirma la recepción de la pieza y entrega del reembolso antes de liquidarlo.");
+    }
+    if (kind === "provider_compensation"
+      && (!state.confirmed || (incident.events ?? []).some((saved) => saved.kind === "provider_compensation"))) {
+      throw new Error("La compensación del proveedor ya está registrada en esta incidencia.");
+    }
+    // ── Inventory effects (same commit; shortages abort the whole event).
+    // Firestore requires EVERY read before ANY write: both product reads
+    // happen first, then both writes.
+    const quarantineProduct = incident.productId ? doc(db, "products", incident.productId) : null;
+    if (kind === "confirmed") {
+      // The PERSISTED resolution/replacement drive the confirm (parameters
+      // only ride along with resolution_agreed) — the fresh doc is the truth
+      // (review #212 F9: doc-first, never the incoming parameter).
+      const agreed = incident.resolution ?? resolution;
+      const target = agreed && agreed.kind !== "refund"
+        ? (incident.replacement ?? replacement)
+        : undefined;
+      // #212 F4: wait_restock hands the restocked piece over at confirm — the
+      // SAME piece leaves stock at its real stored cost, shortage included.
+      const effectiveTarget = agreed?.kind === "wait_restock"
+        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false })
+        : target;
+      if (quarantineProduct) {
+        const productSnap = await tx.get(quarantineProduct);
+        if (productSnap.exists() && (productSnap.data().storeId ?? "") !== storeId) {
+          throw new Error("El producto pertenece a otra tienda.");
+        }
+      }
+      let replacementRef: ReturnType<typeof doc> | null = null;
+      if (effectiveTarget?.productId) {
+        replacementRef = doc(db, "products", effectiveTarget.productId);
+        const replacementSnap = await tx.get(replacementRef);
+        if (!replacementSnap.exists()) throw new Error("No se encontró el producto de reemplazo.");
+        if ((replacementSnap.data().storeId ?? "") !== storeId) throw new Error("El reemplazo pertenece a otra tienda.");
+        const onHand = typeof replacementSnap.data().quantityOnHand === "number" ? replacementSnap.data().quantityOnHand : 0;
+        if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del reemplazo.`);
+      }
+      if (quarantineProduct) {
+        tx.update(quarantineProduct, { quantityQuarantined: increment(quantity), updatedAt: event.at });
+      }
+      if (replacementRef) {
+        tx.update(replacementRef, { quantityOnHand: increment(-quantity), updatedAt: event.at });
+      }
+    }
+    if ((kind === "repaired" || kind === "provider_replacement" || kind === "returned_to_sale") && quarantineProduct) {
+      tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), quantityOnHand: increment(quantity), updatedAt: event.at });
+    }
+    if (kind === "written_off" && quarantineProduct) {
+      tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), updatedAt: event.at });
+    }
+    // ── Order doc: append the event (and the agreed resolution, once). ──
+    const updated: OrderIncident = {
+      ...incident,
+      ...(kind === "resolution_agreed" && resolution ? { resolution } : {}),
+      ...(kind === "resolution_agreed" && replacement ? { replacement } : {}),
+      events: [...(incident.events ?? []), event],
+    };
+    const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));
+    const updatedAt = event.at;
+    tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
+    return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }) };
+  });
+}
+
+function incidentsRefundPendingCentsOf(incident: OrderIncident): number {
+  const resolution = incident.resolution;
+  if (!resolution || resolution.kind !== "refund") return 0;
+  const quantity = Math.max(1, Math.round(incident.quantity || 1));
+  const agreed = typeof resolution.refundUnitPriceCents === "number" && Number.isSafeInteger(resolution.refundUnitPriceCents) && resolution.refundUnitPriceCents > 0 ? resolution.refundUnitPriceCents : 0;
+  const executed = (incident.events ?? []).reduce(
+    (sum: number, event: OrderIncidentEvent) =>
+      sum + ((event.kind === "confirmed" || event.kind === "refund_executed") && typeof event.detail?.refundExecutedCents === "number" && Number.isSafeInteger(event.detail.refundExecutedCents) ? event.detail.refundExecutedCents : 0),
+    0
+  );
+  return Math.max(0, agreed * quantity - executed);
 }
