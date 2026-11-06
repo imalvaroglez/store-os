@@ -19,7 +19,11 @@ export async function fileHash(file) {
   for await (const chunk of createReadStream(file)) hash.update(chunk);
   return hash.digest('hex');
 }
-export async function privateDirectory(dir) { await mkdir(dir, { recursive: true, mode: 0o700 }); await chmod(dir, 0o700); }
+export async function privateDirectory(dir) {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  // iCloud can deny a redundant chmod even when the directory is already private.
+  if (((await stat(dir)).mode & 0o7777) !== 0o700) await chmod(dir, 0o700);
+}
 export async function json(file, value) { await writeFile(file, JSON.stringify(value, null, 2), { mode: 0o600 }); }
 export async function readJson(file) { return JSON.parse(await readFile(file, 'utf8')); }
 export async function atomicJson(file, value) { await json(`${file}.new`, value); await rename(`${file}.new`, file); }

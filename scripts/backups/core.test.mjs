@@ -5,8 +5,9 @@ import { mkdtemp, chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/pro
 import path from 'node:path';
 import os from 'node:os';
 import childProcess, { execFileSync, spawn } from 'node:child_process';
+import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
-import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, dueDate, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
+import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, dueDate, privateDirectory, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
 import { DEV, PROD } from './core.mjs';
 import { capture, restore, remapFields, validateTarget, validateUsers, EMULATORS } from './cloud.mjs';
 import { startSupervisor, stopSupervisor, supervisedCommand, cleanupStaleWorkspaces } from './supervisor.mjs';
@@ -303,4 +304,20 @@ test('first manual run fails closed so an older installed scheduler cannot lose 
   const now = new Date('2026-11-07T03:15:00Z');
   const oldRuntimeSkips = state.lastScheduledDate ? dueDate(now) <= state.lastScheduledDate : !isDue(now, state.lastSuccess);
   assert.equal(oldRuntimeSkips, false);
+});
+
+test('secure existing directories need no chmod; insecure directories still fail closed', async t => {
+  const dir = await workspace(t);
+  const original = fsPromises.chmod;
+  await original(dir, 0o700);
+  let calls = 0;
+  fsPromises.chmod = async () => { calls++; const error = new Error('fixture chmod denied'); error.code = 'EPERM'; throw error; };
+  syncBuiltinESMExports();
+  try {
+    await privateDirectory(dir);
+    assert.equal(calls, 0);
+    await original(dir, 0o755);
+    await assert.rejects(privateDirectory(dir), { code: 'EPERM' });
+    assert.equal(calls, 1);
+  } finally { fsPromises.chmod = original; syncBuiltinESMExports(); await original(dir, 0o700); }
 });
