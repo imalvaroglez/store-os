@@ -316,6 +316,10 @@ export type Order = {
   creditConsumedCents?: number;
   /** #189 append-only evidence of applications/releases on this order. */
   creditLedger?: OrderCreditLedgerEntry[];
+  /** #203 after-sales incidents opened on this order (append-only events;
+   * derived money effects flow through customerCredit — never a second
+   * balance). Absent = no incidents. */
+  incidents?: OrderIncident[];
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
@@ -339,6 +343,70 @@ export type OrderPaymentMethod = "cash" | "transfer" | "unknown";
  *   order's pending balance.
  * - release: a cancellation restituted a previously applied amount back to
  *   `fromOrderId`. */
+/** #203: what Fer agreed with the clienta to solve an incident. */
+export type IncidentResolutionKind =
+  /** Default: equivalent piece, no additional charge (#203 decision). */
+  | "replacement_equivalent"
+  /** Another/better piece with a price difference: charged to the clienta or
+   * absorbed by the store as atención comercial (recorded, never silent). */
+  | "replacement_with_difference"
+  /** The clienta waits for restock with an agreed date. */
+  | "wait_restock"
+  /** The clienta takes the money back (pending until actually refunded). */
+  | "refund";
+
+export type OrderIncidentEvent = {
+  id: string;
+  at: string;
+  by: string;
+  kind:
+    /** Problem registered: piece, quantity, reason (payload on the incident). */
+    | "opened"
+    /** Resolution agreed with the clienta (payload: resolution). */
+    | "resolution_agreed"
+    /** Confirmed jointly: damaged piece received (quarantined) + solution
+     * delivered (replacement stock out at its real cost / refund executed /
+     * wait confirmed). Payload: quantities and costs. */
+    | "confirmed"
+    /** Fer repaired the piece: quarantine → sellable again. */
+    | "repaired"
+    /** Provider delivered a replacement for the damaged piece: quarantine → sellable. */
+    | "provider_replacement"
+    /** Provider compensated the store (amount recorded; valuation is #128/#129). */
+    | "provider_compensation"
+    /** Fer authorized writing the piece off (identifiable for the monthly close). */
+    | "written_off"
+    /** Fer explicitly authorized returning the piece to sale. */
+    | "returned_to_sale";
+  /** Event-specific evidence (amounts in exact cents, ids, motive). */
+  detail?: Record<string, string | number>;
+};
+
+export type OrderIncident = {
+  id: string;
+  /** Line of the origin order the incident is about. */
+  lineId?: string;
+  productId?: string;
+  productName: string;
+  quantity: number;
+  reason: string;
+  /** The line's HISTORICAL unit price frozen at open (exact cents) — evidence
+   * and the basis for any price-difference adjustment. */
+  originalUnitPriceCents: number;
+  /** What was agreed with the clienta (set by the resolution_agreed event). */
+  resolution?: {
+    kind: IncidentResolutionKind;
+    /** wait_restock: agreed date (YYYY-MM-DD). */
+    waitUntil?: string;
+    /** refund: the piece's HISTORICAL sale price, exact cents (evidence). */
+    refundUnitPriceCents?: number;
+  };
+  /** The replacement piece when the resolution is a replacement. */
+  replacement?: { productId?: string; productName: string; unitPriceCents: number; /** Real cost of the piece leaving stock, exact cents. */ unitCostCents: number; chargeDifference: boolean };
+  /** append-only history; every state is DERIVED from it, never stored twice. */
+  events: OrderIncidentEvent[];
+};
+
 export type OrderCreditLedgerEntry = {
   /** Stable per intent: a retry after an error reuses it (idempotent apply). */
   id: string;
