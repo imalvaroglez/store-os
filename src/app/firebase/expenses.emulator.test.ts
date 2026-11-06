@@ -111,6 +111,28 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("loose expense transaction
     ).rejects.toThrow(/disponibles/i);
   });
 
+  it("#214 F1: editing the order through the normal save path keeps the direct charges (OrderForm-shaped caller)", async () => {
+    const { saveOrderWithStockTx } = await import("./firestoreData");
+    const before = (await getDoc(doc(holder.db, "orders/exp2-order"))).data()!;
+    expect((before.saleExpenses ?? []).length).toBeGreaterThan(0);
+    // The caller shape is OrderForm's: a whitelist WITHOUT saleExpenses.
+    const { saleExpenses, ...callerShape } = before;
+    const edited = { ...callerShape, id: "exp2-order", notes: "editado tras asignar" };
+    await saveOrderWithStockTx({ uid: "exp2-user" } as never, edited as never, before.revision ?? 0, "mut_exp_f1");
+    const after = (await getDoc(doc(holder.db, "orders/exp2-order"))).data()!;
+    expect(after.saleExpenses).toEqual(saleExpenses); // evidence survives the edit
+    expect(after.notes).toBe("editado tras asignar");
+  });
+
+  it("#214 F2: a supply cannot be assigned — it distributes by consumption", async () => {
+    await expect(
+      assignExpenseTx({
+        expenseId: "exp2-bags", storeId: "exp2-store",
+        assignment: assignment("asgSup", 500, { kind: "order", orderId: "exp2-order" }),
+      })
+    ).rejects.toThrow(/suministros se distribuyen consum/i);
+  });
+
   it("never crosses stores", async () => {
     await expect(
       assignExpenseTx({ expenseId: "exp2-1", storeId: "foreign-store", assignment: assignment("asgX", 100, { kind: "order", orderId: "exp2-order" }) })

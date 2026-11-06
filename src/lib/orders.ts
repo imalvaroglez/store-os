@@ -1,4 +1,4 @@
-import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderIncident, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
+import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderIncident, OrderItem, OrderSaleExpense, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { formatMoney } from "./money";
@@ -197,6 +197,15 @@ function isWellFormedCreditEntry(entry: unknown): entry is OrderCreditLedgerEntr
     && typeof e.at === "string" && typeof e.by === "string";
 }
 
+/** #184: a direct sale charge is carried verbatim only when well-formed. */
+function isWellFormedSaleExpense(entry: unknown): entry is OrderSaleExpense {
+  const charge = entry as Record<string, unknown>;
+  return typeof charge?.id === "string" && !!charge.id
+    && typeof charge.amountCents === "number" && Number.isSafeInteger(charge.amountCents) && charge.amountCents > 0
+    && typeof charge.expenseId === "string" && !!charge.expenseId
+    && typeof charge.at === "string" && typeof charge.by === "string";
+}
+
 /** #203: an incident is carried verbatim only when well-formed. */
 function isWellFormedIncident(entry: unknown): entry is OrderIncident {
   const incident = entry as Record<string, unknown>;
@@ -262,6 +271,10 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
     // verbatim when the array is well-formed, never rebuilt or dropped.
     ...(Array.isArray(raw.incidents) && raw.incidents.length > 0
       ? { incidents: raw.incidents.filter(isWellFormedIncident) } : {}),
+    // #184: direct sale-side charges are append-only evidence on the order —
+    // carried verbatim, never rebuilt or dropped.
+    ...(Array.isArray(raw.saleExpenses) && raw.saleExpenses.length > 0
+      ? { saleExpenses: raw.saleExpenses.filter(isWellFormedSaleExpense) } : {}),
     schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,

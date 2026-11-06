@@ -23,9 +23,15 @@ export function assignedCents(expense: LooseExpense): number {
  * never negative. A simplified-operation expense (criterio 6) is fully
  * recognized in its period — nothing pending.
  */
+/** Σ consumption charges in exact cents — supplies distribute their amount
+ * by being consumed, so consumptions ARE assignments for them (review F2). */
+export function consumedCents(expense: LooseExpense): number {
+  return (expense.supply?.consumptions ?? []).reduce((sum, consumption) => sum + supplyChargeCents(consumption, expense), 0);
+}
+
 export function pendingAssignmentCents(expense: LooseExpense): number {
   if (expense.simplifiedOperation) return 0;
-  return Math.max(0, expenseAmountCents(expense) - assignedCents(expense));
+  return Math.max(0, expenseAmountCents(expense) - assignedCents(expense) - consumedCents(expense));
 }
 
 /** A piece carrier for allocation planning (purchase lines or order items). */
@@ -60,8 +66,9 @@ export function planAllocation(
   });
 }
 
-/** Supplies: conservative per-unit cost (rounds UP so consumption never
- * undercharges); Σ over the whole stash stays exact via availability. */
+/** Supplies: conservative per-unit cost (rounds UP so a consumption never
+ * undercharges); consuming the whole stash may slightly overcharge the last
+ * units — the honest direction for money already spent. */
 export function supplyUnitCostCents(expense: LooseExpense): number {
   const total = expenseAmountCents(expense);
   const quantity = Math.max(1, Math.round(expense.supply?.quantityInitial ?? 1));
