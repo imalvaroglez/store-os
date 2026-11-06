@@ -66,13 +66,34 @@ export function planAllocation(
   });
 }
 
-/** Supplies: conservative per-unit cost (rounds UP so a consumption never
- * undercharges); consuming the whole stash may slightly overcharge the last
- * units — the honest direction for money already spent. */
+/**
+ * Supplies: exact conservation of the outlay. Unit cost = floor(total /
+ * initial); the remainder (total − unit × initial cents) is spread ONE extra
+ * cent over the FIRST units consumed, and only once: the charge for a
+ * consumption depends on how many units were already consumed before it, so
+ * consuming the whole stash in any pattern charges exactly the outlay.
+ */
 export function supplyUnitCostCents(expense: LooseExpense): number {
   const total = expenseAmountCents(expense);
   const quantity = Math.max(1, Math.round(expense.supply?.quantityInitial ?? 1));
-  return Math.ceil(total / quantity);
+  return Math.floor(total / quantity);
+}
+
+/** Remainder cents not covered by unit × initial (spread over first units). */
+export function supplyRemainderCents(expense: LooseExpense): number {
+  const total = expenseAmountCents(expense);
+  const quantity = Math.max(1, Math.round(expense.supply?.quantityInitial ?? 1));
+  return total - supplyUnitCostCents(expense) * quantity;
+}
+
+/** Units consumed BEFORE the given consumption in the append-only history
+ * (array order = chronological). A consumption not yet stored (a new one)
+ * sees every stored consumption as prior. Later ones never count. */
+export function supplyConsumedBeforeQuantity(consumption: SupplyConsumption, expense: LooseExpense): number {
+  const history = expense.supply?.consumptions ?? [];
+  const index = history.findIndex((existing) => existing.id === consumption.id);
+  const prior = index >= 0 ? history.slice(0, index) : history;
+  return prior.reduce((sum, existing) => sum + Math.max(0, Math.round(existing.quantity || 0)), 0);
 }
 
 /** Quantity still available (initial − Σ consumptions, floored at 0). */
@@ -82,7 +103,11 @@ export function supplyAvailableQuantity(expense: LooseExpense): number {
   return Math.max(0, initial - consumed);
 }
 
-/** What one consumption charges (quantity × unit cost, exact cents). */
+/** What one consumption charges: quantity × unit + the not-yet-distributed
+ * remainder units (one cent each), so Σ over the stash = the outlay exactly. */
 export function supplyChargeCents(consumption: SupplyConsumption, expense: LooseExpense): number {
-  return supplyUnitCostCents(expense) * Math.max(0, Math.round(consumption.quantity || 0));
+  const quantity = Math.max(0, Math.round(consumption.quantity || 0));
+  const unit = supplyUnitCostCents(expense);
+  const remainderLeft = Math.max(0, supplyRemainderCents(expense) - Math.min(supplyConsumedBeforeQuantity(consumption, expense), supplyRemainderCents(expense)));
+  return quantity * unit + Math.min(quantity, remainderLeft);
 }
