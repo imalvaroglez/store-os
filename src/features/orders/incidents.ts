@@ -69,43 +69,6 @@ export function incidentState(incident: OrderIncident): IncidentState {
   };
 }
 
-/**
- * Σ sale adjustments in exact cents: how the incidents change the order's
- * EFFECTIVE total (the historical sale stays intact — this is a documented
- * adjustment, never a rewrite). Replacements adjust by the price difference
- * when charged; absorbed upgrades and equivalent replacements change nothing;
- * a refund removes the piece at its historical price.
- */
-export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefined | null): number {
-  return (incidents ?? []).reduce((sum, incident) => {
-    const resolution = incident.resolution;
-    if (!resolution || resolution.kind === "wait_restock") return sum;
-    if (resolution.kind === "refund") {
-      return sum - centsOf(resolution.refundUnitPriceCents) * Math.max(1, Math.round(incident.quantity || 1));
-    }
-    const replacement = incident.replacement;
-    if (!replacement || !replacement.chargeDifference) return sum;
-    // Difference = the alternative's agreed price vs the line's HISTORICAL
-    // price frozen at open. Negative for a cheaper alternative (the clienta's
-    // favor — she then chooses refund or credit; #189 handles the money).
-    const quantity = Math.max(1, Math.round(incident.quantity || 1));
-    const original = centsOf(incident.originalUnitPriceCents);
-    return sum + (replacement.unitPriceCents - original) * quantity;
-  }, 0);
-}
-
-/**
- * Σ refund money still blocked (agreed but not executed), exact cents. This
- * amount is EXCLUDED from available credit (#189): "un importe comprometido
- * a reembolso queda separado y no se usa para otra compra sin aceptación de
- * la clienta". Executing the refund (handed back) releases the block once.
- */
-export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefined | null): number {
-  return (incidents ?? []).reduce((sum, incident) => {
-    const resolution = incident.resolution;
-    if (!resolution || resolution.kind !== "refund") return sum;
-    const quantity = Math.max(1, Math.round(incident.quantity || 1));
-    const agreed = centsOf(resolution.refundUnitPriceCents) * quantity;
-    return sum + Math.max(0, agreed - incidentState(incident).refundExecutedCents);
-  }, 0);
-}
+// The money derivations live with the order-doc money truth (lib/orderMoney);
+// re-exported here so the incident domain stays one import away.
+export { incidentsSaleAdjustmentCents, incidentsRefundPendingCents } from "../../lib/orderMoney";

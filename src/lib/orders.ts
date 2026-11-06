@@ -1,5 +1,6 @@
 import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
+import { incidentsRefundPendingCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { formatMoney } from "./money";
 import { docReceivedCents, orderAmountCents } from "./orderMoney";
 import { LEGACY_TIER_IDS } from "./pricing";
@@ -87,13 +88,17 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
   // #189: `balance` is NET of the credit applied to this order (the PO read:
   // "Pendiente por pagar"); `paid` stays real money so sales/cobros months
   // never move. `availableCredit` subtracts what sister orders consumed.
+  // #203: incidents adjust the EFFECTIVE total (upgrades charged, refunds
+  // taken out at historical price) and pending refunds block credit.
   const appliedCents = creditFieldCents(order, "creditAppliedCents");
-  const surplusCents = Math.max(0, paidCents - totalCents);
-  const availableCents = Math.max(0, surplusCents - creditFieldCents(order, "creditConsumedCents"));
+  const adjustmentCents = incidentsSaleAdjustmentCents(order.incidents);
+  const effectiveCents = Math.max(0, totalCents + adjustmentCents);
+  const surplusCents = Math.max(0, paidCents - effectiveCents);
+  const availableCents = Math.max(0, surplusCents - creditFieldCents(order, "creditConsumedCents") - incidentsRefundPendingCents(order.incidents));
   return {
     estimatedTotal,
     paid,
-    balance: Math.max(0, totalCents - paidCents - appliedCents) / 100,
+    balance: Math.max(0, effectiveCents - paidCents - appliedCents) / 100,
     appliedCredit: appliedCents / 100,
     availableCredit: availableCents / 100,
     pieces,
