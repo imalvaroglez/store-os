@@ -35,6 +35,7 @@ import {
 } from "../../types";
 import {
   pendingAssignmentCents,
+  supplyChargeCents,
   planAllocation,
   supplyAvailableQuantity,
   supplyUnitCostCents,
@@ -186,7 +187,18 @@ export function ExpensesScreen() {
               placeholder="p. ej. 100 bolsas"
               value={quantityText}
               onChange={(e) => setQuantityText(e.target.value.replace(/[^0-9]/g, ""))}
-              hint={amountText && Number(quantityText) > 0 ? `Costo por unidad: $${((Number(amountText) || 0) / Number(quantityText)).toFixed(2)}` : undefined}
+              hint={amountText && Number(quantityText) > 0
+                  ? (() => {
+                      const total = Math.round(Number(amountText) * 100);
+                      const units = Math.round(Number(quantityText));
+                      if (units <= 0) return undefined;
+                      const unitCost = Math.floor(total / units);
+                      const remainder = total - unitCost * units;
+                      return remainder > 0
+                        ? `Costo por unidad: $${(unitCost / 100).toFixed(2)}–$${((unitCost + 1) / 100).toFixed(2)} (las primeras ${remainder} cargan un centavo más; el total siempre suma exacto)`
+                        : `Costo por unidad: $${(unitCost / 100).toFixed(2)}`;
+                    })()
+                  : undefined}
             />
           )}
           <CheckboxField
@@ -432,12 +444,15 @@ function ConsumeSheet({ expense, orders, onClose, onConsume }: {
 }) {
   const available = supplyAvailableQuantity(expense);
   const unit = supplyUnitCostCents(expense);
+  // Estimate uses the SAME cumulative math as the transaction (the charge is
+  // recomputed against the fresh document on save).
+  const estimateCharge = (q: number) => supplyChargeCents({ id: "__estimate__", at: "", by: "", quantity: q }, expense);
   const storeOrders = orders.filter((order) => order.storeId === expense.storeId && order.orderStatus !== "cancelled");
   const [quantityText, setQuantityText] = useState("1");
   const [orderId, setOrderId] = useState("");
   const [confirming, setConfirming] = useState(false);
   const quantity = Math.round(Number(quantityText));
-  const charge = quantity > 0 ? quantity * unit : 0;
+  const charge = quantity > 0 ? estimateCharge(quantity) : 0;
   const valid = Number.isSafeInteger(quantity) && quantity > 0 && quantity <= available;
 
   return (
@@ -449,7 +464,7 @@ function ConsumeSheet({ expense, orders, onClose, onConsume }: {
           inputMode="numeric"
           value={quantityText}
           onChange={(e) => setQuantityText(e.target.value.replace(/[^\d]/g, ""))}
-          hint={charge > 0 ? `Carga ${formatMoneyExact(charge / 100)} al pedido que elijas.` : undefined}
+          hint={quantity > 0 ? `Carga ${formatMoneyExact(estimateCharge(quantity) / 100)} al pedido que elijas.` : undefined}
         />
         <SelectField
           label="Pedido (opcional)"
