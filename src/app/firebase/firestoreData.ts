@@ -825,7 +825,7 @@ export async function deleteOrderWithStockTx(
         && !(incident.events ?? []).some((event) => event.kind === "provider_replacement" || event.kind === "returned_to_sale" || event.kind === "written_off");
       return quarantined;
     })) {
-      throw new Error("El pedido tiene una incidencia con pieza en cuarentena. Líbrala (reparar, baja, reemplazo o venta) antes de borrar el pedido.");
+      throw new Error("El pedido tiene una incidencia con pieza retenida. Líbrala (autorizar venta, baja o reemplazo del proveedor) antes de borrar el pedido.");
     }
     const previous = migrateOrder({ ...snap.data(), id: orderId });
     if ((previous.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
@@ -1448,7 +1448,7 @@ export async function applyIncidentEventTx(params: {
     if (kind === "resolution_agreed" && (resolution?.kind === "refund" || (resolution?.kind === "replacement_with_difference" && (replacement?.unitPriceCents ?? 0) < incident.originalUnitPriceCents))) {
       const destination = resolution?.destination ?? "refund_pending";
       const draft = { ...incident, resolution: { ...resolution, kind: resolution!.kind }, ...(replacement ? { replacement } : {}) };
-      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }) as never, draft);
+      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), draft);
       // Both operations carry the HISTORICAL unit price; how it enters the
       // sale adjustment depends on the kind (orderMoney decides).
       resolution!.saleAdjustmentUnitCents = incident.originalUnitPriceCents;
@@ -1464,15 +1464,22 @@ export async function applyIncidentEventTx(params: {
     if (kind === "confirmed" && (!state.resolution || state.confirmed)) {
       throw new Error("Confirma la resolución con la clienta antes de registrar recepción y entrega.");
     }
-    if (["repaired", "provider_replacement", "returned_to_sale", "written_off"].includes(kind)
-      && state.pieceLocation !== "quarantined") {
+    if (kind === "repaired" && !state.confirmed) {
+      throw new Error("Confirma la recepción de la pieza antes de repararla.");
+    }
+    if (["provider_replacement", "returned_to_sale", "written_off"].includes(kind)
+      && state.pieceLocation !== "quarantined" && state.pieceLocation !== "repaired_held") {
       throw new Error("La pieza no está en cuarentena; registra primero su recepción.");
     }
     if (kind === "refund_executed") {
       if (!state.confirmed) throw new Error("Confirma la recepción de la pieza y entrega del reembolso antes de liquidarlo.");
+      // Committed GROSS (never the pending remainder — returned is subtracted
+      // exactly once below). Legacy transition: unit price × quantity.
       const owed = typeof incident.resolution?.refundOwedCents === "number"
         ? Math.max(0, incident.resolution.refundOwedCents)
-        : incidentsRefundPendingCentsOf(incident);
+        : (typeof incident.resolution?.refundUnitPriceCents === "number" && incident.resolution.refundUnitPriceCents > 0
+          ? incident.resolution.refundUnitPriceCents * Math.max(1, Math.round(incident.quantity || 1))
+          : 0);
       const returned = incidentsReturnedCentsOf(incident);
       const amount = typeof event.detail?.refundExecutedCents === "number" ? event.detail.refundExecutedCents : 0;
       if (amount <= 0) throw new Error("El importe devuelto debe ser mayor que cero.");
@@ -1486,6 +1493,38 @@ export async function applyIncidentEventTx(params: {
     if (kind === "provider_compensation" && (incident.events ?? []).some((saved) => saved.kind === "provider_compensation")) {
       throw new Error("La compensación del proveedor ya está registrada en esta incidencia.");
     }
+    // #203 r2-criterio 1: at confirm (the piece is physically back), the
+    // applied credit that covered the reconciled value is RESTITUTED to its
+    // origins — that is how the clienta's money becomes available again in
+    // #189 (the reconcile effect re-applies it). Reads happen before writes.
+    const creditReleases: Array<{ originRef: ReturnType<typeof doc>; cents: number; entry: OrderCreditLedgerEntry }> = [];
+    let restitutionTotal = 0;
+    if (kind === "confirmed") {
+      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), incident);
+      let remaining = money.restitutionCents;
+      const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
+      const netByOrigin = new Map<string, number>();
+      for (const saved of ledger) {
+        if (saved.kind === "application" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
+        if (saved.kind === "release" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
+      }
+      for (const [fromOrderId, netCents] of netByOrigin) {
+        if (remaining <= 0) break;
+        if (netCents <= 0) continue;
+        const originRef = doc(db, "orders", fromOrderId);
+        const originSnap = await tx.get(originRef);
+        if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
+        const release = Math.min(netCents, remaining);
+        remaining -= release;
+        creditReleases.push({
+          originRef,
+          cents: release,
+          entry: { id: `rel_${event.id}_${fromOrderId}`, kind: "release", fromOrderId, amountCents: release, at: event.at, by: event.by },
+        });
+        restitutionTotal += release;
+      }
+    }
+
     // ── Inventory effects (same commit; shortages abort the whole event).
     // Firestore requires EVERY read before ANY write: both product reads
     // happen first, then both writes.
@@ -1535,40 +1574,12 @@ export async function applyIncidentEventTx(params: {
     }
     // #203 r2: an executed refund at confirm can never exceed the committed
     // obligation (authoritative, recomputed above at agreement time).
-    // #203 r2-criterio 1: at confirm (the piece is physically back), the
-    // applied credit that covered the reconciled value is RESTITUTED to its
-    // origins — that is how the clienta's money becomes available again in
-    // #189 (the reconcile effect re-applies it). Reads happen before writes.
-    const creditReleases: Array<{ originRef: ReturnType<typeof doc>; cents: number; entry: OrderCreditLedgerEntry }> = [];
-    let restitutionTotal = 0;
-    if (kind === "confirmed") {
-      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }) as never, incident);
-      let remaining = money.restitutionCents;
-      const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
-      const netByOrigin = new Map<string, number>();
-      for (const saved of ledger) {
-        if (saved.kind === "application" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
-        if (saved.kind === "release" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
-      }
-      for (const [fromOrderId, netCents] of netByOrigin) {
-        if (remaining <= 0) break;
-        if (netCents <= 0) continue;
-        const release = Math.min(netCents, remaining);
-        remaining -= release;
-        const originRef = doc(db, "orders", fromOrderId);
-        const originSnap = await tx.get(originRef);
-        if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
-        creditReleases.push({
-          originRef,
-          cents: release,
-          entry: { id: `rel_${event.id}_${fromOrderId}`, kind: "release", fromOrderId, amountCents: release, at: event.at, by: event.by },
-        });
-        restitutionTotal += release;
-      }
-    }
-
     if (kind === "confirmed" && typeof event.detail?.refundExecutedCents === "number") {
-      const owed = typeof incident.resolution?.refundOwedCents === "number" ? Math.max(0, incident.resolution.refundOwedCents) : 0;
+      const owed = typeof incident.resolution?.refundOwedCents === "number"
+        ? Math.max(0, incident.resolution.refundOwedCents)
+        : (typeof incident.resolution?.refundUnitPriceCents === "number" && incident.resolution.refundUnitPriceCents > 0
+          ? incident.resolution.refundUnitPriceCents * Math.max(1, Math.round(incident.quantity || 1))
+          : 0);
       if (event.detail.refundExecutedCents > owed) {
         throw new Error(`El reembolso comprometido es de ${owed / 100} pesos; no se puede devolver más.`);
       }
@@ -1609,18 +1620,6 @@ function incidentsReturnedCentsOf(incident: OrderIncident): number {
   );
 }
 
-function incidentsRefundPendingCentsOf(incident: OrderIncident): number {
-  const resolution = incident.resolution;
-  if (!resolution || resolution.kind !== "refund") return 0;
-  const quantity = Math.max(1, Math.round(incident.quantity || 1));
-  const agreed = typeof resolution.refundUnitPriceCents === "number" && Number.isSafeInteger(resolution.refundUnitPriceCents) && resolution.refundUnitPriceCents > 0 ? resolution.refundUnitPriceCents : 0;
-  const executed = (incident.events ?? []).reduce(
-    (sum: number, event: OrderIncidentEvent) =>
-      sum + ((event.kind === "confirmed" || event.kind === "refund_executed") && typeof event.detail?.refundExecutedCents === "number" && Number.isSafeInteger(event.detail.refundExecutedCents) ? event.detail.refundExecutedCents : 0),
-    0
-  );
-  return Math.max(0, agreed * quantity - executed);
-}
 
 /**
  * #184: assign part of a loose expense to a purchase or an order, atomically.
