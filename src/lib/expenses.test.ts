@@ -133,10 +133,54 @@ describe("suministros (criterio 5: 100 bolsas por $15)", () => {
     expect(supplyAvailableQuantity(over)).toBe(0);
   });
 
-  it("100 bolsas por $15.50: residuo de centavos absorbe la última unidad del cálculo, carga exacta", () => {
+  it("100 bolsas por $15.50: unidad $0.15 y las primeras 50 unidades cargan un centavo más (conservación exacta)", () => {
     const odd = expense({ ...bags, amount: 15.5 });
-    expect(supplyUnitCostCents(odd)).toBe(16); // redondeo conservador por unidad
-    const one = odd.supply!.consumptions = [{ id: "c1", at: "", by: "fer", quantity: 1, orderId: "o1" }];
-    expect(supplyChargeCents(one[0], odd)).toBe(16);
+    expect(supplyUnitCostCents(odd)).toBe(15); // piso; el residuo se reparte, no se redondea
+    odd.supply!.consumptions = [{ id: "c1", at: "", by: "fer", quantity: 1, orderId: "o1" }];
+    expect(supplyChargeCents(odd.supply!.consumptions[0], odd)).toBe(16); // primera unidad lleva el centavo extra
+  });
+});
+
+describe("#214-corrección: conservación exacta del desembolso (residuo acumulativo)", () => {
+  const bags = (amount: number): LooseExpense => expense({
+    amount,
+    category: "supplies",
+    supply: { quantityInitial: 100, consumptions: [] },
+  });
+  const consumed = (base: LooseExpense, quantities: number[]): LooseExpense => ({
+    ...base,
+    supply: {
+      quantityInitial: base.supply!.quantityInitial,
+      consumptions: quantities.map((quantity, index) => ({ id: `c${index}`, at: "", by: "fer", quantity })),
+    },
+  });
+  const totalCharged = (e: LooseExpense): number =>
+    (e.supply?.consumptions ?? []).reduce((sum, consumption) => sum + supplyChargeCents(consumption, e), 0);
+
+  it("100 bolsas por $15.50 consumidas TODAS JUNTAS cargan exactamente $15.50", () => {
+    const e = consumed(bags(15.5), [100]);
+    expect(totalCharged(e)).toBe(1550);
+  });
+
+  it("consumidas EN DOS TANDAS (60 + 40) suman exactamente $15.50", () => {
+    const e = consumed(bags(15.5), [60, 40]);
+    expect(totalCharged(e)).toBe(1550);
+  });
+
+  it("consumidas DE UNA EN UNA suman exactamente $15.50 (el residuo se reparte una sola vez)", () => {
+    const e = consumed(bags(15.5), Array.from({ length: 100 }, () => 1));
+    expect(totalCharged(e)).toBe(1550);
+  });
+
+  it("cantidad divisible (100 por $15) sigue exacta en cualquier patrón", () => {
+    expect(totalCharged(consumed(bags(15), [100]))).toBe(1500);
+    expect(totalCharged(consumed(bags(15), Array.from({ length: 100 }, () => 1)))).toBe(1500);
+  });
+
+  it("la primera unidad del caso no divisible carga el centavo extra y la última ya no", () => {
+    const e = bags(15.5);
+    expect(supplyChargeCents({ id: "x", at: "", by: "fer", quantity: 1 }, e)).toBe(16);
+    const after50 = consumed(e, Array.from({ length: 50 }, () => 1));
+    expect(supplyChargeCents({ id: "y", at: "", by: "fer", quantity: 1 }, after50)).toBe(15);
   });
 });
