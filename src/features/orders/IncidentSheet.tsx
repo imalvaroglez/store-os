@@ -189,7 +189,9 @@ function IncidentCard({
   const [compensationText, setCompensationText] = useState("");
 
   // Money in the clienta's favor: a refund, or a cheaper replacement.
-  const downgradeDifference = kind === "replacement_with_difference"
+  // Money in her favor exists only when the CHEAPER difference is CHARGED
+  // (an absorbed difference moves no money — no destination, r3 F2).
+  const downgradeDifference = kind === "replacement_with_difference" && chargeDifference
     && !!replacementPick && replacementPick.priceCents < incident.originalUnitPriceCents;
   const needsDestination = kind === "refund" || downgradeDifference;
   // ESTIMATE only — the transaction recomputes the authoritative amounts
@@ -199,7 +201,7 @@ function IncidentCard({
         ...incident,
         resolution: { kind },
         ...(replacementPick && kind === "replacement_with_difference"
-          ? { replacement: { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: replacementPick.costCents, chargeDifference: true } }
+          ? { replacement: { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: replacementPick.costCents, chargeDifference } }
           : {}),
       })
     : null;

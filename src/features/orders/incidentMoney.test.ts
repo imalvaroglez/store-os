@@ -107,6 +107,23 @@ describe("reconcileIncidentMoney — crédito aplicado y compensado (r2-criterio
     expect(r.refundOwedCents("refund_pending")).toBe(12000);
   });
 
+  it("r3-F1: incidencia hermana de MEJORA reduce el reembolso de una devolución (repro de revisión)", () => {
+    // 2 piezas × $100, pagadas $200. Hermana: cambio a pieza de $150 con
+    // diferencia por cobrar (+$50, ella debe $50 más). Devolución de la otra
+    // pieza → máximo reembolsable $50, NO $100.
+    const upgrade: OrderIncident = { ...draft({ id: "incUp", lineId: "l0", originalUnitPriceCents: 10000 }),
+      resolution: { kind: "replacement_with_difference" },
+      replacement: { productId: "p9", productName: "Aro mayor", unitPriceCents: 15000, unitCostCents: 6000, chargeDifference: true } };
+    const o = order({ paymentsReceivedCents: 20000, inheritedDepositMaterialized: true,
+      items: [{ lineId: "l0", productName: "A", quantity: 1, unitPrice: 100, subtotal: 100 },
+              { lineId: "l1", productName: "B", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      incidents: [upgrade] });
+    const d = draft({ id: "incRet", lineId: "l1", originalUnitPriceCents: 10000, resolution: { kind: "refund" } });
+    const r = reconcileIncidentMoney(o, d);
+    expect(r.reconciledCents).toBe(5000); // 200 − (200 + 50 de la mejora − 100 de esta) = 50
+    expect(r.refundOwedCents("refund_pending")).toBe(5000);
+  });
+
   it("otra incidencia con reembolso ya comprometido no se compromete dos veces", () => {
     const other: OrderIncident = { ...draft({ id: "inc0", lineId: "l1" }),
       resolution: { kind: "refund", refundOwedCents: 12000, saleAdjustmentUnitCents: 12000 } };

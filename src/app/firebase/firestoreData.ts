@@ -1445,9 +1445,21 @@ export async function applyIncidentEventTx(params: {
     // price) and the reconciled refund obligation; refunds already committed
     // by other incidents reduce this one, so the same balance is never
     // committed twice.
-    if (kind === "resolution_agreed" && (resolution?.kind === "refund" || (resolution?.kind === "replacement_with_difference" && (replacement?.unitPriceCents ?? 0) < incident.originalUnitPriceCents))) {
+    if (kind === "resolution_agreed" && resolution) {
+      // F1 (r3 review): the HISTORICAL unit price is persisted on EVERY
+      // resolution — sibling adjustments (upgrades included) must enter every
+      // reconciliation, and orderMoney already prefers this field.
+      resolution.saleAdjustmentUnitCents = incident.originalUnitPriceCents;
+    }
+    const needsDestination = kind === "resolution_agreed"
+      && (resolution?.kind === "refund"
+        || (resolution?.kind === "replacement_with_difference"
+          && (replacement?.chargeDifference ?? false)
+          && (replacement?.unitPriceCents ?? 0) < incident.originalUnitPriceCents));
+    if (needsDestination) {
       // The clienta's explicit choice is REQUIRED server-side (r3): a refund
-      // or a price difference in her favor never defaults silently.
+      // or a charged difference in her favor never defaults silently. An
+      // ABSORBED difference moves no money to her — no destination needed.
       if (resolution?.destination !== "refund_pending" && resolution?.destination !== "credit_accepted") {
         throw new Error("Elige con la clienta el destino del importe: reembolso pendiente o crédito para sus pedidos.");
       }
@@ -1519,7 +1531,13 @@ export async function applyIncidentEventTx(params: {
         const originRef = doc(db, "orders", fromOrderId);
         const originSnap = await tx.get(originRef);
         if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
-        const release = Math.min(netCents, remaining);
+        // F4: cap against the origin's REAL mirror so a release can never
+        // drive creditConsumed negative (manual-repair scenarios included).
+        const originConsumed = typeof originSnap.data().creditConsumedCents === "number" && Number.isSafeInteger(originSnap.data().creditConsumedCents)
+          ? Math.max(0, originSnap.data().creditConsumedCents)
+          : 0;
+        const release = Math.min(netCents, remaining, originConsumed);
+        if (release <= 0) continue;
         remaining -= release;
         creditReleases.push({
           originRef,
@@ -1580,6 +1598,9 @@ export async function applyIncidentEventTx(params: {
     // #203 r2: an executed refund at confirm can never exceed the committed
     // obligation (authoritative, recomputed above at agreement time).
     if (kind === "confirmed" && typeof event.detail?.refundExecutedCents === "number") {
+      if (!Number.isSafeInteger(event.detail.refundExecutedCents) || event.detail.refundExecutedCents < 0) {
+        throw new Error("El importe devuelto no es válido.");
+      }
       const owed = typeof incident.resolution?.refundOwedCents === "number"
         ? Math.max(0, incident.resolution.refundOwedCents)
         : (typeof incident.resolution?.refundUnitPriceCents === "number" && incident.resolution.refundUnitPriceCents > 0

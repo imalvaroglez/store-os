@@ -48,8 +48,16 @@ function otherSaleAdjustmentsCents(order: Order, incident: OrderIncident): numbe
         // Stored as the POSITIVE unit value; the adjustment it causes is negative.
         return sum - resolution.saleAdjustmentUnitCents * quantity;
       }
-      // Legacy transition: refundUnitPriceCents also acted as the adjustment.
-      return sum - (resolution.refundUnitPriceCents ?? 0) * quantity;
+      // Legacy transition: refunds used refundUnitPriceCents as the
+      // adjustment; charged replacements adjusted by the price difference
+      // (mirrors orderMoney so siblings never diverge — r3 review F1).
+      if (resolution.kind === "refund") {
+        return sum - (resolution.refundUnitPriceCents ?? 0) * quantity;
+      }
+      if (existing.replacement?.chargeDifference) {
+        return sum + (existing.replacement.unitPriceCents - Math.max(0, existing.originalUnitPriceCents)) * quantity;
+      }
+      return sum;
     }, 0);
 }
 
