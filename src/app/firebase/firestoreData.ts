@@ -1446,14 +1446,19 @@ export async function applyIncidentEventTx(params: {
     // by other incidents reduce this one, so the same balance is never
     // committed twice.
     if (kind === "resolution_agreed" && (resolution?.kind === "refund" || (resolution?.kind === "replacement_with_difference" && (replacement?.unitPriceCents ?? 0) < incident.originalUnitPriceCents))) {
-      const destination = resolution?.destination ?? "refund_pending";
-      const draft = { ...incident, resolution: { ...resolution, kind: resolution!.kind }, ...(replacement ? { replacement } : {}) };
+      // The clienta's explicit choice is REQUIRED server-side (r3): a refund
+      // or a price difference in her favor never defaults silently.
+      if (resolution?.destination !== "refund_pending" && resolution?.destination !== "credit_accepted") {
+        throw new Error("Elige con la clienta el destino del importe: reembolso pendiente o crédito para sus pedidos.");
+      }
+      const destination = resolution.destination;
+      const draft = { ...incident, resolution: { ...resolution, kind: resolution.kind }, ...(replacement ? { replacement } : {}) };
       const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), draft);
       // Both operations carry the HISTORICAL unit price; how it enters the
       // sale adjustment depends on the kind (orderMoney decides).
-      resolution!.saleAdjustmentUnitCents = incident.originalUnitPriceCents;
-      resolution!.refundOwedCents = money.refundOwedCents(destination);
-      resolution!.destination = destination;
+      resolution.saleAdjustmentUnitCents = incident.originalUnitPriceCents;
+      resolution.refundOwedCents = money.refundOwedCents(destination);
+      resolution.destination = destination;
     }
     // #212 F2 defense in depth: a replacement resolution MUST name the real
     // piece leaving stock — no stock-less defaults, no invented costs.

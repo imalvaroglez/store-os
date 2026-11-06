@@ -155,7 +155,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     await applyIncidentEventTx({
       orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6",
       event: event("f6-e1", "resolution_agreed"),
-      resolution: { kind: "refund", refundUnitPriceCents: 12000 },
+      resolution: { kind: "refund", destination: "refund_pending" },
     });
     await expect(
       applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6", event: event("f6-e2", "refund_executed", { refundExecutedCents: 12000 }) })
@@ -187,6 +187,76 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     ).rejects.toThrow(/retenida|recepción de la pieza antes de reparar/i);
   });
 
+  it("r3: destino obligatorio en servidor — resolución de reembolso sin elección aborta", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-r3"), {
+      storeId: "inc-store", customerId: "inc-clienta",
+      items: [{ lineId: "r3_L0", productId: "inc-product", productName: "Anillo QA", quantity: 1, unitPrice: 120, subtotal: 120 }],
+      deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 12000, inheritedDepositMaterialized: true,
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-r3", storeId: "inc-store", incident: incident("inc-r3", { events: [event("r3-open", "opened")] }) });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order-r3", storeId: "inc-store", incidentId: "inc-r3",
+        event: event("r3-e1", "resolution_agreed"), resolution: { kind: "refund" } })
+    ).rejects.toThrow(/destino del importe/i);
+  });
+
+  it("r3: doble compromiso CONCURRENTE nunca excede el excedente (criterio 4)", async () => {
+    // Venta $200 (dos piezas de $100), pagados $200: dos devoluciones
+    // simultáneas compiten por el excedente de $200.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-race"), {
+      storeId: "inc-store", customerId: "inc-clienta",
+      items: [
+        { lineId: "ra_L0", productId: "inc-product", productName: "Pieza A", quantity: 1, unitPrice: 100, subtotal: 100 },
+        { lineId: "rb_L0", productId: "inc-product", productName: "Pieza B", quantity: 1, unitPrice: 100, subtotal: 100 },
+      ],
+      deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 20000, inheritedDepositMaterialized: true,
+        createdAt: "", updatedAt: "",
+      });
+    });
+    for (const id of ["inc-ra", "inc-rb"]) {
+      await openIncidentTx({ orderId: "inc-order-race", storeId: "inc-store", incident: incident(id, { events: [event(`${id}-open`, "opened")] }) });
+    }
+    const destination = { destination: "refund_pending" as const };
+    const results = await Promise.allSettled([
+      applyIncidentEventTx({ orderId: "inc-order-race", storeId: "inc-store", incidentId: "inc-ra",
+        event: event("ra-e1", "resolution_agreed"), resolution: { kind: "refund" as const, ...destination } }),
+      applyIncidentEventTx({ orderId: "inc-order-race", storeId: "inc-store", incidentId: "inc-rb",
+        event: event("rb-e1", "resolution_agreed"), resolution: { kind: "refund" as const, ...destination } }),
+    ]);
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-race"))).data()!;
+    const owed = (order.incidents ?? []).reduce((sum: number, incident: { resolution?: { refundOwedCents?: number } }) =>
+      sum + Math.max(0, incident.resolution?.refundOwedCents ?? 0), 0);
+    expect(owed).toBe(20000); // exacto: cada pieza $100, excedente total $200
+  });
+
+  it("r3: origen ausente en la restitución no consume el remanente en silencio", async () => {
+    // Pedido cubierto con crédito cuyo ORIGEN fue borrado: la restitución lo
+    // salta SIN descontar el remanente — el crédito restituible sobrevive.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-noreturn"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "nr_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [{ id: "app_gone", kind: "application", fromOrderId: "origin-deleted", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incident: incident("inc-nr", { events: [event("nr-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incidentId: "inc-nr",
+      event: event("nr-e1", "resolution_agreed"),
+      resolution: { kind: "refund", destination: "credit_accepted" } });
+    await applyIncidentEventTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incidentId: "inc-nr", event: event("nr-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-noreturn"))).data()!;
+    // El origen no existe: nada se liberó, la ficha quedó confirmada y coherente.
+    expect(order.creditAppliedCents).toBe(10000);
+  });
+
   it("never crosses stores", async () => {
     await expect(
       openIncidentTx({ orderId: "inc-order", storeId: "inc-foreign", incident: incident("inc-x") })
@@ -208,7 +278,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     await applyIncidentEventTx({
       orderId: "inc-order-3", storeId: "inc-store", incidentId: "inc-3",
       event: event("inc3-e1", "resolution_agreed"),
-      resolution: { kind: "refund", refundUnitPriceCents: 12000 },
+      resolution: { kind: "refund", destination: "refund_pending" },
     });
     await applyIncidentEventTx({
       orderId: "inc-order-3", storeId: "inc-store", incidentId: "inc-3",

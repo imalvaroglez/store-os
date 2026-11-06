@@ -96,13 +96,14 @@ describe("reconcileIncidentMoney — crédito aplicado y compensado (r2-criterio
 
   it("excedente ya compensado a pedidos hermanos reduce lo disponible, no el valor de la pieza", () => {
     // Pieza $120 totalmente pagada + sobreprecio de $30 del que $15 ya se usó
-    // en otro pedido: la devolución debe los $120 de la pieza (los otros $15
-    // ya le dieron valor); el consumo se refleja en el origen, no aquí.
+    // en otro pedido (creditConsumedCents EN ESTE pedido): la devolución debe
+    // los $120 de la pieza — los $15 ya le dieron valor en otra compra.
     const o = order({ items: [{ lineId: "l0", productName: "Pieza", quantity: 1, unitPrice: 120, subtotal: 120 }],
-      paymentsReceivedCents: 15000, inheritedDepositMaterialized: true });
+      paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+      creditConsumedCents: 1500 });
     const de = draft({ lineId: "l0", originalUnitPriceCents: 12000, resolution: { kind: "refund" } });
     const r = reconcileIncidentMoney(o, de);
-    expect(r.reconciledCents).toBe(12000);
+    expect(r.reconciledCents).toBe(12000); // cubierto 150 − efectiva 0 − 15 consumidos = 135 → tope pieza 120
     expect(r.refundOwedCents("refund_pending")).toBe(12000);
   });
 
