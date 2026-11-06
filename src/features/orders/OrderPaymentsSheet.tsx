@@ -59,6 +59,7 @@ export function OrderPaymentsSheet({
   const [inheritedDate, setInheritedDate] = useState("");
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustAmountText, setAdjustAmountText] = useState("");
+  const [adjustDirection, setAdjustDirection] = useState<"subtract" | "add">("subtract");
   const [adjustNote, setAdjustNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -152,8 +153,9 @@ export function OrderPaymentsSheet({
   async function submitAdjustment() {
     const id = intentIdRef.current.adjust ?? uid("adj");
     intentIdRef.current.adjust = id;
-    await save({ kind: "adjustment", id, amountText: adjustAmountText, note: adjustNote }, () => {
+    await save({ kind: "adjustment", id, direction: adjustDirection, amountText: adjustAmountText, note: adjustNote }, () => {
       setAdjustAmountText("");
+      setAdjustDirection("subtract");
       setAdjustNote("");
       setAdjustOpen(false);
       intentIdRef.current.adjust = null;
@@ -353,12 +355,21 @@ export function OrderPaymentsSheet({
               <p className="text-xs text-on-surface-soft">
                 Los ajustes no borran cobros: quedan como registros con signo y motivo.
               </p>
+              <SelectField
+                label="Dirección"
+                value={adjustDirection}
+                onChange={setAdjustDirection}
+                options={[
+                  { value: "subtract", label: "Restar (devolución)" },
+                  { value: "add", label: "Sumar" },
+                ]}
+              />
               <TextField
                 label="Monto del ajuste"
                 inputMode="decimal"
-                placeholder="-150 para devolver"
+                placeholder="150 para devolver"
                 value={adjustAmountText}
-                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value))}
+                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, "")))}
               />
               <TextField
                 label="Motivo"
