@@ -99,6 +99,17 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
     expect(ticket).toContain("*Saldo* $300.00");
   });
 
+  it("strips literal asterisks from names so WhatsApp bold pairing survives", () => {
+    const order: Order = { id: "o1", storeId: "s1", customerId: "c1", customerName: "Ana *Fer*", items: [
+      { productName: "Aretes *dorados*", quantity: 1, unitPrice: 10, subtotal: 10, categorySnapshot: { id: "earrings", name: "Aretes *finos*" } },
+    ], deposit: 0, orderStatus: "asked", paymentStatus: "unpaid", createdAt: "2026-11-06", updatedAt: "" };
+    const ticket = orderTicketText(order, "Olivia *joyas*");
+    expect(ticket).toContain("*Cliente:* Ana Fer");
+    expect(ticket).toContain("*Tienda:* Olivia joyas");
+    expect(ticket).toContain("*Aretes finos*");
+    expect(ticket).toContain("1. Aretes dorados $10.00");
+  });
+
   it("counts an unmaterialized inherited deposit once", () => {
     const order: Order = {
       id: "o3", storeId: "s1", customerId: "c1",

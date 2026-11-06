@@ -19,7 +19,8 @@ import { docReceivedCents } from "./payments";
  * "Detalle para compartir" sheet.
  */
 export function orderTicketText(order: Order, storeName: string, currentCustomerName?: string): string {
-  const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+  // Names must not carry literal '*' or they would break WhatsApp's bold pairing.
+  const clean = (value: string) => value.replace(/\*/g, "").replace(/\s+/g, " ").trim();
   const items = orderItems(order);
   const totalCents = items.reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
   const hasPaymentRecords = typeof order.paymentsReceivedCents === "number";
