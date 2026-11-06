@@ -322,6 +322,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     if (!activeStore) return;
     if (!cloud) { toast.error("Inicia sesión y conecta Firebase para crear productos."); return; }
     const line = draft.lines[idx];
+    const costIssue = inputIssues.find((issue) => issue.target === `line:${line.lineId}`);
+    if (costIssue) {
+      openIssue(costIssue);
+      toast.error("Corrige el costo por pieza antes de crear este producto.");
+      return;
+    }
     const base = newProduct(activeStore.id);
     const fullName = line.variant ? `${line.name} ${line.variant}` : line.name;
     setProductDraft({

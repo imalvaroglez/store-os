@@ -382,3 +382,19 @@ it("locks adding and removing trip expenses while a draft save is pending", asyn
   await waitFor(() => expect(screen.getByRole("button", { name: "+ Agregar gasto" })).not.toBeDisabled());
   expect(upsertPurchase.mock.calls[0][0].sourcingExpenses).toEqual([{ id: "transport", category: "sourcing_transport", amount: 44 }]);
 });
+
+it("does not replace an invalid captured cost with zero through individual product creation", async () => {
+  open();
+  fireEvent.change(screen.getByLabelText("Costo unitario"), { target: { value: "" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Producto en Store OS" }), { target: { value: "Nueva pieza" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ Crear nuevo producto" }));
+  expect(screen.queryByRole("dialog", { name: "Nuevo producto" })).not.toBeInTheDocument();
+  expect(upsertProduct).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByLabelText("Costo unitario")).toHaveFocus());
+  expect(screen.getByLabelText("Costo unitario")).toHaveValue("");
+  fireEvent.change(screen.getByLabelText("Costo unitario"), { target: { value: "16.45" } });
+  fireEvent.focus(screen.getByRole("combobox", { name: "Producto en Store OS" }));
+  fireEvent.click(screen.getByRole("button", { name: "+ Crear nuevo producto" }));
+  expect(screen.getByRole("dialog", { name: "Nuevo producto" })).toBeVisible();
+  expect(screen.getByLabelText("Costo", { exact: true })).toHaveValue("16.45");
+});
