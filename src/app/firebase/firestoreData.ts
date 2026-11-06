@@ -31,7 +31,7 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
 import type { OrderIncident, OrderIncidentEvent } from "../../types";
@@ -54,7 +54,7 @@ export class PublicCatalogProjectionError extends Error {
 // stores; a member sees only stores whose memberUids include them). Writes go to
 // the entity's own doc; security rules enforce membership server-side.
 
-export const COLLECTIONS = ["stores", "products", "categories", "suppliers", "purchases", "customers", "orders"] as const;
+export const COLLECTIONS = ["stores", "products", "categories", "suppliers", "purchases", "customers", "orders", "expenses"] as const;
 type CollectionName = (typeof COLLECTIONS)[number];
 
 /** Load all cloud data visible to the user. */
@@ -79,7 +79,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For a
   // super_admin this is the full collection (no `in`-query size limit); for
   // members it remains scoped to their store set.
-  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = user.role === "super_admin"
       ? collection(db, name)
@@ -88,13 +88,14 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, categories, suppliers, purchases, customers, orders] = await Promise.all([
+  const [products, categories, suppliers, purchases, customers, orders, expenses] = await Promise.all([
     forStores<Product>("products"),
     forStores<Category>("categories"),
     forStores<Supplier>("suppliers"),
     forStores<Purchase>("purchases"),
     forStores<Customer>("customers"),
     forStores<Order>("orders"),
+    forStores<LooseExpense>("expenses"),
   ]);
 
   return {
@@ -106,6 +107,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     purchases,
     customers,
     orders,
+    expenses,
   };
 }
 
@@ -166,7 +168,7 @@ export function subscribeCloudState(
   function registerEntityListeners(storeIds: string[]) {
     if (tornDown) return;
     if (storeIds.length === 0 && user.role !== "super_admin") return;
-    for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders"] as const) {
+    for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders", "expenses"] as const) {
       const entityQ = user.role === "super_admin"
         ? collection(db, name)
         : query(collection(db, name), where("storeId", "in", storeIds));
@@ -1516,4 +1518,131 @@ function incidentsRefundPendingCentsOf(incident: OrderIncident): number {
     0
   );
   return Math.max(0, agreed * quantity - executed);
+}
+
+/**
+ * #184: assign part of a loose expense to a purchase or an order, atomically.
+ * Validation against FRESH docs: the pending balance must cover the amount;
+ * a purchase target must be OPEN (a received purchase's historical cost
+ * allocations are never silently recalculated — asignar allí exige #202);
+ * an order target must belong to the same store. Order assignments charge
+ * the order via append-only `saleExpenses` (profit-only, never the sale
+ * total nor the clienta's balance) in the SAME commit as the expense doc.
+ * Idempotent by assignment id.
+ */
+export async function assignExpenseTx(params: {
+  expenseId: string;
+  storeId: string;
+  assignment: ExpenseAssignment;
+  /** For purchase targets: the purchase expense entry to append (native
+   * sourcing path reuses the existing allocation machinery). */
+  purchaseExpense?: { id: string; category: "sourcing_transport" | "other"; amount: number; description?: string; includeInInventoryCost?: boolean };
+}): Promise<void> {
+  const { db } = getFirebase();
+  const { expenseId, storeId, assignment, purchaseExpense } = params;
+  const expenseRef = doc(db, "expenses", expenseId);
+  await runTransaction(db, async (tx) => {
+    const expenseSnap = await tx.get(expenseRef);
+    if (!expenseSnap.exists()) throw new Error("No se encontró el gasto.");
+    const data = expenseSnap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El gasto pertenece a otra tienda.");
+    const expense = { ...data, id: expenseId } as LooseExpense;
+    const assignments = [...(expense.assignments ?? [])];
+    if (assignments.some((existing) => existing.id === assignment.id)) return; // idempotent
+    const { pendingAssignmentCents } = await import("../../lib/expenses");
+    if (assignment.amountCents <= 0 || !Number.isSafeInteger(assignment.amountCents)) {
+      throw new Error("El importe de la asignación debe ser mayor que cero.");
+    }
+    if (pendingAssignmentCents(expense) < assignment.amountCents) {
+      throw new Error(`Solo quedan ${pendingAssignmentCents(expense) / 100} pesos por asignar de este gasto.`);
+    }
+    const updatedAt = assignment.at;
+    if (assignment.target.kind === "purchase") {
+      const purchaseRef = doc(db, "purchases", assignment.target.purchaseId);
+      const purchaseSnap = await tx.get(purchaseRef);
+      if (!purchaseSnap.exists()) throw new Error("No se encontró la compra.");
+      const purchaseData = purchaseSnap.data() as Record<string, unknown>;
+      if ((purchaseData.storeId ?? "") !== storeId) throw new Error("La compra pertenece a otra tienda.");
+      if (purchaseData.status === "received" || effectivePurchaseStatus(purchaseData as Purchase) === "received") {
+        throw new Error("La compra ya está recibida: su costo histórico no se recalcula. Asigna el gasto por la vía de venta o registra el ajuste del periodo.");
+      }
+      const existingExpenses = Array.isArray(purchaseData.sourcingExpenses) ? (purchaseData.sourcingExpenses as unknown[]) : [];
+      const nextExpenses = [...existingExpenses, ...(purchaseExpense ? [purchaseExpense] : [])];
+      tx.update(purchaseRef, { sourcingExpenses: nextExpenses, updatedAt });
+    } else {
+      const orderRef = doc(db, "orders", assignment.target.orderId);
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
+      const orderData = orderSnap.data() as Record<string, unknown>;
+      if ((orderData.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+      const charge: OrderSaleExpense = {
+        id: `asg_${assignment.id}`,
+        at: assignment.at,
+        by: assignment.by,
+        amountCents: assignment.amountCents,
+        description: expense.description,
+        expenseId,
+      };
+      tx.update(orderRef, { saleExpenses: arrayUnion(stripUndefined(charge)), updatedAt: assignment.at });
+    }
+    assignments.push(assignment);
+    tx.update(expenseRef, { assignments: stripUndefined(assignments), updatedAt });
+  });
+}
+
+/**
+ * #184: consume supply units and charge the linked order, atomically.
+ * Availability is validated against the FRESH expense doc (quantity can never
+ * go negative); the charge is quantity × unit cost in exact cents and lands
+ * on the order as append-only `saleExpenses` evidence. Idempotent by
+ * consumption id.
+ */
+export async function consumeSupplyTx(params: {
+  expenseId: string;
+  storeId: string;
+  consumption: SupplyConsumption;
+  description?: string;
+}): Promise<void> {
+  const { db } = getFirebase();
+  const { expenseId, storeId, consumption, description } = params;
+  const expenseRef = doc(db, "expenses", expenseId);
+  await runTransaction(db, async (tx) => {
+    const expenseSnap = await tx.get(expenseRef);
+    if (!expenseSnap.exists()) throw new Error("No se encontró el suministro.");
+    const data = expenseSnap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El suministro pertenece a otra tienda.");
+    const expense = { ...data, id: expenseId } as LooseExpense;
+    if (!expense.supply) throw new Error("Este gasto no es un suministro.");
+    if ((expense.supply.consumptions ?? []).some((existing) => existing.id === consumption.id)) return; // idempotent
+    const { supplyAvailableQuantity, supplyChargeCents } = await import("../../lib/expenses");
+    if (consumption.quantity <= 0 || !Number.isSafeInteger(consumption.quantity)) {
+      throw new Error("La cantidad a consumir debe ser mayor que cero.");
+    }
+    if (supplyAvailableQuantity(expense) < consumption.quantity) {
+      throw new Error(`Solo quedan ${supplyAvailableQuantity(expense)} disponibles de este suministro.`);
+    }
+    const updatedAt = consumption.at;
+    const nextSupply = {
+      ...expense.supply,
+      consumptions: [...(expense.supply.consumptions ?? []), consumption],
+    };
+    tx.update(expenseRef, { supply: stripUndefined(nextSupply), updatedAt });
+    if (consumption.orderId) {
+      const orderRef = doc(db, "orders", consumption.orderId);
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
+      const orderData = orderSnap.data() as Record<string, unknown>;
+      if ((orderData.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+      const charge: OrderSaleExpense = {
+        id: `sup_${consumption.id}`,
+        at: consumption.at,
+        by: consumption.by,
+        amountCents: supplyChargeCents(consumption, expense),
+        description: description ?? expense.description,
+        expenseId,
+        supplyConsumptionId: consumption.id,
+      };
+      tx.update(orderRef, { saleExpenses: arrayUnion(stripUndefined(charge)), updatedAt: consumption.at });
+    }
+  });
 }

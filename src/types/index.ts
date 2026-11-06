@@ -830,6 +830,8 @@ export type AppState = {
   purchases: Purchase[];
   customers: Customer[];
   orders: Order[];
+  /** #184 loose expenses (registration, assignment, supplies). */
+  expenses: LooseExpense[];
 };
 
 // Catalog business rules (single source of truth).

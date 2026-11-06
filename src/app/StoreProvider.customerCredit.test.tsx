@@ -41,7 +41,7 @@ const debtor = (extra: Partial<Order> = {}): Order => ({
 });
 const stateWith = (orders: Order[]): AppState => ({
   stores: [{ id: "s1", name: "Tienda", slug: "tienda", type: "on_demand", createdAt: "", updatedAt: "" }],
-  activeStoreId: "s1", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders,
+  activeStoreId: "s1", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders, expenses: [],
 });
 
 let context: ReturnType<typeof useStore>;
