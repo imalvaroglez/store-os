@@ -300,6 +300,13 @@ service cloud.firestore {
         && resource.data.storeId == request.resource.data.storeId
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision'])
             || validMoneyUpdate(id, resource.data, request.resource.data))
+        // #218: legacy deposit cannot rise after receipts, and is frozen once materialized.
+        && (!('paymentsReceivedCents' in resource.data)
+            || (('deposit' in request.resource.data || !('deposit' in resource.data))
+                && request.resource.data.get('deposit', 0) <= resource.data.get('deposit', 0)))
+        && (resource.data.get('inheritedDepositMaterialized', false) != true
+            || (('deposit' in request.resource.data || !('deposit' in resource.data))
+                && request.resource.data.get('deposit', 0) == resource.data.get('deposit', 0)))
         // Editing cannot strip the evidence that prevents orphaning a parent.
         && (!('paymentsReceivedCents' in resource.data)
             || 'paymentsReceivedCents' in request.resource.data)

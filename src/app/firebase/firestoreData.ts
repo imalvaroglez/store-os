@@ -21,7 +21,7 @@ import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange } from "../../lib/inventory";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
-import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
+import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
@@ -403,8 +403,15 @@ export async function saveOrderWithStockTx(
     // can never wipe a concurrent abono's accumulator (Firestore retries this
     // transaction whenever the doc changed after this read).
     const docData = snap.data() as Record<string, unknown> | undefined;
+    // #218: full saves cannot invent legacy money after payment evidence.
+    // Use the RAW deposit: migration can inflate it for legacy paid orders.
+    const rawDeposit = typeof docData?.deposit === "number" && Number.isFinite(docData.deposit) ? docData.deposit : 0;
+    const depositPinned = docData?.inheritedDepositMaterialized === true ? rawDeposit
+      : typeof docData?.paymentsReceivedCents === "number" ? Math.min(order.deposit ?? 0, rawDeposit)
+      : (order.deposit ?? 0);
     const next: Order = {
       ...order,
+      deposit: depositPinned,
       // A caller can neither erase existing evidence nor invent it on create.
       // Only the canonical doc (or the payment transaction) owns these fields.
       installmentsReservedAt: previous?.installmentsReservedAt,
@@ -428,6 +435,7 @@ export async function saveOrderWithStockTx(
       // belong to the expense transactions — same verbatim carry (review F1).
       saleExpenses: Array.isArray(docData?.saleExpenses) ? (docData.saleExpenses as Order["saleExpenses"]) : undefined,
     };
+    next.paymentStatus = paymentStatusForOrder(next);
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
     // conservative max, since records are immutable evidence. The accumulator
