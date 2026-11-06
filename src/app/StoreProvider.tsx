@@ -272,7 +272,7 @@ type StoreContextValue = {
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => Promise<void>;
-  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<void>;
+  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<Order>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
   /** #203 after-sales incidents (ficha linked to the order). */
   openIncident: (order: Order, incident: Omit<OrderIncident, "events">) => Promise<void>;
@@ -971,6 +971,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         persistInBackground("restituir el saldo a favor", () =>
           releaseCustomerCreditTx({ orderId: order.id, storeId: order.storeId, by: currentUser.uid }));
       }
+      return result.order;
     },
     deleteOrder: async (orderId, expectedRevision) => {
       const currentUser = requireAuthenticatedUser();

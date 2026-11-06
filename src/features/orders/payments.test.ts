@@ -186,13 +186,13 @@ describe("total changes with registered payments (decision iv)", () => {
 
 describe("adjustments keep the evidence (decision iii)", () => {
   it("builds a signed adjustment with a required note", () => {
-    const record = buildAdjustmentRecord(order(), { kind: "adjustment", id: "adj1", amountText: "-150", note: " Devolución en efectivo " }, "u1", "2026-11-02T10:00:00.000Z");
+    const record = buildAdjustmentRecord(order(), { kind: "adjustment", id: "adj1", direction: "subtract", amountText: "150", note: " Devolución en efectivo " }, "u1", "2026-11-02T10:00:00.000Z");
     expect(record).toMatchObject({ id: "adj1", kind: "adjustment", method: "unknown", amount: -150, note: "Devolución en efectivo", date: "2026-11-02" });
   });
 
   it("rejects a zero adjustment or one without a note", () => {
-    expect(() => buildAdjustmentRecord(order(), { kind: "adjustment", id: "a", amountText: "0", note: "motivo" }, "u1")).toThrow(/cero/i);
-    expect(() => buildAdjustmentRecord(order(), { kind: "adjustment", id: "a", amountText: "-10", note: "  " }, "u1")).toThrow(/motivo/i);
+    expect(() => buildAdjustmentRecord(order(), { kind: "adjustment", id: "a", direction: "subtract", amountText: "0", note: "motivo" }, "u1")).toThrow(/cero/i);
+    expect(() => buildAdjustmentRecord(order(), { kind: "adjustment", id: "a", direction: "subtract", amountText: "10", note: "  " }, "u1")).toThrow(/motivo/i);
   });
 
   it("a refund subtracts from received without deleting any record", () => {
@@ -297,5 +297,15 @@ describe("safe transactional payment totals (#171)", () => {
 describe("canonical balance while receipt details load", () => {
   it("keeps received money from the order instead of showing zero for an empty session", () => {
     expect(paymentSummary(order({ paymentsReceivedCents: 40000 }), []).receivedCents).toBe(40000);
+  });
+});
+
+
+describe("explicit adjustment direction (#218)", () => {
+  it.each([["subtract", "150", -150], ["add", "80", 80]] as const)("%s signs a positive amount", (direction, amountText, expected) => {
+    expect(buildAdjustmentRecord(order(), { kind: "adjustment", id: "a", direction, amountText, note: "Corrección" }, "u1").amount).toBe(expected);
+  });
+  it.each(["-150", "+80", "0", "-0", "1-2"])("rejects signed or nonpositive input %s", (amountText) => {
+    expect(() => buildAdjustmentRecord(order(), { kind: "adjustment", id: "a", direction: "subtract", amountText, note: "Corrección" }, "u1")).toThrow();
   });
 });

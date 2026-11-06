@@ -89,7 +89,7 @@ describe("OrderPaymentsSheet", () => {
     const ajuste = () => screen.getByLabelText("Monto del ajuste");
     fireEvent.click(screen.getByRole("button", { name: "Registrar ajuste o devolución" }));
     fireEvent.change(ajuste(), { target: { value: "-99.999" } });
-    expect((ajuste() as HTMLInputElement).value).toBe("-99.99"); // ajustes con signo también
+    expect((ajuste() as HTMLInputElement).value).toBe("99.99"); // direction owns the sign
   });
 
   it("reuses the same record id on retry so a resend never duplicates", async () => {
@@ -258,4 +258,26 @@ it("does not announce a late success after the payment sheet has been closed", a
   view.rerender(<ToastProvider><OrderPaymentsSheet order={order} open={false} onClose={() => {}} /></ToastProvider>);
   await act(async () => finish());
   expect(screen.queryByText("Cobro registrado")).toBeNull();
+});
+
+
+describe("mobile adjustment direction (#218)", () => {
+  beforeEach(() => {
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+  });
+  it.each(["subtract", "add"] as const)("submits %s without typing a sign", async (direction) => {
+    renderSheet();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar ajuste o devolución" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Registrar ajuste o devolución" }));
+    expect(screen.getByLabelText("Dirección")).toHaveValue("subtract");
+    fireEvent.change(screen.getByLabelText("Dirección"), { target: { value: direction } });
+    const amount = screen.getByLabelText("Monto del ajuste");
+    expect(amount).toHaveAttribute("inputMode", "decimal");
+    fireEvent.change(amount, { target: { value: "150" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Corrección" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledWith(order, expect.objectContaining({ kind: "adjustment", direction, amountText: "150", note: "Corrección" })));
+  });
 });
