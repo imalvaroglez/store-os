@@ -17,7 +17,7 @@ export default defineConfig({
   testDir: "./e2e",
   // Anchored names so build-smoke.spec.ts (default-config-only) is NOT matched
   // by the "smoke" alternative — it must not run under the emulator config.
-  testMatch: /(^|\/)(firebase|public-catalog|member-invite|purchase-ux2|functions|smoke|responsive|theme)\.spec\.ts$/,
+  testMatch: /(^|\/)(firebase|public-catalog|member-invite|purchase-ux2|purchase-ticket-flow|functions|smoke|responsive|theme)\.spec\.ts$/,
   globalSetup: "./e2e/firebase-global-setup.ts",
   timeout: 40_000,
   // Emulator failures must surface; deterministic fixture setup avoids retries.
@@ -43,13 +43,13 @@ export default defineConfig({
     // Mobile viewport-sensitive specs run first.
     {
       name: "mobile",
-      testMatch: /(^|\/)(smoke|responsive|theme)\.spec\.ts$/,
+      testMatch: /(^|\/)(smoke|responsive|theme|purchase-ticket-flow)\.spec\.ts$/,
       use: { viewport: { width: 390, height: 844 } },
     },
     // Desktop: the same viewport-sensitive specs at desktop size.
     {
       name: "desktop",
-      testMatch: /(^|\/)(smoke|responsive|theme)\.spec\.ts$/,
+      testMatch: /(^|\/)(smoke|responsive|theme|purchase-ticket-flow)\.spec\.ts$/,
       use: { viewport: { width: 1280, height: 800 } },
     },
     // firebase.spec + public-catalog.spec: auth/bootstrap + anonymous catalog.
