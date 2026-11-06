@@ -104,6 +104,9 @@ export function ExpensesScreen() {
           ...editing,
           description: description.trim() || undefined,
           category: locked ? editing.category : category,
+          // R1: the simplified treatment IS editable while nothing has been
+          // assigned/consumed and there is no stash (locked otherwise).
+          ...(locked ? {} : { simplifiedOperation: simplified ? true : undefined }),
         });
         toast.success("Gasto actualizado.");
         setOpen(false);
@@ -179,6 +182,7 @@ export function ExpensesScreen() {
             <TextField
               label="Unidades compradas"
               inputMode="numeric"
+              disabled={!!editing}
               placeholder="p. ej. 100 bolsas"
               value={quantityText}
               onChange={(e) => setQuantityText(e.target.value.replace(/[^0-9]/g, ""))}
@@ -382,8 +386,8 @@ function AssignSheet({ expense, purchases, orders, onClose, onAssign }: {
         {plan.length > 0 && (
           <div className="rounded-xl bg-surface p-3 ring-1 ring-edge text-xs space-y-1">
             <p className="font-semibold text-ink">Vista previa del reparto</p>
-            {plan.map((row) => (
-              <p key={row.lineId} className="flex justify-between gap-2">
+            {plan.map((row, index) => (
+              <p key={row.lineId || `line-${index}`} className="flex justify-between gap-2">
                 <span className="text-ink-soft truncate">{targetLines.find((line) => line.lineId === row.lineId)?.name ?? "Pieza"}</span>
                 <span className="font-mono">{formatMoneyExact(row.amountCents / 100)}</span>
               </p>
