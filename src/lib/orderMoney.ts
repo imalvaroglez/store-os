@@ -69,6 +69,17 @@ export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefi
   return (incidents ?? []).reduce((sum, incident) => {
     const resolution = incident.resolution;
     if (!resolution || resolution.kind === "wait_restock") return sum;
+    // New model: the piece (or the price difference) leaves the sale at the
+    // HISTORICAL unit price stored on the resolution — never the refund amount.
+    if (typeof resolution.saleAdjustmentUnitCents === "number") {
+      if (resolution.kind === "refund") {
+        return sum - incidentCentsOf(resolution.saleAdjustmentUnitCents) * incidentQuantity(incident);
+      }
+      const replacement = incident.replacement;
+      if (!replacement || !replacement.chargeDifference) return sum;
+      return sum + (replacement.unitPriceCents - incidentCentsOf(resolution.saleAdjustmentUnitCents)) * incidentQuantity(incident);
+    }
+    // Legacy transition reads (pre-reconcile synthetic data).
     if (resolution.kind === "refund") {
       return sum - incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
     }
@@ -86,7 +97,16 @@ export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefi
 export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefined | null): number {
   return (incidents ?? []).reduce((sum, incident) => {
     const resolution = incident.resolution;
-    if (!resolution || resolution.kind !== "refund") return sum;
+    if (!resolution) return sum;
+    if (typeof resolution.refundOwedCents === "number") {
+      const agreed = Math.max(0, resolution.refundOwedCents);
+      const executed = (incident.events ?? [])
+        .filter((event) => event.kind === "confirmed" || event.kind === "refund_executed")
+        .reduce((partial, event) => partial + incidentCentsOf(event.detail?.refundExecutedCents), 0);
+      return sum + Math.max(0, agreed - executed);
+    }
+    // Legacy transition.
+    if (resolution.kind !== "refund") return sum;
     const agreed = incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
     const executed = (incident.events ?? [])
       .filter((event) => event.kind === "confirmed" || event.kind === "refund_executed")
@@ -105,7 +125,12 @@ export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefin
 export function incidentsRefundCommittedCents(incidents: OrderIncident[] | undefined | null): number {
   return (incidents ?? []).reduce((sum, incident) => {
     const resolution = incident.resolution;
-    if (!resolution || resolution.kind !== "refund") return sum;
+    if (!resolution) return sum;
+    if (typeof resolution.refundOwedCents === "number") {
+      return sum + Math.max(0, resolution.refundOwedCents);
+    }
+    // Legacy transition.
+    if (resolution.kind !== "refund") return sum;
     return sum + incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
   }, 0);
 }

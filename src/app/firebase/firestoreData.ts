@@ -34,6 +34,7 @@ import type { AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
+import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent } from "../../types";
 import { publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
@@ -1437,6 +1438,22 @@ export async function applyIncidentEventTx(params: {
     if (kind === "resolution_agreed" && (state.resolution || !state.opened)) {
       throw new Error("Esta incidencia ya tiene una resolución acordada.");
     }
+    // #203 r2: the AUTHORITATIVE money reconciliation happens HERE, against
+    // the fresh order doc — the UI's numbers are only an estimate. The stored
+    // resolution carries the sale adjustment (piece/difference at historical
+    // price) and the reconciled refund obligation; refunds already committed
+    // by other incidents reduce this one, so the same balance is never
+    // committed twice.
+    if (kind === "resolution_agreed" && (resolution?.kind === "refund" || (resolution?.kind === "replacement_with_difference" && (replacement?.unitPriceCents ?? 0) < incident.originalUnitPriceCents))) {
+      const destination = resolution?.destination ?? "refund_pending";
+      const draft = { ...incident, resolution: { ...resolution, kind: resolution!.kind }, ...(replacement ? { replacement } : {}) };
+      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }) as never, draft);
+      // Both operations carry the HISTORICAL unit price; how it enters the
+      // sale adjustment depends on the kind (orderMoney decides).
+      resolution!.saleAdjustmentUnitCents = incident.originalUnitPriceCents;
+      resolution!.refundOwedCents = money.refundOwedCents(destination);
+      resolution!.destination = destination;
+    }
     // #212 F2 defense in depth: a replacement resolution MUST name the real
     // piece leaving stock — no stock-less defaults, no invented costs.
     if (kind === "resolution_agreed" && (resolution?.kind === "replacement_equivalent" || resolution?.kind === "replacement_with_difference")
@@ -1450,8 +1467,17 @@ export async function applyIncidentEventTx(params: {
       && state.pieceLocation !== "quarantined") {
       throw new Error("La pieza no está en cuarentena; registra primero su recepción.");
     }
-    if (kind === "refund_executed" && (!state.confirmed || incidentsRefundPendingCentsOf(incident) <= 0)) {
-      throw new Error("Confirma la recepción de la pieza y entrega del reembolso antes de liquidarlo.");
+    if (kind === "refund_executed") {
+      if (!state.confirmed) throw new Error("Confirma la recepción de la pieza y entrega del reembolso antes de liquidarlo.");
+      const owed = typeof incident.resolution?.refundOwedCents === "number"
+        ? Math.max(0, incident.resolution.refundOwedCents)
+        : incidentsRefundPendingCentsOf(incident);
+      const returned = incidentsReturnedCentsOf(incident);
+      const amount = typeof event.detail?.refundExecutedCents === "number" ? event.detail.refundExecutedCents : 0;
+      if (amount <= 0) throw new Error("El importe devuelto debe ser mayor que cero.");
+      if (amount > owed - returned) {
+        throw new Error(`Solo quedan ${Math.max(0, owed - returned) / 100} pesos por devolver de este reembolso.`);
+      }
     }
     if (kind === "provider_compensation" && !state.confirmed) {
       throw new Error("Confirma la incidencia antes de registrar al proveedor.");
@@ -1498,12 +1524,23 @@ export async function applyIncidentEventTx(params: {
         tx.update(replacementRef, { quantityOnHand: increment(-quantity), updatedAt: event.at });
       }
     }
-    if ((kind === "repaired" || kind === "provider_replacement" || kind === "returned_to_sale") && quarantineProduct) {
+    // #203 r2: repairing does NOT release the piece — it stays in quarantine
+    // until Fer explicitly authorizes the return to sale (or writes it off).
+    if ((kind === "provider_replacement" || kind === "returned_to_sale") && quarantineProduct) {
       tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), quantityOnHand: increment(quantity), updatedAt: event.at });
     }
     if (kind === "written_off" && quarantineProduct) {
       tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), updatedAt: event.at });
     }
+    // #203 r2: an executed refund at confirm can never exceed the committed
+    // obligation (authoritative, recomputed above at agreement time).
+    if (kind === "confirmed" && typeof event.detail?.refundExecutedCents === "number") {
+      const owed = typeof incident.resolution?.refundOwedCents === "number" ? Math.max(0, incident.resolution.refundOwedCents) : 0;
+      if (event.detail.refundExecutedCents > owed) {
+        throw new Error(`El reembolso comprometido es de ${owed / 100} pesos; no se puede devolver más.`);
+      }
+    }
+
     // ── Order doc: append the event (and the agreed resolution, once). ──
     const updated: OrderIncident = {
       ...incident,
@@ -1516,6 +1553,15 @@ export async function applyIncidentEventTx(params: {
     tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
     return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }) };
   });
+}
+
+/** Σ money actually handed back (executed refunds) for this incident. */
+function incidentsReturnedCentsOf(incident: OrderIncident): number {
+  return (incident.events ?? []).reduce(
+    (sum: number, event: OrderIncidentEvent) =>
+      sum + ((event.kind === "confirmed" || event.kind === "refund_executed") && typeof event.detail?.refundExecutedCents === "number" && Number.isSafeInteger(event.detail.refundExecutedCents) ? event.detail.refundExecutedCents : 0),
+    0
+  );
 }
 
 function incidentsRefundPendingCentsOf(incident: OrderIncident): number {
