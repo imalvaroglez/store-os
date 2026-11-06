@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.6.0",
+    "date": "2026.11.06",
+    "title": "Saldo a favor por clienta",
+    "notes": [
+      "El dinero de más de un pedido compensa lo pendiente de los otros pedidos de la misma clienta, del más antiguo al más reciente, sin pasos extra.",
+      "Cada pedido muestra si ya se le aplicó saldo a favor y de qué pedido viene; la ficha de la clienta muestra su neto por cobrar.",
+      "Cancelar un pedido devuelve el saldo a favor que había usado."
+    ]
+  },
+  {
     "version": "1.5.0",
     "date": "2026.11.05",
     "title": "Versión visible y captura de dinero confiable",
