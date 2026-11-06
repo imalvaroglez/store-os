@@ -19,7 +19,8 @@
 import type { Order } from "../../types";
 import { docReceivedCents, orderAmountCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
-import { incidentsRefundPendingCents, incidentsSaleAdjustmentCents } from "./incidents";
+import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
+
 
 /** Any order-shaped record with unknown extra fields (migrated docs). */
 type OrderLike = Partial<Order> & Record<string, unknown>;
@@ -39,11 +40,6 @@ function effectiveTotalCents(order: OrderLike): number {
   return Math.max(0, orderTotalCents(order) + incidentsSaleAdjustmentCents(order.incidents));
 }
 
-/** #203: refund money agreed but not yet handed back — blocked, never credit. */
-function refundPendingCents(order: OrderLike): number {
-  return incidentsRefundPendingCents(order.incidents);
-}
-
 /** Net credit applied TO this order (destination accumulator; #168 pattern). */
 export function creditAppliedCents(order: OrderLike): number {
   const applied = order.creditAppliedCents;
@@ -56,9 +52,10 @@ export function creditAvailableCents(order: OrderLike): number {
   if (surplus <= 0) return 0;
   const consumed = order.creditConsumedCents;
   const consumedCents = typeof consumed === "number" && Number.isFinite(consumed) ? Math.max(0, consumed) : 0;
-  // #203: money committed to a refund stays blocked until it is actually
-  // handed back — it compensates nothing without the clienta's acceptance.
-  return Math.max(0, surplus - consumedCents - refundPendingCents(order));
+  // #203: refund money is NEVER credit — agreed refunds block the surplus
+  // whether or not the cash has been handed back yet (executing the refund
+  // must not surface it as saldo a favor; review #212 F1).
+  return Math.max(0, surplus - consumedCents - incidentsRefundCommittedCents(order.incidents));
 }
 
 /** What the customer still owes on this order, net of credit applied to it

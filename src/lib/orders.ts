@@ -1,6 +1,6 @@
 import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderIncident, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
-import { incidentsRefundPendingCents, incidentsSaleAdjustmentCents } from "./orderMoney";
+import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { formatMoney } from "./money";
 import { docReceivedCents, orderAmountCents } from "./orderMoney";
 import { LEGACY_TIER_IDS } from "./pricing";
@@ -94,7 +94,7 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
   const adjustmentCents = incidentsSaleAdjustmentCents(order.incidents);
   const effectiveCents = Math.max(0, totalCents + adjustmentCents);
   const surplusCents = Math.max(0, paidCents - effectiveCents);
-  const availableCents = Math.max(0, surplusCents - creditFieldCents(order, "creditConsumedCents") - incidentsRefundPendingCents(order.incidents));
+  const availableCents = Math.max(0, surplusCents - creditFieldCents(order, "creditConsumedCents") - incidentsRefundCommittedCents(order.incidents));
   return {
     estimatedTotal,
     paid,

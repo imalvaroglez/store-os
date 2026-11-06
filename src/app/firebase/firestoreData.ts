@@ -801,6 +801,17 @@ export async function deleteOrderWithStockTx(
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(orderRef);
     if (!snap.exists()) return [];
+    // #203: an order with a confirmed incident still holding quarantined
+    // pieces cannot be deleted — the quarantine release lives on this ficha
+    // (deleting it would orphan quantityQuarantined forever; review #212 F5).
+    const orderIncidents = Array.isArray(snap.data().incidents) ? (snap.data().incidents as OrderIncident[]) : [];
+    if (orderIncidents.some((incident) => {
+      const quarantined = (incident.events ?? []).some((event) => event.kind === "confirmed")
+        && !(incident.events ?? []).some((event) => event.kind === "repaired" || event.kind === "provider_replacement" || event.kind === "returned_to_sale" || event.kind === "written_off");
+      return quarantined;
+    })) {
+      throw new Error("El pedido tiene una incidencia con pieza en cuarentena. Líbrala (reparar, baja, reemplazo o venta) antes de borrar el pedido.");
+    }
     const previous = migrateOrder({ ...snap.data(), id: orderId });
     if ((previous.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
     // A zero accumulator can still have payments and offsetting adjustments.
@@ -1413,6 +1424,12 @@ export async function applyIncidentEventTx(params: {
     if (kind === "resolution_agreed" && (state.resolution || !state.opened)) {
       throw new Error("Esta incidencia ya tiene una resolución acordada.");
     }
+    // #212 F2 defense in depth: a replacement resolution MUST name the real
+    // piece leaving stock — no stock-less defaults, no invented costs.
+    if (kind === "resolution_agreed" && (resolution?.kind === "replacement_equivalent" || resolution?.kind === "replacement_with_difference")
+      && !replacement?.productId) {
+      throw new Error("Elige la pieza que entregas como reemplazo.");
+    }
     if (kind === "confirmed" && (!state.resolution || state.confirmed)) {
       throw new Error("Confirma la resolución con la clienta antes de registrar recepción y entrega.");
     }
@@ -1420,22 +1437,30 @@ export async function applyIncidentEventTx(params: {
       && state.pieceLocation !== "quarantined") {
       throw new Error("La pieza no está en cuarentena; registra primero su recepción.");
     }
-    if (kind === "refund_executed" && incidentsRefundPendingCentsOf(incident) <= 0) {
-      throw new Error("No hay reembolso pendiente en esta incidencia.");
+    if (kind === "refund_executed" && (!state.confirmed || incidentsRefundPendingCentsOf(incident) <= 0)) {
+      throw new Error("Confirma la recepción de la pieza y entrega del reembolso antes de liquidarlo.");
     }
-    if (kind === "provider_compensation" && !state.confirmed) {
-      throw new Error("Confirma la incidencia antes de registrar al proveedor.");
+    if (kind === "provider_compensation"
+      && (!state.confirmed || (incident.events ?? []).some((saved) => saved.kind === "provider_compensation"))) {
+      throw new Error("La compensación del proveedor ya está registrada en esta incidencia.");
     }
     // ── Inventory effects (same commit; shortages abort the whole event).
     // Firestore requires EVERY read before ANY write: both product reads
     // happen first, then both writes.
     const quarantineProduct = incident.productId ? doc(db, "products", incident.productId) : null;
     if (kind === "confirmed") {
-      // The PERSISTED resolution drives the confirm (the parameter only rides
-      // along with resolution_agreed) — the fresh doc is the truth.
+      // The PERSISTED resolution/replacement drive the confirm (parameters
+      // only ride along with resolution_agreed) — the fresh doc is the truth
+      // (review #212 F9: doc-first, never the incoming parameter).
       const agreed = incident.resolution ?? resolution;
-      const isReplacement = agreed?.kind === "replacement_equivalent" || agreed?.kind === "replacement_with_difference";
-      const target = isReplacement ? (replacement ?? incident.replacement) : undefined;
+      const target = agreed && agreed.kind !== "refund"
+        ? (incident.replacement ?? replacement)
+        : undefined;
+      // #212 F4: wait_restock hands the restocked piece over at confirm — the
+      // SAME piece leaves stock at its real stored cost, shortage included.
+      const effectiveTarget = agreed?.kind === "wait_restock"
+        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false })
+        : target;
       if (quarantineProduct) {
         const productSnap = await tx.get(quarantineProduct);
         if (productSnap.exists() && (productSnap.data().storeId ?? "") !== storeId) {
@@ -1443,8 +1468,8 @@ export async function applyIncidentEventTx(params: {
         }
       }
       let replacementRef: ReturnType<typeof doc> | null = null;
-      if (target?.productId) {
-        replacementRef = doc(db, "products", target.productId);
+      if (effectiveTarget?.productId) {
+        replacementRef = doc(db, "products", effectiveTarget.productId);
         const replacementSnap = await tx.get(replacementRef);
         if (!replacementSnap.exists()) throw new Error("No se encontró el producto de reemplazo.");
         if ((replacementSnap.data().storeId ?? "") !== storeId) throw new Error("El reemplazo pertenece a otra tienda.");

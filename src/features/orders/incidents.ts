@@ -56,7 +56,7 @@ export function incidentState(incident: OrderIncident): IncidentState {
     }
   }
   const refundExecutedCents = eventsOf(incident)
-    .filter((event) => event.kind === "confirmed")
+    .filter((event) => event.kind === "confirmed" || event.kind === "refund_executed")
     .reduce((sum, event) => sum + centsOf(event.detail?.refundExecutedCents), 0);
   return {
     opened: kinds.has("opened"),
