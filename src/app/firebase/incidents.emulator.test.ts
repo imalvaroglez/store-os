@@ -74,7 +74,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     ).rejects.toThrow(/ya tiene una resolución/i);
     await expect(
       applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-1", event: event("inc-e4", "repaired") })
-    ).rejects.toThrow(/cuarentena/i);
+    ).rejects.toThrow(/retenida|recepción de la pieza antes de reparar/i);
   });
 
   it("confirming moves inventory atomically: damaged piece quarantined, replacement out at real cost", async () => {
@@ -108,15 +108,20 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     expect(damaged.quantityQuarantined).toBe(1); // unchanged
   });
 
-  it("repaired releases the quarantine back into sellable stock; refund_executed settles once", async () => {
+  it("repaired KEEPS the piece held; explicit sale authorization releases it (r2)", async () => {
+    const before = (await getDoc(doc(holder.db, "products/inc-product"))).data()!;
     await applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-1", event: event("inc-e6", "repaired") });
-    const damaged = (await getDoc(doc(holder.db, "products/inc-product"))).data()!;
-    expect(damaged.quantityQuarantined).toBe(0);
-    expect(damaged.quantityOnHand).toBe(6);
+    const repaired = (await getDoc(doc(holder.db, "products/inc-product"))).data()!;
+    expect(repaired.quantityQuarantined).toBe(before.quantityQuarantined); // still held
+    expect(repaired.quantityOnHand).toBe(before.quantityOnHand);           // NOT sellable
+    await applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-1", event: event("inc-e6b", "returned_to_sale") });
+    const released = (await getDoc(doc(holder.db, "products/inc-product"))).data()!;
+    expect(released.quantityQuarantined).toBe(before.quantityQuarantined - 1);
+    expect(released.quantityOnHand).toBe(before.quantityOnHand + 1);
     // refund_executed on a non-refund incident aborts.
     await expect(
       applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-1", event: event("inc-e7", "refund_executed") })
-    ).rejects.toThrow(/reembolso|confirm/i);
+    ).rejects.toThrow(/reembolso|importe devuelto|confirm/i);
   });
 
   it("#212 F2: a replacement resolution without the real piece aborts", async () => {
@@ -150,7 +155,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     await applyIncidentEventTx({
       orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6",
       event: event("f6-e1", "resolution_agreed"),
-      resolution: { kind: "refund", refundUnitPriceCents: 12000 },
+      resolution: { kind: "refund", destination: "refund_pending" },
     });
     await expect(
       applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6", event: event("f6-e2", "refund_executed", { refundExecutedCents: 12000 }) })
@@ -179,7 +184,137 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     await applyIncidentEventTx({ orderId: "inc-order-hold", storeId: "inc-store", incidentId: "inc-hold", event: event("h-e2", "confirmed") });
     await expect(
       deleteOrderWithStockTx({ uid: "inc-user" } as never, "inc-order-hold", 0)
-    ).rejects.toThrow(/cuarentena/i);
+    ).rejects.toThrow(/retenida|recepción de la pieza antes de reparar/i);
+  });
+
+  it("r3: destino obligatorio en servidor — resolución de reembolso sin elección aborta", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-r3"), {
+      storeId: "inc-store", customerId: "inc-clienta",
+      items: [{ lineId: "r3_L0", productId: "inc-product", productName: "Anillo QA", quantity: 1, unitPrice: 120, subtotal: 120 }],
+      deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 12000, inheritedDepositMaterialized: true,
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-r3", storeId: "inc-store", incident: incident("inc-r3", { events: [event("r3-open", "opened")] }) });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order-r3", storeId: "inc-store", incidentId: "inc-r3",
+        event: event("r3-e1", "resolution_agreed"), resolution: { kind: "refund" } })
+    ).rejects.toThrow(/destino del importe/i);
+  });
+
+  it("r3: doble compromiso CONCURRENTE nunca excede el excedente (criterio 4)", async () => {
+    // Venta $200 (dos piezas de $100), pagados $200: dos devoluciones
+    // simultáneas compiten por el excedente de $200.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-race"), {
+      storeId: "inc-store", customerId: "inc-clienta",
+      items: [
+        { lineId: "ra_L0", productId: "inc-product", productName: "Pieza A", quantity: 1, unitPrice: 100, subtotal: 100 },
+        { lineId: "rb_L0", productId: "inc-product", productName: "Pieza B", quantity: 1, unitPrice: 100, subtotal: 100 },
+      ],
+      deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 20000, inheritedDepositMaterialized: true,
+        createdAt: "", updatedAt: "",
+      });
+    });
+    for (const id of ["inc-ra", "inc-rb"]) {
+      await openIncidentTx({ orderId: "inc-order-race", storeId: "inc-store", incident: incident(id, { events: [event(`${id}-open`, "opened")] }) });
+    }
+    const destination = { destination: "refund_pending" as const };
+    const results = await Promise.allSettled([
+      applyIncidentEventTx({ orderId: "inc-order-race", storeId: "inc-store", incidentId: "inc-ra",
+        event: event("ra-e1", "resolution_agreed"), resolution: { kind: "refund" as const, ...destination } }),
+      applyIncidentEventTx({ orderId: "inc-order-race", storeId: "inc-store", incidentId: "inc-rb",
+        event: event("rb-e1", "resolution_agreed"), resolution: { kind: "refund" as const, ...destination } }),
+    ]);
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-race"))).data()!;
+    const owed = (order.incidents ?? []).reduce((sum: number, incident: { resolution?: { refundOwedCents?: number } }) =>
+      sum + Math.max(0, incident.resolution?.refundOwedCents ?? 0), 0);
+    expect(owed).toBe(20000); // exacto: cada pieza $100, excedente total $200
+  });
+
+  it("r4 (PO): origen AUSENTE aborta la confirmación completa — sin efectos parciales ni omisión silenciosa", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-noreturn"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "nr_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [{ id: "app_gone", kind: "application", fromOrderId: "origin-deleted", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incident: incident("inc-nr", { events: [event("nr-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incidentId: "inc-nr",
+      event: event("nr-e1", "resolution_agreed"),
+      resolution: { kind: "refund", destination: "credit_accepted" } });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incidentId: "inc-nr", event: event("nr-e2", "confirmed") })
+    ).rejects.toThrow(/pedido origen del saldo a favor/i);
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-noreturn"))).data()!;
+    // NADA aterrizó: ni el evento confirmado, ni cuarentena, ni cambio de crédito.
+    expect((order.incidents[0].events ?? []).some((saved: { kind: string }) => saved.kind === "confirmed")).toBe(false);
+    expect(order.creditAppliedCents).toBe(10000);
+    const product = (await getDoc(doc(holder.db, "products/inc-product"))).data()!;
+    expect(product.quantityQuarantined).toBeLessThan(999); // sin efecto de esta tx
+  });
+
+  it("r4: espejo inconsistente del origen (creditConsumed 0 con ledger neto) también aborta con explicación", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-drift"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "od_L0", productName: "Origen", quantity: 1, unitPrice: 50, subtotal: 50 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        createdAt: "", updatedAt: "",
+        // Ledger dice que consumió $100… pero el espejo fue dañado a 0.
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-drift"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "df_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [{ id: "app_drift", kind: "application", fromOrderId: "inc-origin-drift", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-drift", storeId: "inc-store", incident: incident("inc-df", { events: [event("df-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-drift", storeId: "inc-store", incidentId: "inc-df",
+      event: event("df-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted" } });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order-drift", storeId: "inc-store", incidentId: "inc-df", event: event("df-e2", "confirmed") })
+    ).rejects.toThrow(/no refleja el crédito consumido/i);
+  });
+
+  it("r4: restitución del CAMINO FELIZ — el origen recupera su disponible y todo aterriza junto", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-ok"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "oo_L0", productName: "Origen", quantity: 1, unitPrice: 50, subtotal: 50 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 10000,
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-ok"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "ok_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [{ id: "app_ok", kind: "application", fromOrderId: "inc-origin-ok", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-ok", storeId: "inc-store", incident: incident("inc-ok", { events: [event("ok-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-ok", storeId: "inc-store", incidentId: "inc-ok",
+      event: event("ok-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted" } });
+    await applyIncidentEventTx({ orderId: "inc-order-ok", storeId: "inc-store", incidentId: "inc-ok", event: event("ok-e2", "confirmed") });
+    const origin = (await getDoc(doc(holder.db, "orders/inc-origin-ok"))).data()!;
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-ok"))).data()!;
+    expect(origin.creditConsumedCents).toBe(0);            // el crédito vuelve a estar disponible (#189)
+    expect(order.creditAppliedCents).toBe(0);
+    const releases = (order.creditLedger ?? []).filter((entry: { kind: string }) => entry.kind === "release");
+    expect(releases).toHaveLength(1);
+    expect(releases[0].amountCents).toBe(10000);
   });
 
   it("never crosses stores", async () => {
@@ -203,7 +338,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     await applyIncidentEventTx({
       orderId: "inc-order-3", storeId: "inc-store", incidentId: "inc-3",
       event: event("inc3-e1", "resolution_agreed"),
-      resolution: { kind: "refund", refundUnitPriceCents: 12000 },
+      resolution: { kind: "refund", destination: "refund_pending" },
     });
     await applyIncidentEventTx({
       orderId: "inc-order-3", storeId: "inc-store", incidentId: "inc-3",
@@ -214,6 +349,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     // Double settle aborts: nothing pending anymore.
     await expect(
       applyIncidentEventTx({ orderId: "inc-order-3", storeId: "inc-store", incidentId: "inc-3", event: event("inc3-e3", "refund_executed", { refundExecutedCents: 12000 }) })
-    ).rejects.toThrow(/reembolso|confirm/i);
+    ).rejects.toThrow(/reembolso|importe devuelto|confirm/i);
   });
 });
