@@ -22,7 +22,7 @@ import { reservationDeltasForOrderChange } from "../../lib/inventory";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
-import { deliveryWithBalanceBlocked, orderTotalCents } from "../../features/orders/installments";
+import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -408,6 +408,15 @@ export async function saveOrderWithStockTx(
       paymentsRevision: typeof docData?.paymentsRevision === "number" ? docData.paymentsRevision : undefined,
       paymentsReceivedCents: typeof docData?.paymentsReceivedCents === "number" ? docData.paymentsReceivedCents : undefined,
       inheritedDepositMaterialized: docData?.inheritedDepositMaterialized === true ? true : undefined,
+      // #189 (review F1): the credit fields belong to the compensation
+      // transactions exactly like the money fields above — an order save
+      // carries them through VERBATIM so a full-document write can never wipe
+      // a compensation (which would double-charge or invent money depending
+      // on which side is edited). Only applyCustomerCreditTx / release-
+      // CustomerCreditTx may write them.
+      creditAppliedCents: typeof docData?.creditAppliedCents === "number" ? docData.creditAppliedCents : undefined,
+      creditConsumedCents: typeof docData?.creditConsumedCents === "number" ? docData.creditConsumedCents : undefined,
+      creditLedger: Array.isArray(docData?.creditLedger) ? (docData.creditLedger as Order["creditLedger"]) : undefined,
     };
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
@@ -433,7 +442,10 @@ export async function saveOrderWithStockTx(
       effectiveOrderStatus(next) === "delivered" &&
       (!previous || effectiveOrderStatus(previous) !== "delivered");
     if (delivering && deliveryWithBalanceBlocked(next, docMoney)) {
-      const saldoCents = orderTotalCents(next) - docMoney.receivedCents;
+      // #189 (review F2): the recorded saldo is the NET uncovered figure —
+      // saldo a favor already applied to this order counts as covered, the
+      // same "Pendiente por pagar" every read model shows.
+      const saldoCents = uncoveredBalanceCents(next, docMoney);
       if (!options?.confirmDeliveredWithBalance) {
         throw new DeliveryWithBalanceError(saldoCents);
       }
@@ -722,8 +734,11 @@ export async function releaseCustomerCreditTx(params: {
   const { db } = getFirebase();
   const { orderId, storeId, by, reason = "cancellation" } = params;
   const destRef = doc(db, "orders", orderId);
+  // Per-ATTEMPT accumulator: Firestore retries the transaction body on
+  // conflicts, so a total accumulated across attempts would over-report.
   let released = 0;
   await runTransaction(db, async (tx) => {
+    released = 0;
     const destSnap = await tx.get(destRef);
     if (!destSnap.exists()) return;
     const destData = destSnap.data() as Record<string, unknown>;

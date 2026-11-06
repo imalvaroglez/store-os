@@ -6,7 +6,8 @@ import type { OrderCreditLedgerEntry } from "../../types";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
-import { applyCustomerCreditTx, releaseCustomerCreditTx } from "./firestoreData";
+import { applyCustomerCreditTx, releaseCustomerCreditTx, saveOrderWithStockTx } from "./firestoreData";
+import type { AppUser } from "./auth";
 
 let env: RulesTestEnvironment;
 
@@ -114,5 +115,53 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
     await expect(
       getDoc(doc(foreign, "orders/credit-dest"))
     ).rejects.toThrow();
+  });
+
+  it("editing an order through the normal save path keeps the credit fields intact (review F1)", async () => {
+    const user = { uid: "tx-user" } as AppUser;
+    // Re-apply a compensation on a live destination.
+    await updateDoc(doc(holder.db, "orders/credit-dest"), { orderStatus: "confirmed" });
+    await applyCustomerCreditTx({ entry: entry("app_edit", 1500), orderId: "credit-dest", storeId: "credit-store" });
+
+    // Edit and save the DESTINATION: the credit applied to it must survive.
+    const before = (await getDoc(doc(holder.db, "orders/credit-dest"))).data()!;
+    const edited = { ...before, id: "credit-dest", notes: "editado tras compensación" } as never;
+    await saveOrderWithStockTx(user, edited as never, before.revision ?? 0, "mut_edit_dest");
+    const after = (await getDoc(doc(holder.db, "orders/credit-dest"))).data()!;
+    expect(after.creditAppliedCents).toBe(1500);
+    expect((after.creditLedger as Array<{ id: string }>).length).toBeGreaterThanOrEqual(2);
+    expect(after.notes).toBe("editado tras compensación");
+
+    // Edit and save the ORIGIN: its consumed mirror must survive too.
+    const originBefore = (await getDoc(doc(holder.db, "orders/credit-origin"))).data()!;
+    const originEdited = { ...originBefore, id: "credit-origin", notes: "origen editado" } as never;
+    await saveOrderWithStockTx(user, originEdited as never, originBefore.revision ?? 0, "mut_edit_origin");
+    const originAfter = (await getDoc(doc(holder.db, "orders/credit-origin"))).data()!;
+    expect(originAfter.creditConsumedCents).toBe(1500);
+    expect(originAfter.notes).toBe("origen editado");
+  });
+
+  it("the delivery gate counts applied credit as covered and records the NET saldo (review F2)", async () => {
+    const user = { uid: "tx-user" } as AppUser;
+    // $200 order with $100 received on it + $100 credit applied from a sister
+    // order. Money fields only enter through the disabled-rules seeder — the
+    // rules themselves forbid creating docs that carry them.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/credit-origin-2"), orderDoc("credit-origin-2", {
+        items: [{ productName: "Aro", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "credit-origin-2_L0" }],
+        paymentsReceivedCents: 20000,
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/credit-deliver"), orderDoc("credit-deliver", { paymentsReceivedCents: 10000 }));
+    });
+    await applyCustomerCreditTx({ entry: entry("app_deliver", 10000, "credit-origin-2"), orderId: "credit-deliver", storeId: "credit-store" });
+
+    // Delivering without explicit confirmation must NOT fire the gate: the
+    // credit is the clienta's money, received on her other order.
+    const snap = (await getDoc(doc(holder.db, "orders/credit-deliver"))).data()!;
+    const delivered = { ...snap, id: "credit-deliver", orderStatus: "delivered" } as never;
+    await saveOrderWithStockTx(user, delivered as never, snap.revision ?? 0, "mut_deliver");
+    const result = (await getDoc(doc(holder.db, "orders/credit-deliver"))).data()!;
+    expect(result.orderStatus).toBe("delivered");
+    expect(result.deliveredWithBalanceCents).toBeUndefined(); // nothing uncovered
   });
 });
