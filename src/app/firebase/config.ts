@@ -128,21 +128,16 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
 
 // Usage-measurement hook (#192, protocol in the issue): compiled ONLY into
 // dev-project builds — the production build (store-os-f7cf8) dead-code
-// eliminates this branch because VITE_FIREBASE_PROJECT_ID is a build-time
-// literal. Armed by ?measure=1, it lets scripts/measure-usage.mjs sign in with
-// a short-lived custom token (minted locally via the Admin SDK + ADC, dev-only
-// guard) and turn on Firestore debug logging. No passwords, no bundle secrets.
+// eliminates this branch because both operands are build-time literals
+// (Vite replaces import.meta.env.*, FIREBASE_DEV_PROJECT_ID is a plain
+// string). Armed by ?measure=1, it does exactly what the harness consumes:
+// expose the marker scripts/measure-usage.mjs checks to prove it is driving
+// a dev build, and turn on Firestore debug logging for its raw evidence
+// log. The harness signs in through the UI like a human operator; there is
+// deliberately NO auth API here (review #201 F2). No secrets in the bundle.
 if (import.meta.env.VITE_FIREBASE_PROJECT_ID === FIREBASE_DEV_PROJECT_ID) {
   if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("measure")) {
+    (window as unknown as { __storeOsMeasure?: boolean }).__storeOsMeasure = true;
     void import("firebase/firestore").then(({ setLogLevel }) => setLogLevel("debug")).catch(console.error);
-    void import("firebase/auth").then(({ signInWithCustomToken, onAuthStateChanged }) => {
-      const { auth: measureAuth } = getFirebase();
-      (window as unknown as { __storeOsMeasure?: object }).__storeOsMeasure = {
-        signInCustom: (token: string) => signInWithCustomToken(measureAuth, token),
-        signOut: () => measureAuth.signOut(),
-        onUser: (callback: (email: string | null) => void) =>
-          onAuthStateChanged(measureAuth, (user) => callback(user?.email ?? null)),
-      };
-    }).catch(console.error);
   }
 }
