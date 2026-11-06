@@ -598,3 +598,36 @@ describe("purchase-ux2 — received purchases are immutable evidence", () => {
     await assertSucceeds(updateDoc(doc(db, "purchases/draft1"), { status: "received", receivedAt: "2026-08-20T00:00:00Z" }));
   });
 });
+
+describe("#184 loose expenses (expenses collection)", () => {
+  const expense = { storeId: "exp-store", amount: 15, date: "2026-11-06", category: "operation", createdAt: "2026-11-06T10:00:00Z", updatedAt: "2026-11-06T10:00:00Z" };
+
+  it("a member of the store registers, updates and deletes their expense", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/exp-user"), { role: "member" });
+      await setDoc(doc(c.firestore(), "adminStores/exp-store"), { ownerUid: "exp-user", memberUids: ["exp-user"] });
+    });
+    const db = await asUser("exp-user");
+    await assertSucceeds(setDoc(doc(db, "expenses/exp-1"), { ...expense, id: "exp-1" }));
+    await assertSucceeds(updateDoc(doc(db, "expenses/exp-1"), { description: "Gasolina", updatedAt: "2026-11-06T11:00:00Z" }));
+    await assertSucceeds(deleteDoc(doc(db, "expenses/exp-1")));
+  });
+
+  it("the original amount and date are evidence: an update cannot rewrite them", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "expenses/exp-2"), { ...expense, id: "exp-2" });
+    });
+    const db = await asUser("exp-user");
+    await assertFails(updateDoc(doc(db, "expenses/exp-2"), { amount: 5 }));
+    await assertFails(updateDoc(doc(db, "expenses/exp-2"), { date: "2026-10-01" }));
+  });
+
+  it("never crosses stores (read or write)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "expenses/exp-3"), { ...expense, id: "exp-3" });
+    });
+    const db = await asUser("exp-user");
+    await assertFails(getDoc(doc(db, "expenses/exp-3")));
+    await assertFails(setDoc(doc(db, "expenses/exp-4"), { ...expense, id: "exp-4", storeId: "other-store" }));
+  });
+});

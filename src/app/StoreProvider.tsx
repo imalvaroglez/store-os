@@ -40,7 +40,7 @@ import {
 import { creditAvailableCents, ordersForCustomer, planCreditApplications } from "../features/orders/customerCredit";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
-import type { OrderIncident, OrderIncidentEvent } from "../types";
+import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
 import {
   loadCloudState,
@@ -65,6 +65,8 @@ import {
   releaseCustomerCreditTx,
   openIncidentTx,
   applyIncidentEventTx,
+  assignExpenseTx,
+  consumeSupplyTx,
   StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
@@ -76,6 +78,9 @@ import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 // Actions: every mutation flows through here. The active store scopes normal UI
 // work; membership and super_admin access are enforced by Firebase rules.
 type Action =
+  | { type: "ADD_EXPENSE"; expense: LooseExpense }
+  | { type: "UPDATE_EXPENSE"; expense: LooseExpense }
+  | { type: "DELETE_EXPENSE"; expenseId: string }
   | { type: "ADD_STORE"; store: Store }
   | { type: "UPDATE_STORE"; store: Store }
   | { type: "DELETE_STORE"; storeId: string }
@@ -110,6 +115,16 @@ type Action =
 // cascade deletes, entity CRUD) without spinning up a React tree.
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case "ADD_EXPENSE": {
+      if (state.expenses.some((e) => e.id === action.expense.id)) return state;
+      return { ...state, expenses: [...state.expenses, action.expense] };
+    }
+    case "UPDATE_EXPENSE": {
+      return { ...state, expenses: state.expenses.map((e) => (e.id === action.expense.id ? action.expense : e)) };
+    }
+    case "DELETE_EXPENSE": {
+      return { ...state, expenses: state.expenses.filter((e) => e.id !== action.expenseId) };
+    }
     case "ADD_STORE":
       return { ...state, stores: [...state.stores, action.store], activeStoreId: action.store.id };
     case "UPDATE_STORE":
@@ -267,6 +282,15 @@ type StoreContextValue = {
     event: Omit<OrderIncidentEvent, "at" | "by">,
     extra?: { resolution?: OrderIncident["resolution"]; replacement?: OrderIncident["replacement"] }
   ) => Promise<void>;
+  /** #184 loose expenses. */
+  saveExpense: (expense: LooseExpense) => Promise<void>;
+  deleteExpense: (expenseId: string) => Promise<void>;
+  assignExpense: (
+    expense: LooseExpense,
+    assignment: Omit<ExpenseAssignment, "at" | "by">,
+    purchaseExpense?: { id: string; category: "sourcing_transport" | "other"; amount: number; description?: string; includeInInventoryCost?: boolean }
+  ) => Promise<void>;
+  consumeSupply: (expense: LooseExpense, consumption: Omit<SupplyConsumption, "at" | "by">, description?: string) => Promise<void>;
   /** Payment records loaded this session (cloud reads; not local legacy state). */
   payments: OrderPayment[];
   /** Load one order's payment records from Firestore. Rejects on failure. */
@@ -467,7 +491,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid, state.stores]);
 
-  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
+  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses", entity: { id: string } & Record<string, unknown>): Promise<void> {
     const currentUser = requireAuthenticatedUser();
     return saveEntity(currentUser, name, entity).catch((error) => {
       // Log with context for debugging, then re-throw so callers can surface a
@@ -1022,6 +1046,50 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       dispatch({ type: "UPDATE_ORDER", order: result.order });
     },
+    // #184 loose expenses: register/classify; assignment and consumption run
+    // through their transactions and land via the entity listeners.
+    saveExpense: async (expense) => {
+      requireAuthenticatedUser();
+      const existing = state.expenses.find((candidate) => candidate.id === expense.id);
+      if (existing) {
+        // The original amount/date are evidence — never rewritten by an edit.
+        const updated = { ...expense, amount: existing.amount, date: existing.date, createdAt: existing.createdAt, updatedAt: nowIso() };
+        await persistEntity("expenses", updated);
+        dispatch({ type: "UPDATE_EXPENSE", expense: updated });
+        return;
+      }
+      const created = { ...expense, createdAt: nowIso(), updatedAt: nowIso() };
+      await persistEntity("expenses", created);
+      dispatch({ type: "ADD_EXPENSE", expense: created });
+    },
+    deleteExpense: async (expenseId) => {
+      const currentUser = requireAuthenticatedUser();
+      const existing = state.expenses.find((candidate) => candidate.id === expenseId);
+      if (!existing) return;
+      if ((existing.assignments ?? []).length > 0 || (existing.supply?.consumptions ?? []).length > 0) {
+        throw new Error("Este gasto ya tiene asignaciones o consumos registrados; no se puede borrar.");
+      }
+      await deleteEntity(currentUser, "expenses", expenseId);
+      dispatch({ type: "DELETE_EXPENSE", expenseId });
+    },
+    assignExpense: async (expense, assignment, purchaseExpense) => {
+      const currentUser = requireAuthenticatedUser();
+      await assignExpenseTx({
+        expenseId: expense.id,
+        storeId: expense.storeId,
+        assignment: { ...assignment, at: nowIso(), by: currentUser.uid },
+        ...(purchaseExpense ? { purchaseExpense } : {}),
+      });
+    },
+    consumeSupply: async (expense, consumption, description) => {
+      const currentUser = requireAuthenticatedUser();
+      await consumeSupplyTx({
+        expenseId: expense.id,
+        storeId: expense.storeId,
+        consumption: { ...consumption, at: nowIso(), by: currentUser.uid },
+        ...(description ? { description } : {}),
+      });
+    },
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
@@ -1033,7 +1101,7 @@ function storeWithMembership(store: Store, user: AppUser): Store & { ownerUid?: 
 }
 
 export function emptyAppState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
+  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [] };
 }
 
 export function useStore(): StoreContextValue {
