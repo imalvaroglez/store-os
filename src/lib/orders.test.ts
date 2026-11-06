@@ -36,7 +36,7 @@ describe("order domain helpers", () => {
   });
 
   it("#189: balance is net of applied credit; availableCredit discounts consumed surplus", () => {
-    const items = [{ productId: "p1", productName: "A", quantity: 2, unitPrice: 100 }];
+    const items = [{ productId: "p1", productName: "A", quantity: 2, unitPrice: 100, subtotal: 200 }];
     const debtor = base({ items, paymentsReceivedCents: 5000, inheritedDepositMaterialized: true, creditAppliedCents: 1500 });
     // $200 total, $50 received, $15 credit applied -> owes $135, paid stays $50.
     expect(orderTotals(debtor)).toEqual({ estimatedTotal: 200, paid: 50, balance: 135, appliedCredit: 15, availableCredit: 0, pieces: 2 });
