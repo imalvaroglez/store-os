@@ -1530,12 +1530,25 @@ export async function applyIncidentEventTx(params: {
         if (netCents <= 0) continue;
         const originRef = doc(db, "orders", fromOrderId);
         const originSnap = await tx.get(originRef);
-        if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
+        // PO directive (r4): a NEEDED origin that is missing, foreign or
+        // inconsistent ABORTS the whole confirmation — never a silent skip.
+        // The clienta's credit would vanish with no signal; fail closed and
+        // explain so the operator can repair the data first.
+        if (!originSnap.exists()) {
+          throw new Error(`No se encontró el pedido origen del saldo a favor (${fromOrderId}). Repara ese pedido antes de confirmar: la devolución necesita devolverle su crédito.`);
+        }
+        const originData = originSnap.data() as Record<string, unknown>;
+        if ((originData.storeId ?? "") !== storeId) {
+          throw new Error("El pedido origen del saldo a favor pertenece a otra tienda. Revisa la ficha antes de confirmar.");
+        }
         // F4: cap against the origin's REAL mirror so a release can never
         // drive creditConsumed negative (manual-repair scenarios included).
-        const originConsumed = typeof originSnap.data().creditConsumedCents === "number" && Number.isSafeInteger(originSnap.data().creditConsumedCents)
-          ? Math.max(0, originSnap.data().creditConsumedCents)
+        const originConsumed = typeof originData.creditConsumedCents === "number" && Number.isSafeInteger(originData.creditConsumedCents)
+          ? Math.max(0, originData.creditConsumedCents)
           : 0;
+        if (originConsumed <= 0) {
+          throw new Error(`El pedido origen del saldo a favor no refleja el crédito consumido (${fromOrderId}). Revisa sus cobros de saldo antes de confirmar.`);
+        }
         const release = Math.min(netCents, remaining, originConsumed);
         if (release <= 0) continue;
         remaining -= release;
