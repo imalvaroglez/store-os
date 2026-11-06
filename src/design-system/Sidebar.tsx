@@ -30,7 +30,7 @@ export function Sidebar({
   // navigates; the chevron is a separate expand control (unified-products).
   const [productosOpen, setProductosOpen] = useState<boolean>(() => parentActive(active));
   return (
-    <aside className="hidden md:flex flex-col w-60 shrink-0 border-r border-rule/70 bg-paper/60 backdrop-blur h-full sticky top-0">
+    <aside className="hidden md:flex flex-col w-60 shrink-0 border-r border-rule/70 bg-paper/60 backdrop-blur h-dvh overflow-y-auto sticky top-0">
       <div className="px-5 pt-6 pb-4">
         <div className="flex items-center gap-2">
           <span className="h-8 w-8 rounded-lg bg-ink text-paper flex items-center justify-center serif-display font-semibold">
