@@ -176,7 +176,12 @@ export function installmentPlanView(
   if (!plan) return null;
   const totalCents = orderTotalCents(order);
   const receivedCents = docReceivedCents(order);
-  const balanceCents = totalCents - receivedCents;
+  // #189: the NET balance — saldo a favor applied from sister orders counts
+  // as covered (the clienta's money already arrived, on another order). Cuota
+  // coverage below stays pure REAL money: credit never fakes a cobro.
+  const appliedCredit = typeof order.creditAppliedCents === "number" && Number.isSafeInteger(order.creditAppliedCents)
+    ? Math.max(0, order.creditAppliedCents) : 0;
+  const balanceCents = totalCents - receivedCents - appliedCredit;
   const amounts = splitInstallmentCents(totalCents, plan.count);
   const coverage = applyReceivedToSchedule(amounts, receivedCents);
   const cuotas: InstallmentCuota[] = amounts.map((amountCents, i) => {

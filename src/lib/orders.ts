@@ -55,7 +55,24 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
   }];
 }
 
-export type OrderTotals = { estimatedTotal: number; paid: number; balance: number; pieces: number };
+export type OrderTotals = {
+  estimatedTotal: number;
+  /** Real money received on THIS order (credit is never "received" here). */
+  paid: number;
+  /** #189: what the clienta still owes, NET of saldo a favor applied to this order. */
+  balance: number;
+  /** #189: saldo a favor applied to this order from sister orders, pesos. */
+  appliedCredit: number;
+  /** #189: unconsumed surplus this order still holds for the clienta, pesos. */
+  availableCredit: number;
+  pieces: number;
+};
+
+/** Safe cents read of an optional credit accumulator (corrupt → 0, never NaN). */
+function creditFieldCents(order: Partial<Order> & Record<string, unknown>, field: "creditAppliedCents" | "creditConsumedCents"): number {
+  const value = order[field];
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
 
 /** Totals always use the frozen line snapshots, never the current catalog. */
 export function orderTotals(order: Partial<Order> & Record<string, unknown>): OrderTotals {
@@ -67,7 +84,20 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
   const paidCents = typeof order.paymentsReceivedCents === "number"
     ? docReceivedCents(order) : orderAmountCents(Math.max(0, finite(order.deposit)));
   const paid = paidCents / 100;
-  return { estimatedTotal, paid, balance: Math.max(0, totalCents - paidCents) / 100, pieces };
+  // #189: `balance` is NET of the credit applied to this order (the PO read:
+  // "Pendiente por pagar"); `paid` stays real money so sales/cobros months
+  // never move. `availableCredit` subtracts what sister orders consumed.
+  const appliedCents = creditFieldCents(order, "creditAppliedCents");
+  const surplusCents = Math.max(0, paidCents - totalCents);
+  const availableCents = Math.max(0, surplusCents - creditFieldCents(order, "creditConsumedCents"));
+  return {
+    estimatedTotal,
+    paid,
+    balance: Math.max(0, totalCents - paidCents - appliedCents) / 100,
+    appliedCredit: appliedCents / 100,
+    availableCredit: availableCents / 100,
+    pieces,
+  };
 }
 
 export function paymentStatusForOrder(order: Partial<Order> & Record<string, unknown>): PaymentStatus {
