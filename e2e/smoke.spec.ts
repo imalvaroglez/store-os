@@ -376,7 +376,8 @@ test("recorded payments survive reload and an adjustment updates card and histor
   await card.getByRole("button", { name: "Cobros", exact: true }).click();
   await expect(sheet.getByRole("button", { name: "Registrar ajuste o devolución", exact: true })).toBeEnabled();
   await sheet.getByRole("button", { name: "Registrar ajuste o devolución", exact: true }).click();
-  await sheet.getByLabel("Monto del ajuste", { exact: true }).fill("-150");
+  await sheet.getByRole("combobox", { name: /^Dirección/ }).selectOption("subtract");
+  await sheet.getByLabel("Monto del ajuste", { exact: true }).fill("150");
   await sheet.getByLabel("Motivo", { exact: true }).fill("Corrección de prueba");
   await sheet.getByRole("button", { name: "Guardar ajuste", exact: true }).click();
   await expect(sheet.getByText("$1,250.00", { exact: true })).toBeVisible();

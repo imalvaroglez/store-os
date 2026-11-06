@@ -95,7 +95,7 @@ describe("payment response ordering", () => {
     });
     await mount();
     const old = context.registerOrderPayment(context.state.orders[0], input);
-    await act(async () => context.registerOrderPayment(context.state.orders[0], { kind: "adjustment", id: "adjustment", amountText: "-150", note: "Corrección" }));
+    await act(async () => context.registerOrderPayment(context.state.orders[0], { kind: "adjustment", id: "adjustment", direction: "subtract", amountText: "150", note: "Corrección" }));
     expect(screen.getByTestId("received")).toHaveTextContent("25000");
     await act(async () => {
       finishOld({ payments: [receipt], order: { ...order, paymentsRevision: 1, paymentsReceivedCents: 40000 } });
