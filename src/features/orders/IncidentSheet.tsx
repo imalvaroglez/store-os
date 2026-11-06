@@ -26,6 +26,7 @@ import type { IncidentResolutionKind, Order, OrderIncident } from "../../types";
 const PIECE_LABEL: Record<IncidentPieceLocation, string> = {
   with_customer: "Pieza con la clienta",
   quarantined: "En cuarentena (no vendible)",
+  repaired_held: "Reparada — autoriza la venta para liberarla",
   back_in_stock: "De vuelta en inventario",
   written_off: "Dada de baja",
 };
@@ -327,7 +328,7 @@ function IncidentCard({
         </div>
       )}
 
-      {info.confirmed && info.pieceLocation === "quarantined" && (
+      {info.confirmed && (info.pieceLocation === "quarantined" || info.pieceLocation === "repaired_held") && (
         <div className="flex flex-wrap gap-2 border-t border-edge pt-3">
           <Button size="sm" variant="secondary" onClick={() => void later("repaired")}>Reparado</Button>
           <Button size="sm" variant="secondary" onClick={() => void later("provider_replacement")}>Proveedor entregó reemplazo</Button>

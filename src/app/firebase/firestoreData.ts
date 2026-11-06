@@ -820,8 +820,9 @@ export async function deleteOrderWithStockTx(
     // (deleting it would orphan quantityQuarantined forever; review #212 F5).
     const orderIncidents = Array.isArray(snap.data().incidents) ? (snap.data().incidents as OrderIncident[]) : [];
     if (orderIncidents.some((incident) => {
+      // repaired keeps the piece held (not released): it must still block.
       const quarantined = (incident.events ?? []).some((event) => event.kind === "confirmed")
-        && !(incident.events ?? []).some((event) => event.kind === "repaired" || event.kind === "provider_replacement" || event.kind === "returned_to_sale" || event.kind === "written_off");
+        && !(incident.events ?? []).some((event) => event.kind === "provider_replacement" || event.kind === "returned_to_sale" || event.kind === "written_off");
       return quarantined;
     })) {
       throw new Error("El pedido tiene una incidencia con pieza en cuarentena. Líbrala (reparar, baja, reemplazo o venta) antes de borrar el pedido.");
@@ -1534,6 +1535,38 @@ export async function applyIncidentEventTx(params: {
     }
     // #203 r2: an executed refund at confirm can never exceed the committed
     // obligation (authoritative, recomputed above at agreement time).
+    // #203 r2-criterio 1: at confirm (the piece is physically back), the
+    // applied credit that covered the reconciled value is RESTITUTED to its
+    // origins — that is how the clienta's money becomes available again in
+    // #189 (the reconcile effect re-applies it). Reads happen before writes.
+    const creditReleases: Array<{ originRef: ReturnType<typeof doc>; cents: number; entry: OrderCreditLedgerEntry }> = [];
+    let restitutionTotal = 0;
+    if (kind === "confirmed") {
+      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }) as never, incident);
+      let remaining = money.restitutionCents;
+      const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
+      const netByOrigin = new Map<string, number>();
+      for (const saved of ledger) {
+        if (saved.kind === "application" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
+        if (saved.kind === "release" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
+      }
+      for (const [fromOrderId, netCents] of netByOrigin) {
+        if (remaining <= 0) break;
+        if (netCents <= 0) continue;
+        const release = Math.min(netCents, remaining);
+        remaining -= release;
+        const originRef = doc(db, "orders", fromOrderId);
+        const originSnap = await tx.get(originRef);
+        if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
+        creditReleases.push({
+          originRef,
+          cents: release,
+          entry: { id: `rel_${event.id}_${fromOrderId}`, kind: "release", fromOrderId, amountCents: release, at: event.at, by: event.by },
+        });
+        restitutionTotal += release;
+      }
+    }
+
     if (kind === "confirmed" && typeof event.detail?.refundExecutedCents === "number") {
       const owed = typeof incident.resolution?.refundOwedCents === "number" ? Math.max(0, incident.resolution.refundOwedCents) : 0;
       if (event.detail.refundExecutedCents > owed) {
@@ -1550,7 +1583,19 @@ export async function applyIncidentEventTx(params: {
     };
     const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));
     const updatedAt = event.at;
-    tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
+    if (restitutionTotal > 0) {
+      for (const release of creditReleases) {
+        tx.update(release.originRef, { creditConsumedCents: increment(-release.cents) });
+      }
+      tx.update(orderRef, {
+        incidents: stripUndefined(nextIncidents),
+        updatedAt,
+        creditAppliedCents: increment(-restitutionTotal),
+        creditLedger: arrayUnion(...creditReleases.map((release) => stripUndefined(release.entry))),
+      });
+    } else {
+      tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
+    }
     return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }) };
   });
 }
