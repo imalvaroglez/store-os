@@ -929,6 +929,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // #189: a valid cancellation restitutes the saldo a favor this order had
       // consumed (PO decision 2026-11-05). The reconcile effect above then
       // re-applies the returned credit to the next pending order, if any.
+      // Best-effort by design (unlike deletion's awaited fail-closed release):
+      // the order is already saved as cancelled; a failed restitution surfaces
+      // through the sync-error banner with its retry and blocks nothing else.
       if (result.order.orderStatus === "cancelled" && prev && prev.orderStatus !== "cancelled") {
         persistInBackground("restituir el saldo a favor", () =>
           releaseCustomerCreditTx({ orderId: order.id, storeId: order.storeId, by: currentUser.uid }));

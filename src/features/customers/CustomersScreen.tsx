@@ -146,7 +146,7 @@ export function CustomersScreen() {
                         </StatRow>
                       )}
                       {due > 0 && favor > 0 && (
-                        <StatRow label="Neto a cobrar" tone="danger">
+                        <StatRow label="Neto a cobrar" tone={netDue > 0 ? "danger" : "success"}>
                           <Money amount={netDue} />
                         </StatRow>
                       )}
