@@ -181,3 +181,21 @@ describe("estimated profit on the order card", () => {
     expect(screen.queryByText(/Ganancia estimada/)).toBeNull();
   });
 });
+
+
+describe("one-tap collection reconciliation (#218)", () => {
+  it.each([true, false])("reports canonical collection (pinned=%s)", async (pinned) => {
+    holder.payments = [];
+    holder.upsertOrder.mockReset().mockResolvedValue({ ...order, deposit: pinned ? 0 : 1.25, ...(pinned ? { paymentsReceivedCents: 50 } : {}) });
+    render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
+    if (pinned) {
+      expect(await screen.findByText("Este pedido ya tiene cobros registrados. Regístralos en Cobros.")).toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
+      expect(screen.queryByText("Pedido cobrado")).toBeNull();
+    } else {
+      expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Cobros del pedido" })).toBeNull();
+    }
+  });
+});
