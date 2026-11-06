@@ -125,3 +125,24 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
   }
   return { app: app!, auth: a, db: database };
 }
+
+// Usage-measurement hook (#192, protocol in the issue): compiled ONLY into
+// dev-project builds — the production build (store-os-f7cf8) dead-code
+// eliminates this branch because VITE_FIREBASE_PROJECT_ID is a build-time
+// literal. Armed by ?measure=1, it lets scripts/measure-usage.mjs sign in with
+// a short-lived custom token (minted locally via the Admin SDK + ADC, dev-only
+// guard) and turn on Firestore debug logging. No passwords, no bundle secrets.
+if (import.meta.env.VITE_FIREBASE_PROJECT_ID === FIREBASE_DEV_PROJECT_ID) {
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("measure")) {
+    void import("firebase/firestore").then(({ setLogLevel }) => setLogLevel("debug")).catch(console.error);
+    void import("firebase/auth").then(({ signInWithCustomToken, onAuthStateChanged }) => {
+      const { auth: measureAuth } = getFirebase();
+      (window as unknown as { __storeOsMeasure?: object }).__storeOsMeasure = {
+        signInCustom: (token: string) => signInWithCustomToken(measureAuth, token),
+        signOut: () => measureAuth.signOut(),
+        onUser: (callback: (email: string | null) => void) =>
+          onAuthStateChanged(measureAuth, (user) => callback(user?.email ?? null)),
+      };
+    }).catch(console.error);
+  }
+}
