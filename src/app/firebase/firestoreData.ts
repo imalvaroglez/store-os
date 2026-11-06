@@ -1426,25 +1426,35 @@ export async function applyIncidentEventTx(params: {
     if (kind === "provider_compensation" && !state.confirmed) {
       throw new Error("Confirma la incidencia antes de registrar al proveedor.");
     }
-    // ── Inventory effects (same commit; shortages abort the whole event). ──
+    // ── Inventory effects (same commit; shortages abort the whole event).
+    // Firestore requires EVERY read before ANY write: both product reads
+    // happen first, then both writes.
     const quarantineProduct = incident.productId ? doc(db, "products", incident.productId) : null;
-    if (kind === "confirmed" && quarantineProduct) {
-      const productSnap = await tx.get(quarantineProduct);
-      if (productSnap.exists() && (productSnap.data().storeId ?? "") !== storeId) {
-        throw new Error("El producto pertenece a otra tienda.");
-      }
-      tx.update(quarantineProduct, { quantityQuarantined: increment(quantity), updatedAt: event.at });
-    }
     if (kind === "confirmed") {
-      const isReplacement = resolution?.kind === "replacement_equivalent" || resolution?.kind === "replacement_with_difference";
+      // The PERSISTED resolution drives the confirm (the parameter only rides
+      // along with resolution_agreed) — the fresh doc is the truth.
+      const agreed = incident.resolution ?? resolution;
+      const isReplacement = agreed?.kind === "replacement_equivalent" || agreed?.kind === "replacement_with_difference";
       const target = isReplacement ? (replacement ?? incident.replacement) : undefined;
+      if (quarantineProduct) {
+        const productSnap = await tx.get(quarantineProduct);
+        if (productSnap.exists() && (productSnap.data().storeId ?? "") !== storeId) {
+          throw new Error("El producto pertenece a otra tienda.");
+        }
+      }
+      let replacementRef: ReturnType<typeof doc> | null = null;
       if (target?.productId) {
-        const replacementRef = doc(db, "products", target.productId);
+        replacementRef = doc(db, "products", target.productId);
         const replacementSnap = await tx.get(replacementRef);
         if (!replacementSnap.exists()) throw new Error("No se encontró el producto de reemplazo.");
         if ((replacementSnap.data().storeId ?? "") !== storeId) throw new Error("El reemplazo pertenece a otra tienda.");
         const onHand = typeof replacementSnap.data().quantityOnHand === "number" ? replacementSnap.data().quantityOnHand : 0;
         if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del reemplazo.`);
+      }
+      if (quarantineProduct) {
+        tx.update(quarantineProduct, { quantityQuarantined: increment(quantity), updatedAt: event.at });
+      }
+      if (replacementRef) {
         tx.update(replacementRef, { quantityOnHand: increment(-quantity), updatedAt: event.at });
       }
     }
