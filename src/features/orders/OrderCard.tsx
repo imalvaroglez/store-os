@@ -160,7 +160,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
         <Button variant="ghost" onClick={() => setPaymentsOpen(true)}>Cobros</Button>
-        <Button variant="ghost" onClick={() => setIncidentOpen(true)}>Incidencia{(order.incidents?.length ?? 0) > 0 ? ` (${order.incidents!.length})` : ""}</Button>
+        {(status !== "cancelled" || (order.incidents?.length ?? 0) > 0) && (
+          <Button variant="ghost" onClick={() => setIncidentOpen(true)}>Incidencia{(order.incidents?.length ?? 0) > 0 ? ` (${order.incidents!.length})` : ""}</Button>
+        )}
       </div>
       {(verb || owed) && (
         <div className="mt-3 flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
