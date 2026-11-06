@@ -159,7 +159,15 @@ export async function publish(encrypted, destination, name, verify) {
 }
 export async function prune(destination, ownedNames) {
   // Local ledger of this installation prevents deletion of unrelated or unowned iCloud files.
-  const available = (await readdir(destination)).filter(name => ownedNames.includes(name));
+  const available = [];
+  // The ledger already identifies our files; iCloud may deny directory listing.
+  for (const name of new Set(ownedNames)) {
+    if (!BACKUP_NAME.test(name)) continue;
+    try {
+      if (!(await lstat(path.join(destination, name))).isFile()) throw new Error('UNSAFE_RETENTION_ENTRY');
+      available.push(name);
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
   const { remove } = retention(available);
   for (const name of remove) {
     if (!(await lstat(path.join(destination, name))).isFile()) throw new Error('UNSAFE_RETENTION_ENTRY');

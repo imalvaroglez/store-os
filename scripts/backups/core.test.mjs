@@ -321,3 +321,20 @@ test('secure existing directories need no chmod; insecure directories still fail
     assert.equal(calls, 1);
   } finally { fsPromises.chmod = original; syncBuiltinESMExports(); await original(dir, 0o700); }
 });
+
+test('retention uses its owned ledger without requiring directory enumeration', async t => {
+  const dir = await workspace(t);
+  const early = name(new Date('2026-11-06T18:00:00Z'));
+  const latest = name(new Date('2026-11-06T19:00:00Z'));
+  const unrelated = name(new Date('2000-01-01T12:00:00Z'));
+  for (const filename of [early, latest, unrelated]) await writeFile(path.join(dir, filename), 'fixture');
+  const original = fsPromises.readdir;
+  fsPromises.readdir = async () => { const error = new Error('fixture enumeration denied'); error.code = 'EPERM'; throw error; };
+  syncBuiltinESMExports();
+  try {
+    assert.deepEqual(await prune(dir, [early, latest, '../unowned']), [latest, '../unowned']);
+    assert.equal(await exists(path.join(dir, early)), false);
+    assert.equal(await exists(path.join(dir, latest)), true);
+    assert.equal(await exists(path.join(dir, unrelated)), true);
+  } finally { fsPromises.readdir = original; syncBuiltinESMExports(); }
+});
