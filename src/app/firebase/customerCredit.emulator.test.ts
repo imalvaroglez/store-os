@@ -124,8 +124,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
     await applyCustomerCreditTx({ entry: entry("app_edit", 1500), orderId: "credit-dest", storeId: "credit-store" });
 
     // Edit and save the DESTINATION: the credit applied to it must survive.
+    // The caller shape is OrderForm's: it builds `next` WITHOUT the credit
+    // fields — the regression this pins is exactly their loss on a
+    // full-document write, so they are stripped here on purpose.
     const before = (await getDoc(doc(holder.db, "orders/credit-dest"))).data()!;
-    const edited = { ...before, id: "credit-dest", notes: "editado tras compensación" } as never;
+    const { creditAppliedCents, creditConsumedCents, creditLedger, ...callerShape } = before;
+    expect(creditAppliedCents).toBe(1500); // the doc does carry them before the edit
+    const edited = { ...callerShape, id: "credit-dest", notes: "editado tras compensación" } as never;
     await saveOrderWithStockTx(user, edited as never, before.revision ?? 0, "mut_edit_dest");
     const after = (await getDoc(doc(holder.db, "orders/credit-dest"))).data()!;
     expect(after.creditAppliedCents).toBe(1500);
@@ -134,7 +139,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
 
     // Edit and save the ORIGIN: its consumed mirror must survive too.
     const originBefore = (await getDoc(doc(holder.db, "orders/credit-origin"))).data()!;
-    const originEdited = { ...originBefore, id: "credit-origin", notes: "origen editado" } as never;
+    const { creditAppliedCents: _a, creditConsumedCents: _c, creditLedger: _l, ...originCallerShape } = originBefore;
+    const originEdited = { ...originCallerShape, id: "credit-origin", notes: "origen editado" } as never;
     await saveOrderWithStockTx(user, originEdited as never, originBefore.revision ?? 0, "mut_edit_origin");
     const originAfter = (await getDoc(doc(holder.db, "orders/credit-origin"))).data()!;
     expect(originAfter.creditConsumedCents).toBe(1500);
@@ -163,5 +169,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
     const result = (await getDoc(doc(holder.db, "orders/credit-deliver"))).data()!;
     expect(result.orderStatus).toBe("delivered");
     expect(result.deliveredWithBalanceCents).toBeUndefined(); // nothing uncovered
+
+    // Partial credit: $200 total, $100 received, $50 credit → the R9 stamp
+    // records the NET uncovered $50 (not the gross $100).
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/credit-deliver-2"), orderDoc("credit-deliver-2", { paymentsReceivedCents: 10000 }));
+      await setDoc(doc(ctx.firestore(), "orders/credit-origin-3"), orderDoc("credit-origin-3", {
+        items: [{ productName: "Esclava", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "credit-origin-3_L0" }],
+        paymentsReceivedCents: 15000,
+      }));
+    });
+    await applyCustomerCreditTx({ entry: entry("app_deliver_2", 5000, "credit-origin-3"), orderId: "credit-deliver-2", storeId: "credit-store" });
+    const snap2 = (await getDoc(doc(holder.db, "orders/credit-deliver-2"))).data()!;
+    const { creditAppliedCents: _applied, creditConsumedCents: _consumed, creditLedger: _ledger, ...caller2 } = snap2;
+    const delivered2 = { ...caller2, id: "credit-deliver-2", orderStatus: "delivered" } as never;
+    await saveOrderWithStockTx(user, delivered2 as never, snap2.revision ?? 0, "mut_deliver_2", { confirmDeliveredWithBalance: true });
+    const stamped = (await getDoc(doc(holder.db, "orders/credit-deliver-2"))).data()!;
+    expect(stamped.deliveredWithBalanceCents).toBe(5000); // net, not the gross 10000
   });
 });
