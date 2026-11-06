@@ -624,7 +624,9 @@ describe("#184 loose expenses (expenses collection)", () => {
 
   it("never crosses stores (read or write)", async () => {
     await env.withSecurityRulesDisabled(async (c) => {
-      await setDoc(doc(c.firestore(), "expenses/exp-3"), { ...expense, id: "exp-3" });
+      // A expense of ANOTHER store (exp-user is not a member there).
+      await setDoc(doc(c.firestore(), "adminStores/other-store"), { ownerUid: "someone", memberUids: ["someone"] });
+      await setDoc(doc(c.firestore(), "expenses/exp-3"), { ...expense, id: "exp-3", storeId: "other-store" });
     });
     const db = await asUser("exp-user");
     await assertFails(getDoc(doc(db, "expenses/exp-3")));
