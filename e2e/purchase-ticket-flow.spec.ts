@@ -85,6 +85,12 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   await expect.poll(() => page.locator("main").evaluate((main) => getComputedStyle(main).overflowY)).toBe("visible");
   await page.getByRole("tab", { name: /#QA-T-2/ }).click();
   await page.getByLabel("Total pagado", { exact: true }).scrollIntoViewIfNeeded();
+  await page.getByRole("button", { name: "Siguiente ticket", exact: true }).click();
+  await expect(page.getByLabel("Total pagado", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Total pagado", { exact: true })).toHaveValue("50");
+  await page.getByRole("button", { name: "Ticket anterior", exact: true }).click();
+  await expect(page.getByLabel("Total pagado", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Total pagado", { exact: true })).toHaveValue("60.");
   await expect(page.getByRole("tablist", { name: "Tickets y revisión" })).toBeInViewport();
   if (testInfo.project.name === "mobile") {
     const header = await page.locator("header").boundingBox();

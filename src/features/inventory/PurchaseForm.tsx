@@ -859,8 +859,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           </div>
         )}
         <div className="flex flex-wrap gap-2 border-t border-edge pt-3">
-          {tickets.indexOf(activeTicket) > 0 && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled && !locked} onClick={() => selectTicket(tickets[tickets.indexOf(activeTicket) - 1].id)}>Ticket anterior</Button>}
-          {tickets.indexOf(activeTicket) < tickets.length - 1 && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled && !locked} onClick={() => selectTicket(tickets[tickets.indexOf(activeTicket) + 1].id)}>Siguiente ticket</Button>}
+          {tickets.indexOf(activeTicket) > 0 && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled && !locked} onClick={() => { const id = tickets[tickets.indexOf(activeTicket) - 1].id; selectTicket(id); setFocusTarget(ticketAmountKey(id, "totalConfirmed")); }}>Ticket anterior</Button>}
+          {tickets.indexOf(activeTicket) < tickets.length - 1 && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled && !locked} onClick={() => { const id = tickets[tickets.indexOf(activeTicket) + 1].id; selectTicket(id); setFocusTarget(ticketAmountKey(id, "totalConfirmed")); }}>Siguiente ticket</Button>}
           <Button size="sm" variant="secondary" onClick={showReview}>Revisar toda la compra</Button>
           {!locked && tickets.length > 1 && !draft.lines.some((line) => line.ticketId === activeTicket.id) && <Button size="sm" variant="ghost" disabled={editDisabled} onClick={removeTicket}>Quitar ticket vacío</Button>}
         </div>
