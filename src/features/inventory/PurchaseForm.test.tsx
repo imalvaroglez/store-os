@@ -311,6 +311,7 @@ describe("ticket capture and journey review (#206)", () => {
     fireEvent.click(screen.getByRole("tab", { name: /#B/ }));
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
     expect(upsertPurchase).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Resumen de tickets" })).toHaveFocus();
     const fix = screen.getByRole("button", { name: /#A.*Total pagado/ });
     fireEvent.click(fix);
     await waitFor(() => expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveFocus());
