@@ -40,6 +40,7 @@ import {
 import { creditAvailableCents, ordersForCustomer, planCreditApplications } from "../features/orders/customerCredit";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
+import type { OrderIncident, OrderIncidentEvent } from "../types";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
 import {
   loadCloudState,
@@ -62,6 +63,8 @@ import {
   registerOrderPaymentTx,
   applyCustomerCreditTx,
   releaseCustomerCreditTx,
+  openIncidentTx,
+  applyIncidentEventTx,
   StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
@@ -256,6 +259,14 @@ type StoreContextValue = {
   deleteCustomer: (customerId: string) => Promise<void>;
   upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<void>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
+  /** #203 after-sales incidents (ficha linked to the order). */
+  openIncident: (order: Order, incident: Omit<OrderIncident, "events">) => Promise<void>;
+  applyIncidentEvent: (
+    order: Order,
+    incidentId: string,
+    event: Omit<OrderIncidentEvent, "at" | "by">,
+    extra?: { resolution?: OrderIncident["resolution"]; replacement?: OrderIncident["replacement"] }
+  ) => Promise<void>;
   /** Payment records loaded this session (cloud reads; not local legacy state). */
   payments: OrderPayment[];
   /** Load one order's payment records from Firestore. Rejects on failure. */
@@ -986,6 +997,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Canonical amounts replace a versioned snapshot; a retried receipt is
       // never added to the local accumulator and late responses cannot undo it.
       dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
+    },
+    // #203: after-sales ficha. Both actions AWAIT their transaction and throw
+    // so the sheet can toast real failures (nothing is faked as saved); the
+    // product effects (quarantine/stock) land through the store listeners.
+    openIncident: async (order, incident) => {
+      const currentUser = requireAuthenticatedUser();
+      const updated = await openIncidentTx({
+        orderId: order.id,
+        storeId: order.storeId,
+        incident: { ...incident, events: [{ id: uid("iev"), kind: "opened", at: nowIso(), by: currentUser.uid }] },
+      });
+      dispatch({ type: "UPDATE_ORDER", order: updated });
+    },
+    applyIncidentEvent: async (order, incidentId, event, extra) => {
+      const currentUser = requireAuthenticatedUser();
+      const result = await applyIncidentEventTx({
+        orderId: order.id,
+        storeId: order.storeId,
+        incidentId,
+        event: { ...event, at: nowIso(), by: currentUser.uid },
+        resolution: extra?.resolution,
+        replacement: extra?.replacement,
+      });
+      dispatch({ type: "UPDATE_ORDER", order: result.order });
     },
   };
 

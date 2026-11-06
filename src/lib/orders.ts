@@ -1,5 +1,6 @@
-import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
+import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderIncident, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
+import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { formatMoney } from "./money";
 import { docReceivedCents, orderAmountCents } from "./orderMoney";
 import { LEGACY_TIER_IDS } from "./pricing";
@@ -87,13 +88,17 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
   // #189: `balance` is NET of the credit applied to this order (the PO read:
   // "Pendiente por pagar"); `paid` stays real money so sales/cobros months
   // never move. `availableCredit` subtracts what sister orders consumed.
+  // #203: incidents adjust the EFFECTIVE total (upgrades charged, refunds
+  // taken out at historical price) and pending refunds block credit.
   const appliedCents = creditFieldCents(order, "creditAppliedCents");
-  const surplusCents = Math.max(0, paidCents - totalCents);
-  const availableCents = Math.max(0, surplusCents - creditFieldCents(order, "creditConsumedCents"));
+  const adjustmentCents = incidentsSaleAdjustmentCents(order.incidents);
+  const effectiveCents = Math.max(0, totalCents + adjustmentCents);
+  const surplusCents = Math.max(0, paidCents - effectiveCents);
+  const availableCents = Math.max(0, surplusCents - creditFieldCents(order, "creditConsumedCents") - incidentsRefundCommittedCents(order.incidents));
   return {
     estimatedTotal,
     paid,
-    balance: Math.max(0, totalCents - paidCents - appliedCents) / 100,
+    balance: Math.max(0, effectiveCents - paidCents - appliedCents) / 100,
     appliedCredit: appliedCents / 100,
     availableCredit: availableCents / 100,
     pieces,
@@ -192,6 +197,17 @@ function isWellFormedCreditEntry(entry: unknown): entry is OrderCreditLedgerEntr
     && typeof e.at === "string" && typeof e.by === "string";
 }
 
+/** #203: an incident is carried verbatim only when well-formed. */
+function isWellFormedIncident(entry: unknown): entry is OrderIncident {
+  const incident = entry as Record<string, unknown>;
+  return typeof incident?.id === "string" && !!incident.id
+    && typeof incident.productName === "string" && !!incident.productName
+    && typeof incident.quantity === "number" && Number.isSafeInteger(incident.quantity) && incident.quantity > 0
+    && typeof incident.reason === "string" && !!incident.reason
+    && typeof incident.originalUnitPriceCents === "number" && Number.isSafeInteger(incident.originalUnitPriceCents)
+    && Array.isArray(incident.events);
+}
+
 export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()): Order {
   const raw = (rawOrder ?? {}) as Partial<Order> & Record<string, unknown>;
   const id = String(raw.id ?? "");
@@ -242,6 +258,10 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
       ? { creditConsumedCents: raw.creditConsumedCents } : {}),
     ...(Array.isArray(raw.creditLedger) && raw.creditLedger.length > 0
       ? { creditLedger: raw.creditLedger.filter(isWellFormedCreditEntry) } : {}),
+    // #203: incidents are append-only evidence on the order — carried
+    // verbatim when the array is well-formed, never rebuilt or dropped.
+    ...(Array.isArray(raw.incidents) && raw.incidents.length > 0
+      ? { incidents: raw.incidents.filter(isWellFormedIncident) } : {}),
     schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,

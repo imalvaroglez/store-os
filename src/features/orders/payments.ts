@@ -8,7 +8,7 @@
 // exact-cents helpers; NaN never enters the state.
 import type { Order, OrderPayment, OrderPaymentMethod } from "../../types";
 import { parseAmount } from "../../lib/money";
-import { docReceivedCents, orderAmountCents } from "../../lib/orderMoney";
+import { docReceivedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 export { docReceivedCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
 
@@ -251,10 +251,13 @@ export function paymentSummary(
   order: Partial<Order> & Record<string, unknown>,
   payments: OrderPayment[]
 ): PaymentSummary {
+  // #203: the EFFECTIVE total (historical + incident adjustments) — the same
+  // figure every other read model shows, so Cobros and the card never
+  // contradict each other (review #212 F3).
   const totalCents = orderItems(order).reduce(
     (sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity),
     0
-  );
+  ) + incidentsSaleAdjustmentCents(order.incidents);
   const records = orderPaymentsFor(payments, String(order.id ?? ""), String(order.storeId ?? "")).sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
   );

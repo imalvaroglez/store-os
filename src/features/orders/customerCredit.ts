@@ -19,6 +19,8 @@
 import type { Order } from "../../types";
 import { docReceivedCents, orderAmountCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
+import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
+
 
 /** Any order-shaped record with unknown extra fields (migrated docs). */
 type OrderLike = Partial<Order> & Record<string, unknown>;
@@ -26,6 +28,16 @@ type OrderLike = Partial<Order> & Record<string, unknown>;
 /** Σ frozen line snapshots — the order's sales total in exact cents. */
 function orderTotalCents(order: OrderLike): number {
   return orderItems(order).reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+}
+
+/**
+ * #203: the EFFECTIVE total — the historical sale plus the incidents' sale
+ * adjustments (a charged upgrade adds the difference; a refund removes the
+ * piece at its historical price). The historical total is never rewritten;
+ * this is what the clienta actually owes after posventa.
+ */
+function effectiveTotalCents(order: OrderLike): number {
+  return Math.max(0, orderTotalCents(order) + incidentsSaleAdjustmentCents(order.incidents));
 }
 
 /** Net credit applied TO this order (destination accumulator; #168 pattern). */
@@ -36,16 +48,20 @@ export function creditAppliedCents(order: OrderLike): number {
 
 /** This order's surplus still available to compensate sister orders. */
 export function creditAvailableCents(order: OrderLike): number {
-  const surplus = docReceivedCents(order) - orderTotalCents(order);
+  const surplus = docReceivedCents(order) - effectiveTotalCents(order);
   if (surplus <= 0) return 0;
   const consumed = order.creditConsumedCents;
   const consumedCents = typeof consumed === "number" && Number.isFinite(consumed) ? Math.max(0, consumed) : 0;
-  return Math.max(0, surplus - consumedCents);
+  // #203: refund money is NEVER credit — agreed refunds block the surplus
+  // whether or not the cash has been handed back yet (executing the refund
+  // must not surface it as saldo a favor; review #212 F1).
+  return Math.max(0, surplus - consumedCents - incidentsRefundCommittedCents(order.incidents));
 }
 
-/** What the customer still owes on this order, net of credit applied to it. */
+/** What the customer still owes on this order, net of credit applied to it
+ * and of the incidents' sale adjustments (#203 effective total). */
 export function pendingCents(order: OrderLike): number {
-  const pending = orderTotalCents(order) - docReceivedCents(order) - creditAppliedCents(order);
+  const pending = effectiveTotalCents(order) - docReceivedCents(order) - creditAppliedCents(order);
   return Math.max(0, pending);
 }
 
