@@ -13,9 +13,14 @@ export function parseArgs(args) {
   const [action, ...rest] = args;
   if (!['preflight', 'run', 'status', 'restore', 'verify', 'unlock', 'check-key'].includes(action)) throw new Error('USAGE');
   const flags = {};
-  for (let i = 0; i < rest.length; i += 2) {
+  for (let i = 0; i < rest.length;) {
+    if (rest[i] === '--manual') {
+      if (action !== 'run' || flags.manual) throw new Error('USAGE');
+      flags.manual = true; i += 1; continue;
+    }
     if (!['--config', '--archive', '--identity'].includes(rest[i]) || !rest[i + 1] || rest[i + 1].startsWith('--') || flags[rest[i].slice(2)]) throw new Error('USAGE');
     flags[rest[i].slice(2)] = path.resolve(rest[i + 1]);
+    i += 2;
   }
   if (['run', 'preflight', 'status', 'unlock'].includes(action) && (flags.identity || flags.archive)) throw new Error('USAGE');
   return { action, ...flags };
@@ -70,7 +75,7 @@ export async function preflight(config, client) {
   await json(path.join(config.home, 'preflight.json'), report);
   return report;
 }
-export async function runBackup(config, clientFactory = connect, now = new Date()) {
+export async function runBackup(config, clientFactory = connect, now = new Date(), { manual = false } = {}) {
   await privateDirectory(config.home);
   const stateFile = path.join(config.home, 'state.json');
   let release;
@@ -79,7 +84,13 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
   try {
     await cleanupStaleWorkspaces(config.home);
     const state = await stateFor(config.home);
-    if (hasVerifiedBackup(state) && (state.lastScheduledDate ? dueDate(now) <= state.lastScheduledDate : !isDue(now, state.lastSuccess))) return { skipped: true };
+    // A manual capture never satisfies the nightly cycle. Legacy state without
+    // an explicit checkpoint derives it from its last scheduled success only.
+    const lastScheduledDate = state.lastScheduledDate ?? (hasVerifiedBackup(state) && state.lastRunKind !== 'manual' ? dueDate(new Date(state.lastSuccess)) : null);
+    // Extra copies require a prior scheduled success: an old installed runtime
+    // must never fall back to the manual lastSuccess and skip tonight.
+    if (manual && (!hasVerifiedBackup(state) || !lastScheduledDate)) throw new Error('INITIAL_SCHEDULE_REQUIRED');
+    if (!manual && hasVerifiedBackup(state) && lastScheduledDate && dueDate(now) <= lastScheduledDate) return { skipped: true };
     validateTarget(config);
     const recoveryProof = await recoveryKeyProof(config);
     if (state.suspendedForApproval && state.suspendedForApproval === config.reviewedPreflightSha256) return { skipped: true, suspended: true };
@@ -129,11 +140,11 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
       });
       verification.archive = name;
       verification.recoveryRecipient = recoveryProof.recipient; verification.recoveryRecipientVerified = true;
-      const next = { ...state, lastSuccess: new Date().toISOString(), lastScheduledDate: dueDate(now), lastArchive: name, bytes: encryptedBytes, sha256: encryptedSha256, cloudAvailability: 'not-verified', verification, ownedArchives: [...new Set([...state.ownedArchives, name])], lastError: null, suspendedForApproval: null };
+      const next = { ...state, lastSuccess: new Date().toISOString(), lastScheduledDate: manual ? lastScheduledDate : dueDate(now), lastRunKind: manual ? 'manual' : 'scheduled', lastArchive: name, bytes: encryptedBytes, sha256: encryptedSha256, cloudAvailability: 'not-verified', verification, ownedArchives: [...new Set([...state.ownedArchives, name])], lastError: null, suspendedForApproval: null };
       await atomicJson(stateFile, next); // Commit success before retention; failures cannot erase the previous backup.
       next.ownedArchives = await prune(config.destination, next.ownedArchives);
       await atomicJson(stateFile, next);
-      return { completed: true, archive: name, bytes: next.bytes, verification, cloudAvailability: next.cloudAvailability };
+      return { completed: true, mode: next.lastRunKind, lastScheduledDate: next.lastScheduledDate, archive: name, bytes: next.bytes, verification, cloudAvailability: next.cloudAvailability };
     } finally { await trash(encrypted); }
   } catch (error) {
     const state = await stateFor(config.home);
@@ -183,7 +194,7 @@ export async function main(args = process.argv.slice(2)) {
     try { process.kill(owner.pid, 0); throw new Error('LOCK_OWNER_RUNNING'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
     await trash(lock); return { unlocked: true };
   }
-  if (options.action === 'run') { const result = await runBackup(config); await status(config, false); return result; }
+  if (options.action === 'run') { const result = await runBackup(config, connect, new Date(), { manual: options.manual === true }); await status(config, false); return result; }
   if (options.action === 'preflight') {
     await privateDirectory(config.home); const release = await acquireLock(config.home); let client;
     try { client = await connect(config); const report = await preflight(config, client); return { ...report, approvalSha256: await fileHash(path.join(config.home, 'preflight.json')) }; }
