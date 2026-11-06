@@ -483,19 +483,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (origin.orderStatus === "cancelled" || creditAvailableCents(origin) <= 0) continue;
       const next = planCreditApplications(ordersForCustomer(state.orders, origin.storeId, origin.customerId))[0];
       if (!next) continue;
-      persistInBackground("aplicar el saldo a favor", () =>
-        applyCustomerCreditTx({
-          entry: {
-            id: uid("credit"),
-            kind: "application",
-            fromOrderId: next.fromOrderId,
-            amountCents: next.amountCents,
-            at: nowIso(),
-            by: user.uid,
-          },
-          orderId: next.toOrderId,
-          storeId: origin.storeId,
-        }));
+      persistInBackground("aplicar el saldo a favor", async () => {
+        try {
+          await applyCustomerCreditTx({
+            entry: {
+              id: uid("credit"),
+              kind: "application",
+              fromOrderId: next.fromOrderId,
+              amountCents: next.amountCents,
+              at: nowIso(),
+              by: user.uid,
+            },
+            orderId: next.toOrderId,
+            storeId: origin.storeId,
+          });
+        } catch (error) {
+          // A stale plan aborting against fresher docs is EXPECTED under
+          // concurrency (another pass already applied, or a concurrent cobro
+          // changed the numbers): the listener round-trip replans. Money is
+          // safe — surfacing this would only scare the operator.
+          if (error instanceof Error && /cambió mientras se aplicaba/.test(error.message)) return;
+          throw error;
+        }
+      });
       return; // one write per pass; its state update re-triggers the effect
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
