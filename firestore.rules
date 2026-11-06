@@ -172,6 +172,19 @@ service cloud.firestore {
     }
     // purchases/{id} — per-store supplier purchase transaction (private). Cost
     // history lives here; never written to the anonymous-readable projections.
+    match /expenses/{id} {
+      // #184 loose expenses: same store isolation as every data collection.
+      allow read: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId);
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId
+        && resource.data.amount == request.resource.data.amount
+        && resource.data.date == request.resource.data.date
+        && resource.data.createdAt == request.resource.data.createdAt;
+      allow delete: if canOperateStore(resource.data.storeId);
+    }
+
     match /purchases/{id} {
       allow read: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId);
