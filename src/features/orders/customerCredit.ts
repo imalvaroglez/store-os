@@ -126,7 +126,6 @@ export type CustomerBalanceSummary = {
 /** The read model for the per-customer balance view. */
 export function customerBalanceSummary(orders: Order[], storeId: string, customerId: string): CustomerBalanceSummary {
   const mine = ordersForCustomer(orders, storeId, customerId).slice().sort(byAge);
-  const active = mine.filter((order) => order.orderStatus !== "cancelled");
   const rows = mine.map((order) => ({
     orderId: order.id,
     orderStatus: order.orderStatus,

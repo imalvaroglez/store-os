@@ -101,6 +101,13 @@ export function CustomersScreen() {
             const due = cOrders
               .filter(orderCountsTowardToPay)
               .reduce((sum, o) => sum + orderTotals(o).balance, 0);
+            // #189: saldo a favor sin consumir de sus pedidos y el neto a
+            // cobrar (la compensación automática suele consumirlo en segundos;
+            // mientras tanto la clienta ve las tres cifras, sin sorpresas).
+            const favor = cOrders
+              .filter((o) => o.orderStatus !== "cancelled")
+              .reduce((sum, o) => sum + orderTotals(o).availableCredit, 0);
+            const netDue = Math.max(0, due - favor);
             return (
               <Card key={c.id} onClick={() => sheet.openEdit(c)}>
                 <div className="flex items-center justify-between gap-3">
@@ -131,6 +138,16 @@ export function CustomersScreen() {
                       {due > 0 && (
                         <StatRow label="Falta cobrar" tone="danger">
                           <Money amount={due} />
+                        </StatRow>
+                      )}
+                      {favor > 0 && (
+                        <StatRow label="Saldo a favor" tone="success">
+                          <Money amount={favor} />
+                        </StatRow>
+                      )}
+                      {due > 0 && favor > 0 && (
+                        <StatRow label="Neto a cobrar" tone="danger">
+                          <Money amount={netDue} />
                         </StatRow>
                       )}
                     </div>
