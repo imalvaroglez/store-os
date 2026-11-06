@@ -324,6 +324,10 @@ export type Order = {
    * derived money effects flow through customerCredit — never a second
    * balance). Absent = no incidents. */
   incidents?: OrderIncident[];
+  /** #184: direct sale-side charges on this order (loose expenses assigned
+   * here and supply consumptions). Append-only evidence; reduces the order's
+   * profit, never its sale total or the clienta's balance. */
+  saleExpenses?: OrderSaleExpense[];
 
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
@@ -358,6 +362,21 @@ export type IncidentResolutionKind =
   | "wait_restock"
   /** The clienta takes the money back (pending until actually refunded). */
   | "refund";
+
+/** #184: one direct sale-side charge on an order (loose expense assignment
+ * or supply consumption). Exact cents; append-only. */
+export type OrderSaleExpense = {
+  id: string;
+  at: string;
+  by: string;
+  amountCents: number;
+  description?: string;
+  /** Origin for traceability: the loose expense (and its supply, if any). */
+  expenseId: string;
+  supplyConsumptionId?: string;
+  /** Optional manual split across this order's lines (Σ = amountCents). */
+  allocations?: Array<{ lineId: string; amountCents: number }>;
+};
 
 export type OrderIncidentEvent = {
   id: string;
@@ -563,6 +582,79 @@ export type PurchaseExpenseAdjustment = {
   allocations?: PurchaseSaleCostAllocation[];
 };
 
+/** #184: a loose expense — a real outlay registered WITHOUT a purchase,
+ * lot or order attached (Decisión B ampliada, PO 2026-11-05). Classification
+ * decides its treatment; assignments are explicit and traceable; the pending
+ * balance (importe − Σ asignaciones) is DERIVED, never stored. */
+export type LooseExpenseCategory =
+  /** Mercancía y costos de adquisición → assign to an OPEN purchase (native
+   * sourcing-expense path); transporte para surtir distributes across pieces. */
+  | "merchandise"
+  /** Venta y entrega → charge orders (preparation, packaging, delivery). */
+  | "sale_delivery"
+  /** Suministros: materials for gradual consumption (bags, boxes). */
+  | "supplies"
+  /** Operación: recognized in its period, no association required. */
+  | "operation"
+  /** Servicios tecnológicos de StoreOS, when a real charge exists. */
+  | "storeos_services";
+
+export const LOOSE_EXPENSE_CATEGORY_LABEL: Record<LooseExpenseCategory, string> = {
+  merchandise: "Mercancía y costos de adquisición",
+  sale_delivery: "Venta y entrega",
+  supplies: "Suministros",
+  operation: "Operación",
+  storeos_services: "Servicios de StoreOS",
+};
+
+export type ExpenseAssignmentTarget =
+  | { kind: "purchase"; purchaseId: string }
+  | { kind: "order"; orderId: string };
+
+/** One explicit assignment: amount in exact cents + how it was distributed. */
+export type ExpenseAssignment = {
+  id: string;
+  at: string;
+  by: string;
+  target: ExpenseAssignmentTarget;
+  /** units (default for homogeneous) | value-proportional | manual. */
+  mode: "units" | "value" | "manual";
+  amountCents: number;
+  /** Per-piece distribution evidence (purchase lineIds / order lineIds). */
+  allocations?: Array<{ lineId: string; amountCents: number }>;
+};
+
+/** One supply consumption: quantity units leave the stash; the exact cost is
+ * charged to the order when Fer links it (criterio 5: 100 bolsas / $15 →
+ * $0.15 por bolsa; una bolsa que cubre 3 artículos puede repartirse). */
+export type SupplyConsumption = {
+  id: string;
+  at: string;
+  by: string;
+  quantity: number;
+  orderId?: string;
+  /** Optional split across the order's lines (manual, exact, Σ = charge). */
+  allocations?: Array<{ lineId: string; amountCents: number }>;
+};
+
+export type LooseExpense = {
+  id: string;
+  storeId: string;
+  /** Original amount in decimal pesos — never rewritten. */
+  amount: number;
+  date: string;
+  description?: string;
+  category: LooseExpenseCategory;
+  assignments?: ExpenseAssignment[];
+  /** Supplies only: the stash and its gradual consumption. */
+  supply?: { quantityInitial: number; consumptions: SupplyConsumption[] };
+  /** Criterio 6: simplified treatment — recognized as period expense; the
+   * amount never re-enters real costs when selling. */
+  simplifiedOperation?: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, string> = {
   sourcing_transport: "Traslado para surtir",
   customer_delivery: "Entrega a clienta",
@@ -738,6 +830,8 @@ export type AppState = {
   purchases: Purchase[];
   customers: Customer[];
   orders: Order[];
+  /** #184 loose expenses (registration, assignment, supplies). */
+  expenses: LooseExpense[];
 };
 
 // Catalog business rules (single source of truth).

@@ -63,6 +63,7 @@ const testState: AppState = {
   purchases: [],
   customers: [],
   orders: [],
+  expenses: [],
 };
 
 function Wrapper({ children }: { children: React.ReactNode }) {

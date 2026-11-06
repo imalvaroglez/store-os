@@ -33,7 +33,7 @@ const order: Order = {
 };
 const state = (): AppState => ({
   stores: [{ id: "retry-store", name: "Tienda de prueba", slug: "retry-store", type: "on_demand", createdAt: "2026-11-03", updatedAt: "2026-11-03" }],
-  activeStoreId: "retry-store", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [order],
+  activeStoreId: "retry-store", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [order], expenses: [],
 });
 const receipt: OrderPayment = {
   id: "same-intent", orderId: order.id, storeId: order.storeId, amount: 400, kind: "payment", method: "cash",
@@ -78,7 +78,7 @@ describe("confirmed payment display", () => {
     const view = await mount();
     const pending = context.registerOrderPayment(context.state.orders[0], input);
     hooks.user = { uid: "operator-b", role: "member", email: "operator-b@example.test" } as AppUser;
-    hooks.load.mockResolvedValue({ ...state(), stores: [], activeStoreId: null, orders: [] });
+    hooks.load.mockResolvedValue({ ...state(), stores: [], activeStoreId: null, orders: [], expenses: [] });
     view.rerender(<StoreProvider><Probe /></StoreProvider>);
     await act(async () => { finish({ payments: [receipt], order: { ...order, paymentsReceivedCents: 40000, paymentsRevision: 1 } }); await pending; });
     expect(screen.getByTestId("records")).toHaveTextContent("0");
