@@ -89,7 +89,7 @@ export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefin
     if (!resolution || resolution.kind !== "refund") return sum;
     const agreed = incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
     const executed = (incident.events ?? [])
-      .filter((event) => event.kind === "confirmed")
+      .filter((event) => event.kind === "confirmed" || event.kind === "refund_executed")
       .reduce((partial, event) => partial + incidentCentsOf(event.detail?.refundExecutedCents), 0);
     return sum + Math.max(0, agreed - executed);
   }, 0);

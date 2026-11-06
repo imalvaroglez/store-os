@@ -179,6 +179,10 @@ export type Product = {
   prices?: Record<string, number>;
 
   quantityOnHand?: number;
+  /** #203: pieces in quarantine (damaged returns) — NOT sellable until
+   * Fer explicitly authorizes returning them to sale, repairs or writes them
+   * off. Displayed separately from available stock. */
+  quantityQuarantined?: number;
   lowStockAt?: number;
 
   // Schema version for the idempotent migration. Absent = not yet migrated.
@@ -377,7 +381,10 @@ export type OrderIncidentEvent = {
     /** Fer authorized writing the piece off (identifiable for the monthly close). */
     | "written_off"
     /** Fer explicitly authorized returning the piece to sale. */
-    | "returned_to_sale";
+    | "returned_to_sale"
+    /** #203: the pending refund was actually handed back to the clienta
+     * (releases the credit block exactly once; detail.refundExecutedCents). */
+    | "refund_executed";
   /** Event-specific evidence (amounts in exact cents, ids, motive). */
   detail?: Record<string, string | number>;
 };

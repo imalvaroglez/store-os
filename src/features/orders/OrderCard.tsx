@@ -18,12 +18,14 @@ import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
 import { installmentPlanView } from "./installments";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
+import { IncidentSheet } from "./IncidentSheet";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
   const { upsertOrder, state, activeStore } = useStore();
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
+  const [incidentOpen, setIncidentOpen] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const toast = useToast();
   const customer = state.customers.find((c) => c.id === order.customerId && c.storeId === order.storeId);
@@ -158,6 +160,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
         <Button variant="ghost" onClick={() => setPaymentsOpen(true)}>Cobros</Button>
+        {status !== "cancelled" && <Button variant="ghost" onClick={() => setIncidentOpen(true)}>Incidencia{(order.incidents?.length ?? 0) > 0 ? ` (${order.incidents!.length})` : ""}</Button>}
       </div>
       {(verb || owed) && (
         <div className="mt-3 flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
@@ -187,6 +190,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       </div>
     </Sheet>
     <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
+    <IncidentSheet order={order} open={incidentOpen} onClose={() => setIncidentOpen(false)} />
     </>
   );
 }

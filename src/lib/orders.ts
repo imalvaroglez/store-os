@@ -1,4 +1,4 @@
-import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
+import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderIncident, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { incidentsRefundPendingCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { formatMoney } from "./money";
@@ -197,6 +197,17 @@ function isWellFormedCreditEntry(entry: unknown): entry is OrderCreditLedgerEntr
     && typeof e.at === "string" && typeof e.by === "string";
 }
 
+/** #203: an incident is carried verbatim only when well-formed. */
+function isWellFormedIncident(entry: unknown): entry is OrderIncident {
+  const incident = entry as Record<string, unknown>;
+  return typeof incident?.id === "string" && !!incident.id
+    && typeof incident.productName === "string" && !!incident.productName
+    && typeof incident.quantity === "number" && Number.isSafeInteger(incident.quantity) && incident.quantity > 0
+    && typeof incident.reason === "string" && !!incident.reason
+    && typeof incident.originalUnitPriceCents === "number" && Number.isSafeInteger(incident.originalUnitPriceCents)
+    && Array.isArray(incident.events);
+}
+
 export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()): Order {
   const raw = (rawOrder ?? {}) as Partial<Order> & Record<string, unknown>;
   const id = String(raw.id ?? "");
@@ -247,6 +258,10 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
       ? { creditConsumedCents: raw.creditConsumedCents } : {}),
     ...(Array.isArray(raw.creditLedger) && raw.creditLedger.length > 0
       ? { creditLedger: raw.creditLedger.filter(isWellFormedCreditEntry) } : {}),
+    // #203: incidents are append-only evidence on the order — carried
+    // verbatim when the array is well-formed, never rebuilt or dropped.
+    ...(Array.isArray(raw.incidents) && raw.incidents.length > 0
+      ? { incidents: raw.incidents.filter(isWellFormedIncident) } : {}),
     schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,
