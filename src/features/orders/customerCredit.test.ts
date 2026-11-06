@@ -111,6 +111,34 @@ describe("planCreditApplications (PO rules 2026-11-05)", () => {
     expect(planCreditApplications([cancelledCredit, cancelledDebt, liveDebt])).toEqual([]);
   });
 
+  it("#203: committed refund money is NEVER credit — pending or executed (#212 F1)", () => {
+    const refunded = {
+      ...priced("r", 120, 120, "2026-11-01T10:00:00Z"),
+      orderStatus: "delivered" as const,
+      incidents: [{
+        id: "inc", productId: "p", productName: "Anillo", quantity: 1, reason: "Defecto",
+        originalUnitPriceCents: 12000,
+        resolution: { kind: "refund" as const, refundUnitPriceCents: 12000 },
+        events: [{ id: "e1", kind: "opened" as const, at: "2026-11-02T10:00:00Z", by: "fer" }],
+      }],
+    };
+    // Agreed, not yet executed: pending blocks the surplus.
+    expect(creditAvailableCents(refunded)).toBe(0);
+    // Executed (money left the store): the surplus must NOT surface as credit.
+    const executed = {
+      ...refunded,
+      incidents: [{
+        ...refunded.incidents![0],
+        events: [
+          ...refunded.incidents![0].events,
+          { id: "e2", kind: "confirmed" as const, at: "2026-11-03T10:00:00Z", by: "fer", detail: { refundExecutedCents: 12000 } },
+        ],
+      }],
+    };
+    expect(creditAvailableCents(executed)).toBe(0);
+    expect(pendingCents(executed)).toBe(0); // she owes nothing either
+  });
+
   it("no credit, no plan", () => {
     expect(planCreditApplications([priced("x", 100, 100, "2026-11-01T10:00:00Z")])).toEqual([]);
   });

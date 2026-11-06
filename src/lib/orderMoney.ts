@@ -94,3 +94,18 @@ export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefin
     return sum + Math.max(0, agreed - executed);
   }, 0);
 }
+
+/**
+ * #203: refund money COMMITTED to the clienta (agreed at resolution, whether
+ * or not it has been handed back yet). This amount is NEVER available credit:
+ * handing the money back must not surface it as "saldo a favor" — the clienta
+ * would hold the cash AND the credit (review #212 F1). Use
+ * incidentsRefundPendingCents for the "still to hand back" display amount.
+ */
+export function incidentsRefundCommittedCents(incidents: OrderIncident[] | undefined | null): number {
+  return (incidents ?? []).reduce((sum, incident) => {
+    const resolution = incident.resolution;
+    if (!resolution || resolution.kind !== "refund") return sum;
+    return sum + incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
+  }, 0);
+}

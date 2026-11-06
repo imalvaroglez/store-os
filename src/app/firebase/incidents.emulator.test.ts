@@ -116,7 +116,70 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     // refund_executed on a non-refund incident aborts.
     await expect(
       applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-1", event: event("inc-e7", "refund_executed") })
-    ).rejects.toThrow(/reembolso pendiente/i);
+    ).rejects.toThrow(/reembolso|confirm/i);
+  });
+
+  it("#212 F2: a replacement resolution without the real piece aborts", async () => {
+    await openIncidentTx({ orderId: "inc-order", storeId: "inc-store", incident: incident("inc-f2", { events: [event("f2-open", "opened")] }) });
+    await expect(
+      applyIncidentEventTx({
+        orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f2",
+        event: event("f2-e1", "resolution_agreed"),
+        resolution: { kind: "replacement_equivalent" },
+        replacement: { productName: "Sin pieza", unitPriceCents: 12000, unitCostCents: 5400, chargeDifference: false },
+      })
+    ).rejects.toThrow(/elige la pieza/i);
+  });
+
+  it("#212 F4: wait_restock confirm takes the restocked piece out of stock", async () => {
+    await openIncidentTx({ orderId: "inc-order", storeId: "inc-store", incident: incident("inc-f4", { events: [event("f4-open", "opened")] }) });
+    await applyIncidentEventTx({
+      orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f4",
+      event: event("f4-e1", "resolution_agreed"),
+      resolution: { kind: "wait_restock", waitUntil: "2026-11-20" },
+    });
+    const before = (await getDoc(doc(holder.db, "products/inc-product"))).data()!;
+    await applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f4", event: event("f4-e2", "confirmed") });
+    const after = (await getDoc(doc(holder.db, "products/inc-product"))).data()!;
+    expect(after.quantityOnHand).toBe(before.quantityOnHand - 1); // the handed-over piece left
+    expect(after.quantityQuarantined).toBe(before.quantityQuarantined + 1);
+  });
+
+  it("#212 F6/F7: refund_executed requires confirmation; provider compensation lands once", async () => {
+    await openIncidentTx({ orderId: "inc-order", storeId: "inc-store", incident: incident("inc-f6", { events: [event("f6-open", "opened")] }) });
+    await applyIncidentEventTx({
+      orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6",
+      event: event("f6-e1", "resolution_agreed"),
+      resolution: { kind: "refund", refundUnitPriceCents: 12000 },
+    });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6", event: event("f6-e2", "refund_executed", { refundExecutedCents: 12000 }) })
+    ).rejects.toThrow(/confirm/i);
+    await applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6", event: event("f6-e3", "confirmed") });
+    await applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6", event: event("f6-e4", "provider_compensation", { amountCents: 5000 }) });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order", storeId: "inc-store", incidentId: "inc-f6", event: event("f6-e5", "provider_compensation", { amountCents: 5000 }) })
+    ).rejects.toThrow(/ya está registrada/i);
+  });
+
+  it("#212 F5a: an order holding quarantined pieces cannot be deleted", async () => {
+    const { deleteOrderWithStockTx } = await import("./firestoreData");
+    // inc-order holds inc-1 (quarantined → repaired already) — build a fresh held one.
+    await setDoc(doc(holder.db, "orders/inc-order-hold"), {
+      storeId: "inc-store", customerId: "inc-clienta",
+      items: [{ lineId: "h_L0", productId: "inc-product", productName: "Anillo QA", quantity: 1, unitPrice: 120, subtotal: 120 }],
+      deposit: 0, orderStatus: "confirmed", createdAt: "", updatedAt: "",
+    });
+    await openIncidentTx({ orderId: "inc-order-hold", storeId: "inc-store", incident: incident("inc-hold", { events: [event("h-open", "opened")] }) });
+    await applyIncidentEventTx({
+      orderId: "inc-order-hold", storeId: "inc-store", incidentId: "inc-hold",
+      event: event("h-e1", "resolution_agreed"),
+      resolution: { kind: "wait_restock", waitUntil: "2026-11-25" },
+    });
+    await applyIncidentEventTx({ orderId: "inc-order-hold", storeId: "inc-store", incidentId: "inc-hold", event: event("h-e2", "confirmed") });
+    await expect(
+      deleteOrderWithStockTx({ uid: "inc-user" } as never, "inc-order-hold", 0)
+    ).rejects.toThrow(/cuarentena/i);
   });
 
   it("never crosses stores", async () => {
@@ -151,6 +214,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     // Double settle aborts: nothing pending anymore.
     await expect(
       applyIncidentEventTx({ orderId: "inc-order-3", storeId: "inc-store", incidentId: "inc-3", event: event("inc3-e3", "refund_executed", { refundExecutedCents: 12000 }) })
-    ).rejects.toThrow(/reembolso pendiente/i);
+    ).rejects.toThrow(/reembolso|confirm/i);
   });
 });

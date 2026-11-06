@@ -164,6 +164,11 @@ function IncidentCard({
 }) {
   const { applyIncidentEvent } = useStore();
   const info = incidentState(incident);
+  // #212 F6: the settle button only exists while money is actually pending
+  // (executing at confirm already settles it once).
+  const refundStillPending = incident.resolution?.kind === "refund"
+    && incident.originalUnitPriceCents * Math.max(1, incident.quantity) > info.refundExecutedCents;
+  const compensationDone = (incident.events ?? []).some((saved) => saved.kind === "provider_compensation");
   const [kind, setKind] = useState<IncidentResolutionKind>("replacement_equivalent");
   const [replacementQuery, setReplacementQuery] = useState("");
   const [replacementPick, setReplacementPick] = useState<{ id: string; name: string; priceCents: number; costCents: number } | null>(null);
@@ -175,11 +180,17 @@ function IncidentCard({
 
   async function agree() {
     onAgreeing(incident.id);
+    // #212 F2: a replacement ALWAYS names the real piece leaving stock, with
+    // its real stored cost — no invented figures, no stock-less defaults.
     const replacement = kind === "replacement_equivalent" || kind === "replacement_with_difference"
       ? (replacementPick
         ? { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: replacementPick.costCents, chargeDifference: kind === "replacement_with_difference" && chargeDifference }
-        : { productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: Math.round((incident.originalUnitPriceCents * 0.45) / 100) * 100, chargeDifference: false })
+        : undefined)
       : undefined;
+    if ((kind === "replacement_equivalent" || kind === "replacement_with_difference") && !replacement) {
+      onAgreeing(null);
+      return; // the button is disabled; this guards programmatic calls
+    }
     const resolution = kind === "wait_restock"
       ? { kind, waitUntil: waitUntil || undefined }
       : kind === "refund"
@@ -249,7 +260,7 @@ function IncidentCard({
             onChange={(next) => setKind(next as IncidentResolutionKind)}
             options={(Object.keys(RESOLUTION_LABEL) as IncidentResolutionKind[]).map((value) => ({ value, label: RESOLUTION_LABEL[value] }))}
           />
-          {kind === "replacement_with_difference" && (
+          {(kind === "replacement_equivalent" || kind === "replacement_with_difference") && (
             <div className="space-y-2">
               <SearchSelect
                 label="Pieza alternativa"
@@ -291,9 +302,17 @@ function IncidentCard({
               histórico. El reembolso queda pendiente (no se usa como saldo a favor) hasta que devuelvas el dinero.
             </p>
           )}
-          <Button full disabled={agreeing} onClick={() => void agree()}>
+          <Button
+            full
+            disabled={agreeing
+              || ((kind === "replacement_equivalent" || kind === "replacement_with_difference") && !replacementPick)}
+            onClick={() => void agree()}
+          >
             {agreeing ? "Guardando…" : "Acordar resolución"}
           </Button>
+          {(kind === "replacement_equivalent" || kind === "replacement_with_difference") && !replacementPick && (
+            <p className="text-xs text-on-surface-soft">Elige la pieza que entregas: sale de tu inventario con su costo real.</p>
+          )}
         </div>
       )}
 
@@ -316,12 +335,12 @@ function IncidentCard({
           <Button size="sm" variant="ghost" onClick={() => void later("returned_to_sale")}>Volver a venta</Button>
         </div>
       )}
-      {info.confirmed && incident.resolution?.kind === "refund" && (
+      {info.confirmed && incident.resolution?.kind === "refund" && refundStillPending && (
         <div className="border-t border-edge pt-3">
           <Button size="sm" variant="secondary" onClick={() => void later("refund_executed")}>Devolví el dinero</Button>
         </div>
       )}
-      {info.confirmed && (
+      {info.confirmed && !compensationDone && (
         <div className="border-t border-edge pt-3">
           <TextField
             label="Compensación recibida del proveedor (opcional)"
@@ -330,8 +349,14 @@ function IncidentCard({
             value={compensationText}
             onChange={(event) => setCompensationText(event.target.value)}
           />
-          <Button size="sm" variant="ghost" className="mt-2" disabled={!compensationText.trim()} onClick={() => void later("provider_compensation")}>
-            Registrar compensación
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-2"
+            disabled={!compensationText.trim() || compensationDone}
+            onClick={() => void later("provider_compensation").then(() => setCompensationText(""))}
+          >
+            {compensationDone ? "Compensación registrada" : "Registrar compensación"}
           </Button>
         </div>
       )}

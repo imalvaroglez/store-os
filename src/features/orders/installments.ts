@@ -16,6 +16,7 @@ import type { InstallmentFrequency, Order, OrderInstallmentPlan } from "../../ty
 import { parseAmount } from "../../lib/money";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
+import { incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
 import { docReceivedCents } from "./payments";
 
 export type { InstallmentFrequency, OrderInstallmentPlan };
@@ -174,7 +175,8 @@ export function installmentPlanView(
 ): InstallmentPlanView | null {
   const plan = order.installments as OrderInstallmentPlan | undefined;
   if (!plan) return null;
-  const totalCents = orderTotalCents(order);
+  // #203: effective total, same as every other read model (#212 F3).
+  const totalCents = orderTotalCents(order) + incidentsSaleAdjustmentCents(order.incidents);
   const receivedCents = docReceivedCents(order);
   // #189: the NET balance — saldo a favor applied from sister orders counts
   // as covered (the clienta's money already arrived, on another order). Cuota
