@@ -1621,18 +1621,23 @@ export async function consumeSupplyTx(params: {
     if (supplyAvailableQuantity(expense) < consumption.quantity) {
       throw new Error(`Solo quedan ${supplyAvailableQuantity(expense)} disponibles de este suministro.`);
     }
+    // Firestore requires every read before any write: the order (when linked)
+    // is read first, then both writes land in one commit.
+    let orderRef: ReturnType<typeof doc> | null = null;
+    if (consumption.orderId) {
+      orderRef = doc(db, "orders", consumption.orderId);
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
+      const orderData = orderSnap.data() as Record<string, unknown>;
+      if ((orderData.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    }
     const updatedAt = consumption.at;
     const nextSupply = {
       ...expense.supply,
       consumptions: [...(expense.supply.consumptions ?? []), consumption],
     };
     tx.update(expenseRef, { supply: stripUndefined(nextSupply), updatedAt });
-    if (consumption.orderId) {
-      const orderRef = doc(db, "orders", consumption.orderId);
-      const orderSnap = await tx.get(orderRef);
-      if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
-      const orderData = orderSnap.data() as Record<string, unknown>;
-      if ((orderData.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    if (orderRef) {
       const charge: OrderSaleExpense = {
         id: `sup_${consumption.id}`,
         at: consumption.at,
