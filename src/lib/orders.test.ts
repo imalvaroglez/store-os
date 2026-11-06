@@ -31,8 +31,22 @@ describe("order domain helpers", () => {
       { productId: "p1", productName: "A", quantity: 2, unitPrice: 100, subtotal: 999 },
       { productId: "p2", productName: "B", quantity: 1, unitPrice: 250, subtotal: 1 },
     ], deposit: 450 });
-    expect(orderTotals(order)).toEqual({ estimatedTotal: 450, paid: 450, balance: 0, pieces: 3 });
+    expect(orderTotals(order)).toEqual({ estimatedTotal: 450, paid: 450, balance: 0, appliedCredit: 0, availableCredit: 0, pieces: 3 });
     expect(paymentStatusForOrder(order)).toBe("paid");
+  });
+
+  it("#189: balance is net of applied credit; availableCredit discounts consumed surplus", () => {
+    const items = [{ productId: "p1", productName: "A", quantity: 2, unitPrice: 100, subtotal: 200 }];
+    const debtor = base({ items, paymentsReceivedCents: 5000, inheritedDepositMaterialized: true, creditAppliedCents: 1500 });
+    // $200 total, $50 received, $15 credit applied -> owes $135, paid stays $50.
+    expect(orderTotals(debtor)).toEqual({ estimatedTotal: 200, paid: 50, balance: 135, appliedCredit: 15, availableCredit: 0, pieces: 2 });
+    const creditor = base({ items, paymentsReceivedCents: 21500, inheritedDepositMaterialized: true, creditConsumedCents: 1500 });
+    // $200 total, $215 received -> $15 gross surplus, $15 already consumed elsewhere.
+    expect(orderTotals(creditor)).toEqual({ estimatedTotal: 200, paid: 215, balance: 0, appliedCredit: 0, availableCredit: 0, pieces: 2 });
+    const creditorFree = { ...creditor, creditConsumedCents: 500 };
+    expect(orderTotals(creditorFree).availableCredit).toBe(10);
+    // Credit beyond the debt never turns balance negative.
+    expect(orderTotals({ ...debtor, creditAppliedCents: 99999 }).balance).toBe(0);
   });
 
   it("migrates a legacy order once and removes flat fields", () => {

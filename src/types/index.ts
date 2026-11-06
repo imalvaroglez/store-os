@@ -307,6 +307,16 @@ export type Order = {
   deliveredWithBalanceConfirmedAt?: string;
   deliveredWithBalanceConfirmedBy?: string;
 
+  /** #189: credit from a sister order applied TO this order (Σ ledger
+   * entries, maintained transactionally — the #168 accumulator pattern).
+   * Reduces what the clienta owes here; it is NOT received money. */
+  creditAppliedCents?: number;
+  /** #189 mirror on the ORIGIN order: its surplus already consumed by sister
+   * orders. Written in the same transaction as the destination's application. */
+  creditConsumedCents?: number;
+  /** #189 append-only evidence of applications/releases on this order. */
+  creditLedger?: OrderCreditLedgerEntry[];
+
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
   productId?: string;
@@ -321,6 +331,24 @@ export type Order = {
 /** How money was received. "unknown" is ONLY for the inherited legacy deposit
  * (decision i on #123): real receptions always carry cash or transfer. */
 export type OrderPaymentMethod = "cash" | "transfer" | "unknown";
+
+/** #189: one compensation event between orders of the same clienta/store.
+ * Immutable evidence on the DESTINATION order: corrections are new entries,
+ * never edits (the #123 payment-records discipline).
+ * - application: `amountCents` moved from `fromOrderId`'s surplus onto this
+ *   order's pending balance.
+ * - release: a cancellation restituted a previously applied amount back to
+ *   `fromOrderId`. */
+export type OrderCreditLedgerEntry = {
+  /** Stable per intent: a retry after an error reuses it (idempotent apply). */
+  id: string;
+  kind: "application" | "release";
+  /** Origin of the credit (the overpaid sister order). */
+  fromOrderId: string;
+  amountCents: number;
+  at: string;
+  by: string;
+};
 
 /** One money reception registered on an order (#123). Immutable evidence:
  * corrections/refunds are NEW records with a signed amount, never edits. */

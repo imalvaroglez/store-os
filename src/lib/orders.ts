@@ -1,4 +1,4 @@
-import type { InstallmentFrequency, Order, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
+import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderItem, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { formatMoney } from "./money";
 import { docReceivedCents, orderAmountCents } from "./orderMoney";
@@ -55,7 +55,24 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
   }];
 }
 
-export type OrderTotals = { estimatedTotal: number; paid: number; balance: number; pieces: number };
+export type OrderTotals = {
+  estimatedTotal: number;
+  /** Real money received on THIS order (credit is never "received" here). */
+  paid: number;
+  /** #189: what the clienta still owes, NET of saldo a favor applied to this order. */
+  balance: number;
+  /** #189: saldo a favor applied to this order from sister orders, pesos. */
+  appliedCredit: number;
+  /** #189: unconsumed surplus this order still holds for the clienta, pesos. */
+  availableCredit: number;
+  pieces: number;
+};
+
+/** Safe cents read of an optional credit accumulator (corrupt → 0, never NaN). */
+function creditFieldCents(order: Partial<Order> & Record<string, unknown>, field: "creditAppliedCents" | "creditConsumedCents"): number {
+  const value = order[field];
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
 
 /** Totals always use the frozen line snapshots, never the current catalog. */
 export function orderTotals(order: Partial<Order> & Record<string, unknown>): OrderTotals {
@@ -67,7 +84,20 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
   const paidCents = typeof order.paymentsReceivedCents === "number"
     ? docReceivedCents(order) : orderAmountCents(Math.max(0, finite(order.deposit)));
   const paid = paidCents / 100;
-  return { estimatedTotal, paid, balance: Math.max(0, totalCents - paidCents) / 100, pieces };
+  // #189: `balance` is NET of the credit applied to this order (the PO read:
+  // "Pendiente por pagar"); `paid` stays real money so sales/cobros months
+  // never move. `availableCredit` subtracts what sister orders consumed.
+  const appliedCents = creditFieldCents(order, "creditAppliedCents");
+  const surplusCents = Math.max(0, paidCents - totalCents);
+  const availableCents = Math.max(0, surplusCents - creditFieldCents(order, "creditConsumedCents"));
+  return {
+    estimatedTotal,
+    paid,
+    balance: Math.max(0, totalCents - paidCents - appliedCents) / 100,
+    appliedCredit: appliedCents / 100,
+    availableCredit: availableCents / 100,
+    pieces,
+  };
 }
 
 export function paymentStatusForOrder(order: Partial<Order> & Record<string, unknown>): PaymentStatus {
@@ -152,6 +182,16 @@ export function effectiveOrderStatus(order: Partial<Order> & Record<string, unkn
 }
 
 /** Idempotent legacy order migration. The returned object contains no flat fields. */
+/** #189: a persisted ledger entry is carried verbatim only when well-formed. */
+function isWellFormedCreditEntry(entry: unknown): entry is OrderCreditLedgerEntry {
+  const e = entry as Record<string, unknown>;
+  return typeof e?.id === "string" && !!e.id
+    && (e.kind === "application" || e.kind === "release")
+    && typeof e.fromOrderId === "string" && !!e.fromOrderId
+    && typeof e.amountCents === "number" && Number.isSafeInteger(e.amountCents) && e.amountCents > 0
+    && typeof e.at === "string" && typeof e.by === "string";
+}
+
 export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()): Order {
   const raw = (rawOrder ?? {}) as Partial<Order> & Record<string, unknown>;
   const id = String(raw.id ?? "");
@@ -194,6 +234,14 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
       ? { paymentsRevision: raw.paymentsRevision } : {}),
     ...(typeof raw.lastPaymentId === "string" ? { lastPaymentId: raw.lastPaymentId } : {}),
     ...(raw.inheritedDepositMaterialized === true ? { inheritedDepositMaterialized: true } : {}),
+    // #189 credit accumulators + evidence: same verbatim-when-well-formed
+    // discipline as the #168 money fields — never repaired, never invented.
+    ...(typeof raw.creditAppliedCents === "number" && Number.isSafeInteger(raw.creditAppliedCents) && raw.creditAppliedCents >= 0
+      ? { creditAppliedCents: raw.creditAppliedCents } : {}),
+    ...(typeof raw.creditConsumedCents === "number" && Number.isSafeInteger(raw.creditConsumedCents) && raw.creditConsumedCents >= 0
+      ? { creditConsumedCents: raw.creditConsumedCents } : {}),
+    ...(Array.isArray(raw.creditLedger) && raw.creditLedger.length > 0
+      ? { creditLedger: raw.creditLedger.filter(isWellFormedCreditEntry) } : {}),
     schemaVersion: CURRENT_ORDER_SCHEMA_VERSION,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,

@@ -126,18 +126,24 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           <>
             <StatRow label="Recibido"><Money exact amount={planView.receivedCents / 100} /></StatRow>
             <StatRow label={planView.balanceCents > 0 ? "Saldo" : "A favor"} tone={planView.balanceCents > 0 ? "danger" : "success"}>
-              <Money exact amount={Math.abs(planView.balanceCents) / 100} />
+              {/* #189: a creditor's real "A favor" is the UNCONSUMED surplus. */}
+              <Money exact amount={planView.balanceCents > 0 ? planView.balanceCents / 100 : totals.availableCredit} />
             </StatRow>
           </>
         ) : (
           <>
             <StatRow label={hasPaymentRecords ? "Recibido" : "Pagado"}><Money exact amount={totals.paid} /></StatRow>
-            <StatRow label={hasPaymentRecords && totals.paid > totals.estimatedTotal ? "A favor" : "Saldo"} tone={totals.balance > 0 ? "danger" : "success"}>
-              <Money exact amount={hasPaymentRecords && totals.paid > totals.estimatedTotal ? totals.paid - totals.estimatedTotal : totals.balance} />
+            <StatRow label={totals.availableCredit > 0 ? "A favor" : "Saldo"} tone={totals.balance > 0 ? "danger" : "success"}>
+              <Money exact amount={totals.availableCredit > 0 ? totals.availableCredit : totals.balance} />
             </StatRow>
           </>
         )}
       </div>
+      {totals.appliedCredit > 0 && (
+        <p className="text-xs text-ink-soft mt-1">
+          Ya se aplicó un saldo a favor de <Money exact amount={totals.appliedCredit} /> de otro pedido de la clienta.
+        </p>
+      )}
       {profitView && profitView.profitCents != null && (
         <p className="text-xs text-ink-soft mt-2">
           Ganancia estimada: <Money exact className={profitView.profitCents < 0 ? "text-danger" : ""} amount={profitView.profitCents / 100} />
