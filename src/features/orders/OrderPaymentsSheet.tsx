@@ -11,6 +11,7 @@ import {
   useToast,
 } from "../../design-system";
 import { todayIso } from "../../lib/dates";
+import { orderReference } from "../../lib/orders";
 import { uid } from "../../lib/ids";
 import { sanitizeMoneyInput } from "../../lib/money";
 import type { Order, OrderPayment } from "../../types";
@@ -173,6 +174,29 @@ export function OrderPaymentsSheet({
             <Money exact amount={Math.abs(summary.balanceCents) / 100} />
           </StatRow>
         </div>
+
+        {summary.creditAppliedCents > 0 && (
+          <div className="space-y-1 rounded-xl bg-surface p-3 ring-1 ring-edge">
+            <p className="text-sm">
+              Total del pedido: <Money exact amount={summary.totalCents / 100} />
+              {" "}· Saldo a favor aplicado: <Money exact amount={summary.creditAppliedCents / 100} />
+              {" "}· Pendiente por pagar: <Money exact amount={Math.max(0, summary.balanceCents) / 100} />
+            </p>
+            {(order.creditLedger ?? []).filter((entry) => entry.kind === "application").length > 0 && (
+              <ul className="text-xs text-on-surface-soft space-y-0.5">
+                {(order.creditLedger ?? []).filter((entry) => entry.kind === "application").map((entry) => (
+                  <li key={entry.id}>
+                    <Money exact amount={entry.amountCents / 100} /> del pedido{" "}
+                    {orderReference(entry.fromOrderId)} · {new Date(entry.at).toLocaleDateString("es-MX")}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-xs text-on-surface-soft">
+              El saldo a favor sale de otro pedido de la clienta con dinero de más; no es un cobro nuevo.
+            </p>
+          </div>
+        )}
 
         {summary.inheritedPendingCents > 0 && (
           <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">

@@ -13,6 +13,7 @@ import {
   where,
   runTransaction,
   increment,
+  arrayUnion,
   writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
@@ -21,7 +22,7 @@ import { reservationDeltasForOrderChange } from "../../lib/inventory";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
-import { deliveryWithBalanceBlocked, orderTotalCents } from "../../features/orders/installments";
+import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -30,7 +31,8 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry } from "../../types";
+import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -406,6 +408,15 @@ export async function saveOrderWithStockTx(
       paymentsRevision: typeof docData?.paymentsRevision === "number" ? docData.paymentsRevision : undefined,
       paymentsReceivedCents: typeof docData?.paymentsReceivedCents === "number" ? docData.paymentsReceivedCents : undefined,
       inheritedDepositMaterialized: docData?.inheritedDepositMaterialized === true ? true : undefined,
+      // #189 (review F1): the credit fields belong to the compensation
+      // transactions exactly like the money fields above — an order save
+      // carries them through VERBATIM so a full-document write can never wipe
+      // a compensation (which would double-charge or invent money depending
+      // on which side is edited). Only applyCustomerCreditTx / release-
+      // CustomerCreditTx may write them.
+      creditAppliedCents: typeof docData?.creditAppliedCents === "number" ? docData.creditAppliedCents : undefined,
+      creditConsumedCents: typeof docData?.creditConsumedCents === "number" ? docData.creditConsumedCents : undefined,
+      creditLedger: Array.isArray(docData?.creditLedger) ? (docData.creditLedger as Order["creditLedger"]) : undefined,
     };
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
@@ -431,7 +442,10 @@ export async function saveOrderWithStockTx(
       effectiveOrderStatus(next) === "delivered" &&
       (!previous || effectiveOrderStatus(previous) !== "delivered");
     if (delivering && deliveryWithBalanceBlocked(next, docMoney)) {
-      const saldoCents = orderTotalCents(next) - docMoney.receivedCents;
+      // #189 (review F2): the recorded saldo is the NET uncovered figure —
+      // saldo a favor already applied to this order counts as covered, the
+      // same "Pendiente por pagar" every read model shows.
+      const saldoCents = uncoveredBalanceCents(next, docMoney);
       if (!options?.confirmDeliveredWithBalance) {
         throw new DeliveryWithBalanceError(saldoCents);
       }
@@ -635,6 +649,140 @@ export async function registerOrderPaymentTx(
     }
   }
   throw new Error("No se pudo registrar el cobro. Revisa los cobros guardados antes de reintentarlo.");
+}
+
+/**
+ * #189: apply ONE planned compensation between two orders of the same clienta
+ * and store, atomically (the #168 accumulator discipline). One commit touches
+ * both documents: the destination gains `creditAppliedCents` + the immutable
+ * ledger entry (arrayUnion), the origin gains its `creditConsumedCents`
+ * mirror — mirrors can never drift. Idempotent on the entry id: a retry that
+ * finds it already persisted returns success without applying twice. The
+ * amounts are re-validated against the FRESH docs inside the transaction, so
+ * a stale plan (concurrent cobro, edited total) aborts instead of inventing
+ * money; the caller replans on the next trigger.
+ */
+export async function applyCustomerCreditTx(params: {
+  entry: OrderCreditLedgerEntry;
+  /** Destination order: the pending balance being compensated. */
+  orderId: string;
+  storeId: string;
+}): Promise<void> {
+  const { db } = getFirebase();
+  const { entry, orderId, storeId } = params;
+  if (entry.kind !== "application" || !Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) {
+    throw new Error("La compensación a aplicar no es válida.");
+  }
+  const destRef = doc(db, "orders", orderId);
+  const originRef = doc(db, "orders", entry.fromOrderId);
+  await runTransaction(db, async (tx) => {
+    // READ PHASE (Firestore requires every read before any write).
+    const destSnap = await tx.get(destRef);
+    const originSnap = await tx.get(originRef);
+    if (!destSnap.exists()) throw new Error("No se encontró el pedido a compensar.");
+    if (!originSnap.exists()) throw new Error("No se encontró el pedido con el saldo a favor.");
+    const destData = destSnap.data() as Record<string, unknown>;
+    const originData = originSnap.data() as Record<string, unknown>;
+    if ((destData.storeId ?? "") !== storeId || (originData.storeId ?? "") !== storeId) {
+      throw new Error("Los pedidos pertenecen a otra tienda.");
+    }
+    if ((destData.customerId ?? "") !== (originData.customerId ?? "") || !destData.customerId) {
+      throw new Error("El saldo a favor solo compensa pedidos de la misma clienta.");
+    }
+    if (destData.orderStatus === "cancelled" || originData.orderStatus === "cancelled") {
+      throw new Error("Un pedido cancelado no participa en la compensación.");
+    }
+    const ledger = Array.isArray(destData.creditLedger) ? (destData.creditLedger as OrderCreditLedgerEntry[]) : [];
+    if (ledger.some((saved) => saved.id === entry.id)) return; // idempotent retry
+    // Fresh-doc validation: the planned amount must still fit both sides.
+    if (creditAvailableCents(originData) < entry.amountCents) {
+      throw new Error("El saldo a favor cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
+    }
+    if (pendingCents(destData) < entry.amountCents) {
+      throw new Error("El saldo del pedido cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
+    }
+    // WRITE PHASE — one atomic commit across both documents.
+    tx.update(destRef, {
+      creditAppliedCents: increment(entry.amountCents),
+      creditLedger: arrayUnion(stripUndefined(entry)),
+      updatedAt: entry.at,
+    });
+    tx.update(originRef, {
+      creditConsumedCents: increment(entry.amountCents),
+    });
+  });
+}
+
+/**
+ * #189: restitute the credit a CANCELLED order had consumed, atomically. PO
+ * decision 2026-11-05: cancelling a valid order that used saldo a favor
+ * returns that credit to the clienta. For every origin still owed restitution
+ * (net applications − releases from the ledger), the reversal is ONE commit:
+ * destination accumulator down, origin mirror down, release entries appended
+ * as evidence. Idempotent: re-running after a successful release finds net
+ * zero and writes nothing.
+ */
+export async function releaseCustomerCreditTx(params: {
+  orderId: string;
+  storeId: string;
+  by: string;
+  /** "cancellation" (default): only a cancelled order restitutes — the PO
+   * rule. "deletion": the order is about to be deleted; its consumed credit
+   * is restituted so the origin's mirror never overstates consumption. */
+  reason?: "cancellation" | "deletion";
+}): Promise<number> {
+  const { db } = getFirebase();
+  const { orderId, storeId, by, reason = "cancellation" } = params;
+  const destRef = doc(db, "orders", orderId);
+  // Per-ATTEMPT accumulator: Firestore retries the transaction body on
+  // conflicts, so a total accumulated across attempts would over-report.
+  let released = 0;
+  await runTransaction(db, async (tx) => {
+    released = 0;
+    const destSnap = await tx.get(destRef);
+    if (!destSnap.exists()) return;
+    const destData = destSnap.data() as Record<string, unknown>;
+    if ((destData.storeId ?? "") !== storeId) return;
+    if (reason === "cancellation" && destData.orderStatus !== "cancelled") return;
+    const ledger = Array.isArray(destData.creditLedger) ? (destData.creditLedger as OrderCreditLedgerEntry[]) : [];
+    const netByOrigin = new Map<string, number>();
+    for (const saved of ledger) {
+      if (saved.kind !== "application" || !Number.isSafeInteger(saved.amountCents)) continue;
+      netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
+    }
+    for (const saved of ledger) {
+      if (saved.kind !== "release" || !Number.isSafeInteger(saved.amountCents)) continue;
+      netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
+    }
+    const entries: OrderCreditLedgerEntry[] = [];
+    const writes: Array<{ ref: ReturnType<typeof doc>; data: Record<string, unknown> }> = [];
+    let appliedDown = 0;
+    for (const [fromOrderId, netCents] of netByOrigin) {
+      if (netCents <= 0) continue;
+      const originRef = doc(db, "orders", fromOrderId);
+      const originSnap = await tx.get(originRef);
+      if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
+      entries.push({
+        id: `release_${orderId}_${fromOrderId}_${(ledger.filter((e) => e.kind === "release" && e.fromOrderId === fromOrderId).length) + 1}`,
+        kind: "release",
+        fromOrderId,
+        amountCents: netCents,
+        at: new Date().toISOString(),
+        by,
+      });
+      writes.push({ ref: originRef, data: { creditConsumedCents: increment(-netCents) } });
+      appliedDown += netCents;
+      released += netCents;
+    }
+    if (entries.length === 0) return;
+    tx.update(destRef, {
+      creditAppliedCents: increment(-appliedDown),
+      creditLedger: arrayUnion(...entries.map(stripUndefined)),
+      updatedAt: entries[0].at,
+    });
+    for (const write of writes) tx.update(write.ref, write.data);
+  });
+  return released;
 }
 
 /** Release the canonical reservation and delete the matching revision atomically. */

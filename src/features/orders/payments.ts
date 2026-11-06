@@ -230,8 +230,12 @@ export type PaymentSummary = {
   totalCents: number;
   /** Received = Σ records + the still-unmaterialized inherited deposit. */
   receivedCents: number;
-  /** total − received, signed: negative means money in the customer's favor. */
+  /** total − received − creditApplied, signed: negative means money in the
+   * customer's favor. #189: saldo a favor applied from sister orders reduces
+   * what she owes here (never counted as received money). */
   balanceCents: number;
+  /** #189: saldo a favor applied TO this order (destination accumulator). */
+  creditAppliedCents: number;
   /** Deposit cents not yet materialized as a record (shown as unknown). */
   inheritedPendingCents: number;
   /** The order's records, chronological evidence (earliest first). */
@@ -260,10 +264,13 @@ export function paymentSummary(
   const receivedCents = typeof order.paymentsReceivedCents === "number" && Number.isFinite(order.paymentsReceivedCents)
     ? docReceivedCents(order)
     : paymentsCents(records) + inheritedPendingCents;
+  const creditAppliedCents = typeof order.creditAppliedCents === "number" && Number.isSafeInteger(order.creditAppliedCents)
+    ? Math.max(0, order.creditAppliedCents) : 0;
   return {
     totalCents,
     receivedCents,
-    balanceCents: totalCents - receivedCents,
+    balanceCents: totalCents - receivedCents - creditAppliedCents,
+    creditAppliedCents,
     inheritedPendingCents,
     records,
   };

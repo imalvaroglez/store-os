@@ -37,6 +37,7 @@ import {
   reconcileOrderPayments,
   type PaymentRecordInput,
 } from "../features/orders/payments";
+import { creditAvailableCents, ordersForCustomer, planCreditApplications } from "../features/orders/customerCredit";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
@@ -59,6 +60,8 @@ import {
   deleteOrderWithStockTx,
   fetchOrderPayments,
   registerOrderPaymentTx,
+  applyCustomerCreditTx,
+  releaseCustomerCreditTx,
   StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
@@ -465,6 +468,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const stateStatus = cloud && cloudLoad.uid === user?.uid ? cloudLoad.status : cloud ? "loading" : "idle";
   const stateError = stateStatus === "error" ? cloudLoad.error : null;
+
+  // #189: automatic compensation of saldo a favor (PO decision 2026-11-05 —
+  // no per-application confirmation). Pure planning over the in-memory orders;
+  // the write itself re-validates against the fresh docs inside its Firestore
+  // transaction, so a stale plan aborts instead of inventing money and the
+  // listener round-trip replans. ONE application per pass: each success lands
+  // as a new state.orders identity and re-triggers this effect until the plan
+  // is empty (idempotent by construction). Failures surface through the same
+  // sync-error banner as any other write, with an idempotent retry.
+  useEffect(() => {
+    if (!cloud || !user || stateStatus !== "ready") return;
+    for (const origin of state.orders) {
+      if (origin.orderStatus === "cancelled" || creditAvailableCents(origin) <= 0) continue;
+      const next = planCreditApplications(ordersForCustomer(state.orders, origin.storeId, origin.customerId))[0];
+      if (!next) continue;
+      persistInBackground("aplicar el saldo a favor", async () => {
+        try {
+          await applyCustomerCreditTx({
+            entry: {
+              id: uid("credit"),
+              kind: "application",
+              fromOrderId: next.fromOrderId,
+              amountCents: next.amountCents,
+              at: nowIso(),
+              by: user.uid,
+            },
+            orderId: next.toOrderId,
+            storeId: origin.storeId,
+          });
+        } catch (error) {
+          // A stale plan aborting against fresher docs is EXPECTED under
+          // concurrency (another pass already applied, or a concurrent cobro
+          // changed the numbers): the listener round-trip replans. Money is
+          // safe — surfacing this would only scare the operator.
+          if (error instanceof Error && /cambió mientras se aplicaba/.test(error.message)) return;
+          throw error;
+        }
+      });
+      return; // one write per pass; its state update re-triggers the effect
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloud, user?.uid, state.orders, stateStatus]);
 
   const value: StoreContextValue = {
     state,
@@ -881,6 +926,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
       }
       dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
+      // #189: a valid cancellation restitutes the saldo a favor this order had
+      // consumed (PO decision 2026-11-05). The reconcile effect above then
+      // re-applies the returned credit to the next pending order, if any.
+      // Best-effort by design (unlike deletion's awaited fail-closed release):
+      // the order is already saved as cancelled; a failed restitution surfaces
+      // through the sync-error banner with its retry and blocks nothing else.
+      if (result.order.orderStatus === "cancelled" && prev && prev.orderStatus !== "cancelled") {
+        persistInBackground("restituir el saldo a favor", () =>
+          releaseCustomerCreditTx({ orderId: order.id, storeId: order.storeId, by: currentUser.uid }));
+      }
     },
     deleteOrder: async (orderId, expectedRevision) => {
       const currentUser = requireAuthenticatedUser();
@@ -889,6 +944,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const existing = state.orders.find((o) => o.id === orderId);
       if (existing && (existing.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
       if (!existing) throw new Error("No se encontró el pedido.");
+      // #189: an order that consumed saldo a favor restitutes it BEFORE the
+      // document goes away — awaited, fail-closed: without this the origin's
+      // creditConsumed mirror would overstate consumption forever.
+      if ((existing.creditAppliedCents ?? 0) > 0) {
+        await releaseCustomerCreditTx({ orderId, storeId: existing.storeId, by: currentUser.uid, reason: "deletion" });
+      }
       const updates = await deleteOrderWithStockTx(currentUser, orderId, expectedRevision);
       for (const update of updates) {
         const product = state.products.find((p) => p.id === update.productId);
