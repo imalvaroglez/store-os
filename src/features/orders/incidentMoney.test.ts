@@ -124,6 +124,35 @@ describe("reconcileIncidentMoney — crédito aplicado y compensado (r2-criterio
     expect(r.refundOwedCents("refund_pending")).toBe(5000);
   });
 
+  it("r3-F1R: hermanas de MODELO NUEVO (campo persistido) — los 4 repros del revisor", () => {
+    // Pedido 2 × $100, pagados $150; hermana sobre pieza A, devolución de B.
+    const base = (siblingResolution: OrderIncident["resolution"], siblingReplacement?: OrderIncident["replacement"]) =>
+      order({ paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        items: [{ lineId: "l0", productName: "A", quantity: 1, unitPrice: 100, subtotal: 100 },
+                { lineId: "l1", productName: "B", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        incidents: [{ ...draft({ id: "sib", lineId: "l0", originalUnitPriceCents: 10000 }),
+          resolution: siblingResolution, ...(siblingReplacement ? { replacement: siblingReplacement } : {}) }] });
+    const returned = draft({ id: "ret", lineId: "l1", originalUnitPriceCents: 10000, resolution: { kind: "refund" } });
+    const field = 10000; // el servidor persiste el precio histórico en TODA resolución
+
+    // wait_restock: sin ajuste → venta efectiva $100, cubierto $150 → $50.
+    expect(reconcileIncidentMoney(base({ kind: "wait_restock", waitUntil: "2026-11-20", saleAdjustmentUnitCents: field }), returned).reconciledCents).toBe(5000);
+    // upgrade a $150 (+$50 por cobrar): venta $250 → cubierto 150 → $0.
+    expect(reconcileIncidentMoney(base({ kind: "replacement_with_difference", saleAdjustmentUnitCents: field },
+      { productId: "p9", productName: "Aro", unitPriceCents: 15000, unitCostCents: 6000, chargeDifference: true }), returned).reconciledCents).toBe(0);
+    // equivalente: sin ajuste → $50.
+    expect(reconcileIncidentMoney(base({ kind: "replacement_equivalent", saleAdjustmentUnitCents: field },
+      { productId: "p8", productName: "Igual", unitPriceCents: 10000, unitCostCents: 4000, chargeDifference: false }), returned).reconciledCents).toBe(5000);
+    // downgrade a $60 (−$40) con pagado $200: venta efectiva tras ambas $60,
+    // cubierto $200 → le corresponden $140; el tope de ESTA devolución es la
+    // pieza ($100) y los $40 restantes quedan como saldo a favor ordinario
+    // (#189). El "$60" del repro del revisor es la venta efectiva, no lo
+    // devolvible por la pieza — discrepancia marcada para adjudicación.
+    const paid200 = { ...base({ kind: "replacement_with_difference", saleAdjustmentUnitCents: field },
+      { productId: "p7", productName: "Menor", unitPriceCents: 6000, unitCostCents: 3000, chargeDifference: true }), paymentsReceivedCents: 20000 };
+    expect(reconcileIncidentMoney(paid200, returned).reconciledCents).toBe(10000);
+  });
+
   it("otra incidencia con reembolso ya comprometido no se compromete dos veces", () => {
     const other: OrderIncident = { ...draft({ id: "inc0", lineId: "l1" }),
       resolution: { kind: "refund", refundOwedCents: 12000, saleAdjustmentUnitCents: 12000 } };

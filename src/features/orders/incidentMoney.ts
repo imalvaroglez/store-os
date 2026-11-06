@@ -10,7 +10,7 @@
 // The UI may only ESTIMATE with this; the transaction recomputes it against
 // the fresh document and stores the authoritative amounts.
 import type { Order, OrderIncident } from "../../types";
-import { docReceivedCents, orderAmountCents } from "../../lib/orderMoney";
+import { docReceivedCents, incidentSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
 
 function orderTotalCentsOf(order: Order): number {
@@ -39,26 +39,11 @@ function otherRefundsCommittedCents(order: Order, incident: OrderIncident): numb
 }
 
 function otherSaleAdjustmentsCents(order: Order, incident: OrderIncident): number {
+  // The SHARED kind-dispatch (orderMoney) — siblings can never diverge from
+  // the read model (r3 F1-R).
   return (order.incidents ?? [])
     .filter((existing) => existing.id !== incident.id && existing.resolution)
-    .reduce((sum, existing) => {
-      const resolution = existing.resolution!;
-      const quantity = Math.max(1, Math.round(existing.quantity || 1));
-      if (typeof resolution.saleAdjustmentUnitCents === "number") {
-        // Stored as the POSITIVE unit value; the adjustment it causes is negative.
-        return sum - resolution.saleAdjustmentUnitCents * quantity;
-      }
-      // Legacy transition: refunds used refundUnitPriceCents as the
-      // adjustment; charged replacements adjusted by the price difference
-      // (mirrors orderMoney so siblings never diverge — r3 review F1).
-      if (resolution.kind === "refund") {
-        return sum - (resolution.refundUnitPriceCents ?? 0) * quantity;
-      }
-      if (existing.replacement?.chargeDifference) {
-        return sum + (existing.replacement.unitPriceCents - Math.max(0, existing.originalUnitPriceCents)) * quantity;
-      }
-      return sum;
-    }, 0);
+    .reduce((sum, existing) => sum + incidentSaleAdjustmentCents(existing), 0);
 }
 
 export type IncidentMoney = {

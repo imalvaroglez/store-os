@@ -65,28 +65,35 @@ function incidentQuantity(incident: OrderIncident): number {
  * never rewritten — this is the documented adjustment, the basis of what the
  * clienta actually owes after posventa.
  */
-export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefined | null): number {
-  return (incidents ?? []).reduce((sum, incident) => {
-    const resolution = incident.resolution;
-    if (!resolution || resolution.kind === "wait_restock") return sum;
-    // New model: the piece (or the price difference) leaves the sale at the
-    // HISTORICAL unit price stored on the resolution — never the refund amount.
-    if (typeof resolution.saleAdjustmentUnitCents === "number") {
-      if (resolution.kind === "refund") {
-        return sum - incidentCentsOf(resolution.saleAdjustmentUnitCents) * incidentQuantity(incident);
-      }
-      const replacement = incident.replacement;
-      if (!replacement || !replacement.chargeDifference) return sum;
-      return sum + (replacement.unitPriceCents - incidentCentsOf(resolution.saleAdjustmentUnitCents)) * incidentQuantity(incident);
-    }
-    // Legacy transition reads (pre-reconcile synthetic data).
+/**
+ * ONE incident's sale adjustment, exact cents — the single kind-dispatch both
+ * the order read model and the incident reconciliation use, so they can never
+ * diverge (r3 F1-R): wait_restock → 0; refund → −piece at the historical
+ * price; charged replacement → ±price difference; anything else → 0.
+ */
+export function incidentSaleAdjustmentCents(incident: OrderIncident): number {
+  const resolution = incident.resolution;
+  if (!resolution || resolution.kind === "wait_restock") return 0;
+  const quantity = incidentQuantity(incident);
+  if (typeof resolution.saleAdjustmentUnitCents === "number") {
     if (resolution.kind === "refund") {
-      return sum - incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
+      return -incidentCentsOf(resolution.saleAdjustmentUnitCents) * quantity;
     }
     const replacement = incident.replacement;
-    if (!replacement || !replacement.chargeDifference) return sum;
-    return sum + (replacement.unitPriceCents - incidentCentsOf(incident.originalUnitPriceCents)) * incidentQuantity(incident);
-  }, 0);
+    if (!replacement || !replacement.chargeDifference) return 0;
+    return (replacement.unitPriceCents - incidentCentsOf(resolution.saleAdjustmentUnitCents)) * quantity;
+  }
+  // Legacy transition reads (pre-reconcile synthetic data).
+  if (resolution.kind === "refund") {
+    return -incidentCentsOf(resolution.refundUnitPriceCents) * quantity;
+  }
+  const replacement = incident.replacement;
+  if (!replacement || !replacement.chargeDifference) return 0;
+  return (replacement.unitPriceCents - incidentCentsOf(incident.originalUnitPriceCents)) * quantity;
+}
+
+export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefined | null): number {
+  return (incidents ?? []).reduce((sum, incident) => sum + incidentSaleAdjustmentCents(incident), 0);
 }
 
 /**
