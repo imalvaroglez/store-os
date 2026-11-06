@@ -74,7 +74,8 @@ async function main() {
       const armed = await page.evaluate(() => Boolean((window).__storeOsMeasure));
       await context.close();
       if (!armed) {
-        failWith("El build servido no arma el gancho de medición (window.__storeOsMeasure ausente). Solo los builds del proyecto store-os-dev lo incluyen; revisa que `npm run preview` sirva el build con la configuración de dev.");
+        // Throw (not failWith) so the finally below closes the browser (#192 F4).
+        throw new Error("El build servido no arma el gancho de medición (window.__storeOsMeasure ausente). Solo los builds del proyecto store-os-dev lo incluyen; revisa que `npm run preview` sirva el build con la configuración de dev.");
       }
       console.log("✔ Build de medición verificado (gancho dev presente).");
     }
@@ -92,9 +93,10 @@ async function main() {
         const requestUrl = request.url();
         if (!requestUrl.includes("firestore.googleapis.com")) return;
         const grpc = /Firestore\/(Listen|RunQuery|BatchGet|GetDocument|Write|Commit)\b/.exec(requestUrl);
-        const rest = /documents:(runQuery|batchGet)/.exec(requestUrl)
-          ?? (/\/databases\/\(default\)\/documents\/[^:]+$/.test(requestUrl) ? ["", "GetDocument"] : null);
-        const key = grpc?.[1] ?? rest?.[1];
+        // REST captures arrive lowercase; the counters speak camelCase (#192 F1).
+        const restRaw = /documents:(runQuery|batchGet)/.exec(requestUrl)?.[1]
+          ?? (/\/databases\/\(default\)\/documents\/[^:]+$/.test(requestUrl) ? "GetDocument" : null);
+        const key = grpc?.[1] ?? (restRaw ? restRaw[0].toUpperCase() + restRaw.slice(1) : null);
         if (key && key in requests) requests[key] += 1;
         else {
           requests.other += 1;
@@ -146,6 +148,12 @@ async function main() {
         await page.getByLabel("Contraseña").fill(password);
         await page.getByRole("button", { name: "Entrar" }).click();
         await page.waitForTimeout(3500);
+        // A rejected login must fail the phase loudly, never report a false
+        // zero row (#192 F3): the form still being up means no session was
+        // established.
+        if (await page.getByLabel("Correo").count()) {
+          throw new Error("El login de dev fue rechazado o no completó; revisa --email/--password.");
+        }
       };
       await phase("admin · login + carga inicial", `${base}/`, async (page, url) => {
         await page.goto(url, { waitUntil: "networkidle" });
