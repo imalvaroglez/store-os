@@ -182,7 +182,11 @@ service cloud.firestore {
         && resource.data.amount == request.resource.data.amount
         && resource.data.date == request.resource.data.date
         && resource.data.createdAt == request.resource.data.createdAt;
-      allow delete: if canOperateStore(resource.data.storeId);
+      allow delete: if canOperateStore(resource.data.storeId)
+        // #184: an expense with assignments or consumptions is money evidence
+        // (server-side guard; the UI blocks it too).
+        && !(('assignments' in resource.data) && resource.data.assignments.size() > 0)
+        && !(('supply' in resource.data) && ('consumptions' in resource.data.supply) && resource.data.supply.consumptions.size() > 0);
     }
 
     match /purchases/{id} {

@@ -424,6 +424,9 @@ export async function saveOrderWithStockTx(
       // #203: same verbatim discipline — incidents (append-only evidence on
       // this order) belong to the incident transactions, never to a form save.
       incidents: Array.isArray(docData?.incidents) ? (docData.incidents as Order["incidents"]) : undefined,
+      // #184: saleExpenses (loose-expense charges and supply consumptions)
+      // belong to the expense transactions — same verbatim carry (review F1).
+      saleExpenses: Array.isArray(docData?.saleExpenses) ? (docData.saleExpenses as Order["saleExpenses"]) : undefined,
     };
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
@@ -1553,6 +1556,9 @@ export async function assignExpenseTx(params: {
     if (assignment.amountCents <= 0 || !Number.isSafeInteger(assignment.amountCents)) {
       throw new Error("El importe de la asignación debe ser mayor que cero.");
     }
+    if (expense.supply) {
+      throw new Error("Los suministros se distribuyen consumiéndolos, no asignándolos a compras o pedidos.");
+    }
     if (pendingAssignmentCents(expense) < assignment.amountCents) {
       throw new Error(`Solo quedan ${pendingAssignmentCents(expense) / 100} pesos por asignar de este gasto.`);
     }
@@ -1582,6 +1588,7 @@ export async function assignExpenseTx(params: {
         amountCents: assignment.amountCents,
         description: expense.description,
         expenseId,
+        ...(assignment.allocations?.length ? { allocations: assignment.allocations } : {}),
       };
       tx.update(orderRef, { saleExpenses: arrayUnion(stripUndefined(charge)), updatedAt: assignment.at });
     }

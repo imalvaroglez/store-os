@@ -24,6 +24,7 @@ import { formatDate } from "../../lib/dates";
 import { uid } from "../../lib/ids";
 import { sanitizeDecimalInput, formatMoneyExact } from "../../lib/money";
 import { orderAmountCents } from "../../lib/orderMoney";
+import { effectivePurchaseStatus } from "../../types";
 import {
   LOOSE_EXPENSE_CATEGORY_LABEL,
   type ExpenseAssignment,
@@ -133,24 +134,22 @@ export function ExpensesScreen() {
             onChange={(next) => setCategory(next as LooseExpenseCategory)}
             options={(Object.keys(LOOSE_EXPENSE_CATEGORY_LABEL) as LooseExpenseCategory[]).map((value) => ({ value, label: LOOSE_EXPENSE_CATEGORY_LABEL[value] }))}
           />
-          {category === "supplies" && (
-            <>
-              <TextField
-                label="Unidades compradas"
-                inputMode="numeric"
-                placeholder="p. ej. 100 bolsas"
-                value={quantityText}
-                onChange={(e) => setQuantityText(e.target.value.replace(/[^\d]/g, ""))}
-                hint={amountText && Number(quantityText) > 0 ? `Costo por unidad: $${((Number(amountText) || 0) / Number(quantityText)).toFixed(2)}` : undefined}
-              />
-              <CheckboxField
-                label="Tratamiento simplificado (gasto del periodo)"
-                caption="Sin controlar unidades: el importe se reconoce en el periodo y no vuelve a contarse al vender."
-                checked={simplified}
-                onChange={setSimplified}
-              />
-            </>
+          {category === "supplies" && !simplified && (
+            <TextField
+              label="Unidades compradas"
+              inputMode="numeric"
+              placeholder="p. ej. 100 bolsas"
+              value={quantityText}
+              onChange={(e) => setQuantityText(e.target.value.replace(/[^0-9]/g, ""))}
+              hint={amountText && Number(quantityText) > 0 ? `Costo por unidad: $${((Number(amountText) || 0) / Number(quantityText)).toFixed(2)}` : undefined}
+            />
           )}
+          <CheckboxField
+            label="Tratamiento simplificado (gasto del periodo)"
+            caption="Reconocer el importe en su periodo sin asociarlo a nada: no vuelve a contarse al vender."
+            checked={simplified}
+            onChange={setSimplified}
+          />
           <Button full disabled={busy} onClick={() => void submit()}>
             {busy ? "Guardando…" : "Guardar gasto"}
           </Button>
@@ -192,7 +191,11 @@ function ExpenseCard({ expense, purchases, orders }: { expense: LooseExpense; pu
           <p className="text-xs text-ink-soft">{formatDate(expense.date)} · {LOOSE_EXPENSE_CATEGORY_LABEL[expense.category]}</p>
         </div>
         <Badge tone={pending > 0 ? "warning" : "success"}>
-          {expense.simplifiedOperation ? "Reconocido" : pending > 0 ? `Pendiente ${formatMoneyExact(pending / 100)}` : "Asignado"}
+          {expense.simplifiedOperation
+            ? "Reconocido"
+            : pending > 0
+              ? `${isSupply ? "Por consumir" : "Pendiente"} ${formatMoneyExact(pending / 100)}`
+              : isSupply ? "Consumido" : "Asignado"}
         </Badge>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -213,7 +216,7 @@ function ExpenseCard({ expense, purchases, orders }: { expense: LooseExpense; pu
         </ul>
       )}
       <div className="flex flex-wrap gap-2">
-        {pending > 0 && (
+        {pending > 0 && !isSupply && (
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setAssignOpen(true)}>Asignar</Button>
         )}
         {isSupply && supplyAvailableQuantity(expense) > 0 && (
@@ -256,8 +259,15 @@ function AssignSheet({ expense, purchases, orders, onClose, onAssign }: {
   onAssign: (assignment: Omit<ExpenseAssignment, "at" | "by">, purchaseExpense?: { id: string; category: "sourcing_transport" | "other"; amount: number; description?: string }) => Promise<void>;
 }) {
   const pending = pendingAssignmentCents(expense);
-  const openPurchases = purchases.filter((purchase) => purchase.storeId === expense.storeId && purchase.status !== "received");
-  const storeOrders = orders.filter((order) => order.storeId === expense.storeId && order.orderStatus !== "cancelled");
+  // F8: legacy purchases without status are RECEIVED — the effective status
+  // keeps only truly assignable purchases in the list.
+  const openPurchases = purchases.filter(
+    (purchase) => purchase.storeId === expense.storeId && effectivePurchaseStatus(purchase) !== "received"
+  );
+  // F7: newest orders first — the likely assignment targets.
+  const storeOrders = orders
+    .filter((order) => order.storeId === expense.storeId && order.orderStatus !== "cancelled")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const [kind, setKind] = useState<"purchase" | "order">(openPurchases.length > 0 ? "purchase" : "order");
   const [purchaseId, setPurchaseId] = useState(openPurchases[0]?.id ?? "");
   const [orderId, setOrderId] = useState(storeOrders[0]?.id ?? "");
@@ -268,10 +278,10 @@ function AssignSheet({ expense, purchases, orders, onClose, onAssign }: {
   const targetLines = useMemo(() => {
     if (kind === "purchase") {
       const purchase = openPurchases.find((candidate) => candidate.id === purchaseId);
-      return (purchase?.lines ?? []).map((line) => ({ lineId: line.lineId ?? "", quantity: line.quantity, unitPriceCents: orderAmountCents(line.unitCost ?? 0) }));
+      return (purchase?.lines ?? []).map((line) => ({ lineId: line.lineId ?? "", name: line.name, quantity: line.quantity, unitPriceCents: orderAmountCents(line.unitCost ?? 0) }));
     }
     const order = storeOrders.find((candidate) => candidate.id === orderId);
-    return (order?.items ?? []).map((item) => ({ lineId: item.lineId ?? "", quantity: item.quantity, unitPriceCents: orderAmountCents(item.unitPrice) }));
+    return (order?.items ?? []).map((item) => ({ lineId: item.lineId ?? "", name: item.productName, quantity: item.quantity, unitPriceCents: orderAmountCents(item.unitPrice) }));
   }, [kind, purchaseId, orderId, openPurchases, storeOrders]);
 
   const amountCents = Math.round(Number(amountText) * 100);
@@ -312,15 +322,19 @@ function AssignSheet({ expense, purchases, orders, onClose, onAssign }: {
         )}
         <div className="grid grid-cols-2 gap-3">
           <TextField label="Importe a asignar" inputMode="decimal" value={amountText} onChange={(e) => setAmountText(sanitizeDecimalInput(e.target.value))} />
-          <SelectField
-            label="Reparto"
-            value={mode}
-            onChange={(next) => setMode(next as "units" | "value")}
-            options={[
-              { value: "units", label: "Por unidades" },
-              { value: "value", label: "Por valor" },
-            ]}
-          />
+          {kind === "order" ? (
+            <SelectField
+              label="Reparto"
+              value={mode}
+              onChange={(next) => setMode(next as "units" | "value")}
+              options={[
+                { value: "units", label: "Por unidades" },
+                { value: "value", label: "Por valor" },
+              ]}
+            />
+          ) : (
+            <p className="text-xs text-on-surface-soft">El costo se integra por piezas al recibir la mercancía.</p>
+          )}
         </div>
         <p className="text-xs text-on-surface-soft">Pendiente de este gasto: <Money exact amount={pending / 100} /></p>
         {plan.length > 0 && (
@@ -328,7 +342,7 @@ function AssignSheet({ expense, purchases, orders, onClose, onAssign }: {
             <p className="font-semibold text-ink">Vista previa del reparto</p>
             {plan.map((row) => (
               <p key={row.lineId} className="flex justify-between gap-2">
-                <span className="text-ink-soft truncate">{targetLines.find((line) => line.lineId === row.lineId)?.lineId ? "Pieza" : ""} {row.lineId}</span>
+                <span className="text-ink-soft truncate">{targetLines.find((line) => line.lineId === row.lineId)?.name ?? "Pieza"}</span>
                 <span className="font-mono">{formatMoneyExact(row.amountCents / 100)}</span>
               </p>
             ))}

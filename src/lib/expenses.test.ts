@@ -44,6 +44,25 @@ describe("saldo pendiente de asignación (criterios 1 y 3)", () => {
     expect(pendingAssignmentCents(over)).toBe(0); // derived, never negative
   });
 
+  it("#214 F2: consumir un suministro DISTRIBUYE su importe — el pendiente baja y no se puede volver a asignar", () => {
+    const bags = expense({
+      amount: 15,
+      category: "supplies",
+      supply: { quantityInitial: 100, consumptions: [
+        { id: "c1", at: "", by: "fer", quantity: 40 }, // 40 × $0.15 = $6.00 cargados
+      ] },
+    });
+    expect(pendingAssignmentCents(bags)).toBe(900); // 1500 − 600 por consumos
+    const all = expense({
+      ...bags,
+      supply: { quantityInitial: 100, consumptions: [
+        { id: "c1", at: "", by: "fer", quantity: 40 },
+        { id: "c2", at: "", by: "fer", quantity: 60 },
+      ] },
+    });
+    expect(pendingAssignmentCents(all)).toBe(0); // consumido completo: nada pendiente
+  });
+
   it("tratamiento simplificado (criterio 6): el importe completo queda reconocido, sin pendiente", () => {
     const e = expense({ category: "supplies", simplifiedOperation: true });
     expect(pendingAssignmentCents(e)).toBe(0);
