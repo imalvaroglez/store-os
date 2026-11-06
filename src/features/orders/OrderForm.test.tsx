@@ -581,3 +581,37 @@ describe("estimated profit while registering a sale", () => {
     rendered.unmount();
   });
 });
+
+
+describe("legacy anticipo guards (#218)", () => {
+  const order = { id: "guard-218", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Pieza", quantity: 1, unitPrice: 720, subtotal: 720 }], deposit: 590, paymentsReceivedCents: 59000, orderStatus: "asked" as const, paymentStatus: "partial" as const, createdAt: "2026-11-06", updatedAt: "2026-11-06" };
+  it("disables the anticipo once materialized", () => {
+    localStorage.clear();
+    render(<ToastProvider><OrderForm order={{ ...order, inheritedDepositMaterialized: true }} onDone={() => {}} /></ToastProvider>);
+    expect(screen.getByLabelText(/^Anticipo/)).toBeDisabled();
+    expect(screen.getByText("El anticipo ya está registrado en el historial de cobros.")).toBeInTheDocument();
+  });
+  it.each([720, 0])("guards increases but allows repair to %s", async (amount) => {
+    localStorage.clear();
+    mockUpsertOrder.mockClear();
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Anticipo"), { target: { value: String(amount) } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    if (amount > order.deposit) {
+      expect(await screen.findByText("El anticipo no puede subir cuando el pedido ya tiene cobros. Registra un cobro.")).toBeInTheDocument();
+      expect(mockUpsertOrder).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalled());
+      expect(mockUpsertOrder.mock.calls[0][0].deposit).toBe(0);
+    }
+  });
+  it("ignores a draft's inflated anticipo when the order has payment evidence", async () => {
+    localStorage.clear();
+    const { orderDraftKey, saveOrderDraft } = await import("./orderDraft");
+    const key = orderDraftKey(order.storeId, order.id, false, "uid_test");
+    saveOrderDraft(key, { orderUpdatedAt: order.updatedAt, savedAt: order.updatedAt, customerId: order.customerId, customerQuery: "Cliente Olivia", lines: [{ key: "saved", productName: "Pieza", productQuery: "Pieza", quantity: 1, quantityText: "1", unitPrice: 720, unitPriceText: "720", costText: "", subtotal: 720 }], deposit: "720", promisedDate: "", orderStatus: "asked", notes: "Nota recuperada" });
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    expect(screen.getByLabelText("Anticipo")).toHaveValue("590");
+    expect(screen.getByLabelText("Notas")).toHaveValue("Nota recuperada");
+  });
+});

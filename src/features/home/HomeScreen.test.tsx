@@ -48,6 +48,7 @@ function restockBadges(container: HTMLElement): string[] {
 
 beforeEach(() => {
   localStorage.clear();
+  mocks.upsertOrder.mockReset().mockImplementation(async (order: Order) => order);
 });
 
 describe("HomeScreen alertas de existencias (FER-09)", () => {
@@ -158,5 +159,20 @@ describe("HomeScreen alertas de existencias (FER-09)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
     await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledTimes(1));
     expect(mocks.upsertOrder.mock.calls[0][0].deposit).toBe(500);
+    expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
   });
+});
+
+
+it("opens Cobros with honest feedback when a stale home collection is pinned (#218)", async () => {
+  const state = fixtureState();
+  const legacy: Order = { ...state.orders[0], deposit: 0, orderStatus: "delivered", items: [{ productName: "Pieza", quantity: 1, unitPrice: 720, subtotal: 720 }] };
+  state.orders = [legacy];
+  mocks.upsertOrder.mockResolvedValue({ ...legacy, deposit: 0, paymentsReceivedCents: 59000 });
+  const Wrapper = withState(state);
+  render(<Wrapper><HomeScreen /></Wrapper>);
+  fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
+  expect(await screen.findByText("Este pedido ya tiene cobros registrados. Regístralos en Cobros.")).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
+  expect(screen.queryByText("Pedido cobrado")).toBeNull();
 });

@@ -74,7 +74,12 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   /** One-tap payment collection: deposit rises to the total, paymentStatus re-derives to paid. */
   async function collect() {
     try {
-      await upsertOrder({ ...order, deposit: totals.estimatedTotal, updatedAt: new Date().toISOString() });
+      const saved = await upsertOrder({ ...order, deposit: totals.estimatedTotal, updatedAt: new Date().toISOString() });
+      if ((saved.deposit ?? 0) < totals.estimatedTotal) {
+        toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
+        setPaymentsOpen(true);
+        return;
+      }
       toast.success("Pedido cobrado");
     } catch {
       toast.error("No se pudo registrar el cobro.");
