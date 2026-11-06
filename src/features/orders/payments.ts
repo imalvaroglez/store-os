@@ -254,10 +254,10 @@ export function paymentSummary(
   // #203: the EFFECTIVE total (historical + incident adjustments) — the same
   // figure every other read model shows, so Cobros and the card never
   // contradict each other (review #212 F3).
-  const totalCents = orderItems(order).reduce(
+  const totalCents = Math.max(0, orderItems(order).reduce(
     (sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity),
     0
-  ) + incidentsSaleAdjustmentCents(order.incidents);
+  ) + incidentsSaleAdjustmentCents(order.incidents));
   const records = orderPaymentsFor(payments, String(order.id ?? ""), String(order.storeId ?? "")).sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
   );

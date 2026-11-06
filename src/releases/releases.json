@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.7.0",
+    "date": "2026.11.06",
+    "title": "Incidencias de posventa",
+    "notes": [
+      "Registra un problema de posventa desde el pedido (pieza, cantidad y motivo) y acuerda la solución con la clienta: reemplazo equivalente, otra pieza con diferencia de precio, esperar reposición o reembolso.",
+      "La pieza dañada queda en cuarentena (no vendible) hasta que autorices repararla, devolverla a la venta, darla de baja o recibir el reemplazo del proveedor.",
+      "El reembolso deja de ser saldo a favor: el dinero comprometido a devolver nunca se usa para compensar otros pedidos."
+    ]
+  },
+  {
     "version": "1.6.0",
     "date": "2026.11.06",
     "title": "Saldo a favor por clienta",
