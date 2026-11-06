@@ -133,6 +133,38 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("loose expense transaction
     ).rejects.toThrow(/suministros se distribuyen consum/i);
   });
 
+  it("corrección: consumo CONCURRENTE conserva centavos y nunca doble-commit (criterio 4)", async () => {
+    // 100 bolsas por $15.50; dos consumos de 50 EN PARALELO sobre el mismo stash.
+    await setDoc(doc(holder.db, "expenses/exp2-race"), {
+      id: "exp2-race", storeId: "exp2-store", amount: 15.5, date: "2026-11-06", category: "supplies",
+      description: "Bolsas race", createdAt: "2026-11-06T10:00:00Z", updatedAt: "2026-11-06T10:00:00Z",
+      supply: { quantityInitial: 100, consumptions: [] },
+    });
+    const results = await Promise.allSettled([
+      consumeSupplyTx({ expenseId: "exp2-race", storeId: "exp2-store", consumption: { id: "raceA", at: "2026-11-06T12:00:00Z", by: "u", quantity: 50 } }),
+      consumeSupplyTx({ expenseId: "exp2-race", storeId: "exp2-store", consumption: { id: "raceB", at: "2026-11-06T12:00:00Z", by: "u", quantity: 50 } }),
+    ]);
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const stash = (await getDoc(doc(holder.db, "expenses/exp2-race"))).data()!;
+    const consumptions = stash.supply.consumptions as import("../../types").SupplyConsumption[];
+    expect(consumptions).toHaveLength(2);
+    // Σ cargos = desembolso exacto, sin importar el orden de llegada.
+    const { supplyChargeCents } = await import("../../lib/expenses");
+    const expense = { ...stash, id: "exp2-race" } as never;
+    const charged = consumptions.reduce((sum, consumption) => sum + supplyChargeCents(consumption, expense), 0);
+    expect(charged).toBe(1550);
+
+    // Carrera por disponibilidad: dos de 60 cuando sólo quedan 50 → una aborta.
+    const contested = await Promise.allSettled([
+      consumeSupplyTx({ expenseId: "exp2-race", storeId: "exp2-store", consumption: { id: "raceC", at: "2026-11-06T12:01:00Z", by: "u", quantity: 60 } }),
+      consumeSupplyTx({ expenseId: "exp2-race", storeId: "exp2-store", consumption: { id: "raceD", at: "2026-11-06T12:01:00Z", by: "u", quantity: 60 } }),
+    ]);
+    expect(contested.some((r) => r.status === "rejected")).toBe(true);
+    const after = (await getDoc(doc(holder.db, "expenses/exp2-race"))).data()!;
+    const finalConsumptions = after.supply.consumptions as Array<{ quantity: number }>;
+    expect(finalConsumptions.reduce((sum, c) => sum + c.quantity, 0)).toBeLessThanOrEqual(100);
+  });
+
   it("never crosses stores", async () => {
     await expect(
       assignExpenseTx({ expenseId: "exp2-1", storeId: "foreign-store", assignment: assignment("asgX", 100, { kind: "order", orderId: "exp2-order" }) })
