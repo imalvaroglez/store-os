@@ -44,6 +44,7 @@ export function ExpensesScreen() {
   const { state, activeStore, saveExpense } = useStore();
   const toast = useToast();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<LooseExpense | null>(null);
   const [busy, setBusy] = useState(false);
   const [amountText, setAmountText] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -56,6 +57,25 @@ export function ExpensesScreen() {
     () => state.expenses.filter((expense) => expense.storeId === activeStore?.id).sort((a, b) => b.date.localeCompare(a.date)),
     [state.expenses, activeStore?.id]
   );
+
+  function openCreate() {
+    setEditing(null);
+    setAmountText(""); setDescription(""); setQuantityText(""); setSimplified(false);
+    setCategory("operation");
+    setDate(new Date().toISOString().slice(0, 10));
+    setOpen(true);
+  }
+
+  function openEdit(expense: LooseExpense) {
+    setEditing(expense);
+    setAmountText(String(expense.amount));
+    setDate(expense.date);
+    setDescription(expense.description ?? "");
+    setCategory(expense.category);
+    setQuantityText(expense.supply ? String(expense.supply.quantityInitial) : "");
+    setSimplified(!!expense.simplifiedOperation);
+    setOpen(true);
+  }
 
   async function submit() {
     const amount = Number(amountText);
@@ -73,6 +93,27 @@ export function ExpensesScreen() {
         toast.error("Captura cuántas unidades compraste (p. ej. 100 bolsas).");
         return;
       }
+    }
+    if (editing) {
+      // Classification edit: amount/date are evidence (immutable); category
+      // changes only while nothing has been assigned or consumed.
+      const locked = (editing.assignments ?? []).length > 0 || (editing.supply?.consumptions ?? []).length > 0 || !!editing.supply;
+      setBusy(true);
+      try {
+        await saveExpense({
+          ...editing,
+          description: description.trim() || undefined,
+          category: locked ? editing.category : category,
+        });
+        toast.success("Gasto actualizado.");
+        setOpen(false);
+        setEditing(null);
+      } catch (error) {
+        toast.error(error instanceof Error && error.message ? error.message : "No se pudo actualizar el gasto.");
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
     setBusy(true);
     try {
@@ -105,7 +146,7 @@ export function ExpensesScreen() {
       <ScreenHeader
         title="Gastos"
         subtitle={`${expenses.length} ${expenses.length === 1 ? "gasto suelto" : "gastos sueltos"}`}
-        action={<Button onClick={() => setOpen(true)}>+ Agregar</Button>}
+        action={<Button onClick={openCreate}>+ Agregar</Button>}
       />
       {expenses.length === 0 ? (
         <EmptyState
@@ -116,16 +157,16 @@ export function ExpensesScreen() {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {expenses.map((expense) => (
-            <ExpenseCard key={expense.id} expense={expense} purchases={state.purchases} orders={state.orders} />
+            <ExpenseCard key={expense.id} expense={expense} purchases={state.purchases} orders={state.orders} onEdit={openEdit} />
           ))}
         </div>
       )}
 
-      <Sheet open={open} onClose={() => setOpen(false)} title="Agregar gasto">
+      <Sheet open={open} onClose={() => setOpen(false)} title={editing ? "Editar gasto" : "Agregar gasto"}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <TextField label="Importe" inputMode="decimal" placeholder="0.00" value={amountText} onChange={(e) => setAmountText(sanitizeDecimalInput(e.target.value))} />
-            <TextField label="Fecha" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <TextField label="Importe" inputMode="decimal" placeholder="0.00" disabled={!!editing} value={amountText} onChange={(e) => setAmountText(sanitizeDecimalInput(e.target.value))} />
+            <TextField label="Fecha" type="date" disabled={!!editing} value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
           <TextField label="Descripción (opcional)" placeholder="p. ej. gasolina del viaje" value={description} onChange={(e) => setDescription(e.target.value)} />
           <SelectField
@@ -162,7 +203,7 @@ export function ExpensesScreen() {
   );
 }
 
-function ExpenseCard({ expense, purchases, orders }: { expense: LooseExpense; purchases: Purchase[]; orders: Order[] }) {
+function ExpenseCard({ expense, purchases, orders, onEdit }: { expense: LooseExpense; purchases: Purchase[]; orders: Order[]; onEdit: (expense: LooseExpense) => void }) {
   const { assignExpense, consumeSupply, deleteExpense } = useStore();
   const toast = useToast();
   const [assignOpen, setAssignOpen] = useState(false);
@@ -222,6 +263,7 @@ function ExpenseCard({ expense, purchases, orders }: { expense: LooseExpense; pu
         {isSupply && supplyAvailableQuantity(expense) > 0 && (
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setConsumeOpen(true)}>Consumir</Button>
         )}
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => onEdit(expense)}>Editar</Button>
         {(expense.assignments ?? []).length === 0 && (expense.supply?.consumptions ?? []).length === 0 && (
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => deleteExpense(expense.id), "Gasto eliminado.")}>Eliminar</Button>
         )}
