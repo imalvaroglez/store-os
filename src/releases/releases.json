@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.8.0",
+    "date": "2026.11.06",
+    "title": "Gastos sueltos y suministros",
+    "notes": [
+      "Registra un gasto real en segundos aunque aún no sepas a qué compra o pedido corresponde: lo clasificas y lo asignas después, con vista previa del reparto antes de confirmar.",
+      "Los suministros (bolsas, cajas) se consumen gradualmente: cada unidad usada carga su costo exacto al pedido que atendió.",
+      "El tratamiento simplificado reconoce un gasto en su periodo sin asociarlo a nada, y no vuelve a contarse al vender."
+    ]
+  },
+  {
     "version": "1.7.0",
     "date": "2026.11.06",
     "title": "Incidencias de posventa",
