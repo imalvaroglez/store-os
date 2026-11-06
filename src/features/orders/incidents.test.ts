@@ -45,12 +45,18 @@ describe("incidentState (hechos, no trámite)", () => {
     expect(state.quarantinedQuantity).toBe(1);
   });
 
-  it("acciones posteriores mueven la pieza: reparada y vuelta a venta", () => {
+  it("acciones posteriores: reparar NO libera; autorizar venta sí (r2)", () => {
     const repaired = incidentState(base({
       resolution: { kind: "replacement_equivalent" },
       events: [ev("opened", "e1"), ev("resolution_agreed", "e2"), ev("confirmed", "e33"), ev("repaired", "e4")],
     }));
-    expect(repaired.pieceLocation).toBe("back_in_stock");
+    expect(repaired.pieceLocation).toBe("repaired_held");
+    expect(repaired.quarantinedQuantity).toBeGreaterThan(0); // sigue retenida
+    const released = incidentState(base({
+      resolution: { kind: "replacement_equivalent" },
+      events: [ev("opened", "e1"), ev("resolution_agreed", "e2"), ev("confirmed", "e33"), ev("repaired", "e4"), ev("returned_to_sale", "e5")],
+    }));
+    expect(released.pieceLocation).toBe("back_in_stock");
     const off = incidentState(base({
       resolution: { kind: "replacement_equivalent" },
       events: [ev("opened", "e1"), ev("resolution_agreed", "e2"), ev("confirmed", "e33"), ev("written_off", "e4")],

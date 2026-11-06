@@ -65,17 +65,35 @@ function incidentQuantity(incident: OrderIncident): number {
  * never rewritten — this is the documented adjustment, the basis of what the
  * clienta actually owes after posventa.
  */
-export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefined | null): number {
-  return (incidents ?? []).reduce((sum, incident) => {
-    const resolution = incident.resolution;
-    if (!resolution || resolution.kind === "wait_restock") return sum;
+/**
+ * ONE incident's sale adjustment, exact cents — the single kind-dispatch both
+ * the order read model and the incident reconciliation use, so they can never
+ * diverge (r3 F1-R): wait_restock → 0; refund → −piece at the historical
+ * price; charged replacement → ±price difference; anything else → 0.
+ */
+export function incidentSaleAdjustmentCents(incident: OrderIncident): number {
+  const resolution = incident.resolution;
+  if (!resolution || resolution.kind === "wait_restock") return 0;
+  const quantity = incidentQuantity(incident);
+  if (typeof resolution.saleAdjustmentUnitCents === "number") {
     if (resolution.kind === "refund") {
-      return sum - incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
+      return -incidentCentsOf(resolution.saleAdjustmentUnitCents) * quantity;
     }
     const replacement = incident.replacement;
-    if (!replacement || !replacement.chargeDifference) return sum;
-    return sum + (replacement.unitPriceCents - incidentCentsOf(incident.originalUnitPriceCents)) * incidentQuantity(incident);
-  }, 0);
+    if (!replacement || !replacement.chargeDifference) return 0;
+    return (replacement.unitPriceCents - incidentCentsOf(resolution.saleAdjustmentUnitCents)) * quantity;
+  }
+  // Legacy transition reads (pre-reconcile synthetic data).
+  if (resolution.kind === "refund") {
+    return -incidentCentsOf(resolution.refundUnitPriceCents) * quantity;
+  }
+  const replacement = incident.replacement;
+  if (!replacement || !replacement.chargeDifference) return 0;
+  return (replacement.unitPriceCents - incidentCentsOf(incident.originalUnitPriceCents)) * quantity;
+}
+
+export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefined | null): number {
+  return (incidents ?? []).reduce((sum, incident) => sum + incidentSaleAdjustmentCents(incident), 0);
 }
 
 /**
@@ -86,7 +104,16 @@ export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefi
 export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefined | null): number {
   return (incidents ?? []).reduce((sum, incident) => {
     const resolution = incident.resolution;
-    if (!resolution || resolution.kind !== "refund") return sum;
+    if (!resolution) return sum;
+    if (typeof resolution.refundOwedCents === "number") {
+      const agreed = Math.max(0, resolution.refundOwedCents);
+      const executed = (incident.events ?? [])
+        .filter((event) => event.kind === "confirmed" || event.kind === "refund_executed")
+        .reduce((partial, event) => partial + incidentCentsOf(event.detail?.refundExecutedCents), 0);
+      return sum + Math.max(0, agreed - executed);
+    }
+    // Legacy transition.
+    if (resolution.kind !== "refund") return sum;
     const agreed = incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
     const executed = (incident.events ?? [])
       .filter((event) => event.kind === "confirmed" || event.kind === "refund_executed")
@@ -105,7 +132,12 @@ export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefin
 export function incidentsRefundCommittedCents(incidents: OrderIncident[] | undefined | null): number {
   return (incidents ?? []).reduce((sum, incident) => {
     const resolution = incident.resolution;
-    if (!resolution || resolution.kind !== "refund") return sum;
+    if (!resolution) return sum;
+    if (typeof resolution.refundOwedCents === "number") {
+      return sum + Math.max(0, resolution.refundOwedCents);
+    }
+    // Legacy transition.
+    if (resolution.kind !== "refund") return sum;
     return sum + incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
   }, 0);
 }
