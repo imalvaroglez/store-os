@@ -127,7 +127,8 @@ export function OrderForm({
   const [customerQuery, setCustomerQuery] = useState(
     () => restoredDraft?.customerQuery ?? customers.find((c) => c.id === order.customerId)?.name ?? ""
   );
-  const [deposit, setDeposit] = useState(restoredDraft?.deposit ?? String(order.deposit ?? 0));
+  const hasPaymentEvidence = order.inheritedDepositMaterialized === true || typeof order.paymentsReceivedCents === "number";
+  const [deposit, setDeposit] = useState(hasPaymentEvidence ? String(order.deposit ?? 0) : restoredDraft?.deposit ?? String(order.deposit ?? 0));
   // #165 installment capture. Nothing is defaulted: the count, the frequency
   // and the first due date are the operator's agreement, per order.
   const [installmentsOn, setInstallmentsOn] = useState(
@@ -454,6 +455,10 @@ export function OrderForm({
     }
     if (deposit.trim() && parseAmount(deposit) == null) {
       toast.error("Revisa el anticipo.");
+      return;
+    }
+    if (hasPaymentEvidence && numberFromText(deposit) > (order.deposit ?? 0)) {
+      toast.error("El anticipo no puede subir cuando el pedido ya tiene cobros. Registra un cobro.");
       return;
     }
     // #165: validate the whole agreement before saving anything. Errors are
@@ -800,6 +805,8 @@ export function OrderForm({
         {!installmentsOn && (
           <TextField
             label="Anticipo"
+            disabled={order.inheritedDepositMaterialized === true}
+            hint={order.inheritedDepositMaterialized === true ? "El anticipo ya está registrado en el historial de cobros." : undefined}
             type="text"
             inputMode="decimal"
             pattern="[0-9]*[.]?[0-9]*"
