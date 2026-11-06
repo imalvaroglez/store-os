@@ -114,9 +114,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   useEffect(() => {
     if (!focusTarget) return;
     const root = document.getElementById(focusTarget);
-    const field = root?.matches("input, button, select") ? root : root?.querySelector<HTMLElement>("input, button, select");
+    const field = root?.matches("input, button, select, [tabindex]") ? root : root?.querySelector<HTMLElement>("input, button, select");
     field?.focus();
-    field?.scrollIntoView?.({ block: "center" });
+    field?.scrollIntoView?.({ block: focusTarget.startsWith("review:") ? "start" : "center" });
     setFocusTarget(null);
   }, [focusTarget, review, activeTicketId]);
 
@@ -221,7 +221,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     setActiveTicketId(id);
     setReview(false);
   }
-  function showReview() { setReview(true); }
+  function showReview() { setReview(true); setFocusTarget(`review:${draft.id}`); }
   function openIssue(issue: PurchaseReviewIssue) {
     selectTicket(issue.ticketId);
     setFocusTarget(issue.target);
@@ -612,7 +612,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       <div className="sticky top-[var(--admin-header-height,0px)] z-30 bg-paper border-y border-edge py-2 space-y-2">
         <TabList id={tabsId} label="Tickets y revisión" value={tabValue} disabled={pdfBusy || saving || receiving || bulkCreating}
           items={[...tickets.map((ticket, index) => ({ value: ticket.id, label: ticketLabel(ticket, index) })), { value: "review", label: "Revisión general" }]}
-          onChange={(value) => value === "review" ? showReview() : selectTicket(value)} />
+          onChange={(value) => value === "review" ? setReview(true) : selectTicket(value)} />
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold text-ink min-w-0 break-words">{review ? "Todos los tickets y gastos de la compra" : ticketLabel(activeTicket, tickets.indexOf(activeTicket))}</p>
           {!locked && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled} onClick={addTicket}>+ Agregar ticket</Button>}
@@ -620,7 +620,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       </div>
       <section id={`${tabsId}-panel`} role="tabpanel" aria-labelledby={`${tabsId}-tab-${tabValue}`} className="space-y-4">
       {review && (
-        <section aria-label="Resumen de tickets" className="space-y-3">
+        <section id={`review:${draft.id}`} tabIndex={-1} aria-label="Resumen de tickets" className="space-y-3 scroll-mt-[calc(var(--admin-header-height,0px)+9rem)]">
           <h2 className="font-semibold text-ink">Revisa antes de recibir</h2>
           <p className="text-sm text-ink-soft">Guardar borrador conserva la captura. Recibir mercancía actualiza el inventario cuando todos los tickets están completos.</p>
           {tickets.map((ticket, index) => {

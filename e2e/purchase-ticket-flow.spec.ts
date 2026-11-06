@@ -48,6 +48,8 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   await secondTab.click();
   await expect(page.getByLabel("Total pagado", { exact: true })).toHaveValue("60.");
   await page.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(page.getByRole("region", { name: "Resumen de tickets" })).toBeFocused();
+  await expect(page.getByRole("region", { name: "Resumen de tickets" })).toBeInViewport();
   const fix = page.getByRole("button", { name: /#QA-T-7.*Total pagado: escribe/ });
   await fix.click();
   const paid = page.getByLabel("Total pagado", { exact: true });
