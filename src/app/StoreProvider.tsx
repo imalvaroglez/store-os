@@ -50,6 +50,7 @@ import {
   deleteEntity,
   claimSlug,
   projectPublicForStore,
+  republishStockSignals,
   unprojectPublicForStore,
   upsertPublicProduct,
   removePublicProductDoc,
@@ -863,11 +864,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Reconcile in-memory state only after the transaction commits.
       const at = nowIso();
       const updated = applyPurchaseLines(state.products, purchase.lines);
+      const receivedProducts: Product[] = [];
       for (const [productId, update] of updated) {
         const p = state.products.find((x) => x.id === productId);
-        if (p) dispatch({ type: "UPDATE_PRODUCT", product: { ...p, ...update, updatedAt: at } });
+        if (p) {
+          const product = { ...p, ...update, updatedAt: at };
+          receivedProducts.push(product);
+          dispatch({ type: "UPDATE_PRODUCT", product });
+        }
       }
       dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
+      // #229: the public availability signal follows the reception without a
+      // manual republish; a failure never reverts the received purchase.
+      {
+        const store = state.stores.find((st) => st.id === purchase.storeId);
+        if (store) {
+          const nextProducts = state.products.map(
+            (p) => receivedProducts.find((r) => r.id === p.id) ?? p
+          );
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(
+              store,
+              nextProducts,
+              state.categories,
+              receivedProducts.map((p) => p.id)
+            )
+          );
+        }
+      }
       return "received";
     },
     adjustReceivedPurchase: async (purchase, expense) => {
@@ -956,11 +980,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         options?.mutationId ?? uid("mutation"),
         { confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance }
       );
+      const reservedProducts: Product[] = [];
       for (const update of result.stock) {
         const product = state.products.find((p) => p.id === update.productId);
-        if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
+        if (product) {
+          const next = { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt };
+          reservedProducts.push(next);
+          dispatch({ type: "UPDATE_PRODUCT", product: next });
+        }
       }
       dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
+      // #229: reserved/released pieces update the public signal too.
+      if (reservedProducts.length > 0) {
+        const store = state.stores.find((st) => st.id === order.storeId);
+        if (store) {
+          const nextProducts = state.products.map((p) => reservedProducts.find((r) => r.id === p.id) ?? p);
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(
+              store,
+              nextProducts,
+              state.categories,
+              reservedProducts.map((p) => p.id)
+            )
+          );
+        }
+      }
       // #189: a valid cancellation restitutes the saldo a favor this order had
       // consumed (PO decision 2026-11-05). The reconcile effect above then
       // re-applies the returned credit to the next pending order, if any.
@@ -987,11 +1031,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await releaseCustomerCreditTx({ orderId, storeId: existing.storeId, by: currentUser.uid, reason: "deletion" });
       }
       const updates = await deleteOrderWithStockTx(currentUser, orderId, expectedRevision);
+      const releasedProducts: Product[] = [];
       for (const update of updates) {
         const product = state.products.find((p) => p.id === update.productId);
-        if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() } });
+        if (product) {
+          const next = { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() };
+          releasedProducts.push(next);
+          dispatch({ type: "UPDATE_PRODUCT", product: next });
+        }
       }
       dispatch({ type: "DELETE_ORDER", orderId });
+      // #229: released pieces become publicly available again.
+      if (releasedProducts.length > 0) {
+        const store = state.stores.find((st) => st.id === existing.storeId);
+        if (store) {
+          const nextProducts = state.products.map((p) => releasedProducts.find((r) => r.id === p.id) ?? p);
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(
+              store,
+              nextProducts,
+              state.categories,
+              releasedProducts.map((p) => p.id)
+            )
+          );
+        }
+      }
     },
     loadOrderPayments: async (orderId) => {
       if (!cloud || !user || paymentSession.current.uid !== user.uid) return;
