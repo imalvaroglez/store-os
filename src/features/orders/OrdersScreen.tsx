@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { AnimatedNumber, Button, EmptyState, Screen, ScreenHeader, TextField } from "../../design-system";
 import { navigate } from "../../lib/router";
+import { useListRestore } from "../../lib/listRestore";
 import { orderBucket, orderItems, orderReference, orderTotals, type OrderBucket } from "../../lib/orders";
 import { ordersForStore } from "../../lib/selectors";
 import { OrderCard } from "./OrderCard";
@@ -18,8 +19,16 @@ const FILTER_LABELS: Record<Filter, string> = {
 
 export function OrdersScreen() {
   const { state, activeStore } = useStore();
-  const [filter, setFilter] = useState<Filter>("all");
-  const [query, setQuery] = useState("");
+  // #233: leaving for an editor/detail and coming back (back button or after
+  // saving) must land on the same filter, search and scroll position.
+  const { filters, setFilters, restoreScroll } = useListRestore("orders", { filter: "all" as Filter, query: "" });
+  const filter = filters.filter as Filter;
+  const query = filters.query;
+  const setFilter = (next: Filter) => setFilters((previous) => ({ ...previous, filter: next }));
+  const setQuery = (next: string) => setFilters((previous) => ({ ...previous, query: next }));
+  useEffect(() => {
+    restoreScroll();
+  }, [restoreScroll]);
 
   const storeId = activeStore?.id ?? "";
   const orders = useMemo(() => [...ordersForStore(state.orders, storeId)].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [storeId, state.orders]);

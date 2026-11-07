@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore, newPurchase } from "../../app/StoreProvider";
 import { Button, Screen, ScreenHeader } from "../../design-system";
 import { navigate } from "../../lib/router";
 import { PurchaseForm } from "./PurchaseForm";
+import { useListRestore } from "../../lib/listRestore";
 import { PurchaseList } from "./PurchaseList";
 import { SaleExpenseSummary } from "./SaleExpenseSummary";
 import { effectivePurchaseStatus, type Purchase } from "../../types";
@@ -13,6 +14,11 @@ import { effectivePurchaseStatus, type Purchase } from "../../types";
 export function PurchasesScreen() {
   const { activeStore } = useStore();
   const [editing, setEditing] = useState<Purchase | null>(null);
+  // #233: return from a purchase review to the same scroll position.
+  const { restoreScroll } = useListRestore("purchases", {});
+  useEffect(() => {
+    restoreScroll();
+  }, [restoreScroll]);
 
   if (!activeStore) return null;
 

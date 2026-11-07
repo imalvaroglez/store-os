@@ -20,7 +20,9 @@ import {
   useToast,
 } from "../../design-system";
 import { CustomerForm } from "./CustomerForm";
+import { useEffect } from "react";
 import { customersForStore, ordersForStore } from "../../lib/selectors";
+import { useListRestore } from "../../lib/listRestore";
 import { orderBucket, orderCountsTowardToPay, orderTotals } from "../../lib/orders";
 import { formatDate } from "../../lib/dates";
 import { iconicStatus, type IconicStatus } from "../../lib/iconic";
@@ -33,7 +35,13 @@ export function CustomersScreen() {
   const toast = useToast();
   const [deleting, setDeleting] = useState<Customer | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  // #233: keep search + scroll when returning from a customer's detail.
+  const { filters, setFilters, restoreScroll } = useListRestore("customers", { query: "" });
+  const query = filters.query;
+  const setQuery = (next: string) => setFilters((previous) => ({ ...previous, query: next }));
+  useEffect(() => {
+    restoreScroll();
+  }, [restoreScroll]);
 
   if (!activeStore) return null;
   const customers = customersForStore(state.customers, activeStore.id);
