@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderForm } from "./OrderForm";
-import type { Purchase } from "../../types";
+import type { Order, Purchase } from "../../types";
 
 const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
   mockUpsertOrder: vi.fn().mockResolvedValue(undefined),
