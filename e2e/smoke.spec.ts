@@ -188,9 +188,11 @@ test("create a multi-line order with live totals", async ({ sharedPage: page }) 
   }
 
   await expect(page.getByText("Piezas").last()).toBeVisible();
-  await expect(page.getByText("$8,700").last()).toBeVisible();
+  // .first(): the fixed action bar (#234) renders a second Total/Saldo on
+  // mobile (hidden on desktop) — the summary's value is the first match.
+  await expect(page.getByText("$8,700").first()).toBeVisible();
   await page.getByLabel("Anticipo").fill("8700");
-  await expect(page.getByText("$0").last()).toBeVisible();
+  await expect(page.getByText("$0").first()).toBeVisible();
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
   await page.getByRole("button", { name: "Guardar pedido" }).click();
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
@@ -405,9 +407,9 @@ test("a one-line order can be saved without scrolling on mobile (#234)", async (
     if (await discard.isVisible().catch(() => false)) await discard.click();
     const cliente = page.getByLabel("Cliente", { exact: true });
     await cliente.click();
-    await cliente.pressSequentially("Michelle", { delay: 20 });
+    await cliente.pressSequentially("María López", { delay: 20 });
     await page.waitForTimeout(600);
-    const option = page.getByRole("option", { name: /Michelle/ }).first();
+    const option = page.getByRole("option", { name: /María/ }).first();
     if (await option.isVisible().catch(() => false)) await option.click();
     const producto = page.getByLabel("Producto", { exact: true }).first();
     await producto.click();
