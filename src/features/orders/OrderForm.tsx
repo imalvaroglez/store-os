@@ -836,10 +836,26 @@ export function OrderForm({
           </p>
         )}
         {!totals && <p className="text-danger">Revisa los importes o cantidades demasiado grandes.</p>}
-        <div className="flex gap-2 mt-4">
-          {onCancel && <Button variant="ghost" full onClick={onCancel}>Cancelar</Button>}
-          <Button full size="lg" onClick={submit} disabled={saving || !!conflictingDraft || !customerId || lines.length === 0 || !totals}>Guardar pedido</Button>        </div>
       </div>
+
+        {/*
+          #234: the save action must be reachable WITHOUT scrolling — a 1-line
+          order had "Guardar pedido" ~4 viewports down on mobile. The action row
+          sticks above the bottom nav while the form scrolls (md: the row stays
+          in its natural place at the end).
+        */}
+        <div className="fixed inset-x-0 bottom-[3.75rem] md:static md:inset-auto z-20 mt-4 border-t border-edge bg-paper/95 backdrop-blur px-4 py-2.5 shadow-lift md:border-0 md:bg-transparent md:px-0 md:py-0 md:shadow-none md:backdrop-blur-none" aria-label="Acciones del pedido">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1 md:hidden">
+              <p className="text-xs text-ink-soft">Total {totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</p>
+              <p className="text-xs truncate">Saldo {totals ? <Money exact amount={totals.balance} /> : "—"}</p>
+            </div>
+            {onCancel && <Button variant="ghost" full onClick={onCancel}>Cancelar</Button>}
+            <Button full size="lg" onClick={submit} disabled={saving || !!conflictingDraft || !customerId || lines.length === 0 || !totals}>Guardar pedido</Button>
+          </div>
+        </div>
+        {/* Room so the fixed bar (mobile) never covers the last form fields. */}
+        <div className="h-16 md:hidden" aria-hidden="true" />
 
       <Dialog open={!!pendingCustomer} title="Cambiar cliente" onClose={() => { setPendingCustomer(null); setCustomerQuery(selectedCustomer?.name ?? ""); }} footer={<div className="flex w-full flex-col gap-2">
         <Button full onClick={() => pendingCustomer && applyCustomer(pendingCustomer, true)}>Aplicar precios de {pendingCustomer?.name}</Button>
