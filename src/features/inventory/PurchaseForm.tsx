@@ -344,13 +344,19 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       setProductQueries((previous) => ({ ...previous, [draft.lines[idx].lineId!]: product.name }));
       // Linking identifies the product; it does not edit the purchase amount
       // or interpret the printed ticket. Both are explicit operator actions.
+      // The ticket's own text is likewise never replaced (#206): the linked
+      // product shows in "Producto en Store OS", and "Producto del ticket"
+      // only prefills from the product when nothing was captured yet.
+      const captured = draft.lines[idx].name.trim();
       updateLine(idx, {
         productId,
-        name: product.name,
+        name: captured || product.name,
         matchStatus: "matched",
       });
     } else {
-      updateLine(idx, { productId: "", name: "", matchStatus: "unmatched" });
+      // Unlinking clears the association only — the captured ticket text
+      // stays exactly as the operator typed or imported it.
+      updateLine(idx, { productId: "", matchStatus: "unmatched" });
     }
   }
   // Different suppliers can print different amount semantics. Resolve only
@@ -1123,10 +1129,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             onDone={async (saved) => {
               await upsertProduct(saved);
               setProductQueries((previous) => ({ ...previous, [draft.lines[productLineIdx].lineId!]: saved.name }));
+              // Creating a product links it to the line but never rewrites
+              // the ticket's captured text or cost (#206): the mini form was
+              // prefilled FROM the line; its edits belong to the product
+              // master, not retroactively to the purchase line.
+              const captured = draft.lines[productLineIdx].name.trim();
               updateLine(productLineIdx, {
                 productId: saved.id,
-                name: saved.name,
-                unitCost: saved.cost ?? 0,
+                name: captured || saved.name,
                 matchStatus: "new_product",
               });
               setProductLineIdx(null);
