@@ -398,3 +398,64 @@ it("does not replace an invalid captured cost with zero through individual produ
   expect(screen.getByRole("dialog", { name: "Nuevo producto" })).toBeVisible();
   expect(screen.getByLabelText("Costo", { exact: true })).toHaveValue("16.45");
 });
+
+describe("ticket code preservation (PO report in #206)", () => {
+  const ticketPurchase = (): Purchase => ({
+    ...purchase(),
+    lines: [{ lineId: "line", productId: "", name: "123-ABC", quantity: 2, unitCost: 80 }],
+    subtotal: 160, totalConfirmed: 160,
+  });
+
+  it("keeps the ticket code when linking an existing product with a different name and cost", async () => {
+    open(ticketPurchase());
+    const search = screen.getByRole("combobox", { name: "Producto en Store OS" });
+    fireEvent.change(search, { target: { value: "Anillo" } });
+    fireEvent.click(screen.getByRole("option", { name: /Anillo/ }));
+    expect(screen.getByLabelText("Producto del ticket")).toHaveValue("123-ABC");
+    expect(screen.getByLabelText("Costo unitario")).toHaveValue("80");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "ring", name: "123-ABC", unitCost: 80 });
+  });
+
+  it("keeps the ticket code and captured cost when creating a product with a different name", async () => {
+    open(ticketPurchase());
+    fireEvent.focus(screen.getByRole("combobox", { name: "Producto en Store OS" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Crear nuevo producto" }));
+    const sheet = screen.getByRole("dialog", { name: "Nuevo producto" });
+    expect(screen.getByLabelText("Nombre")).toHaveValue("123-ABC"); // prefill from the line
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "Aretes Dorados" } });
+    fireEvent.change(screen.getByLabelText("Costo", { exact: true }), { target: { value: "120" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Crear producto" }));
+    await waitFor(() => expect(upsertProduct).toHaveBeenCalledOnce());
+    expect(screen.getByLabelText("Producto del ticket")).toHaveValue("123-ABC");
+    expect(screen.getByLabelText("Costo unitario")).toHaveValue("80");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ name: "123-ABC", unitCost: 80 });
+    expect(upsertPurchase.mock.calls[0][0].lines[0].productId).toBeTruthy();
+  });
+
+  it("prefills the ticket field from the product only when the line has no text", async () => {
+    const value = ticketPurchase();
+    value.lines[0] = { ...value.lines[0], name: "" };
+    open(value);
+    const search = screen.getByRole("combobox", { name: "Producto en Store OS" });
+    fireEvent.change(search, { target: { value: "Anillo" } });
+    fireEvent.click(screen.getByRole("option", { name: /Anillo/ }));
+    expect(screen.getByLabelText("Producto del ticket")).toHaveValue("Anillo");
+  });
+
+  it("unlinking keeps the captured ticket text", async () => {
+    open(ticketPurchase());
+    const search = screen.getByRole("combobox", { name: "Producto en Store OS" });
+    fireEvent.change(search, { target: { value: "Anillo" } });
+    fireEvent.click(screen.getByRole("option", { name: /Anillo/ }));
+    expect(screen.getByLabelText("Producto del ticket")).toHaveValue("123-ABC");
+    fireEvent.change(search, { target: { value: "" } }); // clear → unlink
+    expect(screen.getByLabelText("Producto del ticket")).toHaveValue("123-ABC");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "", name: "123-ABC" });
+  });
+});
