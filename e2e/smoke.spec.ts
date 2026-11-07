@@ -404,7 +404,13 @@ test("returning from the order editor preserves the list filter and scroll (#233
   const pendientes = page.getByRole("button", { name: /Pendientes/ }).first();
   await pendientes.click();
   await expect(pendientes).toHaveAttribute("aria-pressed", "true");
-  await page.evaluate(() => window.scrollTo(0, 300));
+  // Scroll whichever container actually scrolls (window on mobile, <main> on
+  // the desktop shell).
+  await page.evaluate(() => {
+    const main = document.querySelector("main");
+    if (main && main.scrollHeight > main.clientHeight) main.scrollTop = 300;
+    else window.scrollTo(0, 300);
+  });
   await page.getByRole("heading", { name: /#/ }).first().click();
   await expect(page.getByRole("button", { name: "Guardar pedido", exact: true })).toBeVisible();
   await page.goBack();
@@ -412,6 +418,13 @@ test("returning from the order editor preserves the list filter and scroll (#233
   await expect(pendientes).toHaveAttribute("aria-pressed", "true");
   // …and the list returns to the same scroll point (not the top).
   await expect
-    .poll(() => page.evaluate(() => window.scrollY), { timeout: 5000 })
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const main = document.querySelector("main");
+          return main && main.scrollHeight > main.clientHeight ? main.scrollTop : window.scrollY;
+        }),
+      { timeout: 5000 }
+    )
     .toBeGreaterThan(150);
 });
