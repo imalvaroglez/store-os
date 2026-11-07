@@ -61,16 +61,27 @@ export function PublicTierPrices({
 }: {
   store: PublicStore;
   product: PublicPricedProduct;
-  mode?: "card" | "detail";
+  mode?: "card" | "detail" | "summary";
 }) {
   const tiers = [...(store.priceTiers ?? [])]
     .sort((a, b) => a.order - b.order)
-    .filter((tier) => typeof product.prices?.[tier.id] === "number");
+    .filter((tier) => typeof product.prices?.[tier.id] === "number" && Number.isFinite(product.prices[tier.id]));
 
-  if (tiers.length < 2) {
+  // The grid shows one informative price; qualification remains in the detail/bag.
+  if (mode === "summary") {
+    const amounts = tiers.map((tier) => product.prices?.[tier.id]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const amount = amounts.length > 0 ? Math.min(...amounts) : publicPrice(product, store.defaultTierId ?? undefined);
+    if (amount == null || !Number.isFinite(amount)) return <p className="olv-product-price">Consultar precio</p>;
+    const unrestricted = tiers.some((tier) => product.prices?.[tier.id] === amount && !tierRequirement(tier));
+    const varies = amounts.some((value) => value !== amount) || (amounts.length > 0 && !unrestricted);
+    return <p className="olv-product-price">{varies ? "Desde " : ""}{formatMoney(amount)}</p>;
+  }
+
+  if (tiers.length === 0 || (tiers.length === 1 && mode === "card")) {
+    const amount = publicPrice(product, store.defaultTierId ?? undefined);
     return (
       <p className={`olv-price-single ${mode === "detail" ? "text-2xl" : "text-xl"} font-semibold text-[var(--olv-accent,var(--terracotta))] mt-2`}>
-        {formatMoney(publicPrice(product, store.defaultTierId ?? undefined))}
+        {amount == null || !Number.isFinite(amount) ? "Consultar precio" : formatMoney(amount)}
       </p>
     );
   }

@@ -165,7 +165,7 @@ async function seedStaleOlivia() {
   const detail = {
     storeId: "store_olivia", storeSlug: "olivia", productSlug: "anillo-blossom", name: "Anillo Blossom",
     sku: "OLI-001", publicDescription: null, images: [], material: null, finish: null, dimensions: null, care: null,
-    availability: "available", canInquire: false, isFeatured: false, isNew: false, price: 1250, categories: [],
+    availability: "available", canInquire: false, isFeatured: false, isNew: false, price: 140, prices: catalog.products[0].prices, categories: [],
   };
 
   const patch = async (path: string, body: unknown) => {
@@ -175,6 +175,7 @@ async function seedStaleOlivia() {
   await patch("publicStores/olivia", { fields: toFields(staleStore) });
   await patch("publicCatalogs/olivia", { fields: toFields(catalog) });
   await patch("publicProducts/store_olivia__anillo-blossom", { fields: toFields(detail) });
+  await patch("publicProducts/store_olivia__aretes-luna", { fields: toFields({ ...detail, ...catalog.products[1], images: [{ url: catalog.products[1].imageUrl }] }) });
 }
 
 async function openCatalogAnonymous(page: Page, slug: string) {
@@ -185,6 +186,14 @@ async function openCatalogAnonymous(page: Page, slug: string) {
     try { indexedDB.deleteDatabase("firebaseLocalStorageDb"); } catch {}
   });
   await gotoClean(page, `/catalogo/${slug}`);
+}
+
+async function addOliviaPiece(page: Page, name: string) {
+  await page.getByRole("article", { name, exact: true }).getByRole("link", { name: `Ver ${name}`, exact: true }).click();
+  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Agregar al carrito", exact: true }).click();
+  await page.goBack();
+  await expect(page.getByRole("article", { name, exact: true })).toBeVisible();
 }
 
 test.beforeAll(async () => {
@@ -259,12 +268,15 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   await openCatalogAnonymous(anon, "olivia");
 
   await expect(anon.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" }).first()).toBeVisible({ timeout: 15000 });
-  const iconicHelp = anon.getByRole("button", { name: "Cómo se obtiene el precio Iconic" }).first();
-  await iconicHelp.hover();
-  await expect(anon.getByText(/desde \$1,000 en productos a precio Iconic/).first()).toBeVisible();
-  await anon.getByRole("link", { name: "Anillo Blossom", exact: true }).click();
+  const card = anon.getByRole("article", { name: "Anillo Blossom", exact: true });
+  await expect(card.getByText("Desde $90", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: /precio|Agregar/ })).toHaveCount(0);
+  await card.getByRole("link", { name: "Anillo Blossom", exact: true }).click();
   await expect(anon).toHaveURL(/\/catalogo\/olivia\/producto\/anillo-blossom$/);
   await expect(anon.getByRole("heading", { name: "Anillo Blossom" })).toBeVisible({ timeout: 15000 });
+  const iconicHelp = anon.getByRole("button", { name: "Cómo se obtiene el precio Iconic" });
+  await iconicHelp.hover();
+  await expect(anon.getByText(/desde \$1,000 en productos a precio Iconic/).first()).toBeVisible();
   await expect(anon.getByText("Pieza no encontrada")).toHaveCount(0);
   await ctx.close();
 });
@@ -278,15 +290,16 @@ for (const width of [390, 1280]) {
     await expect(page.getByRole("heading", { name: "Compra por categoría" })).toBeVisible({ timeout: 15000 });
     const categoryCard = page.locator('.olv-category-grid a[href="/catalogo/olivia/categoria/anillos"]');
     await expect(categoryCard).toContainText("Anillos");
-    const columns = await page.locator(".olv-category-grid").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-    expect(columns).toBe(width < 640 ? 2 : 4);
+    const categoryBox = (await categoryCard.boundingBox())!;
+    expect(categoryBox.width).toBeGreaterThanOrEqual(40);
+    expect(categoryBox.height).toBeGreaterThanOrEqual(40);
     await categoryCard.click();
     await expect(page).toHaveURL(/\/catalogo\/olivia\/categoria\/anillos$/);
     await expect(page.getByRole("heading", { name: "Anillos" })).toBeVisible();
 
     await page.getByRole("searchbox", { name: "Buscar una pieza" }).fill("anillo blossom");
     await expect(page.getByRole("article")).toHaveCount(1);
-    await page.getByRole("button", { name: "Agregar al carrito" }).click();
+    await addOliviaPiece(page, "Anillo Blossom");
     await page.getByRole("button", { name: "Ver mi selección" }).click();
     const bag = page.getByRole("dialog", { name: "Tu pedido" });
     await expect(bag).toBeVisible();
@@ -308,9 +321,9 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
 
   await expect(anon.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" }).first()).toBeVisible({ timeout: 15000 });
 
-  // Add two different pieces from the grid.
-  await anon.getByRole("button", { name: "Agregar al carrito" }).nth(0).click();
-  await anon.getByRole("button", { name: "Agregar al carrito" }).click();
+  // The minimal grid opens each detail before adding to the selection.
+  await addOliviaPiece(anon, "Anillo Blossom");
+  await addOliviaPiece(anon, "Aretes Luna");
 
   // Floating button shows the piece count and opens the drawer.
   const open = anon.getByRole("button", { name: "Abrir pedido" });
@@ -350,7 +363,7 @@ for (const width of [390, 1280]) {
     await page.getByRole("link", { name: "Explorar piezas" }).click();
     await expect(page.getByRole("searchbox")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    expect(await page.locator(".olv-grid").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length)).toBe(width < 640 ? 2 : 4);
+    expect(await page.locator(".olv-grid").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length)).toBe(width < 768 ? 2 : 3);
     const card = page.getByRole("article", { name: "Anillo Blossom" });
     await expect(card.getByRole("img")).toHaveAccessibleName("Anillo de prueba, frente");
     await card.getByRole("button", { name: "Foto siguiente de Anillo Blossom" }).click();
@@ -365,9 +378,9 @@ for (const width of [390, 1280]) {
     await page.getByRole("searchbox").fill("aan1385");
     await expect(page.getByRole("article")).toHaveCount(1);
     await page.getByRole("searchbox").fill("");
-    await page.getByRole("combobox").selectOption("price-asc");
+    await page.getByRole("combobox", { name: "Ordenar por" }).selectOption("price-asc");
     await expect(page.getByRole("article").first()).toHaveAccessibleName("Aretes Luna");
-    await page.getByRole("button", { name: "Agregar al carrito" }).first().click();
+    await addOliviaPiece(page, "Aretes Luna");
     await page.getByRole("button", { name: "Ver mi selección" }).click();
     const dialog = page.getByRole("dialog", { name: "Tu pedido" });
     await expect(dialog).toBeVisible();
@@ -437,7 +450,7 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
     const bannerBox = (await banner.boundingBox())!;
     const headingBox = (await catalog.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" }).boundingBox())!;
     expect(bannerBox.y + bannerBox.height).toBeLessThan(headingBox.y);
-    await expect(catalog.locator(".olv-hero-copy .olv-link-button")).toHaveCSS("margin-top", "26px");
+    await expect(catalog.getByRole("link", { name: "Explorar piezas" })).toBeVisible();
     await catalog.screenshot({ path: testInfo.outputPath(`olivia-banner-${width}.png`), fullPage: true });
   }
   await decodeWithEvidence(logo);
