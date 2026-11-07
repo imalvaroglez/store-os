@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { loginAsFirstAdmin, gotoSantiHome, openCatalog, gotoClean } from "./helpers";
+import { loginAsFirstAdmin, gotoSantiHome, openCatalog, gotoClean, writeEmulatorDoc } from "./helpers";
 
 // Real end-to-end smoke against the Firebase Emulator. Firebase Auth persists to
 // indexedDB, which Playwright's storageState does NOT capture — so the session
@@ -384,4 +384,47 @@ test("recorded payments survive reload and an adjustment updates card and histor
   await expect(sheet.getByText("$950.00", { exact: true })).toBeVisible();
   await sheet.getByRole("button", { name: "Cerrar", exact: true }).click();
   await expect(card.getByText("$1,250.00", { exact: true })).toBeVisible();
+});
+
+test("returning from the order editor preserves the list filter and scroll (#233)", async ({ sharedPage: page }) => {
+  const now = new Date().toISOString();
+  // Enough orders to overflow even the desktop viewport (1280×800): the
+  // restoration can only be observed on a list that actually scrolls.
+  for (let i = 0; i < 20; i++) {
+    const id = `order_list233_${i}`;
+    await writeEmulatorDoc("orders", id, {
+      id, storeId: "store_santi", customerId: "cust_santi_1",
+      items: [{ productName: `Pieza lista ${i}`, quantity: 1, unitPrice: 100 + i, subtotal: 100 + i }],
+      deposit: 0, orderStatus: "asked", paymentStatus: "unpaid", schemaVersion: 2,
+      createdAt: now, updatedAt: now,
+    });
+  }
+  await gotoSantiHome(page);
+  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+  const pendientes = page.getByRole("button", { name: /Pendientes/ }).first();
+  await pendientes.click();
+  await expect(pendientes).toHaveAttribute("aria-pressed", "true");
+  // Scroll whichever container actually scrolls (window on mobile, <main> on
+  // the desktop shell).
+  await page.evaluate(() => {
+    const main = document.querySelector("main");
+    if (main && main.scrollHeight > main.clientHeight) main.scrollTop = 300;
+    else window.scrollTo(0, 300);
+  });
+  await page.getByRole("heading", { name: /#/ }).first().click();
+  await expect(page.getByRole("button", { name: "Guardar pedido", exact: true })).toBeVisible();
+  await page.goBack();
+  // Same filter still applied…
+  await expect(pendientes).toHaveAttribute("aria-pressed", "true");
+  // …and the list returns to the same scroll point (not the top).
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const main = document.querySelector("main");
+          return main && main.scrollHeight > main.clientHeight ? main.scrollTop : window.scrollY;
+        }),
+      { timeout: 5000 }
+    )
+    .toBeGreaterThan(150);
 });
