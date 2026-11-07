@@ -77,7 +77,7 @@ import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 
 // Actions: every mutation flows through here. The active store scopes normal UI
 // work; membership and super_admin access are enforced by Firebase rules.
-type Action =
+export type Action =
   | { type: "ADD_EXPENSE"; expense: LooseExpense }
   | { type: "UPDATE_EXPENSE"; expense: LooseExpense }
   | { type: "DELETE_EXPENSE"; expenseId: string }
@@ -126,7 +126,15 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, expenses: state.expenses.filter((e) => e.id !== action.expenseId) };
     }
     case "ADD_STORE":
-      return { ...state, stores: [...state.stores, action.store], activeStoreId: action.store.id };
+      // Upsert-by-id: a late ADD must never duplicate an entity the cloud
+      // listener already delivered (#232). Keeps the store selected either way.
+      return {
+        ...state,
+        stores: state.stores.some((s) => s.id === action.store.id)
+          ? state.stores.map((s) => (s.id === action.store.id ? action.store : s))
+          : [...state.stores, action.store],
+        activeStoreId: action.store.id,
+      };
     case "UPDATE_STORE":
       return { ...state, stores: state.stores.map((s) => (s.id === action.store.id ? action.store : s)) };
     case "DELETE_STORE":
@@ -147,37 +155,73 @@ export function reducer(state: AppState, action: Action): AppState {
     case "SET_ACTIVE_STORE":
       return { ...state, activeStoreId: action.storeId || null };
     case "ADD_PRODUCT":
-      return { ...state, products: [...state.products, action.product] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        products: state.products.some((x) => x.id === action.product.id)
+          ? state.products.map((x) => (x.id === action.product.id ? action.product : x))
+          : [...state.products, action.product],
+      };
     case "UPDATE_PRODUCT":
       return { ...state, products: state.products.map((p) => (p.id === action.product.id ? action.product : p)) };
     case "DELETE_PRODUCT":
       return { ...state, products: state.products.filter((p) => p.id !== action.productId) };
     case "ADD_CATEGORY":
-      return { ...state, categories: [...state.categories, action.category] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        categories: state.categories.some((x) => x.id === action.category.id)
+          ? state.categories.map((x) => (x.id === action.category.id ? action.category : x))
+          : [...state.categories, action.category],
+      };
     case "UPDATE_CATEGORY":
       return { ...state, categories: state.categories.map((c) => (c.id === action.category.id ? action.category : c)) };
     case "DELETE_CATEGORY":
       return { ...state, categories: state.categories.filter((c) => c.id !== action.categoryId) };
     case "ADD_SUPPLIER":
-      return { ...state, suppliers: [...state.suppliers, action.supplier] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        suppliers: state.suppliers.some((x) => x.id === action.supplier.id)
+          ? state.suppliers.map((x) => (x.id === action.supplier.id ? action.supplier : x))
+          : [...state.suppliers, action.supplier],
+      };
     case "UPDATE_SUPPLIER":
       return { ...state, suppliers: state.suppliers.map((s) => (s.id === action.supplier.id ? action.supplier : s)) };
     case "DELETE_SUPPLIER":
       return { ...state, suppliers: state.suppliers.filter((s) => s.id !== action.supplierId) };
     case "ADD_PURCHASE":
-      return { ...state, purchases: [...state.purchases, action.purchase] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        purchases: state.purchases.some((x) => x.id === action.purchase.id)
+          ? state.purchases.map((x) => (x.id === action.purchase.id ? action.purchase : x))
+          : [...state.purchases, action.purchase],
+      };
     case "UPDATE_PURCHASE":
       return { ...state, purchases: state.purchases.map((p) => (p.id === action.purchase.id ? action.purchase : p)) };
     case "DELETE_PURCHASE":
       return { ...state, purchases: state.purchases.filter((p) => p.id !== action.purchaseId) };
     case "ADD_CUSTOMER":
-      return { ...state, customers: [...state.customers, action.customer] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        customers: state.customers.some((x) => x.id === action.customer.id)
+          ? state.customers.map((x) => (x.id === action.customer.id ? action.customer : x))
+          : [...state.customers, action.customer],
+      };
     case "UPDATE_CUSTOMER":
       return { ...state, customers: state.customers.map((c) => (c.id === action.customer.id ? action.customer : c)) };
     case "DELETE_CUSTOMER":
       return { ...state, customers: state.customers.filter((c) => c.id !== action.customerId) };
     case "ADD_ORDER":
-      return { ...state, orders: [...state.orders, action.order] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        orders: state.orders.some((x) => x.id === action.order.id)
+          ? state.orders.map((x) => (x.id === action.order.id ? action.order : x))
+          : [...state.orders, action.order],
+      };
     case "UPDATE_ORDER":
       return { ...state, orders: state.orders.map((o) => (o.id === action.order.id ? action.order : o)) };
     case "APPLY_ORDER_PAYMENTS":
