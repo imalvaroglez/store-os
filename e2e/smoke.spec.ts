@@ -388,7 +388,9 @@ test("recorded payments survive reload and an adjustment updates card and histor
 
 test("returning from the order editor preserves the list filter and scroll (#233)", async ({ sharedPage: page }) => {
   const now = new Date().toISOString();
-  for (let i = 0; i < 6; i++) {
+  // Enough orders to overflow even the desktop viewport (1280×800): the
+  // restoration can only be observed on a list that actually scrolls.
+  for (let i = 0; i < 20; i++) {
     const id = `order_list233_${i}`;
     await writeEmulatorDoc("orders", id, {
       id, storeId: "store_santi", customerId: "cust_santi_1",
