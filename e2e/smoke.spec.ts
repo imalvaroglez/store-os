@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { loginAsFirstAdmin, gotoSantiHome, openCatalog, gotoClean } from "./helpers";
+import { loginAsFirstAdmin, gotoSantiHome, openCatalog, gotoClean, writeEmulatorDoc } from "./helpers";
 
 // Real end-to-end smoke against the Firebase Emulator. Firebase Auth persists to
 // indexedDB, which Playwright's storageState does NOT capture — so the session
