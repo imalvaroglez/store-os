@@ -615,3 +615,33 @@ describe("legacy anticipo guards (#218)", () => {
     expect(screen.getByLabelText("Notas")).toHaveValue("Nota recuperada");
   });
 });
+
+// #219 fase 1a: contrato de Notas — multilínea con acentos/ñ persiste idéntico.
+describe("text-entry-audit · Notas (#219)", () => {
+  it("preserves accents, ñ and line breaks exactly through save", async () => {
+    localStorage.clear();
+    const notas = "Aretes bañados — ajustar tamaño\nClienta pidió grabado: «Añoranza»\n  · entrega el sábado";
+    const value = orderForNotes();
+    const view = render(<ToastProvider><OrderForm order={value} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByRole("textbox", { name: "Notas" }), { target: { value: notas } });
+    await screen.findByLabelText(/Precio unitario/);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalled());
+    // El flujo de guardado puede despachar más de una escritura (p. ej. la
+    // confirmación del plan); el contrato es sobre la ÚLTIMA persistencia.
+    const saved = mockUpsertOrder.mock.calls[mockUpsertOrder.mock.calls.length - 1][0];
+    expect(saved.notes).toBe(notas);
+    view.unmount(); // reabrir: solo el árbol del pedido persistido
+    render(<ToastProvider><OrderForm order={saved} onDone={() => {}} /></ToastProvider>);
+    expect(screen.getByRole("textbox", { name: "Notas" })).toHaveValue(notas);
+  });
+
+  function orderForNotes(): Order {
+    return {
+      id: "notas-219", storeId: "store_olivia", customerId: "customer_1",
+      items: [{ productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      deposit: 0, orderStatus: "asked", paymentStatus: "unpaid",
+      createdAt: "2026-11-07", updatedAt: "2026-11-07",
+    };
+  }
+});
