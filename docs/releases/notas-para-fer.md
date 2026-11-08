@@ -39,25 +39,23 @@ Qué te pedimos probar:
   mensaje es el que se le envía a ella y queda como comentario del PR de
   release (evidencia de la práctica).
 
-## Ejemplo aplicado — 1.9.1
+## Ejemplo — forma de referencia (borrador para 1.9.1)
 
-> Versión 1.9.1 — Más privacidad y invitaciones más claras
+El mensaje real de cada release se **regenera desde el diff liberado** (nunca
+se copia este ejemplo tal cual: podría prometer algo que no viajó).
+
+> Versión 1.9.1 — Más privacidad entre tiendas
 >
-> Lo más importante:
-> • Blindamos las cuentas entre tiendas: nadie fuera de tu tienda puede ver
->   los correos de tus clientas ni de tu equipo. Lo tuyo sigue siendo tuyo.
+> Lo más importante: nadie fuera de tu tienda puede ver los correos de tu
+> equipo ni de tus clientas. Lo tuyo sigue siendo tuyo.
 >
-> Lo que se corrigió:
-> • Las invitaciones ahora siempre quedan "pendientes" hasta que la persona
->   entra con ese correo — funciona igual si ya tenía cuenta o si la crea.
+> Lo que se corrigió: las invitaciones quedan "pendientes" hasta que la
+> persona entra con ese correo, tenga o no cuenta.
 >
-> Lo nuevo que puedes hacer:
-> • Esta versión es de cuidado por dentro (seguridad y afinamiento); no hay
->   botones nuevos.
+> Lo nuevo: esta versión es de cuidado por dentro; no hay botones nuevos.
 >
-> Qué te pedimos probar:
-> • Invita a alguien por correo desde Ajustes de la tienda y confirma que
->   aparece "pendiente" y que al entrar esa persona ve tu tienda.
+> Qué te pedimos probar: invita a alguien desde "Administrar tienda" y
+> confirma que aparezca "pendiente" y que al entrar vea tu tienda.
 
 Las notas ya publicadas de versiones anteriores NO se reescriben: viven en el
 bundle liberado. La plantilla rige desde la primera liberación posterior a
