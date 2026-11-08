@@ -44,7 +44,7 @@ test.afterAll(async () => {
   sharedPage = null;
 });
 
-test("first signup becomes super_admin and test fixtures stay in the emulator", async ({ sharedPage: page }) => {
+test("the allowlisted platform email becomes super_admin and fixtures stay in the emulator", async ({ sharedPage: page }) => {
   await gotoClean(page);
   await openSettings(page);
   await expect(page.getByText(/administrador/)).toBeVisible({ timeout: 10000 });

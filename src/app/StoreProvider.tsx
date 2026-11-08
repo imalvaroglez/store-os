@@ -41,7 +41,7 @@ import { creditAvailableCents, ordersForCustomer, planCreditApplications } from 
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
 import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
-import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
+import { normalizeEmail, sendInviteLink } from "./firebase/auth";
 import {
   loadCloudState,
   subscribeCloudState,
@@ -287,9 +287,9 @@ type StoreContextValue = {
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
   saveStorefront: (storeId: string, storefront: Storefront) => Promise<void>;
   deleteStore: (storeId: string) => void;
-  inviteMember: (storeId: string, email: string) => Promise<"invited" | "pending">;
+  inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
-  transferStoreOwnership: (storeId: string, email: string) => Promise<void>;
+  transferStoreOwnership: (storeId: string, memberUid: string) => Promise<void>;
   /** Republish a store's public catalog projection (backfill / repair). */
   republishCatalog: (storeId: string) => Promise<void>;
   setActiveStore: (storeId: string | null) => void;
@@ -705,18 +705,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const store = state.stores.find((s) => s.id === storeId);
       if (!store) return "pending";
       const normalized = email.toLowerCase().trim();
-      // Try to find an existing (verified) account by email — literal first,
-      // then the canonical form (Gmail dots/case).
-      const uid = await findUidByEmail(normalized);
-      if (uid) {
-        const memberUids = Array.from(new Set([...(store.memberUids ?? []), uid]));
-        const updated = { ...store, memberUids, updatedAt: nowIso() };
-        dispatch({ type: "UPDATE_STORE", store: updated });
-        await persistEntity("stores", updated);
-        return "invited";
-      }
-      // No account yet: store a pending invite (canonical form, so the login
-      // reconciliation matches); the email-link send happens in the cloud path.
+      // Invite by canonical email only (#176): member identities are private,
+      // so there is no email→uid directory lookup. The invitee reconciles
+      // into memberUids on their own verified login (reconcilePendingInvites
+      // + the inviteeJoinOk rule); both planes are saved by persistEntity.
       const pendingInvites = Array.from(new Set([...(store.pendingInvites ?? []), normalizeEmail(normalized)]));
       const updated = { ...store, pendingInvites, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
@@ -733,16 +725,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "UPDATE_STORE", store: updated });
       await persistEntity("stores", updated);
     },
-    transferStoreOwnership: async (storeId, email) => {
+    transferStoreOwnership: async (storeId, memberUid) => {
       requireAuthenticatedUser();
       const store = state.stores.find((s) => s.id === storeId);
       if (!store) throw new Error("Tienda no encontrada.");
-      const nextOwnerUid = await findUidByEmail(email.toLowerCase().trim());
-      if (!nextOwnerUid || !(store.memberUids ?? []).includes(nextOwnerUid)) {
+      // Identities are private (#176): the next owner is chosen among current
+      // member uids (the UI lists them); no email→uid directory lookup.
+      if (!(store.memberUids ?? []).includes(memberUid)) {
         throw new Error("Esa persona debe ser miembro de la tienda antes de recibirla.");
       }
-      if (nextOwnerUid === store.ownerUid) return;
-      const updated = { ...store, ownerUid: nextOwnerUid, updatedAt: nowIso() };
+      if (memberUid === store.ownerUid) return;
+      const updated = { ...store, ownerUid: memberUid, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
       await persistEntity("stores", updated);
     },
