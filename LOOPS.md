@@ -20,7 +20,9 @@ Política vigente tras eliminar el delivery harness como gate (ver `docs/adr/000
    independiente sin hallazgos abiertos. La historia de producto pasa a Por liberar.
 8. El release a producción puede autorizarlo una persona o ejecutarlo el agente
    bajo esa misma autorización, siempre con versión incrementada y notas
-   (release guard) y verificación del deploy. La liberación cierra la historia:
+   (release guard) y verificación del deploy. Cada release genera además el
+   mensaje para Fer con la plantilla de `docs/releases/notas-para-fer.md` y lo
+   incluye en el cuerpo del PR de release. La liberación cierra la historia:
    se registran commit y versión liberada en la issue y pasa a Hecho, sin ronda
    adicional de aceptación. Defectos o ajustes posteriores nacen como items
    nuevos. El trabajo operativo cierra con su entregable concreto registrado.
