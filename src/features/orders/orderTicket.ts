@@ -1,8 +1,7 @@
 import type { Order } from "../../types";
 import { formatMoneyExact } from "../../lib/money";
 import { orderAmountCents } from "../../lib/orderMoney";
-import { orderItems } from "../../lib/orders";
-import { docReceivedCents } from "./payments";
+import { orderItems, orderTotals } from "../../lib/orders";
 
 /**
  * WhatsApp order detail in Fer's own message format (PO 2026-11-04): client
@@ -16,11 +15,11 @@ export function orderTicketText(order: Order, _storeName: string, currentCustome
   const clean = (value: string) => value.replace(/\s+/g, " ").trim();
   const items = orderItems(order);
   const totalCents = items.reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
-  const hasPaymentRecords = typeof order.paymentsReceivedCents === "number";
-  const receivedCents = hasPaymentRecords
-    ? docReceivedCents(order)
-    : orderAmountCents(Math.max(0, typeof order.deposit === "number" && Number.isFinite(order.deposit) ? order.deposit : 0));
-  const balanceCents = Math.max(0, totalCents - receivedCents);
+  // #168 F4 + #189 + #203: the ticket's Saldo is THE canonical balance from
+  // the read model — net of applied saldo a favor and posventa adjustments —
+  // never a hand-rolled subtraction (which overstated debt after refunds or
+  // credit). "Total" stays the sum of the listed pieces.
+  const balanceCents = Math.round(orderTotals(order).balance * 100);
 
   const customer = clean(order.customerName || currentCustomerName || "Sin cliente");
   return [
