@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useListRestore } from "../../lib/listRestore";
 import { useStore, newProduct } from "../../app/StoreProvider";
 import {
   Button,
@@ -226,11 +227,22 @@ export function CatalogScreen() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("createdAt");
-  const [sortDesc, setSortDesc] = useState(true);
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [restockOnly, setRestockOnly] = useState(false);
-  useEffect(() => setRestockOnly(false), [activeStore?.id, activeStore?.type]);
+  // #233: keep sort/filter/scroll when returning from a product's editor.
+  const { filters, setFilters, restoreScroll } = useListRestore(`products:${activeStore?.id ?? ""}:${activeStore?.type ?? ""}`, {
+    sortKey: "createdAt" as SortKey, sortDesc: true as boolean, categoryFilter: "", restockOnly: false as boolean,
+  });
+  useEffect(() => {
+    restoreScroll();
+  }, [restoreScroll]);
+  const sortKey = filters.sortKey as SortKey;
+  const sortDesc = filters.sortDesc;
+  const categoryFilter = filters.categoryFilter;
+  const restockOnly = filters.restockOnly;
+  const setSortKey = (next: SortKey) => setFilters((p) => ({ ...p, sortKey: next }));
+  const setSortDesc = (next: boolean) => setFilters((p) => ({ ...p, sortDesc: next }));
+  const setCategoryFilter = (next: string) => setFilters((p) => ({ ...p, categoryFilter: next }));
+  const setRestockOnly = (next: boolean) => setFilters((p) => ({ ...p, restockOnly: next }));
+
 
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
@@ -318,7 +330,7 @@ export function CatalogScreen() {
               variant={restockOnly ? "primary" : "secondary"}
               size="sm"
               aria-pressed={restockOnly}
-              onClick={() => setRestockOnly((value) => !value)}
+              onClick={() => setRestockOnly(!restockOnly)}
             >
               Por surtir
             </Button>
@@ -326,7 +338,7 @@ export function CatalogScreen() {
           <IconButton
             variant="secondary"
             aria-label={sortDesc ? "Orden descendente" : "Orden ascendente"}
-            onClick={() => setSortDesc((v) => !v)}
+            onClick={() => setSortDesc(!sortDesc)}
           >
             {sortDesc ? "↓" : "↑"}
           </IconButton>
