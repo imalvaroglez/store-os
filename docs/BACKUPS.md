@@ -178,6 +178,21 @@ node "$HOME/Library/Application Support/Store OS Backups/runtime/scripts/backups
 node "$HOME/Library/Application Support/Store OS Backups/runtime/scripts/backups/cli.mjs" status
 ```
 
+Para una copia extraordinaria solicitada explícitamente:
+
+```sh
+node "$HOME/Library/Application Support/Store OS Backups/runtime/scripts/backups/cli.mjs" run --manual
+```
+
+Este modo requiere un runtime que incluya `--manual` y una copia programada
+previa verificada. Si no existe, falla con `INITIAL_SCHEDULE_REQUIRED`: inicializar
+primero mediante `run` normal. Esto mantiene compatibilidad con el runtime
+programado anterior. Omite únicamente la
+comprobación de que el ciclo diario ya se cumplió; conserva presupuesto,
+bloqueo, cifrado, prueba de recuperación, retención y límites. Registra la copia
+como manual sin adelantar `lastScheduledDate`: la ejecución nocturna sigue
+pendiente. No borrar el estado ni alterar el reloj para forzar una copia.
+
 Cada `run` exige completar este ciclo antes de anunciar éxito:
 
 1. Capturar Firestore, Auth y archivos con manifiesto y hashes.
