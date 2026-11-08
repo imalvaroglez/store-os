@@ -19,7 +19,11 @@ export async function fileHash(file) {
   for await (const chunk of createReadStream(file)) hash.update(chunk);
   return hash.digest('hex');
 }
-export async function privateDirectory(dir) { await mkdir(dir, { recursive: true, mode: 0o700 }); await chmod(dir, 0o700); }
+export async function privateDirectory(dir) {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  // iCloud can deny a redundant chmod even when the directory is already private.
+  if (((await stat(dir)).mode & 0o7777) !== 0o700) await chmod(dir, 0o700);
+}
 export async function json(file, value) { await writeFile(file, JSON.stringify(value, null, 2), { mode: 0o600 }); }
 export async function readJson(file) { return JSON.parse(await readFile(file, 'utf8')); }
 export async function atomicJson(file, value) { await json(`${file}.new`, value); await rename(`${file}.new`, file); }
@@ -155,7 +159,15 @@ export async function publish(encrypted, destination, name, verify) {
 }
 export async function prune(destination, ownedNames) {
   // Local ledger of this installation prevents deletion of unrelated or unowned iCloud files.
-  const available = (await readdir(destination)).filter(name => ownedNames.includes(name));
+  const available = [];
+  // The ledger already identifies our files; iCloud may deny directory listing.
+  for (const name of new Set(ownedNames)) {
+    if (!BACKUP_NAME.test(name)) continue;
+    try {
+      if (!(await lstat(path.join(destination, name))).isFile()) throw new Error('UNSAFE_RETENTION_ENTRY');
+      available.push(name);
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
   const { remove } = retention(available);
   for (const name of remove) {
     if (!(await lstat(path.join(destination, name))).isFile()) throw new Error('UNSAFE_RETENTION_ENTRY');
