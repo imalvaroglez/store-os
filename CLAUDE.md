@@ -15,7 +15,7 @@ sobre documentos históricos para organización, estados y evidencias. El feedba
 se refina en issues, sin PR de documentación por cada solicitud; las áreas son
 permanentes y las épicas tienen objetivos finitos. Solo se asignan historias
 Listo; al tomar una se registra responsable y worktree. Para producto, merge
-significa Por liberar; el release a producción aprobado por el PO cierra como
+significa Por liberar; la liberación a producción cierra la historia como
 Hecho, sin ronda adicional de aceptación. Defectos o ajustes posteriores nacen
 como items nuevos.
 
@@ -54,7 +54,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Promoción de Preview a producción
 
-`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y solo se toca después de aprobación humana explícita. El mismo commit revisado en el PR y la rama `main` es el que se libera; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación y ejecútalo solo después de aprobación. Nunca copies el seed ni datos sintéticos de dev a producción.
+`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y solo recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. El mismo commit revisado en el PR y la rama `main` es el que se libera; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
 
 ## Regla de Firebase
 
@@ -62,7 +62,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Todo desarrollo conectado, prueba contra emuladores y Preview usa el ID `store-os-dev`.
 - Los emuladores usan ese mismo ID y el bucket de dev, pero todos sus servicios apuntan a `127.0.0.1`; no se crea otro proyecto ni namespace para el trabajo local.
 - `.firebaserc` deja `store-os-dev` como proyecto predeterminado. Todo comando Firebase que permita elegir proyecto debe indicar el destino explícitamente; los comandos de desarrollo apuntan a `store-os-dev`.
-- Producción (`store-os-f7cf8`) solo se usa para liberar un cambio aprobado explícitamente por una persona. El trabajo de desarrollo nunca ejecuta operaciones contra producción.
+- Producción (`store-os-f7cf8`) solo recibe releases vía CI (persona o agente bajo la autorización permanente del PO, 2026-11-08). El trabajo de desarrollo nunca ejecuta operaciones de datos contra producción.
 
 ## Regla permanente de arquitectura administrativa
 
@@ -144,7 +144,7 @@ Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno
 
 ### Ambientes y backends (cableado)
 
-Desarrollo y Preview usan `store-os-dev`. Producción usa `store-os-f7cf8` y solo se toca tras aprobación humana explícita. El proyecto predeterminado de Firebase es dev. Los emuladores locales usan el mismo ID de dev y servicios en `127.0.0.1`.
+Desarrollo y Preview usan `store-os-dev`. Producción usa `store-os-f7cf8` y solo recibe releases vía CI (persona o agente con la autorización permanente del PO, 2026-11-08). El proyecto predeterminado de Firebase es dev. Los emuladores locales usan el mismo ID de dev y servicios en `127.0.0.1`.
 
 | Ambiente | Backend Firebase | Cómo se cablea |
 |---|---|---|

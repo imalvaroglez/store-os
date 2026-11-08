@@ -21,7 +21,11 @@ Five loops nest. Know which one you're running.
 - **Task Loop** — one bounded task: a **goal**, **acceptance criteria**, **validation commands**, **minimal fixes only**, and a **final report**. A task is one logical change, not a batch.
 - **Release QA Loop** — full verification **before Vercel**: real browser flows, bug classification (blocker / non-blocker), fix blockers, repeat until clean. See §4–§6.
 - **Product Loop** — **human decides capability → spec → agent implements → QA → deploy → feedback → next step.** No feature starts without a spec the human signed off on.
-- **Oversight Loop** — **human-owned.** Sets goals, limits scope, stops runaway complexity, approves release. **The human stays in this loop.** The agent never self-approves a release.
+- **Oversight Loop** — **human-owned.** Sets goals, limits scope, stops runaway complexity. **The human stays in this loop.**
+  Reconciliation (2026-11-08): the PO granted the agent standing release
+  authority under hard gates (full green CI, context-free independent review
+  per PR, release guard). The loop keeps its goal/limit role; releases no
+  longer require per-release human approval.
 
 > Scope creep stops here: if a change starts pulling in a new capability, halt and return to the Product Loop for a spec.
 
