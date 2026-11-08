@@ -142,9 +142,10 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
       verification.recoveryRecipient = recoveryProof.recipient; verification.recoveryRecipientVerified = true;
       const next = { ...state, lastSuccess: new Date().toISOString(), lastScheduledDate: manual ? lastScheduledDate : dueDate(now), lastRunKind: manual ? 'manual' : 'scheduled', lastArchive: name, bytes: encryptedBytes, sha256: encryptedSha256, cloudAvailability: 'not-verified', verification, ownedArchives: [...new Set([...state.ownedArchives, name])], lastError: null, suspendedForApproval: null };
       await atomicJson(stateFile, next); // Commit success before retention; failures cannot erase the previous backup.
-      next.ownedArchives = await prune(config.destination, next.ownedArchives);
+      const retention = await pruneTolerant(config.destination, next.ownedArchives);
+      next.ownedArchives = retention.ownedNames; next.lastRetentionError = retention.retentionError;
       await atomicJson(stateFile, next);
-      return { completed: true, mode: next.lastRunKind, lastScheduledDate: next.lastScheduledDate, archive: name, bytes: next.bytes, verification, cloudAvailability: next.cloudAvailability };
+      return { completed: true, mode: next.lastRunKind, lastScheduledDate: next.lastScheduledDate, archive: name, bytes: next.bytes, verification, cloudAvailability: next.cloudAvailability, retentionError: retention.retentionError };
     } finally { await trash(encrypted); }
   } catch (error) {
     const state = await stateFor(config.home);
@@ -156,8 +157,19 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
   }
 }
 export function safeCode(error) {
-  const message = error?.message ?? '';
-  return /^(?:[A-Z_]+|CLOUD_HTTP_\d{3}|COMMAND_(?:FAILED|UNAVAILABLE):[a-z-]+)$/.test(message) ? message : 'BACKUP_FAILED';
+  const safe = /^(?:[A-Z_]+|CLOUD_HTTP_\d{3}|COMMAND_(?:FAILED|UNAVAILABLE):[a-z-]+)$/;
+  if (safe.test(error?.message ?? '')) return error.message;
+  // Errno codes (ETIMEDOUT, ECONNRESET, EAI_AGAIN…) are constants without private data and
+  // separate transient network failures from other generic backup errors.
+  for (const candidate of [error?.code, error?.cause?.code]) if (safe.test(candidate ?? '')) return candidate;
+  return 'BACKUP_FAILED';
+}
+// macOS may deny moving iCloud Drive files to the Trash (TCC). Per decision of 2026-11-08 the
+// operator removes excess copies manually, so a denied retention trash is a recorded warning:
+// the verified backup stays successful. Structural retention errors remain fatal.
+export async function pruneTolerant(destination, ownedNames) {
+  try { return { ownedNames: await prune(destination, ownedNames), retentionError: null }; }
+  catch (error) { if (safeCode(error) !== 'TRASH_FAILED') throw error; return { ownedNames, retentionError: 'TRASH_FAILED' }; }
 }
 export async function status(config, checkIntegrity = true) {
   const state = await stateFor(config.home);
@@ -171,7 +183,7 @@ export async function status(config, checkIntegrity = true) {
   }
   const overdue = archiveIntegrityVerified === false || ageHours === null || ageHours > 26 || !locallyAvailable;
   if (overdue) await notify(config, 'No hay un respaldo completo disponible de las últimas 26 horas.');
-  return { lastSuccess: functional ? state.lastSuccess : null, verification: functional ? state.verification : null, hasVerifiedBackup: functional && locallyAvailable && archiveIntegrityVerified !== false, archiveIntegrityVerified, ageHours, overdue, locallyAvailable, bytes: state.bytes ?? null, lastError: archiveIntegrityVerified === false ? 'ARCHIVE_INTEGRITY_FAILED' : state.lastError ?? null, suspended: Boolean(state.suspendedForApproval && state.suspendedForApproval === config.reviewedPreflightSha256), readBudgetDate: state.readBudgetDate ?? null, reservedReads: state.reservedReads ?? 0, cloudAvailability: 'not-verified', locked: await exists(path.join(config.home, 'run.lock')) };
+  return { lastSuccess: functional ? state.lastSuccess : null, verification: functional ? state.verification : null, hasVerifiedBackup: functional && locallyAvailable && archiveIntegrityVerified !== false, archiveIntegrityVerified, ageHours, overdue, locallyAvailable, bytes: state.bytes ?? null, lastError: archiveIntegrityVerified === false ? 'ARCHIVE_INTEGRITY_FAILED' : state.lastError ?? null, retentionError: state.lastRetentionError ?? null, suspended: Boolean(state.suspendedForApproval && state.suspendedForApproval === config.reviewedPreflightSha256), readBudgetDate: state.readBudgetDate ?? null, reservedReads: state.reservedReads ?? 0, cloudAvailability: 'not-verified', locked: await exists(path.join(config.home, 'run.lock')) };
 }
 export async function main(args = process.argv.slice(2)) {
   process.umask(0o077);
