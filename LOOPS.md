@@ -16,9 +16,11 @@ Política vigente tras eliminar el delivery harness como gate (ver `docs/adr/000
 5. Revisión con subagentes read-only (code map, diseño de tests, estándares de `store-os-review`, seguridad multitienda) — son consejo, no gate. El gate real es CI + el humano que hace merge.
 6. Abre **draft PR** hacia `main`; espera CI (`build-test` + `rules-and-e2e`) y el deploy de Preview.
 7. El humano revisa y hace merge. La historia de producto pasa a Por liberar.
-8. Una persona autoriza explícitamente el commit a liberar. Tras la liberación y
-   verificación del resultado, se registra evidencia y se cierra como Hecho.
-   Operaciones y herramientas internas se aceptan por su entregable concreto.
+8. Una persona autoriza explícitamente el release. La liberación a producción
+   cierra la historia: se registran commit y versión liberada en la issue y pasa
+   a Hecho, sin ronda adicional de aceptación. Defectos o ajustes posteriores
+   nacen como items nuevos. El trabajo operativo cierra con su entregable
+   concreto registrado.
 
 ## Backlog
 
@@ -26,7 +28,7 @@ La lista viva es el tablero "Store OS" de [GitHub Projects](https://github.com/u
 una issue por capacidad con criterios de aceptación, y campos Status (estado en español) / Prioridad /
 Tipo / Ciclo. Los agentes lo consultan y actualizan con `gh project` / `gh issue`.
 Al iniciar: consultar la issue y sus dependencias. Al abrir el draft PR, enlazar
-la issue y moverla a En PR. Usar `Refs #N` mientras una historia de producto espera liberación/aceptación.
+la issue y moverla a En PR. Usar `Refs #N` mientras una historia de producto espera su liberación.
 No cerrarla automáticamente al merge. El README del tablero define Listo, los
 responsables, el trabajo en paralelo y la evidencia por tipo de entrega; prevalece
 sobre los antecedentes. No abrir PRs para registrar feedback o mover el backlog.
