@@ -4,7 +4,7 @@ Guía para trabajar en Store OS. Lee esto antes de empezar.
 
 ## Flujo de entrega
 
-Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI y Preview. Nunca merge, push a `main`, producción ni datos productivos.
+Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI, Preview, y —bajo la autorización permanente del PO (2026-11-08)— merge y liberación a producción, siempre con CI completo en verde, revisión independiente sin contexto del PR y release guard (versión + notas). Nunca push directo a `main` ni leer/escribir datos productivos.
 
 ## Gestión del trabajo
 
