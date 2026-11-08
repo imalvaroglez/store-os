@@ -18,15 +18,14 @@ test("invite by email reconciles on the invitee's login", async ({ browser }) =>
   await loginAsFirstAdmin(pageA);
 
   // Invite B from the store management view (picker → Administrar Santi).
+  // Invitations are email-only (#176): no account search, the invite lands in
+  // pendingInvites and B reconciles on login.
   await pageA.getByRole("button", { name: /Cambiar tienda/ }).first().click();
   await expect(pageA.getByText("¿Quién opera hoy?")).toBeVisible({ timeout: 15_000 });
   await pageA.getByRole("button", { name: "Administrar Santi" }).click();
   await expect(pageA.getByRole("heading", { name: "Administrar tienda" })).toBeVisible();
 
-  await pageA.getByLabel("Buscar por correo").fill(bEmail);
-  await pageA.getByRole("button", { name: "Buscar cuenta" }).click();
-  // No account yet → the invite-by-email fallback is offered.
-  await expect(pageA.getByText(/No hay una cuenta con ese correo/)).toBeVisible();
+  await pageA.getByLabel("Invitar por correo").fill(bEmail);
   await pageA.getByRole("button", { name: "Enviar invitación" }).click();
   await expect(pageA.getByText("Invitación enviada. Quedará pendiente hasta que la persona cree su cuenta.")).toBeVisible();
   await expect(pageA.getByText(`${bEmail} · pendiente`)).toBeVisible();

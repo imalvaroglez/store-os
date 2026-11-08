@@ -1,4 +1,4 @@
-import { describe, it, beforeAll } from "vitest";
+import { describe, it, beforeAll, beforeEach } from "vitest";
 import {
   initializeTestEnvironment,
   assertFails,
@@ -119,6 +119,46 @@ describe("publicProducts legacy storeId catch-22", () => {
     });
 
     await assertSucceeds(updateDoc(doc(db, productPath), { name: "Collar reparado" }));
+  });
+});
+
+describe("#176 users directory privacy", () => {
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_a"), { email: "a@x.com", role: "member" });
+      await setDoc(doc(c.firestore(), "users/u_b"), { email: "b@x.com", role: "member" });
+      await setDoc(doc(c.firestore(), "users/u_sa"), { email: "sa@x.com", role: "super_admin" });
+    });
+  });
+
+  it("a member can get only their own profile", async () => {
+    const db = await asUser("u_a");
+    await assertSucceeds(getDoc(doc(db, "users/u_a")));
+  });
+
+  it("a member cannot get another user's profile (cross-store identity exposure)", async () => {
+    const db = await asUser("u_a");
+    await assertFails(getDoc(doc(db, "users/u_b")));
+  });
+
+  it("a member cannot list the users directory (email enumeration)", async () => {
+    const db = await asUser("u_a");
+    await assertFails(getDocs(collection(db, "users")));
+    await assertFails(
+      getDocs(query(collection(db, "users"), where("email", "==", "b@x.com"), where("emailVerified", "==", true)))
+    );
+  });
+
+  it("anonymous cannot read users at all", async () => {
+    const db = env.unauthenticatedContext().firestore();
+    await assertFails(getDoc(doc(db, "users/u_a")));
+    await assertFails(getDocs(collection(db, "users")));
+  });
+
+  it("super_admin can get any profile and list the directory (PlatformUsersScreen)", async () => {
+    const db = await asUser("u_sa");
+    await assertSucceeds(getDoc(doc(db, "users/u_b")));
+    await assertSucceeds(getDocs(collection(db, "users")));
   });
 });
 
