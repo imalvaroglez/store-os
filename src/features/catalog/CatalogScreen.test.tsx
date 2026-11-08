@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { StoreProvider } from "../../app/StoreProvider";
 import { Button, ToastProvider } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
+import { resetListRestoreForTests } from "../../lib/listRestore";
 import { CatalogScreen } from "./CatalogScreen";
 import { fixtureState } from "../../lib/testFixtures";
 import type { AppState, Product } from "../../types";
@@ -106,6 +107,7 @@ function lastByLabel(label: string) {
 }
 
 beforeEach(() => {
+  resetListRestoreForTests(); // #233: la caché de lista es de sesión; cada prueba parte de defaults
   localStorage.clear();
 });
 
