@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore } from "./StoreProvider";
 import { useAuth } from "./firebase/AuthProvider";
 import { useRoute } from "./router";
@@ -43,6 +43,7 @@ export function AppShell() {
   const { user, enabled: authEnabled, signOut } = useAuth();
   const route = useRoute();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const mobileHeaderRef = useRef<HTMLElement>(null);
   const [cmdOpen, setCmdOpen] = useState(false);
 
   const seg = route.name === "admin" ? route.params.tab ?? "" : "";
@@ -59,6 +60,24 @@ export function AppShell() {
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
+
+  // The document owns scrolling; a new route starts at its content heading.
+  useEffect(() => {
+    if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
+  }, [seg, sub, activeStore?.id]);
+
+  // Sticky content follows the actual mobile header height, including safe area
+  // and larger theme fonts; no second scroll region or guessed pixel offset.
+  useLayoutEffect(() => {
+    const header = mobileHeaderRef.current;
+    if (!header) return;
+    const measure = () => header.parentElement?.style.setProperty("--admin-header-height", `${header.getBoundingClientRect().height}px`);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [activeStore?.id, tab, user?.role]);
 
   // Cmd/Ctrl+K opens the command palette. Global while the shell is mounted.
   useEffect(() => {
@@ -155,7 +174,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="md:flex md:h-full">
+    <div className="md:flex min-h-dvh">
       {/* Desktop sidebar */}
       <Sidebar
         active={tab}
@@ -168,9 +187,10 @@ export function AppShell() {
       />
 
       {/* Main column (mobile: header + scroll + bottom nav; desktop: scroll only) */}
-      <div className="flex flex-col h-full min-w-0 flex-1">
+      <div className="flex flex-col min-h-dvh min-w-0 flex-1">
         {/* Mobile-only top header */}
         <header
+          ref={mobileHeaderRef}
           className="md:hidden sticky top-0 z-20 bg-paper/90 backdrop-blur px-4 py-3 flex items-center justify-between border-b border-rule/60"
           style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
         >
@@ -192,7 +212,7 @@ export function AppShell() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto pb-24 md:pb-8">{screen}</main>
+        <main className="flex-1 min-w-0 pb-8">{screen}</main>
 
         {/* Version + release notes at the panel footer (#179) */}
         <VersionFooter />

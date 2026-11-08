@@ -139,25 +139,27 @@ test("one journey receives two suppliers and distributes 44 pesos over 70 pieces
     await expect(supplier).toHaveCount(0);
     await page.getByLabel("Folio del ticket").fill(folio);
     await page.getByRole("button", { name: "+ Agregar línea" }).click();
-    await page.getByLabel("Producto", { exact: true }).nth(index).fill("Anillo del ticket");
-    await page.getByLabel("Cantidad", { exact: true }).nth(index).fill(String(quantity));
-    await page.getByLabel("Costo unitario", { exact: true }).nth(index).fill("10");
-    await page.getByRole("combobox", { name: "Producto en Store OS" }).nth(index).fill("QA-TRIP");
+    await page.getByLabel("Producto", { exact: true }).fill("Anillo del ticket");
+    await page.getByLabel("Cantidad", { exact: true }).fill(String(quantity));
+    await page.getByLabel("Costo unitario", { exact: true }).fill("10");
+    await page.getByRole("combobox", { name: "Producto en Store OS" }).fill("QA-TRIP");
     await page.getByRole("option", { name: /Anillo para viaje QA/ }).click();
     await expect(page.getByRole("button", { name: "Recibir mercancía" })).toBeDisabled();
     await page.getByLabel("Total pagado", { exact: true }).fill(String(quantity * 10));
   }
+  await page.getByRole("tab", { name: "Revisión general" }).click();
   await page.getByRole("button", { name: "+ Agregar gasto" }).click();
   await page.getByLabel("Importe", { exact: true }).fill("44");
   await page.getByLabel("Descripción (opcional)").fill("Transporte de ida y vuelta");
   await expect(page.getByText("$744.00", { exact: true }).last()).toBeVisible();
+  await page.getByText("Ver costo por producto", { exact: true }).click();
   await expect(page.getByText("$10.63 por pieza", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Guardar borrador" }).click();
   await expect(page.getByText("Borrador guardado.")).toBeVisible();
   await gotoClean(page, "/productos/compras");
   await page.getByRole("heading", { name: "Centro joyero QA", exact: true }).click();
-  await expect(page.getByLabel("Ticket que estás capturando").locator("option")).toHaveCount(2);
-  await page.getByLabel("Ticket que estás capturando").selectOption({ label: "#QA-T-B · Proveedor Sur QA" });
+  await expect(page.getByRole("tab")).toHaveCount(3);
+  await page.getByRole("tab", { name: "#QA-T-B · Proveedor Sur QA" }).click();
   await expect(page.getByLabel("Folio del ticket")).toHaveValue("QA-T-B");
   await expect(page.getByLabel("Total pagado", { exact: true })).toHaveValue("300");
   await expect(page.getByRole("button", { name: "Recibir mercancía" })).toBeEnabled();
@@ -187,7 +189,7 @@ test("one journey receives two suppliers and distributes 44 pesos over 70 pieces
   await expect(journeyHeading.locator("xpath=..").getByText("Recibida")).toBeVisible();
   await journeyHeading.click();
   await expect(page.getByRole("button", { name: "Recibir mercancía" })).toHaveCount(0);
-  await page.getByLabel("Ticket que estás revisando").selectOption({ label: "#QA-T-A · Proveedor Centro QA" });
+  await page.getByRole("tab", { name: "#QA-T-A · Proveedor Centro QA" }).click();
   await expect(page.getByLabel("Folio del ticket")).toHaveValue("QA-T-A");
 });
 
@@ -236,14 +238,17 @@ test("create one private product from purchase search and receive it only on con
 test("50-line review: filters, global resolution, bulk create, receive", async ({ sharedPage: page }) => {
   await gotoClean(page, "/productos/compras");
   await ensureStoreActive(page, "Joyería");
-  await expect(page.getByText(/50 productos/).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/50 renglones/).first()).toBeVisible({ timeout: 15000 });
 
   // Open the seeded draft.
   await page.getByText("#3023").first().click();
 
+  await page.getByRole("tab", { name: "Revisión general" }).click();
+
+  await page.getByText("Revisar productos (50 renglones)", { exact: true }).click();
+
   // Review table: all 50 rows, the unknown-amount filter chip, block reason.
   await expect(page.getByText("Importes (50)")).toBeVisible();
-  await expect(page.getByText(/50 importes sin interpretar/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Recibir mercancía" })).toBeDisabled();
   await expect(page.getByText(/50 líneas tienen importes sin interpretar/)).toBeVisible();
 
@@ -254,7 +259,10 @@ test("50-line review: filters, global resolution, bulk create, receive", async (
   await expect(nameInputs).toHaveCount(50);
 
   // Global resolution: unitarios → every line gets unitCost = sourceAmount.
+  await page.getByRole("tab", { name: /#3023/ }).click();
   await page.getByRole("button", { name: "Unitarios" }).click();
+  await page.getByRole("tab", { name: "Revisión general" }).click();
+  await page.getByText("Revisar productos (50 renglones)", { exact: true }).click();
   await expect(page.getByText("Importes (50)")).toHaveCount(0);
   await expect(page.getByText(/Sin vincular \(50\)/)).toBeVisible();
 
@@ -268,21 +276,25 @@ test("50-line review: filters, global resolution, bulk create, receive", async (
   await expect
     .poll(async () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true);
+  await page.getByRole("tab", { name: "Revisión general" }).click();
   await page.getByRole("button", { name: "+ Agregar gasto" }).click();
   await expect(page.getByRole("button", { name: "Guardar borrador" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Recibir mercancía" })).toBeDisabled();
   await page.getByLabel("Importe").nth(0).fill("44");
   await page.getByLabel("Descripción (opcional)").nth(0).fill("Cuatro camiones");
 
+  await page.getByRole("tab", { name: "Revisión general" }).click();
   await page.getByRole("button", { name: "+ Agregar gasto" }).click();
   await page.getByLabel("Tipo de gasto").nth(1).selectOption("customer_delivery");
   await page.getByLabel("Importe").nth(1).fill("22");
   await page.getByLabel("Descripción (opcional)").nth(1).fill("Traslado a Santa Fe");
 
+  await page.getByRole("tab", { name: "Revisión general" }).click();
   await page.getByRole("button", { name: "+ Agregar gasto" }).click();
   await page.getByLabel("Tipo de gasto").nth(2).selectOption("shared_packaging");
   await page.getByLabel("Importe").nth(2).fill("1");
   await page.getByLabel("Descripción (opcional)").nth(2).fill("Bolsa compartida");
+  await page.getByRole("tab", { name: "Revisión general" }).click();
   await page.getByRole("button", { name: "+ Agregar gasto" }).click();
   await page.getByLabel("Tipo de gasto").nth(3).selectOption("other");
   const smallExpenseAmount = page.getByLabel("Importe").nth(3);
@@ -296,6 +308,7 @@ test("50-line review: filters, global resolution, bulk create, receive", async (
 
   await page.getByRole("button", { name: "← Compras" }).click();
   await page.getByText("#3023").first().click();
+  await page.getByRole("tab", { name: "Revisión general" }).click();
   await expect(page.getByLabel("Tipo de gasto").nth(0)).toHaveValue("sourcing_transport");
   await expect(page.getByLabel("Descripción (opcional)").nth(0)).toHaveValue("Cuatro camiones");
   await expect(page.getByLabel("Importe").nth(1)).toHaveValue("22.00");
