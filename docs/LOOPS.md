@@ -85,15 +85,18 @@ release destination:
   CI can deploy compatible rules to both projects after the reviewed change
   reaches its approved release path.
 - **The promotion order is fixed and linear:** local development → Preview
-  (validated by Fer as a real user) → Production (only with explicit human
-  approval). The agent never approves or self-promotes a release.
+  (validated by Fer as a real user) → Production. Reconciliation (2026-11-08):
+  releases go through CI only — by a person, or by the agent under the PO's
+  standing release authority with its hard gates (full green CI, context-free
+  independent review per PR, release guard). Data is never promoted.
 - **Data is never promoted.** Test data and seeds stay in dev
   (`scripts/seed-dev.cjs`, which aborts unless `projectId === 'store-os-dev'`).
   Production is never seeded.
 
 Every Firebase CLI command that can choose a project must specify its target.
 `.firebaserc` defaults to `store-os-dev`; no project or emulator namespace is
-created for local work. Production requires explicit human approval.
+created for local work. Production receives CI releases only (person, or
+agent under the PO's standing release authority with its gates).
 
 A change that would cause structural drift between dev and production (e.g. a
 new collection read in code but no rule for it) is a release blocker — fix it

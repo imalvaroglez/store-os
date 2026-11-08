@@ -3,7 +3,8 @@
 Store OS is a static SPA (Vite build) + Firebase (Auth + Firestore), deployed
 to Vercel. This repository uses exactly two existing Firebase projects: dev
 (`store-os-dev`) for all development, emulator work, and Preview; production
-(`store-os-f7cf8`) only after explicit human approval. Do not create or configure
+(`store-os-f7cf8`) via CI releases only — by a person, or by the agent under the
+PO's standing release authority (2026-11-08) with its gates. Do not create or configure
 a third project for this repository.
 
 ## 1. Use the existing Firebase projects
