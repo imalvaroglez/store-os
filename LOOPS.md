@@ -13,14 +13,17 @@ Política vigente tras eliminar el delivery harness como gate (ver `docs/adr/000
    npm run typecheck && npm run test && npm run build
    ```
 
-5. Revisión con subagentes read-only (code map, diseño de tests, estándares de `store-os-review`, seguridad multitienda) — son consejo, no gate. El gate real es CI + el humano que hace merge.
+5. Revisión con subagentes read-only (code map, diseño de tests, estándares de `store-os-review`, seguridad multitienda). Antes de liberar a producción, cada PR pasa por un **sub-agente independiente sin contexto** (solo diff + guías del repo): esa revisión es compuerta — los hallazgos abiertos bloquean el merge.
 6. Abre **draft PR** hacia `main`; espera CI (`build-test` + `rules-and-e2e`) y el deploy de Preview.
-7. El humano revisa y hace merge. La historia de producto pasa a Por liberar.
-8. Una persona autoriza explícitamente el release. La liberación a producción
-   cierra la historia: se registran commit y versión liberada en la issue y pasa
-   a Hecho, sin ronda adicional de aceptación. Defectos o ajustes posteriores
-   nacen como items nuevos. El trabajo operativo cierra con su entregable
-   concreto registrado.
+7. Merge: lo hace el humano, o el agente bajo la autorización permanente del
+   PO (2026-11-08) — en ambos casos tras CI completo en verde y revisión
+   independiente sin hallazgos abiertos. La historia de producto pasa a Por liberar.
+8. El release a producción puede autorizarlo una persona o ejecutarlo el agente
+   bajo esa misma autorización, siempre con versión incrementada y notas
+   (release guard) y verificación del deploy. La liberación cierra la historia:
+   se registran commit y versión liberada en la issue y pasa a Hecho, sin ronda
+   adicional de aceptación. Defectos o ajustes posteriores nacen como items
+   nuevos. El trabajo operativo cierra con su entregable concreto registrado.
 
 ## Backlog
 
@@ -38,7 +41,7 @@ El contexto de descubrimiento (entrevistas, diagnóstico, plan de acción) sigue
 
 ## Límites que se mantienen
 
-- Un agente nunca: mergea un PR, hace push a `main`, despliega producción, ni lee/escribe datos productivos.
+- Un agente nunca: hace push directo a `main` (solo merge de PR) ni lee/escribe datos productivos. Merge de PRs y liberación a producción están autorizados de forma permanente (PO, 2026-11-08) bajo CI completo en verde + revisión independiente sin contexto + release guard.
 - Nunca `firebase deploy --only ...` desde el agente; CI despliega Preview/Production.
 - Producción (`store-os-f7cf8`) intocable: siembra y pruebas solo en `store-os-dev`.
 - Los únicos IDs Firebase permitidos son `store-os-dev` para desarrollo y `store-os-f7cf8` para producción; cualquier otro destino bloquea el cambio.
