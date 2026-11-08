@@ -1,7 +1,7 @@
 import { trash } from './trash.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, chmod, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import childProcess, { execFileSync, spawn } from 'node:child_process';
@@ -13,7 +13,7 @@ import { capture, restore, remapFields, validateTarget, validateUsers, EMULATORS
 import { startSupervisor, stopSupervisor, supervisedCommand, cleanupStaleWorkspaces } from './supervisor.mjs';
 import { launchAgent } from './install.mjs';
 import { checkRecoveryIdentity, hasVerifiedBackup, recoveryKeyProof, verificationEnvironment, verifyCandidate } from './verification.mjs';
-import { parseArgs, preflight, runBackup, safeCode } from './cli.mjs';
+import { parseArgs, preflight, pruneTolerant, runBackup, safeCode } from './cli.mjs';
 
 async function workspace(t) { const dir = await mkdtemp(path.join(os.tmpdir(), 'store-os-backup-test-')); t.after(() => trash(dir)); return dir; }
 const name = date => `backup-${date.toISOString().replace(/[:.]/g, '-')}.tar.gz.age`;
@@ -284,4 +284,36 @@ test('trash still fails when the target survives a failed trash invocation', asy
   syncBuiltinESMExports();
   try { await assert.rejects(trash(file), { message: 'TRASH_FAILED' }); } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
   assert.equal(await exists(file), true);
+});
+test('retention denied by iCloud permissions becomes a recorded warning, not a failed backup', async t => {
+  const dir = await workspace(t); const destination = path.join(dir, 'icloud'); await mkdir(destination);
+  const names = Array.from({ length: 32 }, (_, i) => name(new Date(Date.UTC(2026, 10, 1 + i, 4))));
+  for (const archive of names) await writeFile(path.join(destination, archive), 'fixture');
+  const original = childProcess.execFile;
+  childProcess.execFile = (executable, args, options, callback) => args[0]?.startsWith?.(destination)
+    ? callback(Object.assign(new Error('couldn’t be moved to the trash'), { code: 'NSCocoaErrorDomain' }))
+    : original(executable, args, options, callback);
+  syncBuiltinESMExports();
+  let result;
+  try { result = await pruneTolerant(destination, names); } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
+  assert.equal(result.retentionError, 'TRASH_FAILED');
+  assert.deepEqual(result.ownedNames, names);
+  assert.equal((await readdir(destination)).length, 32);
+});
+test('structural retention errors stay fatal for the run', async t => {
+  const dir = await workspace(t); const destination = path.join(dir, 'icloud'); await mkdir(destination);
+  // The linked entry sits inside the removed daily range and its week already has a newer keeper.
+  const linked = name(new Date(Date.UTC(2026, 9, 30, 4)));
+  const real = Array.from({ length: 34 }, (_, i) => name(new Date(Date.UTC(2026, 9, 31 + i, 4))));
+  for (const archive of real) await writeFile(path.join(destination, archive), 'fixture');
+  await symlink(path.join(destination, real[0]), path.join(destination, linked));
+  await assert.rejects(pruneTolerant(destination, [linked, ...real]), { message: 'UNSAFE_RETENTION_ENTRY' });
+});
+test('retention without pending removals records no warning', async t => {
+  const dir = await workspace(t); const destination = path.join(dir, 'icloud'); await mkdir(destination);
+  const names = Array.from({ length: 3 }, (_, i) => name(new Date(Date.UTC(2026, 10, 1 + i, 4))));
+  for (const archive of names) await writeFile(path.join(destination, archive), 'fixture');
+  const result = await pruneTolerant(destination, names);
+  assert.equal(result.retentionError, null);
+  assert.deepEqual(result.ownedNames, names);
 });
