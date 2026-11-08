@@ -24,6 +24,14 @@ restauración comprobada. La descarga remota desde iCloud queda fuera del alcanc
 - Todos los días a las 21:00 `America/Mexico_City`; 30 últimas copias diarias
   y la última copia disponible de cada una de las 12 últimas semanas (lunes–domingo).
   Una misma copia puede satisfacer ambas retenciones. No se fabrican días omitidos.
+- macOS puede negar mover a la Papelera archivos dentro de iCloud Drive a procesos
+  sin Full Disk Access (NSCocoaErrorDomain 513); escribir y renombrar en el destino
+  sí funcionan. Por decisión de 2026-11-08, el exceso de copias al superar la
+  retención se retira manualmente desde Finder. Si la retención automática no
+  puede retirar un archivo, el respaldo verificado sigue siendo válido: el run
+  registra `lastRetentionError` (visible en `status` como `retentionError`) sin
+  marcar la copia como fallida ni notificar. Los errores estructurales de
+  retención (p. ej. `UNSAFE_RETENTION_ENTRY`) sí abortan el run.
 - `launchd` comprueba al iniciar sesión y cada 15 minutos. El calendario local
   dispara también a las 21:00; el cálculo interno siempre usa Ciudad de México.
   Si cambia la zona del sistema, el intervalo ejecuta la tarea dentro de los
@@ -177,6 +185,21 @@ invalida la aprobación y exige repetir preflight. No activar nuevos servicios.
 node "$HOME/Library/Application Support/Store OS Backups/runtime/scripts/backups/cli.mjs" run
 node "$HOME/Library/Application Support/Store OS Backups/runtime/scripts/backups/cli.mjs" status
 ```
+
+Para una copia extraordinaria solicitada explícitamente:
+
+```sh
+node "$HOME/Library/Application Support/Store OS Backups/runtime/scripts/backups/cli.mjs" run --manual
+```
+
+Este modo requiere un runtime que incluya `--manual` y una copia programada
+previa verificada. Si no existe, falla con `INITIAL_SCHEDULE_REQUIRED`: inicializar
+primero mediante `run` normal. Esto mantiene compatibilidad con el runtime
+programado anterior. Omite únicamente la
+comprobación de que el ciclo diario ya se cumplió; conserva presupuesto,
+bloqueo, cifrado, prueba de recuperación, retención y límites. Registra la copia
+como manual sin adelantar `lastScheduledDate`: la ejecución nocturna sigue
+pendiente. No borrar el estado ni alterar el reloj para forzar una copia.
 
 Cada `run` exige completar este ciclo antes de anunciar éxito:
 
