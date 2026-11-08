@@ -72,7 +72,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Arquitectura (lo esencial)
 
-- **Auth + roles:** `src/app/firebase/`. Email/password + Google; primer usuario → `super_admin`, los demás `member`. Las rutas administrativas requieren sesión; las rutas públicas del catálogo no.
+- **Auth + roles:** `src/app/firebase/`. Email/password + Google; `super_admin` solo por el correo de plataforma (`admin@store.os`); los demás `member`. Las rutas administrativas requieren sesión; las rutas públicas del catálogo no.
 - **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules`: `super_admin` puede operar cualquier tienda; los miembros sólo sus tiendas. El adaptador `firestoreData.ts` carga todos los datos operativos para `super_admin` y acota los de miembros.
 - **Estado:** `StoreProvider` mantiene el estado administrativo en memoria y lo sincroniza con Firestore. `localStorage` conserva únicamente preferencias, carrito público y borradores asociados a una persona autenticada.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
@@ -137,6 +137,6 @@ Sin pagos/checkout/carrito, sin facturas, sin códigos de barras (la Clave/SKU d
 
 ## Despliegue
 
-Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno + reglas). El primer usuario registrado se vuelve super-admin.
+Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno + reglas). `super_admin` solo por el correo de plataforma (`admin@store.os`).
 
 Los diseños detallados viven en `docs/superpowers/specs/`.

@@ -58,14 +58,19 @@ service cloud.firestore {
       ];
     }
 
-    // users/{uid} — readable by any signed-in user (needed for the first-user
-    // bootstrap count and for looking up members by email). Self create/update
+    // users/{uid} — identities are private (#176): an account reads only its
+    // own profile and only the platform super_admin can browse the directory.
+    // The former any-signed-in read allowed cross-store email enumeration.
+    // There is no first-user bootstrap count either: the allowlist above is
+    // the only path to a super_admin doc, so the client grants super_admin by
+    // verified email, never by counting the directory. Self create/update
     // require a VERIFIED email and identity fields consistent with the token
     // (anti-spoofing: a user can never claim someone else's — or an
     // unverified — email/emailNormalized/emailVerified). Cross-user updates by
     // super_admin may change role but never the identity fields.
     match /users/{uid} {
-      allow read: if isSignedIn();
+      allow get: if isSelf(uid) || isSuperAdmin();
+      allow list: if isSuperAdmin();
       allow create: if isSelf(uid)
         && hasVerifiedEmail()
         && request.resource.data.email == verifiedEmail()

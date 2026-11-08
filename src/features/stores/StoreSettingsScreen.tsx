@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { useAuth } from "../../app/firebase/AuthProvider";
-import { findAccountByEmail, type EmailAccount } from "../../app/firebase/auth";
 import { Button, TextField, SelectField, Dialog, Sheet, useToast } from "../../design-system";
 import { STORE_TYPE_LABELS } from "../../lib/labels";
 import { PublicCatalogProjectionError, SlugTakenError } from "../../app/firebase/firestoreData";
@@ -41,14 +40,12 @@ export function StoreSettingsScreen({
   const [whatsapp, setWhatsapp] = useState(store?.whatsappPhone ?? "");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteMsg, setInviteMsg] = useState<string | null>(null);
-  // Exact-email search result (single verified account or null = not found).
-  const [foundAccount, setFoundAccount] = useState<EmailAccount | null>(null);
+  const [transferUid, setTransferUid] = useState("");
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [transferEmail, setTransferEmail] = useState("");
   const [transferError, setTransferError] = useState<string | null>(null);
   const [confirmTransfer, setConfirmTransfer] = useState(false);
   const [editSite, setEditSite] = useState(false);
@@ -70,7 +67,8 @@ export function StoreSettingsScreen({
     return <p className="text-sm text-ink-soft">Tienda no encontrada.</p>;
   }
 
-  // Resolve member uids -> emails (best-effort via the users we can see).
+  // Member identities are private (#176): members render by uid (no profile
+  // reads); invitations carry only the canonical email via pendingInvites.
   const memberUids = store.memberUids ?? [];
   const pending = store.pendingInvites ?? [];
   // Owners and platform super_admins can manage the store. Other members keep
@@ -240,37 +238,14 @@ export function StoreSettingsScreen({
     });
   }
 
-  async function doSearch() {
-    if (!inviteEmail.trim()) return;
-    setBusy(true);
-    setInviteMsg(null);
-    setFoundAccount(null);
-    try {
-      const account = await findAccountByEmail(inviteEmail.trim());
-      setFoundAccount(account);
-      if (!account) {
-        setInviteMsg("No hay una cuenta con ese correo. Puedes enviar una invitación: quedará pendiente hasta que la persona cree su cuenta.");
-      }
-    } catch {
-      setInviteMsg("No se pudo buscar. Intenta de nuevo.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function doInvite() {
     if (!inviteEmail.trim()) return;
     setBusy(true);
     setInviteMsg(null);
     try {
-      const result = await inviteMember(store!.id, inviteEmail.trim());
-      setInviteMsg(
-        result === "invited"
-          ? "Miembro agregado."
-          : "Invitación enviada. Quedará pendiente hasta que la persona cree su cuenta."
-      );
+      await inviteMember(store!.id, inviteEmail.trim());
+      setInviteMsg("Invitación enviada. Quedará pendiente hasta que la persona entre con ese correo.");
       setInviteEmail("");
-      setFoundAccount(null);
     } catch {
       setInviteMsg("No se pudo invitar. Intenta de nuevo.");
     } finally {
@@ -281,9 +256,9 @@ export function StoreSettingsScreen({
   async function transferOwnership() {
     setTransferError(null);
     try {
-      await transferStoreOwnership(store!.id, transferEmail);
+      await transferStoreOwnership(store!.id, transferUid);
       toast.success("Propiedad transferida");
-      setTransferEmail("");
+      setTransferUid("");
     } catch (error) {
       setTransferError(error instanceof Error ? error.message : "No se pudo transferir la propiedad.");
     }
@@ -345,37 +320,29 @@ export function StoreSettingsScreen({
         {isOwnerOrAdmin && (
           <>
             <TextField
-              label="Buscar por correo"
+              label="Invitar por correo"
               placeholder="correo@ejemplo.com"
               type="email"
               value={inviteEmail}
-              onChange={(e) => { setInviteEmail(e.target.value); setFoundAccount(null); }}
+              onChange={(e) => setInviteEmail(e.target.value)}
             />
-            <Button full variant="secondary" onClick={doSearch} disabled={busy || !inviteEmail.trim()}>
-              Buscar cuenta
+            <Button full onClick={doInvite} disabled={busy || !inviteEmail.trim()}>
+              Enviar invitación
             </Button>
-            {foundAccount && (
-              <div className="flex items-center justify-between bg-surface rounded-md px-3 py-2 ring-1 ring-edge">
-                <span className="text-sm text-ink min-w-0">
-                  {foundAccount.email}
-                  {foundAccount.displayName && <span className="text-ink-soft"> · {foundAccount.displayName}</span>}
-                </span>
-                <Button size="sm" onClick={doInvite} disabled={busy}>
-                  Agregar
-                </Button>
-              </div>
-            )}
-            {foundAccount === null && inviteEmail.trim() !== "" && inviteMsg?.startsWith("No hay una cuenta") && (
-              <Button full onClick={doInvite} disabled={busy || !inviteEmail.trim()}>
-                Enviar invitación
-              </Button>
-            )}
           </>
         )}
         {isOwnerOrAdmin && (
           <div className="pt-2">
-            <TextField label="Transferir propiedad a" placeholder="correo@ejemplo.com" type="email" value={transferEmail} onChange={(e) => setTransferEmail(e.target.value)} />
-            <Button full variant="secondary" onClick={() => setConfirmTransfer(true)} disabled={!transferEmail.trim()}>Transferir propiedad</Button>
+            <SelectField
+              label="Transferir propiedad a"
+              value={transferUid}
+              onChange={(uid) => setTransferUid(uid)}
+              options={memberUids.map((uid) => ({
+                value: uid,
+                label: uid === user?.uid ? "Tú" : `Miembro ${uid.slice(0, 8)}`,
+              }))}
+            />
+            <Button full variant="secondary" onClick={() => setConfirmTransfer(true)} disabled={!transferUid || transferUid === store.ownerUid}>Transferir propiedad</Button>
             {transferError && <p className="text-xs text-danger">{transferError}</p>}
           </div>
         )}
