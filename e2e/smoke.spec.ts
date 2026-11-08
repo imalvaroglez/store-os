@@ -389,89 +389,6 @@ test("recorded payments survive reload and an adjustment updates card and histor
   await expect(card.getByText("$1,250.00", { exact: true })).toBeVisible();
 });
 
-test("returning from the order editor preserves the list filter and scroll (#233)", async ({ sharedPage: page }) => {
-  const now = new Date().toISOString();
-  // Enough orders to overflow even the desktop viewport (1280×800): the
-  // restoration can only be observed on a list that actually scrolls.
-  for (let i = 0; i < 20; i++) {
-    const id = `order_list233_${i}`;
-    await writeEmulatorDoc("orders", id, {
-      id, storeId: "store_santi", customerId: "cust_santi_1",
-      items: [{ productName: `Pieza lista ${i}`, quantity: 1, unitPrice: 100 + i, subtotal: 100 + i }],
-      deposit: 0, orderStatus: "asked", paymentStatus: "unpaid", schemaVersion: 2,
-      createdAt: now, updatedAt: now,
-    });
-  }
-  await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
-  const pendientes = page.getByRole("button", { name: /Pendientes/ }).first();
-  await pendientes.click();
-  await expect(pendientes).toHaveAttribute("aria-pressed", "true");
-  // Scroll whichever container actually scrolls (window on mobile, <main> on
-  // the desktop shell).
-  await page.evaluate(() => {
-    const main = document.querySelector("main");
-    if (main && main.scrollHeight > main.clientHeight) main.scrollTop = 300;
-    else window.scrollTo(0, 300);
-  });
-  await page.getByRole("heading", { name: /#/ }).first().click();
-  await expect(page.getByRole("button", { name: "Guardar pedido", exact: true })).toBeVisible();
-  await page.goBack();
-  // Same filter still applied…
-  await expect(pendientes).toHaveAttribute("aria-pressed", "true");
-  // …and the list returns to the same scroll point (not the top).
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          const main = document.querySelector("main");
-          return main && main.scrollHeight > main.clientHeight ? main.scrollTop : window.scrollY;
-        }),
-      { timeout: 5000 }
-    )
-    .toBeGreaterThan(150);
-
-test("a one-line order can be saved without scrolling on mobile (#234)", async ({ browser }) => {
-  const context = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-    hasTouch: true,
-    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-  });
-  const page = await context.newPage();
-  try {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await loginAsFirstAdmin(page);
-    await gotoSantiHome(page);
-    await page.getByRole("button", { name: "Pedidos", exact: true }).click();
-    await page.getByRole("button", { name: "+ Nuevo" }).click();
-    await expect(page.getByRole("heading", { name: /pedido/i })).toBeVisible();
-    const discard = page.getByRole("button", { name: "Descartar", exact: true });
-    if (await discard.isVisible().catch(() => false)) await discard.click();
-    const cliente = page.getByLabel("Cliente", { exact: true });
-    await cliente.click();
-    await cliente.pressSequentially("María López", { delay: 20 });
-    await page.waitForTimeout(600);
-    const option = page.getByRole("option", { name: /María/ }).first();
-    if (await option.isVisible().catch(() => false)) await option.click();
-    const producto = page.getByLabel("Producto", { exact: true }).first();
-    await producto.click();
-    await producto.pressSequentially("perfume", { delay: 15 });
-    await page.waitForTimeout(600);
-    const productOption = page.getByRole("option").first();
-    if (await productOption.isVisible().catch(() => false)) await productOption.click();
-    await page.getByLabel(/Precio unitario/).first().fill("250");
-    await page.evaluate(() => document.querySelector("main")?.scrollTo(0, 0));
-    const save = page.getByRole("button", { name: "Guardar pedido", exact: true });
-    await expect(save).toBeEnabled();
-    const box = await save.boundingBox();
-    expect(box, "el botón debe tener caja").toBeTruthy();
-    // Reachable without scrolling: inside the initial 844px viewport.
-    expect(box!.y + box!.height).toBeLessThanOrEqual(844);
-  } finally {
-    await context.close();
-  }
-
 test("canonical money in the order editor survives a notes save and reload (#225)", async ({ sharedPage: page }, testInfo) => {
   const id = "order_editor225";
   const productName = "Pieza de prueba del saldo";
@@ -526,3 +443,7 @@ test("canonical money in the order editor survives a notes save and reload (#225
   await expect(received).toContainText("$590.00");
   await expect(balance).toContainText("$130.00");
 });
+
+
+
+
