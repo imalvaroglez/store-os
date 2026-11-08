@@ -105,12 +105,13 @@ describe("modelo de dinero — invariantes sobre la matriz exhaustiva (#225 pre-
 
     // I5 — the WhatsApp ticket tells the SAME money story as the read model.
     const text = orderTicketText(order as Order, "Tienda", "Clienta");
-    const totalLine = text.split("\n").find((l) => l.startsWith("Total "));
+    // #222: Fer's WhatsApp format renders the money lines in *bold*.
+    const totalLine = text.split("\n").find((l) => l.startsWith("*Total* "));
     expect(totalLine, "el ticket siempre muestra Total").toBeTruthy();
-    expect(totalLine).toBe(`Total ${formatMoneyExact(totals.estimatedTotal)}`);
-    const saldoLine = text.split("\n").find((l) => l.startsWith("Saldo "));
+    expect(totalLine).toBe(`*Total* ${formatMoneyExact(totals.estimatedTotal)}`);
+    const saldoLine = text.split("\n").find((l) => l.startsWith("*Saldo* "));
     if (totals.balance > 0) {
-      expect(saldoLine, "con saldo pendiente el ticket lo muestra igual que el modelo").toBe(`Saldo ${formatMoneyExact(totals.balance)}`);
+      expect(saldoLine, "con saldo pendiente el ticket lo muestra igual que el modelo").toBe(`*Saldo* ${formatMoneyExact(totals.balance)}`);
     } else {
       expect(saldoLine, "sin saldo pendiente el ticket no muestra Saldo").toBeUndefined();
     }
