@@ -592,7 +592,11 @@ describe("canonical money in the editor (#225)", () => {
     createdAt: "2026-11-06", updatedAt: "2026-11-06",
   };
   const expectSummary = (received: string, balance: string) => {
-    expect(screen.getByText("Saldo").parentElement).toHaveTextContent(balance);
+    // #234 added a fixed action bar that repeats Total/Saldo: EVERY surface
+    // showing money (summary + bar) must carry the SAME canonical value.
+    for (const el of screen.getAllByText("Saldo")) {
+      expect(el.parentElement).toHaveTextContent(balance);
+    }
     expect(screen.getByText("Recibido").parentElement).toHaveTextContent(received);
   };
 

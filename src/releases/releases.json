@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.9.0",
+    "date": "2026.11.08",
+    "title": "Dinero confiable y captura más ágil",
+    "notes": [
+      "El editor de pedidos, la tarjeta y el mensaje de WhatsApp ahora cuentan el mismo dinero: lo recibido y el saldo respetan los cobros registrados, el saldo a favor y los reembolsos de posventa, al centavo.",
+      "Cada clienta tiene su saldo: lo que adelanta en un pedido puede compensar otro, y el aviso de pago ya no contradice al saldo real.",
+      "El detalle para compartir llega en tu formato exacto de WhatsApp, con encabezado y piezas agrupadas; también puedes imprimir o guardar el recibo en PDF.",
+      "Compras por ticket: cada ticket tiene sus propios productos y totales en pestañas, el código del proveedor ya no se borra al vincular o crear un producto, y la revisión general te lleva al campo exacto que falta.",
+      "El catálogo público refleja la disponibilidad real al surtir o vender piezas, sin necesidad de republicarlo a mano.",
+      "Captura más ágil en el celular: guardar un pedido ya no requiere hacer scroll, los formularios largos se desplazan dentro de su ventana, crear una clienta y usarla de inmediato ya no falla, y al volver de un pedido encuentras la lista tal como la dejaste (filtros y posición)."
+    ]
+  },
+  {
     "version": "1.8.1",
     "date": "2026.11.06",
     "title": "Correcciones de dinero",
