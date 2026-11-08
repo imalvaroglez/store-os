@@ -1,8 +1,8 @@
 import { type FullConfig } from "@playwright/test";
 import { wipeEmulator } from "./helpers";
 
-// Wipe Auth + Firestore in the emulator before the run, so the "first signup
-// becomes super_admin" bootstrap is deterministic. No-op if the emulator isn't
+// Wipe Auth + Firestore in the emulator before the run, so the allowlisted
+// ADMIN_EMAIL signup deterministically yields super_admin. No-op if the emulator isn't
 // reachable (e.g. CI without emulator).
 //
 // Storage is intentionally NOT wiped: the Storage emulator exposes no bulk-reset
