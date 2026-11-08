@@ -88,7 +88,7 @@ Todo desarrollo conectado usa `store-os-dev`. Copia `.env.example` a `.env`
 y coloca ahí las credenciales de ese proyecto. Las pruebas con emulador usan el
 mismo ID y mantienen Auth, Firestore, Storage y Functions en localhost: ejecuta
 `npm run emulators` y `npm run e2e:firebase`. Producción usa
-`store-os-f7cf8` únicamente después de aprobación humana explícita.
+`store-os-f7cf8` únicamente mediante releases por CI (persona o agente con la autorización permanente del PO, 2026-11-08).
 
 ## Decisiones de diseño
 
