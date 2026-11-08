@@ -4,7 +4,7 @@ Guía para trabajar en Store OS. Lee esto antes de empezar.
 
 ## Flujo de entrega
 
-Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI y Preview. Nunca merge, push a `main`, producción ni datos productivos.
+Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI, Preview, y —bajo la autorización permanente del PO (2026-11-08)— merge y liberación a producción, siempre con CI completo en verde, revisión independiente sin contexto del PR y release guard (versión + notas). Nunca push directo a `main` ni leer/escribir datos productivos.
 
 ## Gestión del trabajo
 
@@ -13,8 +13,9 @@ sobre documentos históricos para organización, estados y evidencias. El feedba
 se refina en issues, sin PR de documentación por cada solicitud; las áreas son
 permanentes y las épicas tienen objetivos finitos. Solo se asignan historias
 Listo; al tomar una se registra responsable y worktree. Para producto, merge
-significa Por liberar: Hecho requiere disponibilidad y aceptación verificadas
-tras una liberación humana autorizada.
+significa Por liberar; la liberación a producción cierra la historia como
+Hecho, sin ronda adicional de aceptación. Defectos o ajustes posteriores nacen
+como items nuevos.
 
 La cola vive en el tablero "Store OS" de [GitHub Projects](https://github.com/users/imalvaroglez/projects/1)
 (issues + PRs; Status nativo con estados en español / Prioridad / Tipo / Ciclo). La issue es la unidad de
@@ -51,7 +52,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Promoción de Preview a producción
 
-`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y solo se toca después de aprobación humana explícita. El mismo commit revisado en el PR y la rama `main` es el que se libera; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación y ejecútalo solo después de aprobación. Nunca copies el seed ni datos sintéticos de dev a producción.
+`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y solo recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. El mismo commit revisado en el PR y la rama `main` es el que se libera; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
 
 ## Regla de Firebase
 
@@ -59,7 +60,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Todo desarrollo conectado, prueba contra emuladores y Preview usa el ID `store-os-dev`.
 - Los emuladores usan ese mismo ID y el bucket de dev, pero todos sus servicios apuntan a `127.0.0.1`; no se crea otro proyecto ni namespace para el trabajo local.
 - `.firebaserc` deja `store-os-dev` como proyecto predeterminado. Todo comando Firebase que permita elegir proyecto debe indicar el destino explícitamente; los comandos de desarrollo apuntan a `store-os-dev`.
-- Producción (`store-os-f7cf8`) solo se usa para liberar un cambio aprobado explícitamente por una persona. El trabajo de desarrollo nunca ejecuta operaciones contra producción.
+- Producción (`store-os-f7cf8`) solo recibe releases vía CI (persona o agente bajo la autorización permanente del PO, 2026-11-08). El trabajo de desarrollo nunca ejecuta operaciones de datos contra producción.
 
 ## Regla permanente de arquitectura administrativa
 

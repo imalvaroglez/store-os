@@ -21,7 +21,11 @@ Five loops nest. Know which one you're running.
 - **Task Loop** — one bounded task: a **goal**, **acceptance criteria**, **validation commands**, **minimal fixes only**, and a **final report**. A task is one logical change, not a batch.
 - **Release QA Loop** — full verification **before Vercel**: real browser flows, bug classification (blocker / non-blocker), fix blockers, repeat until clean. See §4–§6.
 - **Product Loop** — **human decides capability → spec → agent implements → QA → deploy → feedback → next step.** No feature starts without a spec the human signed off on.
-- **Oversight Loop** — **human-owned.** Sets goals, limits scope, stops runaway complexity, approves release. **The human stays in this loop.** The agent never self-approves a release.
+- **Oversight Loop** — **human-owned.** Sets goals, limits scope, stops runaway complexity. **The human stays in this loop.**
+  Reconciliation (2026-11-08): the PO granted the agent standing release
+  authority under hard gates (full green CI, context-free independent review
+  per PR, release guard). The loop keeps its goal/limit role; releases no
+  longer require per-release human approval.
 
 > Scope creep stops here: if a change starts pulling in a new capability, halt and return to the Product Loop for a spec.
 
@@ -81,15 +85,18 @@ release destination:
   CI can deploy compatible rules to both projects after the reviewed change
   reaches its approved release path.
 - **The promotion order is fixed and linear:** local development → Preview
-  (validated by Fer as a real user) → Production (only with explicit human
-  approval). The agent never approves or self-promotes a release.
+  (validated by Fer as a real user) → Production. Reconciliation (2026-11-08):
+  releases go through CI only — by a person, or by the agent under the PO's
+  standing release authority with its hard gates (full green CI, context-free
+  independent review per PR, release guard). Data is never promoted.
 - **Data is never promoted.** Test data and seeds stay in dev
   (`scripts/seed-dev.cjs`, which aborts unless `projectId === 'store-os-dev'`).
   Production is never seeded.
 
 Every Firebase CLI command that can choose a project must specify its target.
 `.firebaserc` defaults to `store-os-dev`; no project or emulator namespace is
-created for local work. Production requires explicit human approval.
+created for local work. Production receives CI releases only (person, or
+agent under the PO's standing release authority with its gates).
 
 A change that would cause structural drift between dev and production (e.g. a
 new collection read in code but no rule for it) is a release blocker — fix it
