@@ -188,9 +188,11 @@ test("create a multi-line order with live totals", async ({ sharedPage: page }) 
   }
 
   await expect(page.getByText("Piezas").last()).toBeVisible();
-  await expect(page.getByText("$8,700").last()).toBeVisible();
+  // .first(): the fixed action bar (#234) renders a second Total/Saldo on
+  // mobile (hidden on desktop) — the summary's value is the first match.
+  await expect(page.getByText("$8,700").first()).toBeVisible();
   await page.getByLabel("Anticipo").fill("8700");
-  await expect(page.getByText("$0").last()).toBeVisible();
+  await expect(page.getByText("$0").first()).toBeVisible();
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
   await page.getByRole("button", { name: "Guardar pedido" }).click();
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
@@ -386,6 +388,47 @@ test("recorded payments survive reload and an adjustment updates card and histor
   await sheet.getByRole("button", { name: "Cerrar", exact: true }).click();
   await expect(card.getByText("$1,250.00", { exact: true })).toBeVisible();
 });
+
+test("a one-line order can be saved without scrolling on mobile (#234)", async ({ browser }) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await loginAsFirstAdmin(page);
+    await gotoSantiHome(page);
+    await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+    await page.getByRole("button", { name: "+ Nuevo" }).click();
+    await expect(page.getByRole("heading", { name: /pedido/i })).toBeVisible();
+    const discard = page.getByRole("button", { name: "Descartar", exact: true });
+    if (await discard.isVisible().catch(() => false)) await discard.click();
+    const cliente = page.getByLabel("Cliente", { exact: true });
+    await cliente.click();
+    await cliente.pressSequentially("María López", { delay: 20 });
+    await page.waitForTimeout(600);
+    const option = page.getByRole("option", { name: /María/ }).first();
+    if (await option.isVisible().catch(() => false)) await option.click();
+    const producto = page.getByLabel("Producto", { exact: true }).first();
+    await producto.click();
+    await producto.pressSequentially("perfume", { delay: 15 });
+    await page.waitForTimeout(600);
+    const productOption = page.getByRole("option").first();
+    if (await productOption.isVisible().catch(() => false)) await productOption.click();
+    await page.getByLabel(/Precio unitario/).first().fill("250");
+    await page.evaluate(() => document.querySelector("main")?.scrollTo(0, 0));
+    const save = page.getByRole("button", { name: "Guardar pedido", exact: true });
+    await expect(save).toBeEnabled();
+    const box = await save.boundingBox();
+    expect(box, "el botón debe tener caja").toBeTruthy();
+    // Reachable without scrolling: inside the initial 844px viewport.
+    expect(box!.y + box!.height).toBeLessThanOrEqual(844);
+  } finally {
+    await context.close();
+  }
 
 test("canonical money in the order editor survives a notes save and reload (#225)", async ({ sharedPage: page }, testInfo) => {
   const id = "order_editor225";
