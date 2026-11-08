@@ -34,9 +34,6 @@ export type AppUser = {
   role: Role;
 };
 
-/** Minimal account shape returned by exact-email search (no directory listing). */
-export type EmailAccount = { uid: string; email: string; displayName: string };
-
 const GOOGLE = new GoogleAuthProvider();
 const PLATFORM_ADMIN_EMAIL = "admin@store.os";
 
@@ -105,10 +102,12 @@ async function ensureUserDoc(fbUser: FbUser): Promise<AppUser> {
       role: isPlatformAdmin ? "super_admin" : role,
     };
   }
-  // The designated platform account is always super_admin; otherwise the first
-  // user bootstraps the platform and later signups are members.
-  const all = await getDocs(collection(db, "users"));
-  const role: Role = normalizeEmail(fbUser.email) === PLATFORM_ADMIN_EMAIL || all.empty ? "super_admin" : "member";
+  // The designated platform account is always super_admin; everyone else is a
+  // member. No first-user bootstrap count: the rules allowlist
+  // (isAllowlistedSuperAdmin) is the only path to a super_admin doc, and
+  // counting the directory would mean listing other accounts' identities
+  // (#176). A non-allowlisted first signup is a member by design.
+  const role: Role = normalizeEmail(fbUser.email) === PLATFORM_ADMIN_EMAIL ? "super_admin" : "member";
   await setDoc(ref, {
     ...identity,
     displayName: fbUser.displayName ?? "",
@@ -231,39 +230,6 @@ export function subscribeToAuth(
       onChange(null);
     }
   }, (error) => onError?.(error));
-}
-
-/**
- * Exact-email account search for inviting members (no directory enumeration):
- * returns ONE verified account or null. Tries the literal email first, then
- * the normalized one (stored as emailNormalized by ensureUserDoc).
- */
-export async function findAccountByEmail(email: string): Promise<EmailAccount | null> {
-  const { db } = getFirebase();
-  const literal = email.toLowerCase().trim();
-  const byEmail = await getDocs(
-    query(collection(db, "users"), where("email", "==", literal), where("emailVerified", "==", true))
-  );
-  if (!byEmail.empty) {
-    const d = byEmail.docs[0].data() as { email?: string; displayName?: string };
-    return { uid: byEmail.docs[0].id, email: d.email ?? literal, displayName: d.displayName ?? "" };
-  }
-  const byNormalized = await getDocs(
-    query(
-      collection(db, "users"),
-      where("emailNormalized", "==", normalizeEmail(email)),
-      where("emailVerified", "==", true)
-    )
-  );
-  if (byNormalized.empty) return null;
-  const d = byNormalized.docs[0].data() as { email?: string; displayName?: string };
-  return { uid: byNormalized.docs[0].id, email: d.email ?? literal, displayName: d.displayName ?? "" };
-}
-
-/** Look up a uid by email (for inviting members). Returns uid or null. */
-export async function findUidByEmail(email: string): Promise<string | null> {
-  const account = await findAccountByEmail(email).catch(() => null);
-  return account?.uid ?? null;
 }
 
 /** Email-link auth (for inviting members who don't have an account yet). */

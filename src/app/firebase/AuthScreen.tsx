@@ -3,7 +3,8 @@ import { signInWithEmail as signIn, signUpWithEmail as signUp, signInWithGoogle 
 import { Button, TextField, ScreenHeader } from "../../design-system";
 
 // Email/password sign-in / sign-up + Google. Shown as a sheet from Settings or a
-// standalone screen. First-ever signup becomes super_admin (handled in auth.ts).
+// standalone screen. Only the allowlisted platform email (admin@store.os)
+// becomes super_admin; every other signup is a member (handled in auth.ts).
 export function AuthScreen({ onDone }: { onDone?: () => void }) {
   const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
