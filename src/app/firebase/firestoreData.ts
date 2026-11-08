@@ -1233,6 +1233,71 @@ export function isPublished(p: Product): boolean {
  * doc per published product. Prunes stale publicProducts no longer published.
  * Idempotent.
  */
+/**
+ * Pure builder for the publicCatalogs/{slug} doc: active categories + published
+ * product summaries. Extracted from projectPublicForStore so the targeted
+ * stock-signal republish (#229) reuses the exact same shape.
+ */
+export function buildPublicCatalogDoc(
+  store: Store,
+  products: Product[],
+  categories: Category[]
+): Record<string, unknown> {
+  const published = products
+    .filter((p) => p.storeId === store.id && isPublished(p))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  const activeCats = categories
+    .filter((c) => c.storeId === store.id && c.active)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      description: c.description ?? null,
+      imageUrl: c.imageUrl ?? null,
+      sortOrder: c.sortOrder,
+    }));
+  return {
+    storeSlug: store.slug,
+    storeId: store.id, // anonymous product route resolves the detail doc id from here
+    categories: activeCats,
+    products: published.map((p) => projectPublicProductSummary(p, store.slug, store)),
+  };
+}
+
+/**
+ * #229: canonical stock moved (purchase reception, order reservation/release)
+ * and the public availability signal must follow without a manual "Republicar
+ * catálogo". Targeted and READ-FREE: the caller passes the post-change
+ * canonical products, so the catalog summary doc is rebuilt locally (1 write)
+ * and each changed published product's detail doc is patched (1 write each).
+ * Idempotent: recomputed from post-transaction values — a retry writes the
+ * same thing and never re-applies a stock delta. A failure here must NOT
+ * revert the reception/order (callers run it via persistInBackground).
+ */
+export async function republishStockSignals(
+  store: Store,
+  products: Product[],
+  categories: Category[],
+  changedProductIds: string[]
+): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "publicCatalogs", store.slug), buildPublicCatalogDoc(store, products, categories));
+  const changed = new Set(changedProductIds);
+  const writes: Promise<unknown>[] = [];
+  for (const p of products) {
+    if (p.storeId !== store.id || !changed.has(p.id) || !isPublished(p) || !p.slug) continue;
+    writes.push(
+      setDoc(
+        doc(db, "publicProducts", publicProductId(store.id, p.slug)),
+        { stockSignal: publicStockSignal(p) },
+        { merge: true }
+      )
+    );
+  }
+  await Promise.all(writes);
+}
+
 export async function projectPublicForStore(
   store: Store,
   products: Product[],
@@ -1248,32 +1313,10 @@ export async function projectPublicForStore(
   const writes: Promise<unknown>[] = [];
 
   // 2. Catalog: active categories + published product summaries.
-  const published = products.filter((p) => p.storeId === store.id && isPublished(p));
-  const activeCats = categories
-    .filter((c) => c.storeId === store.id && c.active)
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      slug: c.slug,
-      description: c.description ?? null,
-      imageUrl: c.imageUrl ?? null,
-      sortOrder: c.sortOrder,
-    }));
   writes.push(
-    setDoc(
-      doc(db, "publicCatalogs", store.slug),
-      {
-        storeSlug: store.slug,
-        storeId: store.id, // anonymous product route resolves the detail doc id from here
-        categories: activeCats,
-        products: published
-          .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-          .map((p) => projectPublicProductSummary(p, store.slug, store)),
-      },
-      {}
-    )
+    setDoc(doc(db, "publicCatalogs", store.slug), buildPublicCatalogDoc(store, products, categories))
   );
+  const published = products.filter((p) => p.storeId === store.id && isPublished(p));
 
   // 3. Per-product detail docs for published products.
   const keepIds = new Set<string>();

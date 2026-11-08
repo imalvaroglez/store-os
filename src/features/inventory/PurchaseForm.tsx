@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore, newSupplier, newProduct } from "../../app/StoreProvider";
 import {
   Button,
+  TabList,
+  Disclosure,
   Card,
   CheckboxField,
   SelectField,
@@ -48,15 +50,15 @@ import {
   type Supplier,
   type Product,
 } from "../../types";
+import { purchaseReviewIssues, ticketAmountKey, type PurchaseReviewIssue } from "./purchaseReview";
 import { SupplierForm } from "./SupplierForm";
 import { PurchasePdfImport, type PdfApplyPayload } from "./PurchasePdfImport";
 
 // Shared purchase editor — the single destination for BOTH entries (manual
 // capture and PDF import). Saving only persists the Purchase (a draft);
 // "Receive merchandise" (Recibir mercancía) is the only operation that moves inventory.
-// purchase-ux2: one responsive CSS grid (dense table on desktop, two-tier
-// rows on mobile), sticky footer, calculated line states, global amount
-// resolution and (cloud) bulk product creation.
+// Ticket-scoped capture; global filters and trip expenses live in review.
+// Navigation and totals remain reachable without returning to the page top.
 const LINE_STATUS_LABEL: Record<PurchaseLineStatus, string> = {
   amount_review: "Importe por revisar",
   unlinked: "Sin vincular",
@@ -94,6 +96,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const [supplierDraft, setSupplierDraft] = useState<Supplier | null>(null);
   const [productLineIdx, setProductLineIdx] = useState<number | null>(null);
   const [productDraft, setProductDraft] = useState<Product | null>(null);
+  const [review, setReview] = useState(false);
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [receiving, setReceiving] = useState(false);
   const [bulkCreating, setBulkCreating] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
@@ -106,12 +111,22 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const [productQueries, setProductQueries] = useState<Record<string, string>>({});
   const [pdfBusy, setPdfBusy] = useState(false);
 
+  useEffect(() => {
+    if (!focusTarget) return;
+    const root = document.getElementById(focusTarget);
+    const field = root?.matches("input, button, select, [tabindex]") ? root : root?.querySelector<HTMLElement>("input, button, select");
+    field?.focus();
+    field?.scrollIntoView?.({ block: focusTarget.startsWith("review:") ? "start" : "center" });
+    setFocusTarget(null);
+  }, [focusTarget, review, activeTicketId]);
+
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const suppliers = suppliersForStore(state.suppliers, activeStore.id);
   const products = productsForStore(state.products, activeStore.id)
     .sort((a, b) => a.name.localeCompare(b.name, "es-MX", { sensitivity: "base" }));
   const locked = effectivePurchaseStatus(draft) === "received";
+  const editDisabled = locked || saving || receiving || bulkCreating;
   const tickets = draft.tickets ?? [legacyPurchaseTicket(draft)];
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? tickets[0];
   const activeTotals = draft.tickets ? purchaseTicketTotals(draft, activeTicket.id) : purchaseTotals(draft);
@@ -131,11 +146,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const mismatchConfirmed =
     draft.confirmedMismatchAmount != null && Math.abs(mismatch - draft.confirmedMismatchAmount) < 0.005;
   const status = recalcPurchaseStatus(draft);
-  const invalidInput = Object.entries(amountDrafts).some(([key, raw]) => {
-    if (["discount", "shipping", "tax"].includes(key) && raw.trim() === "") return false;
-    const parsed = parseAmount(raw);
-    return parsed == null || parsed < 0 || (key.startsWith("quantity:") && (!Number.isSafeInteger(parsed) || parsed <= 0));
-  });
+  const reviewIssues = purchaseReviewIssues(draft, amountDrafts);
+  const inputIssues = reviewIssues.filter((issue) => issue.input);
+  const invalidInput = inputIssues.length > 0;
+  const fieldError = (key: string) => reviewIssues.find((issue) => issue.target === key && issue.input)?.message;
   // The single rule lives in recalcPurchaseStatus; the button just obeys it.
   let allocations: ReturnType<typeof purchaseCostAllocation> = [];
   let productCosts: ReturnType<typeof purchaseProductCosts> = new Map();
@@ -155,11 +169,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const saleByProduct = locked ? purchaseProductSaleCosts(draft)
     : purchaseProductSaleCosts({ ...draft, costAllocations: allocations });
   const quantityByLineId = new Map(draft.lines.map((line) => [line.lineId ?? "", line.quantity]));
-  const incompleteTickets = tickets.filter((ticket) => {
-    if (!draft.tickets) return false;
-    return !draft.lines.some((line) => line.ticketId === ticket.id)
-      || Math.abs(purchaseTicketTotals(draft, ticket.id).calculated - ticket.totalConfirmed) > 0.005;
-  });
+  const incompleteTickets = tickets.filter((ticket) => reviewIssues.some((issue) => issue.ticketId === ticket.id));
 
   const statuses = useMemo(() => draft.lines.map(lineStatus), [draft.lines]);
   const counts = useMemo(() => {
@@ -167,9 +177,17 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     for (const s of statuses) c[s] += 1;
     return c;
   }, [statuses]);
+  useEffect(() => {
+    if (filter !== "all" && counts[filter] === 0) setFilter("all");
+  }, [filter, counts]);
   const hasUnknown = counts.amount_review > 0;
   const activeUnknownCount = draft.lines.filter((line) => line.ticketId === activeTicket.id && line.sourceAmountType === "unknown").length;
-  const visible = statuses.map((s, i) => ({ line: draft.lines[i], status: s, idx: i })).filter((r) => filter === "all" || r.status === filter);
+  const visible = statuses.map((s, i) => ({ line: draft.lines[i], status: s, idx: i }))
+    .filter((r) => review ? filter === "all" || r.status === filter : (r.line.ticketId ?? tickets[0].id) === activeTicket.id);
+  const visibleUnlinked = visible.filter((row) => !row.line.productId).length;
+  const visibleUnknown = visible.some((row) => row.status === "amount_review");
+  const tabsId = `purchase-${draft.id}`;
+  const tabValue = review ? "review" : activeTicket.id;
 
   const blockReason = locked
     ? undefined
@@ -201,11 +219,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
   function selectTicket(id: string) {
     setActiveTicketId(id);
-    setAmountDrafts((previous) => {
-      const next = { ...previous };
-      for (const key of ["discount", "shipping", "tax", "totalConfirmed"]) delete next[key];
-      return next;
-    });
+    setReview(false);
+  }
+  function showReview() { setReview(true); setFocusTarget(`review:${draft.id}`); }
+  function openIssue(issue: PurchaseReviewIssue) {
+    selectTicket(issue.ticketId);
+    setFocusTarget(issue.target);
   }
   function addTicket() {
     const ticket: PurchaseTicket = { id: uid("pt"), totalConfirmed: 0 };
@@ -244,11 +263,11 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     setDraft(invalidateMismatch({ ...draft, lines: draft.lines.filter((_, i) => i !== idx) }));
   }
   function setAdjustment(field: "discount" | "shipping" | "tax", raw: string) {
-    setAmountDrafts((previous) => ({ ...previous, [field]: raw }));
+    setAmountDrafts((previous) => ({ ...previous, [ticketAmountKey(activeTicket.id, field)]: raw }));
     updateTicket({ [field]: parseAmount(raw) ?? 0 });
   }
   function setTotalPaid(raw: string) {
-    setAmountDrafts((previous) => ({ ...previous, totalConfirmed: raw }));
+    setAmountDrafts((previous) => ({ ...previous, [ticketAmountKey(activeTicket.id, "totalConfirmed")]: raw }));
     updateTicket({ totalConfirmed: parseAmount(raw) ?? 0 });
   }
   function setUnitCost(idx: number, raw: string) {
@@ -303,6 +322,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     if (!activeStore) return;
     if (!cloud) { toast.error("Inicia sesión y conecta Firebase para crear productos."); return; }
     const line = draft.lines[idx];
+    const costIssue = inputIssues.find((issue) => issue.target === `line:${line.lineId}`);
+    if (costIssue) {
+      openIssue(costIssue);
+      toast.error("Corrige el costo por pieza antes de crear este producto.");
+      return;
+    }
     const base = newProduct(activeStore.id);
     const fullName = line.variant ? `${line.name} ${line.variant}` : line.name;
     setProductDraft({
@@ -319,13 +344,19 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       setProductQueries((previous) => ({ ...previous, [draft.lines[idx].lineId!]: product.name }));
       // Linking identifies the product; it does not edit the purchase amount
       // or interpret the printed ticket. Both are explicit operator actions.
+      // The ticket's own text is likewise never replaced (#206): the linked
+      // product shows in "Producto en Store OS", and "Producto del ticket"
+      // only prefills from the product when nothing was captured yet.
+      const captured = draft.lines[idx].name.trim();
       updateLine(idx, {
         productId,
-        name: product.name,
+        name: captured || product.name,
         matchStatus: "matched",
       });
     } else {
-      updateLine(idx, { productId: "", name: "", matchStatus: "unmatched" });
+      // Unlinking clears the association only — the captured ticket text
+      // stays exactly as the operator typed or imported it.
+      updateLine(idx, { productId: "", matchStatus: "unmatched" });
     }
   }
   // Different suppliers can print different amount semantics. Resolve only
@@ -353,7 +384,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
 
   function applyPdf(payload: PdfApplyPayload) {
-    setAmountDrafts({});
+    // An import replaces this ticket's amounts, never another ticket's text.
+    setAmountDrafts((previous) => {
+      const next = { ...previous };
+      for (const field of ["discount", "shipping", "tax", "totalConfirmed"]) delete next[ticketAmountKey(activeTicket.id, field)];
+      return next;
+    });
     const parsedDate = payload.dateLabel ? parseSpanishDate(payload.dateLabel) : null;
     setDraft((d) => invalidateMismatch({
       ...d,
@@ -375,11 +411,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   }
 
   async function saveDraft(receive = false) {
+    if (saving || receiving) return;
     if (!cloud) {
       toast.error("Inicia sesión y conecta Firebase para guardar la compra de inventario.");
       return;
     }
-    if (invalidInput) { toast.error("Revisa los importes y las cantidades que estás escribiendo."); return; }
+    if (invalidInput) { showReview(); toast.error("Revisa los importes y las cantidades que estás escribiendo."); return; }
     if (incompleteExpenseCount > 0) {
       toast.error("Completa el importe de cada gasto o quita los gastos vacíos.");
       return;
@@ -400,11 +437,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       status: receive ? "ready" : status,
       updatedAt: nowIso(),
     };
+    setSaving(true);
     try {
       await upsertPurchase(next);
     } catch {
       toast.error("No se pudo guardar la compra. Revisa tu conexión e intenta de nuevo.");
       return;
+    } finally {
+      setSaving(false);
     }
     if (!receive) {
       setDraft(next);
@@ -460,9 +500,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   // requires cloud anyway). SKUs avoid collisions within the batch.
   async function bulkCreateProducts() {
     if (!activeStore || !cloud) return;
-    const targets = draft.lines.filter((l) => !l.productId);
+    if (invalidInput || incompleteExpenseCount > 0) {
+      showReview();
+      toast.error("Revisa los campos pendientes antes de crear el lote y guardar la compra.");
+      return;
+    }
+    const targets = visible.filter((row) => !row.line.productId);
     if (!targets.length) return;
-    if (hasUnknown) {
+    if (visibleUnknown) {
       toast.error("Primero interpreta los importes (unitario o total por línea).");
       return;
     }
@@ -476,17 +521,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       // The SKU generator sees the accumulated batch so two lines with the
       // same name can never collide inside one lot.
       const batchProducts: Product[] = [];
-      const newIds: (string | undefined)[] = []; // per-line new product id
       const lines = draft.lines.map((l, i) => {
-        if (l.productId) {
-          newIds[i] = undefined;
+        if (l.productId || !visible.some((row) => row.idx === i)) {
           return l;
         }
         const base = newProduct(activeStore.id);
         const fullName = l.variant ? `${l.name} ${l.variant}` : l.name;
         const sku = uniqueProductSku([...batchProducts, ...products], activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
         batchProducts.push({ ...base, name: fullName, cost: l.unitCost, sku });
-        newIds[i] = base.id;
         return { ...l, productId: base.id, matchStatus: "new_product" as const };
       });
       // The batch itself must carry the invalidation, not just local state.
@@ -512,22 +554,116 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     ? suppliers.find((s) => s.name.toLowerCase() === activeTicket.supplierName!.toLowerCase())
     : undefined;
 
+  const linesSection = (
+<div className="min-w-0 space-y-3">
+        <h2 className="font-semibold text-ink">{review ? "Productos de toda la compra" : "Productos de este ticket"}</h2>
+        {review && <div className="flex flex-wrap gap-1">
+          <FilterChip active={filter === "all"} onClick={() => setFilter("all")} label={`Todas (${draft.lines.length})`} />
+          {counts.amount_review > 0 && <FilterChip active={filter === "amount_review"} onClick={() => setFilter("amount_review")} label={`Importes (${counts.amount_review})`} />}
+          {counts.unlinked > 0 && <FilterChip active={filter === "unlinked"} onClick={() => setFilter("unlinked")} label={`Sin vincular (${counts.unlinked})`} />}
+          {counts.new_product > 0 && <FilterChip active={filter === "new_product"} onClick={() => setFilter("new_product")} label={`Nuevos (${counts.new_product})`} />}
+          {counts.linked > 0 && <FilterChip active={filter === "linked"} onClick={() => setFilter("linked")} label={`Vinculadas (${counts.linked})`} />}
+        </div>}
+        {visible.length === 0 && <p className="text-sm text-ink-soft">{review ? "No hay productos con este filtro." : "Agrega los productos de este ticket o importa su PDF."}</p>}
+        {visible.map(({ line, status: st, idx }) => (
+          <Card key={line.lineId} className="!p-3 !bg-surface-muted space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Badge tone={LINE_STATUS_TONE[st]}>{LINE_STATUS_LABEL[st]}</Badge>
+              {review && <span className="text-xs text-ink-soft">{ticketLabel(tickets.find((ticket) => ticket.id === line.ticketId) ?? tickets[0], tickets.findIndex((ticket) => ticket.id === line.ticketId))}</span>}
+              {!locked && <IconButton variant="ghost" aria-label="Quitar línea" disabled={editDisabled} onClick={() => removeLine(idx)}>✕</IconButton>}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <TextField aria-label="Producto" label="Producto del ticket" value={line.name} disabled={editDisabled}
+                onChange={(e) => updateLine(idx, { name: e.target.value, matchStatus: e.target.value ? line.matchStatus : "unmatched" })} />
+              <div id={`link:${line.lineId}`} className="min-w-0 scroll-mt-48">
+                <SearchSelect label="Producto en Store OS"
+                  value={productQueries[line.lineId!] ?? products.find((product) => product.id === line.productId)?.name ?? ""}
+                  disabled={editDisabled} onChange={(value) => {
+                    setProductQueries((previous) => ({ ...previous, [line.lineId!]: value }));
+                    if (line.productId) updateLine(idx, { productId: "", matchStatus: "unmatched" });
+                  }} onSelect={(option) => pickProduct(idx, option.value)}
+                  options={products.map((product) => ({ value: product.id, label: product.name, detail: `Existencia: ${product.quantityOnHand ?? 0}`, keywords: product.sku }))}
+                  placeholder="Buscar por nombre o clave…" action={{ label: "+ Crear nuevo producto", onClick: () => openMiniForm(idx) }} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_auto] gap-3 items-start">
+              <TextField id={`quantity:${line.lineId}`} aria-label="Cantidad" label="Cantidad" inputMode="numeric"
+                value={amountDrafts[`quantity:${line.lineId}`] ?? line.quantity.toString()} disabled={editDisabled}
+                error={fieldError(`quantity:${line.lineId}`)} onChange={(e) => setQuantity(idx, e.target.value)} />
+              <TextField id={`line:${line.lineId}`} aria-label="Costo unitario" label="Costo por pieza" inputMode="decimal"
+                value={amountDrafts[`line:${line.lineId}`] ?? (line.unitCost ?? 0).toString()} disabled={editDisabled}
+                error={fieldError(`line:${line.lineId}`)} onChange={(e) => setUnitCost(idx, e.target.value)} />
+              <div className="col-span-2 sm:col-span-1 sm:text-right text-sm"><p className="text-xs text-ink-soft">Total de la línea</p><p className="font-semibold py-2">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</p></div>
+            </div>
+            {line.sourceAmount != null && <div id={`source:${line.lineId}`} className="flex flex-wrap items-center gap-2 text-sm scroll-mt-48">
+              <span className="text-ink-soft">Importe del PDF: {formatMoneyExact(line.sourceAmount)}</span>
+              {st === "amount_review" && !locked && <>
+                <Button size="sm" variant="secondary" disabled={editDisabled} onClick={() => resolveAmount(idx, "unit")}>Unitario</Button>
+                <Button size="sm" variant="secondary" disabled={editDisabled} onClick={() => resolveAmount(idx, "line")}>Total línea</Button>
+              </>}
+            </div>}
+          </Card>
+        ))}
+        {!locked && <div className="flex flex-wrap gap-2">
+          {!review && <Button id={`add:${activeTicket.id}`} size="sm" variant="secondary" disabled={pdfBusy || editDisabled} onClick={addLine}>+ Agregar línea</Button>}
+          {cloud && visibleUnlinked > 1 && !visibleUnknown && <Button size="sm" variant="secondary" disabled={editDisabled || invalidInput || incompleteExpenseCount > 0} onClick={() => void bulkCreateProducts()}>
+            {bulkCreating ? "Creando…" : `Crear ${visibleUnlinked} productos`}
+          </Button>}
+        </div>}
+      </div>
+  );
+
   return (
-    <div className="mx-auto max-w-5xl space-y-5 pb-36">
+    <div className="mx-auto max-w-5xl space-y-5">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <TextField label="Nombre de la compra" placeholder="Ej. Centro joyero — 30 de octubre" value={draft.name ?? ""} disabled={locked} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        <TextField label="Nombre de la compra" placeholder="Ej. Centro joyero — 30 de octubre" value={draft.name ?? ""} disabled={editDisabled} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
         <Card className="!p-3 !bg-surface-muted text-sm">
           Una compra reúne los tickets del mismo viaje o surtido, aunque sean de distintos proveedores.
         </Card>
       </div>
-      <div className="flex flex-wrap gap-3 items-end border-t border-edge pt-4">
-        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
-          <SelectField label={locked ? "Ticket que estás revisando" : "Ticket que estás capturando"} value={activeTicket.id} onChange={selectTicket} disabled={pdfBusy}
-            options={tickets.map((ticket, index) => ({ value: ticket.id, label: ticketLabel(ticket, index) }))} />
+      <div className="sticky top-[var(--admin-header-height,0px)] z-30 bg-paper border-y border-edge py-2 space-y-2">
+        <TabList id={tabsId} label="Tickets y revisión" value={tabValue} disabled={pdfBusy || saving || receiving || bulkCreating}
+          items={[...tickets.map((ticket, index) => ({ value: ticket.id, label: ticketLabel(ticket, index) })), { value: "review", label: "Revisión general" }]}
+          onChange={(value) => value === "review" ? setReview(true) : selectTicket(value)} />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-ink min-w-0 break-words">{review ? "Todos los tickets y gastos de la compra" : ticketLabel(activeTicket, tickets.indexOf(activeTicket))}</p>
+          {!locked && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled} onClick={addTicket}>+ Agregar ticket</Button>}
         </div>
-        {!locked && <Button variant="secondary" disabled={pdfBusy} onClick={addTicket}>+ Agregar ticket</Button>}
-        {!locked && tickets.length > 1 && !draft.lines.some((line) => line.ticketId === activeTicket.id) && <Button variant="ghost" disabled={pdfBusy} onClick={removeTicket}>Quitar ticket vacío</Button>}
       </div>
+      <section id={`${tabsId}-panel`} role="tabpanel" aria-labelledby={`${tabsId}-tab-${tabValue}`} className="space-y-4">
+      {review && (
+        <section id={`review:${draft.id}`} tabIndex={-1} aria-label="Resumen de tickets" className="space-y-3 scroll-mt-[calc(var(--admin-header-height,0px)+9rem)]">
+          <h2 className="font-semibold text-ink">Revisa antes de recibir</h2>
+          <p className="text-sm text-ink-soft">Guardar borrador conserva la captura. Recibir mercancía actualiza el inventario cuando todos los tickets están completos.</p>
+          {tickets.map((ticket, index) => {
+            const totals = draft.tickets ? purchaseTicketTotals(draft, ticket.id) : purchaseTotals(draft);
+            const issues = locked ? [] : reviewIssues.filter((issue) => issue.ticketId === ticket.id);
+            return (
+              <Card key={ticket.id} className="space-y-2 !p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-semibold text-ink">{ticketLabel(ticket, index)}</h3>
+                  <Badge tone={issues.length ? "warning" : "success"}>{issues.length ? `${issues.length} pendientes` : locked ? "Recibido" : "Completo"}</Badge>
+                </div>
+                <dl className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                  <div><dt className="text-ink-soft">Calculado</dt><dd>{formatMoneyExact(totals.calculated)}</dd></div>
+                  <div><dt className="text-ink-soft">Pagado</dt><dd>{formatMoneyExact(ticket.totalConfirmed)}</dd></div>
+                  <div><dt className="text-ink-soft">Diferencia</dt><dd>{formatMoneyExact(Math.abs(totals.calculated - ticket.totalConfirmed))}</dd></div>
+                </dl>
+                {issues.length > 0 && <ul className="space-y-1">{issues.slice(0, 3).map((issue, i) => (
+                  <li key={`${issue.target}:${i}`}><Button variant="ghost" className="text-left !text-danger whitespace-normal" onClick={() => openIssue(issue)}>
+                    <span className="sr-only">{ticketLabel(ticket, index)}: </span>{issue.message}
+                  </Button></li>
+                ))}</ul>}
+                {issues.length > 3 && <p className="text-xs text-ink-soft">Y {issues.length - 3} pendientes más en este ticket.</p>}
+                <Button variant="secondary" size="sm" onClick={() => { selectTicket(ticket.id); setFocusTarget(ticketAmountKey(ticket.id, "totalConfirmed")); }}>
+                  {locked ? "Ver ticket" : "Revisar ticket"}
+                </Button>
+              </Card>
+            );
+          })}
+        </section>
+      )}
+      {!review && <>
       {/* ── Cabecera ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
@@ -537,13 +673,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             onChange={(v) => updateTicket({ supplierId: v || undefined, supplierName: suppliers.find((supplier) => supplier.id === v)?.name ?? activeTicket.supplierName })}
             options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
             placeholder="Elegir proveedor…"
-            disabled={locked}
+            disabled={editDisabled}
           />
           {!locked && (
             <Button
               size="sm"
               variant="ghost"
               className="mt-1 -ml-2"
+              disabled={editDisabled}
               onClick={() => {
                 if (!activeStore) return;
                 setSupplierDraft({ ...newSupplier(activeStore.id), name: activeTicket.supplierName ?? "" });
@@ -553,12 +690,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               + Nuevo proveedor
             </Button>
           )}
-          {!activeTicket.supplierId && <TextField label="Nombre del proveedor (si no está en la lista)" value={activeTicket.supplierName ?? ""} disabled={locked} onChange={(event) => updateTicket({ supplierName: event.target.value })} />}
+          {!activeTicket.supplierId && <TextField label="Nombre del proveedor (si no está en la lista)" value={activeTicket.supplierName ?? ""} disabled={editDisabled} onChange={(event) => updateTicket({ supplierName: event.target.value })} />}
           {(activeTicket.supplierId == null || supplierSuggestion) && activeTicket.supplierName && draft.origin === "pdf" && (
             <div className="mt-1 text-xs text-on-surface-soft">
               Proveedor detectado: {supplierSuggestion}{" "}
               {matchingSupplier ? (
-                <Button size="sm" variant="ghost" className="!px-1" onClick={() => updateTicket({ supplierId: matchingSupplier.id })}>
+                <Button size="sm" variant="ghost" className="!px-1" disabled={editDisabled} onClick={() => updateTicket({ supplierId: matchingSupplier.id })}>
                   Usar {matchingSupplier.name}
                 </Button>
               ) : (
@@ -566,6 +703,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   size="sm"
                   variant="ghost"
                   className="!px-1"
+                  disabled={editDisabled}
                   onClick={() => {
                     if (!activeStore) return;
                     setSupplierDraft({ ...newSupplier(activeStore.id), name: supplierSuggestion ?? activeTicket.supplierName ?? "" });
@@ -580,10 +718,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </div>
         <div>
           <TextField
-            label="Fecha"
+            label="Fecha de la compra"
             type="date"
             value={draft.date || todayIso()}
-            disabled={locked}
+            disabled={editDisabled}
             onChange={(e) => setDraft({ ...draft, date: e.target.value, dateInferred: false })}
           />
           {draft.dateInferred && <p className="text-xs text-on-surface-soft mt-1">Año sugerido según el documento — edítalo si no es correcto.</p>}
@@ -593,13 +731,13 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             label="Folio del ticket"
             placeholder="3023"
             value={activeTicket.folio ?? ""}
-            disabled={locked}
+            disabled={editDisabled}
             onChange={(e) => updateTicket({ folio: e.target.value || undefined })}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-soft">
             {draft.origin === "pdf" && <Badge tone="info">PDF importado</Badge>}
             {locked && <Badge tone="success">Recibida</Badge>}
-            {!locked && status === "needs_review" && <Badge tone="warning">Revisar</Badge>}
+            {!locked && incompleteTickets.some((ticket) => ticket.id === activeTicket.id) && <Badge tone="warning">Revisar</Badge>}
             {activeTicket.documentPath && (
               <Button
                 size="sm"
@@ -623,9 +761,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
 
       {/* ── Entrada PDF (solo hasta que ya hay líneas importadas) ── */}
       {!locked && !draft.lines.some((line) => line.ticketId === activeTicket.id) && (
-        <div className="flex justify-end">
+        <fieldset disabled={editDisabled} className="flex justify-end min-w-0">
           <PurchasePdfImport key={activeTicket.id} onApply={applyPdf} existingFingerprints={tickets.map((ticket) => ticket.documentFingerprint).filter((value): value is string => !!value)} onBusyChange={setPdfBusy} />
-        </div>
+        </fieldset>
       )}
 
       {/* ── Resolución global de importes ── */}
@@ -636,201 +774,59 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             significan en su documento?
           </p>
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={() => resolveTicketAmounts("unit")}>
+            <Button size="sm" variant="secondary" disabled={editDisabled} onClick={() => resolveTicketAmounts("unit")}>
               Unitarios
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => resolveTicketAmounts("line")}>
+            <Button size="sm" variant="secondary" disabled={editDisabled} onClick={() => resolveTicketAmounts("line")}>
               Total por línea
             </Button>
           </div>
         </div>
       )}
 
-      {/* ── Mercancía: filtros + tabla densa / filas móviles ── */}
-      <div>
-        <div className="flex flex-wrap items-center gap-2 mb-2">
-          <span className="text-xs font-semibold text-on-surface-soft uppercase tracking-wide">Productos de la compra</span>
-          <div className="flex flex-wrap gap-1">
-            <FilterChip active={filter === "all"} onClick={() => setFilter("all")} label={`Todas (${draft.lines.length})`} />
-            {counts.amount_review > 0 && <FilterChip active={filter === "amount_review"} onClick={() => setFilter("amount_review")} label={`Importes (${counts.amount_review})`} />}
-            {counts.unlinked > 0 && <FilterChip active={filter === "unlinked"} onClick={() => setFilter("unlinked")} label={`Sin vincular (${counts.unlinked})`} />}
-            {counts.new_product > 0 && <FilterChip active={filter === "new_product"} onClick={() => setFilter("new_product")} label={`Nuevos (${counts.new_product})`} />}
-            {counts.linked > 0 && <FilterChip active={filter === "linked"} onClick={() => setFilter("linked")} label={`Vinculadas (${counts.linked})`} />}
-          </div>
-        </div>
-
-        {/* Header row (desktop only), outside the rows' scroll flow */}
-        <div className="hidden xl:grid xl:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] gap-2 px-3 py-3 text-xs font-semibold text-ink-soft uppercase tracking-wide sticky top-0 z-10 rounded-lg border-b border-edge bg-paper">
-          <span>Estado</span>
-          <span>Producto</span>
-          <span>Cant.</span>
-          <span>Importe</span>
-          <span>Costo unit.</span>
-          <span>Total</span>
-          <span />{/* quitar */}
-          <span>Vincular producto</span>
-        </div>
-        <div className="space-y-1.5">
-          {visible.map(({ line, status: st, idx }) => (
-            <Card
-              key={line.lineId}
-              className="!p-3 xl:min-h-14 !bg-surface-muted grid grid-cols-2 xl:grid-cols-[auto_1fr_4rem_5rem_6rem_6rem_auto_1fr] xl:items-center gap-3"
-            >
-              {/* Mobile tier 1: status + name + printed amount. Desktop: flat grid cells. */}
-              <div className="col-span-2 flex items-start gap-2 xl:contents">
-                <div className="flex items-center pt-2.5">
-                  <Badge tone={LINE_STATUS_TONE[st]}>{LINE_STATUS_LABEL[st]}</Badge>
-                </div>
-                <div className="min-w-0 flex-1 xl:col-span-1">
-                  <TextField
-                    aria-label="Producto"
-                    label="Producto del ticket"
-                    labelClassName="xl:sr-only"
-                    value={line.name}
-                    disabled={locked}
-                    onChange={(e) => updateLine(idx, { name: e.target.value, matchStatus: e.target.value ? line.matchStatus : "unmatched" })}
-                  />
-                  {tickets.length > 1 && (
-                    <SelectField label="Ticket de esta línea" value={line.ticketId ?? tickets[0].id} disabled={locked}
-                      onChange={(ticketId) => updateLine(idx, { ticketId })}
-                      options={tickets.map((ticket, index) => ({ value: ticket.id, label: ticketLabel(ticket, index) }))} />
-                  )}
-                  <div className="xl:hidden mt-1 flex items-center justify-between gap-2 text-xs text-on-surface-soft">
-                    <span className="font-mono">{line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}</span>
-                    <span className="font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
-                  </div>
-                  {st === "amount_review" && !locked && line.sourceAmount != null && (
-                    <div className="xl:hidden mt-1 flex gap-1">
-                      <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "unit")}>
-                        Unitario
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "line")}>
-                        Total línea
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Mobile tier 2: qty/cost/delete on one line, linking below. */}
-              <div className="col-span-2 xl:contents">
-                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center xl:contents">
-                  <TextField
-                    aria-label="Cantidad"
-                    label="Cantidad"
-                    labelClassName="xl:sr-only"
-                    inputMode="numeric"
-                    value={amountDrafts[`quantity:${line.lineId}`] ?? line.quantity.toString()}
-                    disabled={locked}
-                    onChange={(e) => setQuantity(idx, e.target.value)}
-                  />
-                  <div className="hidden xl:block">
-                    <p className={`text-sm font-mono ${line.sourceAmount != null ? "text-ink-soft" : "text-ink-soft/40"}`}>
-                      {line.sourceAmount != null ? formatMoneyExact(line.sourceAmount) : "—"}
-                    </p>
-                    {st === "amount_review" && !locked && line.sourceAmount != null && (
-                      <div className="flex gap-0.5">
-                        <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "unit")}>
-                          Unitario
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => resolveAmount(idx, "line")}>
-                          Total
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  <TextField
-                    aria-label="Costo unitario"
-                    label="Costo por pieza"
-                    labelClassName="xl:sr-only"
-                    inputMode="decimal"
-                    value={amountDrafts[`line:${line.lineId}`] ?? (line.unitCost ?? 0).toString()}
-                    disabled={locked}
-                    onChange={(e) => setUnitCost(idx, e.target.value)}
-                  />
-                  <div className="hidden xl:flex items-center">
-                    <span className="text-sm font-semibold text-ink">{formatMoneyExact(line.quantity * (line.unitCost ?? 0))}</span>
-                  </div>
-                {!locked ? (
-                  <IconButton variant="ghost" aria-label="Quitar línea" className="!min-h-10 !min-w-10 xl:justify-self-center" onClick={() => removeLine(idx)}>
-                    ✕
-                  </IconButton>
-                ) : (
-                  <span className="hidden xl:block" />
-                )}
-                </div>
-                <div className="col-span-3 xl:col-span-1 min-w-0 mt-3 xl:mt-0">
-                  <SearchSelect
-                    label="Producto en Store OS"
-                    labelClassName="xl:sr-only"
-                    value={productQueries[line.lineId!] ?? products.find((product) => product.id === line.productId)?.name ?? ""}
-                    disabled={locked}
-                    onChange={(value) => {
-                      setProductQueries((previous) => ({ ...previous, [line.lineId!]: value }));
-                      if (line.productId) updateLine(idx, { productId: "", matchStatus: "unmatched" });
-                    }}
-                    onSelect={(option) => pickProduct(idx, option.value)}
-                    options={products.map((product) => ({
-                      value: product.id,
-                      label: product.name,
-                      detail: `Existencia: ${product.quantityOnHand ?? 0}`,
-                      keywords: product.sku,
-                    }))}
-                    placeholder="Buscar por nombre o clave…"
-                    action={{ label: "+ Crear nuevo producto", onClick: () => openMiniForm(idx) }}
-                  />
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-        {!locked && (
-          <div className="flex flex-wrap gap-2 mt-2">
-            <Button size="sm" variant="secondary" disabled={pdfBusy} onClick={addLine}>
-              + Agregar línea
-            </Button>
-            {tickets.length > 1 && <span className="self-center text-xs text-ink-soft">Se agregará al ticket {activeTicket.folio ? `#${activeTicket.folio}` : tickets.indexOf(activeTicket) + 1}.</span>}
-            {cloud && counts.unlinked > 1 && !hasUnknown && (
-              <Button size="sm" variant="secondary" disabled={bulkCreating} onClick={() => void bulkCreateProducts()}>
-                {bulkCreating ? "Creando…" : `Crear ${counts.unlinked} ${counts.unlinked === 1 ? "producto" : "productos"}`}
-              </Button>
-            )}
-          </div>
-        )}
-      </div>
+      </>}
+      <div className={review ? "space-y-4" : "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_19rem] gap-4 items-start"}>
+      {!review && linesSection}
 
       {/* ── Totales y reconciliación (contenido, no footer) ── */}
-      <div className="border-t border-edge pt-3 space-y-2">
-        <div className="flex justify-between text-sm">
+      {!review && <Card className="space-y-3 xl:sticky xl:top-36">
+        <h2 className="font-semibold text-ink">Totales de {activeTicket.folio ? `#${activeTicket.folio}` : `Ticket ${tickets.indexOf(activeTicket) + 1}`}</h2>
+        <div className="flex justify-between gap-3 text-sm">
           <span className="text-ink-soft">Subtotal de productos de este ticket</span>
           <span className="font-semibold text-ink">{formatMoneyExact(activeTotals.merchandise)}</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="space-y-3">
           <TextField
             label="Descuento"
             aria-label="Descuento"
+            id={ticketAmountKey(activeTicket.id, "discount")}
+            error={fieldError(ticketAmountKey(activeTicket.id, "discount"))}
             hint="Pesos descontados por el proveedor."
             inputMode="decimal"
-            disabled={locked}
-            value={amountDrafts.discount ?? (activeTicket.discount ?? 0).toString()}
+            disabled={editDisabled}
+            value={amountDrafts[ticketAmountKey(activeTicket.id, "discount")] ?? (activeTicket.discount ?? 0).toString()}
             onChange={(e) => setAdjustment("discount", e.target.value)}
           />
           <TextField
             label="Envío"
             aria-label="Envío"
+            id={ticketAmountKey(activeTicket.id, "shipping")}
+            error={fieldError(ticketAmountKey(activeTicket.id, "shipping"))}
             hint="Cargo del proveedor; no el traslado para surtir."
             inputMode="decimal"
-            disabled={locked}
-            value={amountDrafts.shipping ?? (activeTicket.shipping ?? 0).toString()}
+            disabled={editDisabled}
+            value={amountDrafts[ticketAmountKey(activeTicket.id, "shipping")] ?? (activeTicket.shipping ?? 0).toString()}
             onChange={(e) => setAdjustment("shipping", e.target.value)}
           />
           <TextField
             label="Impuestos"
             aria-label="Impuestos"
+            id={ticketAmountKey(activeTicket.id, "tax")}
+            error={fieldError(ticketAmountKey(activeTicket.id, "tax"))}
             hint="Solo el importe adicional que no esté incluido en los productos."
             inputMode="decimal"
-            disabled={locked}
-            value={amountDrafts.tax ?? (activeTicket.tax ?? 0).toString()}
+            disabled={editDisabled}
+            value={amountDrafts[ticketAmountKey(activeTicket.id, "tax")] ?? (activeTicket.tax ?? 0).toString()}
             onChange={(e) => setAdjustment("tax", e.target.value)}
           />
         </div>
@@ -841,10 +837,12 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         <TextField
           label="Total pagado"
           aria-label="Total pagado"
+            id={ticketAmountKey(activeTicket.id, "totalConfirmed")}
+            error={fieldError(ticketAmountKey(activeTicket.id, "totalConfirmed"))}
           hint="Lo que pagaste por este ticket, incluidos sus ajustes y su envío."
           inputMode="decimal"
-          disabled={locked}
-          value={amountDrafts.totalConfirmed ?? activeTicket.totalConfirmed.toString()}
+          disabled={editDisabled}
+          value={amountDrafts[ticketAmountKey(activeTicket.id, "totalConfirmed")] ?? activeTicket.totalConfirmed.toString()}
           onChange={(e) => setTotalPaid(e.target.value)}
         />
         {mismatch > (draft.tickets ? 0.005 : 0.5) && !locked && (
@@ -872,8 +870,15 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             </div>
           </div>
         )}
+        <div className="flex flex-wrap gap-2 border-t border-edge pt-3">
+          {tickets.indexOf(activeTicket) > 0 && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled && !locked} onClick={() => { const id = tickets[tickets.indexOf(activeTicket) - 1].id; selectTicket(id); setFocusTarget(ticketAmountKey(id, "totalConfirmed")); }}>Ticket anterior</Button>}
+          {tickets.indexOf(activeTicket) < tickets.length - 1 && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled && !locked} onClick={() => { const id = tickets[tickets.indexOf(activeTicket) + 1].id; selectTicket(id); setFocusTarget(ticketAmountKey(id, "totalConfirmed")); }}>Siguiente ticket</Button>}
+          <Button size="sm" variant="secondary" onClick={showReview}>Revisar toda la compra</Button>
+          {!locked && tickets.length > 1 && !draft.lines.some((line) => line.ticketId === activeTicket.id) && <Button size="sm" variant="ghost" disabled={editDisabled} onClick={removeTicket}>Quitar ticket vacío</Button>}
+        </div>
+      </Card>}
       </div>
-
+      {review && <>
       {/* ── Gastos separados del documento del proveedor ── */}
       <div className="border-t border-edge pt-3 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -884,7 +889,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             </p>
           </div>
           {!locked && (
-            <Button size="sm" variant="secondary" onClick={addExpense}>
+            <Button size="sm" variant="secondary" disabled={editDisabled} onClick={addExpense}>
               + Agregar gasto
             </Button>
           )}
@@ -902,7 +907,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                 <SelectField
                   label="Tipo de gasto"
                   value={expense.category}
-                  disabled={locked}
+                  disabled={editDisabled}
                   onChange={(category) => updateExpense(expense.id, { category })}
                   options={EXPENSE_CATEGORY_OPTIONS}
                 />
@@ -911,19 +916,19 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   inputMode="decimal"
                   placeholder="0.00"
                   required
-                  disabled={locked}
+                  disabled={editDisabled}
                   value={expenseAmountDrafts[expense.id] ?? (expense.amount > 0 ? expense.amount.toFixed(2) : "")}
                   onChange={(e) => setExpenseAmount(expense.id, e.target.value)}
                 />
                 <TextField
                   label="Descripción (opcional)"
                   placeholder="4 camiones"
-                  disabled={locked}
+                  disabled={editDisabled}
                   value={expense.description ?? ""}
                   onChange={(e) => updateExpense(expense.id, { description: e.target.value })}
                 />
                 {!locked && (
-                  <Button size="sm" variant="ghost" onClick={() => removeExpense(expense.id)}>
+                  <Button size="sm" variant="ghost" disabled={editDisabled} onClick={() => removeExpense(expense.id)}>
                     Quitar
                   </Button>
                 )}
@@ -933,7 +938,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   </p>
                 ) : (
                   <div className="sm:col-span-2 lg:col-span-4"><CheckboxField label="Costo del inventario" caption="Repartir este gasto entre las piezas del viaje"
-                    disabled={locked}
+                    disabled={editDisabled}
                     checked={expense.includeInInventoryCost ?? expense.category === "sourcing_transport"}
                     onChange={(includeInInventoryCost) => { if (!locked) updateExpense(expense.id, { includeInInventoryCost }); }} /></div>
                 ))}
@@ -1041,6 +1046,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             <div className="flex justify-between gap-3 text-sm"><span>Gastos del viaje repartidos</span><span>{formatMoneyExact(allocations.reduce((sum, allocation) => sum + allocation.sourcingExpenseCents, 0) / 100)}</span></div>
             {saleCentsTotal > 0 && <div className="flex justify-between gap-3 text-sm"><span>Gastos de venta repartidos</span><span>{formatMoneyExact(saleCentsTotal / 100)}</span></div>}
             <div className="flex justify-between gap-3 font-semibold"><span>Costo completo de las piezas</span><span>{formatMoneyExact(allocations.reduce((sum, allocation) => sum + allocation.totalCents, 0) / 100)}</span></div>
+            <Disclosure label="Ver costo por producto">
             {[...productCosts].map(([id, cost]) => {
               const sale = saleByProduct.get(id);
               return (
@@ -1051,6 +1057,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                 </div>
               );
             })}
+            </Disclosure>
           </>}
         </Card>
       )}
@@ -1058,9 +1065,13 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       <TextArea
         label="Notas"
         value={draft.notes ?? ""}
-        disabled={locked}
+        disabled={editDisabled}
         onChange={(e) => setDraft({ ...draft, notes: e.target.value || undefined })}
       />
+
+      <Disclosure label={`Revisar productos (${draft.lines.length} renglones)`}>{linesSection}</Disclosure>
+      </>}
+      </section>
 
       {locked ? (
         <p className="text-sm text-on-surface-soft">
@@ -1068,20 +1079,20 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </p>
       ) : (
         /* Sticky footer: total, diferencia y acciones — nothing else. */
-        <div className="fixed inset-x-0 z-40 border-t border-edge bg-surface px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-sm bottom-[calc(4.25rem+env(safe-area-inset-bottom))] md:bottom-0">
+        <div className="sticky z-30 border-t border-edge bg-surface p-3 shadow-sm bottom-[calc(4.25rem+env(safe-area-inset-bottom))] md:bottom-0 rounded-lg">
           <div className="max-w-5xl mx-auto">
-            <div className="flex items-baseline justify-between text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
               <span className="text-ink-soft">
                 Compra {formatMoneyExact(calculated + sourcingExpenseTotal)}
-                {mismatch > 0.5 && <span className="text-warning"> · difiere {formatMoneyExact(mismatch)}</span>}
+                {!review && mismatch > 0.5 && <span className="text-warning"> · difiere {formatMoneyExact(mismatch)}</span>}
               </span>
-              {blockReason && <span className="text-xs text-warning">{blockReason}</span>}
+              {blockReason && <Button size="sm" variant="ghost" className="text-xs !text-danger text-left whitespace-normal" onClick={showReview}>{blockReason} · Ver pendientes</Button>}
             </div>
             <div className="flex gap-2 mt-1.5">
-              <Button variant="secondary" className="flex-1" disabled={receiving || pdfBusy || incompleteExpenseCount > 0} onClick={() => void saveDraft(false)}>
-                Guardar borrador
+              <Button variant="secondary" className="flex-1" disabled={saving || receiving || pdfBusy || bulkCreating || incompleteExpenseCount > 0} onClick={() => void saveDraft(false)}>
+                {saving ? "Guardando…" : "Guardar borrador"}
               </Button>
-              <Button className="flex-1" disabled={pdfBusy || !canReceive || incompleteExpenseCount > 0 || receiving} onClick={() => void saveDraft(true)}>
+              <Button className="flex-1" disabled={saving || bulkCreating || pdfBusy || !canReceive || incompleteExpenseCount > 0 || receiving} onClick={() => void saveDraft(true)}>
                 {receiving ? "Recibiendo…" : "Recibir mercancía"}
               </Button>
             </div>
@@ -1118,10 +1129,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             onDone={async (saved) => {
               await upsertProduct(saved);
               setProductQueries((previous) => ({ ...previous, [draft.lines[productLineIdx].lineId!]: saved.name }));
+              // Creating a product links it to the line but never rewrites
+              // the ticket's captured text or cost (#206): the mini form was
+              // prefilled FROM the line; its edits belong to the product
+              // master, not retroactively to the purchase line.
+              const captured = draft.lines[productLineIdx].name.trim();
               updateLine(productLineIdx, {
                 productId: saved.id,
-                name: saved.name,
-                unitCost: saved.cost ?? 0,
+                name: captured || saved.name,
                 matchStatus: "new_product",
               });
               setProductLineIdx(null);
