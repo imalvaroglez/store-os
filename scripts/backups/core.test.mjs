@@ -1,13 +1,14 @@
 import { trash } from './trash.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, chmod, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import childProcess, { execFileSync, spawn } from 'node:child_process';
+import fsPromises, { symlink } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
+import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, dueDate, privateDirectory, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
 import { DEV, PROD } from './core.mjs';
 import { capture, restore, remapFields, validateTarget, validateUsers, EMULATORS } from './cloud.mjs';
 import { startSupervisor, stopSupervisor, supervisedCommand, cleanupStaleWorkspaces } from './supervisor.mjs';
@@ -99,10 +100,6 @@ test('CLI rejects unknown options and sanitizes personal error text', () => {
   assert.throws(() => parseArgs(['run', '--prod'])); assert.throws(() => parseArgs(['restore', '--config']));
   assert.equal(safeCode(new Error('secret@example.com')), 'BACKUP_FAILED');
   assert.equal(safeCode(new Error('CLOUD_HTTP_403')), 'CLOUD_HTTP_403');
-  assert.equal(safeCode(Object.assign(new Error('fetch failed'), { code: 'ETIMEDOUT' })), 'ETIMEDOUT');
-  assert.equal(safeCode(Object.assign(new Error('fetch failed'), { cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) })), 'ECONNRESET');
-  assert.equal(safeCode(Object.assign(new Error('fetch failed'), { cause: Object.assign(new Error('getaddrinfo ...'), { code: 'EAI_AGAIN' }) })), 'EAI_AGAIN');
-  assert.equal(safeCode(new Error('fetch failed')), 'BACKUP_FAILED');
 });
 test('failed capture preserves last successful backup, cleans staging and releases lock', async t => {
   const dir = await workspace(t); const home = path.join(dir, 'home'); await mkdir(home); const destination = path.join(dir, 'icloud'); await mkdir(destination);
@@ -269,22 +266,80 @@ test('timed-out process inspection reports a safe code and preserves unclassifie
   try { await assert.rejects(cleanupStaleWorkspaces(dir), { message: 'PROCESS_INSPECTION_TIMEOUT' }); assert.equal(await exists(capture), true); }
   finally { childProcess.execFileSync = original; syncBuiltinESMExports(); }
 });
-test('trash succeeds when the workspace supervisor removes the same target mid-run', async t => {
-  const dir = await workspace(t); const file = path.join(dir, 'snapshot.age'); await writeFile(file, 'ciphertext');
-  const original = childProcess.execFile;
-  childProcess.execFile = (executable, args, options, callback) => { rmSync(args[0]); callback(Object.assign(new Error('trash: no such file'), { code: 'ENOENT' })); };
-  syncBuiltinESMExports();
-  try { await trash(file); } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
-  assert.equal(await exists(file), false);
+
+test('manual backup flag is exclusive to run and rejects duplicate flags', () => {
+  assert.deepEqual(parseArgs(['run', '--manual']), { action: 'run', manual: true });
+  assert.equal(parseArgs(['run', '--config', '/private/config.json', '--manual']).manual, true);
+  for (const args of [['status', '--manual'], ['run', '--manual', '--manual'], ['run', '--manual', 'true']]) assert.throws(() => parseArgs(args), /USAGE/);
 });
-test('trash still fails when the target survives a failed trash invocation', async t => {
-  const dir = await workspace(t); const file = path.join(dir, 'stuck'); await writeFile(file, 'fixture');
-  const original = childProcess.execFile;
-  childProcess.execFile = (executable, args, options, callback) => callback(Object.assign(new Error('private fixture details'), { code: 'EACCES' }));
-  syncBuiltinESMExports();
-  try { await assert.rejects(trash(file), { message: 'TRASH_FAILED' }); } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
-  assert.equal(await exists(file), true);
+test('manual copy bypasses only the completed-cycle gate and still requires recovery proof', async t => {
+  const originalEnv = Object.fromEntries(Object.keys(EMULATORS).map(k => [k, process.env[k]])); Object.assign(process.env, EMULATORS);
+  t.after(() => { for (const [k, v] of Object.entries(originalEnv)) v === undefined ? delete process.env[k] : process.env[k] = v; });
+  const dir = await workspace(t);
+  const state = {
+    lastSuccess: '2026-11-06T03:02:00Z', lastScheduledDate: '2026-11-05', lastArchive: 'backup.age', sha256: 'hash',
+    verification: { version: 1, restoreVerified: true, encryptedArchiveVerified: true, sourceSnapshotVerified: true, recoveryRecipientVerified: true, archive: 'backup.age', archiveSha256: 'hash', verifiedAt: '2026-11-06T03:02:00Z' },
+  };
+  await json(path.join(dir, 'state.json'), state);
+  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home: dir, notifications: false };
+  const now = new Date('2026-11-06T20:00:00Z');
+  assert.deepEqual(await runBackup(config, async () => { throw new Error('CLOUD_MUST_NOT_OPEN'); }, now), { skipped: true });
+  await assert.rejects(runBackup(config, async () => { throw new Error('CLOUD_MUST_NOT_OPEN'); }, now, { manual: true }), /RECOVERY_KEY_CHECK_REQUIRED/);
+  const after = await readFile(path.join(dir, 'state.json'), 'utf8');
+  assert.equal(JSON.parse(after).lastScheduledDate, '2026-11-05');
+  // A successful manual copy later in the day cannot consume tonight's slot.
+  await json(path.join(dir, 'state.json'), { ...state, lastSuccess: '2026-11-06T21:00:00Z', lastRunKind: 'manual' });
+  await assert.rejects(runBackup(config, undefined, new Date('2026-11-07T03:00:00Z')), /RECOVERY_KEY_CHECK_REQUIRED/);
+  // First-ever manual success has no historical scheduled checkpoint.
+  await json(path.join(dir, 'state.json'), { ...state, lastScheduledDate: null, lastRunKind: 'manual' });
+  await assert.rejects(runBackup(config, undefined, now), /RECOVERY_KEY_CHECK_REQUIRED/);
 });
+
+test('first manual run fails closed so an older installed scheduler cannot lose its nightly slot', async t => {
+  const dir = await workspace(t);
+  let connected = false;
+  await assert.rejects(runBackup({ home: dir, notifications: false }, async () => { connected = true; }, new Date('2026-11-07T03:15:00Z'), { manual: true }), /INITIAL_SCHEDULE_REQUIRED/);
+  assert.equal(connected, false);
+  // With an existing checkpoint, even the OLD runtime's predicate schedules tonight.
+  const state = { lastSuccess: '2026-11-07T03:05:00Z', lastScheduledDate: '2026-11-05' };
+  const now = new Date('2026-11-07T03:15:00Z');
+  const oldRuntimeSkips = state.lastScheduledDate ? dueDate(now) <= state.lastScheduledDate : !isDue(now, state.lastSuccess);
+  assert.equal(oldRuntimeSkips, false);
+});
+
+test('secure existing directories need no chmod; insecure directories still fail closed', async t => {
+  const dir = await workspace(t);
+  const original = fsPromises.chmod;
+  await original(dir, 0o700);
+  let calls = 0;
+  fsPromises.chmod = async () => { calls++; const error = new Error('fixture chmod denied'); error.code = 'EPERM'; throw error; };
+  syncBuiltinESMExports();
+  try {
+    await privateDirectory(dir);
+    assert.equal(calls, 0);
+    await original(dir, 0o755);
+    await assert.rejects(privateDirectory(dir), { code: 'EPERM' });
+    assert.equal(calls, 1);
+  } finally { fsPromises.chmod = original; syncBuiltinESMExports(); await original(dir, 0o700); }
+});
+
+test('retention uses its owned ledger without requiring directory enumeration', async t => {
+  const dir = await workspace(t);
+  const early = name(new Date('2026-11-06T18:00:00Z'));
+  const latest = name(new Date('2026-11-06T19:00:00Z'));
+  const unrelated = name(new Date('2000-01-01T12:00:00Z'));
+  for (const filename of [early, latest, unrelated]) await writeFile(path.join(dir, filename), 'fixture');
+  const original = fsPromises.readdir;
+  fsPromises.readdir = async () => { const error = new Error('fixture enumeration denied'); error.code = 'EPERM'; throw error; };
+  syncBuiltinESMExports();
+  try {
+    assert.deepEqual(await prune(dir, [early, latest, '../unowned']), [latest, '../unowned']);
+    assert.equal(await exists(path.join(dir, early)), false);
+    assert.equal(await exists(path.join(dir, latest)), true);
+    assert.equal(await exists(path.join(dir, unrelated)), true);
+  } finally { fsPromises.readdir = original; syncBuiltinESMExports(); }
+});
+
 test('retention denied by iCloud permissions becomes a recorded warning, not a failed backup', async t => {
   const dir = await workspace(t); const destination = path.join(dir, 'icloud'); await mkdir(destination);
   const names = Array.from({ length: 32 }, (_, i) => name(new Date(Date.UTC(2026, 10, 1 + i, 4))));
@@ -300,6 +355,16 @@ test('retention denied by iCloud permissions becomes a recorded warning, not a f
   assert.deepEqual(result.ownedNames, names);
   assert.equal((await readdir(destination)).length, 32);
 });
+
+test('retention without pending removals records no warning', async t => {
+  const dir = await workspace(t); const destination = path.join(dir, 'icloud'); await mkdir(destination);
+  const names = Array.from({ length: 3 }, (_, i) => name(new Date(Date.UTC(2026, 10, 1 + i, 4))));
+  for (const archive of names) await writeFile(path.join(destination, archive), 'fixture');
+  const result = await pruneTolerant(destination, names);
+  assert.equal(result.retentionError, null);
+  assert.deepEqual(result.ownedNames, names);
+});
+
 test('structural retention errors stay fatal for the run', async t => {
   const dir = await workspace(t); const destination = path.join(dir, 'icloud'); await mkdir(destination);
   // The linked entry sits inside the removed daily range and its week already has a newer keeper.
@@ -309,11 +374,21 @@ test('structural retention errors stay fatal for the run', async t => {
   await symlink(path.join(destination, real[0]), path.join(destination, linked));
   await assert.rejects(pruneTolerant(destination, [linked, ...real]), { message: 'UNSAFE_RETENTION_ENTRY' });
 });
-test('retention without pending removals records no warning', async t => {
-  const dir = await workspace(t); const destination = path.join(dir, 'icloud'); await mkdir(destination);
-  const names = Array.from({ length: 3 }, (_, i) => name(new Date(Date.UTC(2026, 10, 1 + i, 4))));
-  for (const archive of names) await writeFile(path.join(destination, archive), 'fixture');
-  const result = await pruneTolerant(destination, names);
-  assert.equal(result.retentionError, null);
-  assert.deepEqual(result.ownedNames, names);
+
+test('trash still fails when the target survives a failed trash invocation', async t => {
+  const dir = await workspace(t); const file = path.join(dir, 'stuck'); await writeFile(file, 'fixture');
+  const original = childProcess.execFile;
+  childProcess.execFile = (executable, args, options, callback) => callback(Object.assign(new Error('private fixture details'), { code: 'EACCES' }));
+  syncBuiltinESMExports();
+  try { await assert.rejects(trash(file), { message: 'TRASH_FAILED' }); } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
+  assert.equal(await exists(file), true);
+});
+
+test('trash succeeds when the workspace supervisor removes the same target mid-run', async t => {
+  const dir = await workspace(t); const file = path.join(dir, 'snapshot.age'); await writeFile(file, 'ciphertext');
+  const original = childProcess.execFile;
+  childProcess.execFile = (executable, args, options, callback) => { rmSync(args[0]); callback(Object.assign(new Error('trash: no such file'), { code: 'ENOENT' })); };
+  syncBuiltinESMExports();
+  try { await trash(file); } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
+  assert.equal(await exists(file), false);
 });

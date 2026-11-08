@@ -300,6 +300,7 @@ export function OrderForm({
   const totals = useMemo(() => {
     try {
       return orderTotals({
+        ...order,
         items: lines.map((line) => ({
           productId: line.productId,
           productName: line.productName,
@@ -315,7 +316,7 @@ export function OrderForm({
       if (error instanceof RangeError) return null;
       throw error;
     }
-  }, [deposit, lines]);
+  }, [deposit, lines, order]);
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
   // pieza. Only lines with content enter the estimate; an empty placeholder
   // line is not "sin costo". An unsafe amount throws RangeError here too —
@@ -823,7 +824,7 @@ export function OrderForm({
         <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
           <StatRow label="Piezas">{totals?.pieces ?? "—"}</StatRow>
           <StatRow label="Total">{totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</StatRow>
-          <StatRow label="Anticipo">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
+          <StatRow label="Recibido">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
           <StatRow label="Saldo" tone={totals && totals.balance > 0 ? "danger" : "success"}>{totals ? <Money exact amount={totals.balance} /> : "—"}</StatRow>
           <StatRow
             label="Ganancia"
