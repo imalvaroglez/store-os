@@ -25,6 +25,9 @@ function centsOf(value: unknown): number {
 export type IncidentPieceLocation =
   | "with_customer"
   | "quarantined"
+  // repaired ≠ released: stays non-sellable until Fer authorizes
+  // the return to sale or writes it off (#203 r2).
+  | "repaired_held"
   | "back_in_stock"
   | "written_off";
 
@@ -49,10 +52,12 @@ export function incidentState(incident: OrderIncident): IncidentState {
   let pieceLocation: IncidentPieceLocation = "with_customer";
   if (confirmed) {
     pieceLocation = "quarantined";
-    if (kinds.has("repaired") || kinds.has("provider_replacement") || kinds.has("returned_to_sale")) {
+    if (kinds.has("provider_replacement") || kinds.has("returned_to_sale")) {
       pieceLocation = "back_in_stock";
     } else if (kinds.has("written_off")) {
       pieceLocation = "written_off";
+    } else if (kinds.has("repaired")) {
+      pieceLocation = "repaired_held"; // repaired ≠ released: still quarantined
     }
   }
   const refundExecutedCents = eventsOf(incident)
@@ -63,7 +68,7 @@ export function incidentState(incident: OrderIncident): IncidentState {
     resolution: incident.resolution,
     confirmed,
     pieceLocation,
-    quarantinedQuantity: pieceLocation === "quarantined" ? Math.max(1, Math.round(incident.quantity || 1)) : 0,
+    quarantinedQuantity: pieceLocation === "quarantined" || pieceLocation === "repaired_held" ? Math.max(1, Math.round(incident.quantity || 1)) : 0,
     replacementOutQuantity: confirmed && incident.resolution?.kind !== "refund" && !incident.resolution?.waitUntil ? Math.max(1, Math.round(incident.quantity || 1)) : 0,
     refundExecutedCents,
   };

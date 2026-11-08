@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.8.1",
+    "date": "2026.11.06",
+    "title": "Correcciones de dinero",
+    "notes": [
+      "El anticipo heredado ya no puede duplicarse tras registrar cobros, y los ajustes permiten Restar o Sumar sin escribir signos desde el celular.",
+      "En posventa, el reembolso se concilia con lo realmente pagado (con elección explícita entre reembolso y crédito) y una pieza reparada sólo vuelve a venta con tu autorización.",
+      "Los suministros cobran exactamente lo desembolsado al consumirse completos, en cualquier patrón de consumo."
+    ]
+  },
+  {
     "version": "1.8.0",
     "date": "2026.11.06",
     "title": "Gastos sueltos y suministros",
