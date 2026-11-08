@@ -16,6 +16,7 @@ import type { InstallmentFrequency, Order, OrderInstallmentPlan } from "../../ty
 import { parseAmount } from "../../lib/money";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
+import { incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
 import { docReceivedCents } from "./payments";
 
 export type { InstallmentFrequency, OrderInstallmentPlan };
@@ -174,9 +175,15 @@ export function installmentPlanView(
 ): InstallmentPlanView | null {
   const plan = order.installments as OrderInstallmentPlan | undefined;
   if (!plan) return null;
-  const totalCents = orderTotalCents(order);
+  // #203: effective total, same as every other read model (#212 F3).
+  const totalCents = Math.max(0, orderTotalCents(order) + incidentsSaleAdjustmentCents(order.incidents));
   const receivedCents = docReceivedCents(order);
-  const balanceCents = totalCents - receivedCents;
+  // #189: the NET balance — saldo a favor applied from sister orders counts
+  // as covered (the clienta's money already arrived, on another order). Cuota
+  // coverage below stays pure REAL money: credit never fakes a cobro.
+  const appliedCredit = typeof order.creditAppliedCents === "number" && Number.isSafeInteger(order.creditAppliedCents)
+    ? Math.max(0, order.creditAppliedCents) : 0;
+  const balanceCents = totalCents - receivedCents - appliedCredit;
   const amounts = splitInstallmentCents(totalCents, plan.count);
   const coverage = applyReceivedToSchedule(amounts, receivedCents);
   const cuotas: InstallmentCuota[] = amounts.map((amountCents, i) => {
@@ -217,14 +224,29 @@ export type DocMoney = {
   receivedCents: number;
 };
 
+/** #189: saldo a favor applied to this order (destination accumulator); the
+ * clienta's money already received on a sister order — counts as covered. */
+function creditAppliedCentsOf(order: Partial<Order> & Record<string, unknown>): number {
+  const value = order.creditAppliedCents;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+/** Net balance a delivery decision evaluates: total − received − applied
+ * credit (#189): the same figure every read model shows as "Pendiente". */
+export function uncoveredBalanceCents(order: Partial<Order> & Record<string, unknown>, money: DocMoney): number {
+  return orderTotalCents(order) - creditAppliedCentsOf(order) - money.receivedCents;
+}
+
 /** #165/#168 F1 delivery gate for the mutation path: an order with a plan OR
  * with registered cobros (the doc accumulator) may only be confirmed delivered
- * once its total is covered by received money. Removing the plan with a saldo
- * cannot dodge the gate in the same save; a deposit-only ordinary order keeps
- * its legacy behavior (no cobros → the gate never triggers).
+ * once its total is covered by received money. #189: saldo a favor applied
+ * from sister orders counts as covered — it is the clienta's money, received
+ * on another order. Removing the plan with a saldo cannot dodge the gate in
+ * the same save; a deposit-only ordinary order keeps its legacy behavior (no
+ * cobros → the gate never triggers).
  */
 export function deliveryWithBalanceBlocked(order: Partial<Order> & Record<string, unknown>, money: DocMoney): boolean {
-  return (!!order.installments || money.accumulatorCents > 0) && orderTotalCents(order) > money.receivedCents;
+  return (!!order.installments || money.accumulatorCents > 0) && uncoveredBalanceCents(order, money) > 0;
 }
 
 /** Order total in exact cents — the same frozen-line math payments.ts uses. */

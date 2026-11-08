@@ -6,7 +6,7 @@ import type { AppUser } from "./firebase/auth";
 
 const hooks = vi.hoisted(() => ({
   user: null as AppUser | null,
-  load: vi.fn(), subscribe: vi.fn(), register: vi.fn(), fetch: vi.fn(),
+  save: vi.fn(), load: vi.fn(), subscribe: vi.fn(), register: vi.fn(), fetch: vi.fn(),
   snapshot: null as ((state: AppState) => void) | null,
 }));
 vi.mock("./firebase/AuthProvider", () => ({ useAuth: () => ({ user: hooks.user }) }));
@@ -18,7 +18,7 @@ vi.mock("../lib/storage", () => ({
 vi.mock("./firebase/firestoreData", async (importOriginal) => ({
   ...await importOriginal<typeof import("./firebase/firestoreData")>(),
   loadCloudState: hooks.load, subscribeCloudState: hooks.subscribe,
-  registerOrderPaymentTx: hooks.register, fetchOrderPayments: hooks.fetch,
+  registerOrderPaymentTx: hooks.register, fetchOrderPayments: hooks.fetch, saveOrderWithStockTx: hooks.save,
   saveEntity: vi.fn().mockResolvedValue(undefined), projectPublicForStore: vi.fn().mockResolvedValue(undefined),
 }));
 import { StoreProvider, useStore } from "./StoreProvider";
@@ -33,7 +33,7 @@ const order: Order = {
 };
 const state = (): AppState => ({
   stores: [{ id: "retry-store", name: "Tienda de prueba", slug: "retry-store", type: "on_demand", createdAt: "2026-11-03", updatedAt: "2026-11-03" }],
-  activeStoreId: "retry-store", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [order],
+  activeStoreId: "retry-store", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [order], expenses: [],
 });
 const receipt: OrderPayment = {
   id: "same-intent", orderId: order.id, storeId: order.storeId, amount: 400, kind: "payment", method: "cash",
@@ -78,7 +78,7 @@ describe("confirmed payment display", () => {
     const view = await mount();
     const pending = context.registerOrderPayment(context.state.orders[0], input);
     hooks.user = { uid: "operator-b", role: "member", email: "operator-b@example.test" } as AppUser;
-    hooks.load.mockResolvedValue({ ...state(), stores: [], activeStoreId: null, orders: [] });
+    hooks.load.mockResolvedValue({ ...state(), stores: [], activeStoreId: null, orders: [], expenses: [] });
     view.rerender(<StoreProvider><Probe /></StoreProvider>);
     await act(async () => { finish({ payments: [receipt], order: { ...order, paymentsReceivedCents: 40000, paymentsRevision: 1 } }); await pending; });
     expect(screen.getByTestId("records")).toHaveTextContent("0");
@@ -95,7 +95,7 @@ describe("payment response ordering", () => {
     });
     await mount();
     const old = context.registerOrderPayment(context.state.orders[0], input);
-    await act(async () => context.registerOrderPayment(context.state.orders[0], { kind: "adjustment", id: "adjustment", amountText: "-150", note: "Corrección" }));
+    await act(async () => context.registerOrderPayment(context.state.orders[0], { kind: "adjustment", id: "adjustment", direction: "subtract", amountText: "150", note: "Corrección" }));
     expect(screen.getByTestId("received")).toHaveTextContent("25000");
     await act(async () => {
       finishOld({ payments: [receipt], order: { ...order, paymentsRevision: 1, paymentsReceivedCents: 40000 } });
@@ -145,4 +145,15 @@ it("never exposes the previous account's already-loaded receipts during the new 
   await waitFor(() => expect(context.state.orders).toHaveLength(0));
   expect(nextAccountCounts.length).toBeGreaterThan(0);
   expect(nextAccountCounts.every((count) => count === 0)).toBe(true);
+});
+
+
+it("returns the canonical saved order so a caller can detect a pinned deposit (#218)", async () => {
+  const canonical = { ...order, deposit: 0, paymentsReceivedCents: 59000, revision: 2 };
+  hooks.save.mockResolvedValue({ order: canonical, stock: [] });
+  await mount();
+  let saved: unknown;
+  await act(async () => { saved = await context.upsertOrder({ ...order, deposit: 1000 }); });
+  expect(saved).toEqual(canonical);
+  expect(context.state.orders[0]).toMatchObject(canonical);
 });

@@ -81,7 +81,7 @@ describe("SaleExpenseSummary (#184 corte ejecutable)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mes anterior" }));
     fireEvent.click(screen.getByRole("button", { name: "Mes anterior" }));
     expect(screen.getByText("septiembre 2026")).toBeTruthy();
-    expect(screen.getByText("Sin gastos de venta en este periodo.")).toBeTruthy();
+    expect(screen.getByText("No hay gastos de empaque o entrega registrados en este periodo.")).toBeTruthy();
     vi.useRealTimers();
   });
 });

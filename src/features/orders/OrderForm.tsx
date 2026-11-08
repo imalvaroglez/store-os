@@ -127,7 +127,8 @@ export function OrderForm({
   const [customerQuery, setCustomerQuery] = useState(
     () => restoredDraft?.customerQuery ?? customers.find((c) => c.id === order.customerId)?.name ?? ""
   );
-  const [deposit, setDeposit] = useState(restoredDraft?.deposit ?? String(order.deposit ?? 0));
+  const hasPaymentEvidence = order.inheritedDepositMaterialized === true || typeof order.paymentsReceivedCents === "number";
+  const [deposit, setDeposit] = useState(hasPaymentEvidence ? String(order.deposit ?? 0) : restoredDraft?.deposit ?? String(order.deposit ?? 0));
   // #165 installment capture. Nothing is defaulted: the count, the frequency
   // and the first due date are the operator's agreement, per order.
   const [installmentsOn, setInstallmentsOn] = useState(
@@ -299,6 +300,7 @@ export function OrderForm({
   const totals = useMemo(() => {
     try {
       return orderTotals({
+        ...order,
         items: lines.map((line) => ({
           productId: line.productId,
           productName: line.productName,
@@ -314,7 +316,7 @@ export function OrderForm({
       if (error instanceof RangeError) return null;
       throw error;
     }
-  }, [deposit, lines]);
+  }, [deposit, lines, order]);
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
   // pieza. Only lines with content enter the estimate; an empty placeholder
   // line is not "sin costo". An unsafe amount throws RangeError here too —
@@ -454,6 +456,10 @@ export function OrderForm({
     }
     if (deposit.trim() && parseAmount(deposit) == null) {
       toast.error("Revisa el anticipo.");
+      return;
+    }
+    if (hasPaymentEvidence && numberFromText(deposit) > (order.deposit ?? 0)) {
+      toast.error("El anticipo no puede subir cuando el pedido ya tiene cobros. Registra un cobro.");
       return;
     }
     // #165: validate the whole agreement before saving anything. Errors are
@@ -800,6 +806,8 @@ export function OrderForm({
         {!installmentsOn && (
           <TextField
             label="Anticipo"
+            disabled={order.inheritedDepositMaterialized === true}
+            hint={order.inheritedDepositMaterialized === true ? "El anticipo ya está registrado en el historial de cobros." : undefined}
             type="text"
             inputMode="decimal"
             pattern="[0-9]*[.]?[0-9]*"
@@ -816,7 +824,7 @@ export function OrderForm({
         <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
           <StatRow label="Piezas">{totals?.pieces ?? "—"}</StatRow>
           <StatRow label="Total">{totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</StatRow>
-          <StatRow label="Anticipo">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
+          <StatRow label="Recibido">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
           <StatRow label="Saldo" tone={totals && totals.balance > 0 ? "danger" : "success"}>{totals ? <Money exact amount={totals.balance} /> : "—"}</StatRow>
           <StatRow
             label="Ganancia"

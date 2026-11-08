@@ -44,6 +44,7 @@ export function fixtureState(): AppState {
     customers: [
       { id: "cust_joyeria_1", storeId: joyeriaId, name: "Cliente Joyería", createdAt: NOW, updatedAt: NOW } as Customer,
     ],
+    expenses: [],
     orders: [
       order("order_olivia_1", oliviaId, "Anillo de plata 925", "delivered"),
       order("order_santi_1", santiId, "Perfume Baccarat Rouge 540", "confirmed"),

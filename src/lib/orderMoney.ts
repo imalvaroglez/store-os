@@ -45,3 +45,99 @@ export function docReceivedCents(order: Partial<Order> & Record<string, unknown>
     return acc; // a deposit beyond safe precision is corrupt, not money
   }
 }
+
+// ── #203: incident money effects over the ORDER DOCUMENT ─────────────────
+import type { OrderIncident } from "../types";
+
+function incidentCentsOf(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+function incidentQuantity(incident: OrderIncident): number {
+  return Math.max(1, Math.round(incident.quantity || 1));
+}
+
+/**
+ * #203: how the incidents change the order's EFFECTIVE total (exact cents).
+ * Charged upgrades add the price difference vs the historical price frozen at
+ * open; a refund removes the piece at its historical price; equivalent
+ * replacements and absorbed upgrades change nothing. Historical sales are
+ * never rewritten — this is the documented adjustment, the basis of what the
+ * clienta actually owes after posventa.
+ */
+/**
+ * ONE incident's sale adjustment, exact cents — the single kind-dispatch both
+ * the order read model and the incident reconciliation use, so they can never
+ * diverge (r3 F1-R): wait_restock → 0; refund → −piece at the historical
+ * price; charged replacement → ±price difference; anything else → 0.
+ */
+export function incidentSaleAdjustmentCents(incident: OrderIncident): number {
+  const resolution = incident.resolution;
+  if (!resolution || resolution.kind === "wait_restock") return 0;
+  const quantity = incidentQuantity(incident);
+  if (typeof resolution.saleAdjustmentUnitCents === "number") {
+    if (resolution.kind === "refund") {
+      return -incidentCentsOf(resolution.saleAdjustmentUnitCents) * quantity;
+    }
+    const replacement = incident.replacement;
+    if (!replacement || !replacement.chargeDifference) return 0;
+    return (replacement.unitPriceCents - incidentCentsOf(resolution.saleAdjustmentUnitCents)) * quantity;
+  }
+  // Legacy transition reads (pre-reconcile synthetic data).
+  if (resolution.kind === "refund") {
+    return -incidentCentsOf(resolution.refundUnitPriceCents) * quantity;
+  }
+  const replacement = incident.replacement;
+  if (!replacement || !replacement.chargeDifference) return 0;
+  return (replacement.unitPriceCents - incidentCentsOf(incident.originalUnitPriceCents)) * quantity;
+}
+
+export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefined | null): number {
+  return (incidents ?? []).reduce((sum, incident) => sum + incidentSaleAdjustmentCents(incident), 0);
+}
+
+/**
+ * #203: refund money agreed but not yet handed back (exact cents). Blocked —
+ * never available credit: "un importe comprometido a reembolso queda
+ * separado y no se usa para otra compra sin aceptación de la clienta".
+ */
+export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefined | null): number {
+  return (incidents ?? []).reduce((sum, incident) => {
+    const resolution = incident.resolution;
+    if (!resolution) return sum;
+    if (typeof resolution.refundOwedCents === "number") {
+      const agreed = Math.max(0, resolution.refundOwedCents);
+      const executed = (incident.events ?? [])
+        .filter((event) => event.kind === "confirmed" || event.kind === "refund_executed")
+        .reduce((partial, event) => partial + incidentCentsOf(event.detail?.refundExecutedCents), 0);
+      return sum + Math.max(0, agreed - executed);
+    }
+    // Legacy transition.
+    if (resolution.kind !== "refund") return sum;
+    const agreed = incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
+    const executed = (incident.events ?? [])
+      .filter((event) => event.kind === "confirmed" || event.kind === "refund_executed")
+      .reduce((partial, event) => partial + incidentCentsOf(event.detail?.refundExecutedCents), 0);
+    return sum + Math.max(0, agreed - executed);
+  }, 0);
+}
+
+/**
+ * #203: refund money COMMITTED to the clienta (agreed at resolution, whether
+ * or not it has been handed back yet). This amount is NEVER available credit:
+ * handing the money back must not surface it as "saldo a favor" — the clienta
+ * would hold the cash AND the credit (review #212 F1). Use
+ * incidentsRefundPendingCents for the "still to hand back" display amount.
+ */
+export function incidentsRefundCommittedCents(incidents: OrderIncident[] | undefined | null): number {
+  return (incidents ?? []).reduce((sum, incident) => {
+    const resolution = incident.resolution;
+    if (!resolution) return sum;
+    if (typeof resolution.refundOwedCents === "number") {
+      return sum + Math.max(0, resolution.refundOwedCents);
+    }
+    // Legacy transition.
+    if (resolution.kind !== "refund") return sum;
+    return sum + incidentCentsOf(resolution.refundUnitPriceCents) * incidentQuantity(incident);
+  }, 0);
+}

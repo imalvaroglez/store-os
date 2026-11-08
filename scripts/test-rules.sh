@@ -10,6 +10,9 @@ FILES=(
   src/app/firebase/firestore.rules.test.ts
   src/app/firebase/orderTransactions.emulator.test.ts
   src/app/firebase/orderPayments.emulator.test.ts
+  src/app/firebase/customerCredit.emulator.test.ts
+  src/app/firebase/incidents.emulator.test.ts
+  src/app/firebase/expenses.emulator.test.ts
   src/app/firebase/installments.emulator.test.ts
   src/app/firebase/customerPricing.emulator.test.ts
 )

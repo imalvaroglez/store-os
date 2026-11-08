@@ -1,5 +1,45 @@
 [
   {
+    "version": "1.8.1",
+    "date": "2026.11.06",
+    "title": "Correcciones de dinero",
+    "notes": [
+      "El anticipo heredado ya no puede duplicarse tras registrar cobros, y los ajustes permiten Restar o Sumar sin escribir signos desde el celular.",
+      "En posventa, el reembolso se concilia con lo realmente pagado (con elección explícita entre reembolso y crédito) y una pieza reparada sólo vuelve a venta con tu autorización.",
+      "Los suministros cobran exactamente lo desembolsado al consumirse completos, en cualquier patrón de consumo."
+    ]
+  },
+  {
+    "version": "1.8.0",
+    "date": "2026.11.06",
+    "title": "Gastos sueltos y suministros",
+    "notes": [
+      "Registra un gasto real en segundos aunque aún no sepas a qué compra o pedido corresponde: lo clasificas y lo asignas después, con vista previa del reparto antes de confirmar.",
+      "Los suministros (bolsas, cajas) se consumen gradualmente: cada unidad usada carga su costo exacto al pedido que atendió.",
+      "El tratamiento simplificado reconoce un gasto en su periodo sin asociarlo a nada, y no vuelve a contarse al vender."
+    ]
+  },
+  {
+    "version": "1.7.0",
+    "date": "2026.11.06",
+    "title": "Incidencias de posventa",
+    "notes": [
+      "Registra un problema de posventa desde el pedido (pieza, cantidad y motivo) y acuerda la solución con la clienta: reemplazo equivalente, otra pieza con diferencia de precio, esperar reposición o reembolso.",
+      "La pieza dañada queda en cuarentena (no vendible) hasta que autorices repararla, devolverla a la venta, darla de baja o recibir el reemplazo del proveedor.",
+      "El reembolso deja de ser saldo a favor: el dinero comprometido a devolver nunca se usa para compensar otros pedidos."
+    ]
+  },
+  {
+    "version": "1.6.0",
+    "date": "2026.11.06",
+    "title": "Saldo a favor por clienta",
+    "notes": [
+      "El dinero de más de un pedido compensa lo pendiente de los otros pedidos de la misma clienta, del más antiguo al más reciente, sin pasos extra.",
+      "Cada pedido muestra si ya se le aplicó saldo a favor y de qué pedido viene; la ficha de la clienta muestra su neto por cobrar.",
+      "Cancelar un pedido devuelve el saldo a favor que había usado."
+    ]
+  },
+  {
     "version": "1.5.0",
     "date": "2026.11.05",
     "title": "Versión visible y captura de dinero confiable",

@@ -179,6 +179,10 @@ export type Product = {
   prices?: Record<string, number>;
 
   quantityOnHand?: number;
+  /** #203: pieces in quarantine (damaged returns) — NOT sellable until
+   * Fer explicitly authorizes returning them to sale, repairs or writes them
+   * off. Displayed separately from available stock. */
+  quantityQuarantined?: number;
   lowStockAt?: number;
 
   // Schema version for the idempotent migration. Absent = not yet migrated.
@@ -307,6 +311,24 @@ export type Order = {
   deliveredWithBalanceConfirmedAt?: string;
   deliveredWithBalanceConfirmedBy?: string;
 
+  /** #189: credit from a sister order applied TO this order (Σ ledger
+   * entries, maintained transactionally — the #168 accumulator pattern).
+   * Reduces what the clienta owes here; it is NOT received money. */
+  creditAppliedCents?: number;
+  /** #189 mirror on the ORIGIN order: its surplus already consumed by sister
+   * orders. Written in the same transaction as the destination's application. */
+  creditConsumedCents?: number;
+  /** #189 append-only evidence of applications/releases on this order. */
+  creditLedger?: OrderCreditLedgerEntry[];
+  /** #203 after-sales incidents opened on this order (append-only events;
+   * derived money effects flow through customerCredit — never a second
+   * balance). Absent = no incidents. */
+  incidents?: OrderIncident[];
+  /** #184: direct sale-side charges on this order (loose expenses assigned
+   * here and supply consumptions). Append-only evidence; reduces the order's
+   * profit, never its sale total or the clienta's balance. */
+  saleExpenses?: OrderSaleExpense[];
+
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
   productId?: string;
@@ -321,6 +343,117 @@ export type Order = {
 /** How money was received. "unknown" is ONLY for the inherited legacy deposit
  * (decision i on #123): real receptions always carry cash or transfer. */
 export type OrderPaymentMethod = "cash" | "transfer" | "unknown";
+
+/** #189: one compensation event between orders of the same clienta/store.
+ * Immutable evidence on the DESTINATION order: corrections are new entries,
+ * never edits (the #123 payment-records discipline).
+ * - application: `amountCents` moved from `fromOrderId`'s surplus onto this
+ *   order's pending balance.
+ * - release: a cancellation restituted a previously applied amount back to
+ *   `fromOrderId`. */
+/** #203: what Fer agreed with the clienta to solve an incident. */
+export type IncidentResolutionKind =
+  /** Default: equivalent piece, no additional charge (#203 decision). */
+  | "replacement_equivalent"
+  /** Another/better piece with a price difference: charged to the clienta or
+   * absorbed by the store as atención comercial (recorded, never silent). */
+  | "replacement_with_difference"
+  /** The clienta waits for restock with an agreed date. */
+  | "wait_restock"
+  /** The clienta takes the money back (pending until actually refunded). */
+  | "refund";
+
+/** #184: one direct sale-side charge on an order (loose expense assignment
+ * or supply consumption). Exact cents; append-only. */
+export type OrderSaleExpense = {
+  id: string;
+  at: string;
+  by: string;
+  amountCents: number;
+  description?: string;
+  /** Origin for traceability: the loose expense (and its supply, if any). */
+  expenseId: string;
+  supplyConsumptionId?: string;
+  /** Optional manual split across this order's lines (Σ = amountCents). */
+  allocations?: Array<{ lineId: string; amountCents: number }>;
+};
+
+export type OrderIncidentEvent = {
+  id: string;
+  at: string;
+  by: string;
+  kind:
+    /** Problem registered: piece, quantity, reason (payload on the incident). */
+    | "opened"
+    /** Resolution agreed with the clienta (payload: resolution). */
+    | "resolution_agreed"
+    /** Confirmed jointly: damaged piece received (quarantined) + solution
+     * delivered (replacement stock out at its real cost / refund executed /
+     * wait confirmed). Payload: quantities and costs. */
+    | "confirmed"
+    /** Fer repaired the piece: quarantine → sellable again. */
+    | "repaired"
+    /** Provider delivered a replacement for the damaged piece: quarantine → sellable. */
+    | "provider_replacement"
+    /** Provider compensated the store (amount recorded; valuation is #128/#129). */
+    | "provider_compensation"
+    /** Fer authorized writing the piece off (identifiable for the monthly close). */
+    | "written_off"
+    /** Fer explicitly authorized returning the piece to sale. */
+    | "returned_to_sale"
+    /** #203: the pending refund was actually handed back to the clienta
+     * (releases the credit block exactly once; detail.refundExecutedCents). */
+    | "refund_executed";
+  /** Event-specific evidence (amounts in exact cents, ids, motive). */
+  detail?: Record<string, string | number>;
+};
+
+export type OrderIncident = {
+  id: string;
+  /** Line of the origin order the incident is about. */
+  lineId?: string;
+  productId?: string;
+  productName: string;
+  quantity: number;
+  reason: string;
+  /** The line's HISTORICAL unit price frozen at open (exact cents) — evidence
+   * and the basis for any price-difference adjustment. */
+  originalUnitPriceCents: number;
+  /** What was agreed with the clienta (set by the resolution_agreed event). */
+  resolution?: {
+    kind: IncidentResolutionKind;
+    /** wait_restock: agreed date (YYYY-MM-DD). */
+    waitUntil?: string;
+    /** LEGACY (pre-reconcile): the piece's historical price — read only while
+     * synthetic transition data exists; new writes never set it. */
+    refundUnitPriceCents?: number;
+    /** The piece's HISTORICAL unit price, exact cents — drives the SALE
+     * adjustment (the piece leaves the sale). NEVER the refund amount. */
+    saleAdjustmentUnitCents?: number;
+    /** Refund obligation TOTAL in exact cents (reconciled money, transaction
+     * authoritative). Zero when nothing is refundable or the clienta chose
+     * credit. Kept distinct from the sale adjustment by design. */
+    refundOwedCents?: number;
+    /** Clienta's explicit choice for the reconciled difference: pending refund
+     * or accepted credit (only accepted credit may auto-compensate, #189). */
+    destination?: "refund_pending" | "credit_accepted";
+  };
+  /** The replacement piece when the resolution is a replacement. */
+  replacement?: { productId?: string; productName: string; unitPriceCents: number; /** Real cost of the piece leaving stock, exact cents. */ unitCostCents: number; chargeDifference: boolean };
+  /** append-only history; every state is DERIVED from it, never stored twice. */
+  events: OrderIncidentEvent[];
+};
+
+export type OrderCreditLedgerEntry = {
+  /** Stable per intent: a retry after an error reuses it (idempotent apply). */
+  id: string;
+  kind: "application" | "release";
+  /** Origin of the credit (the overpaid sister order). */
+  fromOrderId: string;
+  amountCents: number;
+  at: string;
+  by: string;
+};
 
 /** One money reception registered on an order (#123). Immutable evidence:
  * corrections/refunds are NEW records with a signed amount, never edits. */
@@ -458,6 +591,79 @@ export type PurchaseExpenseAdjustment = {
   amount: number;
   description?: string;
   allocations?: PurchaseSaleCostAllocation[];
+};
+
+/** #184: a loose expense — a real outlay registered WITHOUT a purchase,
+ * lot or order attached (Decisión B ampliada, PO 2026-11-05). Classification
+ * decides its treatment; assignments are explicit and traceable; the pending
+ * balance (importe − Σ asignaciones) is DERIVED, never stored. */
+export type LooseExpenseCategory =
+  /** Mercancía y costos de adquisición → assign to an OPEN purchase (native
+   * sourcing-expense path); transporte para surtir distributes across pieces. */
+  | "merchandise"
+  /** Venta y entrega → charge orders (preparation, packaging, delivery). */
+  | "sale_delivery"
+  /** Suministros: materials for gradual consumption (bags, boxes). */
+  | "supplies"
+  /** Operación: recognized in its period, no association required. */
+  | "operation"
+  /** Servicios tecnológicos de StoreOS, when a real charge exists. */
+  | "storeos_services";
+
+export const LOOSE_EXPENSE_CATEGORY_LABEL: Record<LooseExpenseCategory, string> = {
+  merchandise: "Mercancía y costos de adquisición",
+  sale_delivery: "Venta y entrega",
+  supplies: "Suministros",
+  operation: "Operación",
+  storeos_services: "Servicios de StoreOS",
+};
+
+export type ExpenseAssignmentTarget =
+  | { kind: "purchase"; purchaseId: string }
+  | { kind: "order"; orderId: string };
+
+/** One explicit assignment: amount in exact cents + how it was distributed. */
+export type ExpenseAssignment = {
+  id: string;
+  at: string;
+  by: string;
+  target: ExpenseAssignmentTarget;
+  /** units (default for homogeneous) | value-proportional | manual. */
+  mode: "units" | "value" | "manual";
+  amountCents: number;
+  /** Per-piece distribution evidence (purchase lineIds / order lineIds). */
+  allocations?: Array<{ lineId: string; amountCents: number }>;
+};
+
+/** One supply consumption: quantity units leave the stash; the exact cost is
+ * charged to the order when Fer links it (criterio 5: 100 bolsas / $15 →
+ * $0.15 por bolsa; una bolsa que cubre 3 artículos puede repartirse). */
+export type SupplyConsumption = {
+  id: string;
+  at: string;
+  by: string;
+  quantity: number;
+  orderId?: string;
+  /** Optional split across the order's lines (manual, exact, Σ = charge). */
+  allocations?: Array<{ lineId: string; amountCents: number }>;
+};
+
+export type LooseExpense = {
+  id: string;
+  storeId: string;
+  /** Original amount in decimal pesos — never rewritten. */
+  amount: number;
+  date: string;
+  description?: string;
+  category: LooseExpenseCategory;
+  assignments?: ExpenseAssignment[];
+  /** Supplies only: the stash and its gradual consumption. */
+  supply?: { quantityInitial: number; consumptions: SupplyConsumption[] };
+  /** Criterio 6: simplified treatment — recognized as period expense; the
+   * amount never re-enters real costs when selling. */
+  simplifiedOperation?: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, string> = {
@@ -635,6 +841,8 @@ export type AppState = {
   purchases: Purchase[];
   customers: Customer[];
   orders: Order[];
+  /** #184 loose expenses (registration, assignment, supplies). */
+  expenses: LooseExpense[];
 };
 
 // Catalog business rules (single source of truth).

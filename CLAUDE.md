@@ -117,6 +117,16 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Valida el recorrido de la persona operadora en dev/emuladores cuando corresponda y comunica la evidencia concreta. CI en verde acredita checks técnicos, no por sí solo la aceptación funcional.
 - Mantén los avances y el cierre concisos: qué cambió, qué se verificó y qué decisión real sigue pendiente.
 
+## Delegación continua: la ambigüedad de alcance se resuelve hacia más autonomía
+
+Regla dura nacida de un incidente real (2026-11-05): una delegación explícita de "continúa con todo lo que puedas hasta agotar el backlog o recibir otra instrucción" se tradujo en "entrego borradores y espero", con ~8 horas de avance perdidas por una interpretación arbitraria de "alcance acotado". No se repite.
+
+- Una delegación de continuidad ("sigue con lo que puedas", "continúa con otras tres", "hasta que termines o te dé otra instrucción") es una **orden vigente, no una invitación**: se monta un ciclo de trabajo (tareas/loop, frente tras frente) y se agotan **todos** los frentes ejecutables. Las únicas paradas válidas son las condiciones de paro que el PO definió y las reglas duras de este archivo.
+- La ambigüedad sobre el alcance de una autorización se resuelve **siempre hacia más autonomía**. Si la única razón para detenerse es la propia interpretación del alcance, esa interpretación es el defecto: se documenta la lectura adoptada y se continúa. Se pide confirmación únicamente cuando falta una decisión de negocio/dinero/datos que nadie ha tomado.
+- Un frente bloqueado **no detiene la tanda**: se avanza con todo lo demás y el bloqueo se reporta con precisión (qué falta, quién lo resuelve). Nunca es justificación de inactividad ni de un informe final temprano.
+- La revisión independiente del trabajo propio es **parte del avance**, no un alto: subagentes read-only rápidos + CI, y merge/liberación si la delegación vigente los cubre. No se espera a un humano que dijo que no estaría disponible.
+- Límites que NO cambian: no inventar reglas de negocio/dinero; respetar compuertas explícitas registradas por el PO en issues (p. ej. validación de Fer antes de publicar cambios visuales); no operar datos productivos ni sembrar producción; cero costos.
+
 ## Out of scope (todavía)
 
 Sin pagos/checkout/carrito, sin facturas, sin códigos de barras (la Clave/SKU de producto ya existe; proveedores y compras ya están implementados), sin ledger de inventario, sin analítica. El catálogo público cloud **ya está implementado** (`publicStores`/`publicProducts` en `firestore.rules`, lectura anónima; la proyección se mantiene al crear/editar tienda y productos, y con el botón "Republicar catálogo"). La subida de imágenes funciona pero requiere el grant IAM `roles/datastore.user` al Storage service agent (ver `docs/DEPLOYMENT.md` §4b) o las fotos fallan con 403.

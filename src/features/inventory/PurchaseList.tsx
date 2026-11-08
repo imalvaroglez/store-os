@@ -77,7 +77,7 @@ export function PurchaseList({
                   </div>
                   <p className="text-xs text-ink-soft">
                     {formatDate(p.date)} · {p.lines.length}{" "}
-                    {p.lines.length === 1 ? "producto" : "productos"} · {pieces}{" "}
+                    {p.lines.length === 1 ? "renglón" : "renglones"} · {pieces}{" "}
                     {pieces === 1 ? "pieza" : "piezas"}
                   </p>
                   {tickets.length > 1 && <p className="text-xs text-ink-soft">{tickets.length} tickets · {tickets.map((ticket) => suppliers.find((item) => item.id === ticket.supplierId)?.name ?? ticket.supplierName ?? "Sin proveedor").join(" · ")}</p>}
