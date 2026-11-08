@@ -120,12 +120,13 @@ describe("storage.rules — emulator-blind guards still present in the real file
         throw new Error("storage.rules no longer requires application/pdf for purchases: check the guard.");
       }
     });
-    it("purchases have no update rule (immutable evidence)", () => {
+    it("purchases allow ONLY read/create/delete (immutable evidence)", () => {
       const block = REAL_RULES.match(/match \/purchases\/\{storeId\}\/\{fileName\} \{([\s\S]*?)\n    \}/);
       if (!block) throw new Error("purchases block not found in storage.rules");
-      if (/allow update/.test(block[1])) {
-        throw new Error("purchases allows update: a purchase PDF would no longer be immutable evidence.");
-      }
+      // Exact verb set: catches "allow update", "allow create, update",
+      // "allow write" and any other drift in one assertion.
+      const verbs = Array.from(block[1].matchAll(/allow ([a-z, ]+):/g)).map((m) => m[1].replace(/\s|,/g, ""));
+      expect(verbs.sort()).toEqual(["create", "delete", "read"]);
     });
   }
 );
