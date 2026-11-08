@@ -161,6 +161,20 @@ describe("Dialog", () => {
     expect(screen.getByText("Borrar")).toBeTruthy();
     expect(screen.getByText("¿Seguro?")).toBeTruthy();
   });
+  // #231: a tall dialog must scroll INSIDE the panel — the overlay is fixed
+  // and body scroll is locked, so without max-h/overflow the actions at the
+  // bottom (e.g. Guardar cliente) are unreachable on mobile viewports.
+  it("keeps a tall dialog scrollable so its footer actions stay reachable (#231)", () => {
+    render(
+      <Dialog open title="Nuevo cliente" onClose={() => {}}>
+        {Array.from({ length: 30 }, (_, i) => <p key={i}>Campo {i}</p>)}
+        <button>Guardar cliente</button>
+      </Dialog>
+    );
+    const panel = screen.getByRole("dialog");
+    expect(panel.className).toContain("max-h-");
+    expect(panel.className).toContain("overflow-y-auto");
+  });
 });
 
 describe("Dropdown", () => {

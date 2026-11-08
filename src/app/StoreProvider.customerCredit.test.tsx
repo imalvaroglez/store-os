@@ -117,6 +117,10 @@ describe("automatic saldo a favor compensation (#189)", () => {
     // persistInBackground surfaced the failure (retry available), and the
     // state did not change, so no second write was attempted.
     expect(hooks.apply).toHaveBeenCalledTimes(1);
+    // The sync error surfaces asynchronously (persistInBackground); retrying
+    // before it exists silently no-ops (?.) and the second apply never runs —
+    // this wait removes the load-sensitive race that flaked CI.
+    await waitFor(() => expect(context.syncError).toBeTruthy());
     await act(async () => {
       await context.syncError?.retry?.();
     });
