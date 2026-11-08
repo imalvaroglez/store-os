@@ -244,7 +244,7 @@ export function StoreSettingsScreen({
     setInviteMsg(null);
     try {
       await inviteMember(store!.id, inviteEmail.trim());
-      setInviteMsg("Invitación enviada. Quedará pendiente hasta que la persona cree su cuenta.");
+      setInviteMsg("Invitación enviada. Quedará pendiente hasta que la persona entre con ese correo.");
       setInviteEmail("");
     } catch {
       setInviteMsg("No se pudo invitar. Intenta de nuevo.");
