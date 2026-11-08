@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.9.1",
+    "date": "2026.11.08",
+    "title": "Privacidad entre tiendas",
+    "notes": [
+      "Los correos y cuentas ya no son visibles entre tiendas: cada quien ve solo los suyos.",
+      "Las invitaciones quedan pendientes hasta que la persona entra con ese correo, tenga o no cuenta.",
+      "Mantenimiento interno de seguridad y dependencias; sin botones nuevos."
+    ]
+  },
+  {
     "version": "1.9.0",
     "date": "2026.11.08",
     "title": "Dinero confiable y captura más ágil",
