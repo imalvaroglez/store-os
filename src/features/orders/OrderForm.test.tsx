@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderForm } from "./OrderForm";
-import type { Purchase } from "../../types";
+import type { Order, Purchase } from "../../types";
 
 const { mockUpsertOrder, activeStore, state } = vi.hoisted(() => ({
   mockUpsertOrder: vi.fn().mockResolvedValue(undefined),
@@ -582,6 +582,58 @@ describe("estimated profit while registering a sale", () => {
   });
 });
 
+
+describe("canonical money in the editor (#225)", () => {
+  const base: Order = {
+    id: "editor-225", storeId: "store_olivia", customerId: "customer_1",
+    items: [{ productName: "Pieza", quantity: 1, unitPrice: 720, subtotal: 720 }],
+    deposit: 0, paymentsReceivedCents: 59000, inheritedDepositMaterialized: true,
+    orderStatus: "asked", paymentStatus: "partial",
+    createdAt: "2026-11-06", updatedAt: "2026-11-06",
+  };
+  const expectSummary = (received: string, balance: string) => {
+    expect(screen.getByText("Saldo").parentElement).toHaveTextContent(balance);
+    expect(screen.getByText("Recibido").parentElement).toHaveTextContent(received);
+  };
+
+  it.each<{ name: string; fields: Partial<Order>; received: string; balance: string }>([
+    { name: "registered payments", fields: {}, received: "$590.00", balance: "$130.00" },
+    { name: "legacy deposit without records", fields: { deposit: 150, paymentsReceivedCents: undefined, inheritedDepositMaterialized: undefined }, received: "$150.00", balance: "$570.00" },
+    { name: "negative adjustment before deposit materialization", fields: { deposit: 150, paymentsReceivedCents: -2000, inheritedDepositMaterialized: false }, received: "$130.00", balance: "$590.00" },
+    { name: "materialized deposit counted only once", fields: { deposit: 590 }, received: "$590.00", balance: "$130.00" },
+    { name: "applied credit kept separate from received money", fields: { creditAppliedCents: 3000 }, received: "$590.00", balance: "$100.00" },
+    { name: "incident adjustment", fields: { incidents: [{ id: "inc-225", productName: "Pieza", quantity: 1, reason: "Defecto", originalUnitPriceCents: 72000, resolution: { kind: "replacement_with_difference", saleAdjustmentUnitCents: 72000 }, replacement: { productName: "Otra pieza", unitPriceCents: 77000, unitCostCents: 10000, chargeDifference: true }, events: [] }] }, received: "$590.00", balance: "$180.00" },
+  ])("shows $name", ({ fields, received, balance }) => {
+    localStorage.clear();
+    render(<ToastProvider><OrderForm order={{ ...base, ...fields }} onDone={() => {}} /></ToastProvider>);
+    expectSummary(received, balance);
+    expect(screen.getByLabelText(/^Anticipo/)).toHaveValue(String(fields.deposit ?? 0));
+  });
+
+  it("recalculates edited prices and quantities without losing received money", () => {
+    localStorage.clear();
+    render(<ToastProvider><OrderForm order={base} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText(/Precio unitario/), { target: { value: "800" } });
+    expectSummary("$590.00", "$210.00");
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "2" } });
+    expectSummary("$590.00", "$1,010.00");
+  });
+
+  it("previews a permitted legacy deposit edit alongside a negative adjustment", () => {
+    localStorage.clear();
+    render(<ToastProvider><OrderForm order={{ ...base, deposit: 150, paymentsReceivedCents: -2000, inheritedDepositMaterialized: false }} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Anticipo"), { target: { value: "100" } });
+    expectSummary("$80.00", "$640.00");
+  });
+
+  it("refreshes totals when the canonical payment evidence changes", () => {
+    localStorage.clear();
+    const view = render(<ToastProvider><OrderForm order={base} onDone={() => {}} /></ToastProvider>);
+    expectSummary("$590.00", "$130.00");
+    view.rerender(<ToastProvider><OrderForm order={{ ...base, paymentsReceivedCents: 62000 }} onDone={() => {}} /></ToastProvider>);
+    expectSummary("$620.00", "$100.00");
+  });
+});
 
 describe("legacy anticipo guards (#218)", () => {
   const order = { id: "guard-218", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Pieza", quantity: 1, unitPrice: 720, subtotal: 720 }], deposit: 590, paymentsReceivedCents: 59000, orderStatus: "asked" as const, paymentStatus: "partial" as const, createdAt: "2026-11-06", updatedAt: "2026-11-06" };
