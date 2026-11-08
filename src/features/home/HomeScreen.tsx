@@ -81,7 +81,13 @@ export function HomeScreen() {
     const o = orders.find((x) => x.id === orderId);
     if (!o) return;
     try {
-      await upsertOrder({ ...o, deposit: orderTotals(o).estimatedTotal, updatedAt: new Date().toISOString() });
+      const total = orderTotals(o).estimatedTotal;
+      const saved = await upsertOrder({ ...o, deposit: total, updatedAt: new Date().toISOString() });
+      if ((saved.deposit ?? 0) < total) {
+        toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
+        setPaymentsOrderId(o.id);
+        return;
+      }
       toast.success("Pedido cobrado");
     } catch {
       toast.error("No se pudo registrar el cobro.");

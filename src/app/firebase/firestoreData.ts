@@ -13,6 +13,7 @@ import {
   where,
   runTransaction,
   increment,
+  arrayUnion,
   writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
@@ -20,8 +21,8 @@ import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange } from "../../lib/inventory";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
-import { effectiveOrderStatus, migrateOrder } from "../../lib/orders";
-import { deliveryWithBalanceBlocked, orderTotalCents } from "../../features/orders/installments";
+import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
+import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -30,7 +31,11 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption } from "../../types";
+import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
+import { incidentState } from "../../features/orders/incidents";
+import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
+import type { OrderIncident, OrderIncidentEvent } from "../../types";
 import { publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -50,7 +55,7 @@ export class PublicCatalogProjectionError extends Error {
 // stores; a member sees only stores whose memberUids include them). Writes go to
 // the entity's own doc; security rules enforce membership server-side.
 
-export const COLLECTIONS = ["stores", "products", "categories", "suppliers", "purchases", "customers", "orders"] as const;
+export const COLLECTIONS = ["stores", "products", "categories", "suppliers", "purchases", "customers", "orders", "expenses"] as const;
 type CollectionName = (typeof COLLECTIONS)[number];
 
 /** Load all cloud data visible to the user. */
@@ -75,7 +80,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For a
   // super_admin this is the full collection (no `in`-query size limit); for
   // members it remains scoped to their store set.
-  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = user.role === "super_admin"
       ? collection(db, name)
@@ -84,13 +89,14 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, categories, suppliers, purchases, customers, orders] = await Promise.all([
+  const [products, categories, suppliers, purchases, customers, orders, expenses] = await Promise.all([
     forStores<Product>("products"),
     forStores<Category>("categories"),
     forStores<Supplier>("suppliers"),
     forStores<Purchase>("purchases"),
     forStores<Customer>("customers"),
     forStores<Order>("orders"),
+    forStores<LooseExpense>("expenses"),
   ]);
 
   return {
@@ -102,6 +108,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     purchases,
     customers,
     orders,
+    expenses,
   };
 }
 
@@ -162,7 +169,7 @@ export function subscribeCloudState(
   function registerEntityListeners(storeIds: string[]) {
     if (tornDown) return;
     if (storeIds.length === 0 && user.role !== "super_admin") return;
-    for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders"] as const) {
+    for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders", "expenses"] as const) {
       const entityQ = user.role === "super_admin"
         ? collection(db, name)
         : query(collection(db, name), where("storeId", "in", storeIds));
@@ -397,8 +404,15 @@ export async function saveOrderWithStockTx(
     // can never wipe a concurrent abono's accumulator (Firestore retries this
     // transaction whenever the doc changed after this read).
     const docData = snap.data() as Record<string, unknown> | undefined;
+    // #218: full saves cannot invent legacy money after payment evidence.
+    // Use the RAW deposit: migration can inflate it for legacy paid orders.
+    const rawDeposit = typeof docData?.deposit === "number" && Number.isFinite(docData.deposit) ? docData.deposit : 0;
+    const depositPinned = docData?.inheritedDepositMaterialized === true ? rawDeposit
+      : typeof docData?.paymentsReceivedCents === "number" ? Math.min(order.deposit ?? 0, rawDeposit)
+      : (order.deposit ?? 0);
     const next: Order = {
       ...order,
+      deposit: depositPinned,
       // A caller can neither erase existing evidence nor invent it on create.
       // Only the canonical doc (or the payment transaction) owns these fields.
       installmentsReservedAt: previous?.installmentsReservedAt,
@@ -406,7 +420,23 @@ export async function saveOrderWithStockTx(
       paymentsRevision: typeof docData?.paymentsRevision === "number" ? docData.paymentsRevision : undefined,
       paymentsReceivedCents: typeof docData?.paymentsReceivedCents === "number" ? docData.paymentsReceivedCents : undefined,
       inheritedDepositMaterialized: docData?.inheritedDepositMaterialized === true ? true : undefined,
+      // #189 (review F1): the credit fields belong to the compensation
+      // transactions exactly like the money fields above — an order save
+      // carries them through VERBATIM so a full-document write can never wipe
+      // a compensation (which would double-charge or invent money depending
+      // on which side is edited). Only applyCustomerCreditTx / release-
+      // CustomerCreditTx may write them.
+      creditAppliedCents: typeof docData?.creditAppliedCents === "number" ? docData.creditAppliedCents : undefined,
+      creditConsumedCents: typeof docData?.creditConsumedCents === "number" ? docData.creditConsumedCents : undefined,
+      creditLedger: Array.isArray(docData?.creditLedger) ? (docData.creditLedger as Order["creditLedger"]) : undefined,
+      // #203: same verbatim discipline — incidents (append-only evidence on
+      // this order) belong to the incident transactions, never to a form save.
+      incidents: Array.isArray(docData?.incidents) ? (docData.incidents as Order["incidents"]) : undefined,
+      // #184: saleExpenses (loose-expense charges and supply consumptions)
+      // belong to the expense transactions — same verbatim carry (review F1).
+      saleExpenses: Array.isArray(docData?.saleExpenses) ? (docData.saleExpenses as Order["saleExpenses"]) : undefined,
     };
+    next.paymentStatus = paymentStatusForOrder(next);
     // Received money per the doc: the stored accumulator plus the deposit in
     // this save (a deposit captured in the same edit also counts) — the
     // conservative max, since records are immutable evidence. The accumulator
@@ -431,7 +461,10 @@ export async function saveOrderWithStockTx(
       effectiveOrderStatus(next) === "delivered" &&
       (!previous || effectiveOrderStatus(previous) !== "delivered");
     if (delivering && deliveryWithBalanceBlocked(next, docMoney)) {
-      const saldoCents = orderTotalCents(next) - docMoney.receivedCents;
+      // #189 (review F2): the recorded saldo is the NET uncovered figure —
+      // saldo a favor already applied to this order counts as covered, the
+      // same "Pendiente por pagar" every read model shows.
+      const saldoCents = uncoveredBalanceCents(next, docMoney);
       if (!options?.confirmDeliveredWithBalance) {
         throw new DeliveryWithBalanceError(saldoCents);
       }
@@ -637,6 +670,140 @@ export async function registerOrderPaymentTx(
   throw new Error("No se pudo registrar el cobro. Revisa los cobros guardados antes de reintentarlo.");
 }
 
+/**
+ * #189: apply ONE planned compensation between two orders of the same clienta
+ * and store, atomically (the #168 accumulator discipline). One commit touches
+ * both documents: the destination gains `creditAppliedCents` + the immutable
+ * ledger entry (arrayUnion), the origin gains its `creditConsumedCents`
+ * mirror — mirrors can never drift. Idempotent on the entry id: a retry that
+ * finds it already persisted returns success without applying twice. The
+ * amounts are re-validated against the FRESH docs inside the transaction, so
+ * a stale plan (concurrent cobro, edited total) aborts instead of inventing
+ * money; the caller replans on the next trigger.
+ */
+export async function applyCustomerCreditTx(params: {
+  entry: OrderCreditLedgerEntry;
+  /** Destination order: the pending balance being compensated. */
+  orderId: string;
+  storeId: string;
+}): Promise<void> {
+  const { db } = getFirebase();
+  const { entry, orderId, storeId } = params;
+  if (entry.kind !== "application" || !Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) {
+    throw new Error("La compensación a aplicar no es válida.");
+  }
+  const destRef = doc(db, "orders", orderId);
+  const originRef = doc(db, "orders", entry.fromOrderId);
+  await runTransaction(db, async (tx) => {
+    // READ PHASE (Firestore requires every read before any write).
+    const destSnap = await tx.get(destRef);
+    const originSnap = await tx.get(originRef);
+    if (!destSnap.exists()) throw new Error("No se encontró el pedido a compensar.");
+    if (!originSnap.exists()) throw new Error("No se encontró el pedido con el saldo a favor.");
+    const destData = destSnap.data() as Record<string, unknown>;
+    const originData = originSnap.data() as Record<string, unknown>;
+    if ((destData.storeId ?? "") !== storeId || (originData.storeId ?? "") !== storeId) {
+      throw new Error("Los pedidos pertenecen a otra tienda.");
+    }
+    if ((destData.customerId ?? "") !== (originData.customerId ?? "") || !destData.customerId) {
+      throw new Error("El saldo a favor solo compensa pedidos de la misma clienta.");
+    }
+    if (destData.orderStatus === "cancelled" || originData.orderStatus === "cancelled") {
+      throw new Error("Un pedido cancelado no participa en la compensación.");
+    }
+    const ledger = Array.isArray(destData.creditLedger) ? (destData.creditLedger as OrderCreditLedgerEntry[]) : [];
+    if (ledger.some((saved) => saved.id === entry.id)) return; // idempotent retry
+    // Fresh-doc validation: the planned amount must still fit both sides.
+    if (creditAvailableCents(originData) < entry.amountCents) {
+      throw new Error("El saldo a favor cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
+    }
+    if (pendingCents(destData) < entry.amountCents) {
+      throw new Error("El saldo del pedido cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
+    }
+    // WRITE PHASE — one atomic commit across both documents.
+    tx.update(destRef, {
+      creditAppliedCents: increment(entry.amountCents),
+      creditLedger: arrayUnion(stripUndefined(entry)),
+      updatedAt: entry.at,
+    });
+    tx.update(originRef, {
+      creditConsumedCents: increment(entry.amountCents),
+    });
+  });
+}
+
+/**
+ * #189: restitute the credit a CANCELLED order had consumed, atomically. PO
+ * decision 2026-11-05: cancelling a valid order that used saldo a favor
+ * returns that credit to the clienta. For every origin still owed restitution
+ * (net applications − releases from the ledger), the reversal is ONE commit:
+ * destination accumulator down, origin mirror down, release entries appended
+ * as evidence. Idempotent: re-running after a successful release finds net
+ * zero and writes nothing.
+ */
+export async function releaseCustomerCreditTx(params: {
+  orderId: string;
+  storeId: string;
+  by: string;
+  /** "cancellation" (default): only a cancelled order restitutes — the PO
+   * rule. "deletion": the order is about to be deleted; its consumed credit
+   * is restituted so the origin's mirror never overstates consumption. */
+  reason?: "cancellation" | "deletion";
+}): Promise<number> {
+  const { db } = getFirebase();
+  const { orderId, storeId, by, reason = "cancellation" } = params;
+  const destRef = doc(db, "orders", orderId);
+  // Per-ATTEMPT accumulator: Firestore retries the transaction body on
+  // conflicts, so a total accumulated across attempts would over-report.
+  let released = 0;
+  await runTransaction(db, async (tx) => {
+    released = 0;
+    const destSnap = await tx.get(destRef);
+    if (!destSnap.exists()) return;
+    const destData = destSnap.data() as Record<string, unknown>;
+    if ((destData.storeId ?? "") !== storeId) return;
+    if (reason === "cancellation" && destData.orderStatus !== "cancelled") return;
+    const ledger = Array.isArray(destData.creditLedger) ? (destData.creditLedger as OrderCreditLedgerEntry[]) : [];
+    const netByOrigin = new Map<string, number>();
+    for (const saved of ledger) {
+      if (saved.kind !== "application" || !Number.isSafeInteger(saved.amountCents)) continue;
+      netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
+    }
+    for (const saved of ledger) {
+      if (saved.kind !== "release" || !Number.isSafeInteger(saved.amountCents)) continue;
+      netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
+    }
+    const entries: OrderCreditLedgerEntry[] = [];
+    const writes: Array<{ ref: ReturnType<typeof doc>; data: Record<string, unknown> }> = [];
+    let appliedDown = 0;
+    for (const [fromOrderId, netCents] of netByOrigin) {
+      if (netCents <= 0) continue;
+      const originRef = doc(db, "orders", fromOrderId);
+      const originSnap = await tx.get(originRef);
+      if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
+      entries.push({
+        id: `release_${orderId}_${fromOrderId}_${(ledger.filter((e) => e.kind === "release" && e.fromOrderId === fromOrderId).length) + 1}`,
+        kind: "release",
+        fromOrderId,
+        amountCents: netCents,
+        at: new Date().toISOString(),
+        by,
+      });
+      writes.push({ ref: originRef, data: { creditConsumedCents: increment(-netCents) } });
+      appliedDown += netCents;
+      released += netCents;
+    }
+    if (entries.length === 0) return;
+    tx.update(destRef, {
+      creditAppliedCents: increment(-appliedDown),
+      creditLedger: arrayUnion(...entries.map(stripUndefined)),
+      updatedAt: entries[0].at,
+    });
+    for (const write of writes) tx.update(write.ref, write.data);
+  });
+  return released;
+}
+
 /** Release the canonical reservation and delete the matching revision atomically. */
 export async function deleteOrderWithStockTx(
   _user: AppUser,
@@ -648,6 +815,18 @@ export async function deleteOrderWithStockTx(
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(orderRef);
     if (!snap.exists()) return [];
+    // #203: an order with a confirmed incident still holding quarantined
+    // pieces cannot be deleted — the quarantine release lives on this ficha
+    // (deleting it would orphan quantityQuarantined forever; review #212 F5).
+    const orderIncidents = Array.isArray(snap.data().incidents) ? (snap.data().incidents as OrderIncident[]) : [];
+    if (orderIncidents.some((incident) => {
+      // repaired keeps the piece held (not released): it must still block.
+      const quarantined = (incident.events ?? []).some((event) => event.kind === "confirmed")
+        && !(incident.events ?? []).some((event) => event.kind === "provider_replacement" || event.kind === "returned_to_sale" || event.kind === "written_off");
+      return quarantined;
+    })) {
+      throw new Error("El pedido tiene una incidencia con pieza retenida. Líbrala (autorizar venta, baja o reemplazo del proveedor) antes de borrar el pedido.");
+    }
     const previous = migrateOrder({ ...snap.data(), id: orderId });
     if ((previous.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
     // A zero accumulator can still have payments and offsetting adjustments.
@@ -1054,6 +1233,71 @@ export function isPublished(p: Product): boolean {
  * doc per published product. Prunes stale publicProducts no longer published.
  * Idempotent.
  */
+/**
+ * Pure builder for the publicCatalogs/{slug} doc: active categories + published
+ * product summaries. Extracted from projectPublicForStore so the targeted
+ * stock-signal republish (#229) reuses the exact same shape.
+ */
+export function buildPublicCatalogDoc(
+  store: Store,
+  products: Product[],
+  categories: Category[]
+): Record<string, unknown> {
+  const published = products
+    .filter((p) => p.storeId === store.id && isPublished(p))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  const activeCats = categories
+    .filter((c) => c.storeId === store.id && c.active)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      description: c.description ?? null,
+      imageUrl: c.imageUrl ?? null,
+      sortOrder: c.sortOrder,
+    }));
+  return {
+    storeSlug: store.slug,
+    storeId: store.id, // anonymous product route resolves the detail doc id from here
+    categories: activeCats,
+    products: published.map((p) => projectPublicProductSummary(p, store.slug, store)),
+  };
+}
+
+/**
+ * #229: canonical stock moved (purchase reception, order reservation/release)
+ * and the public availability signal must follow without a manual "Republicar
+ * catálogo". Targeted and READ-FREE: the caller passes the post-change
+ * canonical products, so the catalog summary doc is rebuilt locally (1 write)
+ * and each changed published product's detail doc is patched (1 write each).
+ * Idempotent: recomputed from post-transaction values — a retry writes the
+ * same thing and never re-applies a stock delta. A failure here must NOT
+ * revert the reception/order (callers run it via persistInBackground).
+ */
+export async function republishStockSignals(
+  store: Store,
+  products: Product[],
+  categories: Category[],
+  changedProductIds: string[]
+): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "publicCatalogs", store.slug), buildPublicCatalogDoc(store, products, categories));
+  const changed = new Set(changedProductIds);
+  const writes: Promise<unknown>[] = [];
+  for (const p of products) {
+    if (p.storeId !== store.id || !changed.has(p.id) || !isPublished(p) || !p.slug) continue;
+    writes.push(
+      setDoc(
+        doc(db, "publicProducts", publicProductId(store.id, p.slug)),
+        { stockSignal: publicStockSignal(p) },
+        { merge: true }
+      )
+    );
+  }
+  await Promise.all(writes);
+}
+
 export async function projectPublicForStore(
   store: Store,
   products: Product[],
@@ -1069,32 +1313,10 @@ export async function projectPublicForStore(
   const writes: Promise<unknown>[] = [];
 
   // 2. Catalog: active categories + published product summaries.
-  const published = products.filter((p) => p.storeId === store.id && isPublished(p));
-  const activeCats = categories
-    .filter((c) => c.storeId === store.id && c.active)
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      slug: c.slug,
-      description: c.description ?? null,
-      imageUrl: c.imageUrl ?? null,
-      sortOrder: c.sortOrder,
-    }));
   writes.push(
-    setDoc(
-      doc(db, "publicCatalogs", store.slug),
-      {
-        storeSlug: store.slug,
-        storeId: store.id, // anonymous product route resolves the detail doc id from here
-        categories: activeCats,
-        products: published
-          .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-          .map((p) => projectPublicProductSummary(p, store.slug, store)),
-      },
-      {}
-    )
+    setDoc(doc(db, "publicCatalogs", store.slug), buildPublicCatalogDoc(store, products, categories))
   );
+  const published = products.filter((p) => p.storeId === store.id && isPublished(p));
 
   // 3. Per-product detail docs for published products.
   const keepIds = new Set<string>();
@@ -1184,4 +1406,435 @@ export async function rebuildPublicCatalog(
     },
     { merge: true }
   );
+}
+
+/**
+ * #203: open an incident on an order — appends the incident (with its
+ * `opened` event) atomically. No inventory effect yet: the piece is still
+ * with the clienta. Idempotent by incident id.
+ */
+export async function openIncidentTx(params: {
+  orderId: string;
+  storeId: string;
+  incident: OrderIncident;
+}): Promise<Order> {
+  const { db } = getFirebase();
+  const { orderId, storeId, incident } = params;
+  const orderRef = doc(db, "orders", orderId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) throw new Error("No se encontró el pedido.");
+    const data = snap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    if (data.orderStatus === "cancelled") throw new Error("Un pedido cancelado no admite incidencias.");
+    const incidents = Array.isArray(data.incidents) ? [...(data.incidents as OrderIncident[])] : [];
+    if (incidents.some((existing) => existing.id === incident.id)) return migrateOrder({ ...data, id: orderId });
+    if (!incident.events?.some((event) => event.kind === "opened")) {
+      throw new Error("La incidencia debe abrirse con su evento de registro.");
+    }
+    incidents.push(incident);
+    const updatedAt = new Date().toISOString();
+    tx.update(orderRef, { incidents: stripUndefined(incidents), updatedAt });
+    return migrateOrder({ ...data, id: orderId, incidents, updatedAt });
+  });
+}
+
+/**
+ * #203: append ONE event to an incident and apply its effects atomically.
+ * Validity is derived from the FRESH order document (the incident's own
+ * history), so a repeated or out-of-order action aborts instead of inventing
+ * state. Inventory effects, when the event has them, land in the SAME commit:
+ * - confirmed: the damaged piece enters quarantine (not sellable) and the
+ *   replacement leaves stock at its real cost (shortage aborts the event).
+ * - repaired / provider_replacement / returned_to_sale: quarantine → sellable.
+ * - written_off: the piece leaves quarantine (identifiable loss, no cash).
+ * - refund_executed / provider_compensation: evidence only (money and its
+ *   valuation belong to #123/#128-#129, never duplicated here).
+ * `resolution`/`replacement` ride along ONLY for resolution_agreed.
+ */
+export async function applyIncidentEventTx(params: {
+  orderId: string;
+  storeId: string;
+  incidentId: string;
+  event: OrderIncidentEvent;
+  resolution?: OrderIncident["resolution"];
+  replacement?: OrderIncident["replacement"];
+}): Promise<{ order: Order }> {
+  const { db } = getFirebase();
+  const { orderId, storeId, incidentId, event, resolution, replacement } = params;
+  const orderRef = doc(db, "orders", orderId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) throw new Error("No se encontró el pedido.");
+    const data = snap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    const incidents = Array.isArray(data.incidents) ? (data.incidents as OrderIncident[]) : [];
+    const index = incidents.findIndex((existing) => existing.id === incidentId);
+    if (index < 0) throw new Error("No se encontró la incidencia.");
+    if (incidents.some((existing) => existing.events?.some((saved) => saved.id === event.id))) {
+      return { order: migrateOrder({ ...data, id: orderId }) }; // idempotent retry
+    }
+    const incident = incidents[index];
+    const state = incidentState(incident);
+    const quantity = Math.max(1, Math.round(incident.quantity || 1));
+    // ── Validity from derived state (fail closed on nonsense sequences). ──
+    const kind = event.kind;
+    if (kind === "resolution_agreed" && (state.resolution || !state.opened)) {
+      throw new Error("Esta incidencia ya tiene una resolución acordada.");
+    }
+    // #203 r2: the AUTHORITATIVE money reconciliation happens HERE, against
+    // the fresh order doc — the UI's numbers are only an estimate. The stored
+    // resolution carries the sale adjustment (piece/difference at historical
+    // price) and the reconciled refund obligation; refunds already committed
+    // by other incidents reduce this one, so the same balance is never
+    // committed twice.
+    if (kind === "resolution_agreed" && resolution) {
+      // F1 (r3 review): the HISTORICAL unit price is persisted on EVERY
+      // resolution — sibling adjustments (upgrades included) must enter every
+      // reconciliation, and orderMoney already prefers this field.
+      resolution.saleAdjustmentUnitCents = incident.originalUnitPriceCents;
+    }
+    const needsDestination = kind === "resolution_agreed"
+      && (resolution?.kind === "refund"
+        || (resolution?.kind === "replacement_with_difference"
+          && (replacement?.chargeDifference ?? false)
+          && (replacement?.unitPriceCents ?? 0) < incident.originalUnitPriceCents));
+    if (needsDestination) {
+      // The clienta's explicit choice is REQUIRED server-side (r3): a refund
+      // or a charged difference in her favor never defaults silently. An
+      // ABSORBED difference moves no money to her — no destination needed.
+      if (resolution?.destination !== "refund_pending" && resolution?.destination !== "credit_accepted") {
+        throw new Error("Elige con la clienta el destino del importe: reembolso pendiente o crédito para sus pedidos.");
+      }
+      const destination = resolution.destination;
+      const draft = { ...incident, resolution: { ...resolution, kind: resolution.kind }, ...(replacement ? { replacement } : {}) };
+      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), draft);
+      // Both operations carry the HISTORICAL unit price; how it enters the
+      // sale adjustment depends on the kind (orderMoney decides).
+      resolution.saleAdjustmentUnitCents = incident.originalUnitPriceCents;
+      resolution.refundOwedCents = money.refundOwedCents(destination);
+      resolution.destination = destination;
+    }
+    // #212 F2 defense in depth: a replacement resolution MUST name the real
+    // piece leaving stock — no stock-less defaults, no invented costs.
+    if (kind === "resolution_agreed" && (resolution?.kind === "replacement_equivalent" || resolution?.kind === "replacement_with_difference")
+      && !replacement?.productId) {
+      throw new Error("Elige la pieza que entregas como reemplazo.");
+    }
+    if (kind === "confirmed" && (!state.resolution || state.confirmed)) {
+      throw new Error("Confirma la resolución con la clienta antes de registrar recepción y entrega.");
+    }
+    if (kind === "repaired" && !state.confirmed) {
+      throw new Error("Confirma la recepción de la pieza antes de repararla.");
+    }
+    if (["provider_replacement", "returned_to_sale", "written_off"].includes(kind)
+      && state.pieceLocation !== "quarantined" && state.pieceLocation !== "repaired_held") {
+      throw new Error("La pieza no está en cuarentena; registra primero su recepción.");
+    }
+    if (kind === "refund_executed") {
+      if (!state.confirmed) throw new Error("Confirma la recepción de la pieza y entrega del reembolso antes de liquidarlo.");
+      // Committed GROSS (never the pending remainder — returned is subtracted
+      // exactly once below). Legacy transition: unit price × quantity.
+      const owed = typeof incident.resolution?.refundOwedCents === "number"
+        ? Math.max(0, incident.resolution.refundOwedCents)
+        : (typeof incident.resolution?.refundUnitPriceCents === "number" && incident.resolution.refundUnitPriceCents > 0
+          ? incident.resolution.refundUnitPriceCents * Math.max(1, Math.round(incident.quantity || 1))
+          : 0);
+      const returned = incidentsReturnedCentsOf(incident);
+      const amount = typeof event.detail?.refundExecutedCents === "number" ? event.detail.refundExecutedCents : 0;
+      if (amount <= 0) throw new Error("El importe devuelto debe ser mayor que cero.");
+      if (amount > owed - returned) {
+        throw new Error(`Solo quedan ${Math.max(0, owed - returned) / 100} pesos por devolver de este reembolso.`);
+      }
+    }
+    if (kind === "provider_compensation" && !state.confirmed) {
+      throw new Error("Confirma la incidencia antes de registrar al proveedor.");
+    }
+    if (kind === "provider_compensation" && (incident.events ?? []).some((saved) => saved.kind === "provider_compensation")) {
+      throw new Error("La compensación del proveedor ya está registrada en esta incidencia.");
+    }
+    // #203 r2-criterio 1: at confirm (the piece is physically back), the
+    // applied credit that covered the reconciled value is RESTITUTED to its
+    // origins — that is how the clienta's money becomes available again in
+    // #189 (the reconcile effect re-applies it). Reads happen before writes.
+    const creditReleases: Array<{ originRef: ReturnType<typeof doc>; cents: number; entry: OrderCreditLedgerEntry }> = [];
+    let restitutionTotal = 0;
+    if (kind === "confirmed") {
+      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), incident);
+      let remaining = money.restitutionCents;
+      const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
+      const netByOrigin = new Map<string, number>();
+      for (const saved of ledger) {
+        if (saved.kind === "application" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
+        if (saved.kind === "release" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
+      }
+      for (const [fromOrderId, netCents] of netByOrigin) {
+        if (remaining <= 0) break;
+        if (netCents <= 0) continue;
+        const originRef = doc(db, "orders", fromOrderId);
+        const originSnap = await tx.get(originRef);
+        // PO directive (r4): a NEEDED origin that is missing, foreign or
+        // inconsistent ABORTS the whole confirmation — never a silent skip.
+        // The clienta's credit would vanish with no signal; fail closed and
+        // explain so the operator can repair the data first.
+        if (!originSnap.exists()) {
+          throw new Error(`No se encontró el pedido origen del saldo a favor (${fromOrderId}). Repara ese pedido antes de confirmar: la devolución necesita devolverle su crédito.`);
+        }
+        const originData = originSnap.data() as Record<string, unknown>;
+        if ((originData.storeId ?? "") !== storeId) {
+          throw new Error("El pedido origen del saldo a favor pertenece a otra tienda. Revisa la ficha antes de confirmar.");
+        }
+        // F4: cap against the origin's REAL mirror so a release can never
+        // drive creditConsumed negative (manual-repair scenarios included).
+        const originConsumed = typeof originData.creditConsumedCents === "number" && Number.isSafeInteger(originData.creditConsumedCents)
+          ? Math.max(0, originData.creditConsumedCents)
+          : 0;
+        if (originConsumed <= 0) {
+          throw new Error(`El pedido origen del saldo a favor no refleja el crédito consumido (${fromOrderId}). Revisa sus cobros de saldo antes de confirmar.`);
+        }
+        const release = Math.min(netCents, remaining, originConsumed);
+        if (release <= 0) continue;
+        remaining -= release;
+        creditReleases.push({
+          originRef,
+          cents: release,
+          entry: { id: `rel_${event.id}_${fromOrderId}`, kind: "release", fromOrderId, amountCents: release, at: event.at, by: event.by },
+        });
+        restitutionTotal += release;
+      }
+    }
+
+    // ── Inventory effects (same commit; shortages abort the whole event).
+    // Firestore requires EVERY read before ANY write: both product reads
+    // happen first, then both writes.
+    const quarantineProduct = incident.productId ? doc(db, "products", incident.productId) : null;
+    if (kind === "confirmed") {
+      // The PERSISTED resolution/replacement drive the confirm (parameters
+      // only ride along with resolution_agreed) — the fresh doc is the truth
+      // (review #212 F9: doc-first, never the incoming parameter).
+      const agreed = incident.resolution ?? resolution;
+      const target = agreed && agreed.kind !== "refund"
+        ? (incident.replacement ?? replacement)
+        : undefined;
+      // #212 F4: wait_restock hands the restocked piece over at confirm — the
+      // SAME piece leaves stock at its real stored cost, shortage included.
+      const effectiveTarget = agreed?.kind === "wait_restock"
+        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false })
+        : target;
+      if (quarantineProduct) {
+        const productSnap = await tx.get(quarantineProduct);
+        if (productSnap.exists() && (productSnap.data().storeId ?? "") !== storeId) {
+          throw new Error("El producto pertenece a otra tienda.");
+        }
+      }
+      let replacementRef: ReturnType<typeof doc> | null = null;
+      if (effectiveTarget?.productId) {
+        replacementRef = doc(db, "products", effectiveTarget.productId);
+        const replacementSnap = await tx.get(replacementRef);
+        if (!replacementSnap.exists()) throw new Error("No se encontró el producto de reemplazo.");
+        if ((replacementSnap.data().storeId ?? "") !== storeId) throw new Error("El reemplazo pertenece a otra tienda.");
+        const onHand = typeof replacementSnap.data().quantityOnHand === "number" ? replacementSnap.data().quantityOnHand : 0;
+        if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del reemplazo.`);
+      }
+      if (quarantineProduct) {
+        tx.update(quarantineProduct, { quantityQuarantined: increment(quantity), updatedAt: event.at });
+      }
+      if (replacementRef) {
+        tx.update(replacementRef, { quantityOnHand: increment(-quantity), updatedAt: event.at });
+      }
+    }
+    // #203 r2: repairing does NOT release the piece — it stays in quarantine
+    // until Fer explicitly authorizes the return to sale (or writes it off).
+    if ((kind === "provider_replacement" || kind === "returned_to_sale") && quarantineProduct) {
+      tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), quantityOnHand: increment(quantity), updatedAt: event.at });
+    }
+    if (kind === "written_off" && quarantineProduct) {
+      tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), updatedAt: event.at });
+    }
+    // #203 r2: an executed refund at confirm can never exceed the committed
+    // obligation (authoritative, recomputed above at agreement time).
+    if (kind === "confirmed" && typeof event.detail?.refundExecutedCents === "number") {
+      if (!Number.isSafeInteger(event.detail.refundExecutedCents) || event.detail.refundExecutedCents < 0) {
+        throw new Error("El importe devuelto no es válido.");
+      }
+      const owed = typeof incident.resolution?.refundOwedCents === "number"
+        ? Math.max(0, incident.resolution.refundOwedCents)
+        : (typeof incident.resolution?.refundUnitPriceCents === "number" && incident.resolution.refundUnitPriceCents > 0
+          ? incident.resolution.refundUnitPriceCents * Math.max(1, Math.round(incident.quantity || 1))
+          : 0);
+      if (event.detail.refundExecutedCents > owed) {
+        throw new Error(`El reembolso comprometido es de ${owed / 100} pesos; no se puede devolver más.`);
+      }
+    }
+
+    // ── Order doc: append the event (and the agreed resolution, once). ──
+    const updated: OrderIncident = {
+      ...incident,
+      ...(kind === "resolution_agreed" && resolution ? { resolution } : {}),
+      ...(kind === "resolution_agreed" && replacement ? { replacement } : {}),
+      events: [...(incident.events ?? []), event],
+    };
+    const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));
+    const updatedAt = event.at;
+    if (restitutionTotal > 0) {
+      for (const release of creditReleases) {
+        tx.update(release.originRef, { creditConsumedCents: increment(-release.cents) });
+      }
+      tx.update(orderRef, {
+        incidents: stripUndefined(nextIncidents),
+        updatedAt,
+        creditAppliedCents: increment(-restitutionTotal),
+        creditLedger: arrayUnion(...creditReleases.map((release) => stripUndefined(release.entry))),
+      });
+    } else {
+      tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
+    }
+    return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }) };
+  });
+}
+
+/** Σ money actually handed back (executed refunds) for this incident. */
+function incidentsReturnedCentsOf(incident: OrderIncident): number {
+  return (incident.events ?? []).reduce(
+    (sum: number, event: OrderIncidentEvent) =>
+      sum + ((event.kind === "confirmed" || event.kind === "refund_executed") && typeof event.detail?.refundExecutedCents === "number" && Number.isSafeInteger(event.detail.refundExecutedCents) ? event.detail.refundExecutedCents : 0),
+    0
+  );
+}
+
+
+/**
+ * #184: assign part of a loose expense to a purchase or an order, atomically.
+ * Validation against FRESH docs: the pending balance must cover the amount;
+ * a purchase target must be OPEN (a received purchase's historical cost
+ * allocations are never silently recalculated — asignar allí exige #202);
+ * an order target must belong to the same store. Order assignments charge
+ * the order via append-only `saleExpenses` (profit-only, never the sale
+ * total nor the clienta's balance) in the SAME commit as the expense doc.
+ * Idempotent by assignment id.
+ */
+export async function assignExpenseTx(params: {
+  expenseId: string;
+  storeId: string;
+  assignment: ExpenseAssignment;
+  /** For purchase targets: the purchase expense entry to append (native
+   * sourcing path reuses the existing allocation machinery). */
+  purchaseExpense?: { id: string; category: "sourcing_transport" | "other"; amount: number; description?: string; includeInInventoryCost?: boolean };
+}): Promise<void> {
+  const { db } = getFirebase();
+  const { expenseId, storeId, assignment, purchaseExpense } = params;
+  const expenseRef = doc(db, "expenses", expenseId);
+  await runTransaction(db, async (tx) => {
+    const expenseSnap = await tx.get(expenseRef);
+    if (!expenseSnap.exists()) throw new Error("No se encontró el gasto.");
+    const data = expenseSnap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El gasto pertenece a otra tienda.");
+    const expense = { ...data, id: expenseId } as LooseExpense;
+    const assignments = [...(expense.assignments ?? [])];
+    if (assignments.some((existing) => existing.id === assignment.id)) return; // idempotent
+    const { pendingAssignmentCents } = await import("../../lib/expenses");
+    if (assignment.amountCents <= 0 || !Number.isSafeInteger(assignment.amountCents)) {
+      throw new Error("El importe de la asignación debe ser mayor que cero.");
+    }
+    if (expense.supply) {
+      throw new Error("Los suministros se distribuyen consumiéndolos, no asignándolos a compras o pedidos.");
+    }
+    if (pendingAssignmentCents(expense) < assignment.amountCents) {
+      throw new Error(`Solo quedan ${pendingAssignmentCents(expense) / 100} pesos por asignar de este gasto.`);
+    }
+    const updatedAt = assignment.at;
+    if (assignment.target.kind === "purchase") {
+      const purchaseRef = doc(db, "purchases", assignment.target.purchaseId);
+      const purchaseSnap = await tx.get(purchaseRef);
+      if (!purchaseSnap.exists()) throw new Error("No se encontró la compra.");
+      const purchaseData = purchaseSnap.data() as Record<string, unknown>;
+      if ((purchaseData.storeId ?? "") !== storeId) throw new Error("La compra pertenece a otra tienda.");
+      if (purchaseData.status === "received" || effectivePurchaseStatus(purchaseData as Purchase) === "received") {
+        throw new Error("La compra ya está recibida: su costo histórico no se recalcula. Asigna el gasto por la vía de venta o registra el ajuste del periodo.");
+      }
+      const existingExpenses = Array.isArray(purchaseData.sourcingExpenses) ? (purchaseData.sourcingExpenses as unknown[]) : [];
+      const nextExpenses = [...existingExpenses, ...(purchaseExpense ? [purchaseExpense] : [])];
+      tx.update(purchaseRef, { sourcingExpenses: nextExpenses, updatedAt });
+    } else {
+      const orderRef = doc(db, "orders", assignment.target.orderId);
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
+      const orderData = orderSnap.data() as Record<string, unknown>;
+      if ((orderData.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+      const charge: OrderSaleExpense = {
+        id: `asg_${assignment.id}`,
+        at: assignment.at,
+        by: assignment.by,
+        amountCents: assignment.amountCents,
+        description: expense.description,
+        expenseId,
+        ...(assignment.allocations?.length ? { allocations: assignment.allocations } : {}),
+      };
+      tx.update(orderRef, { saleExpenses: arrayUnion(stripUndefined(charge)), updatedAt: assignment.at });
+    }
+    assignments.push(assignment);
+    tx.update(expenseRef, { assignments: stripUndefined(assignments), updatedAt });
+  });
+}
+
+/**
+ * #184: consume supply units and charge the linked order, atomically.
+ * Availability is validated against the FRESH expense doc (quantity can never
+ * go negative); the charge is quantity × unit cost in exact cents and lands
+ * on the order as append-only `saleExpenses` evidence. Idempotent by
+ * consumption id.
+ */
+export async function consumeSupplyTx(params: {
+  expenseId: string;
+  storeId: string;
+  consumption: SupplyConsumption;
+  description?: string;
+}): Promise<void> {
+  const { db } = getFirebase();
+  const { expenseId, storeId, consumption, description } = params;
+  const expenseRef = doc(db, "expenses", expenseId);
+  await runTransaction(db, async (tx) => {
+    const expenseSnap = await tx.get(expenseRef);
+    if (!expenseSnap.exists()) throw new Error("No se encontró el suministro.");
+    const data = expenseSnap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El suministro pertenece a otra tienda.");
+    const expense = { ...data, id: expenseId } as LooseExpense;
+    if (!expense.supply) throw new Error("Este gasto no es un suministro.");
+    if ((expense.supply.consumptions ?? []).some((existing) => existing.id === consumption.id)) return; // idempotent
+    const { supplyAvailableQuantity, supplyChargeCents } = await import("../../lib/expenses");
+    if (consumption.quantity <= 0 || !Number.isSafeInteger(consumption.quantity)) {
+      throw new Error("La cantidad a consumir debe ser mayor que cero.");
+    }
+    if (supplyAvailableQuantity(expense) < consumption.quantity) {
+      throw new Error(`Solo quedan ${supplyAvailableQuantity(expense)} disponibles de este suministro.`);
+    }
+    // Firestore requires every read before any write: the order (when linked)
+    // is read first, then both writes land in one commit.
+    let orderRef: ReturnType<typeof doc> | null = null;
+    if (consumption.orderId) {
+      orderRef = doc(db, "orders", consumption.orderId);
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap.exists()) throw new Error("No se encontró el pedido.");
+      const orderData = orderSnap.data() as Record<string, unknown>;
+      if ((orderData.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    }
+    const updatedAt = consumption.at;
+    const nextSupply = {
+      ...expense.supply,
+      consumptions: [...(expense.supply.consumptions ?? []), consumption],
+    };
+    tx.update(expenseRef, { supply: stripUndefined(nextSupply), updatedAt });
+    if (orderRef) {
+      const charge: OrderSaleExpense = {
+        id: `sup_${consumption.id}`,
+        at: consumption.at,
+        by: consumption.by,
+        amountCents: supplyChargeCents(consumption, expense),
+        description: description ?? expense.description,
+        expenseId,
+        supplyConsumptionId: consumption.id,
+      };
+      tx.update(orderRef, { saleExpenses: arrayUnion(stripUndefined(charge)), updatedAt: consumption.at });
+    }
+  });
 }

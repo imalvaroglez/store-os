@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emptyAppState, reducer, newOrder, newProduct } from "./StoreProvider";
+import { emptyAppState, reducer, newOrder, newProduct, type Action } from "./StoreProvider";
 import type { AppState, Order, Product } from "../types";
 
 // Reducer-level tests for the stock-reservation wiring (the only non-trivial
@@ -199,5 +199,33 @@ describe("reducer: supplier/purchase CRUD + cascade on store delete", () => {
     const next = reducer(seeded, { type: "DELETE_STORE", storeId });
     expect(next.suppliers.map((s) => s.id)).toEqual(["s-b"]);
     expect(next.purchases.map((p) => p.id)).toEqual(["p-b"]);
+  });
+});
+
+// #232: the cloud listener can REPLACE state with a snapshot that already
+// contains the entity a pending upsert is about to ADD (stale closure chose
+// ADD). Every ADD_* must therefore be an idempotent upsert-by-id, like
+// ADD_EXPENSE already was — otherwise the entity shows twice (e.g. the same
+// clienta twice in the order form's picker, silently breaking exact-name
+// binding) until a reload.
+describe("reducer: ADD_* dispatches are idempotent (cloud listener race #232)", () => {
+  const store = { id: "store_1", name: "S1", slug: "s1", type: "inventory_tiered" as const, createdAt: "", updatedAt: "" };
+  const cases = [
+    { name: "product", first: { ...newProduct(store.id), id: "p1", name: "Uno" }, second: { ...newProduct(store.id), id: "p1", name: "Dos" }, add: (e: unknown) => ({ type: "ADD_PRODUCT", product: e as Product }), key: "products", pick: (s: AppState) => s.products },
+    { name: "category", first: { id: "c1", storeId: store.id, name: "Cat", order: 0 }, second: { id: "c1", storeId: store.id, name: "Cat2", order: 1 }, add: (e: unknown) => ({ type: "ADD_CATEGORY", category: e as never }), pick: (s: AppState) => s.categories },
+    { name: "supplier", first: { id: "sup1", storeId: store.id, name: "Prov" }, second: { id: "sup1", storeId: store.id, name: "Prov2" }, add: (e: unknown) => ({ type: "ADD_SUPPLIER", supplier: e as never }), pick: (s: AppState) => s.suppliers },
+    { name: "purchase", first: { id: "pu1", storeId: store.id, lines: [], status: "draft" }, second: { id: "pu1", storeId: store.id, lines: [], status: "received" }, add: (e: unknown) => ({ type: "ADD_PURCHASE", purchase: e as never }), pick: (s: AppState) => s.purchases },
+    { name: "customer", first: { id: "cu1", storeId: store.id, name: "Clienta" }, second: { id: "cu1", storeId: store.id, name: "Clienta editada" }, add: (e: unknown) => ({ type: "ADD_CUSTOMER", customer: e as never }), pick: (s: AppState) => s.customers },
+    { name: "order", first: { ...newOrder(store.id), id: "o1", storeId: store.id }, second: { ...newOrder(store.id), id: "o1", storeId: store.id, notes: "editada" }, add: (e: unknown) => ({ type: "ADD_ORDER", order: e as Order }), pick: (s: AppState) => s.orders },
+    { name: "store", first: store, second: { ...store, name: "S1 editada" }, add: (e: unknown) => ({ type: "ADD_STORE", store: e as never }), pick: (s: AppState) => s.stores },
+  ] as const;
+
+  it.each(cases)("ADD %s twice with the same id keeps one copy and the latest version", ({ first, second, add, pick }) => {
+    const base: AppState = { ...emptyAppState(), stores: [store] };
+    const once = reducer(base, add(first) as Action);
+    const twice = reducer(once, add(second) as Action);
+    const list = pick(twice) as Array<{ id: string }>;
+    expect(list.filter((x) => x.id === (first as { id: string }).id)).toHaveLength(1);
+    expect(list.find((x) => x.id === (first as { id: string }).id)).toMatchObject(second);
   });
 });

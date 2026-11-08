@@ -11,6 +11,7 @@ import {
   useToast,
 } from "../../design-system";
 import { todayIso } from "../../lib/dates";
+import { orderReference } from "../../lib/orders";
 import { uid } from "../../lib/ids";
 import { sanitizeMoneyInput } from "../../lib/money";
 import type { Order, OrderPayment } from "../../types";
@@ -58,6 +59,7 @@ export function OrderPaymentsSheet({
   const [inheritedDate, setInheritedDate] = useState("");
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustAmountText, setAdjustAmountText] = useState("");
+  const [adjustDirection, setAdjustDirection] = useState<"subtract" | "add">("subtract");
   const [adjustNote, setAdjustNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -151,8 +153,9 @@ export function OrderPaymentsSheet({
   async function submitAdjustment() {
     const id = intentIdRef.current.adjust ?? uid("adj");
     intentIdRef.current.adjust = id;
-    await save({ kind: "adjustment", id, amountText: adjustAmountText, note: adjustNote }, () => {
+    await save({ kind: "adjustment", id, direction: adjustDirection, amountText: adjustAmountText, note: adjustNote }, () => {
       setAdjustAmountText("");
+      setAdjustDirection("subtract");
       setAdjustNote("");
       setAdjustOpen(false);
       intentIdRef.current.adjust = null;
@@ -173,6 +176,29 @@ export function OrderPaymentsSheet({
             <Money exact amount={Math.abs(summary.balanceCents) / 100} />
           </StatRow>
         </div>
+
+        {summary.creditAppliedCents > 0 && (
+          <div className="space-y-1 rounded-xl bg-surface p-3 ring-1 ring-edge">
+            <p className="text-sm">
+              Total del pedido: <Money exact amount={summary.totalCents / 100} />
+              {" "}· Saldo a favor aplicado: <Money exact amount={summary.creditAppliedCents / 100} />
+              {" "}· Pendiente por pagar: <Money exact amount={Math.max(0, summary.balanceCents) / 100} />
+            </p>
+            {(order.creditLedger ?? []).filter((entry) => entry.kind === "application").length > 0 && (
+              <ul className="text-xs text-on-surface-soft space-y-0.5">
+                {(order.creditLedger ?? []).filter((entry) => entry.kind === "application").map((entry) => (
+                  <li key={entry.id}>
+                    <Money exact amount={entry.amountCents / 100} /> del pedido{" "}
+                    {orderReference(entry.fromOrderId)} · {new Date(entry.at).toLocaleDateString("es-MX")}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-xs text-on-surface-soft">
+              El saldo a favor sale de otro pedido de la clienta con dinero de más; no es un cobro nuevo.
+            </p>
+          </div>
+        )}
 
         {summary.inheritedPendingCents > 0 && (
           <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
@@ -329,12 +355,21 @@ export function OrderPaymentsSheet({
               <p className="text-xs text-on-surface-soft">
                 Los ajustes no borran cobros: quedan como registros con signo y motivo.
               </p>
+              <SelectField
+                label="Dirección"
+                value={adjustDirection}
+                onChange={setAdjustDirection}
+                options={[
+                  { value: "subtract", label: "Restar (devolución)" },
+                  { value: "add", label: "Sumar" },
+                ]}
+              />
               <TextField
                 label="Monto del ajuste"
                 inputMode="decimal"
-                placeholder="-150 para devolver"
+                placeholder="150 para devolver"
                 value={adjustAmountText}
-                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value))}
+                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, "")))}
               />
               <TextField
                 label="Motivo"

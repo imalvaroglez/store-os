@@ -10,6 +10,7 @@ export type Tab =
   | "productos"
   | "productos_categorias"
   | "productos_compras"
+  | "productos_gastos"
   | "pedidos"
   | "clientes"
   | "usuarios"
@@ -30,6 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
     children: [
       { id: "productos_categorias", label: "Categorías", path: "/productos/categorias" },
       { id: "productos_compras", label: "Compras", path: "/productos/compras" },
+      { id: "productos_gastos", label: "Gastos", path: "/productos/gastos" },
     ],
   },
   { id: "pedidos", label: "Pedidos", path: "/pedidos" },

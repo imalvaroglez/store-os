@@ -19,12 +19,14 @@ import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
 import { installmentPlanView } from "./installments";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
+import { IncidentSheet } from "./IncidentSheet";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
   const { upsertOrder, state, activeStore } = useStore();
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
+  const [incidentOpen, setIncidentOpen] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const toast = useToast();
   const customer = state.customers.find((c) => c.id === order.customerId && c.storeId === order.storeId);
@@ -73,7 +75,12 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   /** One-tap payment collection: deposit rises to the total, paymentStatus re-derives to paid. */
   async function collect() {
     try {
-      await upsertOrder({ ...order, deposit: totals.estimatedTotal, updatedAt: new Date().toISOString() });
+      const saved = await upsertOrder({ ...order, deposit: totals.estimatedTotal, updatedAt: new Date().toISOString() });
+      if ((saved.deposit ?? 0) < totals.estimatedTotal) {
+        toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
+        setPaymentsOpen(true);
+        return;
+      }
       toast.success("Pedido cobrado");
     } catch {
       toast.error("No se pudo registrar el cobro.");
@@ -127,18 +134,24 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           <>
             <StatRow label="Recibido"><Money exact amount={planView.receivedCents / 100} /></StatRow>
             <StatRow label={planView.balanceCents > 0 ? "Saldo" : "A favor"} tone={planView.balanceCents > 0 ? "danger" : "success"}>
-              <Money exact amount={Math.abs(planView.balanceCents) / 100} />
+              {/* #189: a creditor's real "A favor" is the UNCONSUMED surplus. */}
+              <Money exact amount={planView.balanceCents > 0 ? planView.balanceCents / 100 : totals.availableCredit} />
             </StatRow>
           </>
         ) : (
           <>
             <StatRow label={hasPaymentRecords ? "Recibido" : "Pagado"}><Money exact amount={totals.paid} /></StatRow>
-            <StatRow label={hasPaymentRecords && totals.paid > totals.estimatedTotal ? "A favor" : "Saldo"} tone={totals.balance > 0 ? "danger" : "success"}>
-              <Money exact amount={hasPaymentRecords && totals.paid > totals.estimatedTotal ? totals.paid - totals.estimatedTotal : totals.balance} />
+            <StatRow label={totals.availableCredit > 0 ? "A favor" : "Saldo"} tone={totals.balance > 0 ? "danger" : "success"}>
+              <Money exact amount={totals.availableCredit > 0 ? totals.availableCredit : totals.balance} />
             </StatRow>
           </>
         )}
       </div>
+      {totals.appliedCredit > 0 && (
+        <p className="text-xs text-ink-soft mt-1">
+          Ya se aplicó un saldo a favor de <Money exact amount={totals.appliedCredit} /> de otro pedido de la clienta.
+        </p>
+      )}
       {profitView && profitView.profitCents != null && (
         <p className="text-xs text-ink-soft mt-2">
           Ganancia estimada: <Money exact className={profitView.profitCents < 0 ? "text-danger" : ""} amount={profitView.profitCents / 100} />
@@ -153,6 +166,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
         <Button variant="ghost" onClick={() => setPaymentsOpen(true)}>Cobros</Button>
+        {(status !== "cancelled" || (order.incidents?.length ?? 0) > 0) && (
+          <Button variant="ghost" onClick={() => setIncidentOpen(true)}>Incidencia{(order.incidents?.length ?? 0) > 0 ? ` (${order.incidents!.length})` : ""}</Button>
+        )}
       </div>
       {(verb || owed) && (
         <div className="mt-3 flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
@@ -193,6 +209,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       </div>
     </Sheet>
     <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
+    <IncidentSheet order={order} open={incidentOpen} onClose={() => setIncidentOpen(false)} />
     </>
   );
 }

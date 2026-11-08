@@ -81,5 +81,18 @@ export function itemsProfitBreakdown(items: OrderItem[], storeId: string, purcha
 }
 
 export function orderProfitBreakdown(order: Order, purchases: Purchase[]): OrderProfitBreakdown {
-  return itemsProfitBreakdown(orderItems(order), order.storeId, purchases);
+  const breakdown = itemsProfitBreakdown(orderItems(order), order.storeId, purchases);
+  // #184: direct sale-side charges on this order (loose expense assignments
+  // and supply consumptions) reduce the profit — never the sale total nor the
+  // clienta's balance. Append-only evidence, exact cents.
+  const directCents = (order.saleExpenses ?? []).reduce(
+    (sum, charge) => sum + (Number.isSafeInteger(charge.amountCents) ? charge.amountCents : 0),
+    0
+  );
+  if (directCents === 0) return breakdown;
+  return {
+    ...breakdown,
+    saleExpenseCents: breakdown.saleExpenseCents + directCents,
+    profitCents: breakdown.profitCents == null ? null : breakdown.profitCents - directCents,
+  };
 }

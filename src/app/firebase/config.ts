@@ -125,3 +125,19 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
   }
   return { app: app!, auth: a, db: database };
 }
+
+// Usage-measurement hook (#192, protocol in the issue): compiled ONLY into
+// dev-project builds — the production build (store-os-f7cf8) dead-code
+// eliminates this branch because both operands are build-time literals
+// (Vite replaces import.meta.env.*, FIREBASE_DEV_PROJECT_ID is a plain
+// string). Armed by ?measure=1, it does exactly what the harness consumes:
+// expose the marker scripts/measure-usage.mjs checks to prove it is driving
+// a dev build, and turn on Firestore debug logging for its raw evidence
+// log. The harness signs in through the UI like a human operator; there is
+// deliberately NO auth API here (review #201 F2). No secrets in the bundle.
+if (import.meta.env.VITE_FIREBASE_PROJECT_ID === FIREBASE_DEV_PROJECT_ID) {
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("measure")) {
+    (window as unknown as { __storeOsMeasure?: boolean }).__storeOsMeasure = true;
+    void import("firebase/firestore").then(({ setLogLevel }) => setLogLevel("debug")).catch(console.error);
+  }
+}

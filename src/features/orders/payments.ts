@@ -8,7 +8,7 @@
 // exact-cents helpers; NaN never enters the state.
 import type { Order, OrderPayment, OrderPaymentMethod } from "../../types";
 import { parseAmount } from "../../lib/money";
-import { docReceivedCents, orderAmountCents } from "../../lib/orderMoney";
+import { docReceivedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 export { docReceivedCents } from "../../lib/orderMoney";
 import { orderItems } from "../../lib/orders";
 
@@ -41,9 +41,10 @@ export type PaymentFormInput = {
   inherited?: { method: "cash" | "transfer"; date: string };
 };
 
-/** Form input for a correction/refund (signed amount, note = evidence). */
+/** Form input for a correction/refund (positive magnitude, explicit direction). */
 export type AdjustmentFormInput = {
   kind: "adjustment";
+  direction: "subtract" | "add";
   id: string;
   amountText: string;
   note: string;
@@ -122,8 +123,10 @@ export function buildAdjustmentRecord(
   by: string,
   now = new Date().toISOString()
 ): OrderPayment {
-  const amount = normalizeAmount(input.amountText);
-  if (amount === 0) throw new Error("El monto del ajuste no puede ser cero.");
+  if (/[+-]/.test(input.amountText)) throw new Error("Captura un monto positivo sin signo y elige la dirección.");
+  const magnitude = normalizeAmount(input.amountText);
+  if (magnitude <= 0) throw new Error("El monto del ajuste debe ser mayor que cero.");
+  const amount = input.direction === "subtract" ? -magnitude : magnitude;
   const note = input.note.trim();
   if (!note) throw new Error("Escribe el motivo del ajuste.");
   return {
@@ -230,8 +233,12 @@ export type PaymentSummary = {
   totalCents: number;
   /** Received = Σ records + the still-unmaterialized inherited deposit. */
   receivedCents: number;
-  /** total − received, signed: negative means money in the customer's favor. */
+  /** total − received − creditApplied, signed: negative means money in the
+   * customer's favor. #189: saldo a favor applied from sister orders reduces
+   * what she owes here (never counted as received money). */
   balanceCents: number;
+  /** #189: saldo a favor applied TO this order (destination accumulator). */
+  creditAppliedCents: number;
   /** Deposit cents not yet materialized as a record (shown as unknown). */
   inheritedPendingCents: number;
   /** The order's records, chronological evidence (earliest first). */
@@ -247,10 +254,13 @@ export function paymentSummary(
   order: Partial<Order> & Record<string, unknown>,
   payments: OrderPayment[]
 ): PaymentSummary {
-  const totalCents = orderItems(order).reduce(
+  // #203: the EFFECTIVE total (historical + incident adjustments) — the same
+  // figure every other read model shows, so Cobros and the card never
+  // contradict each other (review #212 F3).
+  const totalCents = Math.max(0, orderItems(order).reduce(
     (sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity),
     0
-  );
+  ) + incidentsSaleAdjustmentCents(order.incidents));
   const records = orderPaymentsFor(payments, String(order.id ?? ""), String(order.storeId ?? "")).sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
   );
@@ -260,10 +270,13 @@ export function paymentSummary(
   const receivedCents = typeof order.paymentsReceivedCents === "number" && Number.isFinite(order.paymentsReceivedCents)
     ? docReceivedCents(order)
     : paymentsCents(records) + inheritedPendingCents;
+  const creditAppliedCents = typeof order.creditAppliedCents === "number" && Number.isSafeInteger(order.creditAppliedCents)
+    ? Math.max(0, order.creditAppliedCents) : 0;
   return {
     totalCents,
     receivedCents,
-    balanceCents: totalCents - receivedCents,
+    balanceCents: totalCents - receivedCents - creditAppliedCents,
+    creditAppliedCents,
     inheritedPendingCents,
     records,
   };

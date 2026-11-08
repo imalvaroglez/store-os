@@ -37,8 +37,10 @@ import {
   reconcileOrderPayments,
   type PaymentRecordInput,
 } from "../features/orders/payments";
+import { creditAvailableCents, ordersForCustomer, planCreditApplications } from "../features/orders/customerCredit";
 import { useAuth } from "./firebase/AuthProvider";
 import type { AppUser } from "./firebase/auth";
+import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
 import { findUidByEmail, normalizeEmail, sendInviteLink } from "./firebase/auth";
 import {
   loadCloudState,
@@ -48,6 +50,7 @@ import {
   deleteEntity,
   claimSlug,
   projectPublicForStore,
+  republishStockSignals,
   unprojectPublicForStore,
   upsertPublicProduct,
   removePublicProductDoc,
@@ -59,6 +62,12 @@ import {
   deleteOrderWithStockTx,
   fetchOrderPayments,
   registerOrderPaymentTx,
+  applyCustomerCreditTx,
+  releaseCustomerCreditTx,
+  openIncidentTx,
+  applyIncidentEventTx,
+  assignExpenseTx,
+  consumeSupplyTx,
   StaleOrderError,
   PurchaseAlreadyReceived,
   PublicCatalogProjectionError,
@@ -69,7 +78,10 @@ import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 
 // Actions: every mutation flows through here. The active store scopes normal UI
 // work; membership and super_admin access are enforced by Firebase rules.
-type Action =
+export type Action =
+  | { type: "ADD_EXPENSE"; expense: LooseExpense }
+  | { type: "UPDATE_EXPENSE"; expense: LooseExpense }
+  | { type: "DELETE_EXPENSE"; expenseId: string }
   | { type: "ADD_STORE"; store: Store }
   | { type: "UPDATE_STORE"; store: Store }
   | { type: "DELETE_STORE"; storeId: string }
@@ -104,8 +116,26 @@ type Action =
 // cascade deletes, entity CRUD) without spinning up a React tree.
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case "ADD_EXPENSE": {
+      if (state.expenses.some((e) => e.id === action.expense.id)) return state;
+      return { ...state, expenses: [...state.expenses, action.expense] };
+    }
+    case "UPDATE_EXPENSE": {
+      return { ...state, expenses: state.expenses.map((e) => (e.id === action.expense.id ? action.expense : e)) };
+    }
+    case "DELETE_EXPENSE": {
+      return { ...state, expenses: state.expenses.filter((e) => e.id !== action.expenseId) };
+    }
     case "ADD_STORE":
-      return { ...state, stores: [...state.stores, action.store], activeStoreId: action.store.id };
+      // Upsert-by-id: a late ADD must never duplicate an entity the cloud
+      // listener already delivered (#232). Keeps the store selected either way.
+      return {
+        ...state,
+        stores: state.stores.some((s) => s.id === action.store.id)
+          ? state.stores.map((s) => (s.id === action.store.id ? action.store : s))
+          : [...state.stores, action.store],
+        activeStoreId: action.store.id,
+      };
     case "UPDATE_STORE":
       return { ...state, stores: state.stores.map((s) => (s.id === action.store.id ? action.store : s)) };
     case "DELETE_STORE":
@@ -126,37 +156,73 @@ export function reducer(state: AppState, action: Action): AppState {
     case "SET_ACTIVE_STORE":
       return { ...state, activeStoreId: action.storeId || null };
     case "ADD_PRODUCT":
-      return { ...state, products: [...state.products, action.product] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        products: state.products.some((x) => x.id === action.product.id)
+          ? state.products.map((x) => (x.id === action.product.id ? action.product : x))
+          : [...state.products, action.product],
+      };
     case "UPDATE_PRODUCT":
       return { ...state, products: state.products.map((p) => (p.id === action.product.id ? action.product : p)) };
     case "DELETE_PRODUCT":
       return { ...state, products: state.products.filter((p) => p.id !== action.productId) };
     case "ADD_CATEGORY":
-      return { ...state, categories: [...state.categories, action.category] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        categories: state.categories.some((x) => x.id === action.category.id)
+          ? state.categories.map((x) => (x.id === action.category.id ? action.category : x))
+          : [...state.categories, action.category],
+      };
     case "UPDATE_CATEGORY":
       return { ...state, categories: state.categories.map((c) => (c.id === action.category.id ? action.category : c)) };
     case "DELETE_CATEGORY":
       return { ...state, categories: state.categories.filter((c) => c.id !== action.categoryId) };
     case "ADD_SUPPLIER":
-      return { ...state, suppliers: [...state.suppliers, action.supplier] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        suppliers: state.suppliers.some((x) => x.id === action.supplier.id)
+          ? state.suppliers.map((x) => (x.id === action.supplier.id ? action.supplier : x))
+          : [...state.suppliers, action.supplier],
+      };
     case "UPDATE_SUPPLIER":
       return { ...state, suppliers: state.suppliers.map((s) => (s.id === action.supplier.id ? action.supplier : s)) };
     case "DELETE_SUPPLIER":
       return { ...state, suppliers: state.suppliers.filter((s) => s.id !== action.supplierId) };
     case "ADD_PURCHASE":
-      return { ...state, purchases: [...state.purchases, action.purchase] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        purchases: state.purchases.some((x) => x.id === action.purchase.id)
+          ? state.purchases.map((x) => (x.id === action.purchase.id ? action.purchase : x))
+          : [...state.purchases, action.purchase],
+      };
     case "UPDATE_PURCHASE":
       return { ...state, purchases: state.purchases.map((p) => (p.id === action.purchase.id ? action.purchase : p)) };
     case "DELETE_PURCHASE":
       return { ...state, purchases: state.purchases.filter((p) => p.id !== action.purchaseId) };
     case "ADD_CUSTOMER":
-      return { ...state, customers: [...state.customers, action.customer] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        customers: state.customers.some((x) => x.id === action.customer.id)
+          ? state.customers.map((x) => (x.id === action.customer.id ? action.customer : x))
+          : [...state.customers, action.customer],
+      };
     case "UPDATE_CUSTOMER":
       return { ...state, customers: state.customers.map((c) => (c.id === action.customer.id ? action.customer : c)) };
     case "DELETE_CUSTOMER":
       return { ...state, customers: state.customers.filter((c) => c.id !== action.customerId) };
     case "ADD_ORDER":
-      return { ...state, orders: [...state.orders, action.order] };
+      // Upsert-by-id: idempotent against the cloud-listener race (#232).
+      return {
+        ...state,
+        orders: state.orders.some((x) => x.id === action.order.id)
+          ? state.orders.map((x) => (x.id === action.order.id ? action.order : x))
+          : [...state.orders, action.order],
+      };
     case "UPDATE_ORDER":
       return { ...state, orders: state.orders.map((o) => (o.id === action.order.id ? action.order : o)) };
     case "APPLY_ORDER_PAYMENTS":
@@ -251,8 +317,25 @@ type StoreContextValue = {
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => Promise<void>;
-  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<void>;
+  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<Order>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
+  /** #203 after-sales incidents (ficha linked to the order). */
+  openIncident: (order: Order, incident: Omit<OrderIncident, "events">) => Promise<void>;
+  applyIncidentEvent: (
+    order: Order,
+    incidentId: string,
+    event: Omit<OrderIncidentEvent, "at" | "by">,
+    extra?: { resolution?: OrderIncident["resolution"]; replacement?: OrderIncident["replacement"] }
+  ) => Promise<void>;
+  /** #184 loose expenses. */
+  saveExpense: (expense: LooseExpense) => Promise<void>;
+  deleteExpense: (expenseId: string) => Promise<void>;
+  assignExpense: (
+    expense: LooseExpense,
+    assignment: Omit<ExpenseAssignment, "at" | "by">,
+    purchaseExpense?: { id: string; category: "sourcing_transport" | "other"; amount: number; description?: string; includeInInventoryCost?: boolean }
+  ) => Promise<void>;
+  consumeSupply: (expense: LooseExpense, consumption: Omit<SupplyConsumption, "at" | "by">, description?: string) => Promise<void>;
   /** Payment records loaded this session (cloud reads; not local legacy state). */
   payments: OrderPayment[];
   /** Load one order's payment records from Firestore. Rejects on failure. */
@@ -453,7 +536,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid, state.stores]);
 
-  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders", entity: { id: string } & Record<string, unknown>): Promise<void> {
+  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses", entity: { id: string } & Record<string, unknown>): Promise<void> {
     const currentUser = requireAuthenticatedUser();
     return saveEntity(currentUser, name, entity).catch((error) => {
       // Log with context for debugging, then re-throw so callers can surface a
@@ -465,6 +548,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const stateStatus = cloud && cloudLoad.uid === user?.uid ? cloudLoad.status : cloud ? "loading" : "idle";
   const stateError = stateStatus === "error" ? cloudLoad.error : null;
+
+  // #189: automatic compensation of saldo a favor (PO decision 2026-11-05 —
+  // no per-application confirmation). Pure planning over the in-memory orders;
+  // the write itself re-validates against the fresh docs inside its Firestore
+  // transaction, so a stale plan aborts instead of inventing money and the
+  // listener round-trip replans. ONE application per pass: each success lands
+  // as a new state.orders identity and re-triggers this effect until the plan
+  // is empty (idempotent by construction). Failures surface through the same
+  // sync-error banner as any other write, with an idempotent retry.
+  useEffect(() => {
+    if (!cloud || !user || stateStatus !== "ready") return;
+    for (const origin of state.orders) {
+      if (origin.orderStatus === "cancelled" || creditAvailableCents(origin) <= 0) continue;
+      const next = planCreditApplications(ordersForCustomer(state.orders, origin.storeId, origin.customerId))[0];
+      if (!next) continue;
+      persistInBackground("aplicar el saldo a favor", async () => {
+        try {
+          await applyCustomerCreditTx({
+            entry: {
+              id: uid("credit"),
+              kind: "application",
+              fromOrderId: next.fromOrderId,
+              amountCents: next.amountCents,
+              at: nowIso(),
+              by: user.uid,
+            },
+            orderId: next.toOrderId,
+            storeId: origin.storeId,
+          });
+        } catch (error) {
+          // A stale plan aborting against fresher docs is EXPECTED under
+          // concurrency (another pass already applied, or a concurrent cobro
+          // changed the numbers): the listener round-trip replans. Money is
+          // safe — surfacing this would only scare the operator.
+          if (error instanceof Error && /cambió mientras se aplicaba/.test(error.message)) return;
+          throw error;
+        }
+      });
+      return; // one write per pass; its state update re-triggers the effect
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloud, user?.uid, state.orders, stateStatus]);
 
   const value: StoreContextValue = {
     state,
@@ -783,11 +908,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Reconcile in-memory state only after the transaction commits.
       const at = nowIso();
       const updated = applyPurchaseLines(state.products, purchase.lines);
+      const receivedProducts: Product[] = [];
       for (const [productId, update] of updated) {
         const p = state.products.find((x) => x.id === productId);
-        if (p) dispatch({ type: "UPDATE_PRODUCT", product: { ...p, ...update, updatedAt: at } });
+        if (p) {
+          const product = { ...p, ...update, updatedAt: at };
+          receivedProducts.push(product);
+          dispatch({ type: "UPDATE_PRODUCT", product });
+        }
       }
       dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
+      // #229: the public availability signal follows the reception without a
+      // manual republish; a failure never reverts the received purchase.
+      {
+        const store = state.stores.find((st) => st.id === purchase.storeId);
+        if (store) {
+          const nextProducts = state.products.map(
+            (p) => receivedProducts.find((r) => r.id === p.id) ?? p
+          );
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(
+              store,
+              nextProducts,
+              state.categories,
+              receivedProducts.map((p) => p.id)
+            )
+          );
+        }
+      }
       return "received";
     },
     adjustReceivedPurchase: async (purchase, expense) => {
@@ -876,11 +1024,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         options?.mutationId ?? uid("mutation"),
         { confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance }
       );
+      const reservedProducts: Product[] = [];
       for (const update of result.stock) {
         const product = state.products.find((p) => p.id === update.productId);
-        if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt } });
+        if (product) {
+          const next = { ...product, quantityOnHand: update.quantityOnHand, updatedAt: result.order.updatedAt };
+          reservedProducts.push(next);
+          dispatch({ type: "UPDATE_PRODUCT", product: next });
+        }
       }
       dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
+      // #229: reserved/released pieces update the public signal too.
+      if (reservedProducts.length > 0) {
+        const store = state.stores.find((st) => st.id === order.storeId);
+        if (store) {
+          const nextProducts = state.products.map((p) => reservedProducts.find((r) => r.id === p.id) ?? p);
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(
+              store,
+              nextProducts,
+              state.categories,
+              reservedProducts.map((p) => p.id)
+            )
+          );
+        }
+      }
+      // #189: a valid cancellation restitutes the saldo a favor this order had
+      // consumed (PO decision 2026-11-05). The reconcile effect above then
+      // re-applies the returned credit to the next pending order, if any.
+      // Best-effort by design (unlike deletion's awaited fail-closed release):
+      // the order is already saved as cancelled; a failed restitution surfaces
+      // through the sync-error banner with its retry and blocks nothing else.
+      if (result.order.orderStatus === "cancelled" && prev && prev.orderStatus !== "cancelled") {
+        persistInBackground("restituir el saldo a favor", () =>
+          releaseCustomerCreditTx({ orderId: order.id, storeId: order.storeId, by: currentUser.uid }));
+      }
+      return result.order;
     },
     deleteOrder: async (orderId, expectedRevision) => {
       const currentUser = requireAuthenticatedUser();
@@ -889,12 +1068,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const existing = state.orders.find((o) => o.id === orderId);
       if (existing && (existing.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
       if (!existing) throw new Error("No se encontró el pedido.");
+      // #189: an order that consumed saldo a favor restitutes it BEFORE the
+      // document goes away — awaited, fail-closed: without this the origin's
+      // creditConsumed mirror would overstate consumption forever.
+      if ((existing.creditAppliedCents ?? 0) > 0) {
+        await releaseCustomerCreditTx({ orderId, storeId: existing.storeId, by: currentUser.uid, reason: "deletion" });
+      }
       const updates = await deleteOrderWithStockTx(currentUser, orderId, expectedRevision);
+      const releasedProducts: Product[] = [];
       for (const update of updates) {
         const product = state.products.find((p) => p.id === update.productId);
-        if (product) dispatch({ type: "UPDATE_PRODUCT", product: { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() } });
+        if (product) {
+          const next = { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() };
+          releasedProducts.push(next);
+          dispatch({ type: "UPDATE_PRODUCT", product: next });
+        }
       }
       dispatch({ type: "DELETE_ORDER", orderId });
+      // #229: released pieces become publicly available again.
+      if (releasedProducts.length > 0) {
+        const store = state.stores.find((st) => st.id === existing.storeId);
+        if (store) {
+          const nextProducts = state.products.map((p) => releasedProducts.find((r) => r.id === p.id) ?? p);
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(
+              store,
+              nextProducts,
+              state.categories,
+              releasedProducts.map((p) => p.id)
+            )
+          );
+        }
+      }
     },
     loadOrderPayments: async (orderId) => {
       if (!cloud || !user || paymentSession.current.uid !== user.uid) return;
@@ -926,6 +1131,74 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // never added to the local accumulator and late responses cannot undo it.
       dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
     },
+    // #203: after-sales ficha. Both actions AWAIT their transaction and throw
+    // so the sheet can toast real failures (nothing is faked as saved); the
+    // product effects (quarantine/stock) land through the store listeners.
+    openIncident: async (order, incident) => {
+      const currentUser = requireAuthenticatedUser();
+      const updated = await openIncidentTx({
+        orderId: order.id,
+        storeId: order.storeId,
+        incident: { ...incident, events: [{ id: uid("iev"), kind: "opened", at: nowIso(), by: currentUser.uid }] },
+      });
+      dispatch({ type: "UPDATE_ORDER", order: updated });
+    },
+    applyIncidentEvent: async (order, incidentId, event, extra) => {
+      const currentUser = requireAuthenticatedUser();
+      const result = await applyIncidentEventTx({
+        orderId: order.id,
+        storeId: order.storeId,
+        incidentId,
+        event: { ...event, at: nowIso(), by: currentUser.uid },
+        resolution: extra?.resolution,
+        replacement: extra?.replacement,
+      });
+      dispatch({ type: "UPDATE_ORDER", order: result.order });
+    },
+    // #184 loose expenses: register/classify; assignment and consumption run
+    // through their transactions and land via the entity listeners.
+    saveExpense: async (expense) => {
+      requireAuthenticatedUser();
+      const existing = state.expenses.find((candidate) => candidate.id === expense.id);
+      if (existing) {
+        // The original amount/date are evidence — never rewritten by an edit.
+        const updated = { ...expense, amount: existing.amount, date: existing.date, createdAt: existing.createdAt, updatedAt: nowIso() };
+        await persistEntity("expenses", updated);
+        dispatch({ type: "UPDATE_EXPENSE", expense: updated });
+        return;
+      }
+      const created = { ...expense, createdAt: nowIso(), updatedAt: nowIso() };
+      await persistEntity("expenses", created);
+      dispatch({ type: "ADD_EXPENSE", expense: created });
+    },
+    deleteExpense: async (expenseId) => {
+      const currentUser = requireAuthenticatedUser();
+      const existing = state.expenses.find((candidate) => candidate.id === expenseId);
+      if (!existing) return;
+      if ((existing.assignments ?? []).length > 0 || (existing.supply?.consumptions ?? []).length > 0) {
+        throw new Error("Este gasto ya tiene asignaciones o consumos registrados; no se puede borrar.");
+      }
+      await deleteEntity(currentUser, "expenses", expenseId);
+      dispatch({ type: "DELETE_EXPENSE", expenseId });
+    },
+    assignExpense: async (expense, assignment, purchaseExpense) => {
+      const currentUser = requireAuthenticatedUser();
+      await assignExpenseTx({
+        expenseId: expense.id,
+        storeId: expense.storeId,
+        assignment: { ...assignment, at: nowIso(), by: currentUser.uid },
+        ...(purchaseExpense ? { purchaseExpense } : {}),
+      });
+    },
+    consumeSupply: async (expense, consumption, description) => {
+      const currentUser = requireAuthenticatedUser();
+      await consumeSupplyTx({
+        expenseId: expense.id,
+        storeId: expense.storeId,
+        consumption: { ...consumption, at: nowIso(), by: currentUser.uid },
+        ...(description ? { description } : {}),
+      });
+    },
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
@@ -937,7 +1210,7 @@ function storeWithMembership(store: Store, user: AppUser): Store & { ownerUid?: 
 }
 
 export function emptyAppState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [] };
+  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [] };
 }
 
 export function useStore(): StoreContextValue {

@@ -55,10 +55,11 @@ describe("OrderReceipt (#139)", () => {
     expect(data.cobrado).toBe("$400.00");
     expect(data.saldo).toBeDefined(); // 621 − 400 abonados
     expect(preview.getByText(data.saldo!)).toBeTruthy();
+    // El texto de WhatsApp (#222) ya no lleva Cobrado: la coherencia texto↔PDF
+    // se asegura comparando contra el mismo builder canónico que alimenta ambos.
     const text = orderTicketText(order, "Olivia");
-    expect(text).toContain(`Total ${data.total}`);
-    expect(text).toContain(`Cobrado ${data.cobrado}`);
-    expect(text).toContain(`Saldo ${data.saldo}`);
+    expect(text).toContain(`*Total* ${data.total}`);
+    expect(text).toContain(`*Saldo* ${data.saldo}`);
     expect(preview.getByText(/Pedidos por WhatsApp/)).toBeTruthy();
   });
 
@@ -70,7 +71,7 @@ describe("OrderReceipt (#139)", () => {
     const preview = within(screen.getByTestId("receipt-preview"));
     expect(preview.queryByText("Saldo")).toBeNull();
     expect(preview.getByText("Cobrado").parentElement?.textContent).toContain("$621.00");
-    expect(orderTicketText(paid, "Olivia")).toContain("Cobrado $621.00");
+    expect(orderTicketText(paid, "Olivia")).not.toContain("Saldo");
   });
 
   it("muestra $0.00 cobrado y el saldo completo si no hay anticipos ni pagos", () => {
@@ -81,7 +82,7 @@ describe("OrderReceipt (#139)", () => {
     expect(data.cobrado).toBe("$0.00");
     expect(data.saldo).toBe(data.total);
     expect(preview.getByText("Cobrado").parentElement?.textContent).toContain("$0.00");
-    expect(orderTicketText(unpaid, "Olivia")).toContain("Cobrado $0.00");
+    expect(orderTicketText(unpaid, "Olivia")).toContain(`*Saldo* ${data.saldo!}`);
   });
 
   it("el botón del Sheet dispara la impresión del navegador", () => {

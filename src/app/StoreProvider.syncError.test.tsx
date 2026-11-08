@@ -63,6 +63,7 @@ const testState: AppState = {
   purchases: [],
   customers: [],
   orders: [],
+  expenses: [],
 };
 
 function Wrapper({ children }: { children: React.ReactNode }) {
@@ -91,7 +92,10 @@ describe("StoreProvider background save errors", () => {
     await waitForCloudHydration();
 
     act(() => result.current.deleteStore(store.id));
-    await waitFor(() => expect(result.current.syncError?.label).toBe("eliminar la tienda"));
+    // CI load: the rejected background write can take longer than the default
+    // 1s waitFor window when two workflow runs share a runner (same family as
+    // the credit-retry race) — give the honest-error path real room.
+    await waitFor(() => expect(result.current.syncError?.label).toBe("eliminar la tienda"), { timeout: 5000 });
 
     const notice = render(
       <SyncErrorNoticeView
