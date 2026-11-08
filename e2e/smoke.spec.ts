@@ -346,10 +346,11 @@ test("copy the saved order detail", async ({ sharedPage: page }) => {
   });
   await page.getByRole("button", { name: "Ver detalle para compartir" }).first().click();
   const detail = page.getByRole("dialog", { name: "Detalle para compartir" });
-  await expect(detail.getByLabel("Detalle del pedido")).toHaveValue(/Total \$/);
+  await expect(detail.getByLabel("Detalle del pedido")).toHaveValue(/\*Detalle de pedido #.*\*/);
+  await expect(detail.getByLabel("Detalle del pedido")).toHaveValue(/\*Total\* \$/);
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
   await detail.getByRole("button", { name: "Copiar detalle" }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).toContain("Saldo ");
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).toContain("*Saldo* $");
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
 });
 
@@ -427,4 +428,58 @@ test("returning from the order editor preserves the list filter and scroll (#233
       { timeout: 5000 }
     )
     .toBeGreaterThan(150);
+
+test("canonical money in the order editor survives a notes save and reload (#225)", async ({ sharedPage: page }, testInfo) => {
+  const id = "order_editor225";
+  const productName = "Pieza de prueba del saldo";
+  const now = new Date().toISOString();
+  await writeEmulatorDoc("orders", id, {
+    id, storeId: "store_santi", customerId: "cust_santi_1",
+    items: [{ productName, quantity: 1, unitPrice: 720, subtotal: 720 }],
+    deposit: 0, orderStatus: "asked", paymentStatus: "unpaid", schemaVersion: 2,
+    createdAt: now, updatedAt: now,
+  });
+  await gotoSantiHome(page);
+  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+  const card = page.getByRole("heading", { name: /^#TOR225 ·/ }).locator("../../..");
+  await card.getByRole("button", { name: "Cobros", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Cobros del pedido" });
+  await sheet.getByLabel("Monto", { exact: true }).fill("590");
+  await sheet.getByRole("button", { name: "Registrar cobro", exact: true }).click();
+  await expect(sheet.getByText("$590.00", { exact: true }).first()).toBeVisible();
+  await expect(sheet.getByText("$130.00", { exact: true })).toBeVisible();
+  await sheet.getByRole("button", { name: "Cerrar", exact: true }).click();
+  await expect(card.getByText("$130.00", { exact: true })).toBeVisible();
+
+  await card.getByRole("heading").click();
+  await expect(page.getByRole("heading", { name: "Editar pedido", exact: true })).toBeVisible();
+  const received = page.getByText("Recibido", { exact: true }).locator("..");
+  const balance = page.getByText("Saldo", { exact: true }).locator("..");
+  await expect(received).toContainText("$590.00");
+  await expect(balance).toContainText("$130.00");
+  await expect(page.getByLabel("Anticipo", { exact: true })).toHaveValue("0");
+  await page.getByLabel(/Precio unitario/).fill("800");
+  await expect(balance).toContainText("$210.00");
+  await page.getByLabel("Cantidad", { exact: true }).fill("2");
+  await expect(balance).toContainText("$1,010.00");
+  await page.getByLabel(/Precio unitario/).fill("720");
+  await page.getByLabel("Cantidad", { exact: true }).fill("1");
+  await page.getByRole("textbox", { name: "Notas", exact: true }).fill("Nota conservada sin cambiar cobros");
+  await expect(balance).toContainText("$130.00");
+  await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("editor-balance.png"), fullPage: true });
+  await page.getByRole("button", { name: "Guardar pedido", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(card.getByText("$590.00", { exact: true })).toBeVisible();
+  await expect(card.getByText("$130.00", { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Cobros", exact: true }).click();
+  await expect(sheet.getByText("$590.00", { exact: true }).first()).toBeVisible();
+  await expect(sheet.getByText("$130.00", { exact: true })).toBeVisible();
+  await sheet.getByRole("button", { name: "Cerrar", exact: true }).click();
+  await card.getByRole("heading").click();
+  await expect(page.getByRole("heading", { name: "Editar pedido", exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Notas", exact: true })).toHaveValue("Nota conservada sin cambiar cobros");
+  await expect(received).toContainText("$590.00");
+  await expect(balance).toContainText("$130.00");
 });
