@@ -12,8 +12,9 @@ import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
 // Suite B (#176) — member/owner/super_admin matrix for storage.rules.
 //
 // The Storage emulator cannot evaluate cross-service firestore.get() (the
-// membership source) nor request.resource.contentType (see
-// storage.rules.emulator for the original e2e note). To still prove the
+// membership source), does not reliably populate request.resource.contentType,
+// and cannot discriminate create-vs-update on re-uploads to an existing path
+// (see storage.rules.emulator for the original e2e note). To still prove the
 // production LOGIC — paths, owner-vs-member distinctions, size caps, file
 // name guards, create-only PDFs, public reads — this suite loads a copy of
 // storage.rules where ONLY those emulator-blind fragments are replaced:
@@ -36,8 +37,8 @@ function mustReplaceExactlyOnce(source: string, before: string, after: string, w
   const count = source.split(before).length - 1;
   if (count !== 1) {
     throw new Error(
-      `storage.rules cambió (${what}: ${count} coincidencias, se esperaba 1). ` +
-        "Actualiza el stub de storage.rules.matrix.test.ts para reflejar el archivo real."
+      `storage.rules drifted (${what}: ${count} matches, expected 1). ` +
+        "Update the stub in storage.rules.matrix.test.ts to mirror the real file."
     );
   }
   return source.replace(before, after);
@@ -111,12 +112,19 @@ function membershipStubbedRules(src: string): string {
 describe("storage.rules — emulator-blind guards still present in the real file", () => {
     it("keeps the image contentType allowlist", () => {
       if (!REAL_RULES.includes("request.resource.contentType == 'image/jpeg'")) {
-        throw new Error("storage.rules ya no restringe contentType de imágenes: revisa el guard.");
+        throw new Error("storage.rules no longer restricts image contentType: check the guard.");
       }
     });
     it("keeps the PDF contentType guard", () => {
       if (!REAL_RULES.includes("request.resource.contentType == 'application/pdf'")) {
-        throw new Error("storage.rules ya no exige application/pdf en compras: revisa el guard.");
+        throw new Error("storage.rules no longer requires application/pdf for purchases: check the guard.");
+      }
+    });
+    it("purchases have no update rule (immutable evidence)", () => {
+      const block = REAL_RULES.match(/match \/purchases\/\{storeId\}\/\{fileName\} \{([\s\S]*?)\n    \}/);
+      if (!block) throw new Error("purchases block not found in storage.rules");
+      if (/allow update/.test(block[1])) {
+        throw new Error("purchases allows update: a purchase PDF would no longer be immutable evidence.");
       }
     });
   }
@@ -193,17 +201,18 @@ describe(
       );
     });
 
-    it("purchase PDFs are immutable: even the owner cannot rewrite one", async () => {
-      await assertSucceeds(
-        uploadBytes(ref(owner1(), "purchases/s1/orden-3.pdf"), jpg(16), {
+    // NOTE: purchase-PDF immutability (no `allow update`) cannot be proven in
+    // the emulator — a re-upload to an existing path is evaluated as another
+    // create there, not as an update, so the rewrite would wrongly succeed.
+    // The contract is pinned statically by the no-update drift guard below.
+
+    it("the platform super_admin can read any store's purchase PDF", async () => {
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        await uploadBytes(ref(ctx.storage(), "purchases/s1/orden-5.pdf"), jpg(16), {
           contentType: "application/pdf",
-        })
-      );
-      await assertFails(
-        uploadBytes(ref(owner1(), "purchases/s1/orden-3.pdf"), jpg(32), {
-          contentType: "application/pdf",
-        })
-      );
+        });
+      });
+      await assertSucceeds(getBytes(ref(superAdmin(), "purchases/s1/orden-5.pdf"), MAX));
     });
 
     it("only the owner can delete a purchase PDF", async () => {
@@ -305,6 +314,14 @@ describe(
         })
       );
       await assertFails(deleteObject(ref(member1(), "storefront/s1/brand.jpg")));
+    });
+
+    it("the owner of ANOTHER store cannot write this storefront", async () => {
+      await assertFails(
+        uploadBytes(ref(member2(), "storefront/s1/intruso.jpg"), jpg(16), {
+          contentType: "image/jpeg",
+        })
+      );
     });
 
     it("the owner manages the storefront and anyone can read it", async () => {
