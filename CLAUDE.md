@@ -139,7 +139,7 @@ Sin pagos/checkout/carrito, sin facturas, sin códigos de barras (la Clave/SKU d
 
 ## Despliegue
 
-Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno + reglas). El primer usuario registrado se vuelve super-admin.
+Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno + reglas). `super_admin` solo por el correo de plataforma (`admin@store.os`).
 
 ### Ambientes y backends (cableado)
 

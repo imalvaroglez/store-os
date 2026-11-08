@@ -27,7 +27,7 @@ test("invite by email reconciles on the invitee's login", async ({ browser }) =>
 
   await pageA.getByLabel("Invitar por correo").fill(bEmail);
   await pageA.getByRole("button", { name: "Enviar invitación" }).click();
-  await expect(pageA.getByText("Invitación enviada. Quedará pendiente hasta que la persona cree su cuenta.")).toBeVisible();
+  await expect(pageA.getByText("Invitación enviada. Quedará pendiente hasta que la persona entre con ese correo.")).toBeVisible();
   await expect(pageA.getByText(`${bEmail} · pendiente`)).toBeVisible();
 
   // B: fresh context, creates an account. The AuthProvider subscription runs

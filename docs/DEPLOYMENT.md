@@ -145,10 +145,12 @@ CLI deploy to bypass that release path.
 `vercel.json` already sets the SPA rewrite (so deep links like `/catalogo/:slug`
 work on refresh) and long-cache headers for `/assets/*`.
 
-## 6. First user = super-admin
+## 6. Platform super-admin
 
-The very first account created on the deployed app becomes the **super_admin**
-(you). Sign up, then invite store owners by email from each store's settings.
+Only the allowlisted platform email (`admin@store.os`) becomes **super_admin**
+(see `isAllowlistedSuperAdmin` in `firestore.rules`; there is no first-signup
+bootstrap). Sign up with it, then invite store owners by email from each
+store's settings.
 
 `super_admin` is the platform operator: the role can open and edit any store,
 including its catalog, inventory, customers, orders, purchases, suppliers,
