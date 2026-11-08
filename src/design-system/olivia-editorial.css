@@ -1,0 +1,105 @@
+/* Olivia's first approved editorial iteration. Only the public storefront uses
+   this sheet; pricing, product photos and administration keep their contracts. */
+.olivia-root { --olv-heading-weight: 600; --olv-footer-bg: var(--olv-accent); --olv-footer-ink: var(--olv-surface); }
+.olivia-root h1,.olivia-root h2,.olivia-root .olv-footer-brand { font-weight: var(--olv-heading-weight); }
+.olivia-root .olv-container { width: calc(100% - 28px); max-width: 1600px; }
+.olivia-root .olv-notice { background: var(--olv-bg); border-bottom: 1px solid var(--olv-rule); padding: 7px 20px; font-size: 10px; color: var(--olv-ink-soft); letter-spacing: .03em; }
+.olivia-root .olv-header { background: var(--olv-bg); }
+.olivia-root .olv-header-inner { min-height: 66px; grid-template-columns: auto minmax(0,1fr); grid-template-rows: 1fr; gap: 14px; padding-block: 0; }
+.olivia-root .olv-header-inner .olv-wordmark { grid-column: 1; grid-row: 1; justify-self: start; }
+.olivia-root .olv-header-inner .olv-wordmark img { max-width: 115px; max-height: 42px; }
+.olivia-root .olv-header-inner nav { grid-column: 2; grid-row: 1; justify-self: end; gap: 12px; font-size: 10px; }
+.olivia-root .olv-header-inner nav button { padding-inline: 0; font-size: 10px; }
+.olivia-root .olv-count { background: transparent; border: 1px solid var(--olv-rule); }
+.olivia-root .olv-hero { border-bottom: 0; }
+.olivia-root .olv-hero-copy { text-align: left; display: grid; grid-template-columns: 1fr; align-items: center; gap: 0; padding-block: 28px 24px; }
+.olivia-root .olv-hero-copy > * { grid-column: 1; }
+.olivia-root .olv-hero h1 { font-size: clamp(2.75rem,12vw,4.5rem); line-height: .97; letter-spacing: -.055em; margin: 0; max-width: 850px; text-wrap: initial; }
+.olivia-root .olv-hero .olv-eyebrow { font-family: var(--font-body); color: var(--olv-ink-soft); font-size: 9px; letter-spacing: .12em; margin: 0 0 12px; }
+.olivia-root .olv-intro { font-size: 12px; line-height: 1.6; max-width: 340px; margin: 20px 0 0; }
+.olivia-root .olv-hero-copy .olv-link-button { justify-self: start; background: transparent; color: var(--olv-ink); border: 0; border-bottom: 1px solid var(--olv-ink); padding: 10px 0; min-height: 44px; gap: 40px; font-size: 12px; margin-top: 18px; }
+.olivia-root .olv-benefits { justify-content: flex-start; gap: 8px; font-size: 11px; line-height: 1.5; margin-top: 10px; }
+.olivia-root .olv-hero-photo { grid-column: 1; grid-row: 4; margin: 14px 0 0; min-width: 0; width: 100%; min-height: 310px; }
+.olivia-root .olv-hero-photo img { width: 100%; height: 290px; object-fit: contain; aspect-ratio: auto; background: var(--olv-bg); box-shadow: none; }
+.olivia-root .olv-hero-photo figcaption { font-size: 10px; color: var(--olv-ink-soft); padding: 5px 0; text-align: right; }
+.olivia-root .olv-main { padding-top: 0; }
+.olivia-root .olv-category-section { margin: 0; padding: 14px 0; border-block: 1px solid var(--olv-rule); }
+.olivia-root .olv-category-section-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.olivia-root .olv-category-grid { display: flex; overflow-x: auto; gap: 16px; padding-bottom: 4px; }
+.olivia-root .olv-category-card { flex: 0 0 104px; border: 0; background: transparent; }
+.olivia-root .olv-category-image { height: 84px; aspect-ratio: auto; object-fit: contain; background: var(--olv-bg); }
+.olivia-root .olv-category-card-copy { padding: 10px 0 0; min-height: 28px; display: block; }
+.olivia-root .olv-category-card-name { font-family: var(--font-body); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .035em; }
+.olivia-root .olv-category-card-count { display: none; }
+.olivia-root .olv-section-heading { padding: 24px 0 18px; align-items: center; }
+.olivia-root .olv-section-heading .olv-eyebrow { display: none; }
+.olivia-root .olv-section-heading h2 { font-size: 34px; line-height: 1; letter-spacing: -.045em; max-width: 260px; }
+.olivia-root .olv-section-heading > p { font-size: 10px; padding: 0; }
+.olivia-root .olv-tools { grid-template-columns: minmax(0,1fr) 125px; gap: 14px; margin: 0 0 16px; padding: 0 0 16px; border-bottom: 1px solid var(--olv-rule); }
+.olivia-root .olv-tools--with-finish > label:first-child { grid-column: 1 / -1; }
+.olivia-root .olv-tools label > span { font-size: 10px; }
+.olivia-root .olv-tools input,.olivia-root .olv-tools select { border: 0; border-radius: 0; border-bottom: 1px solid var(--olv-rule); box-shadow: none; padding-left: 0; font-size: 16px; }
+.olivia-root .olv-pricing-note { margin: -4px 0 18px; max-width: 300px; font-size: 10px; line-height: 1.5; color: var(--olv-ink-soft); }
+.olivia-root .olv-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px 10px; }
+.olivia-root .olv-product { position: relative; background: var(--olv-bg); }
+.olivia-root .olv-photo { aspect-ratio: 1; background: var(--olv-bg); }
+.olivia-root .olv-photo > a { width: 100%; height: 100%; }
+.olivia-root .olv-photo img { width: 100%; height: 100%; object-fit: contain; background: var(--olv-bg); box-shadow: none; }
+.olivia-root .olv-gallery-controls { inset: 0; display: block; pointer-events: none; }
+.olivia-root .olv-gallery-controls button { position: absolute; left: 0; top: 50%; transform: translateY(-50%); pointer-events: auto; background: transparent; border: 0; box-shadow: none; width: 44px; min-height: 44px; font-size: 24px; }
+.olivia-root .olv-gallery-controls button:last-child { left: auto; right: 0; }
+.olivia-root .olv-gallery-controls span { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); border-radius: 0; font-size: 10px; padding: 3px 6px; }
+.olivia-root .olv-product-info { display: flex; flex-direction: column; gap: 0; padding: 5px 0 0; flex: none; }
+.olivia-root .olv-product h3 { font-family: var(--font-body); font-size: 12px; font-weight: 400; line-height: 1.5; letter-spacing: 0; margin: 0; }
+.olivia-root .olv-product h3 a { display: block; min-height: 0; padding: 0; }
+.olivia-root .olv-product-price { font-size: 11px; line-height: 1.6; font-weight: 400; color: var(--olv-ink-soft); margin: 0; padding: 1px 0 0; white-space: nowrap; }
+.olivia-root .olv-product-labels { position: absolute; top: 12px; left: 8px; z-index: 2; min-height: 0; font-size: 10px; }
+.olivia-root .olv-product-labels > * { font-size: 10px; border-radius: 0; padding: 2px 4px; }
+.olivia-root .olv-how { margin-top: 64px; padding: 38px 0; border-block: 1px solid var(--olv-rule); background: var(--olv-bg); }
+.olivia-root .olv-about-grid { padding-block: 48px; gap: 48px; }
+.olivia-root .olv-footer { margin-top: 0; background: var(--olv-footer-bg); color: var(--olv-footer-ink); padding: 48px 0 90px; }
+.olivia-root .olv-footer p:not(.olv-footer-brand) { color: inherit; }
+.olivia-root .olv-footer-brand { font-size: clamp(60px,10vw,160px); line-height: .85; letter-spacing: -.04em; margin-bottom: 22px; }
+.olivia-root .olv-footer-bottom { border-color: currentColor; }
+.olivia-root .olv-detail { padding-top: 10px; }
+.olivia-root .olv-detail-grid { grid-template-columns: 1fr; gap: 24px; }
+.olivia-root .olv-detail h1 { font-size: 36px; line-height: 1.03; letter-spacing: -.03em; margin-bottom: 18px; }
+.olivia-root .olv-price-detail { background: var(--olv-bg); box-shadow: none; padding: 0; border-radius: 0; }
+.olivia-root .olv-price-row--featured { background: var(--olv-bg); border: 0; border-bottom: 1px solid var(--olv-rule); border-radius: 0; }
+.olivia-root .olv-price-row-amount { font-size: 14px; font-weight: 500; }
+@media (min-width: 768px) {
+  .olivia-root .olv-container { width: calc(100% - 48px); }
+  .olivia-root .olv-header-inner { min-height: 76px; gap: 30px; }
+  .olivia-root .olv-header-inner .olv-wordmark img { max-width: 148px; max-height: 50px; }
+  .olivia-root .olv-header-inner nav { gap: 30px; font-size: 12px; }
+  .olivia-root .olv-header-inner nav button { padding-inline: 16px; font-size: 12px; }
+  .olivia-root .olv-hero-copy { padding-block: 42px 48px; }
+  .olivia-root .olv-hero-copy--with-photo { grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 0 36px; min-height: 470px; }
+  .olivia-root .olv-hero h1 { font-size: clamp(3.5rem,6.8vw,7rem); }
+  .olivia-root .olv-hero .olv-eyebrow { font-size: 10px; margin-bottom: 16px; }
+  .olivia-root .olv-benefits { font-size: 10px; gap: 12px; margin-top: 20px; }
+  .olivia-root .olv-hero-photo { grid-column: 2; grid-row: 1 / span 6; align-self: stretch; display: flex; flex-direction: column; justify-content: center; margin: 0; min-height: 420px; }
+  .olivia-root .olv-hero-photo img { height: 400px; }
+  .olivia-root .olv-category-section { padding: 18px 0 20px; }
+  .olivia-root .olv-category-grid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 20px; overflow: visible; padding: 0; }
+  .olivia-root .olv-category-card { min-width: 0; }
+  .olivia-root .olv-category-image { height: 96px; }
+  .olivia-root .olv-category-card-name { font-size: 11px; }
+  .olivia-root .olv-section-heading { padding: 32px 0 22px; }
+  .olivia-root .olv-section-heading h2 { font-size: clamp(2.4rem,4.8vw,4.6rem); max-width: none; }
+  .olivia-root .olv-section-heading > p { font-size: 11px; }
+  .olivia-root .olv-tools { grid-template-columns: minmax(0,1fr) 220px; gap: 20px; margin-bottom: 24px; }
+  .olivia-root .olv-tools--with-finish { grid-template-columns: minmax(0,1fr) 200px 180px; }
+  .olivia-root .olv-tools--with-finish > label:first-child { grid-column: auto; }
+  .olivia-root .olv-pricing-note { font-size: 11px; margin: -10px 0 24px; max-width: none; }
+  .olivia-root .olv-grid { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 22px 12px; }
+  .olivia-root .olv-product-info { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 0 12px; padding: 6px 0 0; min-height: 44px; }
+  .olivia-root .olv-product h3 a { display: flex; min-height: 44px; padding: 6px 0; align-items: flex-start; }
+  .olivia-root .olv-product-price { font-size: 12px; line-height: 1.5; padding: 6px 0; }
+  .olivia-root .olv-detail-grid { grid-template-columns: minmax(0,1.3fr) minmax(0,.7fr); gap: 64px; }
+  .olivia-root .olv-detail h1 { font-size: clamp(2rem,4vw,4rem); }
+}
+@media (hover: hover) and (pointer: fine) {
+  .olivia-root .olv-gallery-controls { opacity: 0; transition: opacity var(--motion-fast); }
+  .olivia-root .olv-photo:hover .olv-gallery-controls,.olivia-root .olv-photo:focus-within .olv-gallery-controls { opacity: 1; }
+}
