@@ -145,8 +145,12 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
   }
 }
 export function safeCode(error) {
-  const message = error?.message ?? '';
-  return /^(?:[A-Z_]+|CLOUD_HTTP_\d{3}|COMMAND_(?:FAILED|UNAVAILABLE):[a-z-]+)$/.test(message) ? message : 'BACKUP_FAILED';
+  const safe = /^(?:[A-Z_]+|CLOUD_HTTP_\d{3}|COMMAND_(?:FAILED|UNAVAILABLE):[a-z-]+)$/;
+  if (safe.test(error?.message ?? '')) return error.message;
+  // Errno codes (ETIMEDOUT, ECONNRESET, EAI_AGAIN…) are constants without private data and
+  // separate transient network failures from other generic backup errors.
+  for (const candidate of [error?.code, error?.cause?.code]) if (safe.test(candidate ?? '')) return candidate;
+  return 'BACKUP_FAILED';
 }
 export async function status(config, checkIntegrity = true) {
   const state = await stateFor(config.home);
