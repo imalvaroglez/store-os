@@ -63,3 +63,47 @@ function longDate(iso: string): string {
   const withoutYear = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "long" }).format(d);
   return `${withoutYear}, ${d.getFullYear()}`;
 }
+
+// ── #139 printable receipt data — same money as the text above ──────────────
+// One data builder feeds the printable receipt; the WhatsApp TEXT keeps Fer's
+// exact bold format. Both read the SAME canonical money (received accumulator
+// + pending legacy deposit, saldo net of credit/posventa per #189/#203), so
+// the PDF can never drift from the message Fer already sends.
+
+import { docReceivedCents } from "./payments";
+
+export type OrderTicketLine = { index: number; label: string; amount: string };
+export type OrderTicketData = {
+  storeName: string;
+  customer: string;
+  dateLabel: string;
+  lines: OrderTicketLine[];
+  total: string;
+  /** Canonical amount received, including an unmaterialized legacy deposit. */
+  cobrado: string;
+  /** Present ONLY when money is still owed — mirrors the text format. */
+  saldo?: string;
+};
+
+export function orderTicketData(order: Order, storeName: string, currentCustomerName?: string): OrderTicketData {
+  const clean = (value: string) => value.replace(/\*/g, "").replace(/\s+/g, " ").trim();
+  const items = orderItems(order);
+  const totalCents = items.reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+  const receivedCents = docReceivedCents(order);
+  // Canonical balance (#168 F4 + #189 + #203): net of applied saldo a favor
+  // and posventa adjustments — never a hand-rolled subtraction.
+  const balanceCents = Math.round(orderTotals(order).balance * 100);
+  return {
+    storeName,
+    customer: clean(order.customerName || currentCustomerName || "Sin cliente"),
+    dateLabel: order.createdAt ? longDate(order.createdAt) : "",
+    lines: items.map((item, index) => ({
+      index: index + 1,
+      label: `${item.quantity > 1 ? `${item.quantity} × ` : ""}${clean(item.productName)}`,
+      amount: formatMoneyExact(orderAmountCents(item.unitPrice, item.quantity) / 100),
+    })),
+    total: formatMoneyExact(totalCents / 100),
+    cobrado: formatMoneyExact(receivedCents / 100),
+    ...(balanceCents > 0 ? { saldo: formatMoneyExact(balanceCents / 100) } : {}),
+  };
+}

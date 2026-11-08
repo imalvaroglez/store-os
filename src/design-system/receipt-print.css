@@ -1,0 +1,31 @@
+.receipt-print-document { display: none; }
+
+@media print {
+  @page { size: letter; margin: 14mm; }
+
+  body.receipt-print-scope {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  body.receipt-print-scope > *:not(#receipt-print-root) {
+    display: none !important;
+  }
+
+  body.receipt-print-scope > #receipt-print-root {
+    display: block !important;
+    width: auto;
+    max-width: none;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  #receipt-print-root .receipt-lines { break-inside: auto; }
+  #receipt-print-root .receipt-lines > li { break-inside: avoid; page-break-inside: avoid; }
+  #receipt-print-root .receipt-totals { break-inside: avoid; page-break-inside: avoid; }
+}
