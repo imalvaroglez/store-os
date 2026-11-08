@@ -633,3 +633,38 @@ describe("#184 loose expenses (expenses collection)", () => {
     await assertFails(setDoc(doc(db, "expenses/exp-4"), { ...expense, id: "exp-4", storeId: "other-store" }));
   });
 });
+
+
+describe("legacy deposit cannot rise after payment evidence (#218)", () => {
+  beforeAll(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users/deposit-218-user"), { role: "member" });
+      await setDoc(doc(ctx.firestore(), "adminStores/deposit-218-store"), { ownerUid: "deposit-218-user", memberUids: ["deposit-218-user"] });
+      await setDoc(doc(ctx.firestore(), "orders/deposit-218-acc"), { storeId: "deposit-218-store", deposit: 590, paymentsReceivedCents: 59000 });
+      await setDoc(doc(ctx.firestore(), "orders/deposit-218-marker"), { storeId: "deposit-218-store", deposit: 590, paymentsReceivedCents: 59000, inheritedDepositMaterialized: true });
+      await setDoc(doc(ctx.firestore(), "orders/deposit-218-zero"), { storeId: "deposit-218-store", paymentsReceivedCents: 0 });
+    });
+  });
+  it("rejects raw increases and removal, permits lowering an unmaterialized deposit", async () => {
+    const db = await asUser("deposit-218-user");
+    const ref = doc(db, "orders/deposit-218-acc");
+    await assertFails(updateDoc(ref, { deposit: 720 }));
+    await assertFails(setDoc(ref, { storeId: "deposit-218-store", paymentsReceivedCents: 59000 }));
+    await assertSucceeds(updateDoc(ref, { deposit: 0 }));
+    await assertFails(updateDoc(doc(db, "orders/deposit-218-zero"), { deposit: 1 }));
+    await assertSucceeds(updateDoc(doc(db, "orders/deposit-218-zero"), { deposit: 0 }));
+  });
+  it("freezes a materialized deposit in both directions but permits unrelated edits", async () => {
+    const db = await asUser("deposit-218-user");
+    const ref = doc(db, "orders/deposit-218-marker");
+    await assertFails(updateDoc(ref, { deposit: 0 }));
+    await assertFails(updateDoc(ref, { deposit: 720 }));
+    await assertSucceeds(updateDoc(ref, { notes: "Sin cambiar dinero" }));
+  });
+  it("keeps creation with an anticipo and edits without evidence legal", async () => {
+    const db = await asUser("deposit-218-user");
+    const ref = doc(db, "orders/deposit-218-create");
+    await assertSucceeds(setDoc(ref, { storeId: "deposit-218-store", deposit: 590 }));
+    await assertSucceeds(updateDoc(ref, { deposit: 720 }));
+  });
+});

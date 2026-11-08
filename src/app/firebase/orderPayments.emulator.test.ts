@@ -7,7 +7,7 @@ import type { Order, OrderPayment } from "../../types";
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
 import { registerOrderPaymentTx, saveOrderWithStockTx } from "./firestoreData";
-import { signedAmountCents } from "../../features/orders/payments";
+import { docReceivedCents, signedAmountCents } from "../../features/orders/payments";
 
 let env: RulesTestEnvironment;
 
@@ -304,6 +304,61 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     await expect(updateDoc(doc(holder.db, "orders", orderId), { paymentsRevision: 1 })).rejects.toThrow();
     await expect(registerOrderPaymentTx({ ...payment("canonical-first", 900), orderId })).rejects.toThrow(/otros datos guardados/);
     expect((await getDoc(doc(holder.db, "orders", orderId))).data()?.paymentsReceivedCents).toBe(25000);
+  });
+
+  it("prevents the #218 phantom after a real receipt and permits in-app repair", async () => {
+    const orderId = "deposit-218-repro";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 0, items: [{ productName: "Pieza", quantity: 1, unitPrice: 720, subtotal: 720 }], orderStatus: "confirmed", createdAt: "", updatedAt: "" });
+    const paid = await registerOrderPaymentTx({ ...payment("deposit-218-receipt", 590), orderId });
+    const saved = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...paid.order, deposit: 590 }, 0, "deposit-218-save");
+    expect(saved.order.deposit).toBe(0);
+    expect(docReceivedCents(saved.order)).toBe(59000);
+    expect((await getDoc(parent)).data()).toMatchObject({ deposit: 0, paymentsReceivedCents: 59000 });
+    // Synthetic corrupt legacy state: the approved repair lowers only deposit.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "orders", orderId), { deposit: 590 });
+    });
+    const repaired = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...saved.order, deposit: 0 }, saved.order.revision!, "deposit-218-repair");
+    expect(docReceivedCents(repaired.order)).toBe(59000);
+    expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(1);
+  });
+
+  it("freezes materialized deposits and leaves deposit-only orders editable", async () => {
+    const orderId = "deposit-218-materialized";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 100, items: [], createdAt: "", updatedAt: "" });
+    const editable = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...(await getDoc(parent)).data(), id: orderId, deposit: 200 } as Order, 0, "deposit-218-free");
+    expect(editable.order.deposit).toBe(200);
+    const paid = await registerOrderPaymentTx({ ...payment("deposit-218-materialize", 10), orderId }, { method: "cash", date: "2026-11-01" });
+    const saved = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...paid.order, deposit: 0 }, editable.order.revision!, "deposit-218-frozen");
+    expect(saved.order.deposit).toBe(200);
+    expect(saved.order.inheritedDepositMaterialized).toBe(true);
+    expect(docReceivedCents(saved.order)).toBe(21000);
+  });
+
+  it("accepts successive receipts on a historical order without a deposit field (#218 review)", async () => {
+    const orderId = "deposit-218-absent";
+    await setDoc(doc(holder.db, "orders", orderId), { storeId: "tx-store", items: [], createdAt: "", updatedAt: "" });
+    await registerOrderPaymentTx({ ...payment("deposit-218-absent-first", 100), orderId });
+    await registerOrderPaymentTx({ ...payment("deposit-218-absent-second", 50), orderId });
+    const adjusted = await registerOrderPaymentTx({ ...payment("deposit-218-absent-adjust", -10), orderId, kind: "adjustment", method: "unknown", note: "Corrección" });
+    expect(adjusted.order.paymentsReceivedCents).toBe(14000);
+    expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(3);
+  });
+
+  it("preserves a real pending deposit after an adjustment-first record (#218)", async () => {
+    const orderId = "deposit-218-adjustment-first";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 100, items: [], createdAt: "", updatedAt: "" });
+    const adjusted = await registerOrderPaymentTx({ ...payment("deposit-218-first-adjustment", 10), orderId, kind: "adjustment", method: "unknown", note: "Corrección previa" });
+    expect(adjusted.order.inheritedDepositMaterialized).not.toBe(true);
+    const saved = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...adjusted.order, deposit: 200 }, 0, "deposit-218-adjust-first-save");
+    expect(saved.order.deposit).toBe(100);
+    expect(docReceivedCents(saved.order)).toBe(11000);
+    const paid = await registerOrderPaymentTx({ ...payment("deposit-218-after-adjustment", 20), orderId }, { method: "cash", date: "2026-11-01" });
+    expect(paid.order.inheritedDepositMaterialized).toBe(true);
+    expect(docReceivedCents(paid.order)).toBe(13000);
   });
 
 });

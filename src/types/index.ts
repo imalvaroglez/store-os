@@ -424,8 +424,19 @@ export type OrderIncident = {
     kind: IncidentResolutionKind;
     /** wait_restock: agreed date (YYYY-MM-DD). */
     waitUntil?: string;
-    /** refund: the piece's HISTORICAL sale price, exact cents (evidence). */
+    /** LEGACY (pre-reconcile): the piece's historical price — read only while
+     * synthetic transition data exists; new writes never set it. */
     refundUnitPriceCents?: number;
+    /** The piece's HISTORICAL unit price, exact cents — drives the SALE
+     * adjustment (the piece leaves the sale). NEVER the refund amount. */
+    saleAdjustmentUnitCents?: number;
+    /** Refund obligation TOTAL in exact cents (reconciled money, transaction
+     * authoritative). Zero when nothing is refundable or the clienta chose
+     * credit. Kept distinct from the sale adjustment by design. */
+    refundOwedCents?: number;
+    /** Clienta's explicit choice for the reconciled difference: pending refund
+     * or accepted credit (only accepted credit may auto-compensate, #189). */
+    destination?: "refund_pending" | "credit_accepted";
   };
   /** The replacement piece when the resolution is a replacement. */
   replacement?: { productId?: string; productName: string; unitPriceCents: number; /** Real cost of the piece leaving stock, exact cents. */ unitCostCents: number; chargeDifference: boolean };

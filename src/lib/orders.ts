@@ -106,9 +106,15 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
 }
 
 export function paymentStatusForOrder(order: Partial<Order> & Record<string, unknown>): PaymentStatus {
-  const { estimatedTotal, paid } = orderTotals(order);
+  // #189/#203 coherence: the badge, the card and the editor must agree on
+  // "quedan deberes de cobro". A saldo a favor that covers the remainder, or a
+  // posventa refund that settles the sale, leave the canonical balance at
+  // zero — the order IS settled for collection purposes, even though less
+  // real money moved than the original total. Real-money progress stays
+  // visible through the Cobros sheet and the accumulators.
+  const { balance, paid } = orderTotals(order);
   // A $0 sale owes nothing: it is paid by definition.
-  if (paid >= estimatedTotal) return "paid";
+  if (balance <= 0) return "paid";
   return paid > 0 ? "partial" : "unpaid";
 }
 

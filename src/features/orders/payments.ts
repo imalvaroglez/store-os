@@ -41,9 +41,10 @@ export type PaymentFormInput = {
   inherited?: { method: "cash" | "transfer"; date: string };
 };
 
-/** Form input for a correction/refund (signed amount, note = evidence). */
+/** Form input for a correction/refund (positive magnitude, explicit direction). */
 export type AdjustmentFormInput = {
   kind: "adjustment";
+  direction: "subtract" | "add";
   id: string;
   amountText: string;
   note: string;
@@ -122,8 +123,10 @@ export function buildAdjustmentRecord(
   by: string,
   now = new Date().toISOString()
 ): OrderPayment {
-  const amount = normalizeAmount(input.amountText);
-  if (amount === 0) throw new Error("El monto del ajuste no puede ser cero.");
+  if (/[+-]/.test(input.amountText)) throw new Error("Captura un monto positivo sin signo y elige la dirección.");
+  const magnitude = normalizeAmount(input.amountText);
+  if (magnitude <= 0) throw new Error("El monto del ajuste debe ser mayor que cero.");
+  const amount = input.direction === "subtract" ? -magnitude : magnitude;
   const note = input.note.trim();
   if (!note) throw new Error("Escribe el motivo del ajuste.");
   return {

@@ -21,11 +21,13 @@ import { orderItems } from "../../lib/orders";
 import { uid } from "../../lib/ids";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { incidentState, type IncidentPieceLocation } from "./incidents";
+import { reconcileIncidentMoney } from "./incidentMoney";
 import type { IncidentResolutionKind, Order, OrderIncident } from "../../types";
 
 const PIECE_LABEL: Record<IncidentPieceLocation, string> = {
   with_customer: "Pieza con la clienta",
   quarantined: "En cuarentena (no vendible)",
+  repaired_held: "Reparada — autoriza la venta para liberarla",
   back_in_stock: "De vuelta en inventario",
   written_off: "Dada de baja",
 };
@@ -166,10 +168,18 @@ function IncidentCard({
   const info = incidentState(incident);
   // #212 F6: the settle button only exists while money is actually pending
   // (executing at confirm already settles it once).
-  const refundStillPending = incident.resolution?.kind === "refund"
-    && incident.originalUnitPriceCents * Math.max(1, incident.quantity) > info.refundExecutedCents;
+  const owedCents = typeof incident.resolution?.refundOwedCents === "number"
+    ? Math.max(0, incident.resolution.refundOwedCents)
+    : incident.resolution?.kind === "refund"
+      ? Math.max(0, incident.resolution.refundUnitPriceCents ?? 0) * Math.max(1, incident.quantity)
+      : 0;
+  const refundStillPending = (incident.resolution?.kind === "refund" || (incident.resolution?.destination === "refund_pending" && (incident.resolution.refundOwedCents ?? 0) > 0))
+    && owedCents > info.refundExecutedCents;
   const compensationDone = (incident.events ?? []).some((saved) => saved.kind === "provider_compensation");
   const [kind, setKind] = useState<IncidentResolutionKind>("replacement_equivalent");
+  // r3: the clienta's explicit choice for money in her favor — required before
+  // agreeing (the transaction rejects a missing destination server-side too).
+  const [destination, setDestination] = useState<"refund_pending" | "credit_accepted" | "">("");
   const [replacementQuery, setReplacementQuery] = useState("");
   const [replacementPick, setReplacementPick] = useState<{ id: string; name: string; priceCents: number; costCents: number } | null>(null);
   const [chargeDifference, setChargeDifference] = useState(true);
@@ -177,6 +187,24 @@ function IncidentCard({
   const [dialog, setDialog] = useState<"confirm" | "none">("none");
   const [refundExecuted, setRefundExecuted] = useState(false);
   const [compensationText, setCompensationText] = useState("");
+
+  // Money in the clienta's favor: a refund, or a cheaper replacement.
+  // Money in her favor exists only when the CHEAPER difference is CHARGED
+  // (an absorbed difference moves no money — no destination, r3 F2).
+  const downgradeDifference = kind === "replacement_with_difference" && chargeDifference
+    && !!replacementPick && replacementPick.priceCents < incident.originalUnitPriceCents;
+  const needsDestination = kind === "refund" || downgradeDifference;
+  // ESTIMATE only — the transaction recomputes the authoritative amounts
+  // against the fresh document when agreeing.
+  const estimate = needsDestination
+    ? reconcileIncidentMoney(order, {
+        ...incident,
+        resolution: { kind },
+        ...(replacementPick && kind === "replacement_with_difference"
+          ? { replacement: { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: replacementPick.costCents, chargeDifference } }
+          : {}),
+      })
+    : null;
 
   async function agree() {
     onAgreeing(incident.id);
@@ -194,8 +222,10 @@ function IncidentCard({
     const resolution = kind === "wait_restock"
       ? { kind, waitUntil: waitUntil || undefined }
       : kind === "refund"
-        ? { kind, refundUnitPriceCents: incident.originalUnitPriceCents }
-        : { kind };
+        ? { kind, destination: destination as "refund_pending" | "credit_accepted" }
+        : kind === "replacement_with_difference" && downgradeDifference
+          ? { kind, destination: destination as "refund_pending" | "credit_accepted" }
+          : { kind };
     await run(
       () => applyIncidentEvent(order, incident.id, { id: uid("iev"), kind: "resolution_agreed" }, { resolution, replacement }),
       "Resolución acordada."
@@ -208,7 +238,7 @@ function IncidentCard({
     onConfirming(incident.id);
     const detail: Record<string, string | number> | undefined =
       info.resolution?.kind === "refund" && refundExecuted
-        ? { refundExecutedCents: incident.originalUnitPriceCents * Math.max(1, incident.quantity) }
+        ? { refundExecutedCents: owedCents }
         : undefined;
     await run(
       () => applyIncidentEvent(order, incident.id, { id: uid("iev"), kind: "confirmed", ...(detail ? { detail } : {}) }),
@@ -220,7 +250,7 @@ function IncidentCard({
   async function later(kindLater: "repaired" | "provider_replacement" | "written_off" | "returned_to_sale" | "refund_executed" | "provider_compensation") {
     const detail: Record<string, string | number> | undefined =
       kindLater === "refund_executed"
-        ? { refundExecutedCents: incident.originalUnitPriceCents * Math.max(1, incident.quantity) }
+        ? { refundExecutedCents: Math.max(0, owedCents - info.refundExecutedCents) }
         : kindLater === "provider_compensation" && compensationText.trim()
           ? { amountCents: orderAmountCents(Number(compensationText) || 0) }
           : undefined;
@@ -299,13 +329,40 @@ function IncidentCard({
           {kind === "refund" && (
             <p className="text-sm text-on-surface-soft">
               Se devuelve <Money exact amount={(incident.originalUnitPriceCents * Math.max(1, incident.quantity)) / 100} /> a su precio
-              histórico. El reembolso queda pendiente (no se usa como saldo a favor) hasta que devuelvas el dinero.
+              histórico. La cantidad a devolver se concilia con lo que realmente pagó; queda pendiente (no se usa como saldo a favor) hasta que devuelvas el dinero.
             </p>
+          )}
+          {needsDestination && estimate && (
+            <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
+              <p className="text-sm">
+                {estimate.saleAdjustmentCents < 0 && kind === "refund"
+                  ? <>Venta ajustada −<Money exact amount={-estimate.saleAdjustmentCents / 100} /></>
+                  : <>Diferencia a favor de la clienta <Money exact amount={estimate.reconciledCents / 100} /></>}
+                {" "}· se le deben <strong><Money exact amount={estimate.reconciledCents / 100} /></strong>
+                {estimate.restitutionCents > 0 && <> (de los cuales <Money exact amount={estimate.restitutionCents / 100} /> vuelven como crédito de su otro pedido)</>}
+              </p>
+              <p className="text-xs text-on-surface-soft">Elige con la clienta el destino (monto definitivo al guardar):</p>
+              <div className="grid grid-cols-1 gap-2">
+                <Button
+                  variant={destination === "refund_pending" ? "primary" : "secondary"}
+                  onClick={() => setDestination("refund_pending")}
+                >
+                  Reembolso pendiente ({estimate.refundOwedCents("refund_pending") > 0 ? <Money exact amount={estimate.refundOwedCents("refund_pending") / 100} /> : "sin efectivo"})
+                </Button>
+                <Button
+                  variant={destination === "credit_accepted" ? "primary" : "secondary"}
+                  onClick={() => setDestination("credit_accepted")}
+                >
+                  Crédito para sus pedidos (aceptado por la clienta)
+                </Button>
+              </div>
+            </div>
           )}
           <Button
             full
             disabled={agreeing
-              || ((kind === "replacement_equivalent" || kind === "replacement_with_difference") && !replacementPick)}
+              || ((kind === "replacement_equivalent" || kind === "replacement_with_difference") && !replacementPick)
+              || (needsDestination && destination === "")}
             onClick={() => void agree()}
           >
             {agreeing ? "Guardando…" : "Acordar resolución"}
@@ -327,7 +384,7 @@ function IncidentCard({
         </div>
       )}
 
-      {info.confirmed && info.pieceLocation === "quarantined" && (
+      {info.confirmed && (info.pieceLocation === "quarantined" || info.pieceLocation === "repaired_held") && (
         <div className="flex flex-wrap gap-2 border-t border-edge pt-3">
           <Button size="sm" variant="secondary" onClick={() => void later("repaired")}>Reparado</Button>
           <Button size="sm" variant="secondary" onClick={() => void later("provider_replacement")}>Proveedor entregó reemplazo</Button>
