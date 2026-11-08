@@ -99,6 +99,10 @@ test('CLI rejects unknown options and sanitizes personal error text', () => {
   assert.throws(() => parseArgs(['run', '--prod'])); assert.throws(() => parseArgs(['restore', '--config']));
   assert.equal(safeCode(new Error('secret@example.com')), 'BACKUP_FAILED');
   assert.equal(safeCode(new Error('CLOUD_HTTP_403')), 'CLOUD_HTTP_403');
+  assert.equal(safeCode(Object.assign(new Error('fetch failed'), { code: 'ETIMEDOUT' })), 'ETIMEDOUT');
+  assert.equal(safeCode(Object.assign(new Error('fetch failed'), { cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) })), 'ECONNRESET');
+  assert.equal(safeCode(Object.assign(new Error('fetch failed'), { cause: Object.assign(new Error('getaddrinfo ...'), { code: 'EAI_AGAIN' }) })), 'EAI_AGAIN');
+  assert.equal(safeCode(new Error('fetch failed')), 'BACKUP_FAILED');
 });
 test('failed capture preserves last successful backup, cleans staging and releases lock', async t => {
   const dir = await workspace(t); const home = path.join(dir, 'home'); await mkdir(home); const destination = path.join(dir, 'icloud'); await mkdir(destination);
