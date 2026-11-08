@@ -302,6 +302,12 @@ export async function openCatalog(page: Page) {
 // Deterministic super_admin login: wipe, authenticate the allow-listed test
 // admin, install explicit emulator-only fixtures, and wait for them in the UI.
 export async function loginAsFirstAdmin(page: Page, password = "password123") {
+  // Fail closed if a Preview was accidentally built without emulator routing.
+  // This also covers additional pages opened to verify persisted purchases.
+  await page.context().route((url) => [
+    "firestore.googleapis.com", "identitytoolkit.googleapis.com", "securetoken.googleapis.com",
+    "firebasestorage.googleapis.com", "storage.googleapis.com",
+  ].includes(url.hostname) || url.hostname.endsWith(".firebaseio.com") || url.hostname.endsWith(".firebasestorage.app"), (route) => route.abort());
   await wipeEmulator();
   const email = ADMIN_EMAIL;
   await signUp(page, email, password);

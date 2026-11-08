@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 // Scoped editorial styles travel with the storefront chunk, not the shared barrel.
 import "../../design-system/olivia.css";
+import "../../design-system/olivia-editorial.css";
 import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
 import { loadPublicStore, loadPublicCatalogSummary, loadPublicProduct, PublicCatalogNotFoundError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
 import { navigate, type RouteMatch } from "../../lib/router";
@@ -108,6 +109,10 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
   const [sort, setSort] = useState("featured");
   const [finishFilter, setFinishFilter] = useState("");
   const sf = store.storefront ?? {};
+  const hasHeroBanner = !!(sf.hero?.imageUrl || sf.hero?.mobileImageUrl);
+  const heroProduct = catalog?.products
+    .filter((product) => ((sf.showSoldOut ?? true) || !isSoldOut(product)) && (product.images?.[0]?.url || product.imageUrl))
+    .sort((a, b) => Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured)) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0))[0];
   const heroBody = sf.hero?.body ?? OLIVIA_CONTENT.hero!.body;
   const slug = store.slug;
   const priceLabel = store.priceTiers?.find((tier) => tier.id === store.defaultTierId)?.label || "Precio";
@@ -162,17 +167,18 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
         {sf.hero.mobileImageUrl && <source media="(max-width: 639px)" srcSet={sf.hero.mobileImageUrl} />}
         <ProductImage src={sf.hero.imageUrl || sf.hero.mobileImageUrl} alt={sf.hero.imageAlt || `Colección de ${store.name}`} size="full" natural loading="eager" fetchPriority="high" width={sf.hero.imageWidth} height={sf.hero.imageHeight} />
       </picture> : null}
-      <div className="olv-container olv-hero-copy">
+      <div className={`olv-container olv-hero-copy${hasHeroBanner ? "" : " olv-hero-copy--with-photo"}`}>
         <p className="olv-eyebrow">Pequeños detalles. Muy tú.</p>
         <InlineEditable enabled={editing} label="Título principal" value={sf.hero?.heading ?? ""} displayValue={sf.hero?.heading?.trim().toLocaleLowerCase() === store.name.trim().toLocaleLowerCase() ? OLIVIA_CONTENT.hero!.heading : sf.hero?.heading || OLIVIA_CONTENT.hero!.heading} placeholder="Toca para añadir un título" render={(text) => <h1>{text}</h1>} onChange={(value) => patchSection("hero", { heading: value || undefined })} />
         <InlineEditable enabled={editing} label="Mensaje principal" value={sf.hero?.body ?? ""} displayValue={heroBody} placeholder="Toca para añadir un mensaje" multiline render={(text) => text ? <p className="olv-intro">{text}</p> : null} onChange={(value) => patchSection("hero", { body: value || undefined })} />
         <a href="#piezas" className="olv-link-button">Explorar piezas <span aria-hidden="true">↗</span></a>
         <InlineEditable enabled={editing} label="Beneficios" value={(sf.benefits ?? []).join("\n")} displayValue={(sf.benefits ?? []).join("\n")} placeholder="Toca para añadir beneficios, uno por línea" multiline render={(text) => text.trim() ? <div className="olv-benefits">{text.split(/\r?\n/).filter(Boolean).map((item) => <span key={item}>{item}</span>)}</div> : null} onChange={(value) => patchStorefront("benefits", value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))} />
+        {!hasHeroBanner && <figure className="olv-hero-photo">
+          {heroProduct && <><ProductImage src={heroProduct.images?.[0]?.url || heroProduct.imageUrl || undefined} alt="" size="full" loading="eager" width={heroProduct.images?.[0]?.width ?? undefined} height={heroProduct.images?.[0]?.height ?? undefined} /><figcaption>{heroProduct.name}</figcaption></>}
+        </figure>}
       </div>
     </section>}
     <main id="piezas" className="olv-container olv-main">
-      <div className="olv-section-heading"><div><p className="olv-eyebrow">Elige lo que va contigo</p><h2>{category?.name || "Encuentra tus favoritas"}</h2></div><p className="olv-muted">{products.length} {products.length === 1 ? "pieza" : "piezas"}</p></div>
-      {category?.description && <p className="olv-muted">{category.description}</p>}
       {!focusCategory && categoryCards.length > 0 && <section className="olv-category-section" aria-labelledby="category-title">
         <div className="olv-category-section-heading"><div><p className="olv-eyebrow">Explora Olivia</p><h2 id="category-title">Compra por categoría</h2></div></div>
         <div className="olv-category-grid">
@@ -182,6 +188,8 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
           </StorefrontLink>)}
         </div>
       </section>}
+      <div className="olv-section-heading"><div><p className="olv-eyebrow">Elige lo que va contigo</p><h2>{category?.name || "Encuentra tus favoritas"}</h2></div><p className="olv-muted">{products.length} {products.length === 1 ? "pieza" : "piezas"}</p></div>
+      {category?.description && <p className="olv-muted">{category.description}</p>}
       {focusCategory && <nav aria-label="Categorías" className="olv-categories">
         <StorefrontLink to={`/catalogo/${slug}`} current={!focusCategory}>Todas las piezas</StorefrontLink>
         {(catalog?.categories ?? []).map((c) => <StorefrontLink key={c.id} to={`/catalogo/${slug}/categoria/${c.slug}`} current={c.slug === focusCategory}>{c.name}</StorefrontLink>)}
@@ -191,6 +199,7 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
         <SelectField label="Ordenar por" value={sort} onChange={setSort} options={[{ value: "featured", label: "Destacados" }, { value: "new", label: "Novedades" }, { value: "price-asc", label: `${priceLabel}: menor a mayor` }, { value: "price-desc", label: `${priceLabel}: mayor a menor` }]} />
         {finishOptions.length > 1 && <SelectField label="Acabado" value={finishFilter} onChange={(value) => setFinishFilter(value)} placeholder="Todos los acabados" options={finishOptions.map(([value, label]) => ({ value, label }))} />}
       </div>
+      {(store.priceTiers?.length ?? 0) > 1 && <p className="olv-pricing-note">Precios por nivel. Condiciones en el detalle de cada pieza.</p>}
       {products.length ? <div className="olv-grid">{products.map((p) => <ProductCard key={p.productSlug} p={p} slug={slug} />)}</div>
         : <div className="olv-empty"><EmptyState title={query || finishFilter ? "No encontramos piezas con estos filtros" : "Sin piezas aquí"} subtitle={query || finishFilter ? "Prueba otro nombre o acabado." : "Vuelve pronto o explora otra categoría."} />{(query || finishFilter) && <Button variant="secondary" onClick={() => { setQuery(""); setFinishFilter(""); }}>Limpiar filtros</Button>}</div>}
       <section className="olv-how" aria-labelledby="how-title"><div><p className="olv-eyebrow">Así de sencillo</p><h2 id="how-title">De tu lista a WhatsApp.</h2></div><div className="olv-steps"><p><span>01</span> Elige tus piezas</p><p><span>02</span> Revisa tu lista</p><p><span>03</span> Envíala por WhatsApp</p></div><p className="olv-muted">Fer confirma contigo el precio y la disponibilidad. Tu selección no reserva las piezas.</p></section>
@@ -211,20 +220,18 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
 }
 
 function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
-  const { store, lines, add, setQty, notifyAdded } = useCartContext();
-  const quantity = lines.find((line) => line.productSlug === p.productSlug)?.qty ?? 0;
+  const { store } = useCartContext();
   const href = `/catalogo/${slug}/producto/${p.productSlug}`;
   const images = p.images?.length ? p.images : p.imageUrl ? [{ url: p.imageUrl }] : [];
   const soldOut = isSoldOut(p);
   return <article className="olv-product" aria-label={p.name}>
     <ProductGallery images={images} name={p.name} href={href} onNavigate={() => navigate(href)} />
     <div className="olv-product-info">
-      <div className="olv-product-labels">{soldOut ? <Badge tone="neutral">Agotado</Badge> : p.stockSignal === "pocas" ? <Badge tone="warning">Quedan pocas</Badge> : p.isNew ? <Badge>Nuevo</Badge> : p.isFeatured ? <span>Selección Olivia</span> : null}</div>
+      <div className="olv-product-labels">{soldOut ? <Badge tone="neutral">Agotado</Badge> : p.stockSignal === "pocas" ? <Badge tone="warning">Quedan pocas</Badge> : null}</div>
       <h3><StorefrontLink to={href}>{p.name}</StorefrontLink></h3>
-      {p.finish && <p className="olv-product-finish">Acabado: {p.finish}</p>}
-      <PublicTierPrices store={store} product={p} />
+      <PublicTierPrices store={store} product={p} mode="summary" />
     </div>
-    <CartProductControl key={`${p.productSlug}-${quantity}`} productSlug={p.productSlug} productName={p.name} quantity={quantity} onAdd={() => { add(cartItemFromPublicProduct(p)); notifyAdded(p.name); }} onSetQty={setQty} full />
+
   </article>;
 }
 
@@ -287,21 +294,6 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
   const cart = useCart(store?.slug);
   const [open, setOpen] = useState(false);
   const [addedName, setAddedName] = useState<string | null>(null);
-  const [homeHeaderCompact, setHomeHeaderCompact] = useState(false);
-  useEffect(() => {
-    if (!isHomeRoute) {
-      setHomeHeaderCompact(false);
-      return;
-    }
-    const onScroll = () => setHomeHeaderCompact((compact) => {
-      if (window.scrollY <= 4) return false;
-      if (window.scrollY >= 96) return true;
-      return compact;
-    });
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [isHomeRoute]);
   useEffect(() => {
     if (!store || !catalog) return;
     cart.prune(new Set(catalog.products.map((p) => p.productSlug)));
@@ -318,7 +310,7 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
   const body = <div className="olivia-root" style={style}>
     {store && <>
       <InlineEditable enabled={editing} label="Aviso" value={sf.notice ?? ""} displayValue={sf.notice || "Tu próxima pieza favorita empieza aquí"} placeholder="Toca para añadir un aviso" render={(text) => <div className="olv-notice">{text}</div>} onChange={(value) => patchStorefront("notice", value || undefined)} />
-      <header className={`olv-header${isHomeRoute ? " olv-header--home" : ""}${homeHeaderCompact ? " olv-header--compact" : ""}`}><div className={`olv-container olv-header-inner ${isHomeRoute ? "olv-header-inner--home" : ""}`}>
+      <header className={`olv-header${isHomeRoute ? " olv-header--home" : ""}`}><div className={`olv-container olv-header-inner ${isHomeRoute ? "olv-header-inner--home" : ""}`}>
         <StorefrontLink to={`/catalogo/${store.slug}`} className="olv-wordmark">{sf.logoUrl ? <ProductImage src={sf.logoUrl} alt={`Logo de ${store.name}`} size="full" natural loading="eager" /> : <ProductImage src={OLIVIA_LOGO_URL} alt={`Logo de ${store.name}`} size="full" natural loading="eager" />}</StorefrontLink>
         <nav aria-label="Principal"><StorefrontLink to={`/catalogo/${store.slug}`} className="olv-header-catalog">Catálogo</StorefrontLink><Button variant="ghost" aria-label="Ver mi selección" onClick={openCart}>Mi pedido <span className="olv-count">{pieces}</span></Button></nav>
       </div></header>

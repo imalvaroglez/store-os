@@ -88,13 +88,23 @@ const categoryRoute: RouteMatch = {
 const cartKey = "store-os:cart:olivia";
 
 async function renderStore(editor?: { storeId: string; storefront: Storefront; save: (storeId: string, storefront: Storefront) => Promise<void>; notifySuccess: (message: string) => void; notifyError: (message: string) => void }) {
-  render(<OliviaStorefront route={storeRoute} editor={editor} />);
-  // Wait for the grid to be ready.
-  await screen.findAllByRole("button", { name: "Agregar al carrito" });
+  const view = render(<OliviaStorefront route={storeRoute} editor={editor} />);
+  await screen.findAllByRole("article");
+  return view;
+}
+
+async function addFromDetail(view: ReturnType<typeof render>, index: number) {
+  const product = catalog.products[index];
+  mocks.loadPublicProduct.mockResolvedValue({ store, product: { ...detail, ...product, images: [], categories: [] } });
+  view.rerender(<OliviaStorefront route={{ name: "public_product", params: { slug: "olivia", productSlug: product.productSlug } }} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar al carrito" }));
+  expect(screen.getByRole("group", { name: `Cantidad de ${product.name}` })).toHaveTextContent("1");
+  view.rerender(<OliviaStorefront route={storeRoute} />);
+  await screen.findAllByRole("article");
 }
 
 async function openDrawer() {
-  fireEvent.click(screen.getByRole("button", { name: "Abrir pedido" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Abrir pedido" }));
   await screen.findByText("Tu pedido");
 }
 
@@ -122,14 +132,13 @@ describe("filtro por acabado", () => {
   it("no muestra un selector cuando solo hay un acabado", async () => {
     mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [catalog.products[0]] } });
     render(<OliviaStorefront route={categoryRoute} />);
-    await screen.findByText("Acabado: Dorado");
+    await screen.findByRole("article", { name: "Anillo Blossom" });
     expect(screen.queryByLabelText("Acabado")).toBeNull();
   });
 
-  it("muestra acabados en tarjetas y limita la categoría seleccionada", async () => {
+  it("filtra por acabado sin repetirlo en cada tarjeta", async () => {
     render(<OliviaStorefront route={categoryRoute} />);
-    await screen.findByText("Acabado: Dorado");
-    expect(screen.getByText("Acabado: Dorado")).toBeTruthy();
+    await screen.findByRole("article", { name: "Anillo Blossom" });
     expect(screen.getByLabelText("Acabado")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Acabado"), { target: { value: "plateado" } });
     expect(screen.getByRole("article", { name: "Aretes Luna" })).toBeTruthy();
@@ -140,36 +149,63 @@ describe("filtro por acabado", () => {
 });
 
 describe("tarjetas — jerarquía de precios", () => {
-  it("destaca Iconic, compacta los otros niveles y comunica el ahorro posible", async () => {
+  it("muestra un solo precio desde y deja condiciones y selección en el detalle", async () => {
     await renderStore();
     const card = screen.getByRole("article", { name: "Anillo Blossom" });
-
-    expect(within(card).queryByText("Mejor precio")).toBeNull();
-    expect(within(card).getByText("$90")).toBeTruthy();
-    expect(within(card).getByText("Iconic")).toBeTruthy();
-    expect(within(card).getByText("Hasta $50 menos por pieza al desbloquear Iconic")).toBeTruthy();
-    expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
-    expect(within(card).getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toBeTruthy();
-
-    const compare = Array.from(card.querySelectorAll(".olv-price-compare-item"))
-      .map((item) => `${item.querySelector(".olv-price-compare-label")?.textContent} ${item.querySelector(".olv-price-compare-amount")?.textContent}`);
-    expect(compare[0]).toBe("Regular $140");
-    expect(compare[1]).toBe("Girly $120");
+    expect(within(card).getByText("Desde $90")).toBeTruthy();
+    expect(within(card).queryByText("Regular")).toBeNull();
+    expect(within(card).queryByText("Girly")).toBeNull();
+    expect(within(card).queryByText("Iconic")).toBeNull();
+    expect(within(card).queryByRole("button", { name: /precio|Agregar/ })).toBeNull();
+    expect(within(card).getByRole("link", { name: "Anillo Blossom" })).toHaveAttribute("href", "/catalogo/olivia/producto/anillo-blossom");
+    expect(screen.getAllByText("Precios por nivel. Condiciones en el detalle de cada pieza.")).toHaveLength(1);
   });
 
-  it("oculta el ahorro cuando Iconic no es menor que Regular", async () => {
-    mocks.loadPublicCatalog.mockResolvedValue({
-      store,
-      catalog: {
-        ...catalog,
-        products: [{ ...catalog.products[0], prices: { t_retail: 140, t_girly: 140, t_iconic: 140 } }],
-      },
-    });
+  it.each([
+    [{ t_retail: 140, t_girly: 140, t_iconic: 140 }, 140, "$140"],
+    [{ t_retail: 0, t_girly: 0, t_iconic: 0 }, 0, "$0"],
+    [undefined, 140, "$140"],
+  ])("no anuncia variación cuando solo hay un importe (%j)", async (prices, price, expected) => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [{ ...catalog.products[0], price, prices }] } });
     await renderStore();
-    const card = screen.getByRole("article", { name: "Anillo Blossom" });
-    expect(within(card).queryByText(/Hasta .* al desbloquear Iconic/)).toBeNull();
-    expect(card.querySelector(".olv-price-savings--empty")).toBeTruthy();
+    expect(within(screen.getByRole("article")).getByText(expected)).toBeTruthy();
+    expect(within(screen.getByRole("article")).queryByText(/Desde/)).toBeNull();
   });
+
+  it("uses the actual lowest public tier for Desde and never invents a missing price", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [
+      { ...catalog.products[0], prices: { t_retail: 140, t_girly: 80, t_iconic: 90 } },
+      { ...catalog.products[1], price: undefined, prices: undefined },
+    ] } });
+    await renderStore();
+    expect(within(screen.getByRole("article", { name: "Anillo Blossom" })).getByText("Desde $80")).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "Aretes Luna" })).getByText("Consultar precio")).toBeTruthy();
+  });
+
+  it("shows a lone public tier with its condition instead of inventing a default price", async () => {
+    const partial = { ...detail, price: undefined, prices: { t_iconic: 90 } };
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [{ ...catalog.products[0], ...partial }] } });
+    const view = await renderStore();
+    expect(within(screen.getByRole("article")).getByText("Desde $90")).toBeTruthy();
+    mocks.loadPublicProduct.mockResolvedValue({ store, product: partial });
+    view.rerender(<OliviaStorefront route={productRoute} />);
+    const prices = await screen.findByRole("region", { name: "Precios por pieza" });
+    expect(within(prices).getByText("$90")).toBeTruthy();
+    expect(within(prices).queryByText("$0")).toBeNull();
+    expect(within(prices).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toBeTruthy();
+  });
+
+  it.each([
+    [{ wholesale: 1 }, "Consultar precio"],
+    [{ retail: 140, wholesale: 1 }, "$140"],
+  ])("retains the explicit legacy retail fallback without showing unconfigured wholesale (%j)", async (prices, expected) => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [{ ...catalog.products[0], price: undefined, prices }] } });
+    await renderStore();
+    const card = screen.getByRole("article");
+    expect(within(card).getByText(expected)).toBeTruthy();
+    expect(within(card).queryByText("$1")).toBeNull();
+  });
+
 });
 
 describe("portada — acceso visual por categoría", () => {
@@ -252,16 +288,14 @@ describe("edición pública in-place", () => {
 });
 
 describe("carrito del storefront — acumular y pedir", () => {
-  it("agrega desde el grid, muestra el contador y arma UN mensaje con todas las líneas", async () => {
-    await renderStore();
+  it("agrega desde detalles, muestra el contador y arma UN mensaje con todas las líneas", async () => {
+    const view = await renderStore();
     expect(screen.getByRole("img", { name: "Logo de Olivia" })).toHaveAttribute("src", "/images/olivia-logo.png");
     expect(screen.getByText("Quedan pocas")).toBeTruthy();
     expect(screen.getByText("Agotado")).toBeTruthy();
-    const adds = screen.getAllByRole("button", { name: "Agregar al carrito" });
-    fireEvent.click(adds[0]);
+    await addFromDetail(view, 0);
     expect(screen.getByRole("status")).toHaveTextContent("Agregado a tu pedido");
-    expect(screen.getByRole("group", { name: "Cantidad de Anillo Blossom" })).toHaveTextContent("1");
-    fireEvent.click(adds[1]);
+    await addFromDetail(view, 1);
 
     const open = screen.getByRole("button", { name: "Abrir pedido" });
     expect(open.textContent).toContain("2");
@@ -291,8 +325,8 @@ describe("carrito del storefront — acumular y pedir", () => {
   });
 
   it("stepper ± actualiza líneas y reduce a cero para quitar", async () => {
-    await renderStore();
-    fireEvent.click(screen.getAllByRole("button", { name: "Agregar al carrito" })[0]);
+    const view = await renderStore();
+    await addFromDetail(view, 0);
     await openDrawer();
 
     const list = screen.getByRole("list");
@@ -309,8 +343,8 @@ describe("carrito del storefront — acumular y pedir", () => {
   });
 
   it("el carrito sobrevive la recarga (localStorage por tienda)", async () => {
-    const first = render(<OliviaStorefront route={storeRoute} />);
-    fireEvent.click((await screen.findAllByRole("button", { name: "Agregar al carrito" }))[0]);
+    const first = await renderStore();
+    await addFromDetail(first, 0);
     first.unmount();
 
     render(<OliviaStorefront route={storeRoute} />);
@@ -322,10 +356,9 @@ describe("carrito del storefront — acumular y pedir", () => {
 
 describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
   it("pocas → invitación a ordenar; agotado → sobre pedido en la línea del mensaje", async () => {
-    await renderStore();
-    const adds = screen.getAllByRole("button", { name: "Agregar al carrito" });
-    fireEvent.click(adds[1]); // Aretes Luna: pocas
-    fireEvent.click(adds[2]); // Collar Vega: agotado
+    const view = await renderStore();
+    await addFromDetail(view, 1); // Aretes Luna: low stock
+    await addFromDetail(view, 2); // Collar Vega: sold out
     await openDrawer();
 
     expect(screen.getByText(/Quedan pocas — tu pedido puede reabastecerse/)).toBeTruthy();
@@ -484,13 +517,13 @@ describe("editorial catalog", () => {
     expect(document.querySelector('meta[name="description"]')).toHaveAttribute("content", OLIVIA_CONTENT.hero!.body);
   });
 
-  it("centra el logo en portada y reemplaza solo el título de marca duplicado", async () => {
+  it("conserva el logo en portada y reemplaza solo el título de marca duplicado", async () => {
     mocks.loadPublicCatalog.mockResolvedValue({
       store: { ...store, storefront: { hero: { heading: "Olivia", body: "Una selección para ti." } } },
       catalog,
     });
     const view = render(<OliviaStorefront route={storeRoute} />);
-    await screen.findAllByRole("button", { name: "Agregar al carrito" });
+    await screen.findAllByRole("article");
 
     expect(screen.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Olivia" })).toBeNull();
@@ -507,28 +540,6 @@ describe("editorial catalog", () => {
     });
     await renderStore();
     expect(screen.getByRole("heading", { name: "Nueva colección" })).toBeTruthy();
-  });
-
-  it("reduce el logo de portada al desplazarse y lo vuelve a ampliar al regresar arriba", async () => {
-    const view = render(<OliviaStorefront route={storeRoute} />);
-    await screen.findAllByRole("button", { name: "Agregar al carrito" });
-    const header = screen.getByRole("img", { name: "Logo de Olivia" }).closest("header")!;
-    expect(header).not.toHaveClass("olv-header--compact");
-
-    const scrollY = vi.spyOn(window, "scrollY", "get");
-    scrollY.mockReturnValue(120);
-    fireEvent.scroll(window);
-    expect(header).toHaveClass("olv-header--compact");
-
-    scrollY.mockReturnValue(80);
-    fireEvent.scroll(window);
-    expect(header).toHaveClass("olv-header--compact");
-
-    scrollY.mockReturnValue(0);
-    fireEvent.scroll(window);
-    expect(header).not.toHaveClass("olv-header--compact");
-    scrollY.mockRestore();
-    view.unmount();
   });
 
   it("searches names/keys, sorts, and never duplicates featured/new products", async () => {
