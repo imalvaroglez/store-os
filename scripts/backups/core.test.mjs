@@ -5,6 +5,7 @@ import { mkdtemp, chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/pro
 import path from 'node:path';
 import os from 'node:os';
 import childProcess, { execFileSync, spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
 import { DEV, PROD } from './core.mjs';
@@ -263,4 +264,20 @@ test('timed-out process inspection reports a safe code and preserves unclassifie
   syncBuiltinESMExports();
   try { await assert.rejects(cleanupStaleWorkspaces(dir), { message: 'PROCESS_INSPECTION_TIMEOUT' }); assert.equal(await exists(capture), true); }
   finally { childProcess.execFileSync = original; syncBuiltinESMExports(); }
+});
+test('trash succeeds when the workspace supervisor removes the same target mid-run', async t => {
+  const dir = await workspace(t); const file = path.join(dir, 'snapshot.age'); await writeFile(file, 'ciphertext');
+  const original = childProcess.execFile;
+  childProcess.execFile = (executable, args, options, callback) => { rmSync(args[0]); callback(Object.assign(new Error('trash: no such file'), { code: 'ENOENT' })); };
+  syncBuiltinESMExports();
+  try { await trash(file); } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
+  assert.equal(await exists(file), false);
+});
+test('trash still fails when the target survives a failed trash invocation', async t => {
+  const dir = await workspace(t); const file = path.join(dir, 'stuck'); await writeFile(file, 'fixture');
+  const original = childProcess.execFile;
+  childProcess.execFile = (executable, args, options, callback) => callback(Object.assign(new Error('private fixture details'), { code: 'EACCES' }));
+  syncBuiltinESMExports();
+  try { await assert.rejects(trash(file), { message: 'TRASH_FAILED' }); } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
+  assert.equal(await exists(file), true);
 });
