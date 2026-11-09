@@ -13,7 +13,7 @@ Política vigente tras eliminar el delivery harness como gate (ver `docs/adr/000
    npm run typecheck && npm run test && npm run build
    ```
 
-5. Revisión con subagentes read-only (code map, diseño de tests, estándares de `store-os-review`, seguridad multitienda). Antes de liberar a producción, cada PR pasa por un **sub-agente independiente sin contexto** (solo diff + guías del repo): esa revisión es compuerta — los hallazgos abiertos bloquean el merge.
+5. **Doble revisión independiente por issue implementada:** cuando el autor considera terminado el cambio, lanza dos subagentes distintos, read-only y sin contexto previo: (a) code review de lógica, datos, seguridad y regresiones; (b) UX review centrada en minimizar el esfuerzo real de quien opera la tienda, ejecutando el flujo afectado en navegador local/dev, móvil y escritorio cuando aplique. Los revisores leen issue + diff/PR + guías y contexto técnico mínimo, reportan veredictos/evidencia propios y no heredan conclusiones del autor. Para trabajo sin interfaz el revisor UX justifica NO APLICA o evalúa impacto indirecto; si no puede comprobar un flujo afectado, la validación queda pendiente. Hallazgos críticos/mayores o fricción significativa en un flujo central bloquean el merge hasta corregir y repetir las revisiones pertinentes. Ver AGENTS.md, CLAUDE.md y docs/DESIGN.md.
 6. Abre **draft PR** hacia `main`; espera CI (`build-test` + `rules-and-e2e`) y el deploy de Preview.
 7. Merge: lo hace el humano, o el agente bajo la autorización permanente del
    PO (2026-11-08) — en ambos casos tras CI completo en verde y revisión
