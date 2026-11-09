@@ -92,7 +92,12 @@ function changeSelect(label: string, value: string) {
 async function renderCatalog(state: AppState) {
   const Wrapper = withState(state);
   const view = render(<Wrapper><CatalogScreen /></Wrapper>);
-  await waitFor(() => expect(screen.getByLabelText("Categoría")).toBeTruthy());
+  // #252: the screen renders null until hydration (loadCloudState) lands, so
+  // the select only exists post-hydration — but the DOM a test reads after a
+  // filter change may not be settled yet, and a live store-key change in
+  // useListRestore resets filters. Never assert synchronously after changing
+  // a filter: wait for the settled state (see the filter tests below).
+  await screen.findByLabelText("Categoría");
   return view;
 }
 
@@ -116,12 +121,13 @@ describe("CatalogScreen filtro por categoría real", () => {
     await renderCatalog(sortFilterState());
 
     changeSelect("Categoría", CAT_ANILLOS);
-    // Filter keeps the active sort (default: Fecha, recientes primero).
-    expect(cardNames()).toEqual(["anillo perla", "Anillo Blossom"]);
+    // Filter keeps the active sort (default: Fecha, recientes primero). The
+    // list settles asynchronously — assert on the settled state (#252).
+    await waitFor(() => expect(cardNames()).toEqual(["anillo perla", "Anillo Blossom"]));
     expect(screen.getByText("2 de 3 piezas")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Limpiar"));
-    expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]);
+    await waitFor(() => expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]));
     expect(screen.queryByText("Limpiar")).toBeNull();
   });
 

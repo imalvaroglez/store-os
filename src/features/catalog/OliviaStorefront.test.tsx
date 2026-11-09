@@ -144,7 +144,10 @@ describe("filtro por acabado", () => {
     expect(screen.getByRole("article", { name: "Aretes Luna" })).toBeTruthy();
     // The list re-renders asynchronously after the filter change — wait for the
     // filtered-out card to leave the DOM instead of asserting synchronously.
-    await waitFor(() => expect(screen.queryByRole("article", { name: "Anillo Blossom" })).toBeNull());
+    // #252: CI runners can take longer than the default 1s to settle that
+    // re-render; an explicit generous timeout removes the flake without
+    // weakening the assertion.
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Anillo Blossom" })).toBeNull(), { timeout: 5000 });
   });
 });
 
