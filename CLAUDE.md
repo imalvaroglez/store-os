@@ -56,6 +56,8 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 `store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y solo recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. El mismo commit revisado en el PR y la rama `main` es el que se libera; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
 
+**Excepción Sev-1 (declarada por el PO; ver `docs/runbook-sev1-hotfix.md`):** durante un incidente activo de dinero/datos, el despacho `release_production=true` puede ir acompañado de `sev1_reuse_ci=true`: las suites se reusan solo si `sev1-verify` prueba que el commit exacto despachado (punta de `main`) ya pasó `build-test` y `rules-and-e2e` en su push; falla cerrado en cualquier duda. El release guard de versión+notas, el despliegue de reglas con paridad y la verificación post-release NO se omiten. La vía normal queda intacta.
+
 ## Regla de Firebase
 
 - Los únicos IDs de proyecto Firebase permitidos en el repositorio son `store-os-dev` y `store-os-f7cf8`; cualquier otro destino bloquea el cambio.

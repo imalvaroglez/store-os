@@ -21,6 +21,11 @@ on:
         required: true
         default: false
         type: boolean
+      sev1_reuse_ci:
+        description: "Sev 1: reusar el CI verde del mismo SHA de main (verificación estricta, falla cerrado)"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   # Tests always use Preview credentials, which point to store-os-dev.
@@ -70,7 +75,9 @@ jobs:
 
   build-test:
     needs: env-select
-    if: needs.env-select.outputs.app-changed == 'true'
+    # #227: skipped ONLY in the Sev-1 path, after sev1-verify proves this exact
+    # commit already passed the suite on a push to main.
+    if: needs.env-select.outputs.app-changed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.sev1_reuse_ci == true)
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
     steps:
@@ -100,7 +107,8 @@ jobs:
 
   rules-and-e2e:
     needs: env-select
-    if: needs.env-select.outputs.app-changed == 'true'
+    # #227: same Sev-1 skip condition as build-test.
+    if: needs.env-select.outputs.app-changed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.sev1_reuse_ci == true)
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
     steps:
@@ -192,12 +200,20 @@ jobs:
   # reachable by dispatching this workflow on main with release_production=true.
   # The test jobs above always use Preview credentials.
   deploy:
-    needs: [env-select, build-test, rules-and-e2e, deploy-rules]
+    needs: [env-select, build-test, rules-and-e2e, deploy-rules, sev1-verify]
+    # #227: always() lets the gate itself decide — normal path requires both
+    # suites green; the Sev-1 path requires sev1-verify's proof AND both suites
+    # actually skipped. deploy-rules must have succeeded in either path.
     if: >-
+      always() &&
       github.ref_name == 'main' &&
       needs.env-select.outputs.app-changed == 'true' &&
       (github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.release_production == true))
+      (github.event_name == 'workflow_dispatch' && inputs.release_production == true)) &&
+      needs.deploy-rules.result == 'success' &&
+      ((needs.build-test.result == 'success' && needs.rules-and-e2e.result == 'success') ||
+      (needs.sev1-verify.result == 'success' && needs.sev1-verify.outputs.reused == 'true' &&
+      needs.build-test.result == 'skipped' && needs.rules-and-e2e.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: ${{ github.event_name == 'workflow_dispatch' && inputs.release_production && 'Production' || 'Preview' }}
     # The Vercel CLI reads ORG/PROJECT id from .vercel/project.json OR these env
@@ -294,6 +310,38 @@ jobs:
           echo "Deployed to: $URL"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
+  # ───────────────────── sev1-verify (#227) ─────────────────────
+  # Sev-1 containment path: with release_production + sev1_reuse_ci the suites
+  # are skipped ONLY after this job PROVES the exact dispatched commit already
+  # passed them on a push to main (job-level, not run-level: a documentary-only
+  # push yields a green run WITHOUT the suite jobs and must not qualify).
+  # Fails closed: no proof → this job fails → no deploy of any kind. The
+  # normal path (push / plain release dispatch) still runs every gate.
+  sev1-verify:
+    needs: env-select
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.release_production == true &&
+      inputs.sev1_reuse_ci == true &&
+      github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reused: ${{ steps.verify.outputs.reused }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verificar CI verde del mismo SHA en main (falla cerrado)
+        id: verify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/check-sev1-ci-reuse.cjs --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
+          echo "reused=true" >> "$GITHUB_OUTPUT"
+
   # ───────────────────── deploy-rules (anti-drift) ─────────────────────
   # Born from the 2026-08-11 incident: production ran three-week-old rules
   # while the repo evolved (rules deploys were a manual DEPLOYMENT.md step and
@@ -302,12 +350,18 @@ jobs:
   # deployment: main pushes update only dev; an explicitly approved manual
   # production release updates only production. Each target gets a parity pass.
   deploy-rules:
-    needs: [env-select, build-test, rules-and-e2e]
+    needs: [env-select, build-test, rules-and-e2e, sev1-verify]
+    # #227: same gate shape as deploy (always() + explicit branch results) so a
+    # skipped-in-Sev-1 suite never blocks the release the verifier approved.
     if: >-
+      always() &&
       github.ref_name == 'main' &&
       needs.env-select.outputs.app-changed == 'true' &&
       (github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.release_production == true))
+      (github.event_name == 'workflow_dispatch' && inputs.release_production == true)) &&
+      ((needs.build-test.result == 'success' && needs.rules-and-e2e.result == 'success') ||
+      (needs.sev1-verify.result == 'success' && needs.sev1-verify.outputs.reused == 'true' &&
+      needs.build-test.result == 'skipped' && needs.rules-and-e2e.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: ${{ github.event_name == 'workflow_dispatch' && inputs.release_production && 'Production' || 'Preview' }}
     permissions:
