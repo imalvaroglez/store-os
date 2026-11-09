@@ -85,6 +85,28 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - **Routing:** router de historia mínimo (`src/lib/router.ts` + `src/app/router.ts`), sin dependencias. La ruta pública `/catalogo/:slug` consulta las proyecciones `publicStores`/`publicProducts` con lectura anónima; las rutas administrativas requieren sesión.
 - **Datos:** tipos en `src/types/index.ts`. Coerción numérica siempre vía `parseAmount` (`src/lib/money.ts`) — nunca escribas `NaN` al estado.
 
+## Principio permanente de UX: menos trabajo para quien opera
+
+**StoreOS existe para quitar trabajo operativo, no para trasladar a una pantalla los mismos pasos manuales.** Facilidad de uso, seguridad, integridad de dinero/inventario y pruebas son estándares de producto igualmente obligatorios en todas las tiendas. Diseña primero el recorrido de la persona operadora y después el código.
+
+- **Menor fricción verificable:** minimiza clics/taps, desplazamientos, cambios de foco, navegación de ida y vuelta, recapturas y decisiones repetitivas. Busca menor esfuerzo total, no menos clics a costa de errores.
+- **Captura una sola vez:** reutiliza datos conocidos, conserva contexto, recuerda asociaciones confirmadas, permite acciones en lote y propone valores razonables, sin inventar importes, existencias ni reglas. Toda propuesta sensible es revisable.
+- **Flujos claros:** acción principal visible, lenguaje cotidiano, estados y errores comprensibles, teclado en escritorio y controles cómodos en móvil. Evita scroll horizontal, formularios extensos y confirmaciones redundantes.
+- **Sin atajos peligrosos:** no sacrifiques accesibilidad, precisión, reversibilidad, auditabilidad ni permisos por ahorrar pasos. Dinero, inventario, cierres y privacidad conservan sus autorizaciones y confirmaciones explícitas.
+- **Diseño antes de implementar:** define persona, tarea, frecuencia, caso habitual y excepciones; describe recorrido actual/propuesto y compara cuando sea posible taps/clics, scrolls, cambios de foco, recapturas y errores. No inventes métricas. Prefiere mejoras comprobables a rediseños especulativos.
+- **Validación de uso:** una feature no está lista solo por compilar o pasar tests. Ejecuta el flujo real en dev/emuladores con datos sintéticos, móvil y escritorio cuando aplique.
+
+### Doble revisión independiente obligatoria por item implementado
+
+Cuando el autor considere terminada una issue y antes de integrarla o marcarla Hecho, **lanza dos subagentes distintos, de solo lectura y sin contexto previo del autor ni entre sí**, idealmente en paralelo. Cada uno recibe solamente la issue y sus decisiones/criterios actuales, el diff/PR, las guías del repositorio y el contexto de código/Preview estrictamente necesario. No hereda conversaciones, defensas del diseño ni conclusiones del otro revisor.
+
+1. **Code reviewer:** busca bugs, regresiones, inconsistencias de negocio, precisión monetaria, aislamiento por tienda, Auth/reglas, seguridad, concurrencia, idempotencia, persistencia y pruebas insuficientes. Entrega hallazgos reproducibles con severidad, ubicación y escenario; CI verde no sustituye su aprobación.
+2. **UX reviewer:** opera como una dueña o colaboradora real, no como auditor de estética. Ejecuta cuando sea viable el recorrido afectado en build/Preview local con datos sintéticos (~390px móvil y ~1280px escritorio, toque/teclado según aplique). Evalúa tarea completa, pasos, clics/taps, scrolls, cambios de foco, repetición de captura, facilidad de corrección, feedback, accesibilidad, responsividad y comprensión sin ayuda del implementador. Compara antes/después cuando exista referencia verificable. Fundamenta problemas concretos, no preferencias visuales.
+
+Cada uno publica su veredicto independiente: **APROBADO, BLOQUEADO o NO APLICA justificado**. El UX reviewer también se convoca en trabajos sin interfaz: evalúa impacto indirecto sobre la operación o explica NO APLICA. Si el flujo afectado no pudo probarse, registra validación pendiente/BLOQUEADO, jamás afirma que lo probó.
+
+**Los hallazgos críticos o mayores de código, y la fricción evitable significativa en el flujo principal afectado, bloquean merge y cierre** hasta corregir y repetir la revisión pertinente. Hallazgos menores fuera del alcance se documentan sin rediseños no autorizados. El implementador corrige; los revisores no modifican código. Registrar evidencia y veredictos en PR/issue. Estas revisiones se suman a CI, release guard y compuertas explícitas de Fer, no las sustituyen.
+
 ## Convenciones (importantes)
 
 - **🔴 CERO COSTOS — restricción dura.** El proyecto está en el plan Blaze **solo** porque Cloud Storage lo exige; **no se usa NADA que genere cobro**. Quédate siempre dentro del free tier. Límites no-cost que nos gobiernan:
