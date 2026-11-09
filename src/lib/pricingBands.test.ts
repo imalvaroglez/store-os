@@ -238,3 +238,27 @@ describe("P0/P1 fixes (#280)", () => {
     expect(proposal?.supportReason).toContain("3 de ellas con existencia");
   });
 });
+
+describe("empaques no configurados (regla PO 2026-11-09)", () => {
+  it("advierte que el costo base es solo adquisición cuando el nivel no tiene perfil de empaque", () => {
+    const packaging = {
+      materials: [{ id: "m1", name: "Bolsita", estimatedCost: 0.5 }],
+      byTier: { t_girly: { perPiece: [{ materialId: "m1", units: 1 }], perOrder: [] } }, // solo Girly configurado
+    };
+    const proposal = proposeCategoryBands({ products: multimodalCategory(), categoryId: "cat", tiers: TIERS, packaging });
+    expect(proposal?.warnings).toContain(
+      "Empaque individual de Regular sin configurar: el costo base es SOLO adquisición. Configúralo en Productos → Empaques para ver contribuciones completas."
+    );
+    expect(proposal?.warnings).toContain(
+      "Empaque individual de Iconic sin configurar: el costo base es SOLO adquisición. Configúralo en Productos → Empaques para ver contribuciones completas."
+    );
+    // Girly sí está configurado: sin esa advertencia, pero su contribución la mueve el empaque.
+    expect(proposal?.warnings.some((w) => w.includes("Girly sin configurar"))).toBe(false);
+    expect(proposal?.bands?.[0].minContribution.t_girly).toBe(57.5);
+  });
+
+  it("sin empaques en absoluto, todos los niveles quedan marcados como preliminares", () => {
+    const proposal = proposeCategoryBands({ products: multimodalCategory(), categoryId: "cat", tiers: TIERS });
+    expect(proposal?.warnings.filter((w) => w.includes("sin configurar")).length).toBe(3);
+  });
+});

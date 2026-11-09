@@ -166,6 +166,13 @@ function canonicalTierIds(tiers) {
   return regular && girly && iconic ? { regular, girly, iconic } : null;
 }
 
+// Purchase-unit vs sellable-unit control (#280, PO 2026-11-09): names that
+// announce several units often carry a LOT-total cost. The report FLAGS them
+// for verification with Fer; it never corrects anything by itself.
+function looksLikePackage(name) {
+  return /(kit|juego|\s\d+\s+pares?\b|\bpares\b|\b\d+\s*(pcs|piezas)\b|[×x]\s*\d+|\d+\s*(en|x)\s*1)/i.test(String(name ?? ""));
+}
+
 function assertEqual(actual, expected, label) {
   SELF_TEST_CHECKS += 1;
   const a = JSON.stringify(actual);
@@ -210,6 +217,11 @@ function selfTest() {
   assertEqual(provenanceStatus(9000, null), null, "sin compra recibida");
   assertEqual(canonicalTierIds([{ id: "a", label: "Regular" }, { id: "b", label: "Girly" }]), null, "faltan niveles");
   assertEqual(outlierCount([10, 10, 10, 10, 1000]), 1, "atípico alto detectado");
+  assertEqual(looksLikePackage("Kit Broquel Amalfi 14 pares"), true, "kit con pares");
+  assertEqual(looksLikePackage("Medio Kit Pulseras Tequila Gold"), true, "medio kit");
+  assertEqual(looksLikePackage("Juego de aretes"), true, "juego");
+  assertEqual(looksLikePackage("Arracada Gold"), false, "pieza simple sin palabra de lote");
+  assertEqual(looksLikePackage("Broquel Amalfi Rayo"), false, "par individual sin palabra de lote");
 }
 
 function emptyCategoryStat() {
@@ -284,6 +296,7 @@ async function main() {
     }
   }
 
+  const PACKAGE_SUSPECTS = [];
   const stats = new Map(); // primary key -> category stat ("__sin" = not migrated
   const ensure = (key) => {
     if (!stats.has(key)) stats.set(key, emptyCategoryStat());
@@ -308,6 +321,9 @@ async function main() {
     }
 
     const hasCost = typeof p.cost === "number" && p.cost > 0;
+    if (looksLikePackage(p.name)) {
+      PACKAGE_SUSPECTS.push({ name: p.name, category: primary, cost: p.cost ?? null, qty: p.quantityOnHand ?? 0 });
+    }
     if (!hasCost) {
       stat.noReliableCost += 1;
       continue;
@@ -447,6 +463,25 @@ async function main() {
       violacionesOrden: s.orderViolations,
     });
   }
+
+  console.log("## Posibles paquetes: unidad de compra vs unidad de venta (verificar con Fer)");
+  console.log("");
+  if (PACKAGE_SUSPECTS.length === 0) {
+    console.log("- Sin nombres de lote/kit en el catálogo con costo.");
+  } else {
+    console.log(
+      "Estas piezas anuncian varias unidades en el nombre; su costo podría ser del LOTE y no de la unidad vendible. El sistema NO corrige nada: se señalan para confirmar con Fer (dividir el costo, archivar el registro del lote, o dejarlo si se vende completo)."
+    );
+    console.log("");
+    for (const suspect of PACKAGE_SUSPECTS.sort((a, b) => String(a.category).localeCompare(String(b.category)) || String(a.name).localeCompare(String(b.name)))) {
+      const catCosts = (stats.get(suspect.category)?.costsCents ?? []).slice().sort((a, b) => a - b);
+      const outlier = outlierCount([toCents(suspect.cost), ...catCosts]) > 0;
+      console.log(
+        `- ${suspect.name} — costo ${suspect.cost === null ? "sin costo" : money(toCents(suspect.cost))} · ${suspect.qty} en existencia${outlier ? " · ⚠️ costo atípico en su categoría (sospecha de costo de lote)" : ""}`
+      );
+    }
+  }
+  console.log("");
 
   console.log("```json");
   console.log(JSON.stringify({ tienda: storeDoc.name, niveles: tiers.map((t) => t.label ?? t.id), categorias: evidence }, null, 2));
