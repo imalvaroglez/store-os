@@ -51,6 +51,12 @@ checks using Preview/dev credentials, then deploys rules and the app from that
 same `main` commit to production. Leaving the input false never deploys
 production rules or the production app.
 
+**Sev-1 exception:** a declared incident may add `sev1_reuse_ci=true` to skip
+the suites ONLY when `sev1-verify` proves this exact commit (tip of `main`)
+already passed `build-test` and `rules-and-e2e` on its push; it fails closed
+and keeps every other gate (version+notes release guard, rules parity,
+environment checks). See `docs/runbook-sev1-hotfix.md`.
+
 One-time setup: create a repo-level `FIREBASE_TOKEN` secret
 (`firebase login:ci` → GitHub Settings → Secrets and variables → Actions).
 Without it the `deploy-rules` job fails loudly.
