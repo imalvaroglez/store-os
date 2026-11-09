@@ -43,6 +43,7 @@ Recorrido: **categoría → resumen de costos (lenguaje comercial) → propuesta
 - Precios pendientes bloquean el guardado; límites validados con `validateBands`.
 - Escenario de impacto (solo lectura): cuántas subirían/bajarían por nivel — no proyección.
 - **Sin flujo de aplicación propio:** aplicar precios vive en Productos → Reglas de venta (enlace directo). Guardar jamás toca productos.
+- **Bajo costo (PO 2026-11-09):** una sugerencia bajo el costo base NO se aplica en lote. Una excepción por producto (`byProduct`) puede quedar bajo costo, pero aplicarla exige confirmación explícita EN EL MOMENTO (diálogo: Aplicar todo / Aplicar sin esos N / Cancelar) — una excepción previa no es autorización vigente para vender con pérdida. Registros de posible lote (unidad de compra ≠ unidad de venta) se SEÑALAN en el diagnóstico, jamás se corrigen solos; la adquisición sola nunca se presenta como costo comercial completo (empaques sin configurar ⇒ contribuciones preliminares).
 
 ## Diagnóstico (Fase A)
 
