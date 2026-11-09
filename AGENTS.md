@@ -107,7 +107,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Trabaja en una **branch** (no directamente en `main`) y abre PR.
 - Mensajes tipo Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
 - Haz commit/push solo cuando se te pida (o al cerrar un paso lógico).
-- Termina los mensajes de commit con `Co-Authored-By: Codex <noreply@anthropic.com>`. (Esta convención se mantiene idéntica en `AGENTS.md` y `CLAUDE.md` — ambos archivos deben estar a la par.)
+- Sin trailer `Co-Authored-By` en los commits (decisión del PO, 2026-11-09: no mezclar atribuciones de agentes con correos ajenos). (Esta convención se mantiene idéntica en `AGENTS.md` y `CLAUDE.md` — ambos archivos deben estar a la par.)
 
 ## Aplicación del feedback y continuidad
 
