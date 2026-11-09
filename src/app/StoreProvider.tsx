@@ -28,7 +28,8 @@ import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso, todayIso } from "../lib/dates";
-import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
+import { reservationDeltasForOrderChange } from "../lib/inventory";
+import { receivedProductsFromStockUpdates } from "../lib/purchases";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
@@ -914,23 +915,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       // Transactional in Firestore: stock + purchase in ONE commit, with the
       // legacy/receivedAt guards re-checked inside.
+      let result: Awaited<ReturnType<typeof receivePurchaseTx>>;
       try {
-        await receivePurchaseTx(purchase.id);
+        result = await receivePurchaseTx(purchase.id);
       } catch (e) {
         if (e instanceof PurchaseAlreadyReceived) return "already";
         throw e;
       }
-      // Reconcile in-memory state only after the transaction commits.
+      // Reconcile in-memory state only after the transaction commits, from
+      // the EXACT updates it applied (#265) — the local weighted-average
+      // approximation diverged from the persisted latest_purchase cost.
       const at = nowIso();
-      const updated = applyPurchaseLines(state.products, purchase.lines);
-      const receivedProducts: Product[] = [];
-      for (const [productId, update] of updated) {
-        const p = state.products.find((x) => x.id === productId);
-        if (p) {
-          const product = { ...p, ...update, updatedAt: at };
-          receivedProducts.push(product);
-          dispatch({ type: "UPDATE_PRODUCT", product });
-        }
+      const receivedProducts = receivedProductsFromStockUpdates(state.products, result.stockUpdates, at);
+      for (const product of receivedProducts) {
+        dispatch({ type: "UPDATE_PRODUCT", product });
       }
       dispatch({ type: "UPDATE_PURCHASE", purchase: { ...purchase, status: "received", receivedAt: at, updatedAt: at } });
       // #229: the public availability signal follows the reception without a
