@@ -22,7 +22,7 @@ import {
 } from "../../design-system";
 import { formatDate } from "../../lib/dates";
 import { uid } from "../../lib/ids";
-import { sanitizeDecimalInput, formatMoneyExact } from "../../lib/money";
+import { sanitizeMoneyInput, formatMoneyExact } from "../../lib/money";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { effectivePurchaseStatus } from "../../types";
 import {
@@ -78,17 +78,37 @@ export function ExpensesScreen() {
     setOpen(true);
   }
 
+  // #257: with assignments, consumptions or an existing stash the
+  // classification is locked evidence — the controls reflect it instead of
+  // accepting changes the save silently discards (adversarial finding C).
+  const locked = !!editing && (
+    (editing.assignments ?? []).length > 0 ||
+    (editing.supply?.consumptions ?? []).length > 0 ||
+    !!editing.supply
+  );
+
   async function submit() {
     const amount = Number(amountText);
     if (!Number.isFinite(amount) || amount <= 0) {
       toast.error("Captura un importe mayor que cero.");
       return;
     }
+    // Adversarial finding B: a huge amount survives validation and later
+    // breaks the list render (cents overflow) on every load — reject it here.
+    if (amount > 10_000_000) {
+      toast.error("El importe es demasiado grande para registrarlo.");
+      return;
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       toast.error("La fecha del gasto no es válida.");
       return;
     }
-    if (category === "supplies") {
+    // #255/#257: units are only demanded when a consumable supply stash is
+    // being decided here — simplified supplies skip them, an existing supply
+    // keeps its original units (evidence), and a locked expense cannot
+    // reclassify so it never decides a stash.
+    const editingExistingSupply = !!(editing && editing.supply);
+    if (category === "supplies" && !simplified && !editingExistingSupply && !locked) {
       const quantity = Math.round(Number(quantityText));
       if (!Number.isSafeInteger(quantity) || quantity < 1) {
         toast.error("Captura cuántas unidades compraste (p. ej. 100 bolsas).");
@@ -97,8 +117,7 @@ export function ExpensesScreen() {
     }
     if (editing) {
       // Classification edit: amount/date are evidence (immutable); category
-      // changes only while nothing has been assigned or consumed.
-      const locked = (editing.assignments ?? []).length > 0 || (editing.supply?.consumptions ?? []).length > 0 || !!editing.supply;
+      // changes only while nothing has been assigned or consumed (locked).
       setBusy(true);
       try {
         await saveExpense({
@@ -108,6 +127,11 @@ export function ExpensesScreen() {
           // R1: the simplified treatment IS editable while nothing has been
           // assigned/consumed and there is no stash (locked otherwise).
           ...(locked ? {} : { simplifiedOperation: simplified ? true : undefined }),
+          // #257: reclassifying into a consumable supply creates its stash
+          // exactly once, with the units captured in this edit.
+          ...(!locked && category === "supplies" && !simplified
+            ? { supply: { quantityInitial: Math.round(Number(quantityText)), consumptions: [] } }
+            : {}),
         });
         toast.success("Gasto actualizado.");
         setOpen(false);
@@ -169,7 +193,7 @@ export function ExpensesScreen() {
       <Sheet open={open} onClose={() => setOpen(false)} title={editing ? "Editar gasto" : "Agregar gasto"}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <TextField label="Importe" inputMode="decimal" placeholder="0.00" disabled={!!editing} value={amountText} onChange={(e) => setAmountText(sanitizeDecimalInput(e.target.value))} />
+            <TextField label="Importe" inputMode="decimal" placeholder="0.00" disabled={!!editing} value={amountText} onChange={(e) => setAmountText(sanitizeMoneyInput(e.target.value))} />
             <TextField label="Fecha" type="date" disabled={!!editing} value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
           <TextField label="Descripción (opcional)" placeholder="p. ej. gasolina del viaje" value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -177,13 +201,15 @@ export function ExpensesScreen() {
             label="Categoría"
             value={category}
             onChange={(next) => setCategory(next as LooseExpenseCategory)}
+            disabled={locked}
+            hint={locked ? "Con asignaciones, consumos o un stash activo la clasificación queda fija: es evidencia." : undefined}
             options={(Object.keys(LOOSE_EXPENSE_CATEGORY_LABEL) as LooseExpenseCategory[]).map((value) => ({ value, label: LOOSE_EXPENSE_CATEGORY_LABEL[value] }))}
           />
           {category === "supplies" && !simplified && (
             <TextField
               label="Unidades compradas"
               inputMode="numeric"
-              disabled={!!editing}
+              disabled={!!editing && (!!editing.supply || locked)}
               placeholder="p. ej. 100 bolsas"
               value={quantityText}
               onChange={(e) => setQuantityText(e.target.value.replace(/[^0-9]/g, ""))}
@@ -206,6 +232,7 @@ export function ExpensesScreen() {
             caption="Reconocer el importe en su periodo sin asociarlo a nada: no vuelve a contarse al vender."
             checked={simplified}
             onChange={setSimplified}
+            disabled={locked}
           />
           <Button full disabled={busy} onClick={() => void submit()}>
             {busy ? "Guardando…" : "Guardar gasto"}
@@ -379,7 +406,7 @@ function AssignSheet({ expense, purchases, orders, onClose, onAssign }: {
           />
         )}
         <div className="grid grid-cols-2 gap-3">
-          <TextField label="Importe a asignar" inputMode="decimal" value={amountText} onChange={(e) => setAmountText(sanitizeDecimalInput(e.target.value))} />
+          <TextField label="Importe a asignar" inputMode="decimal" value={amountText} onChange={(e) => setAmountText(sanitizeMoneyInput(e.target.value))} />
           {kind === "order" ? (
             <SelectField
               label="Reparto"
