@@ -10,6 +10,7 @@
 //
 // Usage: node scripts/analyze-order-mix.cjs --project store-os-f7cf8 [--store Olivia]
 //        node scripts/analyze-order-mix.cjs --project store-os-dev   (fixture test)
+//        node scripts/analyze-order-mix.cjs --self-test             (pure-function checks)
 //
 // Auth: firebase-admin via Application Default Credentials
 // (`gcloud auth application-default login`) or GOOGLE_APPLICATION_CREDENTIALS.
@@ -19,7 +20,7 @@
 //
 // PRIVACY: output is AGGREGATES ONLY. No customer names, phones, notes,
 // product names or any free-text field is read into the report. Order docs are
-// streamed once and reduced in memory.
+// read once (a single .get() per collection) and reduced in memory.
 "use strict";
 
 const { initializeApp } = require("firebase-admin/app");
@@ -27,16 +28,33 @@ const { getFirestore } = require("firebase-admin/firestore");
 
 const ALLOWED_PROJECTS = new Set(["store-os-dev", "store-os-f7cf8"]);
 const FIRM_STATUSES = new Set(["confirmed", "preparing", "ready", "delivered"]);
-const CANONICAL_TIERS = { t_retail: "Regular", t_wholesale: "Girly", t_reseller: "Iconic" };
+// Fallback labels when a store doc defines no priceTiers: app-canonical tier
+// ids (src/lib/pricing.ts) plus the dev fixture ids (scripts/seed-dev.cjs).
+const CANONICAL_TIERS = {
+  t_retail: "Menudeo",
+  t_wholesale: "Mayoreo",
+  t_reseller: "Emprendedora",
+  t_girly: "Girly",
+  t_iconic: "Iconic",
+};
 
 function argumentValue(flag) {
   const index = process.argv.indexOf(flag);
   return index >= 0 ? process.argv[index + 1] : null;
 }
 
+let SELF_TEST_CHECKS = 0;
+
 function failWith(message) {
   console.error(message);
   process.exit(1);
+}
+
+// Self-test runs offline, before any project guard or credential is needed.
+if (process.argv.includes("--self-test")) {
+  selfTest();
+  console.log(`self-test OK (${SELF_TEST_CHECKS} verificaciones)`);
+  process.exit(0);
 }
 
 const projectId = argumentValue("--project");
@@ -45,6 +63,15 @@ if (!ALLOWED_PROJECTS.has(projectId)) {
   failWith(`Proyecto no permitido: ${projectId}. Solo ${[...ALLOWED_PROJECTS].join(" / ")}.`);
 }
 const storeFilter = (argumentValue("--store") ?? "olivia").toLowerCase();
+
+// Review F4: make pasted evidence unambiguous when the emulator is hijacking
+// the connection — the SDK redirects silently, the report must not.
+const EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST ?? null;
+if (EMULATOR_HOST) {
+  console.error(
+    `⚠️  FIRESTORE_EMULATOR_HOST=${EMULATOR_HOST} activo: esta corrida lee del EMULADOR, no del proyecto ${projectId}.`
+  );
+}
 
 initializeApp({ projectId });
 const db = getFirestore();
@@ -87,6 +114,48 @@ function bucketsOf(sizes) {
   return buckets;
 }
 
+// Dominant tier = the one with most pieces. Deterministic tie-break: the first
+// key in insertion (line) order wins (review F7).
+function dominantTierKey(piecesByTier) {
+  let dominant = null;
+  let max = -1;
+  for (const [key, pieces] of piecesByTier) {
+    if (pieces > max) {
+      max = pieces;
+      dominant = key;
+    }
+  }
+  return dominant;
+}
+
+function assertEqual(actual, expected, label) {
+  SELF_TEST_CHECKS += 1;
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) failWith(`self-test FALLÓ (${label}): esperaba ${e}, obtuvo ${a}`);
+}
+
+// Small pure-function checks (review F8), in the seed-dev.cjs self-assert
+// tradition; runs offline with --self-test, before any credential is needed.
+function selfTest() {
+  assertEqual(percentile([1, 2, 3, 4], 0.5), 2.5, "mediana par");
+  assertEqual(percentile([], 0.5), null, "percentil de vacío");
+  assertEqual(percentile([5], 0.25), 5, "elemento único");
+  assertEqual(pct(1, 0), "—", "división por cero");
+  assertEqual(pct(1, 4), "25.0%", "porcentaje");
+  assertEqual(
+    bucketsOf([1, 1, 2, 3, 4, 5, 6, 7, 10, 11]),
+    { "1": 2, "2-3": 2, "4-6": 3, "7-10": 2, "11+": 1 },
+    "buckets"
+  );
+  assertEqual(
+    dominantTierKey(new Map([["Iconic", 3], ["Regular", 3]])),
+    "Iconic",
+    "desempate: primera clave en orden de líneas"
+  );
+  assertEqual(dominantTierKey(new Map()), null, "sin niveles");
+}
+
 async function main() {
   const storesSnap = await db.collection("stores").get();
   const store = storesSnap.docs
@@ -106,7 +175,7 @@ async function main() {
   const tierLabels = {};
   for (const t of store.tiers ?? []) tierLabels[t.id] = t.label ?? t.id;
   for (const [id, label] of Object.entries(CANONICAL_TIERS)) tierLabels[id] ??= label;
-  const labelOf = (tier) => tierLabels[tier] ?? `sin nivel (${tier ?? "?"})`;
+  const labelOf = (tier) => tierLabels[tier] ?? `sin nivel (${tier})`;
   // Customer tier map: ONLY id → assignedPriceTierId is kept in memory (no
   // names/phones ever), to attribute lines captured without priceTier.
   const customerTier = new Map();
@@ -116,7 +185,9 @@ async function main() {
   let attributedByCustomer = 0;
   let attributedByDefault = 0;
 
-  console.log(`# Mix de pedidos — tienda "${store.name}" — proyecto ${projectId}`);
+  console.log(
+    `# Mix de pedidos — tienda "${store.name}" — proyecto ${projectId}${EMULATOR_HOST ? ` (⚠️ EMULADOR: ${EMULATOR_HOST})` : ""}`
+  );
   console.log(`Generado: ${new Date().toISOString()}\n`);
 
   const ordersSnap = await db.collection("orders").where("storeId", "==", store.id).get();
@@ -128,6 +199,7 @@ async function main() {
   let cancelled = 0;
   let legacy = 0;
   let zeroTierPieces = 0;
+  let zeroPieceOrders = 0;
 
   for (const doc of ordersSnap.docs) {
     const o = doc.data();
@@ -161,7 +233,7 @@ async function main() {
         tier = defaultTierId;
         attributedByDefault += qty;
       }
-      const key = labelOf(tier ?? "SIN_NIVEL");
+      const key = tier ? labelOf(tier) : "SIN NIVEL";
       if (!byLineTier.has(key)) byLineTier.set(key, emptyTierStats());
       const st = byLineTier.get(key);
       st.pieces += qty;
@@ -171,16 +243,13 @@ async function main() {
       if (tier) piecesByTier.set(key, (piecesByTier.get(key) ?? 0) + qty);
       else zeroTierPieces += qty;
     }
-    // Order size attributed to its DOMINANT tier label (most pieces).
+    // Order size attributed to its DOMINANT tier label (most pieces; orders
+    // with no attributable pieces are counted, not silently dropped — F6).
     const totalPieces = [...piecesByTier.values()].reduce((a, b) => a + b, 0);
-    if (totalPieces <= 0) continue;
-    let dominant = null;
-    let max = -1;
-    for (const [label, pieces] of piecesByTier) {
-      if (pieces > max) {
-        max = pieces;
-        dominant = label;
-      }
+    const dominant = dominantTierKey(piecesByTier);
+    if (totalPieces <= 0 || !dominant) {
+      zeroPieceOrders += 1;
+      continue;
     }
     if (!byOrderTier.has(dominant)) byOrderTier.set(dominant, emptyTierStats());
     const ost = byOrderTier.get(dominant);
@@ -197,7 +266,9 @@ async function main() {
   const totalRevenue = [...byLineTier.values()].reduce((a, s) => a + s.revenueCents, 0);
 
   console.log("## Composición general");
-  console.log(`- Pedidos leídos: ${ordersSnap.size} (cancelados: ${cancelled}, sin líneas/legacy: ${legacy})`);
+  console.log(
+    `- Pedidos leídos: ${ordersSnap.size} (cancelados: ${cancelled}, sin líneas/legacy: ${legacy}, sin piezas atribuibles: ${zeroPieceOrders})`
+  );
   console.log(`- Por estado: ${Object.entries(statusCounts).map(([k, v]) => `${k}=${v}`).join(", ")}`);
   console.log(`- Por mes: ${[...monthCounts.entries()].sort().map(([k, v]) => `${k}=${v}`).join(", ")}`);
   console.log(`- Piezas vendidas: ${totalPieces} · Ingreso: $${(totalRevenue / 100).toFixed(2)}`);
