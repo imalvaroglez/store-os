@@ -135,4 +135,67 @@ describe("#257 — reclasificar a Suministros al editar", () => {
     expect(saved.simplifiedOperation).toBe(true);
     expect(saved.supply).toBeUndefined();
   });
+
+  it("des-simplificar manda la clave en undefined para que el merge borre la bandera (hallazgo de revisión)", async () => {
+    mocks.state!.expenses.push(expense({ id: "exp_sim", description: "Papel excedente", category: "supplies", simplifiedOperation: true }));
+    render(<ToastProvider><ExpensesScreen /></ToastProvider>);
+    await openEdit(0);
+    const simplified = screen.getByLabelText(/Tratamiento simplificado/) as HTMLInputElement;
+    expect(simplified.checked).toBe(true);
+    fireEvent.click(simplified);
+    // Al dejar de ser simplificado se vuelve un suministro consumible: exige unidades.
+    const units = screen.getByLabelText(/Unidades compradas/) as HTMLInputElement;
+    fireEvent.change(units, { target: { value: "50" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    expect(await screen.findByText("Gasto actualizado.")).toBeTruthy();
+    const saved = mocks.saveExpense.mock.calls[0][0] as LooseExpense;
+    // El contrato con saveEntity: la clave presente en undefined dispara deleteField.
+    expect(Object.prototype.hasOwnProperty.call(saved, "simplifiedOperation")).toBe(true);
+    expect(saved.simplifiedOperation).toBeUndefined();
+    expect(saved.supply).toEqual({ quantityInitial: 50, consumptions: [] });
+  });
+
+  it("un gasto con asignaciones edita con controles bloqueados y sin exigir unidades (hallazgo adversarial C)", async () => {
+    mocks.state!.expenses.push(expense({
+      id: "exp_locked",
+      description: "Gasolina del viaje",
+      category: "operation",
+      assignments: [{ id: "asg_1", at: "2026-11-06T12:00:00.000Z", by: "uid_fer", amountCents: 1000, target: { kind: "order", orderId: "order_olivia_1" } }] as LooseExpense["assignments"],
+    }));
+    render(<ToastProvider><ExpensesScreen /></ToastProvider>);
+    await openEdit(0);
+    const category = screen.getByLabelText(/Categoría/) as HTMLSelectElement;
+    expect(category.disabled).toBe(true);
+    expect(screen.getByText(/la clasificación queda fija/)).toBeTruthy();
+    const simplified = screen.getByLabelText(/Tratamiento simplificado/) as HTMLInputElement;
+    expect(simplified.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    expect(await screen.findByText("Gasto actualizado.")).toBeTruthy();
+    const saved = mocks.saveExpense.mock.calls[0][0] as LooseExpense;
+    expect(saved.category).toBe("operation");
+    expect(saved.supply).toBeUndefined();
+  });
+});
+
+describe("importes extremos (hallazgos adversariales A y B)", () => {
+  it("el importe no admite tercer decimal: 0.001 se corta a 0.00 y se rechaza", async () => {
+    render(<ToastProvider><ExpensesScreen /></ToastProvider>);
+    await openCreate();
+    const amount = screen.getByLabelText("Importe") as HTMLInputElement;
+    fireEvent.change(amount, { target: { value: "0.001" } });
+    expect(amount.value).toBe("0.00");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    expect(await screen.findByText(/Captura un importe mayor que cero/)).toBeTruthy();
+    expect(mocks.saveExpense).not.toHaveBeenCalled();
+  });
+
+  it("rechaza importes gigantes antes de persistirlos (rompían el render por overflow de centavos)", async () => {
+    render(<ToastProvider><ExpensesScreen /></ToastProvider>);
+    await openCreate();
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "99999999" } });
+    fireEvent.change(screen.getByLabelText("Descripción (opcional)"), { target: { value: "prueba" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    expect(await screen.findByText(/demasiado grande/)).toBeTruthy();
+    expect(mocks.saveExpense).not.toHaveBeenCalled();
+  });
 });
