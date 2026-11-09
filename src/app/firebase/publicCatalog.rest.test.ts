@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadPublicCatalog, loadPublicProduct, PublicCatalogNotFoundError, PublicProductNotFoundError } from "./publicCatalog";
+import { loadPublicCatalog, loadPublicProduct, loadPublicStore, PublicCatalogNotFoundError, PublicProductNotFoundError } from "./publicCatalog";
 
 // The REST loader is the public storefront's only data path; these tests pin
 // the wire-format decoder (integerValue arrives as a JSON string) and the
@@ -192,5 +192,55 @@ describe("loadPublicProduct (REST)", () => {
         type: "on_demand",
       })
     ).rejects.toBeInstanceOf(PublicProductNotFoundError);
+  });
+});
+
+describe("#282 reintento automático único ante fallas transitorias", () => {
+  const storeUrl = (url: string) => url.includes("/publicStores/olivia");
+
+  function stubFetchSequence(responses: Array<Response | Error>) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      const next = responses.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    });
+  }
+
+  it("un 503 transitorio se reintenta una vez y la carga triunfa", async () => {
+    const fetchMock = stubFetchSequence([jsonResponse(503, {}), jsonResponse(200, STORE_DOC)]);
+    vi.stubGlobal("fetch", fetchMock);
+    const store = await loadPublicStore("olivia");
+    expect(store.name).toBe("Olivia");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every((call) => storeUrl(String(call[0])))).toBe(true);
+  });
+
+  it("un fallo de red se reintenta una vez y la carga triunfa", async () => {
+    const fetchMock = stubFetchSequence([new TypeError("network blip"), jsonResponse(200, STORE_DOC)]);
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(loadPublicStore("olivia")).resolves.toMatchObject({ name: "Olivia" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("un 404 es una respuesta, no una falla: sin reintento", async () => {
+    const fetchMock = stubFetchSequence([jsonResponse(404, {}), jsonResponse(200, STORE_DOC)]);
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(loadPublicStore("olivia")).rejects.toBeInstanceOf(PublicCatalogNotFoundError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("un 403 (reglas) es una respuesta dura: falla inmediata, sin reintento", async () => {
+    const fetchMock = stubFetchSequence([jsonResponse(403, {}), jsonResponse(200, STORE_DOC)]);
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(loadPublicStore("olivia")).rejects.toThrow(/Firestore REST 403/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("si el reintento también falla, el error llega a la pantalla de reintento manual", async () => {
+    const fetchMock = stubFetchSequence([jsonResponse(503, {}), jsonResponse(503, {})]);
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(loadPublicStore("olivia")).rejects.toThrow(/Firestore REST 503/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

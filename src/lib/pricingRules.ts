@@ -8,6 +8,19 @@ import type { PackagingMaterial, PriceRounding, PricingRule, StorePackaging, Pro
 
 export type RuleOrigin = "product" | "category" | "general";
 
+/** Canonical JSON (recursively key-sorted) of a rules value. Firestore returns
+ * map keys lexicographically sorted while clients build them in tier order —
+ * raw stringify comparisons would see the SAME rules as different. Shared by
+ * the strategy screen (concurrency banner) and the transactional save
+ * (optimistic conflict check, #280 P0-2). */
+export function rulesSignature(value: unknown): string {
+  return JSON.stringify(value, (_key, element) =>
+    element && typeof element === "object" && !Array.isArray(element)
+      ? Object.fromEntries(Object.entries(element).sort(([a], [b]) => a.localeCompare(b)))
+      : element
+  );
+}
+
 export function resolveRule(
   config: { byTier?: Record<string, PricingRule>; byCategory?: Record<string, Record<string, PricingRule>>; byProduct?: Record<string, Record<string, PricingRule>> } | undefined,
   tierId: string,

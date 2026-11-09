@@ -22,6 +22,7 @@ import { reservationDeltasForOrderChange } from "../../lib/inventory";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
+import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
@@ -31,7 +32,7 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
@@ -301,16 +302,68 @@ export async function saveStorePackaging(
   await setDoc(doc(db, "stores", store.id), { packaging: stripUndefined(packaging), updatedAt }, { merge: true });
 }
 
-/** #254: save ONLY the store's pricing rules — same member-reachable,
- * field-scoped path as packaging (#253): every settings field must stay
- * unchanged (rules), and the adminStores control batch is skipped. */
+/** #254: save the store's LEVEL rules — same member-reachable, field-scoped
+ * path as packaging (#253): every settings field must stay unchanged (rules),
+ * and the adminStores control batch is skipped. #280: transactional byTier
+ * overlay — the Reglas editor only owns `byTier`, so a tab holding a stale
+ * clone can no longer replace the whole `pricingRules` field and delete
+ * category tables / product exceptions saved meanwhile elsewhere. */
 export async function savePricingRules(
   store: Pick<Store, "id">,
   pricingRules: PricingRulesConfig,
   updatedAt: string
 ): Promise<void> {
   const { db } = getFirebase();
-  await setDoc(doc(db, "stores", store.id), { pricingRules: stripUndefined(pricingRules), updatedAt }, { merge: true });
+  const storeRef = doc(db, "stores", store.id);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(storeRef);
+    if (!snap.exists()) throw new Error("No se encontró la tienda.");
+    const current = (snap.data().pricingRules ?? {}) as PricingRulesConfig;
+    tx.update(storeRef, { pricingRules: stripUndefined({ ...current, byTier: pricingRules.byTier ?? {} }), updatedAt });
+  });
+}
+
+/** Thrown by saveCategoryPricingRules when the category's saved table changed
+ *  since the client loaded it (P0-2): the save is REFUSED, nothing is lost,
+ *  and the UI must offer to reload and re-apply. */
+export class CategoryRulesConflictError extends Error {
+  constructor() {
+    super("La tabla de esta categoría cambió en otra sesión. Recárgala y vuelve a aplicar tus cambios.");
+    this.name = "CategoryRulesConflictError";
+  }
+}
+
+/** #280: save ONE category's band table transactionally. The whole
+ * `pricingRules` field is replaced (merge:true at the doc level would keep a
+ * deleted category alive), so the new value is built from the FRESH doc inside
+ * the transaction: `byTier`, `byProduct` and every OTHER category survive by
+ * construction, concurrent edits to them can no longer be clobbered by a
+ * stale client config, and a `null` rules value really deletes the category.
+ * P0-2: `expectedSignature` (rulesSignature of the table the client loaded)
+ * is compared against the fresh doc INSIDE the transaction — a same-category
+ * concurrent edit no longer silently loses to last-write-wins; the save is
+ * rejected with CategoryRulesConflictError instead. Same member-reachable,
+ * field-scoped write as savePricingRules. */
+export async function saveCategoryPricingRules(
+  store: Pick<Store, "id">,
+  categoryId: string,
+  rules: Record<string, PricingRule> | null,
+  updatedAt: string,
+  expectedSignature: string
+): Promise<void> {
+  const { db } = getFirebase();
+  const storeRef = doc(db, "stores", store.id);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(storeRef);
+    if (!snap.exists()) throw new Error("No se encontró la tienda.");
+    const current = (snap.data().pricingRules ?? {}) as PricingRulesConfig;
+    const savedNow = current.byCategory?.[categoryId] ?? null;
+    if (rulesSignature(savedNow) !== expectedSignature) throw new CategoryRulesConflictError();
+    const byCategory = { ...(current.byCategory ?? {}) };
+    if (rules === null) delete byCategory[categoryId];
+    else byCategory[categoryId] = rules;
+    tx.update(storeRef, { pricingRules: stripUndefined({ ...current, byCategory }), updatedAt });
+  });
 }
 
 /** Save editable storefront text to its private, control, and public projections atomically. */
