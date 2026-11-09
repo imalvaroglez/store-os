@@ -198,25 +198,8 @@ function naturalGaps(observedCosts: number[]): Array<{ lo: number; hi: number; w
 type Candidate = { k: number; cuts: Cut[]; groups: number[][] }; // groups = cost cents per band
 type CandidateScore = { candidate: Candidate; separation: number; cohesion: number; score: number };
 
-function buildCandidate(k: number, costs: number[], observedCosts: number[]): Candidate | null {
-  if (k === 1) return { k, cuts: [], groups: [costs] };
-  const rangeCents = costs[costs.length - 1] - costs[0];
-  // Cuts prefer the distribution's own structure: the k−1 largest natural
-  // gaps, in weight order. Quantiles only top up when there are fewer gaps
-  // than cuts — they never override a structural boundary.
-  const cuts: Cut[] = [];
-  for (const gap of naturalGaps(observedCosts)) {
-    if (cuts.length >= k - 1) break;
-    const midpoint = gap.lo + Math.floor((gap.hi - gap.lo) / 2);
-    cuts.push(commercialCut(midpoint, observedCosts, rangeCents, gap));
-  }
-  for (let i = 1; i < k && cuts.length < k - 1; i += 1) {
-    const raw = percentileCents(costs, i / k);
-    const cut = commercialCut(raw, observedCosts, rangeCents);
-    if (cut > costs[0] && cut < costs[costs.length - 1] && !cuts.some((c) => Math.abs(c - cut) < 1)) cuts.push(cut);
-  }
-  if (cuts.length < k - 1) return null; // not enough honest boundaries for k bands
-  cuts.sort((a, b) => a - b);
+/** Split the sorted costs by ascending cuts; null when a band comes out empty. */
+function splitByCuts(costs: number[], cuts: Cut[]): number[][] | null {
   const groups: number[][] = [];
   let start = 0;
   for (const cut of [...cuts, Infinity]) {
@@ -225,7 +208,44 @@ function buildCandidate(k: number, costs: number[], observedCosts: number[]): Ca
     groups.push(costs.slice(start, index));
     start = index;
   }
-  return { k, cuts, groups };
+  return groups;
+}
+
+function buildCandidate(k: number, costs: number[], observedCosts: number[]): Candidate | null {
+  if (k === 1) return { k, cuts: [], groups: [costs] };
+  const rangeCents = costs[costs.length - 1] - costs[0];
+  // Two cut-set variants per k, tried in order — a single big outlier gap
+  // (e.g. one $222 piece over a $50 cluster) must not kill the k and force a
+  // trivial one-band table for the whole category.
+  //   (a) structure first: the k−1 largest natural gaps, quantiles topping up;
+  //   (b) pure quantiles (i/k), commercially snapped.
+  const variants: Cut[][] = [];
+  const natural: Cut[] = [];
+  for (const gap of naturalGaps(observedCosts)) {
+    if (natural.length >= k - 1) break;
+    const midpoint = gap.lo + Math.floor((gap.hi - gap.lo) / 2);
+    natural.push(commercialCut(midpoint, observedCosts, rangeCents, gap));
+  }
+  const quantile: Cut[] = [];
+  for (let i = 1; i < k; i += 1) {
+    const cut = commercialCut(percentileCents(costs, i / k), observedCosts, rangeCents);
+    if (cut > costs[0] && cut < costs[costs.length - 1] && !quantile.some((c) => Math.abs(c - cut) < 1)) quantile.push(cut);
+  }
+  const toppedUp = [...natural];
+  for (const cut of quantile) {
+    if (toppedUp.length >= k - 1) break;
+    if (!toppedUp.some((c) => Math.abs(c - cut) < 1)) toppedUp.push(cut);
+  }
+  variants.push(toppedUp, quantile);
+  for (const cuts of variants) {
+    if (cuts.length !== k - 1) continue;
+    cuts.sort((a, b) => a - b);
+    const groups = splitByCuts(costs, cuts);
+    // A variant is only usable when NO band fragments (one $222 outlier over
+    // a $50 cluster must not force a one-band table for the whole category).
+    if (groups && fragments(groups, costs.length) === 0) return { k, cuts, groups };
+  }
+  return null; // not enough honest boundaries for k bands
 }
 
 function minAdjacentGap(groups: number[][]): number {
