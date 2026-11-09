@@ -31,7 +31,7 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
@@ -311,6 +311,32 @@ export async function savePricingRules(
 ): Promise<void> {
   const { db } = getFirebase();
   await setDoc(doc(db, "stores", store.id), { pricingRules: stripUndefined(pricingRules), updatedAt }, { merge: true });
+}
+
+/** #280: save ONE category's band table transactionally. The whole
+ * `pricingRules` field is replaced (merge:true at the doc level would keep a
+ * deleted category alive), so the new value is built from the FRESH doc inside
+ * the transaction: `byTier`, `byProduct` and every OTHER category survive by
+ * construction, concurrent edits to them can no longer be clobbered by a
+ * stale client config, and a `null` rules value really deletes the category.
+ * Same member-reachable, field-scoped write as savePricingRules. */
+export async function saveCategoryPricingRules(
+  store: Pick<Store, "id">,
+  categoryId: string,
+  rules: Record<string, PricingRule> | null,
+  updatedAt: string
+): Promise<void> {
+  const { db } = getFirebase();
+  const storeRef = doc(db, "stores", store.id);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(storeRef);
+    if (!snap.exists()) throw new Error("No se encontró la tienda.");
+    const current = (snap.data().pricingRules ?? {}) as PricingRulesConfig;
+    const byCategory = { ...(current.byCategory ?? {}) };
+    if (rules === null) delete byCategory[categoryId];
+    else byCategory[categoryId] = rules;
+    tx.update(storeRef, { pricingRules: stripUndefined({ ...current, byCategory }), updatedAt });
+  });
 }
 
 /** Save editable storefront text to its private, control, and public projections atomically. */

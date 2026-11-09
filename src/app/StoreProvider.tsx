@@ -22,6 +22,7 @@ import type {
   Storefront,
   StorePackaging,
   PricingRulesConfig,
+  PricingRule,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -52,6 +53,7 @@ import {
   saveStorefrontBatch,
   saveStorePackaging,
   savePricingRules,
+  saveCategoryPricingRules,
   deleteEntity,
   claimSlug,
   projectPublicForStore,
@@ -295,6 +297,10 @@ type StoreContextValue = {
   savePackaging: (packaging: StorePackaging) => Promise<void>;
   /** #254: members may save the pricing rules (same field-scoped path). */
   savePricingRules: (pricingRules: PricingRulesConfig) => Promise<void>;
+  /** #280: save ONE category's rules atomically — other categories, byTier and
+   * byProduct are overlaid on the fresh Firestore doc, never replaced from a
+   * stale client clone. `null` deletes the category's table. */
+  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
@@ -692,6 +698,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
       if (cloud) await savePricingRules(existing, pricingRules, updatedAt);
+      dispatch({ type: "UPDATE_STORE", store: { ...existing, pricingRules, updatedAt } });
+    },
+    saveCategoryPricingRules: async (categoryId, rules) => {
+      const existing = state.stores.find((store) => store.id === state.activeStoreId);
+      if (!existing) throw new Error("No se encontró la tienda.");
+      const updatedAt = nowIso();
+      if (cloud) await saveCategoryPricingRules(existing, categoryId, rules, updatedAt);
+      // Mirror the same category-scoped overlay locally (never a stale clone).
+      const pricingRules: PricingRulesConfig = existing.pricingRules
+        ? JSON.parse(JSON.stringify(existing.pricingRules))
+        : { byTier: {} };
+      pricingRules.byCategory = { ...(pricingRules.byCategory ?? {}) };
+      if (rules === null) delete pricingRules.byCategory[categoryId];
+      else pricingRules.byCategory[categoryId] = rules;
       dispatch({ type: "UPDATE_STORE", store: { ...existing, pricingRules, updatedAt } });
     },
     deleteStore: (storeId) => {
