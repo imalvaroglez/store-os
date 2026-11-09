@@ -21,6 +21,7 @@ import type {
   PurchaseExpense,
   Storefront,
   StorePackaging,
+  PricingRulesConfig,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -49,6 +50,7 @@ import {
   saveEntity,
   saveStorefrontBatch,
   saveStorePackaging,
+  savePricingRules,
   deleteEntity,
   claimSlug,
   projectPublicForStore,
@@ -290,6 +292,8 @@ type StoreContextValue = {
   saveStorefront: (storeId: string, storefront: Storefront) => Promise<void>;
   /** #253: members may save the packaging profile (field-scoped rules path). */
   savePackaging: (packaging: StorePackaging) => Promise<void>;
+  /** #254: members may save the pricing rules (same field-scoped path). */
+  savePricingRules: (pricingRules: PricingRulesConfig) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
@@ -681,6 +685,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updatedAt = nowIso();
       if (cloud) await saveStorePackaging(existing, packaging, updatedAt);
       dispatch({ type: "UPDATE_STORE", store: { ...existing, packaging, updatedAt } });
+    },
+    savePricingRules: async (pricingRules) => {
+      const existing = state.stores.find((store) => store.id === state.activeStoreId);
+      if (!existing) throw new Error("No se encontró la tienda.");
+      const updatedAt = nowIso();
+      if (cloud) await savePricingRules(existing, pricingRules, updatedAt);
+      dispatch({ type: "UPDATE_STORE", store: { ...existing, pricingRules, updatedAt } });
     },
     deleteStore: (storeId) => {
       const currentUser = requireAuthenticatedUser();
