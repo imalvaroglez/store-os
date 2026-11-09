@@ -27,6 +27,36 @@ export type Store = {
   priceTiers?: PriceTierDef[];
   defaultTierId?: string; // public price tier; absent = first tier by order
   pricingRule?: { kind: "markup"; percent: number }; // suggested-price assistant
+  // #253: packaging materials + per-level profiles. Estimated costs are
+  // display/planning inputs — real charges always come from consuming the
+  // linked supply (#184), never from these numbers. Absent = not configured.
+  packaging?: StorePackaging;
+};
+
+/** #253: a packaging material Fer buys (bolsa, cartoncito, moño…). */
+export type PackagingMaterial = {
+  id: string;
+  name: string;
+  /** Estimated cost per unit in pesos; optional while real costs are refined. */
+  estimatedCost?: number;
+  /** Linked consumable supply (expenses doc id); absent = suggestion without consumption. */
+  supplyExpenseId?: string;
+};
+
+/** Units of a material: per piece sold (perPiece) or once per order (perOrder). */
+export type PackagingLine = { materialId: string; units: number };
+
+/** Packaging profile for one price level (tier id keyed in StorePackaging.byTier). */
+export type TierPackaging = {
+  /** Consumed PER PIECE sold at this level (e.g. bag x1, backing card x1). */
+  perPiece: PackagingLine[];
+  /** Consumed ONCE per order at this level (bolsa rosa, moño, paleta). */
+  perOrder: PackagingLine[];
+};
+
+export type StorePackaging = {
+  materials: PackagingMaterial[];
+  byTier: Record<string, TierPackaging>;
 };
 
 // Control-plane projection of a store. It remains the canonical source for

@@ -20,6 +20,7 @@ import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrde
 import { installmentPlanView } from "./installments";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
 import { IncidentSheet } from "./IncidentSheet";
+import { PackagingSheet } from "./PackagingSheet";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
@@ -27,6 +28,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
+  const [packagingOpen, setPackagingOpen] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const toast = useToast();
   const customer = state.customers.find((c) => c.id === order.customerId && c.storeId === order.storeId);
@@ -166,6 +168,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
         <Button variant="ghost" onClick={() => setPaymentsOpen(true)}>Cobros</Button>
+        {order.orderStatus !== "cancelled" && (activeStore?.packaging?.materials.length ?? 0) > 0 && (
+          <Button variant="ghost" onClick={() => setPackagingOpen(true)}>Empaques</Button>
+        )}
         {(status !== "cancelled" || (order.incidents?.length ?? 0) > 0) && (
           <Button variant="ghost" onClick={() => setIncidentOpen(true)}>Incidencia{(order.incidents?.length ?? 0) > 0 ? ` (${order.incidents!.length})` : ""}</Button>
         )}
@@ -210,6 +215,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     </Sheet>
     <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
     <IncidentSheet order={order} open={incidentOpen} onClose={() => setIncidentOpen(false)} />
+    {packagingOpen && <PackagingSheet order={order} onClose={() => setPackagingOpen(false)} />}
     </>
   );
 }
