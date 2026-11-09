@@ -435,6 +435,16 @@ export function proposeCategoryBands(input: {
       bands = [buildBand(0, undefined, allMembers, tiers, packaging, outlierPricesByTier)];
       consolidationNote =
         " Las bandas separaban costos pero cobrarían lo mismo en todos los niveles: se consolidó en una sola banda hasta que quieras cobrar distinto por rango.";
+      // Keep the alternatives list consistent with the collapsed table.
+      for (const option of kSummary) {
+        if (option.k === 1) {
+          option.status = "chosen";
+          option.reason = "una sola banda: los grupos separaban costos pero cobraban lo mismo (consolidada)";
+        } else if (option.status === "chosen") {
+          option.status = "rejected";
+          option.reason = "cobrarían lo mismo en todos los niveles: se consolidó en una sola banda";
+        }
+      }
     }
   }
 

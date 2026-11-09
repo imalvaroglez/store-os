@@ -547,7 +547,7 @@ export function PricingStrategyScreen() {
                         .join(" · ")}
                     </p>
                   )}
-                  {proposal?.bands?.[index]?.belowCost.length ? (
+                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && proposal.bands[index].belowCost.length ? (
                     <div className="rounded-lg border border-danger bg-surface px-3 py-2 text-xs">
                       <p className="font-semibold text-danger">
                         {proposal.bands[index].belowCost.length} pieza(s) quedarían con precio sugerido bajo su costo base:
@@ -562,10 +562,13 @@ export function PricingStrategyScreen() {
                       </ul>
                       <p className="mt-1 text-on-surface-soft">
                         No se subió el precio de toda la banda para taparlas: decide una excepción por producto o un ajuste puntual con Fer.
+                        {tiers.some((t) => !packagingConfigured(activeStore?.packaging, t.id) || packagingGaps(activeStore?.packaging, t.id).length > 0)
+                          ? " El costo base aún no incluye empaques sin configurar: esta lista puede crecer al completarlos."
+                          : ""}
                       </p>
                     </div>
                   ) : null}
-                  {proposal?.bands?.[index] && (
+                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && (
                     <BandMembers band={proposal.bands[index]} tiers={tiers} serialized={serialized} packaging={activeStore?.packaging} />
                   )}
                 </div>
@@ -693,7 +696,7 @@ function emptyImpact() {
     noSuggestion: 0,
     belowCost: 0,
     belowCostInStock: 0,
-    belowCostList: [] as Array<{ name: string; cost: number; inStock: boolean; price: number; base: number }>,
+    belowCostList: [] as Array<{ id: string; name: string; cost: number; inStock: boolean; price: number; base: number }>,
   };
 }
 
@@ -732,7 +735,7 @@ function ImpactPreview({
           if (base !== undefined && suggested < base) {
             impact.belowCost += 1;
             if (inStock) impact.belowCostInStock += 1;
-            impact.belowCostList.push({ name: product.name, cost: product.cost, inStock, price: suggested, base });
+            impact.belowCostList.push({ id: product.id, name: product.name, cost: product.cost, inStock, price: suggested, base });
           }
           if (current === undefined || suggested > current) {
             impact.up += 1;
@@ -771,11 +774,17 @@ function ImpactPreview({
       </div>
       {tiers.some((tier) => impact.byTier[tier.id].belowCost > 0) && (
         <div className="rounded-lg border border-danger px-3 py-2 text-xs">
-          <p className="font-semibold text-danger">Piezas cuyo precio sugerido queda BAJO su costo base:</p>
+          <p className="font-semibold text-danger">
+            Piezas cuyo precio sugerido queda BAJO su costo base ({tiers.reduce((acc, t) => acc + impact.byTier[t.id].belowCost, 0)} precio(s),{" "}
+            {tiers.reduce((acc, t) => acc + impact.byTier[t.id].belowCostInStock, 0)} en piezas con existencia):
+          </p>
+          {tiers.some((t) => !packagingConfigured(packaging, t.id) || packagingGaps(packaging, t.id).length > 0) && (
+            <p className="text-on-surface-soft">El costo base aún no incluye empaques sin configurar: esta lista puede crecer al completarlos.</p>
+          )}
           <ul className="list-disc pl-5 text-on-surface-soft">
             {tiers.flatMap((tier) =>
               impact.byTier[tier.id].belowCostList.map((piece) => (
-                <li key={`${tier.id}-${piece.name}`}>
+                <li key={`${tier.id}-${piece.id}`}>
                   {piece.name} — {tier.label} ${piece.price} vs costo base ${piece.base} · {piece.inStock ? "con existencia" : "agotada"}
                 </li>
               ))

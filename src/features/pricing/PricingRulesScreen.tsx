@@ -167,6 +167,11 @@ export function PricingRulesScreen() {
       toast.success(`Precios actualizados en ${applied.length} producto(s).`);
     } else if (applied.length === 0) {
       toast.error("No se pudo aplicar ningún precio. Revisa tu conexión e inténtalo de nuevo.");
+    } else if (failed.length === 0) {
+      setSelected({});
+      toast.success(
+        `Se aplicaron precios de ${applied.length} producto(s); se omitieron ${skippedBelowCost} precio(s) por quedar bajo el costo (vender con pérdida requiere excepción de Fer).`
+      );
     } else {
       const skipped = skippedBelowCost > 0 ? `; se omitieron ${skippedBelowCost} por quedar bajo el costo` : "";
       toast.error(`Se aplicaron ${applied.length}${skipped}; fallaron ${failed.length}: ${failed.join(", ")}.`);

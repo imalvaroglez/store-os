@@ -228,6 +228,9 @@ describe("P0/P1 fixes (#280)", () => {
     expect(proposal?.bands?.[0].max).toBeUndefined();
     expect(proposal?.chosenReason).toContain("consolidó");
     expect(proposal?.bands?.[0].skuCount).toBe(20);
+    // The alternatives list agrees with the collapsed table (no "2 elegidas" under a 1-band proposal).
+    expect(proposal?.kSummary.find((o) => o.k === 1)?.status).toBe("chosen");
+    expect(proposal?.kSummary.every((o) => o.k === 1 || o.status !== "chosen")).toBe(true);
   });
 
   it("P1: el soporte distingue catálogo histórico de inventario disponible", () => {
