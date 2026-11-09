@@ -295,7 +295,7 @@ describe("frequency labels", () => {
   });
 });
 
-describe("compuerta de entrega vs ajustes de incidencia (#269)", () => {
+describe("compuerta de entrega vs ajustes de incidencia (#268)", () => {
   const money = (receivedCents: number) => ({ accumulatorCents: receivedCents, receivedCents });
   const refund = {
     id: "inc_1",

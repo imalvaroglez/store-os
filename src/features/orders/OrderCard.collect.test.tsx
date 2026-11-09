@@ -63,6 +63,26 @@ describe("OrderCard · Cobrar de un toque (#267)", () => {
     expect(await screen.findByText("Pedido cobrado")).toBeTruthy();
   });
 
+  it("con anticipo previo suma el NETO sobre el anticipo (no lo repite ni lo pisa)", async () => {
+    const withBoth = order({ deposit: 300, creditAppliedCents: 40000 });
+    mocks.upsertOrder.mockImplementation(async (saved: Order) => ({ ...saved }));
+    render(<ToastProvider><OrderCard order={withBoth} onEdit={() => {}} /></ToastProvider>);
+    await clickCobrar();
+    const saved = mocks.upsertOrder.mock.calls[0][0] as Order;
+    expect(saved.deposit).toBe(600); // 300 previos (ya cuentan como recibido) + 300 netos
+  });
+
+  it("con reembolso por incidencia cobra el total EFECTIVO", async () => {
+    const withRefund = order({
+      incidents: [{ id: "inc_1", productName: "Pieza", quantity: 1, reason: "Defecto", originalUnitPriceCents: 20000, resolution: { kind: "refund" as const, saleAdjustmentUnitCents: 20000 }, events: [] }],
+    });
+    mocks.upsertOrder.mockImplementation(async (saved: Order) => ({ ...saved }));
+    render(<ToastProvider><OrderCard order={withRefund} onEdit={() => {}} /></ToastProvider>);
+    await clickCobrar();
+    const saved = mocks.upsertOrder.mock.calls[0][0] as Order;
+    expect(saved.deposit).toBe(800); // 1000 − 200 de reembolso
+  });
+
   it("sin saldo a favor conserva el comportamiento anterior (total completo)", async () => {
     mocks.upsertOrder.mockImplementation(async (saved: Order) => ({ ...saved }));
     render(<ToastProvider><OrderCard order={order({})} onEdit={() => {}} /></ToastProvider>);
