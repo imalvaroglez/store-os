@@ -37,7 +37,7 @@ import { creditAvailableCents, pendingCents } from "../../features/orders/custom
 import { incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent } from "../../types";
-import { publicPrice } from "../../lib/money";
+import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
 /** Private writes may succeed before this public projection is denied/fails. */
@@ -697,6 +697,22 @@ export async function registerOrderPaymentTx(
         throw new Error("El monto del cobro excede la precisión admitida.");
       }
       throw error;
+    }
+    // #270 (PO 2026-11-09): a subtract adjustment is capped at what THIS order
+    // received — `paymentsReceivedCents` never crosses into negative territory
+    // (phantom debt that a compensation would drain from a sister order's real
+    // saldo a favor). The pending inherited deposit is NOT subtractable: it is
+    // not in the accumulator yet. firestore.rules enforces the same invariant
+    // server-side; this guard fails with a human, actionable message instead
+    // of a raw PERMISSION_DENIED. A legacy negative can only climb (Sumar).
+    if (payment.kind === "adjustment" && savedCents < 0) {
+      const acc = orderSnap.data().paymentsReceivedCents;
+      const current = typeof acc === "number" && Number.isFinite(acc) ? acc : 0;
+      if (current + savedCents < 0) {
+        throw new Error(
+          `El ajuste excede lo recibido en este pedido. Puedes restar hasta ${formatMoneyExact(Math.max(0, current) / 100)}.`
+        );
+      }
     }
     const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
     const previousPaymentsRevision = orderSnap.data().paymentsRevision ?? 0;

@@ -5,6 +5,7 @@ import {
   buildPaymentRecord,
   docReceivedCents,
   inheritedDepositRecord,
+  maxAdjustmentSubtractCents,
   mergePayments,
   orderMoneyAfterPayments,
   orderPaymentsFor,
@@ -307,5 +308,24 @@ describe("explicit adjustment direction (#218)", () => {
   });
   it.each(["-150", "+80", "0", "-0", "1-2"])("rejects signed or nonpositive input %s", (amountText) => {
     expect(() => buildAdjustmentRecord(order(), { kind: "adjustment", id: "a", direction: "subtract", amountText, note: "Corrección" }, "u1")).toThrow();
+  });
+});
+
+
+describe("#270 subtract cap bound", () => {
+  it("the cap is the accumulator clamped at zero, never the pending deposit", () => {
+    expect(maxAdjustmentSubtractCents({ paymentsReceivedCents: 10000 })).toBe(10000);
+    expect(maxAdjustmentSubtractCents({ paymentsReceivedCents: 0 })).toBe(0);
+    expect(maxAdjustmentSubtractCents({ paymentsReceivedCents: -50000 })).toBe(0);
+    expect(maxAdjustmentSubtractCents({})).toBe(0);
+    // The unmaterialized deposit is received money but NOT in the accumulator:
+    // its repair path is the deposit flow, so it does not widen the cap.
+    expect(maxAdjustmentSubtractCents({ deposit: 500 })).toBe(0);
+    expect(maxAdjustmentSubtractCents({ deposit: 500, paymentsReceivedCents: 30000 })).toBe(30000);
+  });
+  it("corrupt accumulator values read as zero, never NaN", () => {
+    expect(maxAdjustmentSubtractCents({ paymentsReceivedCents: Number.NaN })).toBe(0);
+    expect(maxAdjustmentSubtractCents({ paymentsReceivedCents: Number.POSITIVE_INFINITY })).toBe(0);
+    expect(maxAdjustmentSubtractCents({ paymentsReceivedCents: "20000" as unknown as number })).toBe(0);
   });
 });

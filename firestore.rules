@@ -293,6 +293,12 @@ service cloud.firestore {
         && after.paymentsReceivedCents is int && math.abs(after.paymentsReceivedCents) <= 9007199254740991
         && before.get('paymentsReceivedCents', 0) is int
         && math.abs(before.get('paymentsReceivedCents', 0)) <= 9007199254740991
+        // #270 (PO 2026-11-09): received money never crosses below zero — a
+        // "Restar" adjustment is capped at what THIS order received, so no
+        // phantom debt can absorb a sister order's real saldo a favor. A
+        // legacy negative accumulator may only climb back (never deepen).
+        && (after.paymentsReceivedCents >= 0
+            || after.paymentsReceivedCents > before.get('paymentsReceivedCents', 0))
         && (!inheritedChanged || validInheritedReceipt(orderId, before, after))
         && after.paymentsReceivedCents == before.get('paymentsReceivedCents', 0) + receipt.amountCents
           + (inheritedChanged
