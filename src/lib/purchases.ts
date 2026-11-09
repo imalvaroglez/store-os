@@ -192,3 +192,19 @@ export function purchaseProductCosts(purchase: Purchase, allocations = purchaseC
   });
   return bought;
 }
+
+/** #265: in-memory reconciliation after receivePurchaseTx commits — built
+ * EXCLUSIVELY from the updates the transaction applied (exact latest_purchase
+ * cost), never from a local approximation like the weighted average. */
+export function receivedProductsFromStockUpdates(
+  products: Product[],
+  stockUpdates: Map<string, ProductStockUpdate>,
+  at: string
+): Product[] {
+  const received: Product[] = [];
+  for (const [productId, update] of stockUpdates) {
+    const product = products.find((p) => p.id === productId);
+    if (product) received.push({ ...product, ...update, updatedAt: at });
+  }
+  return received;
+}
