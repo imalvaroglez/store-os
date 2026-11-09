@@ -301,16 +301,25 @@ export async function saveStorePackaging(
   await setDoc(doc(db, "stores", store.id), { packaging: stripUndefined(packaging), updatedAt }, { merge: true });
 }
 
-/** #254: save ONLY the store's pricing rules — same member-reachable,
- * field-scoped path as packaging (#253): every settings field must stay
- * unchanged (rules), and the adminStores control batch is skipped. */
+/** #254: save the store's LEVEL rules — same member-reachable, field-scoped
+ * path as packaging (#253): every settings field must stay unchanged (rules),
+ * and the adminStores control batch is skipped. #280: transactional byTier
+ * overlay — the Reglas editor only owns `byTier`, so a tab holding a stale
+ * clone can no longer replace the whole `pricingRules` field and delete
+ * category tables / product exceptions saved meanwhile elsewhere. */
 export async function savePricingRules(
   store: Pick<Store, "id">,
   pricingRules: PricingRulesConfig,
   updatedAt: string
 ): Promise<void> {
   const { db } = getFirebase();
-  await setDoc(doc(db, "stores", store.id), { pricingRules: stripUndefined(pricingRules), updatedAt }, { merge: true });
+  const storeRef = doc(db, "stores", store.id);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(storeRef);
+    if (!snap.exists()) throw new Error("No se encontró la tienda.");
+    const current = (snap.data().pricingRules ?? {}) as PricingRulesConfig;
+    tx.update(storeRef, { pricingRules: stripUndefined({ ...current, byTier: pricingRules.byTier ?? {} }), updatedAt });
+  });
 }
 
 /** #280: save ONE category's band table transactionally. The whole

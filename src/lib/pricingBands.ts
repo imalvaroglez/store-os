@@ -153,7 +153,7 @@ export function analyzeCategory(products: BandProduct[], categoryId: string, tie
     withCost: withCost.length,
     withoutCost: inCategory.length - withCost.length,
     unitsOnHand: inCategory.reduce((acc, p) => acc + (typeof p.quantityOnHand === "number" ? p.quantityOnHand : 0), 0),
-    soldOut: inCategory.filter((p) => (p.quantityOnHand ?? 0) === 0).length,
+    soldOut: inCategory.filter((p) => p.quantityOnHand === 0).length,
     costMin: costs.length > 0 ? toPesos(costs[0]) : undefined,
     costMax: costs.length > 0 ? toPesos(costs[costs.length - 1]) : undefined,
     costMedian: costs.length > 0 ? toPesos(percentileCents(costs, 0.5)) : undefined,

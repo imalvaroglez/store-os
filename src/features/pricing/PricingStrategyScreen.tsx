@@ -41,6 +41,17 @@ type TableDraft = {
 };
 
 const SUPPORT_LABEL: Record<string, string> = { high: "soporte alto", medium: "soporte medio", low: "soporte bajo" };
+
+/** Canonical JSON with recursively sorted keys: Firestore returns map keys
+ * lexicographically sorted while our draft follows tier order — comparing raw
+ * strings would flag the user's OWN save as a concurrent change. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, element) =>
+    element && typeof element === "object" && !Array.isArray(element)
+      ? Object.fromEntries(Object.entries(element).sort(([a], [b]) => a.localeCompare(b)))
+      : element
+  );
+}
 const EVIDENCE_LABEL = { orders: "respaldado por pedidos", prices: "respaldado por precios actuales", reference: "referencia, pendiente de validar en puntos físicos" } as const;
 const SUPPORT_HINT: Record<PriceSupport, string> = {
   strong: "sólido",
@@ -121,7 +132,7 @@ export function PricingStrategyScreen() {
 
   // Concurrency: the saved table changed under a dirty draft (another session).
   const savedSignature = useMemo(
-    () => (categoryId ? JSON.stringify(activeStore?.pricingRules?.byCategory?.[categoryId] ?? null) : ""),
+    () => (categoryId ? canonicalJson(activeStore?.pricingRules?.byCategory?.[categoryId] ?? null) : ""),
     [categoryId, activeStore?.pricingRules]
   );
   const concurrentChange = !!draft?.dirty && savedSignature !== draftBase;
@@ -158,6 +169,8 @@ export function PricingStrategyScreen() {
   }, [categoryId, savedSignature]);
 
   // The serialized rules this draft will save (also drives the impact preview).
+  // Rules for tiers that are currently HIDDEN ride along untouched — hiding a
+  // level must not silently delete its saved table.
   const serialized: Record<string, PricingRule> | null = useMemo(() => {
     if (!draft || draft.limits.length === 0) return null;
     const rules: Record<string, PricingRule> = {};
@@ -173,8 +186,13 @@ export function PricingStrategyScreen() {
         rounding: "none",
       };
     }
+    const saved = activeStore?.pricingRules?.byCategory?.[categoryId ?? ""];
+    const visible = new Set(tiers.map((t) => t.id));
+    for (const [tierId, rule] of Object.entries(saved ?? {})) {
+      if (!visible.has(tierId)) rules[tierId] = rule;
+    }
     return rules;
-  }, [draft, tiers]);
+  }, [draft, tiers, activeStore?.pricingRules, categoryId]);
 
   const limitError = useMemo(() => {
     if (!draft) return null;
@@ -223,7 +241,13 @@ export function PricingStrategyScreen() {
   function addBand() {
     patchDraft((next) => {
       const last = next.limits[next.limits.length - 1];
-      if (!last) return;
+      if (!last) {
+        // Empty table (every band was removed): restart from a single open
+        // band instead of dead-ending the editor.
+        next.limits = [{ min: 0 }];
+        for (const tier of tiers) next.prices[tier.id] = [null];
+        return;
+      }
       const previousMax = last.max ?? Math.max(100, Math.ceil((last.min + 100) / 50) * 50);
       last.max = previousMax;
       next.limits.push({ min: previousMax });
@@ -296,7 +320,7 @@ export function PricingStrategyScreen() {
     try {
       await saveCategoryPricingRules(categoryId, serialized);
       setDraft((current) => (current ? { ...current, dirty: false } : current));
-      setDraftBase(JSON.stringify(serialized));
+      setDraftBase(canonicalJson(serialized));
       setReplaceExisting(false);
       toast.success("Tabla guardada. Los precios de tus productos no cambiaron.");
     } catch (error) {
@@ -426,7 +450,17 @@ export function PricingStrategyScreen() {
               Las reglas de esta categoría cambiaron en otra sesión mientras editabas. Tu guardado solo tocaría esta
               categoría, pero conviene revisar antes de continuar.
             </p>
-            <Button size="sm" variant="secondary" onClick={() => { setDraft(null); setDraftBase(savedSignature); }}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                // Rebuild directly from the CURRENT saved state — the adopt
+                // effect won't re-run (its deps didn't change) and leaving
+                // draft null would dead-end the editor.
+                setDraft(existing?.compatible ? existing.draft : null);
+                setDraftBase(savedSignature);
+              }}
+            >
               Descartar mis cambios y recargar
             </Button>
           </Card>
