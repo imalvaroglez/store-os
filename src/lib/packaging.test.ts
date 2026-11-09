@@ -124,6 +124,35 @@ describe("suggestOrderPackaging (#253)", () => {
     expect(line(s, "m_paleta")?.supplyExpenseId).toBeUndefined();
   });
 
+  it("el mismo material en por pieza y por pedido se acumula en una sola línea", () => {
+    const mixed: StorePackaging = JSON.parse(JSON.stringify(packaging));
+    mixed.byTier.t_iconic.perOrder.push({ materialId: "m_bolsa", units: 1 }); // bolsa extra por pedido
+    const s = suggestOrderPackaging({
+      order: order([{ productName: "Anillo", quantity: 3, unitPrice: 60, subtotal: 180, priceTier: "t_iconic" }]),
+      packaging: mixed,
+    });
+    expect(line(s, "m_bolsa")?.units).toBe(4); // 3 por pieza + 1 por pedido
+    expect(s.lines.filter((l) => l.materialId === "m_bolsa")).toHaveLength(1);
+  });
+
+  it("pedido sin items es estable", () => {
+    const s = suggestOrderPackaging({ order: { items: undefined } as unknown as Pick<Order, "items">, packaging });
+    expect(s.lines).toEqual([]);
+  });
+
+  it("empate de piezas: gana el primer nivel en orden de líneas (documentado)", () => {
+    const s = suggestOrderPackaging({
+      order: order([
+        { productName: "A", quantity: 2, unitPrice: 1, subtotal: 2, priceTier: "t_iconic" },
+        { productName: "B", quantity: 2, unitPrice: 1, subtotal: 2, priceTier: "t_retail" },
+      ]),
+      packaging,
+    });
+    expect(line(s, "m_carton")?.units).toBe(2); // perOrder del iconic (primero) NO lleva cartoncito; retail sí → 2 piezas retail
+    // El set por pedido viene del dominante (empate → t_iconic, primero): una sola bolsa rosa.
+    expect(line(s, "m_rosa")?.units).toBe(1);
+  });
+
   it("cantidades fraccionarias o nulas no rompen la aritmética", () => {
     const s = suggestOrderPackaging({
       order: order([

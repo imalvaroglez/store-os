@@ -168,7 +168,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
         <Button variant="ghost" onClick={() => setPaymentsOpen(true)}>Cobros</Button>
-        {(activeStore?.packaging?.materials.length ?? 0) > 0 && (
+        {order.orderStatus !== "cancelled" && (activeStore?.packaging?.materials.length ?? 0) > 0 && (
           <Button variant="ghost" onClick={() => setPackagingOpen(true)}>Empaques</Button>
         )}
         {(status !== "cancelled" || (order.incidents?.length ?? 0) > 0) && (

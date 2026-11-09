@@ -133,6 +133,53 @@ describe("PackagingSheet (#253)", () => {
     expect(screen.getByText("sin suministro vinculado (solo estimado)")).toBeTruthy();
   });
 
+  it("reintentar tras falla parcial NO reconsume lo ya consumido (H1)", async () => {
+    state.expenses.push(supplyExpense("exp_bolsas", 100, "Bolsas"));
+    state.expenses.push(supplyExpense("exp_rosa", 10, "Bolsas rosa"));
+    render(<ToastProvider><PackagingSheet order={iconicOrder(4)} onClose={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Consumir materiales" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    // El moño (sin vincular) falla: bolsa y rosa se consumieron.
+    expect(await screen.findByText(/no se pudieron consumir/)).toBeTruthy();
+    expect(mocks.consumeSupply).toHaveBeenCalledTimes(2);
+    // Reintento: nada nuevo debe consumirse — solo se re-procesa el moño.
+    fireEvent.click(screen.getByRole("button", { name: "Consumir materiales" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    // El botón vuelve a su texto cuando run() terminó.
+    await screen.findByText("Consumir materiales");
+    expect(mocks.consumeSupply).toHaveBeenCalledTimes(2);
+  });
+
+  it("lo ya consumido en el pedido se descuenta de la sugerencia al abrir (F4)", () => {
+    state.expenses.push({
+      ...supplyExpense("exp_bolsas", 100, "Bolsas"),
+      supply: {
+        quantityInitial: 100,
+        consumptions: [{ id: "c1", at: "2026-11-08T00:00:00.000Z", by: "uid_fer", quantity: 2, orderId: "order_pk" }],
+      },
+    });
+    state.expenses.push(supplyExpense("exp_rosa", 10, "Bolsas rosa"));
+    render(<ToastProvider><PackagingSheet order={iconicOrder(4)} onClose={() => {}} /></ToastProvider>);
+    // Sugerencia: 4 bolsas; ya se consumieron 2 en este pedido → default 2.
+    expect(screen.getByDisplayValue("2")).toBeTruthy();
+    expect(screen.getByText(/ya consumidos 2/)).toBeTruthy();
+    expect(screen.getByText(/98 disponibles/)).toBeTruthy();
+  });
+
+  it("material totalmente consumido en este pedido queda marcado y deshabilitado", () => {
+    state.expenses.push({
+      ...supplyExpense("exp_rosa", 10, "Bolsas rosa"),
+      supply: {
+        quantityInitial: 10,
+        consumptions: [{ id: "c1", at: "2026-11-08T00:00:00.000Z", by: "uid_fer", quantity: 1, orderId: "order_pk" }],
+      },
+    });
+    render(<ToastProvider><PackagingSheet order={iconicOrder(4)} onClose={() => {}} /></ToastProvider>);
+    expect(screen.getByText("Ya consumido en este pedido")).toBeTruthy();
+    const rosa = screen.getByDisplayValue("0") as HTMLInputElement;
+    expect(rosa.disabled).toBe(true);
+  });
+
   it("sin empaques configurados: mensaje que guía a la configuración", () => {
     const state = mocks.state!;
     state.stores[0] = { ...state.stores[0], packaging: undefined };
