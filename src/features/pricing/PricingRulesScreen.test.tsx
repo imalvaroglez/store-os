@@ -111,7 +111,7 @@ describe("PricingRulesScreen (#254)", () => {
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
   });
 
-  it("#280 P0-1: la excepción EXPLÍCITA por producto sí puede quedar bajo el costo", async () => {
+  it("#280 P0-1: la excepción por producto bajo el costo exige confirmación EN EL MOMENTO (PO 2026-11-09)", async () => {
     state.stores[0].pricingRules = {
       byTier: {},
       byProduct: { p1: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 60 }], rounding: "none" } } },
@@ -121,9 +121,36 @@ describe("PricingRulesScreen (#254)", () => {
     await screen.findAllByText(/\$60/);
     fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
     fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    // Una excepción previa NO es autorización vigente: pide confirmación explícita.
+    expect(await screen.findByText(/1 precio\(s\) bajo el costo/)).toBeTruthy();
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+    // Cancelar no aplica nada.
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+    // Reintentar y confirmar la pérdida deliberada.
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Aplicar todo/ }));
     expect(await screen.findByText(/Precios actualizados en 1 producto/)).toBeTruthy();
     const updated = mocks.upsertProduct.mock.calls[0][0] as Product;
-    expect(updated.prices?.t_iconic).toBe(60); // decisión deliberada de Fer vía excepción
+    expect(updated.prices?.t_iconic).toBe(60); // decisión deliberada y confirmada de Fer
+  });
+
+  it("#280 P0-1: en el diálogo bajo costo se puede aplicar solo lo seguro", async () => {
+    state.stores[0].pricingRules = {
+      byTier: { t_retail: { kind: "fixed", amount: 60, rounding: "none" } }, // 100+60=160 seguro
+      byProduct: { p1: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 60 }], rounding: "none" } } },
+    };
+    state.products = [product({ cost: 100, prices: { t_iconic: 120, t_retail: 200 } })];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    await screen.findAllByText(/\$160/);
+    fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    expect(await screen.findByText(/1 precio\(s\) bajo el costo/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar sin esos 1/ }));
+    expect(await screen.findByText(/se omitieron 1 precio\(s\) por quedar bajo el costo/)).toBeTruthy();
+    const updated = mocks.upsertProduct.mock.calls[0][0] as Product;
+    expect(updated.prices?.t_retail).toBe(160); // el cambio seguro sí entró
+    expect(updated.prices?.t_iconic).toBe(120); // el bajo costo quedó intacto
   });
 
   it("guardar reglas NO cambia precios: sin selección, aplicar no llama a upsertProduct", async () => {
