@@ -30,7 +30,7 @@ import { uid } from "../lib/ids";
 import { nowIso, todayIso } from "../lib/dates";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
-import { deliveryWithBalanceBlocked, orderTotalCents, sameInstallmentPlan , uncoveredBalanceCents } from "../features/orders/installments";
+import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
   buildAdjustmentRecord,
   buildPaymentRecord,
