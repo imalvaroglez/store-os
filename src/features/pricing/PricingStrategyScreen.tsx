@@ -257,15 +257,18 @@ export function PricingStrategyScreen() {
 
   function splitBand(index: number) {
     // Data-driven cut: the midpoint of this band's member costs (defaults to
-    // +50% of min for an empty band) — Fer adjusts before saving.
-    const members = proposal?.bands?.[index]?.members ?? [];
+    // +50% of min for an empty band) — Fer adjusts before saving. Members are
+    // matched by COST RANGE, not by proposal index: removeBand/addBand shift
+    // indices and would otherwise pick the wrong band's pieces.
     patchDraft((next) => {
       const band = next.limits[index];
       if (!band) return;
-      const costs = members.map((m) => m.cost).filter((c) => c > 0);
+      const inBand = (proposal?.bands ?? []).flatMap((b) => b.members.map((m) => m.cost)).filter(
+        (c) => c > 0 && c >= band.min && (band.max === undefined || c < band.max)
+      );
       const cut =
-        costs.length > 0
-          ? Math.round(((Math.min(...costs) + Math.max(...costs)) / 2) * 100) / 100
+        inBand.length > 0
+          ? Math.round(((Math.min(...inBand) + Math.max(...inBand)) / 2) * 100) / 100
           : Math.round((band.min + 50) * 100) / 100;
       if (!(cut > band.min) || (band.max !== undefined && !(cut < band.max))) return;
       const nextBand = { min: cut, ...(band.max !== undefined ? { max: band.max } : {}) };
@@ -390,7 +393,7 @@ export function PricingStrategyScreen() {
               <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-semibold text-ink">Propuesta</h3>
-                  <Badge tone={proposal.support === "high" ? "success" : proposal.support === "medium" ? "neutral" : "neutral"}>
+                  <Badge tone={proposal.support === "high" ? "success" : proposal.support === "medium" ? "info" : "warning"}>
                     {SUPPORT_LABEL[proposal.support]}
                   </Badge>
                 </div>
@@ -418,7 +421,7 @@ export function PricingStrategyScreen() {
         )}
 
         {concurrentChange && (
-          <Card className="space-y-2 border-warning">
+          <Card className="space-y-2 border border-warning">
             <p className="text-sm text-on-surface">
               Las reglas de esta categoría cambiaron en otra sesión mientras editabas. Tu guardado solo tocaría esta
               categoría, pero conviene revisar antes de continuar.
@@ -484,6 +487,17 @@ export function PricingStrategyScreen() {
                       );
                     })}
                   </div>
+                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && (
+                    <p className="text-xs text-on-surface-soft">
+                      Contribución mínima en la banda (con la pieza más cara, empaque individual incluido):{" "}
+                      {tiers
+                        .map((t) => {
+                          const contribution = proposal.bands![index].minContribution[t.id];
+                          return `${t.label} ${contribution === null || contribution === undefined ? "—" : `$${contribution}`}`;
+                        })
+                        .join(" · ")}
+                    </p>
+                  )}
                   {proposal?.bands?.[index] && (
                     <BandMembers band={proposal.bands[index]} tiers={tiers} serialized={serialized} packaging={activeStore?.packaging} />
                   )}
