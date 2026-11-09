@@ -88,33 +88,46 @@ export function saveCart(slug: string, lines: CartLine[]): void {
   }
 }
 
+/** #276: pure line builders over an explicit BASE — useCart computes from its
+ * in-memory state so a broken (read-only) localStorage never truncates the
+ * order: persistence is best-effort, memory is the truth while mounted. */
+export function addCartLine(lines: CartLine[], item: Omit<CartLine, "qty">, qty = 1): CartLine[] {
+  const existing = lines.find((l) => l.productSlug === item.productSlug);
+  return existing
+    ? lines.map((l) => (l.productSlug === item.productSlug ? { ...l, qty: l.qty + qty } : l))
+    : [...lines, { ...item, qty }];
+}
+
+/** Set a quantity; 0 or less removes the line. */
+export function setCartLineQty(lines: CartLine[], productSlug: string, qty: number): CartLine[] {
+  return qty <= 0
+    ? lines.filter((l) => l.productSlug !== productSlug)
+    : lines.map((l) => (l.productSlug === productSlug ? { ...l, qty } : l));
+}
+
+export function removeCartLineFrom(lines: CartLine[], productSlug: string): CartLine[] {
+  return lines.filter((l) => l.productSlug !== productSlug);
+}
+
 export function addToCart(
   slug: string,
   item: Omit<CartLine, "qty">,
   qty = 1
 ): CartLine[] {
-  const lines = loadCart(slug);
-  const existing = lines.find((l) => l.productSlug === item.productSlug);
-  const next = existing
-    ? lines.map((l) => (l.productSlug === item.productSlug ? { ...l, qty: l.qty + qty } : l))
-    : [...lines, { ...item, qty }];
+  const next = addCartLine(loadCart(slug), item, qty);
   saveCart(slug, next);
   return next;
 }
 
 /** Set a quantity; 0 or less removes the line. */
 export function setCartQty(slug: string, productSlug: string, qty: number): CartLine[] {
-  const current = loadCart(slug);
-  const next =
-    qty <= 0
-      ? current.filter((l) => l.productSlug !== productSlug)
-      : current.map((l) => (l.productSlug === productSlug ? { ...l, qty } : l));
+  const next = setCartLineQty(loadCart(slug), productSlug, qty);
   saveCart(slug, next);
   return next;
 }
 
 export function removeCartLine(slug: string, productSlug: string): CartLine[] {
-  const next = loadCart(slug).filter((l) => l.productSlug !== productSlug);
+  const next = removeCartLineFrom(loadCart(slug), productSlug);
   saveCart(slug, next);
   return next;
 }

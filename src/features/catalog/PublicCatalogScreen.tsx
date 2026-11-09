@@ -3,6 +3,7 @@ import { Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../desi
 import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
 import {
   loadPublicCatalog,
+  PublicCatalogNotFoundError,
   type PublicCatalog,
   type PublicStore,
   type PublicStockSignal,
@@ -16,18 +17,21 @@ import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } 
 // the established Store OS look instead of inheriting Olivia's fixed brand.
 export function PublicCatalogScreen({ slug }: { slug: string }) {
   const [data, setData] = useState<{ store: PublicStore; catalog: PublicCatalog } | null>(null);
-  const [failed, setFailed] = useState(false);
+  // #276: a missing store and a network failure are DIFFERENT things — a
+  // clienta on flaky mobile data must never read "this catalog does not
+  // exist" (and a wrong slug must not promise the store still exists).
+  const [loadState, setLoadState] = useState<"loading" | "missing" | "failed">("loading");
   const cart = useCart(slug);
   const [cartOpen, setCartOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setData(null);
-    setFailed(false);
+    setLoadState("loading");
     loadPublicCatalog(slug).then((next) => {
       if (!cancelled) setData(next);
-    }).catch(() => {
-      if (!cancelled) setFailed(true);
+    }).catch((err: unknown) => {
+      if (!cancelled) setLoadState(err instanceof PublicCatalogNotFoundError ? "missing" : "failed");
     });
     return () => { cancelled = true; };
   }, [slug]);
@@ -51,23 +55,22 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
       : undefined,
   });
 
-  if (!data && !failed) {
+  if (!data && loadState === "loading") {
     return <div className="min-h-full bg-paper p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}</div>;
   }
-  if (!data) {
-    // #276: a network failure is NOT a missing store — clients on flaky mobile
-    // data must not read "this catalog does not exist".
-    return failed ? (
+  if (!data && loadState === "failed") {
+    return (
       <div className="min-h-full flex items-center justify-center p-6">
         <EmptyState
           title="No se pudo cargar el catálogo"
-          subtitle="Revisa tu conexión e inténtalo de nuevo: la tienda sigue disponible."
+          subtitle="Revisa tu conexión e inténtalo de nuevo."
           action={<Button onClick={() => window.location.reload()}>Reintentar</Button>}
         />
       </div>
-    ) : (
-      <div className="min-h-full flex items-center justify-center p-6"><EmptyState title="Tienda no encontrada" subtitle="Este catálogo no existe o no está disponible." /></div>
     );
+  }
+  if (!data) {
+    return <div className="min-h-full flex items-center justify-center p-6"><EmptyState title="Tienda no encontrada" subtitle="Este catálogo no existe o no está disponible." /></div>;
   }
 
   const { store, catalog } = data;
