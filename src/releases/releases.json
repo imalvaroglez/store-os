@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.11.0",
+    "date": "2026.11.09",
+    "title": "Estrategia de precios por categoría",
+    "notes": [
+      "Nuevo: en Productos → Estrategia de precios analizas los costos reales de cada categoría y recibes una propuesta de tablas por rangos de costo con precios Iconic, Girly y Regular.",
+      "La propuesta explica por qué sugiere esa cantidad de bandas y qué piezas caen en cada una, con la diferencia contra tus precios actuales antes de decidir nada.",
+      "Puedes ajustar límites y precios, guardar la tabla y recuperar tal cual al recargar; guardar nunca cambia los precios de tus productos.",
+      "Para aplicar precios a productos sigue siendo explícito, pieza por pieza o por lote, desde Productos → Reglas.",
+      "Las reglas de una categoría ya no pueden borrarse por accidente al editar otra, ni pisarse entre sesiones (guardado por categoría, protegido contra cambios simultáneos).",
+      "Piezas sin costo confiable o niveles sin evidencia quedan pendientes en vez de recibir precios inventados."
+    ]
+  },
+  {
     "version": "1.10.0",
     "date": "2026.11.09",
     "title": "Empaques, reglas de venta y dinero confiable",
