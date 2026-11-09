@@ -230,6 +230,35 @@ describe("G-P02 super_admin can operate any store by role", () => {
 // not-yet-visible adminStores document. If either rule started calling
 // isMember()/isOwner() again, this test would fail.
 describe("G-P02 batched create — stores + adminStores in one batch", () => {
+  it("#274 deny-list closed: member cannot write skuPrefix or retainedPrivacyRequestCount", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1", "u2"] });
+      await setDoc(doc(c.firestore(), "stores/s1"), { ownerUid: "u1", memberUids: ["u1", "u2"], name: "Olivia", skuPrefix: "OL", retainedPrivacyRequestCount: 2 });
+    });
+    const db = await asUser("u2"); // member, not owner
+    await assertFails(updateDoc(doc(db, "stores/s1"), { skuPrefix: "FAKE" }));
+    await assertFails(updateDoc(doc(db, "stores/s1"), { retainedPrivacyRequestCount: 0 }));
+    await assertFails(updateDoc(doc(db, "stores/s1"), { someFutureField: true }));
+    // The allowed business-content fields keep working (regression).
+    await assertSucceeds(
+      updateDoc(doc(db, "stores/s1"), { packaging: { materials: [], byTier: {} }, updatedAt: "2026-11-09T00:00:00.000Z" })
+    );
+  });
+
+  it("#274 an already-member with a stale self-invite cannot add someone else's uid", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      const base = { ownerUid: "u1", memberUids: ["u1", "u2"], pendingInvites: ["member2@x.com"] };
+      await setDoc(doc(c.firestore(), "adminStores/s1"), base);
+      await setDoc(doc(c.firestore(), "stores/s1"), base);
+    });
+    const db = await asUser("u2"); // already a member, own email still pending
+    await assertFails(
+      updateDoc(doc(db, "stores/s1"), { memberUids: ["u1", "u2", "u_evil"], pendingInvites: [] })
+    );
+    // The legitimate fresh-invitee join is regression-tested by the
+    // "reliable invitations" suite below (u_guest joins with the invite).
+  });
+
   it("#253 a member can update ONLY the packaging field of their store", async () => {
     await env.withSecurityRulesDisabled(async (c) => {
       await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1", "u2"] });
