@@ -231,10 +231,11 @@ function creditAppliedCentsOf(order: Partial<Order> & Record<string, unknown>): 
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
 
-/** Net balance a delivery decision evaluates: total − received − applied
- * credit (#189): the same figure every read model shows as "Pendiente". */
+/** Net balance a delivery decision evaluates: EFFECTIVE total (historical +
+ * incident adjustments, #203) − received − applied credit (#189) — the same
+ * figure every read model shows as "Pendiente". */
 export function uncoveredBalanceCents(order: Partial<Order> & Record<string, unknown>, money: DocMoney): number {
-  return orderTotalCents(order) - creditAppliedCentsOf(order) - money.receivedCents;
+  return effectiveOrderTotalCents(order) - creditAppliedCentsOf(order) - money.receivedCents;
 }
 
 /** #165/#168 F1 delivery gate for the mutation path: an order with a plan OR
@@ -255,6 +256,12 @@ export function orderTotalCents(order: Partial<Order> & Record<string, unknown>)
     (sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity),
     0
   );
+}
+
+/** #203/#268: the EFFECTIVE total every read model uses (paymentSummary, the
+ * card, the calendar): historical + incident adjustments, floored at zero. */
+export function effectiveOrderTotalCents(order: Partial<Order> & Record<string, unknown>): number {
+  return Math.max(0, orderTotalCents(order) + incidentsSaleAdjustmentCents(order.incidents));
 }
 
 /** Same agreement (count/frequency/first date)? Agreed-at/by are metadata. */
