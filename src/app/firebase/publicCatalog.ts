@@ -241,12 +241,20 @@ async function loadPublicCatalogDoc(slug: string): Promise<{ catalog: PublicCata
  * projection hasn't been written yet. Screens that want progressive rendering
  * (hero from the small store doc, grid from the big catalog doc) call
  * loadPublicStore + their own catalog read instead.
+ *
+ * SEQUENTIAL on purpose (#282): with Promise.all, an unknown slug 404s BOTH
+ * docs and whichever rejection landed first classified the page — the
+ * catalog's plain "not published yet" error sometimes beat the store's
+ * NotFoundError and an unknown store showed the connection-failure screen
+ * (the e2e flake). The STORE doc is the authoritative existence signal: it
+ * resolves first, and the catalog is only read when the store exists.
  */
 export async function loadPublicCatalog(slug: string): Promise<{
   store: PublicStore;
   catalog: PublicCatalog;
 }> {
-  const [store, doc] = await Promise.all([loadPublicStore(slug), loadPublicCatalogDoc(slug)]);
+  const store = await loadPublicStore(slug);
+  const doc = await loadPublicCatalogDoc(slug);
   if (!store.storeId && doc.storeId) {
     return { store: { ...store, storeId: doc.storeId }, catalog: doc.catalog };
   }

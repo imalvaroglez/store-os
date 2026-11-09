@@ -244,3 +244,20 @@ describe("#282 reintento automático único ante fallas transitorias", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("#282 carrera de clasificación: tienda primero (secuencial)", () => {
+  it("slug desconocido: NotFoundError aunque el catálogo también 404e — y sin leer el catálogo siquiera", async () => {
+    // Antes: Promise.all rechazaba con el 404 que llegara primero; si ganaba
+    // el del catálogo, la pantalla mostraba 'falló la conexión'. Ahora la
+    // tienda es la señal autoritativa y se lee primero.
+    const fetchMock = stubFetchByUrl({
+      "/publicStores/": jsonResponse(404, {}),
+      "/publicCatalogs/": jsonResponse(404, {}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(loadPublicCatalog("no-existe")).rejects.toBeInstanceOf(PublicCatalogNotFoundError);
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((u) => u.includes("/publicStores/no-existe"))).toBe(true);
+    expect(urls.some((u) => u.includes("/publicCatalogs/"))).toBe(false);
+  });
+});
