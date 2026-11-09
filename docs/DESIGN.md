@@ -16,6 +16,20 @@ centrado porque una forma de captura de 1500px es hostil de leer y llenar.
 Decisión del dueño (2026-09-01): Pedidos fija el estándar de espaciado; la
 máxima es aprovechar el espacio disponible.
 
+## Estándar UX: fricción operativa mínima
+
+Una vista es exitosa cuando la persona dueña o colaboradora **completa su tarea con el menor esfuerzo posible**, sin perder control sobre dinero, inventario, permisos o decisiones. No digitalices pasos innecesarios.
+
+Antes de cambiar un recorrido, define caso habitual y excepciones, qué información ya conoce StoreOS y cuántas interacciones requiere completar la tarea: **taps/clics, scrolls, cambios de foco, recapturas, retrocesos y confirmaciones**. Compara antes/después con fixtures representativos cuando sea viable; nunca conviertas números imaginados en mediciones. Un paso eliminado que causa errores no es una mejora.
+
+- **Frecuencia primero:** prioriza el trabajo repetitivo (compras, artículos, pedidos, cobros, entregas). Acción principal accesible; excepción con detalle cuando se necesite.
+- **Captura mínima:** reutiliza datos, recuerda decisiones confirmadas, facilita revisión/edición por lote y no obliga a copiar información entre pantallas.
+- **Automatismos seguros:** no confundir sugerencia con confirmación. Para dinero, stock, autorizaciones y asignaciones ambiguas, muestra qué ocurrirá y exige confirmación cuando corresponda.
+- **Dispositivos y accesibilidad:** prueba tarea real en ~390px y ~1280px, con tacto/teclado, feedback claro y sin scroll horizontal; respeta los mínimos del design system.
+- **Revisión externa:** cada item implementado pasa por un UX reviewer independiente, distinto del code reviewer y sin contexto del autor. Usa Preview/dev y datos sintéticos, documenta fricción del flujo afectado y bloquea problemas significativos antes del merge. Sin interfaz, justifica NO APLICA o su impacto indirecto. No inventar pruebas realizadas.
+
+Ejemplo: en compras, conservar el código original del proveedor, reconocer productos ya vinculados, evitar búsquedas duplicadas y corregir varias líneas sin cambiar de pantalla, pero no inferir precios ambiguos. En cobros, presentar importe exacto y acción clara es más importante que eliminar una confirmación protectora.
+
 ## Anchura
 
 - `Screen` (design system) es el único dueño del ancho: `p-4 md:p-8`, sin
