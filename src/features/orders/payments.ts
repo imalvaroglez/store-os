@@ -221,6 +221,19 @@ export function orderPaymentsFor(
   return (payments ?? []).filter((p) => p.orderId === orderId && p.storeId === storeId);
 }
 
+/**
+ * #270 (PO 2026-11-09): the most a "Restar" adjustment may take — the
+ * transactional accumulator itself, clamped at zero. The still-unmaterialized
+ * inherited deposit is NOT subtractable here: it is not in the accumulator
+ * yet (its repair path is the #218/#271 deposit flow, not a free adjustment).
+ * The transaction re-validates against the fresh value; this is the UI's
+ * fast, friendly bound.
+ */
+export function maxAdjustmentSubtractCents(order: Partial<Order> & Record<string, unknown>): number {
+  const acc = order.paymentsReceivedCents;
+  return typeof acc === "number" && Number.isFinite(acc) ? Math.max(0, acc) : 0;
+}
+
 /** Merge loaded/saved records by id (replace, never duplicate). */
 export function mergePayments(prev: OrderPayment[], incoming: OrderPayment[]): OrderPayment[] {
   const byId = new Map(prev.map((p) => [p.id, p]));
