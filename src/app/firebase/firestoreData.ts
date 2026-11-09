@@ -31,7 +31,7 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
@@ -286,6 +286,19 @@ export async function saveEntity(
   // Orders are rewritten as canonical snapshots during migration/save. A full
   // replace removes legacy flat fields that merge writes would leave behind.
   await setDoc(doc(db, name, id), clean, name === "orders" ? { merge: false } : { merge: true });
+}
+
+/** #253: save ONLY the store's packaging profile. Members reach this through a
+ * field-scoped rules exception (packaging + updatedAt and nothing else); the
+ * adminStores batch is deliberately skipped — packaging is business content,
+ * not membership/control data (G-P02 targets membership-carrying writes). */
+export async function saveStorePackaging(
+  store: Pick<Store, "id">,
+  packaging: StorePackaging,
+  updatedAt: string
+): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "stores", store.id), { packaging: stripUndefined(packaging), updatedAt }, { merge: true });
 }
 
 /** Save editable storefront text to its private, control, and public projections atomically. */

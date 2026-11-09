@@ -20,6 +20,7 @@ import type {
   OrderPayment,
   PurchaseExpense,
   Storefront,
+  StorePackaging,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -47,6 +48,7 @@ import {
   subscribeCloudState,
   saveEntity,
   saveStorefrontBatch,
+  saveStorePackaging,
   deleteEntity,
   claimSlug,
   projectPublicForStore,
@@ -286,6 +288,8 @@ type StoreContextValue = {
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
   saveStorefront: (storeId: string, storefront: Storefront) => Promise<void>;
+  /** #253: members may save the packaging profile (field-scoped rules path). */
+  savePackaging: (packaging: StorePackaging) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
@@ -670,6 +674,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updatedAt = nowIso();
       if (cloud) await saveStorefrontBatch(existing, storefront, updatedAt);
       dispatch({ type: "UPDATE_STORE", store: { ...existing, storefront, updatedAt } });
+    },
+    savePackaging: async (packaging) => {
+      const existing = state.stores.find((store) => store.id === state.activeStoreId);
+      if (!existing) throw new Error("No se encontró la tienda.");
+      const updatedAt = nowIso();
+      if (cloud) await saveStorePackaging(existing, packaging, updatedAt);
+      dispatch({ type: "UPDATE_STORE", store: { ...existing, packaging, updatedAt } });
     },
     deleteStore: (storeId) => {
       const currentUser = requireAuthenticatedUser();
