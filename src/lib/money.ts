@@ -61,6 +61,13 @@ export function sanitizeIntegerInput(input: string): string {
   return input.replace(/\D/g, "");
 }
 
+/** Integer input with an optional LEADING minus ("Faltan N" stock counts).
+ * Digits and one leading sign only — fractional stock can never be typed. */
+export function sanitizeSignedIntegerInput(input: string): string {
+  const digits = input.replace(/[^0-9-]/g, "");
+  return digits.startsWith("-") ? "-" + digits.slice(1).replace(/-/g, "") : digits.replace(/-/g, "");
+}
+
 /** Keep one decimal separator and allow a trailing dot while a value is edited. */
 export function sanitizeDecimalInput(input: string): string {
   const cleaned = input.replace(/[^\d.]/g, "");
