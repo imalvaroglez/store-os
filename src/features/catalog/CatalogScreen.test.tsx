@@ -92,15 +92,12 @@ function changeSelect(label: string, value: string) {
 async function renderCatalog(state: AppState) {
   const Wrapper = withState(state);
   const view = render(<Wrapper><CatalogScreen /></Wrapper>);
-  await waitFor(() => expect(screen.getByLabelText("Categoría")).toBeTruthy());
-  // #252: hydration (loadCloudState) lands AFTER first paint. Interacting with
-  // the select before its options exist coerces the value (the filter never
-  // applies), and a later store-key change can reset it. Wait for the real
-  // categories before any test touches the filters.
-  await waitFor(() => {
-    const select = screen.getByLabelText("Categoría") as HTMLSelectElement;
-    expect(select.options.length).toBeGreaterThan(1);
-  });
+  // #252: the screen renders null until hydration (loadCloudState) lands, so
+  // the select only exists post-hydration — but the DOM a test reads after a
+  // filter change may not be settled yet, and a live store-key change in
+  // useListRestore resets filters. Never assert synchronously after changing
+  // a filter: wait for the settled state (see the filter tests below).
+  await screen.findByLabelText("Categoría");
   return view;
 }
 
