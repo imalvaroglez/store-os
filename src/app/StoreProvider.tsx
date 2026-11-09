@@ -30,7 +30,7 @@ import { uid } from "../lib/ids";
 import { nowIso, todayIso } from "../lib/dates";
 import { applyPurchaseLines, reservationDeltasForOrderChange } from "../lib/inventory";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
-import { deliveryWithBalanceBlocked, orderTotalCents, sameInstallmentPlan } from "../features/orders/installments";
+import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
   buildAdjustmentRecord,
   buildPaymentRecord,
@@ -1010,10 +1010,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         (!prev || effectiveOrderStatus(prev) !== "delivered") &&
         deliveryWithBalanceBlocked(nextOrder, docMoney)
       ) {
+        // #268 review F1: the amount Fer confirms and the doc stamps must be
+        // the SAME effective-net figure the gate used one line above — never
+        // the historical total minus cash (incidents/credit overestimated it).
+        const uncovered = uncoveredBalanceCents(nextOrder, docMoney);
         if (!options?.confirmDeliveredWithBalance) {
-          throw new DeliveryWithBalanceError(orderTotalCents(nextOrder) - docMoney.receivedCents);
+          throw new DeliveryWithBalanceError(uncovered);
         }
-        nextOrder.deliveredWithBalanceCents = orderTotalCents(nextOrder) - docMoney.receivedCents;
+        nextOrder.deliveredWithBalanceCents = uncovered;
         nextOrder.deliveredWithBalanceConfirmedAt = nowIso();
         nextOrder.deliveredWithBalanceConfirmedBy = user?.uid ?? "local";
       }

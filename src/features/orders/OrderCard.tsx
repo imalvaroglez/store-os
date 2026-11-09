@@ -74,11 +74,18 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     }
   }
 
-  /** One-tap payment collection: deposit rises to the total, paymentStatus re-derives to paid. */
+  /** One-tap payment collection: the deposit rises by the NET pending amount
+   * — saldo a favor applied from a sister order is the clienta's money already
+   * received there (#189) and must never be counted as cash here. */
   async function collect() {
     try {
-      const saved = await upsertOrder({ ...order, deposit: totals.estimatedTotal, updatedAt: new Date().toISOString() });
-      if ((saved.deposit ?? 0) < totals.estimatedTotal) {
+      const netPending = Math.max(0, totals.balance);
+      const saved = await upsertOrder({
+        ...order,
+        deposit: (typeof order.deposit === "number" ? order.deposit : 0) + netPending,
+        updatedAt: new Date().toISOString(),
+      });
+      if (orderTotals(saved).balance > 0) {
         toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
         setPaymentsOpen(true);
         return;
