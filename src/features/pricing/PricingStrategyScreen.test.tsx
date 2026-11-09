@@ -175,6 +175,9 @@ describe("PricingStrategyScreen (#280)", () => {
     mount();
     selectCategory();
     expect((screen.getAllByLabelText("Hasta $")[0] as HTMLInputElement).value).toBe("60");
+    // Regression (e2e catch): every tier loads ITS OWN prices, not the first
+    // tier's — Iconic must show 160, not Regular's 290.
+    expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("160");
     fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "300" } });
     fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
     expect(await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.")).toBeTruthy();
