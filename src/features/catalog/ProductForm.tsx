@@ -16,6 +16,7 @@ import {
 import { parseAmount, formatMoney, sanitizeDecimalInput } from "../../lib/money";
 import { DEFAULT_LOW_STOCK_AT } from "../../lib/inventory";
 import { defaultTier, suggestedPrice, tiersForStore } from "../../lib/pricing";
+import { baseCostForTier, resolveRule, suggestedPriceFor } from "../../lib/pricingRules";
 import { slugify, uniqueProductSlug, suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
 import { uid } from "../../lib/ids";
 import { activeCategoriesForStore } from "../../lib/selectors";
@@ -416,7 +417,18 @@ export function ProductForm({
           <div className={tiers.length > 2 ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
             {tiers.map((t) => {
               const isDefault = t.id === def?.id;
-              const suggested = isDefault ? suggestedPrice(parseAmount(cost), activeStore.pricingRule) : undefined;
+              // #254: per-level rules win; the legacy single markup stays as
+              // the default tier's fallback for stores without rules.
+              let suggested: number | undefined;
+              if (store.pricingRules) {
+                const resolved = resolveRule(store.pricingRules, t.id, { id: product.id, categoryIds: draft.categoryIds });
+                if (resolved) {
+                  const base = baseCostForTier({ cost: parseAmount(cost) }, t.id, store.packaging);
+                  suggested = suggestedPriceFor(resolved.rule, { baseCost: base, acquisitionCost: parseAmount(cost) }) ?? undefined;
+                }
+              } else if (isDefault) {
+                suggested = suggestedPrice(parseAmount(cost), store.pricingRule);
+              }
               return (
                 <div key={t.id}>
                   <TextField
