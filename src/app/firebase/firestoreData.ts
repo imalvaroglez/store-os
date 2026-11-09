@@ -263,6 +263,12 @@ export async function saveEntity(
   if (name === "customers" && Object.prototype.hasOwnProperty.call(data, "iconic") && data.iconic === undefined) {
     clean.iconic = deleteField();
   }
+  // #184/#255: un-checking "simplified treatment" on an expense edit must
+  // remove the flag from the merge write; stripping undefined alone would
+  // keep the stored true and strand the supply stash as "Reconocido".
+  if (name === "expenses" && Object.prototype.hasOwnProperty.call(data, "simplifiedOperation") && data.simplifiedOperation === undefined) {
+    clean.simplifiedOperation = deleteField();
+  }
 
   // G-P02: a store write MUST also write its adminStores control doc in the SAME
   // batched write — the rules resolve membership/ownership exclusively from
