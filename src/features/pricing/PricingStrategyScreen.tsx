@@ -24,6 +24,7 @@ import { parseAmount, sanitizeMoneyInput } from "../../lib/money";
 import { suggestedPriceFor, baseCostForTier, validateBands, rulesSignature } from "../../lib/pricingRules";
 import {
   analyzeCategory,
+  packagingConfigured,
   packagingGaps,
   proposeCategoryBands,
   tierEvidence,
@@ -382,11 +383,22 @@ export function PricingStrategyScreen() {
               )}
               {tiers.map((tier) => {
                 const gaps = packagingGaps(activeStore?.packaging, tier.id);
-                return gaps.length > 0 ? (
-                  <p key={tier.id} className="text-danger">
-                    Costo base de {tier.label} incompleto: faltan costos de empaque ({gaps.join(", ")}).
-                  </p>
-                ) : null;
+                if (gaps.length > 0) {
+                  return (
+                    <p key={tier.id} className="text-danger">
+                      Costo base de {tier.label} incompleto: faltan costos de empaque ({gaps.join(", ")}).
+                    </p>
+                  );
+                }
+                if (!packagingConfigured(activeStore?.packaging, tier.id)) {
+                  return (
+                    <p key={tier.id} className="text-danger">
+                      Empaque individual de {tier.label} sin configurar: el costo base es solo adquisición
+                      (preliminar). Configúralo en Productos → Empaques.
+                    </p>
+                  );
+                }
+                return null;
               })}
             </div>
           )}
@@ -526,7 +538,9 @@ export function PricingStrategyScreen() {
                       {tiers
                         .map((t) => {
                           const contribution = proposal.bands![index].minContribution[t.id];
-                          const preliminary = packagingGaps(activeStore?.packaging, t.id).length > 0;
+                          const preliminary =
+                            packagingGaps(activeStore?.packaging, t.id).length > 0 ||
+                            !packagingConfigured(activeStore?.packaging, t.id);
                           const value = contribution === null || contribution === undefined ? "—" : `$${contribution}`;
                           return `${t.label} ${value}${preliminary ? " (preliminar: falta costo de empaque)" : ""}`;
                         })

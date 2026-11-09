@@ -115,6 +115,14 @@ export function packagingGaps(packaging: StorePackaging | undefined, tierId: str
     .map((line) => materials.get(line.materialId)?.name ?? line.materialId);
 }
 
+/** True when the tier has NO per-piece packaging profile at all. PO rule
+ *  (2026-11-09): acquisition alone must NEVER be presented as the complete
+ *  commercial cost — an unconfigured profile makes every base cost and
+ *  contribution for that tier PRELIMINARY until Fer configures Empaques. */
+export function packagingConfigured(packaging: StorePackaging | undefined, tierId: string): boolean {
+  return (packaging?.byTier?.[tierId]?.perPiece?.length ?? 0) > 0;
+}
+
 function percentileCents(sorted: number[], q: number): number {
   if (sorted.length === 0) return 0;
   if (sorted.length === 1) return sorted[0];
@@ -435,6 +443,10 @@ export function proposeCategoryBands(input: {
     const gaps = packagingGaps(packaging, tier.id);
     if (gaps.length > 0) {
       warnings.push(`Costo base de ${tier.label} incompleto: faltan costos de empaque (${gaps.join(", ")}). Contribuciones preliminares.`);
+    } else if (!packagingConfigured(packaging, tier.id)) {
+      warnings.push(
+        `Empaque individual de ${tier.label} sin configurar: el costo base es SOLO adquisición. Configúralo en Productos → Empaques para ver contribuciones completas.`
+      );
     }
   }
   // P0-1: pieces the PROPOSING prices would leave under their full base cost.
