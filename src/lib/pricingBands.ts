@@ -35,7 +35,16 @@ export type BandMember = {
   id: string;
   name: string;
   cost: number;
+  inStock: boolean; // P0-1: below-cost pieces are triaged by stock status
   currentPrices: Record<string, number | undefined>;
+};
+
+/** P0-1: a piece whose PROPOSED price for a tier lands under its full base
+ *  cost. Surfaced for an explicit commercial decision (exception or write-off
+ *  conversation) — the band's prices are NEVER raised to hide an outlier. */
+export type BelowCostMember = {
+  member: BandMember;
+  tiers: Array<{ tierId: string; price: number; baseCost: number }>;
 };
 
 export type BandProposal = {
@@ -46,11 +55,13 @@ export type BandProposal = {
   prices: Record<string, number | null>; // pesos; null = pendiente (no evidence)
   priceSupport: Record<string, PriceSupport>;
   minContribution: Record<string, number | null>; // price − worst-case base cost
+  belowCost: BelowCostMember[];
 };
 
 export type CategoryAnalysis = {
   skuCount: number;
   withCost: number;
+  withCostInStock: number; // P1: historical catalog vs sellable inventory
   withoutCost: number;
   unitsOnHand: number;
   soldOut: number;
@@ -151,6 +162,7 @@ export function analyzeCategory(products: BandProduct[], categoryId: string, tie
   return {
     skuCount: inCategory.length,
     withCost: withCost.length,
+    withCostInStock: withCost.filter((p) => (p.quantityOnHand ?? 0) > 0).length,
     withoutCost: inCategory.length - withCost.length,
     unitsOnHand: inCategory.reduce((acc, p) => acc + (typeof p.quantityOnHand === "number" ? p.quantityOnHand : 0), 0),
     soldOut: inCategory.filter((p) => p.quantityOnHand === 0).length,
@@ -173,7 +185,12 @@ type Cut = number; // cents, strictly between the category's min and max cost
 function commercialCut(rawCents: Cut, observedCosts: number[], rangeCents: number, gap?: { lo: number; hi: number }): Cut {
   const tolerance = BANDS_PARAMS.cutSnapToleranceCents;
   const withinGap = (value: number) => (gap ? value > gap.lo && value < gap.hi : true);
-  const observed = observedCosts.find((c) => Math.abs(c - rawCents) <= tolerance);
+  // Closest observed edge within tolerance (NOT the first one): a raw cut of
+  // $22 must snap to the $22 edge, not drift down to $20 and die at the min.
+  const observed = observedCosts.reduce<number | undefined>(
+    (best, c) => (Math.abs(c - rawCents) <= tolerance && (best === undefined || Math.abs(c - rawCents) < Math.abs(best - rawCents)) ? c : best),
+    undefined
+  );
   if (observed !== undefined && withinGap(observed)) return observed;
   const step = rangeCents >= BANDS_PARAMS.bigRangeCents ? 1000 : 500;
   const snapped = Math.round(rawCents / step) * step;
@@ -285,10 +302,10 @@ export function proposeCategoryBands(input: {
   let supportReason: string;
   if (analysis.withCost >= 20 && analysis.distinctCosts >= 5) {
     support = "high";
-    supportReason = `${analysis.withCost} piezas con costo y ${analysis.distinctCosts} costos distintos: distribución con buen soporte.`;
+    supportReason = `${analysis.withCost} piezas con costo y ${analysis.distinctCosts} costos distintos: distribución con buen soporte (${analysis.withCostInStock} de ellas con existencia ahora mismo).`;
   } else if (analysis.withCost >= 8 && analysis.distinctCosts >= 3) {
     support = "medium";
-    supportReason = `${analysis.withCost} piezas con costo y ${analysis.distinctCosts} costos distintos: soporte medio.`;
+    supportReason = `${analysis.withCost} piezas con costo y ${analysis.distinctCosts} costos distintos: soporte medio (${analysis.withCostInStock} de ellas con existencia ahora mismo).`;
   } else if (analysis.withCost >= 4) {
     support = "low";
     supportReason = `Solo ${analysis.withCost} piezas con costo (${analysis.distinctCosts} costos distintos): propuesta con confianza baja.`;
@@ -390,7 +407,7 @@ export function proposeCategoryBands(input: {
 
   // Limits in pesos: first band opens at 0, last band stays open.
   const limits = best.candidate.cuts.map(toPesos);
-  const bands: BandProposal[] = best.candidate.groups.map((_, index) => {
+  let bands: BandProposal[] = best.candidate.groups.map((_, index) => {
     const min = index === 0 ? 0 : limits[index - 1];
     const max = index < best.candidate.groups.length - 1 ? limits[index] : undefined;
     const members = membersOfGroups(withCost, best.candidate, index).sort(
@@ -398,6 +415,20 @@ export function proposeCategoryBands(input: {
     );
     return buildBand(min, max, members, tiers, packaging, outlierPricesByTier);
   });
+  let consolidationNote = "";
+  if (bands.length > 1) {
+    // P1: bands that would charge IDENTICAL prices for every level carry no
+    // commercial distinction — consolidate into one open band instead of
+    // administering a split that changes nothing (Italian Bracelet case).
+    const priceSignature = (band: BandProposal) => JSON.stringify(tiers.map((t) => band.prices[t.id] ?? null));
+    const anyPrice = bands.some((b) => tiers.some((t) => b.prices[t.id] != null));
+    if (anyPrice && bands.every((b) => priceSignature(b) === priceSignature(bands[0]))) {
+      const allMembers = bands.flatMap((b) => b.members).sort((a, b) => a.cost - b.cost || a.name.localeCompare(b.name));
+      bands = [buildBand(0, undefined, allMembers, tiers, packaging, outlierPricesByTier)];
+      consolidationNote =
+        " Las bandas separaban costos pero cobrarían lo mismo en todos los niveles: se consolidó en una sola banda hasta que quieras cobrar distinto por rango.";
+    }
+  }
 
   const warnings: string[] = [];
   for (const tier of tiers) {
@@ -405,6 +436,16 @@ export function proposeCategoryBands(input: {
     if (gaps.length > 0) {
       warnings.push(`Costo base de ${tier.label} incompleto: faltan costos de empaque (${gaps.join(", ")}). Contribuciones preliminares.`);
     }
+  }
+  // P0-1: pieces the PROPOSING prices would leave under their full base cost.
+  // Named per band for an explicit commercial decision — never absorbed by
+  // raising the whole band.
+  const belowCostTotal = bands.reduce((acc, band) => acc + band.belowCost.length, 0);
+  if (belowCostTotal > 0) {
+    const withStock = bands.reduce((acc, band) => acc + band.belowCost.filter((b) => b.member.inStock).length, 0);
+    warnings.push(
+      `${belowCostTotal} pieza(s) quedarían con precio sugerido bajo su costo base (${withStock} con existencia): revisa cada una y decide una excepción o ajuste puntual antes de aplicar precios.`
+    );
   }
   const canonical = canonicalTiers(tiers);
   if (canonical) {
@@ -421,7 +462,7 @@ export function proposeCategoryBands(input: {
     warnings.push(`${analysis.withoutCost} piezas sin costo confiable quedan fuera de la tabla (sin precio sugerido).`);
   }
 
-  return { analysis, support, supportReason, bands, kSummary, chosenReason, warnings };
+  return { analysis, support, supportReason, bands, kSummary, chosenReason: chosenReason + consolidationNote, warnings };
 }
 
 function membersOfGroups(withCost: Array<BandProduct & { cost: number }>, candidate: Candidate, groupIndex: number): BandMember[] {
@@ -432,7 +473,7 @@ function membersOfGroups(withCost: Array<BandProduct & { cost: number }>, candid
       const index = cuts.findIndex((cut) => cents < cut);
       return (index === -1 ? candidate.groups.length - 1 : index) === groupIndex;
     })
-    .map((p) => ({ id: p.id, name: p.name, cost: p.cost, currentPrices: p.prices ?? {} }));
+    .map((p) => ({ id: p.id, name: p.name, cost: p.cost, inStock: (p.quantityOnHand ?? 0) > 0, currentPrices: p.prices ?? {} }));
 }
 
 function buildBand(
@@ -461,14 +502,32 @@ function buildBand(
     }
     const raw = medianCents(values);
     const step = BANDS_PARAMS.proposalPriceStep * 100;
-    const proposed = Math.max(step, Math.round(raw / step) * step);
+    // P1: a median already sitting on a $0/$5 ending is a price Fer uses
+    // deliberately — keep it instead of dragging it to the $10 ladder.
+    const proposed = raw % 500 === 0 ? Math.max(step, raw) : Math.max(step, Math.round(raw / step) * step);
     prices[tier.id] = toPesos(proposed);
     priceSupport[tier.id] = values.length >= BANDS_PARAMS.strongPriceEvidence ? "strong" : "weak";
     // Worst case inside the band: the most expensive member's full base cost.
     const worstBase = Math.max(...members.map((m) => baseCostForTier({ cost: m.cost }, tier.id, packaging) ?? 0));
     minContribution[tier.id] = toPesos(proposed - toCents(worstBase));
   }
-  return { min, max, skuCount: members.length, members, prices, priceSupport, minContribution };
+  // P0-1: members whose proposed price for ANY tier is under that tier's full
+  // base cost, with the offending tiers listed for the exception decision.
+  const belowCost = members
+    .map((member) => {
+      const tiersBelow = tiers
+        .map((tier) => {
+          const price = prices[tier.id];
+          if (price === null) return null;
+          const base = baseCostForTier({ cost: member.cost }, tier.id, packaging);
+          if (base === undefined || !(price < base)) return null;
+          return { tierId: tier.id, price, baseCost: base };
+        })
+        .filter((entry): entry is { tierId: string; price: number; baseCost: number } => entry !== null);
+      return { member, tiers: tiersBelow };
+    })
+    .filter((entry) => entry.tiers.length > 0);
+  return { min, max, skuCount: members.length, members, prices, priceSupport, minContribution, belowCost };
 }
 
 export function canonicalTiers(tiers: BandTier[]): { regular: string; girly: string; iconic: string } | null {

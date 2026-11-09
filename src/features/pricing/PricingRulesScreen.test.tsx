@@ -98,6 +98,34 @@ describe("PricingRulesScreen (#254)", () => {
     expect(mocks.savePricingRules).not.toHaveBeenCalled();
   });
 
+  it("#280 P0-1: una sugerencia bajo el costo base NO se aplica (regla general)", async () => {
+    state.stores[0].pricingRules = {
+      byTier: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 60 }], rounding: "none" } },
+    };
+    state.products = [product({ cost: 100, prices: { t_iconic: 120 } })]; // sugerido 60 < costo base 100
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/bajo el costo/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    expect(await screen.findByText(/Solo había precios sugeridos bajo el costo/)).toBeTruthy();
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+
+  it("#280 P0-1: la excepción EXPLÍCITA por producto sí puede quedar bajo el costo", async () => {
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byProduct: { p1: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 60 }], rounding: "none" } } },
+    };
+    state.products = [product({ cost: 100, prices: { t_iconic: 120 } })];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    await screen.findAllByText(/\$60/);
+    fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    expect(await screen.findByText(/Precios actualizados en 1 producto/)).toBeTruthy();
+    const updated = mocks.upsertProduct.mock.calls[0][0] as Product;
+    expect(updated.prices?.t_iconic).toBe(60); // decisión deliberada de Fer vía excepción
+  });
+
   it("guardar reglas NO cambia precios: sin selección, aplicar no llama a upsertProduct", async () => {
     state.products = [product({ prices: { t_iconic: 60 } })];
     render(<ToastProvider><PricingRulesScreen /></ToastProvider>);

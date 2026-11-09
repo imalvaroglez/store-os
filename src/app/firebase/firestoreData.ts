@@ -22,6 +22,7 @@ import { reservationDeltasForOrderChange } from "../../lib/inventory";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
+import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
@@ -322,18 +323,33 @@ export async function savePricingRules(
   });
 }
 
+/** Thrown by saveCategoryPricingRules when the category's saved table changed
+ *  since the client loaded it (P0-2): the save is REFUSED, nothing is lost,
+ *  and the UI must offer to reload and re-apply. */
+export class CategoryRulesConflictError extends Error {
+  constructor() {
+    super("La tabla de esta categoría cambió en otra sesión. Recárgala y vuelve a aplicar tus cambios.");
+    this.name = "CategoryRulesConflictError";
+  }
+}
+
 /** #280: save ONE category's band table transactionally. The whole
  * `pricingRules` field is replaced (merge:true at the doc level would keep a
  * deleted category alive), so the new value is built from the FRESH doc inside
  * the transaction: `byTier`, `byProduct` and every OTHER category survive by
  * construction, concurrent edits to them can no longer be clobbered by a
  * stale client config, and a `null` rules value really deletes the category.
- * Same member-reachable, field-scoped write as savePricingRules. */
+ * P0-2: `expectedSignature` (rulesSignature of the table the client loaded)
+ * is compared against the fresh doc INSIDE the transaction — a same-category
+ * concurrent edit no longer silently loses to last-write-wins; the save is
+ * rejected with CategoryRulesConflictError instead. Same member-reachable,
+ * field-scoped write as savePricingRules. */
 export async function saveCategoryPricingRules(
   store: Pick<Store, "id">,
   categoryId: string,
   rules: Record<string, PricingRule> | null,
-  updatedAt: string
+  updatedAt: string,
+  expectedSignature: string
 ): Promise<void> {
   const { db } = getFirebase();
   const storeRef = doc(db, "stores", store.id);
@@ -341,6 +357,8 @@ export async function saveCategoryPricingRules(
     const snap = await tx.get(storeRef);
     if (!snap.exists()) throw new Error("No se encontró la tienda.");
     const current = (snap.data().pricingRules ?? {}) as PricingRulesConfig;
+    const savedNow = current.byCategory?.[categoryId] ?? null;
+    if (rulesSignature(savedNow) !== expectedSignature) throw new CategoryRulesConflictError();
     const byCategory = { ...(current.byCategory ?? {}) };
     if (rules === null) delete byCategory[categoryId];
     else byCategory[categoryId] = rules;

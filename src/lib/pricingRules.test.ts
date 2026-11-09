@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // #254 — the suggested-price engine: precedence, bands, rounding, packaging base.
 import { describe, it, expect } from "vitest";
-import { applyRound, baseCostForTier, resolveRule, suggestedPriceFor, suggestionForTier, validateBands } from "./pricingRules";
+import { applyRound, baseCostForTier, resolveRule, rulesSignature, suggestedPriceFor, suggestionForTier, validateBands } from "./pricingRules";
 
 const product = { id: "p1", categoryIds: ["cat_anillos"], cost: 100 };
 
@@ -141,5 +141,15 @@ describe("suggestionForTier — integración", () => {
     expect(s.baseCost).toBe(100.5);
     expect(s.suggested).toBe(201);
     expect(s.origin).toBe("general");
+  });
+});
+
+describe("rulesSignature (#280 P0-2)", () => {
+  it("es invariante al orden de llaves: cliente y Firestore firman igual", () => {
+    const clientOrder = { byTier: { t_retail: { kind: "markup", percent: 100 }, t_iconic: { kind: "markup", percent: 200 } } };
+    const firestoreOrder = { byTier: { t_iconic: { kind: "markup", percent: 200 }, t_retail: { kind: "markup", percent: 100 } } };
+    expect(rulesSignature(clientOrder)).toBe(rulesSignature(firestoreOrder));
+    expect(rulesSignature(null)).toBe("null");
+    expect(rulesSignature({ a: { b: 1, c: [2, 1] } })).not.toBe(rulesSignature({ a: { b: 2, c: [2, 1] } }));
   });
 });

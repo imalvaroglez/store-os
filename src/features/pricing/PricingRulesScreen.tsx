@@ -95,15 +95,20 @@ export function PricingRulesScreen() {
     return products
       .filter((product) => product.cost !== undefined && product.cost !== null)
       .map((product) => {
-        const byTier: Record<string, { suggested: number | null; current: number | undefined; base: number | undefined; origin: string }> = {};
+        const byTier: Record<string, { suggested: number | null; current: number | undefined; base: number | undefined; origin: string; belowCost: boolean }> = {};
         for (const tier of tiers) {
           const resolved = resolveRule(draft.config, tier.id, product);
           const base = baseCostForTier(product, tier.id, activeStore?.packaging);
+          const suggested = resolved ? suggestedPriceFor(resolved.rule, { baseCost: base, acquisitionCost: product.cost }) : null;
           byTier[tier.id] = {
-            suggested: resolved ? suggestedPriceFor(resolved.rule, { baseCost: base, acquisitionCost: product.cost }) : null,
+            suggested,
             current: product.prices?.[tier.id],
             base,
             origin: resolved?.origin ?? "",
+            // #280 P0-1: a suggestion under the full base cost is a loss by
+            // default — visible here, and applySelected refuses it unless the
+            // rule is Fer's explicit per-product exception.
+            belowCost: suggested != null && base !== undefined && suggested < base,
           };
         }
         return { product, byTier };
@@ -114,6 +119,7 @@ export function PricingRulesScreen() {
 
   async function applySelected() {
     const updates: Array<{ product: Product; prices: Record<string, number> }> = [];
+    let skippedBelowCost = 0;
     for (const entry of suggestions) {
       if (!selected[entry.product.id]) continue;
       const nextPrices = { ...(entry.product.prices ?? {}) };
@@ -121,6 +127,13 @@ export function PricingRulesScreen() {
       for (const tier of tiers) {
         const suggestion = entry.byTier[tier.id];
         if (suggestion?.suggested != null && suggestion.suggested !== suggestion.current) {
+          // #280 P0-1: selling under the full base cost is never applied
+          // implicitly — only Fer's explicit per-product exception (origin
+          // "product") may do it deliberately.
+          if (suggestion.belowCost && suggestion.origin !== "product") {
+            skippedBelowCost += 1;
+            continue;
+          }
           nextPrices[tier.id] = suggestion.suggested;
           changed = true;
         }
@@ -128,7 +141,11 @@ export function PricingRulesScreen() {
       if (changed) updates.push({ product: entry.product, prices: nextPrices });
     }
     if (updates.length === 0) {
-      toast.error("Nada seleccionado con sugerencias distintas al precio actual.");
+      toast.error(
+        skippedBelowCost > 0
+          ? `Solo había precios sugeridos bajo el costo (${skippedBelowCost}); no se aplicó nada. Vender con pérdida requiere una excepción por producto.`
+          : "Nada seleccionado con sugerencias distintas al precio actual."
+      );
       return;
     }
     setApplying(true);
@@ -145,13 +162,14 @@ export function PricingRulesScreen() {
     setApplying(false);
     // Adversarial H4: report what actually applied — a mid-batch failure must
     // not hide the N-1 prices that DID change.
-    if (failed.length === 0) {
+    if (failed.length === 0 && skippedBelowCost === 0) {
       setSelected({});
       toast.success(`Precios actualizados en ${applied.length} producto(s).`);
     } else if (applied.length === 0) {
       toast.error("No se pudo aplicar ningún precio. Revisa tu conexión e inténtalo de nuevo.");
     } else {
-      toast.error(`Se aplicaron ${applied.length}; fallaron ${failed.length}: ${failed.join(", ")}.`);
+      const skipped = skippedBelowCost > 0 ? `; se omitieron ${skippedBelowCost} por quedar bajo el costo` : "";
+      toast.error(`Se aplicaron ${applied.length}${skipped}; fallaron ${failed.length}: ${failed.join(", ")}.`);
     }
   }
 
@@ -220,6 +238,7 @@ export function PricingRulesScreen() {
                           <span className="font-semibold text-on-surface">{tier.label}:</span>{" "}
                           {s.current !== undefined ? <>actual <Money amount={s.current} /></> : "sin precio"} →{" "}
                           {s.suggested != null ? <span className="font-semibold text-terracotta"><Money amount={s.suggested} /></span> : "sin sugerencia"}
+                          {s.belowCost ? " ⚠️ bajo el costo (no se aplica; requiere excepción)" : ""}
                           {s.origin ? ` (${s.origin === "product" ? "excepción" : s.origin === "category" ? "categoría" : "regla"})` : ""}
                         </p>
                       );

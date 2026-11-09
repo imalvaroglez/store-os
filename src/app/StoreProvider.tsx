@@ -43,6 +43,7 @@ import {
 } from "../features/orders/payments";
 import { creditAvailableCents, ordersForCustomer, planCreditApplications } from "../features/orders/customerCredit";
 import { useAuth } from "./firebase/AuthProvider";
+export { CategoryRulesConflictError } from "./firebase/firestoreData";
 import type { AppUser } from "./firebase/auth";
 import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
 import { normalizeEmail, sendInviteLink } from "./firebase/auth";
@@ -299,8 +300,10 @@ type StoreContextValue = {
   savePricingRules: (pricingRules: PricingRulesConfig) => Promise<void>;
   /** #280: save ONE category's rules atomically — other categories, byTier and
    * byProduct are overlaid on the fresh Firestore doc, never replaced from a
-   * stale client clone. `null` deletes the category's table. */
-  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null) => Promise<void>;
+   * stale client clone. `null` deletes the category's table. P0-2:
+   * `expectedSignature` is the table the client loaded; if the saved table
+   * changed meanwhile, the save is REJECTED (CategoryRulesConflictError). */
+  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null, expectedSignature: string) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
@@ -706,11 +709,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       merged.byTier = pricingRules.byTier ?? {};
       dispatch({ type: "UPDATE_STORE", store: { ...existing, pricingRules: merged, updatedAt } });
     },
-    saveCategoryPricingRules: async (categoryId, rules) => {
+    saveCategoryPricingRules: async (categoryId, rules, expectedSignature) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
-      if (cloud) await saveCategoryPricingRules(existing, categoryId, rules, updatedAt);
+      if (cloud) await saveCategoryPricingRules(existing, categoryId, rules, updatedAt, expectedSignature);
       // Mirror the same category-scoped overlay locally (never a stale clone).
       const pricingRules: PricingRulesConfig = existing.pricingRules
         ? JSON.parse(JSON.stringify(existing.pricingRules))
