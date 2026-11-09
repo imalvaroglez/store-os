@@ -54,6 +54,18 @@ export function PricingRulesScreen() {
   }
 
   async function save() {
+    // Adversarial H1: nonsensical increments are refused before persisting.
+    for (const [tierId, rule] of Object.entries(draft.config.byTier)) {
+      const label = tiers.find((t) => t.id === tierId)?.label ?? tierId;
+      if (rule.kind === "markup" && !(rule.percent >= 0)) {
+        toast.error(`El porcentaje de ${label} no puede ser negativo.`);
+        return;
+      }
+      if (rule.kind === "fixed" && !(rule.amount >= 0)) {
+        toast.error(`El importe fijo de ${label} no puede ser negativo.`);
+        return;
+      }
+    }
     // Bands must be unequivocal before anything persists.
     for (const [tierId, rule] of Object.entries(draft.config.byTier)) {
       if (rule.kind === "bands") {
@@ -67,7 +79,9 @@ export function PricingRulesScreen() {
     setBusy(true);
     try {
       await savePricingRules(draft.config);
-      setDraft({ config: cloneConfig(draft.config), dirty: false });
+      // Functional update: edits made while saving are preserved, not clobbered
+      // by the click-time closure (adversarial H3).
+      setDraft((current) => ({ config: cloneConfig(current.config), dirty: false }));
       toast.success("Reglas de venta guardadas.");
     } catch (error) {
       toast.error(error instanceof Error && error.message ? error.message : "No se pudieron guardar las reglas.");
@@ -118,16 +132,26 @@ export function PricingRulesScreen() {
       return;
     }
     setApplying(true);
-    try {
-      for (const update of updates) {
+    const applied: string[] = [];
+    const failed: string[] = [];
+    for (const update of updates) {
+      try {
         await upsertProduct({ ...update.product, prices: update.prices, updatedAt: new Date().toISOString() });
+        applied.push(update.product.name);
+      } catch {
+        failed.push(update.product.name);
       }
+    }
+    setApplying(false);
+    // Adversarial H4: report what actually applied — a mid-batch failure must
+    // not hide the N-1 prices that DID change.
+    if (failed.length === 0) {
       setSelected({});
-      toast.success(`Precios actualizados en ${updates.length} producto(s).`);
-    } catch (error) {
-      toast.error(error instanceof Error && error.message ? error.message : "No se pudieron aplicar los precios.");
-    } finally {
-      setApplying(false);
+      toast.success(`Precios actualizados en ${applied.length} producto(s).`);
+    } else if (applied.length === 0) {
+      toast.error("No se pudo aplicar ningún precio. Revisa tu conexión e inténtalo de nuevo.");
+    } else {
+      toast.error(`Se aplicaron ${applied.length}; fallaron ${failed.length}: ${failed.join(", ")}.`);
     }
   }
 
@@ -142,6 +166,7 @@ export function PricingRulesScreen() {
           <RuleCard
             key={tier.id}
             label={tier.label}
+            disabled={busy}
             rule={draft.config.byTier[tier.id]}
             onChange={(rule) =>
               patchConfig((config) => {
@@ -214,20 +239,29 @@ function RuleCard({
   label,
   rule,
   onChange,
+  disabled = false,
 }: {
   label: string;
   rule: PricingRule | undefined;
   onChange: (rule: PricingRule | null) => void;
+  disabled?: boolean;
 }) {
   const kind = rule?.kind ?? "markup";
   const rounding: PriceRounding = rule?.rounding ?? "none";
+  // Adversarial H2: remember each method's last values so switching methods
+  // never silently restores defaults.
+  const [last, setLast] = useState<{ percent: number; amount: number }>({ percent: 100, amount: 50 });
 
   function patchRule(patch: Partial<PricingRule> & { kind?: PricingRule["kind"] }) {
     const nextKind = patch.kind ?? kind;
+    setLast((current) => ({
+      percent: kind === "markup" ? (rule as { percent?: number } | undefined)?.percent ?? current.percent : current.percent,
+      amount: kind === "fixed" ? (rule as { amount?: number } | undefined)?.amount ?? current.amount : current.amount,
+    }));
     if (nextKind === "markup") {
-      onChange({ kind: "markup", percent: (rule as { percent?: number } | undefined)?.percent ?? 100, rounding, ...(patch as object) } as PricingRule);
+      onChange({ kind: "markup", percent: (rule as { percent?: number } | undefined)?.percent ?? last.percent, rounding, ...(patch as object) } as PricingRule);
     } else if (nextKind === "fixed") {
-      onChange({ kind: "fixed", amount: (rule as { amount?: number } | undefined)?.amount ?? 50, rounding, ...(patch as object) } as PricingRule);
+      onChange({ kind: "fixed", amount: (rule as { amount?: number } | undefined)?.amount ?? last.amount, rounding, ...(patch as object) } as PricingRule);
     } else {
       const bands = (rule as { bands?: Array<{ min: number; max?: number; price: number }> } | undefined)?.bands ?? [
         { min: 0, max: 90, price: 0 },
@@ -245,6 +279,7 @@ function RuleCard({
       <div className="grid gap-3 sm:grid-cols-2">
         <SelectField
           label="Método"
+          disabled={disabled}
           value={kind}
           onChange={(next) => patchRule({ kind: next as PricingRule["kind"] })}
           options={[
@@ -255,11 +290,12 @@ function RuleCard({
         />
         <SelectField
           label="Redondeo"
+          disabled={disabled}
           value={rounding}
           onChange={(next) => patchRule({ rounding: next as PriceRounding })}
           options={[
             { value: "none", label: "Sin redondeo" },
-            { value: "1", label: "Al peso" },
+            { value: "1", label: "Al peso (más cercano)" },
             { value: "5", label: "A $5 (sube)" },
             { value: "10", label: "A $10 (sube)" },
           ]}
@@ -268,6 +304,7 @@ function RuleCard({
       {kind === "markup" && (
         <TextField
           label="Porcentaje sobre el costo"
+          disabled={disabled}
           inputMode="decimal"
           placeholder="p. ej. 200"
           hint="Ojo: +200% sobre un costo de $100 da un precio de $300 — una ganancia de 66.7% sobre la venta, no 200%."
@@ -281,6 +318,7 @@ function RuleCard({
       {kind === "fixed" && (
         <TextField
           label="Importe fijo (pesos sobre el costo)"
+          disabled={disabled}
           inputMode="decimal"
           placeholder="p. ej. 50"
           value={String((rule as { amount?: number } | undefined)?.amount ?? "")}

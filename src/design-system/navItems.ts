@@ -48,13 +48,18 @@ export function parentActive(active: Tab): boolean {
   return active === "productos" || active.startsWith("productos_");
 }
 
-// Compras child only exists for inventory-tiered stores.
+// Compras child only exists for inventory-tiered stores; so do the level
+// pricing rules (levels only exist for tiered stores).
 export function visibleNavItems(storeType: StoreType, userRole?: PlatformRole) {
   return NAV_ITEMS.filter((item) => item.id !== "usuarios" || userRole === "super_admin").map((t) =>
     t.children
       ? {
           ...t,
-          children: t.children.filter((c) => c.id !== "productos_compras" || storeType === "inventory_tiered"),
+          children: t.children.filter(
+            (c) =>
+              (c.id !== "productos_compras" || storeType === "inventory_tiered") &&
+              (c.id !== "productos_reglas" || storeType === "inventory_tiered")
+          ),
         }
       : t
   );

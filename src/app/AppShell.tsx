@@ -147,10 +147,11 @@ export function AppShell() {
       screen = <ExpensesScreen />;
       break;
     case "productos_empaques":
-      screen = <PackagingScreen />;
+      // key: switching stores must never carry one store's draft into another.
+      screen = <PackagingScreen key={activeStore?.id ?? "store"} />;
       break;
     case "productos_reglas":
-      screen = <PricingRulesScreen />;
+      screen = <PricingRulesScreen key={activeStore?.id ?? "store"} />;
       break;
     case "pedidos":
       // key={sub}: back/forward between two editors must remount the form, or
