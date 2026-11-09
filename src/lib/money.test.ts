@@ -8,6 +8,7 @@ import {
   sanitizeDecimalInput,
   sanitizeIntegerInput,
   sanitizeMoneyInput,
+  sanitizeSignedIntegerInput,
 } from "./money";
 import type { Product } from "../types";
 
@@ -103,5 +104,15 @@ describe("formatMoneyExact", () => {
   it("falls back to $0.00 for invalid input", () => {
     expect(formatMoneyExact(undefined)).toBe("$0.00");
     expect(formatMoneyExact(NaN)).toBe("$0.00");
+  });
+});
+
+describe("sanitizeSignedIntegerInput (#266)", () => {
+  it("acepta enteros y el menos inicial; bloquea fracciones y signos intermedios", () => {
+    expect(sanitizeSignedIntegerInput("2.5")).toBe("25");
+    expect(sanitizeSignedIntegerInput("-3")).toBe("-3");
+    expect(sanitizeSignedIntegerInput("12-3")).toBe("123");
+    expect(sanitizeSignedIntegerInput("--5")).toBe("-5");
+    expect(sanitizeSignedIntegerInput("abc")).toBe("");
   });
 });

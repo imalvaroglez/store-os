@@ -13,7 +13,7 @@ import {
   MultiPhotoPicker,
   type GalleryTile,
 } from "../../design-system";
-import { parseAmount, formatMoney, sanitizeDecimalInput } from "../../lib/money";
+import { parseAmount, formatMoney, sanitizeDecimalInput , sanitizeSignedIntegerInput } from "../../lib/money";
 import { DEFAULT_LOW_STOCK_AT } from "../../lib/inventory";
 import { defaultTier, suggestedPrice, tiersForStore } from "../../lib/pricing";
 import { baseCostForTier, resolveRule, suggestedPriceFor, hasRules } from "../../lib/pricingRules";
@@ -456,7 +456,7 @@ export function ProductForm({
             })}
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <TextField label="En existencia" inputMode="numeric" placeholder="0" value={qty} onChange={(e) => setQty(e.target.value)} />
+            <TextField label="En existencia" inputMode="numeric" placeholder="0" value={qty} onChange={(e) => setQty(sanitizeSignedIntegerInput(e.target.value))} />
             <TextField
               label="Alerta en"
               inputMode="numeric"
