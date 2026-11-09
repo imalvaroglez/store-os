@@ -48,7 +48,7 @@ export type PackagingLine = { materialId: string; units: number };
 
 /** Packaging profile for one price level (tier id keyed in StorePackaging.byTier). */
 export type TierPackaging = {
-  /** Consumed PER PIECE sold at this level (b. ej. bolsa ×1, cartoncito ×1). */
+  /** Consumed PER PIECE sold at this level (e.g. bag x1, backing card x1). */
   perPiece: PackagingLine[];
   /** Consumed ONCE per order at this level (bolsa rosa, moño, paleta). */
   perOrder: PackagingLine[];

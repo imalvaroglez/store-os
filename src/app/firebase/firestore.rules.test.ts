@@ -230,6 +230,32 @@ describe("G-P02 super_admin can operate any store by role", () => {
 // not-yet-visible adminStores document. If either rule started calling
 // isMember()/isOwner() again, this test would fail.
 describe("G-P02 batched create — stores + adminStores in one batch", () => {
+  it("#253 a member can update ONLY the packaging field of their store", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/s1"), { ownerUid: "u1", memberUids: ["u1", "u2"] });
+      await setDoc(doc(c.firestore(), "stores/s1"), { ownerUid: "u1", memberUids: ["u1", "u2"], name: "Olivia" });
+    });
+    const db = await asUser("u2"); // member, not owner
+    await assertSucceeds(
+      updateDoc(doc(db, "stores/s1"), {
+        packaging: { materials: [], byTier: {} },
+        updatedAt: "2026-11-09T00:00:00.000Z",
+      })
+    );
+    // Anything beyond packaging + updatedAt stays owner-only.
+    await assertFails(updateDoc(doc(db, "stores/s1"), { name: "Otra cosa" }));
+    await assertFails(updateDoc(doc(db, "stores/s1"), { ownerUid: "u2" }));
+    await assertFails(updateDoc(doc(db, "stores/s1"), { memberUids: ["u2"] }));
+    // A stranger cannot touch even the packaging field.
+    const stranger = await asUser("u3");
+    await assertFails(
+      updateDoc(doc(stranger, "stores/s1"), {
+        packaging: { materials: [], byTier: {} },
+        updatedAt: "2026-11-09T00:00:00.000Z",
+      })
+    );
+  });
+
   it("owner can create stores/{id} and adminStores/{id} together", async () => {
     const db = await asUser("u1");
     const batch = writeBatch(db);

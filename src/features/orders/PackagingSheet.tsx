@@ -31,8 +31,26 @@ export function PackagingSheet({ order, onClose }: { order: Order; onClose: () =
       }),
     [order, activeStore, customerTier]
   );
+  // Review F4 / adversarial H1: what this order already consumed (from the
+  // append-only consumption evidence), so a reopen or a retry after a partial
+  // failure NEVER re-charges what is already on the order.
+  const consumedForOrder = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const expense of state.expenses) {
+      if (expense.storeId !== order.storeId || !expense.supply) continue;
+      for (const consumption of expense.supply.consumptions ?? []) {
+        if (consumption.orderId !== order.id) continue;
+        map.set(expense.id, (map.get(expense.id) ?? 0) + Math.max(0, Math.round(Number(consumption.quantity) || 0)));
+      }
+    }
+    return map;
+  }, [state.expenses, order.id, order.storeId]);
+  const alreadyConsumed = (line: PackagingSuggestionLine) =>
+    (line.supplyExpenseId ? consumedForOrder.get(line.supplyExpenseId) ?? 0 : 0);
   const [unitsByMaterial, setUnitsByMaterial] = useState<Record<string, string>>(() =>
-    Object.fromEntries(suggestion.lines.map((line) => [line.materialId, String(line.units)]))
+    Object.fromEntries(
+      suggestion.lines.map((line) => [line.materialId, String(Math.max(0, line.units - alreadyConsumed(line)))])
+    )
   );
 
   const expenseFor = (line: PackagingSuggestionLine) =>
@@ -46,6 +64,9 @@ export function PackagingSheet({ order, onClose }: { order: Order; onClose: () =
     const newProblems: Record<string, string> = {};
     let okCount = 0;
     for (const line of suggestion.lines) {
+      // H1: a line already consumed (this run or a previous one) is never
+      // re-charged — retrying after a partial failure only retries the rest.
+      if (consumed[line.materialId]) continue;
       const units = Math.round(Number(unitsByMaterial[line.materialId] ?? "0"));
       if (units <= 0) continue;
       const expense = expenseFor(line);
@@ -97,13 +118,20 @@ export function PackagingSheet({ order, onClose }: { order: Order; onClose: () =
             <ul className="space-y-2">
               {suggestion.lines.map((line) => {
                 const expense = expenseFor(line);
+                const already = alreadyConsumed(line);
+                const fullyConsumed = already >= line.units && line.units > 0;
+                // Snapshot note (review F3): with two materials sharing one
+                // supply, availability shown can lag one consumption behind;
+                // the transaction re-validates and reports the real remainder.
                 const available = expense ? supplyAvailableQuantity(expense) : null;
                 const unitCost = expense ? supplyUnitCostCents(expense) : null;
                 return (
                   <li key={line.materialId} className="space-y-1 rounded-lg border border-edge bg-surface px-3 py-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-sm font-semibold text-ink">{line.name}</p>
-                      {consumed[line.materialId] ? (
+                      {fullyConsumed ? (
+                        <span className="text-xs font-semibold text-success">Ya consumido en este pedido</span>
+                      ) : consumed[line.materialId] ? (
                         <span className="text-xs font-semibold text-success">Consumido</span>
                       ) : problems[line.materialId] ? (
                         <span className="text-xs font-semibold text-danger">{problems[line.materialId]}</span>
@@ -114,7 +142,7 @@ export function PackagingSheet({ order, onClose }: { order: Order; onClose: () =
                         <TextField
                           label="Unidades"
                           inputMode="numeric"
-                          disabled={busy || consumed[line.materialId]}
+                          disabled={busy || consumed[line.materialId] || fullyConsumed}
                           value={unitsByMaterial[line.materialId] ?? "0"}
                           onChange={(e) =>
                             setUnitsByMaterial((current) => ({
@@ -125,6 +153,7 @@ export function PackagingSheet({ order, onClose }: { order: Order; onClose: () =
                         />
                       </div>
                       <p className="pb-2 text-xs text-on-surface-soft">
+                        {already > 0 ? `ya consumidos ${already} · ` : ""}
                         {expense
                           ? `${available} disponibles × ${formatMoneyExact((unitCost ?? 0) / 100)}`
                           : line.estimatedCost !== undefined

@@ -135,10 +135,15 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
       // Owners and super_admins can manage store settings. The new owner must
-      // already be a member. Ordinary members cannot alter store settings.
+      // already be a member. Ordinary members cannot alter store settings —
+      // EXCEPT the packaging profile (#253): a member may update packaging +
+      // updatedAt and NOTHING else (field-scoped diff), because packaging is
+      // business content the operator configures (Fer runs as a member).
       allow update: if ((isSuperAdmin() || isOwner(id))
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
-        || inviteeJoinOk();
+        || inviteeJoinOk()
+        || (canOperateStore(id)
+            && request.resource.data.diff(resource.data).affectedPaths().hasOnly(['packaging', 'updatedAt']));
       allow delete: if isSuperAdmin() || isOwner(id);
     }
 

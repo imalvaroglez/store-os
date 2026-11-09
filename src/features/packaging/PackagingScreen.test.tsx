@@ -10,7 +10,7 @@ import type { Store } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
-  updateStore: vi.fn(),
+  savePackaging: vi.fn(),
 }));
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => {
@@ -20,7 +20,7 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
     useStore: () => ({
       state: mocks.state,
       activeStore: mocks.state?.stores.find((s) => s.id === mocks.state?.activeStoreId) ?? null,
-      updateStore: mocks.updateStore,
+      savePackaging: mocks.savePackaging,
     }),
   };
 });
@@ -37,8 +37,8 @@ function olivia(): Store {
 
 beforeEach(() => {
   mocks.state = fixtureState();
-  mocks.updateStore.mockReset();
-  mocks.updateStore.mockResolvedValue(undefined);
+  mocks.savePackaging.mockReset();
+  mocks.savePackaging.mockResolvedValue(undefined);
 });
 
 describe("PackagingScreen (#253)", () => {
@@ -65,10 +65,10 @@ describe("PackagingScreen (#253)", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "+ Material por pedido" })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Guardar empaques" }));
     await screen.findByText("Empaques guardados.");
-    expect(mocks.updateStore).toHaveBeenCalledTimes(1);
-    const patch = mocks.updateStore.mock.calls[0][0] as { packaging: { materials: unknown[]; byTier: Record<string, unknown> } };
-    expect(patch.packaging.materials).toHaveLength(1);
-    expect(patch.packaging.byTier["t_iconic"]).toEqual({
+    expect(mocks.savePackaging).toHaveBeenCalledTimes(1);
+    const saved = mocks.savePackaging.mock.calls[0][0] as { materials: unknown[]; byTier: Record<string, unknown> };
+    expect(saved.materials).toHaveLength(1);
+    expect(saved.byTier["t_iconic"]).toEqual({
       perPiece: [{ materialId: expect.any(String), units: 1 }],
       perOrder: [{ materialId: expect.any(String), units: 1 }],
     });
@@ -85,7 +85,7 @@ describe("PackagingScreen (#253)", () => {
     fireEvent.change(units, { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar empaques" }));
     expect(await screen.findByText(/enteras y al menos 1/)).toBeTruthy();
-    expect(mocks.updateStore).not.toHaveBeenCalled();
+    expect(mocks.savePackaging).not.toHaveBeenCalled();
   });
 
   it("no elimina un material referenciado por un perfil", async () => {

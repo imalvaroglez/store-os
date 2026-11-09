@@ -2,7 +2,7 @@
 // level carries (per piece and once per order). The estimated costs are
 // planning inputs only — real charges always come from consuming the linked
 // supplies (#184) when preparing an order.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -30,7 +30,7 @@ function clonePackaging(packaging: StorePackaging | undefined): StorePackaging {
 }
 
 export function PackagingScreen() {
-  const { state, activeStore, updateStore } = useStore();
+  const { state, activeStore, savePackaging } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<StorePackaging>(() => clonePackaging(activeStore?.packaging));
   const [busy, setBusy] = useState(false);
@@ -50,6 +50,13 @@ export function PackagingScreen() {
   );
   const materialName = (id: string) => draft.materials.find((m) => m.id === id)?.name ?? "—";
   const dirty = JSON.stringify(draft) !== JSON.stringify(activeStore?.packaging ?? emptyPackaging());
+
+  // Review F5: a remote edit (another device) refreshes the draft while this
+  // one has no local changes; a dirty draft is never clobbered.
+  useEffect(() => {
+    if (!dirty) setDraft(clonePackaging(activeStore?.packaging));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(activeStore?.packaging ?? null), dirty]);
 
   function patchDraft(mutate: (packaging: StorePackaging) => void) {
     setDraft((current) => {
@@ -86,9 +93,21 @@ export function PackagingScreen() {
         }
       }
     }
+    // Adversarial 1d: a seeded null cost normalizes to absent — nulls never
+    // reach the store doc.
+    const clean: StorePackaging = {
+      ...draft,
+      materials: draft.materials.map((m) => ({
+        ...m,
+        ...(m.estimatedCost == null ? { estimatedCost: undefined } : {}),
+      })),
+    };
+    clean.materials = clean.materials.map(({ estimatedCost, ...rest }) =>
+      estimatedCost === undefined ? rest : { ...rest, estimatedCost }
+    );
     setBusy(true);
     try {
-      await updateStore({ id: activeStore!.id, packaging: draft });
+      await savePackaging(clean);
       toast.success("Empaques guardados.");
     } catch (error) {
       toast.error(error instanceof Error && error.message ? error.message : "No se pudieron guardar los empaques.");
@@ -302,7 +321,7 @@ function MaterialDialog({
       }
     >
       <div className="space-y-4">
-        <TextField label="Nombre" placeholder="p. ej. Bolsa transparente" value={name} onChange={(e) => setName(e.target.value)} />
+        <TextField label="Nombre" placeholder="p. ej. Bolsa transparente" maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />
         <TextField
           label="Costo estimado por unidad (opcional)"
           inputMode="decimal"
