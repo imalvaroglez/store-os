@@ -115,3 +115,19 @@ describe("cart proyección al renderizar", () => {
     expect(cartPieces([])).toBe(0);
   });
 });
+
+describe("localStorage de solo-escritura-rota (#276)", () => {
+  it("saveCart no tumba nada cuando setItem lanza; el carrito sigue en memoria", () => {
+    const original = window.localStorage.setItem.bind(window.localStorage);
+    window.localStorage.setItem = () => {
+      throw new DOMException("quota", "QuotaExceededError");
+    };
+    try {
+      expect(() => saveCart("olivia", [{ productSlug: "p1", qty: 2, unitPrice: 90, name: "X" } as never])).not.toThrow();
+      const lines = addToCart("olivia", { productSlug: "p2", qty: 1, unitPrice: 50, name: "Y" } as never);
+      expect(lines.length).toBeGreaterThan(0);
+    } finally {
+      window.localStorage.setItem = original;
+    }
+  });
+});

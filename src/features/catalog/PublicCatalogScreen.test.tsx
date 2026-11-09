@@ -6,9 +6,13 @@ import { PublicCatalogScreen } from "./PublicCatalogScreen";
 import type { PublicCatalog, PublicStore } from "../../app/firebase/publicCatalog";
 
 const mocks = vi.hoisted(() => ({ loadPublicCatalog: vi.fn() }));
-vi.mock("../../app/firebase/publicCatalog", () => ({
+vi.mock("../../app/firebase/publicCatalog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../app/firebase/publicCatalog")>();
+  return {
+  ...actual,
   loadPublicCatalog: mocks.loadPublicCatalog,
-}));
+  };
+});
 
 const store: PublicStore = {
   storeId: "store_santi",
@@ -139,5 +143,23 @@ describe("PublicCatalogScreen carrito", () => {
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("Precio aplicable: Iconic");
     expect(text).toContain("Subtotal estimado: $1,080 MXN");
+  });
+});
+
+describe("missing real vs fallo de red (#276)", () => {
+  it("un slug inexistente (PublicCatalogNotFoundError) sigue mostrando 'Tienda no encontrada'", async () => {
+    const { PublicCatalogNotFoundError } = await import("../../app/firebase/publicCatalog");
+    mocks.loadPublicCatalog.mockRejectedValue(new PublicCatalogNotFoundError("no-existe"));
+    render(<PublicCatalogScreen slug="no-existe" />);
+    expect(await screen.findByText("Tienda no encontrada")).toBeTruthy();
+    expect(screen.queryByText(/No se pudo cargar/)).toBeNull();
+  });
+
+  it("un rechazo de loadPublicCatalog muestra reintentar, no 'no existe'", async () => {
+    mocks.loadPublicCatalog.mockRejectedValue(new Error("Firestore REST 500"));
+    render(<PublicCatalogScreen slug="olivia" />);
+    expect(await screen.findByText("No se pudo cargar el catálogo")).toBeTruthy();
+    expect(screen.queryByText(/no existe o no está disponible/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
   });
 });
