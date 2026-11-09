@@ -36,10 +36,10 @@ const transfer = (amount: number, date: string, id: string): OrderPayment => ({
   createdBy: "u1",
 });
 
-function renderSheet() {
+function renderSheet(o: Order = order) {
   return render(
     <ToastProvider>
-      <OrderPaymentsSheet order={order} open onClose={() => {}} />
+      <OrderPaymentsSheet order={o} open onClose={() => {}} />
     </ToastProvider>
   );
 }
@@ -268,7 +268,9 @@ describe("mobile adjustment direction (#218)", () => {
     store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
   });
   it.each(["subtract", "add"] as const)("submits %s without typing a sign", async (direction) => {
-    renderSheet();
+    // $200 received: the $150 subtract stays inside the #270 cap.
+    const withAccumulator = { ...order, paymentsReceivedCents: 20000 };
+    renderSheet(withAccumulator);
     await waitFor(() => expect(screen.getByRole("button", { name: "Registrar ajuste o devolución" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Registrar ajuste o devolución" }));
     expect(screen.getByLabelText("Dirección")).toHaveValue("subtract");
@@ -278,6 +280,56 @@ describe("mobile adjustment direction (#218)", () => {
     fireEvent.change(amount, { target: { value: "150" } });
     fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Corrección" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
-    await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledWith(order, expect.objectContaining({ kind: "adjustment", direction, amountText: "150", note: "Corrección" })));
+    await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledWith(withAccumulator, expect.objectContaining({ kind: "adjustment", direction, amountText: "150", note: "Corrección" })));
+  });
+});
+
+describe("#270 subtract cap: Restar is limited to what this order received", () => {
+  beforeEach(() => {
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+  });
+
+  async function openAdjust(o: Order) {
+    renderSheet(o);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Registrar ajuste o devolución" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Registrar ajuste o devolución" }));
+  }
+
+  it("shows the max subtractable when Restar is chosen, not for Sumar", async () => {
+    await openAdjust({ ...order, paymentsReceivedCents: 10000 });
+    expect(await screen.findByText(/Puedes restar hasta \$100\.00 — lo cobrado en este pedido/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Dirección"), { target: { value: "add" } });
+    expect(screen.queryByText(/lo cobrado en este pedido/)).toBeNull();
+  });
+
+  it("an order without an accumulator caps at $0.00", async () => {
+    await openAdjust(order);
+    expect(await screen.findByText(/Puedes restar hasta \$0\.00 — lo cobrado en este pedido/)).toBeInTheDocument();
+  });
+
+  it("blocks a subtract beyond the cap without losing the capture (#270 repro)", async () => {
+    await openAdjust({ ...order, paymentsReceivedCents: 10000 });
+    fireEvent.change(screen.getByLabelText("Monto del ajuste"), { target: { value: "600" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución con typo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    expect(await screen.findByText(/El ajuste excede lo recibido en este pedido\. Puedes restar hasta \$100\.00/)).toBeInTheDocument();
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Monto del ajuste")).toHaveValue("600");
+    expect(screen.getByLabelText("Motivo")).toHaveValue("Devolución con typo");
+  });
+
+  it("submits a subtract within the cap", async () => {
+    await openAdjust({ ...order, paymentsReceivedCents: 10000 });
+    fireEvent.change(screen.getByLabelText("Monto del ajuste"), { target: { value: "100" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    await waitFor(() =>
+      expect(store.registerOrderPayment).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentsReceivedCents: 10000 }),
+        expect.objectContaining({ kind: "adjustment", direction: "subtract", amountText: "100", note: "Devolución" })
+      )
+    );
   });
 });
