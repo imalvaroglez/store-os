@@ -141,3 +141,13 @@ describe("PublicCatalogScreen carrito", () => {
     expect(text).toContain("Subtotal estimado: $1,080 MXN");
   });
 });
+
+describe("fallo de red no es tienda inexistente (#276)", () => {
+  it("un rechazo de loadPublicCatalog muestra reintentar, no 'no existe'", async () => {
+    mocks.loadPublicCatalog.mockRejectedValue(new Error("Firestore REST 500"));
+    render(<PublicCatalogScreen slug="olivia" />);
+    expect(await screen.findByText("No se pudo cargar el catálogo")).toBeTruthy();
+    expect(screen.queryByText(/no existe o no está disponible/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
+  });
+});

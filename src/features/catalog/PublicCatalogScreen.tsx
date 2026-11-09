@@ -54,7 +54,21 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   if (!data && !failed) {
     return <div className="min-h-full bg-paper p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}</div>;
   }
-  if (!data) return <div className="min-h-full flex items-center justify-center p-6"><EmptyState title="Tienda no encontrada" subtitle="Este catálogo no existe o no está disponible." /></div>;
+  if (!data) {
+    // #276: a network failure is NOT a missing store — clients on flaky mobile
+    // data must not read "this catalog does not exist".
+    return failed ? (
+      <div className="min-h-full flex items-center justify-center p-6">
+        <EmptyState
+          title="No se pudo cargar el catálogo"
+          subtitle="Revisa tu conexión e inténtalo de nuevo: la tienda sigue disponible."
+          action={<Button onClick={() => window.location.reload()}>Reintentar</Button>}
+        />
+      </div>
+    ) : (
+      <div className="min-h-full flex items-center justify-center p-6"><EmptyState title="Tienda no encontrada" subtitle="Este catálogo no existe o no está disponible." /></div>
+    );
+  }
 
   const { store, catalog } = data;
   const visibleSlugs = new Set(catalog.products.map((product) => product.productSlug));

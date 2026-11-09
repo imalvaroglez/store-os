@@ -78,7 +78,14 @@ export function loadCart(slug: string): CartLine[] {
 }
 
 export function saveCart(slug: string, lines: CartLine[]): void {
-  localStorage.setItem(key(slug), JSON.stringify({ v: SCHEMA_VERSION, lines }));
+  // #276: a broken read-only localStorage (Safari "block all cookies", quota)
+  // must never take the whole storefront down — same tolerance as loadCart.
+  // The cart keeps working in memory; only persistence is lost.
+  try {
+    localStorage.setItem(key(slug), JSON.stringify({ v: SCHEMA_VERSION, lines }));
+  } catch {
+    /* best-effort persistence */
+  }
 }
 
 export function addToCart(
