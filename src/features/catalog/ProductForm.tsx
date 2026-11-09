@@ -16,7 +16,7 @@ import {
 import { parseAmount, formatMoney, sanitizeDecimalInput } from "../../lib/money";
 import { DEFAULT_LOW_STOCK_AT } from "../../lib/inventory";
 import { defaultTier, suggestedPrice, tiersForStore } from "../../lib/pricing";
-import { baseCostForTier, resolveRule, suggestedPriceFor } from "../../lib/pricingRules";
+import { baseCostForTier, resolveRule, suggestedPriceFor, hasRules } from "../../lib/pricingRules";
 import { slugify, uniqueProductSlug, suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
 import { uid } from "../../lib/ids";
 import { activeCategoriesForStore } from "../../lib/selectors";
@@ -420,7 +420,9 @@ export function ProductForm({
               // #254: per-level rules win; the legacy single markup stays as
               // the default tier's fallback for stores without rules.
               let suggested: number | undefined;
-              if (store.pricingRules) {
+              // An EMPTY saved config must behave as absent so the legacy
+              // single-markup assistant keeps working (review finding 2).
+              if (hasRules(store.pricingRules)) {
                 const resolved = resolveRule(store.pricingRules, t.id, { id: product.id, categoryIds: draft.categoryIds });
                 if (resolved) {
                   const base = baseCostForTier({ cost: parseAmount(cost) }, t.id, store.packaging);

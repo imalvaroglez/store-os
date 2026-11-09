@@ -24,9 +24,12 @@ export function resolveRule(
   return undefined;
 }
 
-/** Round UP to the step — Fer's Excel habit: never round a price down. */
+/** Rounding: "none" keeps the raw value (cents included); "1" rounds to the
+ * nearest peso; $5/$10 always round UP to the step (Fer's Excel habit — never
+ * round a price down). */
 export function applyRound(value: number, rounding: PriceRounding | undefined): number {
-  if (!rounding || rounding === "none" || rounding === "1") return Math.round(value);
+  if (rounding === "none" || !rounding) return value;
+  if (rounding === "1") return Math.round(value);
   const step = rounding === "5" ? 5 : 10;
   return Math.ceil(value / step) * step;
 }
@@ -88,17 +91,23 @@ export function suggestedPriceFor(
   rule: PricingRule,
   input: { baseCost: number | undefined; acquisitionCost: number | undefined }
 ): number | null {
+  let raw: number | null = null;
   if (rule.kind === "markup") {
     if (input.baseCost === undefined) return null;
-    return applyRound(input.baseCost * (1 + rule.percent / 100), rule.rounding);
-  }
-  if (rule.kind === "fixed") {
+    raw = input.baseCost * (1 + rule.percent / 100);
+  } else if (rule.kind === "fixed") {
     if (input.baseCost === undefined) return null;
-    return applyRound(input.baseCost + rule.amount, rule.rounding);
+    raw = input.baseCost + rule.amount;
+  } else {
+    if (input.acquisitionCost === undefined) return null;
+    raw = bandPrice(rule.bands, input.acquisitionCost);
   }
-  if (input.acquisitionCost === undefined) return null;
-  const price = bandPrice(rule.bands, input.acquisitionCost);
-  return price === null ? null : applyRound(price, rule.rounding);
+  if (raw === null) return null;
+  const rounded = applyRound(raw, rule.rounding);
+  // Adversarial H1/H5: a non-positive suggestion (negative fixed increment,
+  // sub-cent cost rounding to zero) is NEVER proposed — "sin sugerencia"
+  // instead of a free or negative price.
+  return rounded >= 0.01 ? rounded : null;
 }
 
 /** Full suggestion for one product × one level. */
@@ -116,4 +125,18 @@ export function suggestionForTier(
     baseCost,
     origin: resolved.origin,
   };
+}
+
+/** True when the config carries at least one rule — an empty saved config
+ * must behave as absent so the legacy single-markup assistant keeps working
+ * (review finding 2). */
+export function hasRules(
+  config: { byTier?: Record<string, unknown>; byCategory?: Record<string, unknown>; byProduct?: Record<string, unknown> } | undefined
+): boolean {
+  if (!config) return false;
+  return (
+    Object.keys(config.byTier ?? {}).length > 0 ||
+    Object.keys(config.byCategory ?? {}).length > 0 ||
+    Object.keys(config.byProduct ?? {}).length > 0
+  );
 }

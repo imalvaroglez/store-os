@@ -35,9 +35,9 @@ describe("resolveRule — precedencia producto > categoría > general", () => {
   });
 });
 
-describe("applyRound — redondeo hacia arriba", () => {
-  it("sin redondeo y a $1 usan el entero más cercano; $5 y $10 suben al escalón", () => {
-    expect(applyRound(156.4, "none")).toBe(156);
+describe("applyRound — 'none' no redondea; $1 al entero; $5 y $10 suben", () => {
+  it("sin redondeo conserva centavos; los escalones suben", () => {
+    expect(applyRound(156.5, "none")).toBe(156.5);
     expect(applyRound(156.6, "1")).toBe(157);
     expect(applyRound(156.1, "5")).toBe(160);
     expect(applyRound(151, "5")).toBe(155);
@@ -114,6 +114,19 @@ describe("validateBands — límites inequívocos", () => {
     expect(validateBands([{ min: 0, max: 50, price: 1 }, { min: 50, price: 2 }, { min: 60, price: 3 }])).toMatch(/sin tope/);
     expect(validateBands([])).toMatch(/al menos una banda/);
     expect(validateBands([{ min: 0, max: 50, price: 0 }])).toMatch(/precio mayor que cero/);
+  });
+});
+
+describe("piso de sugerido > 0 (H1/H5)", () => {
+  it("importe fijo o porcentaje que da precio ≤ 0 es 'sin sugerencia', nunca negativo ni gratis", () => {
+    expect(suggestedPriceFor({ kind: "fixed", amount: -150 }, { baseCost: 100, acquisitionCost: 100 })).toBeNull();
+    expect(suggestedPriceFor({ kind: "markup", percent: -100 }, { baseCost: 100, acquisitionCost: 100 })).toBeNull();
+    expect(suggestedPriceFor({ kind: "markup", percent: 200 }, { baseCost: 0.001, acquisitionCost: 0.001 })).toBeNull();
+    expect(suggestedPriceFor({ kind: "bands", bands: [{ min: 0, price: -50 }] }, { baseCost: 1, acquisitionCost: 1 })).toBeNull();
+  });
+
+  it("validateBands: mínimo negativo rechazado", () => {
+    expect(validateBands([{ min: -10, max: 50, price: 100 }])).toMatch(/negativo/);
   });
 });
 
