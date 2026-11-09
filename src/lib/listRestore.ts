@@ -68,7 +68,6 @@ export function useListRestore<F extends ListFilters>(key: string, defaults: F) 
   const restoreScroll = useCallback(() => {
     const target = scrollY.current;
     scrollY.current = 0; // one-shot: later navigation starts from a clean slate
-    console.log('[listRestore] restore', key, 'target', target);
     if (target > 0) {
       // Double rAF: land AFTER same-commit focus restorations (Dialog/Sheet
       // return focus to the opening control, which scrolls it into view).
