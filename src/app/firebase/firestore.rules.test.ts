@@ -278,6 +278,25 @@ describe("G-P02 batched create — stores + adminStores in one batch", () => {
         updatedAt: "2026-11-09T00:00:00.000Z",
       })
     );
+    // #280: the strategy screen's category band tables ride the same path —
+    // three bands rules with shared limits under byCategory.
+    await assertSucceeds(
+      updateDoc(doc(db, "stores/s1"), {
+        pricingRules: {
+          byTier: { t_iconic: { kind: "markup", percent: 100 } },
+          byCategory: {
+            cat1: {
+              t_retail: { kind: "bands", bands: [{ min: 0, max: 60, price: 290 }, { min: 60, price: 310 }], rounding: "none" },
+              t_girly: { kind: "bands", bands: [{ min: 0, max: 60, price: 230 }, { min: 60, price: 260 }], rounding: "none" },
+              t_iconic: { kind: "bands", bands: [{ min: 0, max: 60, price: 160 }, { min: 60, price: 170 }], rounding: "none" },
+            },
+          },
+        },
+        updatedAt: "2026-11-09T00:00:00.000Z",
+      })
+    );
+    // A member of the store can read its rules back.
+    await assertSucceeds(getDoc(doc(db, "stores/s1")));
     // Anything beyond the business-content fields stays owner-only.
     await assertFails(updateDoc(doc(db, "stores/s1"), { name: "Otra cosa" }));
     await assertFails(updateDoc(doc(db, "stores/s1"), { ownerUid: "u2" }));
@@ -290,6 +309,8 @@ describe("G-P02 batched create — stores + adminStores in one batch", () => {
         updatedAt: "2026-11-09T00:00:00.000Z",
       })
     );
+    // #280: another store's member cannot READ Olivia's financial rules either.
+    await assertFails(getDoc(doc(stranger, "stores/s1")));
   });
 
   it("owner can create stores/{id} and adminStores/{id} together", async () => {

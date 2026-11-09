@@ -8,6 +8,7 @@ import {
   Badge,
   Button,
   Card,
+  Dialog,
   Money,
   Screen,
   ScreenHeader,
@@ -38,6 +39,14 @@ export function PricingRulesScreen() {
   const [busy, setBusy] = useState(false);
   const [applying, setApplying] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // PO 2026-11-09: applying a below-cost price that comes from a per-product
+  // exception needs a CONFIRMATION IN THE MOMENT — a previously configured
+  // exception is not standing authorization to sell at a loss today.
+  const [confirmBelowCost, setConfirmBelowCost] = useState<{
+    full: Array<{ product: Product; prices: Record<string, number> }>;
+    safe: Array<{ product: Product; prices: Record<string, number> }>;
+    exceptionCount: number;
+  } | null>(null);
 
   const tiers = useMemo(() => tiersForStore(activeStore), [activeStore]);
   const products = useMemo(
@@ -95,15 +104,20 @@ export function PricingRulesScreen() {
     return products
       .filter((product) => product.cost !== undefined && product.cost !== null)
       .map((product) => {
-        const byTier: Record<string, { suggested: number | null; current: number | undefined; base: number | undefined; origin: string }> = {};
+        const byTier: Record<string, { suggested: number | null; current: number | undefined; base: number | undefined; origin: string; belowCost: boolean }> = {};
         for (const tier of tiers) {
           const resolved = resolveRule(draft.config, tier.id, product);
           const base = baseCostForTier(product, tier.id, activeStore?.packaging);
+          const suggested = resolved ? suggestedPriceFor(resolved.rule, { baseCost: base, acquisitionCost: product.cost }) : null;
           byTier[tier.id] = {
-            suggested: resolved ? suggestedPriceFor(resolved.rule, { baseCost: base, acquisitionCost: product.cost }) : null,
+            suggested,
             current: product.prices?.[tier.id],
             base,
             origin: resolved?.origin ?? "",
+            // #280 P0-1: a suggestion under the full base cost is a loss by
+            // default — visible here, and applySelected refuses it unless the
+            // rule is Fer's explicit per-product exception.
+            belowCost: suggested != null && base !== undefined && suggested < base,
           };
         }
         return { product, byTier };
@@ -112,25 +126,10 @@ export function PricingRulesScreen() {
 
   const selectedCount = Object.values(selected).filter(Boolean).length;
 
-  async function applySelected() {
-    const updates: Array<{ product: Product; prices: Record<string, number> }> = [];
-    for (const entry of suggestions) {
-      if (!selected[entry.product.id]) continue;
-      const nextPrices = { ...(entry.product.prices ?? {}) };
-      let changed = false;
-      for (const tier of tiers) {
-        const suggestion = entry.byTier[tier.id];
-        if (suggestion?.suggested != null && suggestion.suggested !== suggestion.current) {
-          nextPrices[tier.id] = suggestion.suggested;
-          changed = true;
-        }
-      }
-      if (changed) updates.push({ product: entry.product, prices: nextPrices });
-    }
-    if (updates.length === 0) {
-      toast.error("Nada seleccionado con sugerencias distintas al precio actual.");
-      return;
-    }
+  async function runApply(
+    updates: Array<{ product: Product; prices: Record<string, number> }>,
+    skippedBelowCost: number
+  ) {
     setApplying(true);
     const applied: string[] = [];
     const failed: string[] = [];
@@ -145,14 +144,70 @@ export function PricingRulesScreen() {
     setApplying(false);
     // Adversarial H4: report what actually applied — a mid-batch failure must
     // not hide the N-1 prices that DID change.
-    if (failed.length === 0) {
+    if (failed.length === 0 && skippedBelowCost === 0) {
       setSelected({});
       toast.success(`Precios actualizados en ${applied.length} producto(s).`);
     } else if (applied.length === 0) {
       toast.error("No se pudo aplicar ningún precio. Revisa tu conexión e inténtalo de nuevo.");
+    } else if (failed.length === 0) {
+      setSelected({});
+      toast.success(
+        `Se aplicaron precios de ${applied.length} producto(s); se omitieron ${skippedBelowCost} precio(s) por quedar bajo el costo (vender con pérdida requiere excepción de Fer).`
+      );
     } else {
-      toast.error(`Se aplicaron ${applied.length}; fallaron ${failed.length}: ${failed.join(", ")}.`);
+      const skipped = skippedBelowCost > 0 ? `; se omitieron ${skippedBelowCost} por quedar bajo el costo` : "";
+      toast.error(`Se aplicaron ${applied.length}${skipped}; fallaron ${failed.length}: ${failed.join(", ")}.`);
     }
+  }
+
+  async function applySelected() {
+    const safeUpdates: Array<{ product: Product; prices: Record<string, number> }> = [];
+    const fullUpdates: Array<{ product: Product; prices: Record<string, number> }> = [];
+    let skippedBelowCost = 0;
+    let exceptionBelowCost = 0;
+    for (const entry of suggestions) {
+      if (!selected[entry.product.id]) continue;
+      const safePrices = { ...(entry.product.prices ?? {}) };
+      const fullPrices = { ...(entry.product.prices ?? {}) };
+      let safeChanged = false;
+      let fullChanged = false;
+      for (const tier of tiers) {
+        const suggestion = entry.byTier[tier.id];
+        if (suggestion?.suggested != null && suggestion.suggested !== suggestion.current) {
+          if (suggestion.belowCost && suggestion.origin === "product") {
+            // An exception rule may price under cost, but applying that loss
+            // needs Fer's confirmation RIGHT NOW, not standing authorization.
+            fullPrices[tier.id] = suggestion.suggested;
+            fullChanged = true;
+            exceptionBelowCost += 1;
+            continue;
+          }
+          if (suggestion.belowCost) {
+            skippedBelowCost += 1;
+            continue;
+          }
+          safePrices[tier.id] = suggestion.suggested;
+          fullPrices[tier.id] = suggestion.suggested;
+          safeChanged = true;
+          fullChanged = true;
+        }
+      }
+      if (safeChanged) safeUpdates.push({ product: entry.product, prices: safePrices });
+      if (fullChanged) fullUpdates.push({ product: entry.product, prices: fullPrices });
+    }
+    if (exceptionBelowCost > 0) {
+      setConfirmBelowCost({ full: fullUpdates, safe: safeUpdates, exceptionCount: exceptionBelowCost });
+      return;
+    }
+    if (safeUpdates.length === 0) {
+      toast.error(
+        skippedBelowCost > 0
+          ? `Solo había precios sugeridos bajo el costo (${skippedBelowCost}); no se aplicó nada. Vender con pérdida requiere una excepción por producto.`
+          : "Nada seleccionado con sugerencias distintas al precio actual."
+      );
+      return;
+    }
+    await runApply(safeUpdates, skippedBelowCost);
   }
 
   return (
@@ -220,6 +275,7 @@ export function PricingRulesScreen() {
                           <span className="font-semibold text-on-surface">{tier.label}:</span>{" "}
                           {s.current !== undefined ? <>actual <Money amount={s.current} /></> : "sin precio"} →{" "}
                           {s.suggested != null ? <span className="font-semibold text-terracotta"><Money amount={s.suggested} /></span> : "sin sugerencia"}
+                          {s.belowCost ? " ⚠️ bajo el costo (no se aplica; requiere excepción)" : ""}
                           {s.origin ? ` (${s.origin === "product" ? "excepción" : s.origin === "category" ? "categoría" : "regla"})` : ""}
                         </p>
                       );
@@ -231,6 +287,49 @@ export function PricingRulesScreen() {
           )}
         </Card>
       </div>
+
+      <Dialog
+        open={confirmBelowCost !== null}
+        tone="danger"
+        title={confirmBelowCost ? `${confirmBelowCost.exceptionCount} precio(s) bajo el costo` : ""}
+        onClose={() => setConfirmBelowCost(null)}
+        footer={
+          confirmBelowCost ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setConfirmBelowCost(null)}>
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const pending = confirmBelowCost;
+                  setConfirmBelowCost(null);
+                  if (pending.safe.length > 0) void runApply(pending.safe, pending.exceptionCount);
+                  else toast.error("No quedó ningún otro precio por aplicar.");
+                }}
+              >
+                Aplicar sin esos {confirmBelowCost.exceptionCount}
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => {
+                  const pending = confirmBelowCost;
+                  setConfirmBelowCost(null);
+                  void runApply(pending.full, 0);
+                }}
+              >
+                Aplicar todo (vender bajo costo a propósito)
+              </Button>
+            </div>
+          ) : undefined
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Los precios marcados vienen de excepciones por producto y quedarían por debajo de su costo base. Aplicarlos
+          es vender con pérdida de forma deliberada; la decisión es tuya, ahora.
+        </p>
+      </Dialog>
     </Screen>
   );
 }

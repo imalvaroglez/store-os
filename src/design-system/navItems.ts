@@ -13,6 +13,7 @@ export type Tab =
   | "productos_gastos"
   | "productos_empaques"
   | "productos_reglas"
+  | "productos_estrategia"
   | "pedidos"
   | "clientes"
   | "usuarios"
@@ -36,6 +37,7 @@ export const NAV_ITEMS: NavItem[] = [
       { id: "productos_gastos", label: "Gastos", path: "/productos/gastos" },
       { id: "productos_empaques", label: "Empaques", path: "/productos/empaques" },
       { id: "productos_reglas", label: "Reglas de venta", path: "/productos/reglas" },
+      { id: "productos_estrategia", label: "Estrategia de precios", path: "/productos/estrategia" },
     ],
   },
   { id: "pedidos", label: "Pedidos", path: "/pedidos" },
@@ -49,7 +51,8 @@ export function parentActive(active: Tab): boolean {
 }
 
 // Compras child only exists for inventory-tiered stores; so do the level
-// pricing rules (levels only exist for tiered stores).
+// pricing rules and the per-category strategy (levels only exist for tiered
+// stores).
 export function visibleNavItems(storeType: StoreType, userRole?: PlatformRole) {
   return NAV_ITEMS.filter((item) => item.id !== "usuarios" || userRole === "super_admin").map((t) =>
     t.children
@@ -58,7 +61,8 @@ export function visibleNavItems(storeType: StoreType, userRole?: PlatformRole) {
           children: t.children.filter(
             (c) =>
               (c.id !== "productos_compras" || storeType === "inventory_tiered") &&
-              (c.id !== "productos_reglas" || storeType === "inventory_tiered")
+              (c.id !== "productos_reglas" || storeType === "inventory_tiered") &&
+              (c.id !== "productos_estrategia" || storeType === "inventory_tiered")
           ),
         }
       : t

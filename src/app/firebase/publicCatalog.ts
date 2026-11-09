@@ -134,16 +134,46 @@ const DOCS_BASE = EMULATOR
 
 type RestValue = { [key: string]: unknown };
 
+/** A read that the server answered with a hard NO (rules denial, bad request).
+ *  Answers are not retried — only failures are. */
+class RestReadError extends Error {
+  constructor(readonly status: number, path: string) {
+    super(`Firestore REST ${status} al leer "${path}"`);
+  }
+}
+
+/** Backoff for the single automatic retry (ms). */
+const REST_RETRY_DELAY_MS = 400;
+
 /** One anonymous REST document read. Mirrors getDoc's contract: an exists
  *  flag, decoded data, and thrown errors for anything that is not a clean 404
- *  (rules denial, network failure, etc.). */
+ *  (rules denial, network failure, etc.). A TRANSIENT failure — network blip,
+ *  5xx, 429 — is retried once automatically (#282): a clienta on flaky mobile
+ *  data must not land on the manual "Reintentar" screen because of one lost
+ *  packet, and the e2e emulator under load throws exactly those transients.
+ *  Clean 404s and 4xx denials are answers, never retried. */
 async function getDocRest(path: string): Promise<{ exists: boolean; data?: Record<string, unknown> }> {
-  const key = EMULATOR ? "" : `?key=${import.meta.env.VITE_FIREBASE_API_KEY as string}`;
-  const res = await fetch(`${DOCS_BASE}/${path}${key}`, { headers: { accept: "application/json" } });
-  if (res.status === 404) return { exists: false };
-  if (!res.ok) throw new Error(`Firestore REST ${res.status} al leer "${path}"`);
-  const json = (await res.json()) as { fields?: Record<string, RestValue> };
-  return { exists: true, data: decodeFields(json.fields ?? {}) };
+  const attempt = async (): Promise<{ exists: boolean; data?: Record<string, unknown> }> => {
+    const key = EMULATOR ? "" : `?key=${import.meta.env.VITE_FIREBASE_API_KEY as string}`;
+    let res: Response;
+    try {
+      res = await fetch(`${DOCS_BASE}/${path}${key}`, { headers: { accept: "application/json" } });
+    } catch {
+      throw new RestReadError(0, path); // network-level failure: transient
+    }
+    if (res.status === 404) return { exists: false };
+    if (!res.ok) throw new RestReadError(res.status, path);
+    const json = (await res.json()) as { fields?: Record<string, RestValue> };
+    return { exists: true, data: decodeFields(json.fields ?? {}) };
+  };
+  try {
+    return await attempt();
+  } catch (error) {
+    const transient = error instanceof RestReadError && (error.status === 0 || error.status >= 500 || error.status === 429);
+    if (!transient) throw error;
+    await new Promise((resolve) => setTimeout(resolve, REST_RETRY_DELAY_MS));
+    return await attempt();
+  }
 }
 
 // REST wire format → client values. Gotchas pinned by tests: integerValue
