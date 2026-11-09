@@ -595,13 +595,28 @@ export function PricingStrategyScreen() {
 
         {categoryId && (
           <Card className="space-y-2">
-            <p className="text-sm text-on-surface-soft">
-              Para aplicar precios a productos, usa las sugerencias por pieza en Reglas de venta: eliges qué productos
-              cambian y confirmas ahí.
-            </p>
-            <Button size="sm" variant="secondary" onClick={() => navigate("/productos/reglas")}>
-              Ir a Reglas de venta
-            </Button>
+            {activeStore?.pricingRules?.byCategory?.[categoryId] ? (
+              <>
+                <p className="text-sm text-on-surface">
+                  <span className="font-semibold">Tabla activa:</span> las sugerencias de esta categoría ya aparecen
+                  pieza por pieza en Reglas de venta (verás "categoría" como origen). Revisa los cambios, selecciona y
+                  aplica ahí — nunca automáticamente.
+                </p>
+                <Button size="sm" onClick={() => navigate("/productos/reglas")}>
+                  Ver y aplicar sugerencias en Reglas de venta
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-on-surface-soft">
+                  Guarda la tabla de esta categoría y sus sugerencias aparecerán pieza por pieza en Reglas de venta,
+                  listas para revisar y aplicar cuando tú decidas.
+                </p>
+                <Button size="sm" variant="secondary" onClick={() => navigate("/productos/reglas")}>
+                  Ir a Reglas de venta
+                </Button>
+              </>
+            )}
           </Card>
         )}
       </div>
