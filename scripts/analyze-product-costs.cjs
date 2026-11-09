@@ -231,7 +231,7 @@ function emptyCategoryStat() {
     minMarginCentsByTier: new Map(), // tierId -> lowest observed margin
     orderViolations: 0,
     provenance: { match: 0, diferente: 0, sinEvidencia: 0 },
-    secondaryCounts: new Map(), // secondary categoryId -> SKU count
+    secondaryCounts: new Map(), // secondary categoryId -> pieza count
   };
 }
 
@@ -380,9 +380,9 @@ async function main() {
 
     console.log(`## ${nameOf(key)}`);
     console.log(
-      `- SKUs: ${s.skus} (${s.published} publicados, ${s.draft} borrador, ${s.archived} archivados) · con existencia: ${s.inStock} · agotados: ${s.soldOut} · unidades: ${s.unitsOnHand} (cuarentena: ${s.unitsQuarantined})${secondary}`
+      `- Piezas: ${s.skus} (${s.published} publicados, ${s.draft} borrador, ${s.archived} archivados) · con existencia: ${s.inStock} · agotados: ${s.soldOut} · unidades: ${s.unitsOnHand} (cuarentena: ${s.unitsQuarantined})${secondary}`
     );
-    console.log(`- Costo confiable: ${n} SKUs · sin costo confiable: ${s.noReliableCost}`);
+    console.log(`- Costo confiable: ${n} piezas · sin costo confiable: ${s.noReliableCost}`);
     if (n === 0) {
       console.log("- Sin costos para analizar: no se propone tabla.\n");
       evidence.push({ categoria: nameOf(key), skus: s.skus, conCosto: 0 });
@@ -390,7 +390,7 @@ async function main() {
     }
     const tails = n >= MIN_SAMPLE_FOR_TAILS ? ` · P10 ${money(percentile(costs, 0.1))} · P90 ${money(percentile(costs, 0.9))}` : "";
     console.log(
-      `- Costo: mín ${money(costs[0])} · P25 ${money(percentile(costs, 0.25))} · mediana ${money(percentile(costs, 0.5))} · P75 ${money(percentile(costs, 0.75))} · máx ${money(costs[n - 1])}${tails} · costos distintos: ${distinct} (${pct(distinct, n)} de los SKUs)`
+      `- Costo: mín ${money(costs[0])} · P25 ${money(percentile(costs, 0.25))} · mediana ${money(percentile(costs, 0.5))} · P75 ${money(percentile(costs, 0.75))} · máx ${money(costs[n - 1])}${tails} · costos distintos: ${distinct} (${pct(distinct, n)} de los piezas)`
     );
     const buckets = new Array(COST_BUCKETS.length + 1).fill(0);
     for (const c of costs) buckets[bucketIndexOf(c / 100)] += 1;
@@ -405,7 +405,7 @@ async function main() {
       const pack = packagingByTier.get(tier.id);
       const incomplete = pack.missing.length > 0;
       if (prices.length === 0) {
-        console.log(`- ${tierLabels[tier.id]}: sin precios capturados (${missing} SKUs)`);
+        console.log(`- ${tierLabels[tier.id]}: sin precios capturados (${missing} piezas)`);
         continue;
       }
       const negatives = s.negativeMarginByTier.get(tier.id) ?? 0;
