@@ -361,4 +361,99 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     expect(docReceivedCents(paid.order)).toBe(13000);
   });
 
+  // #270 (PO 2026-11-09): a "Restar" adjustment is capped at what THIS order
+  // received — paymentsReceivedCents never crosses into negative territory,
+  // so no phantom debt can absorb a sister order's real saldo a favor.
+  it("rejects a subtract beyond what the order received, with the actionable cap (#270)", async () => {
+    const orderId = "cap-270-order";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 0, items: [], createdAt: "", updatedAt: "" });
+    await registerOrderPaymentTx({ ...payment("cap-270-receipt", 100), orderId });
+    // The adversarial repro: $100 received, a $600 "devolución" (typo of $60).
+    await expect(
+      registerOrderPaymentTx({ ...payment("cap-270-huge", -600), orderId, kind: "adjustment", method: "unknown", note: "Devolución con typo" })
+    ).rejects.toThrow(/Puedes restar hasta \$100\.00/);
+    expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBe(10000);
+    expect((await getDoc(doc(holder.db, "orders", orderId, "payments/cap-270-huge"))).exists()).toBe(false);
+    // A raw batched write cannot force the negative either — the rules hold.
+    const before = (await getDoc(parent)).data()!;
+    const force = writeBatch(holder.db);
+    force.set(doc(holder.db, "orders", orderId, "payments/cap-270-force"), { ...payment("cap-270-force", -600), kind: "adjustment", method: "unknown", note: "Fuerza bruta", amountCents: -60000 });
+    force.update(parent, { lastPaymentId: "cap-270-force", paymentsRevision: (before.paymentsRevision ?? 0) + 1, paymentsReceivedCents: before.paymentsReceivedCents - 60000 });
+    await expect(force.commit()).rejects.toThrow();
+    expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBe(10000);
+  });
+
+  it("allows the subtract up to the exact floor, but not one cent further (#270)", async () => {
+    const orderId = "cap-270-floor";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 0, items: [], createdAt: "", updatedAt: "" });
+    await registerOrderPaymentTx({ ...payment("cap-270-floor-receipt", 100), orderId });
+    const partial = await registerOrderPaymentTx({ ...payment("cap-270-floor-partial", -40), orderId, kind: "adjustment", method: "unknown", note: "Devolución parcial" });
+    expect(partial.order.paymentsReceivedCents).toBe(6000);
+    const exact = await registerOrderPaymentTx({ ...payment("cap-270-floor-exact", -60), orderId, kind: "adjustment", method: "unknown", note: "Devolución del resto" });
+    expect(exact.order.paymentsReceivedCents).toBe(0);
+    await expect(
+      registerOrderPaymentTx({ ...payment("cap-270-floor-cent", -0.01), orderId, kind: "adjustment", method: "unknown", note: "Un centavo de más" })
+    ).rejects.toThrow(/Puedes restar hasta \$0\.00/);
+    expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBe(0);
+  });
+
+  it("does not let the pending inherited deposit widen the subtract cap (#270)", async () => {
+    // Domain nuance (PO): the unmaterialized deposit is money received, but it
+    // is NOT in the accumulator — its repair path is the deposit flow, never a
+    // free adjustment that would push the accumulator below zero.
+    const orderId = "cap-270-deposit";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 500, items: [], createdAt: "", updatedAt: "" });
+    await expect(
+      registerOrderPaymentTx({ ...payment("cap-270-deposit-sub", -100), orderId, kind: "adjustment", method: "unknown", note: "Devolución del anticipo" })
+    ).rejects.toThrow(/Puedes restar hasta \$0\.00/);
+    expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBeUndefined();
+    expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(0);
+  });
+
+  it("serializes two racing subtracts so the accumulator never goes negative (#270)", async () => {
+    const orderId = "cap-270-race";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 0, items: [], createdAt: "", updatedAt: "" });
+    await registerOrderPaymentTx({ ...payment("cap-270-race-receipt", 100), orderId });
+    const results = await Promise.allSettled([
+      registerOrderPaymentTx({ ...payment("cap-270-race-a", -60), orderId, kind: "adjustment", method: "unknown", note: "Devolución A" }),
+      registerOrderPaymentTx({ ...payment("cap-270-race-b", -60), orderId, kind: "adjustment", method: "unknown", note: "Devolución B" }),
+    ]);
+    // Each fits alone ($100 received), together they do not ($120): exactly
+    // one survives the transactional re-read, the other fails with the cap.
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(Error);
+    expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBe(4000);
+    expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(2); // receipt + one adjustment
+  });
+
+  it("lets a legacy negative accumulator climb back, but never deepen (#270)", async () => {
+    const orderId = "cap-270-legacy";
+    const parent = doc(holder.db, "orders", orderId);
+    // Synthetic legacy corruption: the pre-#270 bug could leave a negative.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders", orderId), { storeId: "tx-store", deposit: 0, items: [], createdAt: "", updatedAt: "", paymentsReceivedCents: -50000, paymentsRevision: 3, lastPaymentId: "legacy" });
+    });
+    // A partial "Sumar" still lands negative but strictly improves — allowed.
+    const repair = await registerOrderPaymentTx({ ...payment("cap-270-repair", 200), orderId, kind: "adjustment", method: "unknown", note: "Reparación parcial del negativo histórico" });
+    expect(repair.order.paymentsReceivedCents).toBe(-30000);
+    // Deepening the negative is denied at the rules layer, raw write included.
+    const before = (await getDoc(parent)).data()!;
+    const deepen = writeBatch(holder.db);
+    deepen.set(doc(holder.db, "orders", orderId, "payments/cap-270-deepen"), { ...payment("cap-270-deepen", -100), kind: "adjustment", method: "unknown", note: "Empeorar", amountCents: -10000 });
+    deepen.update(parent, { lastPaymentId: "cap-270-deepen", paymentsRevision: (before.paymentsRevision ?? 0) + 1, paymentsReceivedCents: before.paymentsReceivedCents - 10000 });
+    await expect(deepen.commit()).rejects.toThrow();
+    // And a subtract via the transaction is capped at zero received.
+    await expect(
+      registerOrderPaymentTx({ ...payment("cap-270-legacy-sub", -1), orderId, kind: "adjustment", method: "unknown", note: "Restar sobre negativo" })
+    ).rejects.toThrow(/Puedes restar hasta \$0\.00/);
+    expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBe(-30000);
+  });
+
 });
