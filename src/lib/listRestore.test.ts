@@ -96,6 +96,10 @@ describe("useListRestore key change (#233)", () => {
     });
     expect(second.result.current.filters).toEqual({ restockOnly: false, query: "" }); // defaults, no leak
 
+    // Switch back with non-default filters ACTIVE on store B: the live key
+    // change must reset them. Without this, the assertion below passed even
+    // with the reset effect deleted (mutation-tested blind spot, #252).
+    act(() => second.result.current.setFilters({ restockOnly: true, query: "aretes" }));
     act(() => second.rerender({ key: "products:store-a" })); // switch back to store A
     // A live key change resets (fresh view per list); restoration only happens
     // on a fresh MOUNT of the same key (returning from a detail/editor).
