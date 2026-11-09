@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   INSTALLMENT_FREQUENCY_LABELS,
   deliveryWithBalanceBlocked,
+  uncoveredBalanceCents,
   installmentDueDate,
   installmentPlanView,
   sameInstallmentPlan,
@@ -291,5 +292,41 @@ describe("frequency labels", () => {
       biweekly: "Quincenal",
       monthly: "Mensual",
     });
+  });
+});
+
+describe("compuerta de entrega vs ajustes de incidencia (#269)", () => {
+  const money = (receivedCents: number) => ({ accumulatorCents: receivedCents, receivedCents });
+  const refund = {
+    id: "inc_1",
+    productName: "Pieza",
+    quantity: 1,
+    reason: "Defecto",
+    originalUnitPriceCents: 60000,
+    resolution: { kind: "refund" as const, saleAdjustmentUnitCents: 60000 },
+    events: [],
+  };
+
+  it("un reembolso por incidencia reduce el total de la compuerta: lo efectivo cubierto entrega sin bloqueo", () => {
+    const withRefund = order({ installments: plan, orderStatus: "ready", incidents: [refund] });
+    expect(uncoveredBalanceCents(withRefund, money(120000))).toBe(0);
+    expect(deliveryWithBalanceBlocked(withRefund, money(120000))).toBe(false);
+  });
+
+  it("sin incidencias el comportamiento histórico se conserva (regresión)", () => {
+    const plain = order({ installments: plan, orderStatus: "ready" });
+    expect(uncoveredBalanceCents(plain, money(120000))).toBe(60000);
+    expect(deliveryWithBalanceBlocked(plain, money(120000))).toBe(true);
+  });
+
+  it("un upgrade con cargo aumenta el total efectivo de la compuerta", () => {
+    const upgrade = {
+      ...refund,
+      resolution: { kind: "replacement_with_difference" as const, saleAdjustmentUnitCents: 60000 },
+      replacement: { productName: "Otra pieza", unitPriceCents: 90000, unitCostCents: 10000, chargeDifference: true },
+    };
+    const withUpgrade = order({ installments: plan, orderStatus: "ready", incidents: [upgrade] });
+    expect(uncoveredBalanceCents(withUpgrade, money(210000))).toBe(0);
+    expect(deliveryWithBalanceBlocked(withUpgrade, money(150000))).toBe(true);
   });
 });
