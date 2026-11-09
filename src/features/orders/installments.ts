@@ -258,7 +258,7 @@ export function orderTotalCents(order: Partial<Order> & Record<string, unknown>)
   );
 }
 
-/** #203/#269: the EFFECTIVE total every read model uses (paymentSummary, the
+/** #203/#268: the EFFECTIVE total every read model uses (paymentSummary, the
  * card, the calendar): historical + incident adjustments, floored at zero. */
 export function effectiveOrderTotalCents(order: Partial<Order> & Record<string, unknown>): number {
   return Math.max(0, orderTotalCents(order) + incidentsSaleAdjustmentCents(order.incidents));
