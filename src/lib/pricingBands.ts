@@ -318,7 +318,7 @@ export function proposeCategoryBands(input: {
       continue;
     }
     const separation = minAdjacentGap(candidate.groups);
-    const cohesion = candidate.groups.reduce((acc, g, index) => {
+    const cohesion = candidate.groups.reduce((acc, _group, index) => {
       // Price cohesion: how uniformly Fer already prices each group, per tier.
       const members = membersOfGroups(withCost, candidate, index);
       const shares = tiers
@@ -405,7 +405,6 @@ export function proposeCategoryBands(input: {
 }
 
 function membersOfGroups(withCost: Array<BandProduct & { cost: number }>, candidate: Candidate, groupIndex: number): BandMember[] {
-  const group = candidate.groups[groupIndex];
   const cuts = [...candidate.cuts, Infinity];
   return withCost
     .filter((p) => {
