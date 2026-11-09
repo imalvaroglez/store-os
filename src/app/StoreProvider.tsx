@@ -698,7 +698,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
       if (cloud) await savePricingRules(existing, pricingRules, updatedAt);
-      dispatch({ type: "UPDATE_STORE", store: { ...existing, pricingRules, updatedAt } });
+      // Local mirror with the same byTier-only overlay the transaction applies
+      // server-side — never replace the whole config from this screen's clone.
+      const merged: PricingRulesConfig = existing.pricingRules
+        ? JSON.parse(JSON.stringify(existing.pricingRules))
+        : { byTier: {} };
+      merged.byTier = pricingRules.byTier ?? {};
+      dispatch({ type: "UPDATE_STORE", store: { ...existing, pricingRules: merged, updatedAt } });
     },
     saveCategoryPricingRules: async (categoryId, rules) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);

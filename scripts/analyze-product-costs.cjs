@@ -236,15 +236,19 @@ function emptyCategoryStat() {
 }
 
 async function main() {
-  const storesSnap = await db.collection("stores").get();
+  // Scope the read to the target store ONLY: a slug-prefix range query never
+  // fetches other stores' docs (the PO authorized reading Olivia and nothing
+  // else), and the miss path must not dump other stores' names either.
+  const storesSnap = await db
+    .collection("stores")
+    .where("slug", ">=", storeFilter)
+    .where("slug", "<", storeFilter + "\uf8ff")
+    .get();
   const storeDoc = storesSnap.docs
     .map((d) => ({ id: d.id, name: d.data().name ?? d.id, data: d.data() }))
-    .find((s) => s.name.toLowerCase().includes(storeFilter));
+    .sort((a, b) => a.name.localeCompare(b.name))[0];
   if (!storeDoc) {
-    failWith(
-      `No encontré una tienda que contenga "${storeFilter}". Tiendas: ` +
-        storesSnap.docs.map((d) => d.data().name ?? d.id).join(", ")
-    );
+    failWith(`No encontré una tienda con slug que empiece con "${storeFilter}" en este proyecto.`);
   }
   const store = storeDoc.data;
   const tiers = (store.priceTiers ?? []).filter((t) => !t.hidden).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
