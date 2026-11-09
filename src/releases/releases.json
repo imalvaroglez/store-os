@@ -9,6 +9,7 @@
       "Puedes ajustar límites y precios, guardar la tabla y recuperar tal cual al recargar; guardar nunca cambia los precios de tus productos.",
       "Para aplicar precios a productos sigue siendo explícito, pieza por pieza o por lote, desde Productos → Reglas.",
       "Las reglas de una categoría ya no pueden borrarse por accidente al editar otra, ni pisarse entre sesiones (guardado por categoría, protegido contra cambios simultáneos).",
+      "El catálogo público reintenta solo una vez si la conexión falla un instante: menos pantallas de error para clientas con datos móviles inestables.",
       "Piezas sin costo confiable o niveles sin evidencia quedan pendientes en vez de recibir precios inventados."
     ]
   },
