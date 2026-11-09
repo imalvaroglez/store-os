@@ -103,6 +103,10 @@ service cloud.firestore {
     // Nothing else may change (no ownerUid, no other members, no business fields).
     function inviteeJoinOk() {
       return hasVerifiedEmail()
+        // #274: an already-member with a stale self-invite must not use the
+        // join path to add SOMEONE ELSE'S uid — the requester must not be a
+        // member yet.
+        && !resource.data.memberUids.hasAny([request.auth.uid])
         && resource.data.pendingInvites.hasAny([canonicalEmail()])
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids', 'pendingInvites'])
         && request.resource.data.memberUids.hasAny([request.auth.uid])
@@ -144,22 +148,12 @@ service cloud.firestore {
       allow update: if ((isSuperAdmin() || isOwner(id))
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
         || inviteeJoinOk()
-        || (canOperateStore(id) && storeSettingsUnchanged())
+        // #274: allow-list, not deny-list — members may touch ONLY the
+        // business-content fields; affectedKeys() IS emulator-supported
+        // (unlike affectedPaths()) and is already proven in inviteeJoinOk.
+        || (canOperateStore(id)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['packaging', 'pricingRules', 'updatedAt']))
 
-      function storeSettingsUnchanged() {
-        return request.resource.data.get('name', null) == resource.data.get('name', null)
-          && request.resource.data.get('slug', null) == resource.data.get('slug', null)
-          && request.resource.data.get('type', null) == resource.data.get('type', null)
-          && request.resource.data.get('ownerUid', null) == resource.data.get('ownerUid', null)
-          && request.resource.data.get('memberUids', null) == resource.data.get('memberUids', null)
-          && request.resource.data.get('pendingInvites', null) == resource.data.get('pendingInvites', null)
-          && request.resource.data.get('whatsappPhone', null) == resource.data.get('whatsappPhone', null)
-          && request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null)
-          && request.resource.data.get('storefront', null) == resource.data.get('storefront', null)
-          && request.resource.data.get('priceTiers', null) == resource.data.get('priceTiers', null)
-          && request.resource.data.get('defaultTierId', null) == resource.data.get('defaultTierId', null)
-          && request.resource.data.get('pricingRule', null) == resource.data.get('pricingRule', null);
-      }
       allow delete: if isSuperAdmin() || isOwner(id);
     }
 
