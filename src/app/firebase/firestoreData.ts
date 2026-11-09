@@ -31,7 +31,7 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging } from "../../types";
+import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
@@ -293,6 +293,18 @@ export async function saveStorePackaging(
 ): Promise<void> {
   const { db } = getFirebase();
   await setDoc(doc(db, "stores", store.id), { packaging: stripUndefined(packaging), updatedAt }, { merge: true });
+}
+
+/** #254: save ONLY the store's pricing rules — same member-reachable,
+ * field-scoped path as packaging (#253): every settings field must stay
+ * unchanged (rules), and the adminStores control batch is skipped. */
+export async function savePricingRules(
+  store: Pick<Store, "id">,
+  pricingRules: PricingRulesConfig,
+  updatedAt: string
+): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "stores", store.id), { pricingRules: stripUndefined(pricingRules), updatedAt }, { merge: true });
 }
 
 /** Save editable storefront text to its private, control, and public projections atomically. */

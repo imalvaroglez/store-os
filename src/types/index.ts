@@ -31,6 +31,9 @@ export type Store = {
   // display/planning inputs — real charges always come from consuming the
   // linked supply (#184), never from these numbers. Absent = not configured.
   packaging?: StorePackaging;
+  // #254: suggested-price rules per level (product > category > general).
+  // Absent = no suggestions beyond the legacy single-markup assistant.
+  pricingRules?: PricingRulesConfig;
 };
 
 /** #253: a packaging material Fer buys (bolsa, cartoncito, moño…). */
@@ -57,6 +60,28 @@ export type TierPackaging = {
 export type StorePackaging = {
   materials: PackagingMaterial[];
   byTier: Record<string, TierPackaging>;
+};
+
+/** #254 — how a suggested price is derived for one price level. */
+export type PriceRounding = "none" | "1" | "5" | "10";
+
+export type PricingRule =
+  /** Percentage over the level's base cost (e.g. +100 → cost × 2). */
+  | { kind: "markup"; percent: number; rounding?: PriceRounding }
+  /** Fixed increment in pesos over the base cost. */
+  | { kind: "fixed"; amount: number; rounding?: PriceRounding }
+  /** Cost-band table: the ACQUISITION cost picks the band, the band carries
+   * the final price for this level. Bands are [min, max) — half-open, so a
+   * piece costing exactly the limit belongs to the NEXT band. */
+  | { kind: "bands"; bands: Array<{ min: number; max?: number; price: number }>; rounding?: PriceRounding };
+
+export type PricingRulesConfig = {
+  /** General rule per price level (tier id keyed). */
+  byTier: Record<string, PricingRule>;
+  /** Category override: categoryId → tier → rule. */
+  byCategory?: Record<string, Record<string, PricingRule>>;
+  /** Product exception: productId → tier → rule. Wins over everything. */
+  byProduct?: Record<string, Record<string, PricingRule>>;
 };
 
 // Control-plane projection of a store. It remains the canonical source for

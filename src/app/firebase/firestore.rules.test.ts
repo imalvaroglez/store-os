@@ -242,7 +242,14 @@ describe("G-P02 batched create — stores + adminStores in one batch", () => {
         updatedAt: "2026-11-09T00:00:00.000Z",
       })
     );
-    // Anything beyond packaging + updatedAt stays owner-only.
+    // #254: pricing rules ride the same field-scoped exception.
+    await assertSucceeds(
+      updateDoc(doc(db, "stores/s1"), {
+        pricingRules: { byTier: {} },
+        updatedAt: "2026-11-09T00:00:00.000Z",
+      })
+    );
+    // Anything beyond the business-content fields stays owner-only.
     await assertFails(updateDoc(doc(db, "stores/s1"), { name: "Otra cosa" }));
     await assertFails(updateDoc(doc(db, "stores/s1"), { ownerUid: "u2" }));
     await assertFails(updateDoc(doc(db, "stores/s1"), { memberUids: ["u2"] }));
