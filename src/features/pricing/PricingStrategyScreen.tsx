@@ -4,7 +4,7 @@
 // categories, level rules and product exceptions are never touched. Applying
 // prices to products stays in Reglas de venta; this screen never edits prices.
 import { useEffect, useMemo, useState } from "react";
-import { useStore } from "../../app/StoreProvider";
+import { useStore, CategoryRulesConflictError } from "../../app/StoreProvider";
 import {
   Badge,
   Button,
@@ -21,7 +21,7 @@ import {
 import { navigate } from "../../lib/router";
 import { tiersForStore } from "../../lib/pricing";
 import { parseAmount, sanitizeMoneyInput } from "../../lib/money";
-import { suggestedPriceFor, baseCostForTier, validateBands } from "../../lib/pricingRules";
+import { suggestedPriceFor, baseCostForTier, validateBands, rulesSignature } from "../../lib/pricingRules";
 import {
   analyzeCategory,
   packagingGaps,
@@ -41,18 +41,11 @@ type TableDraft = {
 };
 
 const SUPPORT_LABEL: Record<string, string> = { high: "soporte alto", medium: "soporte medio", low: "soporte bajo" };
-
-/** Canonical JSON with recursively sorted keys: Firestore returns map keys
- * lexicographically sorted while our draft follows tier order — comparing raw
- * strings would flag the user's OWN save as a concurrent change. */
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(value, (_key, element) =>
-    element && typeof element === "object" && !Array.isArray(element)
-      ? Object.fromEntries(Object.entries(element).sort(([a], [b]) => a.localeCompare(b)))
-      : element
-  );
-}
-const EVIDENCE_LABEL = { orders: "respaldado por pedidos", prices: "respaldado por precios actuales", reference: "referencia, pendiente de validar en puntos físicos" } as const;
+const EVIDENCE_LABEL = {
+  orders: "canal con más pedidos en el mix GLOBAL de la tienda (no prueba la demanda de esta categoría)",
+  prices: "respaldado solo por los precios actuales de la categoría",
+  reference: "referencia, pendiente de validar en puntos físicos",
+} as const;
 const SUPPORT_HINT: Record<PriceSupport, string> = {
   strong: "sólido",
   weak: "poco respaldado",
@@ -132,7 +125,7 @@ export function PricingStrategyScreen() {
 
   // Concurrency: the saved table changed under a dirty draft (another session).
   const savedSignature = useMemo(
-    () => (categoryId ? canonicalJson(activeStore?.pricingRules?.byCategory?.[categoryId] ?? null) : ""),
+    () => (categoryId ? rulesSignature(activeStore?.pricingRules?.byCategory?.[categoryId] ?? null) : ""),
     [categoryId, activeStore?.pricingRules]
   );
   const concurrentChange = !!draft?.dirty && savedSignature !== draftBase;
@@ -318,12 +311,18 @@ export function PricingStrategyScreen() {
     }
     setBusy(true);
     try {
-      await saveCategoryPricingRules(categoryId, serialized);
+      await saveCategoryPricingRules(categoryId, serialized, draftBase);
       setDraft((current) => (current ? { ...current, dirty: false } : current));
-      setDraftBase(canonicalJson(serialized));
+      setDraftBase(rulesSignature(serialized));
       setReplaceExisting(false);
       toast.success("Tabla guardada. Los precios de tus productos no cambiaron.");
     } catch (error) {
+      // P0-2: a same-category concurrent edit REFUSES the save (nothing is
+      // lost); the banner below then offers to reload the fresh table.
+      if (error instanceof CategoryRulesConflictError) {
+        toast.error(error.message);
+        return;
+      }
       toast.error(error instanceof Error && error.message ? error.message : "No se pudo guardar la tabla.");
     } finally {
       setBusy(false);
@@ -334,7 +333,7 @@ export function PricingStrategyScreen() {
     if (!categoryId) return;
     setBusy(true);
     try {
-      await saveCategoryPricingRules(categoryId, null);
+      await saveCategoryPricingRules(categoryId, null, draftBase);
       setDraft(null);
       setDraftBase("");
       toast.success("Tabla eliminada.");
@@ -527,11 +526,31 @@ export function PricingStrategyScreen() {
                       {tiers
                         .map((t) => {
                           const contribution = proposal.bands![index].minContribution[t.id];
-                          return `${t.label} ${contribution === null || contribution === undefined ? "—" : `$${contribution}`}`;
+                          const preliminary = packagingGaps(activeStore?.packaging, t.id).length > 0;
+                          const value = contribution === null || contribution === undefined ? "—" : `$${contribution}`;
+                          return `${t.label} ${value}${preliminary ? " (preliminar: falta costo de empaque)" : ""}`;
                         })
                         .join(" · ")}
                     </p>
                   )}
+                  {proposal?.bands?.[index]?.belowCost.length ? (
+                    <div className="rounded-lg border border-danger bg-surface px-3 py-2 text-xs">
+                      <p className="font-semibold text-danger">
+                        {proposal.bands[index].belowCost.length} pieza(s) quedarían con precio sugerido bajo su costo base:
+                      </p>
+                      <ul className="list-disc pl-5 text-on-surface-soft">
+                        {proposal.bands[index].belowCost.map(({ member, tiers: below }) => (
+                          <li key={member.id}>
+                            {member.name} — costo <Money amount={member.cost} /> · {member.inStock ? "con existencia" : "agotada"} ·{" "}
+                            {below.map((b) => `${tiers.find((t) => t.id === b.tierId)?.label ?? b.tierId} $${b.price}`).join(", ")}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1 text-on-surface-soft">
+                        No se subió el precio de toda la banda para taparlas: decide una excepción por producto o un ajuste puntual con Fer.
+                      </p>
+                    </div>
+                  ) : null}
                   {proposal?.bands?.[index] && (
                     <BandMembers band={proposal.bands[index]} tiers={tiers} serialized={serialized} packaging={activeStore?.packaging} />
                   )}
@@ -647,7 +666,23 @@ function BandMembers({
 }
 
 /** Read-only scenario: how many pieces would change (up/down) per level if the
- * draft table were adopted. Not a projection of future profit. */
+ * draft table were adopted, SPLIT by stock (historical catalog vs sellable
+ * inventory, P1) and surfacing which pieces would land under their full base
+ * cost (P0-1). Not a projection of future profit. */
+function emptyImpact() {
+  return {
+    up: 0,
+    upInStock: 0,
+    down: 0,
+    downInStock: 0,
+    same: 0,
+    noSuggestion: 0,
+    belowCost: 0,
+    belowCostInStock: 0,
+    belowCostList: [] as Array<{ name: string; cost: number; inStock: boolean; price: number; base: number }>,
+  };
+}
+
 function ImpactPreview({
   products,
   categoryId,
@@ -662,25 +697,39 @@ function ImpactPreview({
   packaging: Parameters<typeof baseCostForTier>[2];
 }) {
   const impact = useMemo(() => {
-    const members = products.filter((p) => p.categoryIds?.[0] === categoryId && typeof p.cost === "number" && p.cost > 0);
+    const members = products.filter(
+      (p): p is Product & { cost: number } => p.categoryIds?.[0] === categoryId && typeof p.cost === "number" && p.cost > 0
+    );
     const byTier = Object.fromEntries(
-      tiers.map((tier) => {
-        let up = 0;
-        let down = 0;
-        let same = 0;
-        let noSuggestion = 0;
+      tiers.map((tier): [string, ReturnType<typeof emptyImpact>] => {
+        const impact = emptyImpact();
         for (const product of members) {
+          const inStock = (product.quantityOnHand ?? 0) > 0;
           const current = product.prices?.[tier.id];
+          const base = baseCostForTier(product, tier.id, packaging);
           const suggested = suggestedPriceFor(rules[tier.id], {
-            baseCost: baseCostForTier(product, tier.id, packaging),
+            baseCost: base,
             acquisitionCost: product.cost,
           });
-          if (suggested == null) noSuggestion += 1;
-          else if (current === undefined || suggested > current) up += 1;
-          else if (suggested < current) down += 1;
-          else same += 1;
+          if (suggested == null) {
+            impact.noSuggestion += 1;
+            continue;
+          }
+          if (base !== undefined && suggested < base) {
+            impact.belowCost += 1;
+            if (inStock) impact.belowCostInStock += 1;
+            impact.belowCostList.push({ name: product.name, cost: product.cost, inStock, price: suggested, base });
+          }
+          if (current === undefined || suggested > current) {
+            impact.up += 1;
+            if (inStock) impact.upInStock += 1;
+          } else if (suggested < current) {
+            impact.down += 1;
+            if (inStock) impact.downInStock += 1;
+          } else impact.same += 1;
         }
-        return [tier.id, { up, down, same, noSuggestion }];
+        impact.belowCostList.sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name));
+        return [tier.id, impact];
       })
     );
     return { total: members.length, byTier };
@@ -690,18 +739,40 @@ function ImpactPreview({
   return (
     <Card className="space-y-2">
       <h3 className="font-semibold text-ink">Si adoptaras esta tabla (escenario, no proyección)</h3>
-      <p className="text-sm text-on-surface-soft">{impact.total} piezas con costo en la categoría:</p>
+      <p className="text-sm text-on-surface-soft">
+        {impact.total} piezas con costo en la categoría (histórico completo; la cifra "en existencia" es el inventario
+        vendible de hoy):
+      </p>
       <div className="grid gap-1 sm:grid-cols-3">
         {tiers.map((tier) => {
           const t = impact.byTier[tier.id];
           return (
             <p key={tier.id} className="text-xs text-on-surface-soft">
-              <span className="font-semibold text-on-surface">{tier.label}:</span> {t.up} subirían · {t.down} bajarían ·{" "}
-              {t.same} iguales · {t.noSuggestion} sin sugerencia
+              <span className="font-semibold text-on-surface">{tier.label}:</span> {t.up} subirían ({t.upInStock} en
+              existencia) · {t.down} bajarían ({t.downInStock} en existencia) · {t.same} iguales · {t.noSuggestion} sin
+              sugerencia
             </p>
           );
         })}
       </div>
+      {tiers.some((tier) => impact.byTier[tier.id].belowCost > 0) && (
+        <div className="rounded-lg border border-danger px-3 py-2 text-xs">
+          <p className="font-semibold text-danger">Piezas cuyo precio sugerido queda BAJO su costo base:</p>
+          <ul className="list-disc pl-5 text-on-surface-soft">
+            {tiers.flatMap((tier) =>
+              impact.byTier[tier.id].belowCostList.map((piece) => (
+                <li key={`${tier.id}-${piece.name}`}>
+                  {piece.name} — {tier.label} ${piece.price} vs costo base ${piece.base} · {piece.inStock ? "con existencia" : "agotada"}
+                </li>
+              ))
+            )}
+          </ul>
+          <p className="mt-1 text-on-surface-soft">
+            Vender con pérdida requiere decisión explícita: al aplicar precios en Reglas de venta estas sugerencias se
+            omiten solas (salvo excepción por producto).
+          </p>
+        </div>
+      )}
       <p className="text-xs text-on-surface-soft">
         Nada cambia hasta que apliques precios pieza por pieza en Reglas de venta. Las excepciones por producto ganan
         a esta tabla.

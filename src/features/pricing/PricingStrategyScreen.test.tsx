@@ -9,6 +9,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { PricingStrategyScreen } from "./PricingStrategyScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
+import { CategoryRulesConflictError } from "../../app/StoreProvider";
 import type { Category, Product, Store } from "../../types";
 
 const mocks = vi.hoisted(() => ({
@@ -57,7 +58,7 @@ function categoryFixture(): Category {
 }
 
 let counter = 0;
-function product(cost: number, prices: Partial<Record<string, number>>): Product {
+function product(cost: number, prices: Partial<Record<string, number>>, quantityOnHand = 1): Product {
   counter += 1;
   return {
     id: `p${counter}`,
@@ -69,7 +70,7 @@ function product(cost: number, prices: Partial<Record<string, number>>): Product
     status: "published",
     cost,
     prices: prices as Record<string, number>,
-    quantityOnHand: 1,
+    quantityOnHand,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
   } as Product;
@@ -222,6 +223,36 @@ describe("PricingStrategyScreen (#280)", () => {
     expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("165");
   });
 
+  it("P0-2: un guardado concurrente de la MISMA categoría se rechaza, sin perder el draft ni sobrescribir", async () => {
+    state.products = [...clusterProducts(), product(190, pricey, 3)];
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    expect(await screen.findByText(/cambiaron en otra sesión|La tabla de esta categoría cambió/)).toBeTruthy();
+    // The draft survives untouched — nothing was overwritten silently.
+    expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("165");
+    expect(screen.getByRole("button", { name: /Guardar tabla/ })).toBeTruthy();
+    // The save travelled WITH the expected signature of the loaded table.
+    const call = mocks.saveCategoryPricingRules.mock.calls[0];
+    expect(typeof call[2]).toBe("string");
+  });
+
+  it("P0-1c: la simulación muestra las piezas que quedarían bajo su costo y su existencia", async () => {
+    const outlier = product(190, pricey, 3); // Iconic sugerido 170 < costo 190, con existencia
+    state.products = [...clusterProducts(), outlier];
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    expect(await screen.findByText(/Piezas cuyo precio sugerido queda BAJO su costo base/)).toBeTruthy();
+    expect(
+      screen.getAllByText((_, element) => !!element?.textContent?.includes(`${outlier.name} — Iconic $170 vs costo base $190 · con existencia`)).length
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(/no se aplica; requiere excepción|se omiten solas/)).toBeTruthy();
+  });
+
   it("elimina la tabla guardada con confirmación explícita", async () => {
     state.stores[0].pricingRules = {
       byTier: {},
@@ -238,7 +269,12 @@ describe("PricingStrategyScreen (#280)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Quitar tabla de esta categoría/ }));
     fireEvent.click(screen.getByRole("button", { name: /^Quitar tabla$/ }));
     expect(await screen.findByText("Tabla eliminada.")).toBeTruthy();
-    expect(mocks.saveCategoryPricingRules).toHaveBeenCalledWith(CAT, null);
+    // P0-2: deletion also travels with the expected signature of the table it
+    // deletes — a concurrent change must refuse the deletion too.
+    const deleteCall = mocks.saveCategoryPricingRules.mock.calls[mocks.saveCategoryPricingRules.mock.calls.length - 1];
+    expect(deleteCall[0]).toBe(CAT);
+    expect(deleteCall[1]).toBeNull();
+    expect(typeof deleteCall[2]).toBe("string");
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
   });
 });
