@@ -88,7 +88,11 @@ export function ExpensesScreen() {
       toast.error("La fecha del gasto no es válida.");
       return;
     }
-    if (category === "supplies") {
+    // #255/#257: units are only demanded when a consumable supply stash is
+    // being decided here — simplified supplies skip them, and an existing
+    // supply keeps its original units (quantityInitial is evidence).
+    const editingExistingSupply = !!(editing && editing.supply);
+    if (category === "supplies" && !simplified && !editingExistingSupply) {
       const quantity = Math.round(Number(quantityText));
       if (!Number.isSafeInteger(quantity) || quantity < 1) {
         toast.error("Captura cuántas unidades compraste (p. ej. 100 bolsas).");
@@ -108,6 +112,11 @@ export function ExpensesScreen() {
           // R1: the simplified treatment IS editable while nothing has been
           // assigned/consumed and there is no stash (locked otherwise).
           ...(locked ? {} : { simplifiedOperation: simplified ? true : undefined }),
+          // #257: reclassifying into a consumable supply creates its stash
+          // exactly once, with the units captured in this edit.
+          ...(!locked && category === "supplies" && !simplified
+            ? { supply: { quantityInitial: Math.round(Number(quantityText)), consumptions: [] } }
+            : {}),
         });
         toast.success("Gasto actualizado.");
         setOpen(false);
@@ -183,7 +192,7 @@ export function ExpensesScreen() {
             <TextField
               label="Unidades compradas"
               inputMode="numeric"
-              disabled={!!editing}
+              disabled={!!editing && !!editing.supply}
               placeholder="p. ej. 100 bolsas"
               value={quantityText}
               onChange={(e) => setQuantityText(e.target.value.replace(/[^0-9]/g, ""))}
