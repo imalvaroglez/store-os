@@ -77,7 +77,7 @@ jobs:
     needs: env-select
     # #227: skipped ONLY in the Sev-1 path, after sev1-verify proves this exact
     # commit already passed the suite on a push to main.
-    if: needs.env-select.outputs.app-changed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.sev1_reuse_ci == true)
+    if: needs.env-select.outputs.app-changed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.release_production == true && inputs.sev1_reuse_ci == true && github.ref_name == 'main')
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
     steps:
@@ -108,7 +108,7 @@ jobs:
   rules-and-e2e:
     needs: env-select
     # #227: same Sev-1 skip condition as build-test.
-    if: needs.env-select.outputs.app-changed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.sev1_reuse_ci == true)
+    if: needs.env-select.outputs.app-changed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.release_production == true && inputs.sev1_reuse_ci == true && github.ref_name == 'main')
     runs-on: ubuntu-latest
     environment: ${{ needs.env-select.outputs.env-name }}
     steps:

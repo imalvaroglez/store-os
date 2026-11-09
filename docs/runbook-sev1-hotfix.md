@@ -77,7 +77,12 @@ Ensayar en dev con incidentes sintéticos, sin tocar producción:
    ahorrados).
 4. **Vía normal intacta**: un push normal y un despacho `release_production`
    sin `sev1_reuse_ci` deben correr ambas suites como hoy.
-5. Retorno compatible: ensayar el flujo de rollback de Vercel en el entorno de
+5. **Destino Firebase cruzado**: confirmar que la vía Sev-1 no evade el guard
+   de entorno — `check-env.cjs` corre dentro del `vercel build` del deploy con
+   los secrets del environment Production, independiente de las suites
+   saltadas; un bundle apuntando a `store-os-dev` no puede pasar a producción
+   por ninguna vía.
+6. Retorno compatible: ensayar el flujo de rollback de Vercel en el entorno de
    preview (elegibilidad del plan, sin contratar nada).
 
 ## Fuentes

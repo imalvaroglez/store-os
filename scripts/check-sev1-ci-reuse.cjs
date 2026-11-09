@@ -25,6 +25,9 @@ const { execFileSync } = require("node:child_process");
 
 const REQUIRED_JOBS = ["build-test", "rules-and-e2e"];
 const WORKFLOW_NAME = "CI";
+// H1 (adversarial): identity is pinned by PATH, not just display name — a
+// foreign workflow named "CI" must never supply release evidence.
+const WORKFLOW_PATH = ".github/workflows/ci.yml";
 
 function argumentValue(flag) {
   const index = process.argv.indexOf(flag);
@@ -43,54 +46,57 @@ function failWith(message) {
  * @returns {{ok: boolean, reasons: string[], evidence: string[]}}
  */
 function verifyReusableCi({ sha, headSha, runs, jobsByRunId }) {
-  const reasons = [];
+  // Structural reasons deny the reuse no matter what evidence exists; per-run
+  // notes are informational — a non-reusable sibling run (e.g. the same SHA
+  // pushed to a backup branch) must NOT deny a release that has valid
+  // evidence (H2, adversarial: order-dependent denial).
+  const structuralReasons = [];
+  const notes = [];
   const evidence = [];
   if (!/^[0-9a-f]{40}$/.test(sha ?? "")) {
-    reasons.push(`--sha no es un id de commit completo (40 hex): "${sha}"`);
+    structuralReasons.push(`--sha no es un id de commit completo (40 hex): "${sha}"`);
   }
   if (!headSha) {
-    reasons.push("no se pudo resolver la punta de origin/main");
+    structuralReasons.push("no se pudo resolver la punta de origin/main");
   } else if (sha && headSha !== sha) {
-    reasons.push(`el commit despachado (${sha ? sha.slice(0, 8) : "?"}) no es la punta de origin/main (${headSha.slice(0, 8)}): despacha desde la punta tras integrar el hotfix`);
+    structuralReasons.push(`el commit despachado (${sha ? sha.slice(0, 8) : "?"}) no es la punta de origin/main (${headSha.slice(0, 8)}): despacha desde la punta tras integrar el hotfix`);
   }
   const qualifying = (runs ?? []).filter(
     (run) =>
       run.head_sha === sha &&
       run.name === WORKFLOW_NAME &&
+      run.path === WORKFLOW_PATH &&
       run.event === "push" &&
+      run.head_branch === "main" &&
       run.status === "completed" &&
       run.conclusion === "success"
   );
   if (qualifying.length === 0) {
-    reasons.push(`no hay corrida COMPLETADA y EXITOSA de "${WORKFLOW_NAME}" (evento push) para este commit`);
+    structuralReasons.push(`no hay corrida COMPLETADA y EXITOSA de "${WORKFLOW_NAME}" (${WORKFLOW_PATH}, push de main) para este commit`);
   }
   let reusableRun = null;
   for (const run of qualifying) {
     const jobs = jobsByRunId[run.id] ?? [];
-    const byName = new Map(jobs.map((job) => [job.name, job]));
-    const missing = [];
-    const failed = [];
+    const blocking = [];
     for (const required of REQUIRED_JOBS) {
-      const job = byName.get(required);
-      if (!job) {
-        missing.push(required);
-      } else if (job.conclusion !== "success") {
-        failed.push(`${required}=${job.conclusion}`);
-      }
+      // H3 (adversarial): duplicate job names must never average out to
+      // success — uniqueness is part of the evidence.
+      const matches = jobs.filter((job) => job.name === required);
+      if (matches.length === 0) blocking.push(`sin job ${required}`);
+      else if (matches.length > 1) blocking.push(`${required} duplicado (${matches.length} jobs con ese nombre)`);
+      else if (matches[0].conclusion !== "success") blocking.push(`${required}=${matches[0].conclusion}`);
     }
-    if (missing.length === 0 && failed.length === 0) {
+    if (blocking.length === 0) {
       reusableRun = run;
-      evidence.push(`run ${run.id} (push, exitoso): ${REQUIRED_JOBS.join(" y ")} en success — ${run.html_url ?? run.url ?? ""}`);
+      evidence.push(`run ${run.id} (push de main, exitoso): ${REQUIRED_JOBS.join(" y ")} en success — ${run.html_url ?? run.url ?? ""}`);
       break;
     }
-    reasons.push(
-      `run ${run.id} no reutilizable: ${[missing.length ? `sin jobs ${missing.join("/")}` : "", failed.length ? failed.join(", ") : ""].filter(Boolean).join(" · ")}`
-    );
+    notes.push(`run ${run.id} no reutilizable: ${blocking.join(" · ")}`);
   }
   if (!reusableRun && qualifying.length > 0) {
-    reasons.push("ninguna corrida del commit tiene ambas suites en success (un push solo-documentación da run verde SIN esos jobs: no cuenta)");
+    structuralReasons.push("ninguna corrida del commit tiene ambas suites únicas y en success (un push solo-documentación da run verde SIN esos jobs: no cuenta)");
   }
-  return { ok: reasons.length === 0, reasons, evidence };
+  return { ok: structuralReasons.length === 0 && reusableRun !== null, reasons: [...structuralReasons, ...notes], evidence };
 }
 
 let SELF_TEST_CHECKS = 0;
@@ -104,7 +110,17 @@ function assertEqual(actual, expected, label) {
 
 function selfTest() {
   const sha = "a".repeat(40);
-  const run = (id, overrides = {}) => ({ id, name: WORKFLOW_NAME, event: "push", status: "completed", conclusion: "success", head_sha: sha, ...overrides });
+  const run = (id, overrides = {}) => ({
+    id,
+    name: WORKFLOW_NAME,
+    path: WORKFLOW_PATH,
+    event: "push",
+    head_branch: "main",
+    status: "completed",
+    conclusion: "success",
+    head_sha: sha,
+    ...overrides,
+  });
   const jobs = (id, overrides = {}) => ({ [id]: REQUIRED_JOBS.map((name) => ({ name, conclusion: "success" })), ...overrides });
   // Happy path: same-sha push run with both suites green.
   assertEqual(verifyReusableCi({ sha, headSha: sha, runs: [run(101)], jobsByRunId: jobs(101) }).ok, true, "camino verde");
@@ -136,12 +152,46 @@ function selfTest() {
     false,
     "jobs de otra corrida no rescatan"
   );
+  // H1: a foreign workflow NAMED "CI" (different path) must not qualify.
+  assertEqual(verifyReusableCi({ sha, headSha: sha, runs: [run(109, { path: ".github/workflows/escalation.yml" })], jobsByRunId: jobs(109) }).ok, false, "workflow homónimo ajeno no cuenta");
+  // H2: a non-reusable sibling run BEFORE the good one must not deny the release.
+  assertEqual(
+    verifyReusableCi({
+      sha,
+      headSha: sha,
+      runs: [run(110, { conclusion: "failure" }), run(111)],
+      jobsByRunId: { ...jobs(111), 110: [{ name: "build-test", conclusion: "success" }] },
+    }).ok,
+    true,
+    "hermano fallido antes del bueno no deniega"
+  );
+  // Same-SHA run pushed from a non-main branch: neither approves nor denies.
+  assertEqual(
+    verifyReusableCi({ sha, headSha: sha, runs: [run(112, { head_branch: "main-backup" }), run(113)], jobsByRunId: { ...jobs(113), 112: [{ name: "env-select", conclusion: "success" }] } }).ok,
+    true,
+    "corrida de otra rama ni aprueba ni deniega"
+  );
+  // H3: duplicate required-job names must not average out to success.
+  assertEqual(
+    verifyReusableCi({
+      sha,
+      headSha: sha,
+      runs: [run(114)],
+      jobsByRunId: { 114: [{ name: "build-test", conclusion: "success" }, { name: "build-test", conclusion: "failure" }, { name: "rules-and-e2e", conclusion: "success" }] },
+    }).ok,
+    false,
+    "jobs duplicados no promedian"
+  );
 }
 
 async function main() {
   const repo = argumentValue("--repo");
   const sha = argumentValue("--sha");
   if (!repo || !sha) failWith("Uso: node scripts/check-sev1-ci-reuse.cjs --repo owner/repo --sha <40-hex> (o --self-test)");
+  // Validate BEFORE any network call: malformed input must never reach a query
+  // string (review F4 — the workflow always passes GITHUB_SHA, but the guard
+  // owns its own inputs).
+  if (!/^[0-9a-f]{40}$/.test(sha)) failWith(`--sha no es un id de commit completo (40 hex): "${sha}"`);
   // Freshness: the dispatched commit must be origin/main's tip. The workflow
   // checks out the dispatch ref with fetch-depth 0.
   let headSha = "";
@@ -152,6 +202,10 @@ async function main() {
   }
   const gh = (args) =>
     JSON.parse(execFileSync("gh", ["api", ...args], { encoding: "utf8", env: { ...process.env } }));
+  // Pagination note (review F3): per_page=100 WITHOUT following Link links.
+  // Truncation can only LOSE evidence (unjustified deny), never approve
+  // without proof — fail-closed by construction. A single commit exceeding
+  // 100 runs/jobs would be extraordinary.
   const runsPage = gh([`repos/${repo}/actions/runs?head_sha=${sha}&per_page=100`]);
   const runs = runsPage.workflow_runs ?? [];
   const jobsByRunId = {};
