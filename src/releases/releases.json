@@ -2,12 +2,18 @@
   {
     "version": "1.10.0",
     "date": "2026.11.09",
-    "title": "Empaques por nivel y reglas de venta",
+    "title": "Empaques, reglas de venta y dinero confiable",
     "notes": [
       "Empaques por nivel: en Productos → Empaques se definen los materiales de cada nivel y el pedido sugiere el consumo en un toque.",
       "Reglas de venta: en Productos → Reglas se define cómo se sugiere cada precio (porcentaje, importe o bandas de costo) y se aplican sugeridos por lote, nunca solos.",
+      "Cobrar de un toque cobra solo lo pendiente real: si la clienta tenía saldo a favor aplicado, antes se cobraba de más; ahora el cobro es por el neto exacto.",
+      "Al entregar con saldo pendiente, el monto que confirmas ya considera reembolsos y cargos de posventa, no solo el total histórico.",
+      "Al recibir una compra, el costo por pieza que ves en pantalla es exactamente el que queda guardado.",
+      "En existencia solo acepta piezas enteras: ni puntos ni fracciones.",
+      "El catálogo público ya no se cae si el navegador bloquea el almacenamiento, y si falla la conexión ofrece reintentar en vez de decir que la tienda no existe.",
       "El formulario de gastos ya no exige unidades de campos que no deja capturar (simplificados y reclasificaciones).",
-      "Camino urgente para incidentes graves que reusa el CI ya probado del mismo commit (interno)."
+      "Camino urgente para incidentes graves que reusa el CI ya probado del mismo commit (interno).",
+      "Permisos más estrictos para miembros de una tienda y menos corridas de pruebas rojas sin causa (interno)."
     ]
   },
   {
