@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.11.1",
+    "date": "2026.11.09",
+    "title": "Aplicar precios sugeridos sin fricción",
+    "notes": [
+      "Si aún no tienes reglas ni tablas, Reglas de venta te lo dice y te lleva directo a Estrategia de precios en un toque (antes la lista aparecía sin explicación).",
+      "Nuevo botón Seleccionar todo: marca de golpe las piezas con cambios reales; aplicar sigue siendo tuyo, pieza a pieza o por lote.",
+      "Al guardar una tabla en Estrategia de precios, la pantalla te confirma que las sugerencias ya están activas y te lleva a revisarlas."
+    ]
+  },
+  {
     "version": "1.11.0",
     "date": "2026.11.09",
     "title": "Estrategia de precios por categoría",

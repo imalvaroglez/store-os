@@ -19,7 +19,8 @@ import {
 } from "../../design-system";
 import { tiersForStore } from "../../lib/pricing";
 import { sanitizeMoneyInput } from "../../lib/money";
-import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands } from "../../lib/pricingRules";
+import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, hasRules } from "../../lib/pricingRules";
+import { navigate } from "../../lib/router";
 import type { PricingRule, PricingRulesConfig, PriceRounding, Product } from "../../types";
 
 function emptyConfig(): PricingRulesConfig {
@@ -125,6 +126,14 @@ export function PricingRulesScreen() {
   }, [products, tiers, draft.config, activeStore?.packaging]);
 
   const selectedCount = Object.values(selected).filter(Boolean).length;
+  // #289: practical batches — everything with at least one real change.
+  const withChanges = suggestions.filter((entry) =>
+    tiers.some((tier) => {
+      const s = entry.byTier[tier.id];
+      return s?.suggested != null && s.suggested !== s.current;
+    })
+  );
+  const allSelected = withChanges.length > 0 && withChanges.every((entry) => selected[entry.product.id]);
 
   async function runApply(
     updates: Array<{ product: Product; prices: Record<string, number> }>,
@@ -203,7 +212,9 @@ export function PricingRulesScreen() {
       toast.error(
         skippedBelowCost > 0
           ? `Solo había precios sugeridos bajo el costo (${skippedBelowCost}); no se aplicó nada. Vender con pérdida requiere una excepción por producto.`
-          : "Nada seleccionado con sugerencias distintas al precio actual."
+          : hasRules(draft.config)
+            ? "Las piezas seleccionadas no tienen sugerencias distintas a su precio actual."
+            : "No hay sugerencias porque aún no hay reglas ni tablas: define tu estrategia en Estrategia de precios."
       );
       return;
     }
@@ -217,7 +228,26 @@ export function PricingRulesScreen() {
         subtitle="Cómo se sugiere el precio de cada nivel a partir del costo"
       />
       <div className="space-y-4">
-        {tiers.map((tier) => (
+          {!hasRules(draft.config) && (
+            <Card className="space-y-2 border border-warning">
+              <h3 className="font-semibold text-ink">Todavía no hay reglas ni tablas de precios</h3>
+              <p className="text-sm text-on-surface-soft">
+                Por eso la lista de abajo no tiene sugerencias: sin reglas no hay nada que sugerir. Lo recomendado es
+                definir tus tablas por categoría en Estrategia de precios (usa tus costos y precios reales); las reglas
+                generales de abajo son opcionales y sirven de respaldo para categorías sin tabla.
+              </p>
+              <Button size="sm" onClick={() => navigate("/productos/estrategia")}>
+                Ir a Estrategia de precios
+              </Button>
+            </Card>
+          )}
+          {tiers.length > 0 && hasRules(draft.config) && (
+            <p className="text-xs text-on-surface-soft">
+              Opcional: las reglas de abajo aplican a categorías sin tabla en Estrategia de precios; una tabla de
+              categoría siempre gana, y una excepción por producto gana sobre todo.
+            </p>
+          )}
+          {tiers.map((tier) => (
           <RuleCard
             key={tier.id}
             label={tier.label}
@@ -245,10 +275,33 @@ export function PricingRulesScreen() {
         <Card className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold text-ink">Precios sugeridos</h2>
-            <Button size="sm" disabled={selectedCount === 0 || applying} onClick={() => void applySelected()}>
-              {applying ? "Aplicando…" : `Aplicar seleccionados (${selectedCount})`}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={withChanges.length === 0 || applying || allSelected}
+                onClick={() =>
+                  setSelected(Object.fromEntries(withChanges.map((entry) => [entry.product.id, true])))
+                }
+              >
+                Seleccionar todo ({withChanges.length})
+              </Button>
+              {selectedCount > 0 && (
+                <Button size="sm" variant="ghost" disabled={applying} onClick={() => setSelected({})}>
+                  Limpiar selección
+                </Button>
+              )}
+              <Button size="sm" disabled={selectedCount === 0 || applying} onClick={() => void applySelected()}>
+                {applying ? "Aplicando…" : `Aplicar seleccionados (${selectedCount})`}
+              </Button>
+            </div>
           </div>
+          {hasRules(draft.config) && withChanges.length > 0 && (
+            <p className="text-xs text-on-surface-soft">
+              {withChanges.length} pieza(s) tendrían al menos un cambio con las reglas actuales (verifica el origen:
+              tabla de categoría, regla general o excepción). Las sugerencias bajo el costo se omiten solas al aplicar.
+            </p>
+          )}
           {suggestions.length === 0 ? (
             <p className="text-sm text-on-surface-soft">
               Captura el costo de compra de tus piezas para ver sugerencias aquí.

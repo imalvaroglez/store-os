@@ -104,7 +104,7 @@ describe("PricingRulesScreen (#254)", () => {
     };
     state.products = [product({ cost: 100, prices: { t_iconic: 120 } })]; // sugerido 60 < costo base 100
     render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
-    expect(await screen.findByText(/bajo el costo/)).toBeTruthy();
+    expect(await screen.findByText(/⚠️ bajo el costo/)).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
     fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
     expect(await screen.findByText(/Solo había precios sugeridos bajo el costo/)).toBeTruthy();
@@ -160,5 +160,33 @@ describe("PricingRulesScreen (#254)", () => {
     const apply = screen.getByRole("button", { name: /Aplicar seleccionados/ });
     expect((apply as HTMLButtonElement).disabled).toBe(true);
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+});
+
+describe("PricingRulesScreen orientación y lote (#289)", () => {
+  it("sin reglas ni tablas: banner que guía a Estrategia y error que lo explica", async () => {
+    state.products = [product({ prices: { t_iconic: 60 } })];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(screen.getByText("Todavía no hay reglas ni tablas de precios")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ir a Estrategia de precios" })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    expect(await screen.findByText(/aún no hay reglas ni tablas/)).toBeTruthy();
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+
+  it("con tablas: Seleccionar todo marca las piezas con cambios y aplicarlas en un toque", async () => {
+    state.stores[0].pricingRules = {
+      byTier: { t_iconic: { kind: "markup", percent: 100, rounding: "none" } }, // costo 100 → 200
+    };
+    state.products = [product({ cost: 100, prices: { t_iconic: 60 } }), product({ cost: 100, prices: { t_iconic: 200 } })];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    const selectAll = await screen.findByRole("button", { name: /Seleccionar todo \(1\)/ });
+    fireEvent.click(selectAll);
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados \(1\)/ }));
+    expect(await screen.findByText(/Precios actualizados en 1 producto/)).toBeTruthy();
+    expect(mocks.upsertProduct).toHaveBeenCalledTimes(1);
+    const updated = mocks.upsertProduct.mock.calls[0][0] as Product;
+    expect(updated.prices?.t_iconic).toBe(200);
   });
 });
