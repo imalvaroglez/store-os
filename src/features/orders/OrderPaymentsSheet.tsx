@@ -13,9 +13,9 @@ import {
 import { todayIso } from "../../lib/dates";
 import { orderReference } from "../../lib/orders";
 import { uid } from "../../lib/ids";
-import { sanitizeMoneyInput } from "../../lib/money";
+import { formatMoneyExact, parseAmount, sanitizeMoneyInput } from "../../lib/money";
 import type { Order, OrderPayment } from "../../types";
-import { PAYMENT_METHOD_LABELS, paymentSummary } from "./payments";
+import { PAYMENT_METHOD_LABELS, maxAdjustmentSubtractCents, paymentSummary, signedAmountCents } from "./payments";
 import { INSTALLMENT_FREQUENCY_LABELS, installmentPlanView } from "./installments";
 
 function paymentDateLabel(p: OrderPayment): string {
@@ -151,6 +151,25 @@ export function OrderPaymentsSheet({
   }
 
   async function submitAdjustment() {
+    // #270 (PO 2026-11-09): a "Restar" is capped at what THIS order received.
+    // Fast, friendly rejection without losing the capture; the transaction
+    // re-validates against the fresh accumulator (the authoritative guard).
+    if (adjustDirection === "subtract") {
+      const maxCents = maxAdjustmentSubtractCents(order);
+      let cents: number | null = null;
+      try {
+        const amount = parseAmount(adjustAmountText);
+        cents = amount == null ? null : signedAmountCents(amount);
+      } catch {
+        cents = null; // malformed or out-of-precision: the save path reports it
+      }
+      if (cents != null && cents > maxCents) {
+        toast.error(
+          `El ajuste excede lo recibido en este pedido. Puedes restar hasta ${formatMoneyExact(maxCents / 100)}.`
+        );
+        return;
+      }
+    }
     const id = intentIdRef.current.adjust ?? uid("adj");
     intentIdRef.current.adjust = id;
     await save({ kind: "adjustment", id, direction: adjustDirection, amountText: adjustAmountText, note: adjustNote }, () => {
@@ -355,6 +374,12 @@ export function OrderPaymentsSheet({
               <p className="text-xs text-on-surface-soft">
                 Los ajustes no borran cobros: quedan como registros con signo y motivo.
               </p>
+              {adjustDirection === "subtract" && (
+                <p className="text-xs text-on-surface-soft">
+                  Puedes restar hasta {formatMoneyExact(maxAdjustmentSubtractCents(order) / 100)} — lo
+                  cobrado en este pedido. Para devolver más, registra la incidencia o el reembolso.
+                </p>
+              )}
               <SelectField
                 label="Dirección"
                 value={adjustDirection}
