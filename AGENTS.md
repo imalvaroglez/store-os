@@ -94,16 +94,31 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - **Diseño antes de implementar:** define persona, tarea, frecuencia, caso habitual y excepciones; describe recorrido actual/propuesto y compara cuando sea posible taps/clics, scrolls, cambios de foco, recapturas y errores. No inventes métricas. Prefiere mejoras comprobables a rediseños especulativos.
 - **Validación de uso:** una feature no está lista solo por compilar o pasar tests. Ejecuta el flujo real en dev/emuladores con datos sintéticos, móvil y escritorio cuando aplique.
 
+### Estándar de entrega UX (mandato del PO, 2026-11-09 — obligatorio en todo StoreOS)
+
+Nació del incidente 1.11.0 (Estrategia de precios/Reglas: técnicamente correcto, pruebas en verde, pero cientos de registros sin filtros ni selección masiva, descubierto al usarlo en vivo). Toda funcionalidad que entregue listas, configuración o trabajo sobre registros cumple esto **antes** de declararse lista:
+
+1. **Diseñar tareas, no pantallas:** identifica quién usa la función, qué intenta lograr y el recorrido completo más natural. Componentes correctos por separado no bastan.
+2. **Sin operaciones manuales repetitivas:** si la persona debe repetir la misma acción sobre muchos registros, evalúa acciones en lote, sugerencias, valores predeterminados y automatización segura. No se exige selección individual donde una selección contextual revisable resuelve.
+3. **Navegación eficiente de colecciones:** conjuntos significativos de registros exigen búsqueda, filtros relevantes, ordenamiento, estados, selección múltiple o visualización progresiva. Volcar una colección entera en una lista interminable no es una interfaz terminada.
+4. **Contexto conservado:** el paso siguiente conserva de dónde viene la persona (categoría, filtro, clienta); nunca la obligues a re-buscar lo que el sistema ya sabe.
+5. **Acciones orientadas a resultados:** cada acción corresponde a una intención comprensible. Los estados vacíos dicen qué falta y ofrecen la acción apropiada; prevenir la confusión vale más que un error técnicamente correcto.
+6. **Escalar con el negocio:** prueba con datos representativos — tienda nueva, pocos productos, cientos de registros. El e2e no se limita al escenario conveniente de 1–2 objetos.
+7. **La tarea frecuente manda:** el uso habitual es fácil de descubrir y ejecutar; lo avanzado, excepcional y técnico no domina el recorrido principal.
+8. **Seguridad antes que velocidad:** minimizar interacciones nunca justifica aplicar precios, mover inventario, cobrar o cambiar datos sensibles sin autorización. Se quita trabajo mecánico, no decisiones humanas.
+
 ### Doble revisión independiente obligatoria por item implementado
 
 Cuando el autor considere terminada una issue y antes de integrarla o marcarla Hecho, **lanza dos subagentes distintos, de solo lectura y sin contexto previo del autor ni entre sí**, idealmente en paralelo. Cada uno recibe solamente la issue y sus decisiones/criterios actuales, el diff/PR, las guías del repositorio y el contexto de código/Preview estrictamente necesario. No hereda conversaciones, defensas del diseño ni conclusiones del otro revisor.
 
 1. **Code reviewer:** busca bugs, regresiones, inconsistencias de negocio, precisión monetaria, aislamiento por tienda, Auth/reglas, seguridad, concurrencia, idempotencia, persistencia y pruebas insuficientes. Entrega hallazgos reproducibles con severidad, ubicación y escenario; CI verde no sustituye su aprobación.
-2. **UX reviewer:** opera como una dueña o colaboradora real, no como auditor de estética. Ejecuta cuando sea viable el recorrido afectado en build/Preview local con datos sintéticos (~390px móvil y ~1280px escritorio, toque/teclado según aplique). Evalúa tarea completa, pasos, clics/taps, scrolls, cambios de foco, repetición de captura, facilidad de corrección, feedback, accesibilidad, responsividad y comprensión sin ayuda del implementador. Compara antes/después cuando exista referencia verificable. Fundamenta problemas concretos, no preferencias visuales.
+2. **UX reviewer — misión de operadora:** actúa como una dueña o colaboradora real, no como revisor visual. Recibe del proceso (no del implementador) un **objetivo concreto de negocio** — p. ej. «Fer necesita aplicar una estrategia de precios solo a la categoría Reloj, con 283 SKUs en catálogo» — y **ejecuta el recorrido de principio a fin sin instrucciones del autor**, en build/Preview local con datos sintéticos (~390px móvil y ~1280px escritorio, toque/teclado según aplique). Su informe responde, como mínimo: ¿completó el objetivo sin que le explicaran cómo?; ¿cuántas interacciones relevantes necesitó?; ¿qué trabajo repetitivo evitó el sistema?; ¿qué pasa con un volumen representativo de registros?; ¿qué información, navegación o acciones faltaron?; ¿es igual de comprensible en móvil y escritorio?; ¿hay errores, estados vacíos o pasos siguientes confusos?; ¿qué impedimentos son bloqueantes y cuáles mejoras menores? Sin métricas inventadas ni presupuestos arbitrarios de clics: evidencia del recorrido ejecutado y evaluación justificada de su fricción.
 
-Cada uno publica su veredicto independiente: **APROBADO, BLOQUEADO o NO APLICA justificado**. El UX reviewer también se convoca en trabajos sin interfaz: evalúa impacto indirecto sobre la operación o explica NO APLICA. Si el flujo afectado no pudo probarse, registra validación pendiente/BLOQUEADO, jamás afirma que lo probó.
+Cada uno publica su veredicto independiente: **APROBADO, BLOQUEADO o NO APLICA justificado**. Si el UX reviewer encuentra que una tarea frecuente exige esfuerzo manual claramente evitable, emite **BLOQUEADO** explicando la alternativa. El UX reviewer también se convoca en trabajos sin interfaz: evalúa impacto indirecto sobre la operación o explica NO APLICA. Si el flujo afectado no pudo probarse, registra validación pendiente/BLOQUEADO, jamás afirma que lo probó.
 
 **Los hallazgos críticos o mayores de código, y la fricción evitable significativa en el flujo principal afectado, bloquean merge y cierre** hasta corregir y repetir la revisión pertinente. Hallazgos menores fuera del alcance se documentan sin rediseños no autorizados. El implementador corrige; los revisores no modifican código. Registrar evidencia y veredictos en PR/issue. Estas revisiones se suman a CI, release guard y compuertas explícitas de Fer, no las sustituyen.
+
+**Evidencia de UX en cada PR:** además de los checks, el PR documenta brevemente su validación UX — objetivo de negocio ejecutado, recorrido (pasos/pantallas), volumen de datos probado y veredicto del UX reviewer con su evidencia. Un CI verde no reemplaza esa evaluación.
 
 ## Convenciones (importantes)
 
