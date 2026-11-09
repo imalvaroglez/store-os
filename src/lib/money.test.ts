@@ -114,5 +114,7 @@ describe("sanitizeSignedIntegerInput (#266)", () => {
     expect(sanitizeSignedIntegerInput("12-3")).toBe("123");
     expect(sanitizeSignedIntegerInput("--5")).toBe("-5");
     expect(sanitizeSignedIntegerInput("abc")).toBe("");
+    expect(sanitizeSignedIntegerInput("")).toBe("");
+    expect(sanitizeSignedIntegerInput("-")).toBe("-");
   });
 });
