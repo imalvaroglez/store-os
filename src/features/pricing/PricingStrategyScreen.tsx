@@ -105,7 +105,15 @@ export function PricingStrategyScreen() {
       compatible: true as const,
       draft: {
         limits: bands.map((b) => ({ min: b.min, max: b.max })),
-        prices: Object.fromEntries(tiers.map((t) => [t.id, bands.map((b) => (byCategory[t.id].kind === "bands" ? b.price : null))])),
+        // Each tier's prices come from ITS OWN bands — never from the first
+        // tier's rule (e2e caught the cross-tier leak: Iconic loading Regular's
+        // prices after a reload).
+        prices: Object.fromEntries(
+          tiers.map((t) => {
+            const rule = byCategory[t.id];
+            return [t.id, rule?.kind === "bands" ? rule.bands.map((b) => b.price) : bands.map(() => null)];
+          })
+        ),
         dirty: false,
       } as TableDraft,
     };

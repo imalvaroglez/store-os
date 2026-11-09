@@ -3,6 +3,7 @@ import {
   ADMIN_EMAIL,
   FIRESTORE_REST,
   adminToken,
+  gotoClean,
   loginAsFirstAdmin,
   switchToStore,
   writeEmulatorDoc,
@@ -91,9 +92,13 @@ test.afterAll(async () => {
 });
 
 async function openStrategy(page: Page) {
-  await page.goto("/productos/estrategia", { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(700);
-  await page.getByLabel("Categoría").selectOption(CAT_ID);
+  await gotoClean(page, "/productos/estrategia");
+  await expect(page.getByRole("heading", { name: "Estrategia de precios" })).toBeVisible();
+  const select = page.getByLabel("Categoría");
+  await expect(select.locator(`option[value="${CAT_ID}"]`)).toBeAttached({ timeout: 15000 });
+  await select.selectOption(CAT_ID);
+  // The category summary card must be live before any interaction.
+  await expect(page.getByText(/piezas en la categoría/)).toBeVisible({ timeout: 15000 });
 }
 
 test("propone dos bandas, Fer edita y guarda; la tabla persiste tras recargar", async ({ sharedPage: page }) => {
@@ -126,12 +131,14 @@ test("guardar la tabla no cambia ningún precio de producto", async ({ sharedPag
 
 test("quitar la tabla elimina las reglas y no resucita tras recargar", async ({ sharedPage: page }) => {
   await openStrategy(page);
+  // The saved table must load into the editor before the remove button exists.
+  await expect(page.getByRole("button", { name: /Guardar tabla|Sin cambios/ })).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Quitar tabla de esta categoría/ }).click();
   await page.getByRole("button", { name: "Quitar tabla", exact: true }).click();
   await expect(page.getByText("Tabla eliminada.")).toBeVisible({ timeout: 10000 });
 
   // Reload: the category is back to proposal mode — no saved table left.
   await openStrategy(page);
-  await expect(page.getByRole("button", { name: /Editar esta propuesta/ })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: /Editar esta propuesta/ })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("button", { name: /Quitar tabla de esta categoría/ })).toHaveCount(0);
 });
