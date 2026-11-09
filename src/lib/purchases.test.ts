@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ProductStockUpdate } from "./inventory";
 import {
   allocateCents,
   effectiveSaleExpenseCents,
@@ -7,6 +8,7 @@ import {
   purchaseInventoryUpdates,
   purchaseProductSaleCosts,
   purchaseSaleExpenseTotalCents,
+  receivedProductsFromStockUpdates,
 } from "./purchases";
 import {
   isSaleExpense,
@@ -202,5 +204,22 @@ describe("post-reception expense adjustments (FER-02)", () => {
   it("refuses to allocate over lines without stable identity", () => {
     const legacy: Purchase = { ...received, lines: [{ productId: "ring", name: "Anillo", quantity: 70, unitCost: 10 }] };
     expect(() => purchaseExpenseAdjustment(legacy, { id: "adj", category: "shared_packaging", amount: 7 }, "2026-11-02T00:00:00Z")).toThrow(/líneas/);
+  });
+});
+
+describe("receivedProductsFromStockUpdates (#265)", () => {
+  it("reconcilia con el costo EXACTO de la transacción, no con promedio local", () => {
+    const products = [{ id: "p1", storeId: "s1", name: "X", cost: 50, quantityOnHand: 10 }] as Product[];
+    const updates = new Map<string, ProductStockUpdate>([["p1", { quantityOnHand: 13, cost: 100.33 }]]);
+    const [received] = receivedProductsFromStockUpdates(products, updates, "2026-11-09T00:00:00.000Z");
+    expect(received.cost).toBe(100.33);
+    expect(received.quantityOnHand).toBe(13);
+    expect(received.updatedAt).toBe("2026-11-09T00:00:00.000Z");
+  });
+
+  it("ignora productos desaparecidos y devuelve vacío sin updates", () => {
+    expect(receivedProductsFromStockUpdates([], new Map(), "at")).toEqual([]);
+    const products = [{ id: "p1", storeId: "s1", name: "X" }] as Product[];
+    expect(receivedProductsFromStockUpdates(products, new Map([["p2", { quantityOnHand: 1, cost: 1 }]]), "at")).toEqual([]);
   });
 });
