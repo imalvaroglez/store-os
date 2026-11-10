@@ -1120,6 +1120,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           dispatch({ type: "UPDATE_PRODUCT", product: next });
         }
       }
+      // #124/H1-twin: the order save also moved COLOR shelves — reconcile
+      // them into memory (and the republish set) exactly like product-level
+      // stock; otherwise the per-color shelf and the public signal stay stale
+      // all session.
+      if (result.variantStock) {
+        for (const variantUpdate of result.variantStock) {
+          const product = state.products.find((p) => p.id === variantUpdate.productId);
+          if (!product) continue;
+          const already = reservedProducts.find((p) => p.id === product.id);
+          const next = {
+            ...(already ?? product),
+            variants: variantUpdate.variants,
+            updatedAt: result.order.updatedAt,
+          };
+          const index = reservedProducts.findIndex((p) => p.id === product.id);
+          if (index >= 0) reservedProducts[index] = next;
+          else reservedProducts.push(next);
+          dispatch({ type: "UPDATE_PRODUCT", product: next });
+        }
+      }
       dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
       // #229: reserved/released pieces update the public signal too.
       if (reservedProducts.length > 0) {
@@ -1168,6 +1188,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (product) {
           const next = { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() };
           releasedProducts.push(next);
+          dispatch({ type: "UPDATE_PRODUCT", product: next });
+        }
+      }
+      // #124: released COLOR shelves reconcile in memory too (same discipline
+      // as product-level releases and the republish below).
+      if (updates.variantStock) {
+        for (const variantUpdate of updates.variantStock) {
+          const product = state.products.find((p) => p.id === variantUpdate.productId);
+          if (!product) continue;
+          const index = releasedProducts.findIndex((p) => p.id === product.id);
+          const next = { ...(index >= 0 ? releasedProducts[index] : product), variants: variantUpdate.variants, updatedAt: nowIso() };
+          if (index >= 0) releasedProducts[index] = next;
+          else releasedProducts.push(next);
           dispatch({ type: "UPDATE_PRODUCT", product: next });
         }
       }
