@@ -497,7 +497,7 @@ export async function saveOrderWithStockTx(
   expectedRevision: number | null,
   mutationId: string,
   options?: { confirmDeliveredWithBalance?: boolean }
-): Promise<{ order: Order; stock: StockAdjustment[] }> {
+): Promise<{ order: Order; stock: StockAdjustment[]; variantStock?: Array<{ productId: string; variants: ProductVariant[] }> }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
   return runTransaction(db, async (tx) => {
@@ -675,7 +675,13 @@ export async function saveOrderWithStockTx(
     for (const [productId, variants] of variantWrites) tx.update(doc(db, "products", productId), { variants, updatedAt: at });
     const { id, ...data } = saved;
     tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
-    return { order: saved, stock: updates };
+    // #124/H1-twin: the caller reconciles in-memory state and republishes the
+    // public signal from these — the color shelves must ride along.
+    const variantStock = [...variantWrites.entries()].map(([productId, variants]) => ({
+      productId,
+      variants: variants as ProductVariant[],
+    }));
+    return { order: saved, stock: finalUpdates, ...(variantStock.length > 0 ? { variantStock } : {}) };
   });
 }
 
@@ -1007,7 +1013,7 @@ export async function deleteOrderWithStockTx(
   _user: AppUser,
   orderId: string,
   expectedRevision: number
-): Promise<StockAdjustment[]> {
+): Promise<StockAdjustment[] & { variantStock?: Array<{ productId: string; variants: ProductVariant[] }> }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", orderId);
   return runTransaction(db, async (tx) => {
@@ -1033,7 +1039,11 @@ export async function deleteOrderWithStockTx(
     if (previous.installmentsReservedAt || "paymentsReceivedCents" in data || data.inheritedDepositMaterialized === true) {
       throw new OrderEvidenceDeletionError();
     }
-    const deltas = reservationDeltasForOrderChange(previous, { ...previous, orderStatus: "cancelled" });
+    const cancelled = { ...previous, orderStatus: "cancelled" as const };
+    const deltas = reservationDeltasForOrderChange(previous, cancelled);
+    // #124: deleting releases COLOR shelves too — the same delta model, or
+    // the exact-color pieces would never return to their shelf.
+    const variantDeltas = variantReservationDeltasForOrderChange(previous, cancelled);
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
       const product = await tx.get(doc(db, "products", productId));
@@ -1042,9 +1052,39 @@ export async function deleteOrderWithStockTx(
     }
     const { updates } = applyRelativeDeltas(canonical, deltas);
     const at = new Date().toISOString();
-    for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    const variantWrites = new Map<string, ProductVariant[]>();
+    const releases = new Map<string, number>();
+    for (const vDelta of variantDeltas.values()) {
+      const product = await tx.get(doc(db, "products", vDelta.productId));
+      if (product.exists() && product.data().storeId !== previous.storeId) throw new Error("El producto pertenece a otra tienda.");
+      const data = (product.exists() ? product.data() : {}) as Record<string, unknown>;
+      const variants = data.variants as Product["variants"];
+      const variant = variants?.find((v) => v.id === vDelta.variantId);
+      if (!variant) {
+        // Vanished color: return the real pieces to the design-level shelf.
+        releases.set(vDelta.productId, (releases.get(vDelta.productId) ?? 0) + vDelta.delta);
+        continue;
+      }
+      const working = (variantWrites.get(vDelta.productId) ?? variants!) as ProductVariant[];
+      const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);
+      if (nextVariants) variantWrites.set(vDelta.productId, nextVariants);
+    }
+    const finalUpdates = [...updates];
+    for (const [productId, release] of releases) {
+      const target = finalUpdates.find((u) => u.productId === productId);
+      if (target) target.quantityOnHand += release;
+      else {
+        const releaseSnap = await tx.get(doc(db, "products", productId));
+        const data = (releaseSnap.data() ?? {}) as Record<string, unknown>;
+        const current = typeof data.quantityOnHand === "number" ? (data.quantityOnHand as number) : 0;
+        finalUpdates.push({ productId, quantityOnHand: current + release });
+      }
+    }
+    for (const update of finalUpdates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    for (const [productId, variants] of variantWrites) tx.update(doc(db, "products", productId), { variants, updatedAt: at });
     tx.delete(orderRef);
-    return updates;
+    const variantStock = [...variantWrites.entries()].map(([productId, variants]) => ({ productId, variants: variants as ProductVariant[] }));
+    return Object.assign(finalUpdates, variantStock.length > 0 ? { variantStock } : {});
   });
 }
 

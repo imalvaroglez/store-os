@@ -118,6 +118,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order transactions with F
     ).rejects.toThrow(/color elegido ya no existe/);
     const afterGhost = (await getDoc(doc(holder.db, "products", designId))).data() as { variants: Array<{ id: string; quantityOnHand?: number }> };
     expect(afterGhost.variants!.find((v) => v.id === "v_silver")!.quantityOnHand).toBe(0);
+
+    // #124/H1-twin: DELETING a color order returns the exact colors, and the
+    // result carries the shelves for in-memory reconcile.
+    await saveOrderWithStockTx(user, { ...order, items: [variantLine(1, "v_gold"), variantLine(1, "v_silver")] }, 3, "variant-both");
+    const deleteResult = await deleteOrderWithStockTx(user, "variant-order", 4);
+    const afterDelete = (await getDoc(doc(holder.db, "products", designId))).data() as { variants: Array<{ id: string; quantityOnHand?: number }> };
+    expect(afterDelete.variants!.find((v) => v.id === "v_gold")!.quantityOnHand).toBe(2);
+    expect(afterDelete.variants!.find((v) => v.id === "v_silver")!.quantityOnHand).toBe(1);
+    expect(deleteResult.variantStock?.find((v) => v.productId === designId)?.variants).toBeTruthy();
   });
 
 });
