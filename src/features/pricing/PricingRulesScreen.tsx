@@ -1,9 +1,14 @@
 // #254 — Reglas de venta: Fer defines ONCE how each price level's suggested
 // price derives from cost (percentage, fixed increment, or a cost-band table),
 // with category and product overrides. Suggestions are PROPOSALS: applying
-// them is always an explicit, per-product or batch action — never automatic.
-import { useMemo, useState } from "react";
-import { useStore } from "../../app/StoreProvider";
+// them is always an explicit, reviewed batch action — never automatic.
+// #289: the review experience — Estrategia de precios links here with a
+// category context (?categoria=), changed pieces come first, non-eligible
+// rows cannot be selected, bulk selection only touches the current filter's
+// eligible pieces, and applying writes ONLY prices (scoped batch, never a
+// full product upsert) after an explicit summary confirmation.
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useStore, PublicCatalogProjectionError } from "../../app/StoreProvider";
 import {
   Badge,
   Button,
@@ -19,39 +24,98 @@ import {
 } from "../../design-system";
 import { tiersForStore } from "../../lib/pricing";
 import { sanitizeMoneyInput } from "../../lib/money";
-import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands } from "../../lib/pricingRules";
-import type { PricingRule, PricingRulesConfig, PriceRounding, Product } from "../../types";
+import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, hasRules } from "../../lib/pricingRules";
+import { navigate } from "../../lib/router";
+import type { Category, PricingRule, PricingRulesConfig, PriceRounding, Product } from "../../types";
 
 function emptyConfig(): PricingRulesConfig {
   return { byTier: {} };
 }
 
 function cloneConfig(config: PricingRulesConfig | undefined): PricingRulesConfig {
-  return config ? JSON.parse(JSON.stringify(config)) : emptyConfig();
+  // Legacy docs can lack byTier (the type says required; early #280 writers
+  // could omit it) — never let a missing map crash the editor.
+  const clone = config ? (JSON.parse(JSON.stringify(config)) as PricingRulesConfig) : emptyConfig();
+  clone.byTier = clone.byTier ?? {};
+  return clone;
 }
 
 type DraftState = { config: PricingRulesConfig; dirty: boolean };
 
+type PriceUpdate = { id: string; prices: Record<string, number> };
+
+type TierSuggestion = {
+  suggested: number | null;
+  current: number | undefined;
+  base: number | undefined;
+  origin: string;
+  belowCost: boolean;
+  reason: string; // why there is no applicable suggestion ("" when there is one)
+};
+
+type SuggestionEntry = {
+  product: Product;
+  byTier: Record<string, TierSuggestion>;
+  applicable: number; // tiers whose price would change and may apply
+  pendingConfirm: number; // below-cost changes from per-product exceptions
+  omitted: number; // below-cost changes refused (category/general origin)
+  eligible: boolean; // applicable + pendingConfirm > 0
+  hasSuggestion: boolean; // any tier produced a suggestion at all
+  available: boolean; // not archived and not sold out
+};
+
 export function PricingRulesScreen() {
-  const { state, activeStore, savePricingRules, upsertProduct } = useStore();
+  const { state, activeStore, savePricingRules, applyProductPrices } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<DraftState>(() => ({ config: cloneConfig(activeStore?.pricingRules), dirty: false }));
   const [busy, setBusy] = useState(false);
   const [applying, setApplying] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // #289: Estrategia de precios bridges here with ?categoria=<id> — keep the
+  // context so Fer reviews exactly the category she just configured.
+  const [categoryFilter, setCategoryFilter] = useState<string>(
+    () => new URLSearchParams(window.location.search).get("categoria") ?? ""
+  );
+  const [includeUnavailable, setIncludeUnavailable] = useState(false);
+  // #289 UX: arriving from Estrategia's bridge, land ON the review list —
+  // not above the general-rule cards (operator review finding 1).
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (categoryFilter && suggestionsRef.current) {
+      suggestionsRef.current.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Pre-apply summary (#289): what will change, what is omitted, what needs
+  // explicit loss confirmation — nothing writes before Fer sees this.
+  const [review, setReview] = useState<{
+    safe: PriceUpdate[];
+    full: PriceUpdate[];
+    pieces: number;
+    priceCount: number;
+    up: number;
+    down: number;
+    omitted: number;
+    pendingConfirm: number;
+  } | null>(null);
   // PO 2026-11-09: applying a below-cost price that comes from a per-product
   // exception needs a CONFIRMATION IN THE MOMENT — a previously configured
   // exception is not standing authorization to sell at a loss today.
   const [confirmBelowCost, setConfirmBelowCost] = useState<{
-    full: Array<{ product: Product; prices: Record<string, number> }>;
-    safe: Array<{ product: Product; prices: Record<string, number> }>;
+    full: PriceUpdate[];
+    safe: PriceUpdate[];
     exceptionCount: number;
+    omitted: number;
   } | null>(null);
 
   const tiers = useMemo(() => tiersForStore(activeStore), [activeStore]);
   const products = useMemo(
     () => state.products.filter((p) => p.storeId === activeStore?.id),
     [state.products, activeStore?.id]
+  );
+  const categories = useMemo(
+    () => state.categories.filter((c) => c.storeId === activeStore?.id).sort((a, b) => a.name.localeCompare(b.name)),
+    [state.categories, activeStore?.id]
   );
 
   function patchConfig(mutate: (config: PricingRulesConfig) => void) {
@@ -100,124 +164,186 @@ export function PricingRulesScreen() {
   }
 
   // The suggestions table: current vs suggested per product × level.
-  const suggestions = useMemo(() => {
+  const suggestions = useMemo<SuggestionEntry[]>(() => {
     return products
       .filter((product) => product.cost !== undefined && product.cost !== null)
       .map((product) => {
-        const byTier: Record<string, { suggested: number | null; current: number | undefined; base: number | undefined; origin: string; belowCost: boolean }> = {};
+        const byTier: Record<string, TierSuggestion> = {};
+        let applicable = 0;
+        let pendingConfirm = 0;
+        let omitted = 0;
+        let hasSuggestion = false;
         for (const tier of tiers) {
           const resolved = resolveRule(draft.config, tier.id, product);
           const base = baseCostForTier(product, tier.id, activeStore?.packaging);
           const suggested = resolved ? suggestedPriceFor(resolved.rule, { baseCost: base, acquisitionCost: product.cost }) : null;
-          byTier[tier.id] = {
-            suggested,
-            current: product.prices?.[tier.id],
-            base,
-            origin: resolved?.origin ?? "",
-            // #280 P0-1: a suggestion under the full base cost is a loss by
-            // default — visible here, and applySelected refuses it unless the
-            // rule is Fer's explicit per-product exception.
-            belowCost: suggested != null && base !== undefined && suggested < base,
-          };
+          const belowCost = suggested != null && base !== undefined && suggested < base;
+          let reason = "";
+          if (suggested == null) {
+            reason = resolved
+              ? resolved.rule.kind === "bands"
+                ? "costo fuera de la tabla"
+                : "falta el costo base"
+              : "sin regla para esta pieza";
+          } else if (suggested === product.prices?.[tier.id]) {
+            reason = "ya está en ese precio";
+          } else if (belowCost && resolved?.origin !== "product") {
+            reason = "bajo el costo: se omite (excepción de Fer requerida)";
+          }
+          if (suggested != null) hasSuggestion = true;
+          if (suggested != null && suggested !== product.prices?.[tier.id]) {
+            if (belowCost && resolved?.origin === "product") pendingConfirm += 1;
+            else if (belowCost) omitted += 1;
+            else applicable += 1;
+          }
+          byTier[tier.id] = { suggested, current: product.prices?.[tier.id], base, origin: resolved?.origin ?? "", belowCost, reason };
         }
-        return { product, byTier };
+        return {
+          product,
+          byTier,
+          applicable,
+          pendingConfirm,
+          omitted,
+          eligible: applicable + pendingConfirm > 0,
+          hasSuggestion,
+          available: product.status !== "archived" && (product.quantityOnHand ?? 0) > 0,
+        };
       });
   }, [products, tiers, draft.config, activeStore?.packaging]);
 
-  const selectedCount = Object.values(selected).filter(Boolean).length;
+  // #289: scoped to the current category filter, changed pieces first.
+  const visible = useMemo(() => {
+    const filtered = categoryFilter
+      ? suggestions.filter((entry) => entry.product.categoryIds?.includes(categoryFilter))
+      : suggestions;
+    const rank = (entry: SuggestionEntry) => (entry.eligible ? 0 : entry.hasSuggestion ? 1 : 2);
+    return [...filtered].sort(
+      (a, b) => rank(a) - rank(b) || a.product.name.localeCompare(b.product.name)
+    );
+  }, [suggestions, categoryFilter]);
 
-  async function runApply(
-    updates: Array<{ product: Product; prices: Record<string, number> }>,
-    skippedBelowCost: number
-  ) {
+  const selectedCount = visible.filter((entry) => selected[entry.product.id]).length;
+  // Bulk selection only touches the CURRENT FILTER's eligible pieces; sold-out
+  // and archived enter solely through Fer's explicit opt-in (#289).
+  const bulkPool = useMemo(
+    () => visible.filter((entry) => entry.eligible && (includeUnavailable || entry.available)),
+    [visible, includeUnavailable]
+  );
+  const allBulkSelected = bulkPool.length > 0 && bulkPool.every((entry) => selected[entry.product.id]);
+  const activeTables = Object.keys(activeStore?.pricingRules?.byCategory ?? {}).length;
+  const filterCategory: Category | undefined = categories.find((c) => c.id === categoryFilter);
+
+  // #289: scoped writes ONLY — a stale full product object can never clobber
+  // stock, cost or photos edited while prices were being reviewed.
+  async function runApply(updates: PriceUpdate[], skippedBelowCost: number) {
     setApplying(true);
-    const applied: string[] = [];
-    const failed: string[] = [];
-    for (const update of updates) {
-      try {
-        await upsertProduct({ ...update.product, prices: update.prices, updatedAt: new Date().toISOString() });
-        applied.push(update.product.name);
-      } catch {
-        failed.push(update.product.name);
-      }
-    }
-    setApplying(false);
-    // Adversarial H4: report what actually applied — a mid-batch failure must
-    // not hide the N-1 prices that DID change.
-    if (failed.length === 0 && skippedBelowCost === 0) {
-      setSelected({});
-      toast.success(`Precios actualizados en ${applied.length} producto(s).`);
-    } else if (applied.length === 0) {
-      toast.error("No se pudo aplicar ningún precio. Revisa tu conexión e inténtalo de nuevo.");
-    } else if (failed.length === 0) {
+    try {
+      await applyProductPrices(updates);
       setSelected({});
       toast.success(
-        `Se aplicaron precios de ${applied.length} producto(s); se omitieron ${skippedBelowCost} precio(s) por quedar bajo el costo (vender con pérdida requiere excepción de Fer).`
+        skippedBelowCost > 0
+          ? `Precios actualizados en ${updates.length} pieza(s); se omitieron ${skippedBelowCost} por quedar bajo el costo.`
+          : `Precios actualizados en ${updates.length} pieza(s).`
       );
-    } else {
-      const skipped = skippedBelowCost > 0 ? `; se omitieron ${skippedBelowCost} por quedar bajo el costo` : "";
-      toast.error(`Se aplicaron ${applied.length}${skipped}; fallaron ${failed.length}: ${failed.join(", ")}.`);
+    } catch (error) {
+      if (error instanceof PublicCatalogProjectionError) {
+        // Prices DID change; only the public projection failed — honest report.
+        setSelected({});
+        toast.error("Precios actualizados, pero el catálogo público no se actualizó: usa Republicar catálogo en la tienda.");
+      } else {
+        toast.error("No se pudo aplicar. Ningún precio cambió: revisa tu conexión e inténtalo de nuevo.");
+      }
+    } finally {
+      setApplying(false);
     }
   }
 
-  async function applySelected() {
-    const safeUpdates: Array<{ product: Product; prices: Record<string, number> }> = [];
-    const fullUpdates: Array<{ product: Product; prices: Record<string, number> }> = [];
-    let skippedBelowCost = 0;
-    let exceptionBelowCost = 0;
-    for (const entry of suggestions) {
-      if (!selected[entry.product.id]) continue;
+  function applySelected() {
+    const safe: PriceUpdate[] = [];
+    const full: PriceUpdate[] = [];
+    let up = 0;
+    let down = 0;
+    let priceCount = 0;
+    for (const entry of visible) {
+      if (!selected[entry.product.id] || !entry.eligible) continue;
       const safePrices = { ...(entry.product.prices ?? {}) };
       const fullPrices = { ...(entry.product.prices ?? {}) };
       let safeChanged = false;
       let fullChanged = false;
       for (const tier of tiers) {
         const suggestion = entry.byTier[tier.id];
-        if (suggestion?.suggested != null && suggestion.suggested !== suggestion.current) {
-          if (suggestion.belowCost && suggestion.origin === "product") {
-            // An exception rule may price under cost, but applying that loss
-            // needs Fer's confirmation RIGHT NOW, not standing authorization.
-            fullPrices[tier.id] = suggestion.suggested;
-            fullChanged = true;
-            exceptionBelowCost += 1;
-            continue;
-          }
-          if (suggestion.belowCost) {
-            skippedBelowCost += 1;
-            continue;
-          }
-          safePrices[tier.id] = suggestion.suggested;
+        if (suggestion?.suggested == null || suggestion.suggested === suggestion.current) continue;
+        if (suggestion.belowCost && suggestion.origin === "product") {
           fullPrices[tier.id] = suggestion.suggested;
-          safeChanged = true;
           fullChanged = true;
+          continue; // pending explicit loss confirmation
         }
+        if (suggestion.belowCost) continue; // refused outright
+        safePrices[tier.id] = suggestion.suggested;
+        fullPrices[tier.id] = suggestion.suggested;
+        safeChanged = true;
+        fullChanged = true;
+        priceCount += 1;
+        if (suggestion.current === undefined || suggestion.suggested > suggestion.current) up += 1;
+        else down += 1;
       }
-      if (safeChanged) safeUpdates.push({ product: entry.product, prices: safePrices });
-      if (fullChanged) fullUpdates.push({ product: entry.product, prices: fullPrices });
+      if (safeChanged) safe.push({ id: entry.product.id, prices: safePrices });
+      if (fullChanged) full.push({ id: entry.product.id, prices: fullPrices });
     }
-    if (exceptionBelowCost > 0) {
-      setConfirmBelowCost({ full: fullUpdates, safe: safeUpdates, exceptionCount: exceptionBelowCost });
-      return;
-    }
-    if (safeUpdates.length === 0) {
+    const omitted = visible
+      .filter((entry) => selected[entry.product.id])
+      .reduce((acc, entry) => acc + entry.omitted, 0);
+    const pendingConfirm = visible
+      .filter((entry) => selected[entry.product.id])
+      .reduce((acc, entry) => acc + entry.pendingConfirm, 0);
+    const pieces = new Set([...safe, ...full].map((update) => update.id)).size;
+    if (pieces === 0) {
       toast.error(
-        skippedBelowCost > 0
-          ? `Solo había precios sugeridos bajo el costo (${skippedBelowCost}); no se aplicó nada. Vender con pérdida requiere una excepción por producto.`
-          : "Nada seleccionado con sugerencias distintas al precio actual."
+        omitted > 0
+          ? `Solo había precios sugeridos bajo el costo (${omitted}); no se aplicó nada. Vender con pérdida requiere una excepción por producto.`
+          : hasRules(draft.config)
+            ? "Las piezas seleccionadas no tienen sugerencias aplicables (mira la razón en cada fila)."
+            : "No hay sugerencias porque aún no hay reglas ni tablas: define tu estrategia en Estrategia de precios."
       );
       return;
     }
-    await runApply(safeUpdates, skippedBelowCost);
+    setReview({ safe, full, pieces, priceCount, up, down, omitted, pendingConfirm });
   }
 
   return (
     <Screen>
       <ScreenHeader
         title="Reglas de venta"
-        subtitle="Cómo se sugiere el precio de cada nivel a partir del costo"
+        subtitle={
+          filterCategory
+            ? `Revisando la categoría ${filterCategory.name}: primero las piezas con cambios pendientes`
+            : "Cómo se sugiere el precio de cada nivel a partir del costo"
+        }
       />
       <div className="space-y-4">
-        {tiers.map((tier) => (
+          {!hasRules(draft.config) && (
+            <Card className="space-y-2 border border-warning">
+              <h3 className="font-semibold text-ink">Todavía no hay reglas ni tablas de precios</h3>
+              <p className="text-sm text-on-surface-soft">
+                Por eso la lista de abajo no tiene sugerencias: sin reglas no hay nada que sugerir. Lo recomendado es
+                definir tus tablas por categoría en Estrategia de precios (usa tus costos y precios reales); las reglas
+                generales de abajo son opcionales y sirven de respaldo para categorías sin tabla.
+              </p>
+              <Button size="sm" onClick={() => navigate("/productos/estrategia")}>
+                Ir a Estrategia de precios
+              </Button>
+            </Card>
+          )}
+          {hasRules(draft.config) && (
+            <p className="text-xs text-on-surface-soft">
+              {activeTables > 0
+                ? `Hay ${activeTables} tabla(s) de categoría activas en Estrategia de precios: esas categorías ya tienen sugerencias sin que configures nada aquí. `
+                : "Sin tablas de categoría todavía. "}
+              Las reglas generales de abajo son opcionales (respaldo para categorías sin tabla); una excepción por
+              producto gana sobre todo.
+            </p>
+          )}
+          {tiers.map((tier) => (
           <RuleCard
             key={tier.id}
             label={tier.label}
@@ -242,51 +368,162 @@ export function PricingRulesScreen() {
           </p>
         </div>
 
-        <Card className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-semibold text-ink">Precios sugeridos</h2>
-            <Button size="sm" disabled={selectedCount === 0 || applying} onClick={() => void applySelected()}>
-              {applying ? "Aplicando…" : `Aplicar seleccionados (${selectedCount})`}
-            </Button>
+        <Card className="space-y-3" >
+          <div ref={suggestionsRef} className="flex flex-wrap items-end justify-between gap-2">
+            <div className="w-full sm:w-72">
+              <SelectField
+                label="Categoría a revisar"
+                value={categoryFilter}
+                onChange={(next) => {
+                  setCategoryFilter(next);
+                  setSelected({});
+                }}
+                options={[
+                  { value: "", label: "Todas las categorías" },
+                  ...categories.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={bulkPool.length === 0 || applying || allBulkSelected}
+                onClick={() => setSelected(Object.fromEntries(bulkPool.map((entry) => [entry.product.id, true])))}
+              >
+                Seleccionar elegibles ({bulkPool.length})
+              </Button>
+              {selectedCount > 0 && (
+                <Button size="sm" variant="ghost" disabled={applying} onClick={() => setSelected({})}>
+                  Limpiar selección
+                </Button>
+              )}
+              <Button size="sm" disabled={selectedCount === 0 || applying} onClick={applySelected}>
+                {applying ? "Aplicando…" : `Aplicar seleccionados (${selectedCount})`}
+              </Button>
+            </div>
           </div>
-          {suggestions.length === 0 ? (
+          <CheckboxField
+            label="Incluir agotadas y archivadas en la selección masiva"
+            checked={includeUnavailable}
+            onChange={setIncludeUnavailable}
+          />
+          {visible.length === 0 ? (
             <p className="text-sm text-on-surface-soft">
-              Captura el costo de compra de tus piezas para ver sugerencias aquí.
+              {categoryFilter
+                ? "No hay piezas con costo en esta categoría."
+                : "Captura el costo de compra de tus piezas para ver sugerencias aquí."}
             </p>
           ) : (
             <div className="space-y-2">
-              {suggestions.map(({ product, byTier }) => (
-                <div key={product.id} className="space-y-1 rounded-lg border border-edge bg-surface px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <CheckboxField
-                        label={product.name}
-                        checked={!!selected[product.id]}
-                        onChange={(next) => setSelected((current) => ({ ...current, [product.id]: next }))}
-                      />
+              {visible.map(({ product, byTier, eligible }, index) => {
+                const previous = visible[index - 1];
+                const startsEligible = eligible && (!previous || !previous.eligible);
+                const startsInactive = !eligible && hasRules(draft.config) && (!previous || previous.eligible);
+                return (
+                  <div key={product.id}>
+                    {startsEligible && (
+                      <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-on-surface-soft">
+                        Con cambios pendientes
+                      </p>
+                    )}
+                    {startsInactive && (
+                      <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-on-surface-soft">
+                        Sin cambios aplicables ahora
+                      </p>
+                    )}
+                    <div className="space-y-1 rounded-lg border border-edge bg-surface px-3 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <CheckboxField
+                            label={product.name}
+                            checked={!!selected[product.id]}
+                            disabled={!eligible}
+                            onChange={(next) => setSelected((current) => ({ ...current, [product.id]: next }))}
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {product.status === "archived" && <Badge tone="neutral">archivada</Badge>}
+                          {(product.quantityOnHand ?? 0) === 0 && <Badge tone="warning">agotada</Badge>}
+                          {product.status === "draft" && <Badge tone="neutral">borrador</Badge>}
+                          <span className="text-xs text-on-surface-soft">Costo <Money amount={product.cost} /></span>
+                        </div>
+                      </div>
+                      <div className="grid gap-1 sm:grid-cols-3">
+                        {tiers.map((tier) => {
+                          const s = byTier[tier.id];
+                          if (!s) return null; // tier added mid-session: next render catches up
+                          return (
+                            <p key={tier.id} className="text-xs text-on-surface-soft">
+                              <span className="font-semibold text-on-surface">{tier.label}:</span>{" "}
+                              {s.current !== undefined ? <>actual <Money amount={s.current} /></> : "sin precio"} →{" "}
+                              {s.suggested != null ? <span className={eligible ? "font-semibold text-terracotta" : ""}><Money amount={s.suggested} /></span> : "sin sugerencia"}
+                              {s.suggested != null && s.reason ? ` (${s.reason})` : ""}
+                              {s.suggested == null && s.reason ? ` (${s.reason})` : ""}
+                              {s.origin ? ` · ${s.origin === "product" ? "excepción" : s.origin === "category" ? "categoría" : "regla"}` : ""}
+                            </p>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <span className="text-xs text-on-surface-soft">Costo <Money amount={product.cost} /></span>
                   </div>
-                  <div className="grid gap-1 sm:grid-cols-3">
-                    {tiers.map((tier) => {
-                      const s = byTier[tier.id];
-                      return (
-                        <p key={tier.id} className="text-xs text-on-surface-soft">
-                          <span className="font-semibold text-on-surface">{tier.label}:</span>{" "}
-                          {s.current !== undefined ? <>actual <Money amount={s.current} /></> : "sin precio"} →{" "}
-                          {s.suggested != null ? <span className="font-semibold text-terracotta"><Money amount={s.suggested} /></span> : "sin sugerencia"}
-                          {s.belowCost ? " ⚠️ bajo el costo (no se aplica; requiere excepción)" : ""}
-                          {s.origin ? ` (${s.origin === "product" ? "excepción" : s.origin === "category" ? "categoría" : "regla"})` : ""}
-                        </p>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>
       </div>
+
+      <Dialog
+        open={review !== null}
+        title={review ? `Aplicar precios a ${review.pieces} pieza(s)` : ""}
+        onClose={() => setReview(null)}
+        footer={
+          review ? (
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setReview(null)}>
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const pending = review;
+                  setReview(null);
+                  if (pending.pendingConfirm > 0) {
+                    setConfirmBelowCost({
+                      full: pending.full,
+                      safe: pending.safe,
+                      exceptionCount: pending.pendingConfirm,
+                      omitted: pending.omitted,
+                    });
+                    return;
+                  }
+                  if (pending.safe.length > 0) void runApply(pending.safe, pending.omitted);
+                }}
+              >
+                {review.pendingConfirm > 0 ? "Continuar" : `Aplicar ${review.priceCount} precio(s)`}
+              </Button>
+            </div>
+          ) : undefined
+        }
+      >
+        {review && (
+          <div className="space-y-1 text-sm text-on-surface-soft">
+            <p>
+              {review.priceCount} precio(s) con cambio seguro en {review.pieces} pieza(s): {review.up} subirían,{" "}
+              {review.down} bajarían.
+            </p>
+            {review.omitted > 0 && <p>Se omitirán {review.omitted} precio(s) por quedar bajo el costo.</p>}
+            {review.pendingConfirm > 0 && (
+              <p>
+                Además hay {review.pendingConfirm} precio(s) bajo el costo por excepciones de producto: pedirán tu
+                confirmación expresa en el siguiente paso.
+              </p>
+            )}
+            <p>Solo se escriben los precios; existencias, costos y fotos quedan intactos.</p>
+          </div>
+        )}
+      </Dialog>
 
       <Dialog
         open={confirmBelowCost !== null}
@@ -304,7 +541,7 @@ export function PricingRulesScreen() {
                 onClick={() => {
                   const pending = confirmBelowCost;
                   setConfirmBelowCost(null);
-                  if (pending.safe.length > 0) void runApply(pending.safe, pending.exceptionCount);
+                  if (pending.safe.length > 0) void runApply(pending.safe, pending.exceptionCount + pending.omitted);
                   else toast.error("No quedó ningún otro precio por aplicar.");
                 }}
               >
@@ -316,7 +553,7 @@ export function PricingRulesScreen() {
                 onClick={() => {
                   const pending = confirmBelowCost;
                   setConfirmBelowCost(null);
-                  void runApply(pending.full, 0);
+                  void runApply(pending.full, pending.omitted);
                 }}
               >
                 Aplicar todo (vender bajo costo a propósito)
@@ -373,7 +610,7 @@ function RuleCard({
     <Card className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-semibold text-ink">{label}</h3>
-        <Badge tone={rule ? "success" : "neutral"}>{rule ? "regla configurada" : "sin regla"}</Badge>
+        <Badge tone={rule ? "success" : "neutral"}>{rule ? "regla configurada" : "sin regla (opcional)"}</Badge>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <SelectField

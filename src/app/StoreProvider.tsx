@@ -43,7 +43,7 @@ import {
 } from "../features/orders/payments";
 import { creditAvailableCents, ordersForCustomer, planCreditApplications } from "../features/orders/customerCredit";
 import { useAuth } from "./firebase/AuthProvider";
-export { CategoryRulesConflictError } from "./firebase/firestoreData";
+export { CategoryRulesConflictError, PublicCatalogProjectionError } from "./firebase/firestoreData";
 import type { AppUser } from "./firebase/auth";
 import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
 import { normalizeEmail, sendInviteLink } from "./firebase/auth";
@@ -55,9 +55,10 @@ import {
   saveStorePackaging,
   savePricingRules,
   saveCategoryPricingRules,
+  applyProductPrices as applyProductPricesBatch,
+  projectPublicForStore,
   deleteEntity,
   claimSlug,
-  projectPublicForStore,
   republishStockSignals,
   unprojectPublicForStore,
   upsertPublicProduct,
@@ -298,6 +299,9 @@ type StoreContextValue = {
   savePackaging: (packaging: StorePackaging) => Promise<void>;
   /** #254: members may save the pricing rules (same field-scoped path). */
   savePricingRules: (pricingRules: PricingRulesConfig) => Promise<void>;
+  /** #289: apply ONLY prices — scoped batch write (never a full product
+   * upsert), public catalog republished once from the merged local state. */
+  applyProductPrices: (updates: Array<{ id: string; prices: Record<string, number> }>) => Promise<void>;
   /** #280: save ONE category's rules atomically — other categories, byTier and
    * byProduct are overlaid on the fresh Firestore doc, never replaced from a
    * stale client clone. `null` deletes the category's table. P0-2:
@@ -708,6 +712,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         : { byTier: {} };
       merged.byTier = pricingRules.byTier ?? {};
       dispatch({ type: "UPDATE_STORE", store: { ...existing, pricingRules: merged, updatedAt } });
+    },
+    applyProductPrices: async (updates) => {
+      const existing = state.stores.find((store) => store.id === state.activeStoreId);
+      if (!existing) throw new Error("No se encontró la tienda.");
+      const updatedAt = nowIso();
+      if (cloud) {
+        await applyProductPricesBatch(existing, updates, updatedAt);
+        // Republish the PUBLIC catalog once from the freshest local products
+        // merged with the new prices — projection prices mirror the private
+        // doc; other public fields come from the live subscription state.
+        const byId = new Map(updates.map((update) => [update.id, update.prices]));
+        const nextProducts = state.products.map((p) =>
+          p.storeId === existing.id && byId.has(p.id) ? { ...p, prices: { ...(p.prices ?? {}), ...byId.get(p.id) } } : p
+        );
+        try {
+          await projectPublicForStore(existing, nextProducts, state.categories);
+        } catch (error) {
+          throw new PublicCatalogProjectionError(error);
+        }
+      }
+      for (const update of updates) {
+        const product = state.products.find((p) => p.id === update.id);
+        if (product) {
+          dispatch({ type: "UPDATE_PRODUCT", product: { ...product, prices: { ...(product.prices ?? {}), ...update.prices } } });
+        }
+      }
     },
     saveCategoryPricingRules: async (categoryId, rules, expectedSignature) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);

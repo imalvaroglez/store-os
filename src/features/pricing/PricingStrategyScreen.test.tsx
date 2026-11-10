@@ -278,3 +278,38 @@ describe("PricingStrategyScreen (#280)", () => {
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
   });
 });
+
+describe("puente a Reglas con contexto (#289)", () => {
+  const SAVED = {
+    byTier: {},
+    byCategory: {
+      [CAT]: {
+        t_retail: { kind: "bands", bands: [{ min: 0, max: 60, price: 300 }, { min: 60, price: 320 }], rounding: "none" },
+        t_girly: { kind: "bands", bands: [{ min: 0, max: 60, price: 250 }, { min: 60, price: 270 }], rounding: "none" },
+        t_iconic: { kind: "bands", bands: [{ min: 0, max: 60, price: 170 }, { min: 60, price: 180 }], rounding: "none" },
+      },
+    },
+  };
+
+  it("con tabla guardada y cambios pendientes ofrece 'Revisar precios pendientes de esta categoría (N)'", async () => {
+    state.stores[0].pricingRules = JSON.parse(JSON.stringify(SAVED));
+    // 16 de 20 piezas cambiarían (clúster barato); la 21 con categoría secundaria también cuenta.
+    const secondary = { ...product(70, pricey), categoryIds: ["otra", CAT] };
+    state.products = [...clusterProducts(), secondary];
+    mount();
+    selectCategory();
+    expect(
+      await screen.findByRole("button", { name: /Revisar precios pendientes de esta categoría \(21\)/ })
+    ).toBeTruthy();
+  });
+
+  it("piezas con la categoría en posición SECUNDARIA cuentan en la revisión (igual que resolveRule)", () => {
+    state.stores[0].pricingRules = JSON.parse(JSON.stringify(SAVED));
+    const secondary = { ...product(70, pricey), categoryIds: ["otra", CAT] };
+    state.products = [...clusterProducts(), secondary];
+    mount();
+    selectCategory();
+    // La pieza de $70 caería en la banda alta (Iconic 180 ≠ actual 170): debe estar en el conteo.
+    expect(screen.getByRole("button", { name: /Revisar precios pendientes de esta categoría \(21\)/ })).toBeTruthy();
+  });
+});
