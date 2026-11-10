@@ -251,11 +251,6 @@ export function ProductForm({
       setSaving(false);
     };
     if (!draft.name.trim() || saving) return;
-    // #219 (Productos): a pasted image link must actually be a link — a typo
-    // publishes a broken photo in the public catalog.
-    if (!cloud && draft.imageUrl && !/^https?:\/\/\S+$/i.test(draft.imageUrl.trim())) {
-      return fail("La imagen debe ser un enlace que empiece con http:// o https://.");
-    }
 
     // Upload staged images first; block save on failure (no half-uploaded state).
     let uploaded: ProductImageType[] = [];
@@ -489,13 +484,9 @@ export function ProductForm({
           onMove={handleMove}
         />
       ) : (
-        <TextField
-          label="Imagen (URL)"
-          hint="Pega un enlace. La subida de fotos está disponible al iniciar sesión."
-          placeholder="https://..."
-          value={draft.imageUrl ?? ""}
-          onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value || undefined })}
-        />
+        <p className="text-xs text-on-surface-soft">
+          La subida de fotos estará disponible al iniciar sesión.
+        </p>
       )}
 
       {/* Categories: primary (first selected) + up to 2 secondary. */}
