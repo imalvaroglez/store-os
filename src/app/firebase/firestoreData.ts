@@ -19,7 +19,7 @@ import {
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
-import { applyVariantDelta, isVariantProduct } from "../../lib/variants";
+import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
@@ -33,7 +33,7 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule } from "../../types";
+import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
@@ -1239,8 +1239,32 @@ function primaryImage(product: Product): string | null {
 }
 
 /** Coarse stock signal for the public catalog: NEVER an exact count. */
+/** #124: one color's PUBLIC signal — coarse like the design-level one
+ * (never a count), derived from the variant's own shelf. */
+function variantPublicStockSignal(v: ProductVariant): "agotado" | "pocas" | "disponible" {
+  const qty = v.quantityOnHand;
+  if (typeof qty !== "number") return "disponible";
+  if (qty <= 0) return "agotado";
+  if (typeof v.lowStockAt === "number" && qty <= v.lowStockAt) return "pocas";
+  return "disponible";
+}
+
+/** #124: the public color list of a design — one product, N colors, each with
+ * its photo; NEVER per-color counts or costs (same policy as the rest of the
+ * projection). */
+function publicVariants(product: Product) {
+  if (!isVariantProduct(product)) return undefined;
+  return product.variants!.map((v) => ({
+    id: v.id,
+    color: v.color,
+    imageUrl: v.photos?.find((photo) => photo.isPrimary)?.url ?? v.photos?.[0]?.url ?? null,
+    stockSignal: variantPublicStockSignal(v),
+  }));
+}
+
 export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible" {
-  const qty = p.quantityOnHand;
+  // #124: a design sold by color signals over the SUM of its colors.
+  const qty = isVariantProduct(p) ? totalStock(p) : p.quantityOnHand;
   if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
   if (qty <= 0) return "agotado";
   if (typeof p.lowStockAt === "number" && qty <= p.lowStockAt) return "pocas";
@@ -1324,6 +1348,8 @@ export function projectPublicProductSummary(
     sortOrder: product.sortOrder ?? 0,
     stockSignal: publicStockSignal(product),
   };
+  const variants = publicVariants(product);
+  if (variants) summary.variants = variants;
   const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") summary.price = resolved;
   const prices = publicPricesByTier(product, pricing);
@@ -1372,6 +1398,8 @@ export function projectPublicProductDetail(
     categories: named,
     stockSignal: publicStockSignal(product),
   };
+  const variants = publicVariants(product);
+  if (variants) detail.variants = variants;
   const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") detail.price = resolved;
   const prices = publicPricesByTier(product, pricing);

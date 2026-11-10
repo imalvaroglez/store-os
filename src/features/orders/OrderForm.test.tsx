@@ -701,3 +701,57 @@ describe("text-entry-audit · Notas (#219)", () => {
     };
   }
 });
+
+describe("OrderForm #124 — venta por color exacto", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockUpsertOrder.mockClear();
+    mockUpsertOrder.mockResolvedValue({});
+    state.products = [
+      {
+        ...state.products[0],
+        id: "design_1",
+        name: "Anillo Sol",
+        sku: "SOL",
+        cost: 100,
+        prices: { t_retail: 300 },
+        categoryIds: ["c1"],
+        quantityOnHand: undefined,
+        variants: [
+          { id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 110, quantityOnHand: 2, photos: [], createdAt: "", updatedAt: "" },
+          { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "SOL-P", cost: 90, quantityOnHand: 1, photos: [], createdAt: "", updatedAt: "" },
+        ],
+      } as unknown as typeof state.products[number],
+    ];
+    state.categories = [{ id: "c1", storeId: "store_olivia", name: "Anillos", active: true, createdAt: "", updatedAt: "" }] as unknown as typeof state.categories;
+  });
+
+  it("pedir el color: sin elección no guarda; con elección guarda color, clave y costo del color", async () => {
+    const order = { id: "var-order", storeId: "store_olivia", customerId: "customer_1", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Anillo Sol" } });
+    fireEvent.click(screen.getByRole("option", { name: /Anillo Sol/ }));
+    // El selector de color aparece y es obligatorio.
+    const colorSelect = await screen.findByLabelText("Color");
+    expect(colorSelect).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    expect(await screen.findByText(/Elige el color del artículo 1/)).toBeTruthy();
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+    // Elegir Dorado adopta SU costo (110, no el 100 del diseño).
+    fireEvent.change(colorSelect, { target: { value: "v_gold" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0] as { items: Array<Record<string, unknown>> };
+    expect(saved.items[0]).toMatchObject({ productId: "design_1", variantId: "v_gold", variantColor: "Dorado", variantSku: "SOL-D" });
+  });
+
+  it("un producto sin variantes no muestra selector de color", async () => {
+    state.products = [{ ...state.products[0], id: "plain_1", name: "Collar Luna", variants: undefined } as typeof state.products[number]];
+    const order = { id: "plain-order", storeId: "store_olivia", customerId: "customer_1", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Collar Luna" } });
+    fireEvent.click(screen.getByRole("option", { name: /Collar Luna/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeTruthy());
+    expect(screen.queryByLabelText("Color")).toBeNull();
+  });
+});
