@@ -152,7 +152,7 @@ export function PricingStrategyScreen() {
     // Draft re-adoption on category switch is driven by the effect below.
     setDraft(null);
     setDraftBase("");
-    if (categoryIdNext) requestAnimationFrame(() => proposalRef.current?.scrollIntoView({ behavior: "smooth" }));
+    if (categoryIdNext) requestAnimationFrame(() => proposalRef.current?.scrollIntoView?.({ behavior: "smooth" }));
   }
 
   // Adopt the saved table (when compatible) or start from the proposal card.
