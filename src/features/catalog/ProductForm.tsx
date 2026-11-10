@@ -78,6 +78,7 @@ export function ProductForm({
   const [variantStaged, setVariantStaged] = useState<Record<string, StagedImage[]>>({});
   const [variantPhotoError, setVariantPhotoError] = useState<string | null>(null);
   const [confirmDisableVariants, setConfirmDisableVariants] = useState(false);
+  const [confirmEnableVariants, setConfirmEnableVariants] = useState(false);
 
   if (!activeStore) return null;
   // Capture the non-null store so async closures (submit/handleAdd) stay narrowed.
@@ -361,6 +362,14 @@ export function ProductForm({
 
     if (variantsEnabled) {
       finalVariants = finalVariants.map((v) => ({ ...v, color: v.color.trim(), sku: buildVariantSku(sku, v) ?? v.sku }));
+      // #124/M4: claves únicas — entre colores del diseño y contra el resto
+      // de la tienda (las claves viajan en compras, tickets y devoluciones).
+      const claves = finalVariants.map((v) => (v.sku ?? "").toUpperCase());
+      if (new Set(claves).size !== claves.length) return fail("Dos colores comparten la misma clave; dale a cada color su sufijo.");
+      const clash = claves.find((clave) =>
+        clave && state.products.some((p) => p.id !== product.id && p.storeId === store.id && (p.sku ?? "").toUpperCase() === clave)
+      );
+      if (clash) return fail(`La clave ${clash} ya la usa otro producto. Elige otra.`);
     }
     const next: Product = {
       ...draft,
@@ -606,6 +615,13 @@ export function ProductForm({
                   setConfirmDisableVariants(true);
                   return;
                 }
+                // #124/M1: ENABLING colors on a product that already has a
+                // design-level shelf discards it (each color owns its own) —
+                // never silently.
+                if (next && (parseAmount(qty) ?? 0) > 0) {
+                  setConfirmEnableVariants(true);
+                  return;
+                }
                 setVariantsEnabled(next);
                 if (!next) setVariants([]);
               }}
@@ -647,7 +663,10 @@ export function ProductForm({
                         inputMode="numeric"
                         placeholder="0"
                         value={variant.quantityOnHand?.toString() ?? ""}
-                        onChange={(e) => patchVariant(variant.id, { quantityOnHand: parseAmount(e.target.value) ? Math.round(parseAmount(e.target.value)!) : undefined })}
+                        onChange={(e) => {
+                          const parsed = parseAmount(e.target.value);
+                          patchVariant(variant.id, { quantityOnHand: parsed == null ? undefined : Math.round(parsed) });
+                        }}
                       />
                     </div>
                     {cloud ? (
@@ -751,6 +770,34 @@ export function ProductForm({
       <Button full size="lg" onClick={submit} disabled={!draft.name.trim() || saving}>
         {saving ? "Guardando…" : "Guardar producto"}
       </Button>
+
+      <Dialog
+        open={confirmEnableVariants}
+        title="¿Vender por color con existencias ya capturadas?"
+        onClose={() => setConfirmEnableVariants(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setConfirmEnableVariants(false)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setConfirmEnableVariants(false);
+                setVariantsEnabled(true);
+                setQty("");
+              }}
+            >
+              Vender por color
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Este producto tiene existencias capturadas como pieza única. Al vender por color, esa cantidad se descarta:
+          captura la existencia de cada color en su tarjeta.
+        </p>
+      </Dialog>
 
       <Dialog
         open={confirmDisableVariants}
