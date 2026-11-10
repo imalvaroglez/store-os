@@ -315,11 +315,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     expect(saved.order.deposit).toBe(0);
     expect(docReceivedCents(saved.order)).toBe(59000);
     expect((await getDoc(parent)).data()).toMatchObject({ deposit: 0, paymentsReceivedCents: 59000 });
-    // Synthetic corrupt legacy state: the approved repair lowers only deposit.
+    // Synthetic corrupt legacy state: the approved repair lowers only deposit —
+    // since #271 with its SIGNED justification (who/from→to/why).
     await env.withSecurityRulesDisabled(async (ctx) => {
       await updateDoc(doc(ctx.firestore(), "orders", orderId), { deposit: 590 });
     });
-    const repaired = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...saved.order, deposit: 0 }, saved.order.revision!, "deposit-218-repair");
+    const repaired = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...saved.order, deposit: 0 }, saved.order.revision!, "deposit-218-repair", { depositCorrectionNote: "Depósito duplicado: el cobro ya lo cubre" });
     expect(docReceivedCents(repaired.order)).toBe(59000);
     expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(1);
   });
@@ -454,6 +455,81 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
       registerOrderPaymentTx({ ...payment("cap-270-legacy-sub", -1), orderId, kind: "adjustment", method: "unknown", note: "Restar sobre negativo" })
     ).rejects.toThrow(/Puedes restar hasta \$0\.00/);
     expect((await getDoc(parent)).data()?.paymentsReceivedCents).toBe(-30000);
+  });
+
+  // #271 (PO 2026-11-09): lowering the deposit with payment evidence in the
+  // doc requires a SIGNED correction — the silent edit erased real money.
+  it("rejects a silent deposit lowering with evidence and records it with the motive (#271)", async () => {
+    const orderId = "lower-271-order";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 500, items: [], createdAt: "", updatedAt: "" });
+    // The #271 repro: an adjustment creates the accumulator WITHOUT
+    // materializing the legacy deposit.
+    await registerOrderPaymentTx({ ...payment("lower-271-adj", 10), orderId, kind: "adjustment", method: "unknown", note: "Corrección previa" });
+    // Silent lowering: refused, nothing changes.
+    const before = (await getDoc(parent)).data()!;
+    await expect(
+      saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...(await getDoc(parent)).data(), id: orderId, deposit: 100 } as Order, 0, "lower-271-silent")
+    ).rejects.toThrow(/motivo de la corrección/);
+    expect((await getDoc(parent)).data()).toEqual(before);
+    // With the motive: the lowering lands WITH its signed record.
+    const corrected = await saveOrderWithStockTx(
+      { uid: "tx-user", role: "member" } as any,
+      { ...(await getDoc(parent)).data(), id: orderId, deposit: 100 } as Order,
+      0,
+      "lower-271-signed",
+      { depositCorrectionNote: "Anticipo capturado por error: era $100" }
+    );
+    expect(corrected.order.deposit).toBe(100);
+    expect(corrected.order.depositCorrections).toHaveLength(1);
+    expect(corrected.order.depositCorrections![0]).toMatchObject({ from: 500, to: 100, by: "tx-user", note: "Anticipo capturado por error: era $100" });
+    // The view keeps every peso accounted for: accumulator $10 + deposit $100.
+    expect(docReceivedCents(corrected.order)).toBe(11000);
+    expect((await getDoc(parent)).data()).toMatchObject({ deposit: 100, paymentsReceivedCents: 1000 });
+  });
+
+  it("a raw batched deposit lowering without the signed entry is denied by the rules (#271)", async () => {
+    const orderId = "lower-271-raw";
+    const parent = doc(holder.db, "orders", orderId);
+    // Money fields on create are denied to clients — seed as the emulator
+    // itself (the synthetic-corruption pattern of the #218 tests).
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders", orderId), { storeId: "tx-store", deposit: 500, items: [], createdAt: "", updatedAt: "", paymentsReceivedCents: 1000, paymentsRevision: 1, lastPaymentId: "seed" });
+    });
+    const direct = writeBatch(holder.db);
+    direct.update(parent, { deposit: 100 });
+    await expect(direct.commit()).rejects.toThrow();
+    // A forged entry that does not match the change is still denied.
+    const forged = writeBatch(holder.db);
+    forged.update(parent, { deposit: 100, depositCorrections: [{ from: 999, to: 100, note: "Inventado", by: "tx-user", at: "2026-11-09T00:00:00.000Z" }] });
+    await expect(forged.commit()).rejects.toThrow();
+    // Another operator's signature does not pass either.
+    const foreignBatch = writeBatch(holder.db);
+    foreignBatch.update(parent, { deposit: 100, depositCorrections: [{ from: 500, to: 100, note: "No fui yo", by: "someone-else", at: "2026-11-09T00:00:00.000Z" }] });
+    await expect(foreignBatch.commit()).rejects.toThrow();
+    expect((await getDoc(parent)).data()?.deposit).toBe(500);
+  });
+
+  it("deposit lowering WITHOUT an accumulator stays free — the typo repair path (#271)", async () => {
+    const orderId = "lower-271-free";
+    const parent = doc(holder.db, "orders", orderId);
+    await setDoc(parent, { storeId: "tx-store", deposit: 400, items: [], createdAt: "", updatedAt: "" });
+    const fixed = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...(await getDoc(parent)).data(), id: orderId, deposit: 100 } as Order, 0, "lower-271-free-fix");
+    expect(fixed.order.deposit).toBe(100);
+    expect(fixed.order.depositCorrections).toBeUndefined();
+  });
+
+  it("ordinary edits carry the corrections verbatim and cannot strip them (#271)", async () => {
+    const orderId = "lower-271-carry";
+    const parent = doc(holder.db, "orders", orderId);
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders", orderId), { storeId: "tx-store", deposit: 200, items: [], notes: "", createdAt: "", updatedAt: "", paymentsReceivedCents: 500, paymentsRevision: 1, lastPaymentId: "seed", depositCorrections: [{ from: 500, to: 200, note: "Primera corrección", by: "tx-user", at: "2026-11-09T01:00:00.000Z" }] });
+    });
+    const edited = await saveOrderWithStockTx({ uid: "tx-user", role: "member" } as any, { ...(await getDoc(parent)).data(), id: orderId, notes: "nota nueva" } as Order, 0, "lower-271-carry-edit");
+    expect(edited.order.depositCorrections).toHaveLength(1);
+    // Stripping them by hand is denied.
+    await expect(updateDoc(parent, { depositCorrections: [] })).rejects.toThrow();
+    expect((await getDoc(parent)).data()?.depositCorrections).toHaveLength(1);
   });
 
 });

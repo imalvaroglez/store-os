@@ -496,7 +496,7 @@ export async function saveOrderWithStockTx(
   order: Order,
   expectedRevision: number | null,
   mutationId: string,
-  options?: { confirmDeliveredWithBalance?: boolean }
+  options?: { confirmDeliveredWithBalance?: boolean; depositCorrectionNote?: string }
 ): Promise<{ order: Order; stock: StockAdjustment[]; variantStock?: Array<{ productId: string; variants: ProductVariant[] }> }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
@@ -519,6 +519,34 @@ export async function saveOrderWithStockTx(
     const depositPinned = docData?.inheritedDepositMaterialized === true ? rawDeposit
       : typeof docData?.paymentsReceivedCents === "number" ? Math.min(order.deposit ?? 0, rawDeposit)
       : (order.deposit ?? 0);
+    // #271 (PO 2026-11-09): silently LOWERING the deposit on an order that
+    // already has payment evidence erased real money from the view (legacy
+    // anticipo + adjustment-created accumulator → edit down → $400 gone with
+    // no trace). The silent path is gone: a lowering below the doc's raw
+    // value requires the operator's motive and lands as a SIGNED correction
+    // entry (who / from → to / why / when) — the #218 sanctioned repair now
+    // leaves its justification too. The auto-pin above (form above raw →
+    // clamps back to the doc's own value) is NOT a lowering: it writes raw.
+    const correctionsCarried = Array.isArray(docData?.depositCorrections)
+      ? (docData.depositCorrections as Order["depositCorrections"])
+      : undefined;
+    const depositLoweringWithEvidence =
+      typeof docData?.paymentsReceivedCents === "number" &&
+      docData?.inheritedDepositMaterialized !== true &&
+      (order.deposit ?? 0) < rawDeposit;
+    let depositCorrections = correctionsCarried;
+    if (depositLoweringWithEvidence) {
+      const note = options?.depositCorrectionNote?.trim();
+      if (!note) {
+        throw new Error(
+          "Bajar el anticipo con cobros registrados requiere el motivo de la corrección: queda como registro firmado de quién, cuánto y por qué."
+        );
+      }
+      depositCorrections = [
+        ...(correctionsCarried ?? []),
+        { from: rawDeposit, to: depositPinned, note, by: user.uid, at: new Date().toISOString() },
+      ];
+    }
     const next: Order = {
       ...order,
       deposit: depositPinned,
@@ -541,6 +569,9 @@ export async function saveOrderWithStockTx(
       // #203: same verbatim discipline — incidents (append-only evidence on
       // this order) belong to the incident transactions, never to a form save.
       incidents: Array.isArray(docData?.incidents) ? (docData.incidents as Order["incidents"]) : undefined,
+      // #271: deposit corrections are append-only signed evidence; a form
+      // save carries them verbatim (plus its own entry on a justified lowering).
+      ...(depositCorrections ? { depositCorrections } : {}),
       // #184: saleExpenses (loose-expense charges and supply consumptions)
       // belong to the expense transactions — same verbatim carry (review F1).
       saleExpenses: Array.isArray(docData?.saleExpenses) ? (docData.saleExpenses as Order["saleExpenses"]) : undefined,
