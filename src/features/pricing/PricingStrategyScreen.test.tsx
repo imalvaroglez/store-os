@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { PricingStrategyScreen } from "./PricingStrategyScreen";
+import { takeSuggestionsFocus } from "./suggestionsFocus";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
 import { CategoryRulesConflictError } from "../../app/StoreProvider";
@@ -123,7 +124,7 @@ describe("PricingStrategyScreen (#280)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
     fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
     fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
-    expect(await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.")).toBeTruthy();
+    expect(await screen.findByText("Tabla guardada. Sus sugerencias ya están activas en Reglas de venta; tus precios no cambiaron.")).toBeTruthy();
 
     expect(mocks.saveCategoryPricingRules).toHaveBeenCalledTimes(1);
     const [categoryId, rules] = mocks.saveCategoryPricingRules.mock.calls[0];
@@ -181,7 +182,7 @@ describe("PricingStrategyScreen (#280)", () => {
     expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("160");
     fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "300" } });
     fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
-    expect(await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.")).toBeTruthy();
+    expect(await screen.findByText("Tabla guardada. Sus sugerencias ya están activas en Reglas de venta; tus precios no cambiaron.")).toBeTruthy();
     const [, rules] = mocks.saveCategoryPricingRules.mock.calls[0];
     expect((rules as Record<string, { bands: Array<{ price: number }> }>).t_retail.bands[0].price).toBe(300);
   });
@@ -276,5 +277,32 @@ describe("PricingStrategyScreen (#280)", () => {
     expect(deleteCall[1]).toBeNull();
     expect(typeof deleteCall[2]).toBe("string");
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+});
+
+describe("PricingStrategyScreen #289 — conexión visible con Reglas", () => {
+  it("con tabla guardada, anuncia las sugerencias activas y entrega la categoría a Reglas", async () => {
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 60, price: 290 }, { min: 60, price: 310 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 60, price: 230 }, { min: 60, price: 260 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 60, price: 160 }, { min: 60, price: 170 }], rounding: "none" },
+        },
+      },
+    };
+    mount();
+    selectCategory();
+    // La tabla está guardada y limpia: el salto directo está visible.
+    const go = await screen.findByRole("button", { name: /Revisar y aplicar precios de esta categoría/ });
+    expect(screen.getByText(/sus sugerencias ya están activas en Reglas de venta/)).toBeTruthy();
+    fireEvent.click(go);
+    expect(window.location.pathname).toBe("/productos/reglas");
+    // El traspaso lleva la categoría: Reglas abre pre-filtrado.
+    expect(takeSuggestionsFocus()).toBe(CAT);
+    // Al editar (sucio) la tarjeta vuelve a la guía genérica hasta guardar.
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    expect(screen.getByRole("button", { name: /Ir a Reglas de venta/ })).toBeTruthy();
   });
 });
