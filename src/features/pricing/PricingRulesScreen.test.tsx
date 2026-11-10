@@ -213,3 +213,22 @@ describe("PricingRulesScreen orientación y lote (#289)", () => {
     expect(mocks.applyProductPrices.mock.calls[0][0][0].prices.t_iconic).toBe(200);
   });
 });
+
+describe("#289 misión 5a — config sin byTier (regresión)", () => {
+  it("una tienda que empieza precios por Estrategia (solo byCategory) renderiza y sugiere por tabla", async () => {
+    state.categories = [
+      { id: "c_reloj", storeId: "store_olivia", name: "Reloj", active: true, createdAt: "", updatedAt: "" },
+    ] as typeof state.categories;
+    state.stores[0].pricingRules = {
+      byCategory: { c_reloj: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 90 }], rounding: "none" } } },
+    } as typeof state.stores[0].pricingRules;
+    state.products = [
+      product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 40, prices: { t_iconic: 60 } }),
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    // Antes del fix de tipo+guardas: "Cannot convert undefined or null to
+    // object" (Object.entries/Object.keys sobre byTier ausente).
+    expect(await screen.findByText(/Reloj Madrid/)).toBeTruthy();
+    expect(screen.getAllByText(/\$90/).length).toBeGreaterThan(0);
+  });
+});
