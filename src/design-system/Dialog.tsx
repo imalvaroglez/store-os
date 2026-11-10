@@ -36,6 +36,11 @@ export function Dialog({
     first?.focus();
 
     const onKey = (e: KeyboardEvent) => {
+      // #219/#304 H2: only the INNERMOST modal answers Escape — a confirm
+      // dialog nested inside this one must not close both and dump the
+      // operator's draft (same guard Sheet already has).
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== panelRef.current) return;
       if (e.key === "Escape") return onCloseRef.current();
       if (e.key !== "Tab") return;
       const items = focusables();

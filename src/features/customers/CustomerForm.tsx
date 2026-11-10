@@ -10,12 +10,11 @@ export function sanitizePhoneInput(value: string): string {
   return value.replace(/[^\d+\s().-]/g, "").slice(0, 24);
 }
 
-/** #219: loose identity for duplicate-name detection (accents folded,
- * letters+digits only) — the same normalization the search uses. */
+import { looseText } from "../../lib/text";
+
+/** #219: duplicate-name detection shares the search's loose normalization. */
 function sameNameLoose(a: string, b: string): boolean {
-  const loose = (text: string) =>
-    text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "").toLocaleLowerCase("es-MX");
-  return loose(a) === loose(b);
+  return looseText(a) === looseText(b);
 }
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import type { Customer } from "../../types";
@@ -105,13 +104,13 @@ export function CustomerForm({
         inputMode="tel"
         placeholder="5512345678"
         value={draft.phone ?? ""}
-        onChange={(e) => setDraft({ ...draft, phone: sanitizePhoneInput(e.target.value).trim() || undefined })}
+        onChange={(e) => setDraft({ ...draft, phone: sanitizePhoneInput(e.target.value) || undefined })}
       />
       <TextField
         label="Instagram"
         placeholder="@usuario"
         value={draft.instagram ?? ""}
-        onChange={(e) => setDraft({ ...draft, instagram: e.target.value.replace(/\s+/g, "").trim() || undefined })}
+        onChange={(e) => setDraft({ ...draft, instagram: e.target.value.replace(/\s+/g, "") || undefined })}
       />
       <SelectField label="Tipo de cliente" value={draft.segment ?? "regular"} onChange={(segment) => setDraft({ ...draft, segment })} options={[{ value: "regular", label: "Regular" }, { value: "entrepreneur", label: "Emprendedora" }]} />
       {activeStore?.type === "inventory_tiered" && <p className="text-sm text-ink-soft">El tipo identifica a tu clienta. Su precio se elige abajo; marcar Emprendedora no asigna Iconic automáticamente.</p>}
