@@ -2,7 +2,9 @@
 *.log
 
 # Dependencies
-node_modules/
+# No trailing slash: also covers a `node_modules` SYMLINK (worktrees link the
+# main checkout's deps; `node_modules/` alone matches directories only).
+node_modules
 pnpm-lock.yaml
 
 # Build output
