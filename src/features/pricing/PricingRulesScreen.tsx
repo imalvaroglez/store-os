@@ -128,7 +128,7 @@ export function PricingRulesScreen() {
 
   async function save() {
     // Adversarial H1: nonsensical increments are refused before persisting.
-    for (const [tierId, rule] of Object.entries(draft.config.byTier)) {
+    for (const [tierId, rule] of Object.entries(draft.config.byTier ?? {})) {
       const label = tiers.find((t) => t.id === tierId)?.label ?? tierId;
       if (rule.kind === "markup" && !(rule.percent >= 0)) {
         toast.error(`El porcentaje de ${label} no puede ser negativo.`);
@@ -140,7 +140,7 @@ export function PricingRulesScreen() {
       }
     }
     // Bands must be unequivocal before anything persists.
-    for (const [tierId, rule] of Object.entries(draft.config.byTier)) {
+    for (const [tierId, rule] of Object.entries(draft.config.byTier ?? {})) {
       if (rule.kind === "bands") {
         const error = validateBands(rule.bands);
         if (error) {
@@ -348,11 +348,11 @@ export function PricingRulesScreen() {
             key={tier.id}
             label={tier.label}
             disabled={busy}
-            rule={draft.config.byTier[tier.id]}
+            rule={draft.config.byTier?.[tier.id]}
             onChange={(rule) =>
               patchConfig((config) => {
-                if (rule === null) delete config.byTier[tier.id];
-                else config.byTier[tier.id] = rule;
+                if (rule === null) delete (config.byTier ?? {})[tier.id];
+                else (config.byTier = config.byTier ?? {})[tier.id] = rule;
               })
             }
           />

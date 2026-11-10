@@ -652,6 +652,10 @@ describe("legacy anticipo guards (#218)", () => {
     mockUpsertOrder.mockClear();
     render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
     fireEvent.change(screen.getByLabelText("Anticipo"), { target: { value: String(amount) } });
+    if (amount < order.deposit) {
+      // #271: the sanctioned repair now carries its signed motive.
+      fireEvent.change(await screen.findByLabelText("Motivo de la corrección del anticipo"), { target: { value: "Depósito duplicado: el cobro ya lo cubre" } });
+    }
     fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
     if (amount > order.deposit) {
       expect(await screen.findByText("El anticipo no puede subir cuando el pedido ya tiene cobros. Registra un cobro.")).toBeInTheDocument();
@@ -753,5 +757,59 @@ describe("OrderForm #124 — venta por color exacto", () => {
     fireEvent.click(screen.getByRole("option", { name: /Collar Luna/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeTruthy());
     expect(screen.queryByLabelText("Color")).toBeNull();
+  });
+});
+
+describe("OrderForm #271 — corrección firmada del anticipo", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockUpsertOrder.mockClear();
+  });
+  function evidenceOrder() {
+    return {
+      id: "lower-271",
+      storeId: "store_olivia",
+      customerId: "customer_1",
+      items: [{ productName: "Anillo", quantity: 1, unitPrice: 50, subtotal: 50 }],
+      deposit: 500,
+      paymentsReceivedCents: 1000,
+      paymentsRevision: 1,
+      orderStatus: "asked" as const,
+      paymentStatus: "unpaid" as const,
+      schemaVersion: 2,
+      revision: 3,
+      createdAt: "",
+      updatedAt: "",
+    };
+  }
+
+  it("bajar el anticipo con cobros pide el motivo y no guarda sin él", async () => {
+    mockUpsertOrder.mockResolvedValue({});
+    render(<ToastProvider><OrderForm order={evidenceOrder()} onDone={() => {}} /></ToastProvider>);
+    const anticipo = screen.getByLabelText("Anticipo") as HTMLInputElement;
+    expect(anticipo.value).toBe("500");
+    fireEvent.change(anticipo, { target: { value: "100" } });
+    expect(await screen.findByText(/Estás bajando el anticipo de un pedido con cobros/)).toBeTruthy();
+    expect(screen.getByLabelText("Motivo de la corrección del anticipo")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    expect(await screen.findByText(/Escribe el motivo de la corrección del anticipo/)).toBeTruthy();
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("con el motivo guarda y viaja la nota firmada", async () => {
+    mockUpsertOrder.mockResolvedValue({});
+    render(<ToastProvider><OrderForm order={evidenceOrder()} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Anticipo"), { target: { value: "100" } });
+    fireEvent.change(await screen.findByLabelText("Motivo de la corrección del anticipo"), { target: { value: "Anticipo capturado por error: era $100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const options = mockUpsertOrder.mock.calls[0][1];
+    expect(options.depositCorrectionNote).toBe("Anticipo capturado por error: era $100");
+    expect((mockUpsertOrder.mock.calls[0][0] as { deposit: number }).deposit).toBe(100);
+  });
+
+  it("sin bajada no aparece el campo de motivo", () => {
+    render(<ToastProvider><OrderForm order={evidenceOrder()} onDone={() => {}} /></ToastProvider>);
+    expect(screen.queryByLabelText("Motivo de la corrección del anticipo")).toBeNull();
   });
 });
