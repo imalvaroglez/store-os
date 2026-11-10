@@ -1,5 +1,5 @@
 import type { Store, Product } from "../types";
-import type { OrderPricing } from "./pricing";
+import type { CartRequestSummary, OrderPricing } from "./pricing";
 import { formatMoney } from "./money";
 
 function storefrontBase(phone?: string | null): string {
@@ -92,6 +92,9 @@ export type CartOrderLine = {
   name: string;
   qty: number;
   inquire?: boolean; // sold-out piece → asked, not bought
+  /** #305: public category name (from the catalog projection) for grouping;
+   * absent → "Sin categoría". */
+  category?: string;
 };
 
 /**
@@ -105,21 +108,53 @@ export function buildCartOrderUrl(
   storeSlug: string,
   lines: CartOrderLine[],
   pricing?: OrderPricing | null,
-  customerName?: string
+  customerName?: string,
+  /** #305: request summary (habitual + conditional identity row). When
+   * present it REPLACES the old single-price summary, so the message can
+   * never contradict the cart. */
+  request?: CartRequestSummary | null
 ): string {
   const name = customerName?.trim();
+  // The owner-editable intro goes verbatim; the DEFAULT intro embeds the
+  // visitor's name — escape it there too (user text in a WhatsApp message).
   const intro =
-    store.storefront?.whatsappBuyIntro?.trim() || (name ? `Hola, soy ${name}, quiero hacer un pedido:` : "Hola, quiero hacer un pedido:");
-  const body = lines
-    .map((l) => `• ${l.qty}× ${l.name}${l.inquire ? " — sobre pedido" : ""}`)
-    .join("\n");
+    store.storefront?.whatsappBuyIntro?.trim()
+    || (name ? `Hola, soy ${name.replace(/([*_~`])/g, "\\$1")}, quiero hacer un pedido:` : "Hola, quiero hacer un pedido:");
+  // #305: group by category (when known from the public projection), keep
+  // order stable, and escape WhatsApp markdown in catalog/user text.
+  const esc = (text: string) => text.replace(/([*_~`])/g, "\\$1");
+  const groups = new Map<string, CartOrderLine[]>();
+  for (const line of lines) {
+    const key = line.category?.trim() || "Sin categoría";
+    groups.set(key, [...(groups.get(key) ?? []), line]);
+  }
+  const body = [...groups.entries()]
+    .map(([category, group]) => {
+      const items = group
+        .map((l) => `• ${l.qty}× ${esc(l.name)}${l.inquire ? " — sobre pedido" : ""}`)
+        .join("\n");
+      return groups.size > 1 ? `*${esc(category.toUpperCase())}*\n${items}` : items;
+    })
+    .join("\n\n");
   // Suppress the identity line only when the intro already carries OUR exact
   // identity phrase ("…soy {name},…") — a bare substring match would let an
   // intro like "Hola, Mar:" swallow the visitor's name.
-  const who = name && !intro.includes(`soy ${name},`) ? `\nSoy ${name}.` : "";
-  const summary = pricing
-    ? `\nTotal de piezas: ${pricing.totalQuantity}\nPrecio aplicable: ${pricing.activeTier.tier.label}\nSubtotal estimado: ${formatMoney(pricing.estimatedSubtotal)} MXN\nEnvío no incluido.\nPrecio y existencia por confirmar por WhatsApp.`
-    : "";
-  const text = `${intro}\nPedido:\n${body}${summary}${who}\n${productUrl(storeSlug)}`;
+  const who = name && !intro.includes(`soy ${name},`) ? `\nSoy ${esc(name)}.` : "";
+  const summary = request
+    ? [
+        `*${request.totalQuantity} ${request.totalQuantity === 1 ? "pieza" : "piezas"} en total*`,
+        `Subtotal estimado: ${formatMoney(request.habitualSubtotal)}`,
+        // The identity estimate travels ONLY when the cart shows it (< $1,000
+        // habitual AND fully calculated) — same rule, same numbers.
+        ...(request.showIdentityHint && request.identitySubtotal != null
+          ? [`¿Eres ${esc(request.identityTier?.label ?? "")}? Subtotal estimado: ${formatMoney(request.identitySubtotal)}`]
+          : []),
+        "Precios, beneficio y disponibilidad sujetos a confirmación.",
+        "Envío no incluido.",
+      ].join("\n")
+    : pricing
+      ? `\nTotal de piezas: ${pricing.totalQuantity}\nPrecio aplicable: ${pricing.activeTier.tier.label}\nSubtotal estimado: ${formatMoney(pricing.estimatedSubtotal)} MXN\nEnvío no incluido.\nPrecio y existencia por confirmar por WhatsApp.`
+      : "";
+  const text = `${intro}\nPedido:\n${body}\n\n${summary}${who}\n${productUrl(storeSlug)}`;
   return `${storefrontBase(store.whatsappPhone)}?text=${encodeURIComponent(text)}`;
 }
