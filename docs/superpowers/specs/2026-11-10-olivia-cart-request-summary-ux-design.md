@@ -79,6 +79,9 @@ Soy [nombre].
 *CADENAS*
 • 1 × Cadena Bogotá Gold
 
+*COLLARES*
+• 2 × Collar Aurora
+
 *6 piezas en total*
 Subtotal de referencia: $770
 Si tienes Iconic vigente, estimado: $420
