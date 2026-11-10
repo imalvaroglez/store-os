@@ -127,6 +127,23 @@ Regla dura nacida de un incidente real (2026-11-05): una delegación explícita 
 - La revisión independiente del trabajo propio es **parte del avance**, no un alto: subagentes read-only rápidos + CI, y merge/liberación si la delegación vigente los cubre. No se espera a un humano que dijo que no estaría disponible.
 - Límites que NO cambian: no inventar reglas de negocio/dinero; respetar compuertas explícitas registradas por el PO en issues (p. ej. validación de Fer antes de publicar cambios visuales); no operar datos productivos ni sembrar producción; cero costos.
 
+### Estándar de UX (Definition of Done, PO 2026-11-09)
+
+Válido para TODA funcionalidad de StoreOS, no solo precios. Una entrega técnicamente correcta con CI verde NO está lista si la experiencia falla; el incidente de 1.11.0 (cientos de registros sin filtro ni lote, pasos desvinculados) es el contraejemplo que originó esta compuerta.
+
+1. **Diseñar tareas, no pantallas.** Antes de implementar: quién usa esto, qué quiere lograr y el recorrido completo más natural. Los componentes no valen aislados.
+2. **Sin operaciones manuales repetitivas.** Si la persona debe repetir la misma acción sobre muchos registros: lote, valores por defecto, selección contextual revisable. Nunca selección individual cuando basta una contextual.
+3. **Navegación eficiente de colecciones.** Con volúmenes reales: búsqueda, filtros relevantes, orden (priorizando lo pendiente), estados distinguibles, selección múltiple. Una lista interminable sin filtro no es una interfaz terminada.
+4. **Preservar el contexto entre pasos.** Si viene de configurar una categoría, el paso siguiente ya está en esa categoría; nadie rebusca lo mismo dos veces.
+5. **Acciones orientadas a resultados.** Estados vacíos que dicen qué falta y ofrecen la acción siguiente; errores que previenen la confusión, no solo técnicamente correctos.
+6. **Escalar con el negocio.** Probar con datos representativos (tienda nueva, pocos productos, cientos de registros). Los E2E no se limitan al fixture conveniente de 2 objetos.
+7. **Priorizar la tarea frecuente.** Lo habitual, visible y fácil; lo avanzado y las excepciones, fuera del recorrido principal.
+8. **Seguridad antes que velocidad.** Menos trabajo mecánico JAMÁS significa aplicar precios, mover inventario, cobrar o cambiar datos sensibles sin autorización humana explícita. Se quita fricción mecánica, no decisiones.
+
+**Compuerta de revisión UX (independiente, por issue):** además del revisor de diseño existente, un subagente independiente actúa como persona operadora REAL: recibe solo un objetivo de negocio y ejecuta el recorrido de principio a fin en la app (emulador), sin instrucciones de quien implementó. Su informe debe responder: ¿completó el objetivo sin ayuda?, ¿cuántas interacciones relevantes necesitó?, ¿qué trabajo repetitivo evitó el sistema?, ¿cómo se comportó con volumen representativo?, ¿qué navegación/acciones faltaron?, ¿es igual de claro en móvil y escritorio?, ¿estados vacíos/errores confusos?, ¿bloqueantes vs mejoras? Si una tarea frecuente exige esfuerzo manual claramente evitable, emite **BLOQUEADO** con la alternativa. Sin métricas inventadas: evidencia del recorrido ejecutado y fricción justificada. El CI verde NO sustituye esta evaluación.
+
+**Evidencia por PR:** cada PR de funcionalidad documenta en su cuerpo el objetivo de negocio del recorrido validado, cómo se ejecutó (escenario + volumen) y el veredicto del revisor UX (o por qué no aplica).
+
 ## Out of scope (todavía)
 
 Sin pagos/checkout/carrito, sin facturas, sin códigos de barras (la Clave/SKU de producto ya existe; proveedores y compras ya están implementados), sin ledger de inventario, sin analítica. El catálogo público cloud **ya está implementado** (`publicStores`/`publicProducts` en `firestore.rules`, lectura anónima; la proyección se mantiene al crear/editar tienda y productos, y con el botón "Republicar catálogo"). La subida de imágenes funciona pero requiere el grant IAM `roles/datastore.user` al Storage service agent (ver `docs/DEPLOYMENT.md` §4b) o las fotos fallan con 403.

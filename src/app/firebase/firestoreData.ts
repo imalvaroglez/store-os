@@ -319,7 +319,8 @@ export async function savePricingRules(
     const snap = await tx.get(storeRef);
     if (!snap.exists()) throw new Error("No se encontró la tienda.");
     const current = (snap.data().pricingRules ?? {}) as PricingRulesConfig;
-    tx.update(storeRef, { pricingRules: stripUndefined({ ...current, byTier: pricingRules.byTier ?? {} }), updatedAt });
+    const byTier = pricingRules.byTier ?? {};
+    tx.update(storeRef, { pricingRules: stripUndefined({ ...current, byTier }), updatedAt });
   });
 }
 
@@ -330,6 +331,26 @@ export class CategoryRulesConflictError extends Error {
   constructor() {
     super("La tabla de esta categoría cambió en otra sesión. Recárgala y vuelve a aplicar tus cambios.");
     this.name = "CategoryRulesConflictError";
+  }
+}
+
+/** #289: PRICE-SCOPED product writes. Applies ONLY each product's `prices`
+ *  map (+updatedAt) in atomic batches of 400 — stock, cost, photos or any
+ *  other field edited while Fer reviewed prices can never be clobbered by a
+ *  stale full-object write (that was the upsertProduct hazard). Rules path
+ *  unchanged: members update their store's products with storeId untouched. */
+export async function applyProductPrices(
+  _store: Pick<Store, "id">,
+  updates: Array<{ id: string; prices: Record<string, number> }>,
+  updatedAt: string
+): Promise<void> {
+  const { db } = getFirebase();
+  for (let start = 0; start < updates.length; start += 400) {
+    const batch = writeBatch(db);
+    for (const update of updates.slice(start, start + 400)) {
+      batch.set(doc(db, "products", update.id), { prices: stripUndefined(update.prices), updatedAt }, { merge: true });
+    }
+    await batch.commit();
   }
 }
 
@@ -357,6 +378,9 @@ export async function saveCategoryPricingRules(
     const snap = await tx.get(storeRef);
     if (!snap.exists()) throw new Error("No se encontró la tienda.");
     const current = (snap.data().pricingRules ?? {}) as PricingRulesConfig;
+    // Normalize: byTier is required by the type but legacy docs written before
+    // this normalization can lack it — never persist a config without it.
+    current.byTier = current.byTier ?? {};
     const savedNow = current.byCategory?.[categoryId] ?? null;
     if (rulesSignature(savedNow) !== expectedSignature) throw new CategoryRulesConflictError();
     const byCategory = { ...(current.byCategory ?? {}) };

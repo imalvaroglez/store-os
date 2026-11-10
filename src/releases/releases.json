@@ -4,9 +4,10 @@
     "date": "2026.11.09",
     "title": "Aplicar precios sugeridos sin fricción",
     "notes": [
-      "Si aún no tienes reglas ni tablas, Reglas de venta te lo dice y te lleva directo a Estrategia de precios en un toque (antes la lista aparecía sin explicación).",
-      "Nuevo botón Seleccionar todo: marca de golpe las piezas con cambios reales; aplicar sigue siendo tuyo, pieza a pieza o por lote.",
-      "Al guardar una tabla en Estrategia de precios, la pantalla te confirma que las sugerencias ya están activas y te lleva a revisarlas."
+      "Nuevo recorrido completo de precios: al guardar una tabla en Estrategia de precios, un botón te lleva a revisar solo esa categoría, con las piezas que cambiarían primero.",
+      "En Reglas de venta: selección masiva de las piezas elegibles del filtro (agotadas y archivadas solo si tú las incluyes), resumen antes de aplicar y escritura que solo toca precios — nunca existencias, costos ni fotos.",
+      "Las piezas sin sugerencia aplicable ya no se pueden seleccionar, y cada fila explica qué falta (sin regla, costo fuera de la tabla, bajo el costo).",
+      "Si aún no tienes reglas ni tablas, Reglas de venta te lo dice y te lleva directo a Estrategia de precios en un toque."
     ]
   },
   {
