@@ -6,6 +6,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { PricingRulesScreen } from "./PricingRulesScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
+import { setSuggestionsFocus, takeSuggestionsFocus } from "./suggestionsFocus";
 import type { Product, Store } from "../../types";
 
 const mocks = vi.hoisted(() => ({
@@ -160,5 +161,129 @@ describe("PricingRulesScreen (#254)", () => {
     const apply = screen.getByRole("button", { name: /Aplicar seleccionados/ });
     expect((apply as HTMLButtonElement).disabled).toBe(true);
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+});
+
+describe("PricingRulesScreen #289 — orientación, filtro y selección masiva", () => {
+  function withCategories() {
+    state.categories = [
+      { id: "c_reloj", storeId: "store_olivia", name: "Reloj", active: true, createdAt: "", updatedAt: "" },
+      { id: "c_aretes", storeId: "store_olivia", name: "Aretes", active: true, createdAt: "", updatedAt: "" },
+    ] as typeof state.categories;
+  }
+
+  it("sin reglas ni tablas ni excepciones: explica qué falta y lleva directo a Estrategia", async () => {
+    state.products = [product({})];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/Aún no hay reglas ni tablas de precios/)).toBeTruthy();
+    const go = screen.getByRole("button", { name: "Ir a Estrategia de precios" });
+    expect(go).toBeTruthy();
+    // La pared de filas sin sentido no existe en este estado.
+    expect(screen.queryByLabelText("Categoría")).toBeNull();
+  });
+
+  it("muestra el filtro por categoría, el conteo honesto y la etiqueta opcional de las reglas generales", async () => {
+    withCategories();
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "markup", percent: 200, rounding: "none" } } };
+    state.products = [
+      product({ id: "p_reloj", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 100, prices: { t_iconic: 60 } }),
+      product({ id: "p_aretes", name: "Aretes Luna", categoryIds: ["c_aretes"], cost: 100, prices: { t_iconic: 300 } }),
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/2 piezas mostradas · 1 con cambios/)).toBeTruthy();
+    // Regla general etiquetada como fallback opcional.
+    expect(screen.getAllByText(/Opcional: se usa cuando una pieza no tiene tabla/).length).toBeGreaterThan(0);
+    // Filtrar conserva el contexto: solo la categoría elegida.
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "c_aretes" } });
+    expect(await screen.findByText(/1 pieza mostrada · 0 con cambios/)).toBeTruthy();
+    expect(screen.queryByLabelText("Reloj Madrid")).toBeNull();
+  });
+
+  it("Seleccionar todo marca exactamente las piezas con cambios del filtro; Limpiar desmarca", async () => {
+    withCategories();
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "markup", percent: 200, rounding: "none" } } };
+    state.products = [
+      product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 100, prices: { t_iconic: 60 } }),
+      product({ id: "p2", name: "Reloj Génova", categoryIds: ["c_reloj"], cost: 100, prices: { t_iconic: 300 } }), // sin cambios
+      product({ id: "p3", name: "Aretes Luna", categoryIds: ["c_aretes"], cost: 100, prices: { t_iconic: 60 } }),
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/3 piezas mostradas · 2 con cambios/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Seleccionar todo \(2 con cambios\)/ }));
+    expect((screen.getByLabelText("Reloj Madrid") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Aretes Luna") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Reloj Génova") as HTMLInputElement).checked).toBe(false);
+    // Aplicar seleccionados por lote: 2 precios escritos.
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados \(2\)/ }));
+    expect(await screen.findByText(/Precios actualizados en 2 producto/)).toBeTruthy();
+    expect(mocks.upsertProduct).toHaveBeenCalledTimes(2);
+    // La selección quedó limpia tras aplicar; el botón de limpiar ya no aparece.
+    expect(screen.queryByRole("button", { name: /Limpiar selección/ })).toBeNull();
+  });
+
+  it("el filtro respeta la selección masiva: seleccionar dentro de una categoría no toca las demás", async () => {
+    withCategories();
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "markup", percent: 200, rounding: "none" } } };
+    state.products = [
+      product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 100, prices: { t_iconic: 60 } }),
+      product({ id: "p3", name: "Aretes Luna", categoryIds: ["c_aretes"], cost: 100, prices: { t_iconic: 60 } }),
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/2 piezas mostradas · 2 con cambios/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "c_reloj" } });
+    expect(await screen.findByText(/1 pieza mostrada · 1 con cambios/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Seleccionar todo \(1 con cambios\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Limpiar selección/ }));
+    expect((screen.getByLabelText("Reloj Madrid") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("volumen: 120 piezas en 3 categorías; el escenario del PO se resuelve sin recorrer el catálogo", async () => {
+    withCategories();
+    state.categories.push({ id: "c_anillos", storeId: "store_olivia", name: "Anillos", active: true, createdAt: "", updatedAt: "" } as typeof state.categories[number]);
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "markup", percent: 200, rounding: "none" } } };
+    state.products = Array.from({ length: 120 }, (_, i) =>
+      product({
+        id: `p${i}`,
+        name: `Pieza ${i}`,
+        categoryIds: [i < 40 ? "c_reloj" : i < 80 ? "c_aretes" : "c_anillos"],
+        cost: 100,
+        prices: { t_iconic: 60 }, // todas cambiarían con +200%
+      })
+    );
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/120 piezas mostradas · 120 con cambios/, {}, { timeout: 8000 })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "c_reloj" } });
+    expect(await screen.findByText(/40 piezas mostradas · 40 con cambios/, {}, { timeout: 8000 })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Seleccionar todo \(40 con cambios\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados \(40\)/ }));
+    expect(await screen.findByText(/Precios actualizados en 40 producto/)).toBeTruthy();
+    expect(mocks.upsertProduct).toHaveBeenCalledTimes(40);
+    // Solo la categoría filtrada: las otras 80 intactas.
+    const updatedIds = mocks.upsertProduct.mock.calls.map((c) => (c[0] as Product).id);
+    expect(updatedIds.every((id) => Number(id.slice(1)) < 40)).toBe(true);
+  });
+
+  it("abre con la categoría entregada por Estrategia (traspaso de foco)", async () => {
+    withCategories();
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "markup", percent: 200, rounding: "none" } } };
+    state.products = [
+      product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 100, prices: { t_iconic: 60 } }),
+      product({ id: "p3", name: "Aretes Luna", categoryIds: ["c_aretes"], cost: 100, prices: { t_iconic: 60 } }),
+    ];
+    setSuggestionsFocus("c_reloj");
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/1 pieza mostrada · 1 con cambios/)).toBeTruthy();
+    expect(screen.queryByLabelText("Aretes Luna")).toBeNull();
+    // El foco es de un solo uso: un segundo montaje arranca sin filtro.
+    expect(takeSuggestionsFocus()).toBeNull();
+  });
+
+  it("aplicar sin cambios posibles explica qué hacer en vez de confundir", async () => {
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "markup", percent: 200, rounding: "none" } } };
+    state.products = [product({ cost: 100, prices: { t_iconic: 300 } })]; // sugerido == actual
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/1 pieza mostrada · 0 con cambios/)).toBeTruthy();
+    // Sin cambios no hay nada seleccionable: el botón de seleccionar todo lo dice.
+    expect(screen.getByRole("button", { name: /Seleccionar todo \(0 con cambios\)/ })).toHaveProperty("disabled", true);
   });
 });
