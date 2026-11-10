@@ -56,7 +56,7 @@ jobs:
           # llegue después espera a mañana).
           SHA="$(git rev-parse origin/main)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "### Ventana de liberación $(date -u '+%F %R UTC')" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Ventana de liberación — $(TZ=America/Mexico_City date '+%F %R CDMX')" >> "$GITHUB_STEP_SUMMARY"
           echo "- Candidato congelado: \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
 
           # GUARD DE CONTENIDO: ¿hay cambios aptos desde el último release?
@@ -91,6 +91,7 @@ jobs:
               exit 0
             fi
             cat /tmp/guard.log >&2
+            echo "### ✘ Guard de versión/notas rechazó el candidato — ver log del paso." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           echo "- Versión del candidato: **$VERSION** (guard de versión/notas ✔)" >> "$GITHUB_STEP_SUMMARY"
@@ -117,7 +118,17 @@ jobs:
           if [ -z "$RUN_ID" ]; then echo "No se pudo identificar el run del release." >&2; exit 1; fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "- Dispatch: run $RUN_ID sobre el SHA congelado. Esperando gates…" >> "$GITHUB_STEP_SUMMARY"
-          gh run watch "$RUN_ID" --exit-status --interval 30
+          if ! gh run watch "$RUN_ID" --exit-status --interval 30; then
+            echo "### ✘ Un gate del run $RUN_ID falló — NO se liberó (fail-closed). Recuperación: docs/runbook-release-window.md" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # Qué entró en esta versión (para la nota a Fer y la reconciliación).
+          echo "#### En esta versión:" >> "$GITHUB_STEP_SUMMARY"
+          if git rev-parse -q --verify "refs/tags/release/last" >/dev/null; then
+            git log --oneline "$(git rev-parse release/last)..$SHA" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            git log -1 --oneline "$SHA" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Verificar producción sirve la versión del candidato
         if: steps.candidate.outputs.skip_reason == '' && inputs.dry_run != true
