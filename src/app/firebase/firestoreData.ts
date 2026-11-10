@@ -1151,6 +1151,14 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
         updatedAt: at,
       });
     }
+    // #124 (decisión 2): color lines adjust their own shelf and cost — one
+    // commit with the rest of the reception, the variants array atomically
+    // replacing the doc's (re-read canonically above).
+    if (result.variantUpdates) {
+      for (const [productId, update] of result.variantUpdates) {
+        tx.update(productRefs.get(productId)!, { variants: update.variants, updatedAt: at });
+      }
+    }
     tx.update(purchaseRef, {
       status: "received", receivedAt: at, updatedAt: at,
       ...(result.costAllocations ? { costAllocations: result.costAllocations } : {}),

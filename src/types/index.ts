@@ -588,6 +588,9 @@ export type PurchaseLine = {
   lineId?: string;
   ticketId?: string;
   productId: string;
+  /** #124 (decisión 2): the exact color this line bought — reception adjusts
+   * THAT color's cost and shelf. Absent = whole-product line (legacy). */
+  variantId?: string;
   name: string; // snapshot at purchase time
   quantity: number;
   unitCost: number;
