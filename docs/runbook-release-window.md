@@ -60,10 +60,16 @@ del runbook Sev-1).
 
 ## Notas para Fer
 
-La nota por versión se prepara en `src/releases/releases.json` como parte del
-PR de cada historia o del PR de versión diaria, siguiendo
-`docs/releases/notas-para-fer.md`. La ventana no redacta notas: las publica
-con el deploy tal cual.
+- **Dentro de la app:** la nota de cada versión viaja en
+  `src/releases/releases.json` (se escribe en el PR de cada historia) y Fer la
+  ve en el pie de la app al desplegar — disponible desde las ~07:00 aunque la
+  sesión ejecutora esté caída.
+- **Mensaje WhatsApp copiable (`docs/releases/notas-para-fer.md`):** lo
+  redacta la sesión ejecutora al reconciliar el tablero tras la ventana (usa
+  la sección "En esta versión" del job summary como fuente). Si la sesión
+  está caída a la hora de la ventana, ese mensaje queda pendiente hasta su
+  siguiente ciclo — el bloqueo se ve en el tablero (historias aún en Por
+  liberar) y no pierde información.
 
 ## Primera vez / adopción
 
