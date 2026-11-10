@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
   savePricingRules: vi.fn(),
   upsertProduct: vi.fn(),
+  applyProductPrices: vi.fn(),
 }));
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => {
@@ -23,6 +24,7 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
       activeStore: mocks.state?.stores.find((s) => s.id === mocks.state?.activeStoreId) ?? null,
       savePricingRules: mocks.savePricingRules,
       upsertProduct: mocks.upsertProduct,
+      applyProductPrices: mocks.applyProductPrices,
     }),
   };
 });
@@ -46,6 +48,7 @@ function product(overrides: Partial<Product>): Product {
     isPublic: true,
     status: "published",
     cost: 100,
+    quantityOnHand: 1,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
     ...overrides,
@@ -62,6 +65,8 @@ beforeEach(() => {
   mocks.savePricingRules.mockResolvedValue(undefined);
   mocks.upsertProduct.mockReset();
   mocks.upsertProduct.mockResolvedValue(undefined);
+  mocks.applyProductPrices.mockReset();
+  mocks.applyProductPrices.mockResolvedValue(undefined);
 });
 
 describe("PricingRulesScreen (#254)", () => {
@@ -76,7 +81,7 @@ describe("PricingRulesScreen (#254)", () => {
     expect(saved.byTier.t_iconic).toEqual({ kind: "markup", percent: 200, rounding: "none" });
   });
 
-  it("muestra sugerencias por producto y aplicar seleccionados escribe precios vía upsertProduct", async () => {
+  it("muestra sugerencias y aplicar pasa por el resumen y escribe SOLO precios (applyProductPrices)", async () => {
     state.products = [product({ prices: { t_iconic: 60, t_retail: 130 } })];
     render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
     fireEvent.change(screen.getAllByLabelText(/Porcentaje sobre el costo/)[0], { target: { value: "200" } });
@@ -84,10 +89,17 @@ describe("PricingRulesScreen (#254)", () => {
     expect((await screen.findAllByText(/\$300/)).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
     fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
-    expect(await screen.findByText(/Precios actualizados en 1 producto/)).toBeTruthy();
-    expect(mocks.upsertProduct).toHaveBeenCalledTimes(1);
-    const updated = mocks.upsertProduct.mock.calls[0][0] as Product;
-    expect(updated.prices).toEqual({ t_iconic: 300, t_retail: 130 });
+    // Resumen antes de escribir (#289).
+    expect(await screen.findByText(/Aplicar precios a 1 pieza/)).toBeTruthy();
+    expect(screen.getByText(/1 subirían/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Aplicar 1 precio/ }));
+    expect(await screen.findByText(/Precios actualizados en 1 pieza/)).toBeTruthy();
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+    expect(mocks.applyProductPrices).toHaveBeenCalledTimes(1);
+    const updates = mocks.applyProductPrices.mock.calls[0][0];
+    expect(updates).toHaveLength(1);
+    expect(Object.keys(updates[0])).toEqual(["id", "prices"]); // escritura acotada
+    expect(updates[0].prices).toEqual({ t_iconic: 300, t_retail: 130 });
   });
 
   it("bandas inválidas (precio 0) bloquean el guardado", async () => {
@@ -104,7 +116,7 @@ describe("PricingRulesScreen (#254)", () => {
     };
     state.products = [product({ cost: 100, prices: { t_iconic: 120 } })]; // sugerido 60 < costo base 100
     render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
-    expect(await screen.findByText(/⚠️ bajo el costo/)).toBeTruthy();
+    expect(await screen.findByText(/se omite \(excepción de Fer requerida\)/)).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
     fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
     expect(await screen.findByText(/Solo había precios sugeridos bajo el costo/)).toBeTruthy();
@@ -121,6 +133,10 @@ describe("PricingRulesScreen (#254)", () => {
     await screen.findAllByText(/\$60/);
     fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
     fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    // Resumen primero, luego la confirmación de pérdida (#289).
+    expect(await screen.findByText(/Aplicar precios a 1 pieza/)).toBeTruthy();
+    expect(screen.getByText(/1 precio\(s\) bajo el costo por excepciones/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
     // Una excepción previa NO es autorización vigente: pide confirmación explícita.
     expect(await screen.findByText(/1 precio\(s\) bajo el costo/)).toBeTruthy();
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
@@ -129,10 +145,13 @@ describe("PricingRulesScreen (#254)", () => {
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
     // Reintentar y confirmar la pérdida deliberada.
     fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    expect(await screen.findByText(/Aplicar precios a 1 pieza/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
     fireEvent.click(await screen.findByRole("button", { name: /Aplicar todo/ }));
-    expect(await screen.findByText(/Precios actualizados en 1 producto/)).toBeTruthy();
-    const updated = mocks.upsertProduct.mock.calls[0][0] as Product;
-    expect(updated.prices?.t_iconic).toBe(60); // decisión deliberada y confirmada de Fer
+    expect(await screen.findByText(/Precios actualizados en 1 pieza/)).toBeTruthy();
+    const updates = mocks.applyProductPrices.mock.calls[0][0];
+    expect(updates[0].prices.t_iconic).toBe(60); // decisión deliberada y confirmada de Fer
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
   });
 
   it("#280 P0-1: en el diálogo bajo costo se puede aplicar solo lo seguro", async () => {
@@ -145,12 +164,16 @@ describe("PricingRulesScreen (#254)", () => {
     await screen.findAllByText(/\$160/);
     fireEvent.click(screen.getByLabelText("Huggies Mezcalita Gold"));
     fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados/ }));
+    expect(await screen.findByText(/Aplicar precios a 1 pieza/)).toBeTruthy();
+    expect(screen.getByText(/1 bajarían/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
     expect(await screen.findByText(/1 precio\(s\) bajo el costo/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Aplicar sin esos 1/ }));
-    expect(await screen.findByText(/se omitieron 1 precio\(s\) por quedar bajo el costo/)).toBeTruthy();
-    const updated = mocks.upsertProduct.mock.calls[0][0] as Product;
-    expect(updated.prices?.t_retail).toBe(160); // el cambio seguro sí entró
-    expect(updated.prices?.t_iconic).toBe(120); // el bajo costo quedó intacto
+    expect(await screen.findByText(/se omitieron 1 por quedar bajo el costo/)).toBeTruthy();
+    const updates = mocks.applyProductPrices.mock.calls[0][0];
+    expect(updates[0].prices.t_retail).toBe(160); // el cambio seguro sí entró
+    expect(updates[0].prices.t_iconic).toBe(120); // el bajo costo quedó intacto
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
   });
 
   it("guardar reglas NO cambia precios: sin selección, aplicar no llama a upsertProduct", async () => {
@@ -175,18 +198,18 @@ describe("PricingRulesScreen orientación y lote (#289)", () => {
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
   });
 
-  it("con tablas: Seleccionar todo marca las piezas con cambios y aplicarlas en un toque", async () => {
+  it("con tablas: Seleccionar elegibles marca las piezas con cambios y aplicarlas en un toque", async () => {
     state.stores[0].pricingRules = {
       byTier: { t_iconic: { kind: "markup", percent: 100, rounding: "none" } }, // costo 100 → 200
     };
-    state.products = [product({ cost: 100, prices: { t_iconic: 60 } }), product({ cost: 100, prices: { t_iconic: 200 } })];
+    state.products = [product({ id: "p1", cost: 100, prices: { t_iconic: 60 } }), product({ id: "p2", cost: 100, prices: { t_iconic: 200 } })];
     render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
-    const selectAll = await screen.findByRole("button", { name: /Seleccionar todo \(1\)/ });
+    const selectAll = await screen.findByRole("button", { name: /Seleccionar elegibles \(1\)/ });
     fireEvent.click(selectAll);
     fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados \(1\)/ }));
-    expect(await screen.findByText(/Precios actualizados en 1 producto/)).toBeTruthy();
-    expect(mocks.upsertProduct).toHaveBeenCalledTimes(1);
-    const updated = mocks.upsertProduct.mock.calls[0][0] as Product;
-    expect(updated.prices?.t_iconic).toBe(200);
+    fireEvent.click(await screen.findByRole("button", { name: /^Aplicar 1 precio/ }));
+    expect(await screen.findByText(/Precios actualizados en 1 pieza/)).toBeTruthy();
+    expect(mocks.applyProductPrices).toHaveBeenCalledTimes(1);
+    expect(mocks.applyProductPrices.mock.calls[0][0][0].prices.t_iconic).toBe(200);
   });
 });

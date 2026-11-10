@@ -21,7 +21,7 @@ import {
 import { navigate } from "../../lib/router";
 import { tiersForStore } from "../../lib/pricing";
 import { parseAmount, sanitizeMoneyInput } from "../../lib/money";
-import { suggestedPriceFor, baseCostForTier, validateBands, rulesSignature } from "../../lib/pricingRules";
+import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, rulesSignature } from "../../lib/pricingRules";
 import {
   analyzeCategory,
   packagingConfigured,
@@ -197,6 +197,37 @@ export function PricingStrategyScreen() {
     if (!draft) return [];
     return tiers.filter((tier) => (draft.prices[tier.id] ?? []).some((p) => p === null || p === undefined || !(p > 0)));
   }, [draft, tiers]);
+
+  // #289: the config Reglas will ACTUALLY resolve once this table is saved —
+  // saved rules with this category's table overlaid. The impact preview and
+  // the bridge count both use it, so what Estrategia simulates is exactly
+  // what Reglas will offer (secondary categories and byProduct exceptions
+  // included).
+  const previewConfig = useMemo(() => {
+    const base = activeStore?.pricingRules
+      ? (JSON.parse(JSON.stringify(activeStore.pricingRules)) as NonNullable<typeof activeStore.pricingRules>)
+      : { byTier: {} as Record<string, PricingRule> };
+    if (!categoryId || !serialized) return base;
+    base.byCategory = { ...(base.byCategory ?? {}), [categoryId]: serialized };
+    return base;
+  }, [activeStore?.pricingRules, categoryId, serialized]);
+
+  // Pieces of this category (any position) whose prices would change under
+  // previewConfig — the number the bridge button carries into Reglas.
+  const pendingReviewCount = useMemo(() => {
+    if (!categoryId) return 0;
+    return products.filter((p) => {
+      if (!p.categoryIds?.includes(categoryId)) return false;
+      if (typeof p.cost !== "number" || p.cost <= 0) return false;
+      return tiers.some((tier) => {
+        const resolved = resolveRule(previewConfig, tier.id, p);
+        if (!resolved) return false;
+        const base = baseCostForTier(p, tier.id, activeStore?.packaging);
+        const suggested = suggestedPriceFor(resolved.rule, { baseCost: base, acquisitionCost: p.cost });
+        return suggested != null && suggested !== p.prices?.[tier.id];
+      });
+    }).length;
+  }, [products, categoryId, tiers, previewConfig, activeStore?.packaging]);
 
   function patchDraft(mutate: (draft: TableDraft) => void) {
     setDraft((current) => {
@@ -591,8 +622,19 @@ export function PricingStrategyScreen() {
           </Card>
         )}
 
-        {categoryId && draft && serialized && <ImpactPreview products={products} categoryId={categoryId} tiers={tiers} rules={serialized} packaging={activeStore?.packaging} />}
+        {categoryId && draft && serialized && <ImpactPreview products={products} categoryId={categoryId} tiers={tiers} config={previewConfig} packaging={activeStore?.packaging} />}
 
+        {categoryId && existing?.compatible && pendingReviewCount > 0 && (
+          <Card className="space-y-2 border border-terracotta">
+            <p className="text-sm text-on-surface">
+              <span className="font-semibold">Siguiente paso:</span> {pendingReviewCount} pieza(s) de esta categoría
+              tienen precios sugeridos distintos a los actuales.
+            </p>
+            <Button size="sm" onClick={() => navigate(`/productos/reglas?categoria=${categoryId}`)}>
+              Revisar precios pendientes de esta categoría ({pendingReviewCount})
+            </Button>
+          </Card>
+        )}
         {categoryId && (
           <Card className="space-y-2">
             {activeStore?.pricingRules?.byCategory?.[categoryId] ? (
@@ -719,19 +761,23 @@ function ImpactPreview({
   products,
   categoryId,
   tiers,
-  rules,
+  config,
   packaging,
 }: {
   products: Product[];
   categoryId: string;
   tiers: Array<{ id: string; label: string }>;
-  rules: Record<string, PricingRule>;
+  config: Parameters<typeof resolveRule>[0];
   packaging: Parameters<typeof baseCostForTier>[2];
 }) {
   const impact = useMemo(() => {
+    // Any category position counts (that is how resolveRule matches), and
+    // suggestions resolve against the FULL config — a byProduct exception or a
+    // byTier fallback shows here exactly as Reglas will apply it.
     const members = products.filter(
-      (p): p is Product & { cost: number } => p.categoryIds?.[0] === categoryId && typeof p.cost === "number" && p.cost > 0
+      (p): p is Product & { cost: number } => !!p.categoryIds?.includes(categoryId) && typeof p.cost === "number" && p.cost > 0
     );
+    let exceptions = 0;
     const byTier = Object.fromEntries(
       tiers.map((tier): [string, ReturnType<typeof emptyImpact>] => {
         const impact = emptyImpact();
@@ -739,10 +785,9 @@ function ImpactPreview({
           const inStock = (product.quantityOnHand ?? 0) > 0;
           const current = product.prices?.[tier.id];
           const base = baseCostForTier(product, tier.id, packaging);
-          const suggested = suggestedPriceFor(rules[tier.id], {
-            baseCost: base,
-            acquisitionCost: product.cost,
-          });
+          const resolved = resolveRule(config, tier.id, product);
+          if (resolved?.origin === "product") exceptions += 1;
+          const suggested = resolved ? suggestedPriceFor(resolved.rule, { baseCost: base, acquisitionCost: product.cost }) : null;
           if (suggested == null) {
             impact.noSuggestion += 1;
             continue;
@@ -764,8 +809,9 @@ function ImpactPreview({
         return [tier.id, impact];
       })
     );
-    return { total: members.length, byTier };
-  }, [products, categoryId, tiers, rules, packaging]);
+    return { total: members.length, byTier, exceptions };
+  
+  }, [products, categoryId, tiers, config, packaging]);
 
   if (impact.total === 0) return null;
   return (
@@ -810,6 +856,12 @@ function ImpactPreview({
             omiten solas (salvo excepción por producto).
           </p>
         </div>
+      )}
+      {impact.exceptions > 0 && (
+        <p className="text-xs text-on-surface-soft">
+          {impact.exceptions} sugerencia(s) vienen de excepciones por producto (ganán a la tabla y requerirán tu
+          confirmación expresa al aplicar).
+        </p>
       )}
       <p className="text-xs text-on-surface-soft">
         Nada cambia hasta que apliques precios pieza por pieza en Reglas de venta. Las excepciones por producto ganan
