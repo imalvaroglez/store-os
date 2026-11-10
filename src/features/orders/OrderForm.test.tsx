@@ -859,17 +859,28 @@ describe("text-entry-audit · fase 1b (#219)", () => {
     expect(saved.items[0].productName).toBe("Aretes bañados"); // limpio al persistir
   });
 
-  it("clienta por teléfono con espacios: la búsqueda la encuentra (normalización #219)", async () => {
+  it("clienta por teléfono dictado (espacios, guiones, paréntesis) y nombre sin acentos: la búsqueda la encuentra (#219)", async () => {
     state.customers = [
-      { ...state.customers[0], id: "c_phone", name: "Lucía Phone", phone: "5512345678" } as typeof state.customers[number],
+      { ...state.customers[0], id: "c_phone", name: "María José Lucía", phone: "55 1234 5678" } as typeof state.customers[number],
     ];
     const order = { id: "f1b-phone", storeId: "store_olivia", customerId: "", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
-    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    const view = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
     const cliente = screen.getByLabelText("Cliente");
-    fireEvent.change(cliente, { target: { value: "55 1234 5678" } });
-    const option = await screen.findByRole("option", { name: /Lucía Phone/ });
-    expect(option).toBeTruthy();
-    fireEvent.click(option);
+    // Guiones (el caso exacto de la misión: número dictado por WhatsApp).
+    fireEvent.change(cliente, { target: { value: "55-1234 5678" } });
+    expect(await screen.findByRole("option", { name: /María José Lucía/ })).toBeTruthy();
+    // Paréntesis + guion, otra forma común de dictarlo.
+    fireEvent.change(cliente, { target: { value: "(55) 1234-5678" } });
+    expect(await screen.findByRole("option", { name: /María José Lucía/ })).toBeTruthy();
+    // Nombre SIN acentos encuentra al guardado CON acentos.
+    fireEvent.change(cliente, { target: { value: "maria jose" } });
+    expect(await screen.findByRole("option", { name: /María José Lucía/ })).toBeTruthy();
+    // Dirección inversa: teléfono guardado CON espacios, aguja apretada.
+    fireEvent.change(cliente, { target: { value: "5512345678" } });
+    expect(await screen.findByRole("option", { name: /María José Lucía/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: /María José Lucía/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeEnabled());
+    view.unmount();
   });
+
 });

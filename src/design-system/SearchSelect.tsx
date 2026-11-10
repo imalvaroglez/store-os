@@ -43,15 +43,18 @@ export function SearchSelect({
   const filtered = useMemo(() => {
     const needle = value.trim().toLocaleLowerCase("es-MX");
     if (!needle) return options.slice(0, 50);
-    // #219 fase 1b: a phone typed with spaces ("55 1234 5678") must find the
-    // stored "5512345678" — match on both the verbatim and the space-stripped
-    // haystack/needle, so names and keywords keep their exact behavior.
-    const squeeze = (text: string) => text.replace(/\s+/g, "");
-    const squeezedNeedle = squeeze(needle);
+    // #219 fase 1b (misión UX): a phone dictated with spaces/dashes/parens
+    // ("55-1234 5678") must find the stored "5512345678", and a name typed
+    // without accents ("maria jose") must find "María José". Loose pass =
+    // diacritics folded + only letters/digits; the verbatim pass keeps the
+    // exact previous behavior for everything else.
+    const loose = (text: string) =>
+      text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
+    const looseNeedle = loose(needle);
     return options
       .filter((option) => {
         const haystack = `${option.label} ${option.keywords ?? ""}`.toLocaleLowerCase("es-MX");
-        return haystack.includes(needle) || (squeezedNeedle && squeeze(haystack).includes(squeezedNeedle));
+        return haystack.includes(needle) || (looseNeedle.length > 0 && loose(haystack).includes(looseNeedle));
       })
       .slice(0, 50);
   }, [options, value]);
