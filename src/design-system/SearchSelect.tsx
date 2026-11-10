@@ -43,8 +43,16 @@ export function SearchSelect({
   const filtered = useMemo(() => {
     const needle = value.trim().toLocaleLowerCase("es-MX");
     if (!needle) return options.slice(0, 50);
+    // #219 fase 1b: a phone typed with spaces ("55 1234 5678") must find the
+    // stored "5512345678" — match on both the verbatim and the space-stripped
+    // haystack/needle, so names and keywords keep their exact behavior.
+    const squeeze = (text: string) => text.replace(/\s+/g, "");
+    const squeezedNeedle = squeeze(needle);
     return options
-      .filter((option) => `${option.label} ${option.keywords ?? ""}`.toLocaleLowerCase("es-MX").includes(needle))
+      .filter((option) => {
+        const haystack = `${option.label} ${option.keywords ?? ""}`.toLocaleLowerCase("es-MX");
+        return haystack.includes(needle) || (squeezedNeedle && squeeze(haystack).includes(squeezedNeedle));
+      })
       .slice(0, 50);
   }, [options, value]);
 

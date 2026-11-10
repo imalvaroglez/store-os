@@ -813,3 +813,63 @@ describe("OrderForm #271 — corrección firmada del anticipo", () => {
     expect(screen.queryByLabelText("Motivo de la corrección del anticipo")).toBeNull();
   });
 });
+
+describe("text-entry-audit · fase 1b (#219)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockUpsertOrder.mockClear();
+    mockUpsertOrder.mockResolvedValue({});
+  });
+
+  it("fecha prometida: válida persiste, vacía se omite, basura no alcanza el estado (input date sanitiza)", async () => {
+    const order = { id: "f1b-date", storeId: "store_olivia", customerId: "customer_1", items: [{ productName: "Pieza", quantity: 1, unitPrice: 50, subtotal: 50 }], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    const view = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    const fecha = screen.getByLabelText("Fecha prometida") as HTMLInputElement;
+    // Válida persiste tal cual.
+    fireEvent.change(fecha, { target: { value: "2026-11-20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    expect((mockUpsertOrder.mock.calls[0][0] as { promisedDate?: string }).promisedDate).toBe("2026-11-20");
+    // Vacía se omite (no viaja campo).
+    mockUpsertOrder.mockClear();
+    const fecha2 = screen.getByLabelText("Fecha prometida") as HTMLInputElement;
+    fireEvent.change(fecha2, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    expect((mockUpsertOrder.mock.calls[0][0] as Record<string, unknown>).promisedDate).toBeUndefined();
+    // Basura: el input date la sanitiza a "" — jamás llega al estado.
+    mockUpsertOrder.mockClear();
+    fireEvent.change(screen.getByLabelText("Fecha prometida"), { target: { value: "no-es-fecha" } });
+    expect((screen.getByLabelText("Fecha prometida") as HTMLInputElement).value).toBe("");
+    view.unmount();
+  });
+
+  it("producto libre: espacios extremos no se recortan al escribir, sí al guardar", async () => {
+    const order = { id: "f1b-free", storeId: "store_olivia", customerId: "customer_1", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    const producto = screen.getByLabelText("Producto");
+    fireEvent.change(producto, { target: { value: "  Aretes bañados  " } });
+    // Mientras se escribe, el texto permanece tal cual (contrato: no recortar en captura).
+    expect((screen.getByLabelText("Producto") as HTMLInputElement).value).toBe("  Aretes bañados  ");
+    fireEvent.change(screen.getAllByLabelText(/^Cantidad$/)[0], { target: { value: "1" } });
+    fireEvent.change(screen.getAllByLabelText(/Precio unitario/)[0], { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0] as { items: Array<{ productName: string }> };
+    expect(saved.items[0].productName).toBe("Aretes bañados"); // limpio al persistir
+  });
+
+  it("clienta por teléfono con espacios: la búsqueda la encuentra (normalización #219)", async () => {
+    state.customers = [
+      { ...state.customers[0], id: "c_phone", name: "Lucía Phone", phone: "5512345678" } as typeof state.customers[number],
+    ];
+    const order = { id: "f1b-phone", storeId: "store_olivia", customerId: "", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    const cliente = screen.getByLabelText("Cliente");
+    fireEvent.change(cliente, { target: { value: "55 1234 5678" } });
+    const option = await screen.findByRole("option", { name: /Lucía Phone/ });
+    expect(option).toBeTruthy();
+    fireEvent.click(option);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeEnabled());
+  });
+});
