@@ -82,7 +82,7 @@ export function PricingRulesScreen() {
   const suggestionsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (categoryFilter && suggestionsRef.current) {
-      suggestionsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      suggestionsRef.current.scrollIntoView?.({ behavior: "smooth", block: "start" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
