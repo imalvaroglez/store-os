@@ -7,6 +7,7 @@ import { PricingRulesScreen } from "./PricingRulesScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
 import { setSuggestionsFocus, takeSuggestionsFocus } from "./suggestionsFocus";
+import type { PricingRulesConfig } from "../../types";
 import type { Product, Store } from "../../types";
 
 const mocks = vi.hoisted(() => ({
@@ -362,7 +363,7 @@ describe("PricingRulesScreen #289 — config sin byTier (hallazgo misión UX)", 
     ] as typeof state.categories;
     state.stores[0].pricingRules = {
       byCategory: { c_reloj: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 90 }], rounding: "none" } } },
-    } as typeof state.stores[0].pricingRules;
+    } as PricingRulesConfig;
     state.products = [
       product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 40, prices: { t_iconic: 60 } }),
     ];
