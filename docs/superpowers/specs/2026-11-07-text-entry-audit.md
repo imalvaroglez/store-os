@@ -9,13 +9,13 @@ Metodología: por campo se declara (1) significado y tipo persistido, (2) requer
 | # | Campo (etiqueta) | Componente / archivo | Tipo persistido | Contrato | Cobertura |
 |---|---|---|---|---|---|
 | 1 | Cliente | `SearchSelect` · OrderForm.tsx | `customerId` + texto de búsqueda (no persiste) | Requerido para guardar. Búsqueda por nombre/teléfono; se liga por selección o nombre exacto único. Nombres con acentos/ñ se buscan en es-MX. Un valor sin liga **no** debe dejar guardar sin explicación (defecto #232 ya corregido: PR #236). | e2e smoke (emulador) + regresiones #232 |
-| 2 | Producto (por línea) | `SearchSelect` · OrderForm.tsx | `productName` (texto libre) + `productId?` | Opcional vincular; el texto capturado ES el nombre de la línea. Acentos/ñ permitidos; no se recorta lo escrito. | OrdenForm.test parcial; ampliar en fase 1b |
+| 2 | Producto (por línea) | `SearchSelect` · OrderForm.tsx | `productName` (texto libre) + `productId?` | Opcional vincular; el texto capturado ES el nombre de la línea. Acentos/ñ permitidos; **no se recorta mientras se escribe, se limpia (trim) al persistir** (fase 1b). | OrderForm.test fase 1b |
 | 3 | Cantidad | `TextField` inputMode=numeric | `quantity: number` (vía `parseAmount`) | Solo enteros ≥ 0; sanitiza en escritura (`sanitizeIntegerInput`); nunca NaN al estado. | e2e + unit existentes |
 | 4 | Precio unitario | `TextField` inputMode=decimal | `unitPrice: number` | Decimal con punto; se conserva el texto mientras se escribe (12 → 12. → 12.3); rangos protegidos (RangeError → mensaje). | #188 (regresiones decimal) |
 | 5 | Anticipo | `TextField` | `deposit: number` | Decimal ≥ 0; heredado: bloqueado si materializado (#218). | OrderForm.test (#218/#225) |
 | 6 | Número de cuotas | `TextField` inputMode=numeric | `installments.count` | Entero ≥ 1 cuando el plan está activo. | #165 (plan de pagos) |
 | 7 | Frecuencia / primera fecha | `SelectField` / `TextField` date | enum / ISO date | Selección cerrada; fecha requerida con plan activo. | #165 |
-| 8 | Fecha prometida | `TextField` type=date | `promisedDate` ISO | Opcional; inválida no guarda. | pendiente fase 1b |
+| 8 | Fecha prometida | `TextField` type=date | `promisedDate` ISO | Opcional; válida persiste tal cual, vacía se omite; basura no alcanza el estado (el input date sanitiza — verificado). | OrderForm.test fase 1b |
 | 9 | Estado del pedido | `SelectField` | enum | Selección cerrada (Preguntó…Cancelado). | e2e |
 | 10 | Notas | `TextArea` | `notes: string` | **Contrato nuevo (fase 1a)**: opcional, multilínea; conserva acentos, ñ y saltos de línea tal cual al guardar y reabrir; sin límite artificial más allá del documento; no se trim al escribir (solo al comparar). | **agregada en este PR** |
 
@@ -27,7 +27,7 @@ Metodología: por campo se declara (1) significado y tipo persistido, (2) requer
 
 - Fecha prometida: válida persiste tal cual; vacía se omite del documento; basura jamás alcanza el estado (el input date sanitiza a "") — 3 aserciones en OrderForm.test.
 - Producto libre: los espacios extremos NO se recortan mientras se escribe (contrato de captura) y SÍ al persistir (nombre limpio en el pedido).
-- **Defecto encontrado y corregido:** la búsqueda de clienta por teléfono con espacios ("55 1234 5678") no encontraba el "5512345678" guardado — SearchSelect ahora compara también versión sin espacios de aguja/pajar (nombres y claves conservan su comportamiento exacto).
+- **Defecto encontrado y corregido (misión de operadora):** la búsqueda de clienta por teléfono dictado no encontraba el número guardado. SearchSelect ahora aplica una segunda pasada «laxa»: diacríticos plegados (maria jose → María José) y solo letras/dígitos («55-1234 5678», «(55) 1234-5678» → 5512345678, y la dirección inversa). La pasada literal conserva el comportamiento exacto previo. **Trade-off aceptado (revisión):** la fusión letras+dígitos puede teóricamente cruzar el borde label/keywords («os car» vs «Rios»+«Carpintería»); con keywords reales (clave/teléfono/instagram) el caso dominante es el buscado.
 
 ### Pendiente (fase 1b en adelante)
 
