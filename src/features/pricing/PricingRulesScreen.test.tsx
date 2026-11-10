@@ -287,3 +287,70 @@ describe("PricingRulesScreen #289 — orientación, filtro y selección masiva",
     expect(screen.getByRole("button", { name: /Seleccionar todo \(0 con cambios\)/ })).toHaveProperty("disabled", true);
   });
 });
+
+describe("PricingRulesScreen #289 — hallazgos de revisión", () => {
+  function withCategories() {
+    state.categories = [
+      { id: "c_reloj", storeId: "store_olivia", name: "Reloj", active: true, createdAt: "", updatedAt: "" },
+      { id: "c_aretes", storeId: "store_olivia", name: "Aretes", active: true, createdAt: "", updatedAt: "" },
+    ] as typeof state.categories;
+  }
+
+  it("Seleccionar todo conserva una selección manual de otra categoría (unión, no reemplazo)", async () => {
+    withCategories();
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "markup", percent: 200, rounding: "none" } } };
+    state.products = [
+      product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 100, prices: { t_iconic: 60 } }),
+      product({ id: "p2", name: "Reloj Génova", categoryIds: ["c_reloj"], cost: 100, prices: { t_iconic: 300 } }), // sin cambios
+      product({ id: "p3", name: "Aretes Luna", categoryIds: ["c_aretes"], cost: 100, prices: { t_iconic: 60 } }),
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/3 piezas mostradas · 2 con cambios/)).toBeTruthy();
+    // Selección manual previa de otra categoría.
+    fireEvent.click(screen.getByLabelText("Aretes Luna"));
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "c_reloj" } });
+    expect(await screen.findByText(/2 piezas mostradas · 1 con cambios/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Seleccionar todo \(1 con cambios\)/ }));
+    expect((screen.getByLabelText("Reloj Madrid") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Reloj Génova") as HTMLInputElement).checked).toBe(false);
+    // La manual de otra categoría sobrevive: al volver a Todas sigue marcada…
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "" } });
+    expect((await screen.findByLabelText("Aretes Luna") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Reloj Génova") as HTMLInputElement).checked).toBe(false);
+    // …y el botón refleja la unión completa.
+    expect(screen.getByRole("button", { name: /Aplicar seleccionados \(2\)/ })).toBeTruthy();
+  });
+
+  it("selección masiva con piezas solo-bajo-costo: no se escriben y el reporte lo dice", async () => {
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 60 }], rounding: "none" } } };
+    state.products = [
+      product({ id: "p1", name: "Pieza Segura", cost: 50, prices: { t_iconic: 100 } }), // 60 > 50: aplica
+      product({ id: "p2", name: "Pieza Bajo Costo", cost: 100, prices: { t_iconic: 120 } }), // 60 < 100: omitida
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/2 piezas mostradas · 2 con cambios/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Seleccionar todo \(2 con cambios\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar seleccionados \(2\)/ }));
+    expect(await screen.findByText(/Se aplicaron precios de 1 producto/)).toBeTruthy();
+    expect(await screen.findByText(/se omitieron 1 precio\(s\) por quedar bajo el costo/)).toBeTruthy();
+    expect(mocks.upsertProduct).toHaveBeenCalledTimes(1);
+    expect((mocks.upsertProduct.mock.calls[0][0] as Product).name).toBe("Pieza Segura");
+  });
+
+  it("piezas sin categoría solo aparecen en Todas; el filtro nunca las esconde del total", async () => {
+    withCategories();
+    state.stores[0].pricingRules = { byTier: { t_iconic: { kind: "markup", percent: 200, rounding: "none" } } };
+    state.products = [
+      product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 100, prices: { t_iconic: 60 } }),
+      product({ id: "p0", name: "Pieza Huérfana", cost: 100, prices: { t_iconic: 60 } }), // sin categoryIds
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    expect(await screen.findByText(/2 piezas mostradas · 2 con cambios/)).toBeTruthy();
+    expect(screen.getByLabelText("Pieza Huérfana")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "c_reloj" } });
+    expect(await screen.findByText(/1 pieza mostrada · 1 con cambios/)).toBeTruthy();
+    expect(screen.queryByLabelText("Pieza Huérfana")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "" } });
+    expect(await screen.findByLabelText("Pieza Huérfana")).toBeTruthy();
+  });
+});
