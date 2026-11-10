@@ -16,9 +16,12 @@ sobre un SHA congelado de `main`). No abre gates nuevos; no relaja ninguno.
 
 ## Qué hace la ventana, en orden
 
-1. **Congela el candidato**: SHA de `origin/main` al arranque. Todo lo demás
-   opera sobre ese SHA; si `main` avanza después, ese avance espera a mañana
-   (el corte manda).
+1. **Congela el candidato**: SHA de `origin/main` al arranque; los guards se
+   evalúan con checkout explícito de ese SHA. El despacho va por la RAMA
+   `main` (los jobs deploy de `ci.yml` exigen `ref_name == 'main'`) y el run
+   resultante se verifica contra el SHA congelado: si `main` se movió en la
+   brecha, el run se **cancela** y la ventana falla cerrado — jamás se libera
+   un commit distinto del evaluado (revisión #318 B3).
 2. **Guard de contenido**: diff contra el tag `release/last`. Solo cambios
    documentales (`docs/`, `*.md`) o nada → **NO-OP** (nunca versión vacía).
 3. **Guard de versión/notas (el existente)**: `scripts/check-release.cjs` con
@@ -45,6 +48,7 @@ contra lo servido + tag `release/last`.
 | Gate del run en rojo (suite/deploy) | La ventana se detiene sola (fail-closed). Revisar el run; si es un flake conocido (ver #291), `gh run rerun <id> --failed` y luego **despacho manual** (abajo). Si es real: corregir en rama+PR; la historia queda Por liberar para la siguiente ventana. |
 | El scheduler no arrancó / corrido tarde | **Despacho manual de respaldo**: Actions → `release-window` → Run workflow (sin dry_run). Idéntico camino y gates. Alternativa última: el despacho directo de siempre (`ci.yml` → `release_production=true`). |
 | Ventana anterior aún corriendo | `concurrency` encola la nueva; no hay acción. |
+| «main se movió tras el congelamiento» | El orquestador canceló el run y NO liberó nada. Reintentar con despacho manual en cuanto main esté quieto (segundos). |
 | Producción no sirve la versión tras el deploy | La ventana falla en verificación. NO reintentar a ciegas: revisar el deploy en Vercel y el log del run; recuperar por despacho manual tras entender la causa. |
 
 Ninguna recuperación salta pruebas: siempre reusa el camino completo del
