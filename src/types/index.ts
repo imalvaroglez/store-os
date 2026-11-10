@@ -76,8 +76,10 @@ export type PricingRule =
   | { kind: "bands"; bands: Array<{ min: number; max?: number; price: number }>; rounding?: PriceRounding };
 
 export type PricingRulesConfig = {
-  /** General rule per price level (tier id keyed). */
-  byTier: Record<string, PricingRule>;
+  /** General rule per price level (tier id keyed). OPTIONAL in stored docs:
+   * a store whose first pricing config is a category table (Estrategia)
+   * legitimately carries only `byCategory` (#289 misión de operadora 5a). */
+  byTier?: Record<string, PricingRule>;
   /** Category override: categoryId → tier → rule. */
   byCategory?: Record<string, Record<string, PricingRule>>;
   /** Product exception: productId → tier → rule. Wins over everything. */
