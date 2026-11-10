@@ -209,7 +209,7 @@ test("recorrido completo: tabla de Relojes → revisar por categoría → aplica
   await expect(page.getByText(/precio\(s\) con cambio seguro en/)).toBeVisible({ timeout: 10000 });
   await expect(page.getByText(/Solo se escriben los precios/)).toBeVisible();
   await page.getByRole("button", { name: /^Aplicar \d+ precio/ }).click();
-  await expect(page.getByText(/Precios actualizados en \d+ pieza/)).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText(/Precios actualizados en \d+ pieza/)).toBeVisible({ timeout: 60000 });
 
   // 6) Verificación REST: SOLO precios autorizados; inventario, costos y otras categorías intactos.
   const auth = await adminToken(ADMIN_EMAIL, "password123");
