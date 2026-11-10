@@ -23,9 +23,15 @@ Metodología: por campo se declara (1) significado y tipo persistido, (2) requer
 
 - Notas: texto con acentos/ñ/saltos de línea → se persiste idéntico y reaparece igual tras guardar+reabrir.
 
+### Pruebas de contrato fase 1b (2026-11-10, sesión ZCode)
+
+- Fecha prometida: válida persiste tal cual; vacía se omite del documento; basura jamás alcanza el estado (el input date sanitiza a "") — 3 aserciones en OrderForm.test.
+- Producto libre: los espacios extremos NO se recortan mientras se escribe (contrato de captura) y SÍ al persistir (nombre limpio en el pedido).
+- **Defecto encontrado y corregido:** la búsqueda de clienta por teléfono con espacios ("55 1234 5678") no encontraba el "5512345678" guardado — SearchSelect ahora compara también versión sin espacios de aguja/pajar (nombres y claves conservan su comportamiento exacto).
+
 ### Pendiente (fase 1b en adelante)
 
-- [ ] Pedidos: fecha prometida (inválida/omitida), producto libre (espacios extremos), búsqueda de clienta por teléfono con espacios.
+- [x] Pedidos: fecha prometida (inválida/omitida), producto libre (espacios extremos), búsqueda de clienta por teléfono con espacios. — fase 1b completa (2026-11-10).
 - [ ] Clientas (`CustomerForm`): Nombre (unicidad), Teléfono (dígitos/`+`), Instagram (@), Nivel.
 - [ ] Productos (`ProductForm`): Nombre, Clave/SKU (única, mayúsculas), costos/precios por nivel, En existencia/Alerta en, URL de imagen.
 - [ ] Compras (`PurchaseForm`): folio, código del ticket (#206 ya cubre preservación), importes (#206/#207).
