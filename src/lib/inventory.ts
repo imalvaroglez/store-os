@@ -1,4 +1,5 @@
 import type { Product, PurchaseLine, Order, OrderItem } from "../types";
+import { variantReservationDeltas, type VariantStockDelta } from "./variants";
 import { effectiveOrderStatus, orderItems, orderStatusIsOpen } from "./orders";
 
 // Inventory math — pure functions used by the StoreProvider (to apply purchases
@@ -117,16 +118,33 @@ export function committedForProduct(
     .reduce((sum, o) => sum + orderItems(o).filter((item) => item.productId === productId).reduce((lineSum, item) => lineSum + item.quantity, 0), 0);
 }
 
-/** Aggregate reservation changes by product across all lines in an order. */
+/**
+ * Aggregate reservation changes by product across all lines in an order.
+ * #124: lines that carry a variantId move THEIR COLOR's stock (see
+ * variantReservationDeltas) — a line moves exactly one stock dimension, so
+ * product-level aggregation skips variant lines. Legacy lines (no variant)
+ * on a design that later gained variants still land here, fail-closed.
+ */
 export function reservationDeltas(oldItems: OrderItem[], newItems: OrderItem[]): Map<string, number> {
   const deltas = new Map<string, number>();
   for (const item of oldItems) {
-    if (item.productId) deltas.set(item.productId, (deltas.get(item.productId) ?? 0) + item.quantity);
+    if (item.productId && !item.variantId) deltas.set(item.productId, (deltas.get(item.productId) ?? 0) + item.quantity);
   }
   for (const item of newItems) {
-    if (item.productId) deltas.set(item.productId, (deltas.get(item.productId) ?? 0) - item.quantity);
+    if (item.productId && !item.variantId) deltas.set(item.productId, (deltas.get(item.productId) ?? 0) - item.quantity);
   }
   return new Map([...deltas].filter(([, delta]) => delta !== 0));
+}
+
+/** #124: per-color reservation deltas for a lifecycle change — mirrors
+ * reservationDeltasForOrderChange (same holdsPieces truth). */
+export function variantReservationDeltasForOrderChange(
+  previous: Order | undefined,
+  next: Order
+): Map<string, VariantStockDelta> {
+  const heldItems = (order: Order | undefined): OrderItem[] =>
+    order && holdsPieces(order) ? orderItems(order) : [];
+  return variantReservationDeltas(heldItems(previous), heldItems(next));
 }
 
 /**
