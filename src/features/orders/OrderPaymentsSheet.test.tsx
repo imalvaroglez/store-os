@@ -333,3 +333,23 @@ describe("#270 subtract cap: Restar is limited to what this order received", () 
     );
   });
 });
+
+describe("#271 correcciones del anticipo visibles en Cobros", () => {
+  it("lista cada corrección firmada con su motivo", async () => {
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    const withCorrection = {
+      ...order,
+      paymentsReceivedCents: 10000,
+      deposit: 100,
+      depositCorrections: [{ from: 500, to: 100, note: "Anticipo capturado por error: era $100", by: "u1", at: "2026-11-09T02:00:00.000Z" }],
+    };
+    render(
+      <ToastProvider>
+        <OrderPaymentsSheet order={withCorrection} open onClose={() => {}} />
+      </ToastProvider>
+    );
+    expect(await screen.findByText("Correcciones del anticipo")).toBeInTheDocument();
+    expect(screen.getByText(/\$500\.00 → \$100\.00 — Anticipo capturado por error: era \$100/)).toBeInTheDocument();
+  });
+});

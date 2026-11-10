@@ -773,7 +773,16 @@ describe("legacy deposit cannot rise after payment evidence (#218)", () => {
     const ref = doc(db, "orders/deposit-218-acc");
     await assertFails(updateDoc(ref, { deposit: 720 }));
     await assertFails(setDoc(ref, { storeId: "deposit-218-store", paymentsReceivedCents: 59000 }));
-    await assertSucceeds(updateDoc(ref, { deposit: 0 }));
+    // #271 (PO 2026-11-09): the raw lowering is no longer silent either — it
+    // requires the signed correction entry (from/to/note/author) in the same
+    // write; the end-to-end path is covered in the orderPayments suite.
+    await assertFails(updateDoc(ref, { deposit: 0 }));
+    await assertSucceeds(updateDoc(ref, {
+      deposit: 0,
+      depositCorrections: [{ from: 590, to: 0, note: "Depósito duplicado: el cobro ya lo cubre", by: "deposit-218-user", at: "2026-11-09T00:00:00.000Z" }],
+    }));
+    // A forged signature or mismatched amounts never pass.
+    await assertFails(updateDoc(ref, { deposit: 0, depositCorrections: [{ from: 590, to: 0, note: "No fui yo", by: "someone-else", at: "2026-11-09T00:00:00.000Z" }] }));
     await assertFails(updateDoc(doc(db, "orders/deposit-218-zero"), { deposit: 1 }));
     await assertSucceeds(updateDoc(doc(db, "orders/deposit-218-zero"), { deposit: 0 }));
   });
