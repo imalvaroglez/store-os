@@ -141,3 +141,38 @@ describe("#124 misión UX — portada derivada del primer color", () => {
     expect(saved.images?.[0]?.url).toBe("https://x.test/gold.jpg");
   });
 });
+
+describe("text-entry-audit · flujo Productos (#219)", () => {
+  beforeEach(() => {
+    mocks.state = tieredState();
+    mocks.upsertProduct.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("URL de imagen inválida no guarda y explica qué se espera", () => {
+    render(<ProductForm product={{ ...design, imageUrl: "foto bonita" }} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    // Es borrador: el guard de publicación no aplica, pero la URL sí se valida siempre.
+    expect(screen.getByText(/enlace que empiece con http/)).toBeTruthy();
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+
+  it("clave duplicada (mayúsculas/minúsculas) bloquea con mensaje", () => {
+    mocks.state!.products = [{ ...design, id: "otro", name: "Otro diseño", sku: "SOL" } as typeof mocks.state!.products[number]];
+    render(<ProductForm product={{ ...design, categoryIds: ["c1"] }} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText(/Regular/), { target: { value: "300" } });
+    // Misma clave escrita a mano (minúsculas) contra otro producto de la tienda.
+    fireEvent.change(screen.getByLabelText(/Clave \/ SKU/), { target: { value: "sol" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    expect(screen.getByText(/Esa clave ya la usa otro producto/i)).toBeTruthy();
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+
+  it("existencia solo acepta enteros; el nombre vacío no guarda", () => {
+    render(<ProductForm product={{ ...design, categoryIds: ["c1"] }} onDone={() => {}} />);
+    const qty = screen.getByLabelText("En existencia") as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: "3.7" } });
+    expect(qty.value).toBe("37"); // el punto se descarta en escritura, nunca llega un decimal
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Guardar producto" })).toBeDisabled();
+  });
+});

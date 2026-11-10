@@ -251,6 +251,11 @@ export function ProductForm({
       setSaving(false);
     };
     if (!draft.name.trim() || saving) return;
+    // #219 (Productos): a pasted image link must actually be a link — a typo
+    // publishes a broken photo in the public catalog.
+    if (!cloud && draft.imageUrl && !/^https?:\/\/\S+$/i.test(draft.imageUrl.trim())) {
+      return fail("La imagen debe ser un enlace que empiece con http:// o https://.");
+    }
 
     // Upload staged images first; block save on failure (no half-uploaded state).
     let uploaded: ProductImageType[] = [];
