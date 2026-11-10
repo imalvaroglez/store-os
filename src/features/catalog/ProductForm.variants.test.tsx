@@ -114,3 +114,30 @@ describe("ProductForm #124 — editor de colores", () => {
     expect(saved.quantityOnHand).toBeUndefined();
   });
 });
+
+describe("#124 misión UX — portada derivada del primer color", () => {
+  it("publica sin foto propia del diseño: la portada sale del primer color", async () => {
+    // cloud=false: fotos por URL. El diseño SIN galería propia, el color CON foto.
+    render(
+      <ProductForm
+        product={{
+          ...design,
+          cost: 100,
+          categoryIds: ["c1"],
+          status: "published",
+          imageUrl: undefined,
+          variants: [{ id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, quantityOnHand: 2, photos: [{ id: "f1", url: "https://x.test/gold.jpg", storagePath: "p/f1", order: 0, isPrimary: true }], createdAt: "", updatedAt: "" }],
+        }}
+        onDone={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByLabelText(/Regular/), { target: { value: "300" } });
+    fireEvent.click(screen.getByLabelText(/Se vende por color/));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    const saved = mocks.upsertProduct.mock.calls[0][0] as Product;
+    // Ni "foto de portada" ni "foto del color" bloquean; la portada se derivó.
+    expect(saved.imageUrl).toBe("https://x.test/gold.jpg");
+    expect(saved.images?.[0]?.url).toBe("https://x.test/gold.jpg");
+  });
+});

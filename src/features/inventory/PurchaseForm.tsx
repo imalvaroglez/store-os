@@ -584,7 +584,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                     setProductQueries((previous) => ({ ...previous, [line.lineId!]: value }));
                     if (line.productId) updateLine(idx, { productId: "", matchStatus: "unmatched" });
                   }} onSelect={(option) => pickProduct(idx, option.value)}
-                  options={products.map((product) => ({ value: product.id, label: product.name, detail: `Existencia: ${product.quantityOnHand ?? 0}`, keywords: product.sku }))}
+                  options={products.map((product) => ({
+                    value: product.id,
+                    label: product.name,
+                    detail: product.variants?.length
+                      ? `Por colores: ${product.variants.map((v) => `${v.color} ${v.quantityOnHand ?? 0}`).join(", ")}`
+                      : `Existencia: ${product.quantityOnHand ?? 0}`,
+                    keywords: [product.sku, ...(product.variants?.map((v) => v.sku) ?? [])].filter(Boolean).join(" "),
+                  }))}
                   placeholder="Buscar por nombre o clave…" action={{ label: "+ Crear nuevo producto", onClick: () => openMiniForm(idx) }} />
               </div>
             </div>

@@ -315,6 +315,17 @@ export function ProductForm({
       finalVariants = withPhotos;
     }
 
+    // #124 (misión UX): a variant design without its own gallery takes the
+    // FIRST color's primary photo as cover — uploading extra photos of the
+    // same piece must never be a publish requirement. Derived BEFORE the
+    // publish gates below.
+    if (variantsEnabled && merged.length === 0) {
+      const cover = finalVariants
+        .flatMap((v) => v.photos ?? [])
+        .find((photo) => photo.isPrimary) ?? finalVariants.flatMap((v) => v.photos ?? [])[0];
+      if (cover) merged.push(cover);
+    }
+
     // PUBLISH VALIDATION: a published product needs a price and (when the store
     // has categories) a primary category. Drafts bypass validation. A photo is
     // encouraged but not hard-required — a product without one renders a
@@ -327,7 +338,7 @@ export function ProductForm({
       const hasPrice = isTiered ? !!parseAmount(tierPrices[def?.id ?? ""]) : !!parseAmount(price);
       if (!hasPrice) return fail("Para publicar, define un precio.");
       if ((draft.categoryIds ?? []).length === 0) return fail("Para publicar, elige al menos una categoría.");
-      const hasPhoto = cloud ? merged.length > 0 && merged.some((image) => image.isPrimary) : !!draft.imageUrl;
+      const hasPhoto = cloud ? merged.length > 0 && merged.some((image) => image.isPrimary) : !!draft.imageUrl || (variantsEnabled && merged.length > 0);
       if (!hasPhoto) return fail("Para publicar, agrega una foto de portada.");
       // #124: per-color publish gates (photo, clave, distinct names) on the
       // FINAL array (staged photos already uploaded into finalVariants).
@@ -592,7 +603,7 @@ export function ProductForm({
               );
             })}
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className={variantsEnabled ? "hidden" : "grid grid-cols-2 gap-2"}>
             <TextField label="En existencia" inputMode="numeric" placeholder="0" value={qty} onChange={(e) => setQty(sanitizeSignedIntegerInput(e.target.value))} />
             <TextField
               label="Alerta en"
@@ -654,7 +665,7 @@ export function ProductForm({
                         label="Costo del color"
                         inputMode="decimal"
                         placeholder={cost || "0"}
-                        value={variant.cost?.toString() ?? ""}
+                        value={variant.cost != null ? String(Math.round(variant.cost * 100) / 100) : ""}
                         onChange={(e) => patchVariant(variant.id, { cost: parseAmount(e.target.value) })}
                         hint="Hereda el costo del diseño; ajústalo si tu proveedor cobra distinto."
                       />
