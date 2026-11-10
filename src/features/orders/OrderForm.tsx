@@ -450,7 +450,7 @@ export function OrderForm({
   async function submit() {
     if (savingRef.current || conflictingDraft) return;
     if (!totals) { toast.error("Revisa los importes o cantidades demasiado grandes."); return; }
-    if (!customerId || customerQuery !== selectedCustomer?.name) {      toast.error("Elige un cliente para guardar el pedido.");
+    if (!customerId || customerQuery !== selectedCustomer?.name) {      toast.error("Elige una clienta para guardar el pedido.");
       return;
     }
     if (missingTier) {

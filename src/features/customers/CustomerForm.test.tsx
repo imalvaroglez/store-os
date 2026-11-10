@@ -99,3 +99,37 @@ describe("#219 Clientas · nombre duplicado (aviso suave, nunca bloqueo)", () =>
     await waitFor(() => expect(mocks.upsertCustomer).toHaveBeenCalledTimes(1));
   });
 });
+
+describe("#304 hallazgos de revisión", () => {
+  beforeEach(() => {
+    const state = fixtureState();
+    state.customers = [];
+    mocks.state = state;
+    mocks.upsertCustomer.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("H1: teclear el teléfono carácter a carácter CONSERVA los espacios interiores", () => {
+    render(<ToastProvider><CustomerForm customer={{ ...blank }} onDone={() => {}} /></ToastProvider>);
+    const phone = screen.getByLabelText("Teléfono") as HTMLInputElement;
+    // Simula tecleo real: cada tecla dispara change con el valor acumulado.
+    for (const keystroke of ["5", "5", " ", "1", "2", "3", "4", " ", "5", "6", "7", "8"]) {
+      fireEvent.change(phone, { target: { value: phone.value + keystroke } });
+    }
+    expect(phone.value).toBe("55 1234 5678"); // el espacio interior sobrevive
+  });
+
+  it("H1: pegar con letras/emojis se limpia pero los separadores quedan", () => {
+    render(<ToastProvider><CustomerForm customer={{ ...blank }} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Teléfono"), { target: { value: "+52 (55) 1234-5678😀jaja" } });
+    expect((screen.getByLabelText("Teléfono") as HTMLInputElement).value).toBe("+52 (55) 1234-5678");
+  });
+
+  it("auto-exclusión: editar a la MISMA clienta nunca avisa contra sí misma", async () => {
+    mocks.state!.customers = [{ ...blank, id: "c_me", name: "María López" } as Customer];
+    render(<ToastProvider><CustomerForm customer={{ ...blank, id: "c_me", name: "María Lopez" } as Customer} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "María López" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cliente" }));
+    await waitFor(() => expect(mocks.upsertCustomer).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/Ya existe/)).toBeNull();
+  });
+});

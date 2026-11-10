@@ -1,3 +1,4 @@
+import { looseText } from "../lib/text";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { fieldBase, FormField } from "./FormField";
 import { Button } from "./Button";
@@ -48,8 +49,7 @@ export function SearchSelect({
     // without accents ("maria jose") must find "María José". Loose pass =
     // diacritics folded + only letters/digits; the verbatim pass keeps the
     // exact previous behavior for everything else.
-    const loose = (text: string) =>
-      text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
+    const loose = looseText;
     const looseNeedle = loose(needle);
     return options
       .filter((option) => {
