@@ -24,6 +24,7 @@ import { productCreationDefaults } from "./productDefaults";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
 import { committedForProduct, stockAlertLevel, stockAlertText } from "../../lib/inventory";
+import { isVariantProduct, totalStock } from "../../lib/variants";
 import { defaultTier } from "../../lib/pricing";
 import { publicPrice, profit, formatMoney } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
@@ -161,17 +162,22 @@ function ProductCard({
                 <span className="text-ink">
                   {defaultLabel} <b>{formatMoney(product.prices?.[defaultId])}</b>
                 </span>
-                {typeof product.quantityOnHand === "number" && (
+                {isVariantProduct(product) ? (
+                  <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
+                    Existencia: {totalStock(product) ?? 0} en {product.variants!.length}{" "}
+                    {product.variants!.length === 1 ? "color" : "colores"}
+                  </span>
+                ) : typeof product.quantityOnHand === "number" ? (
                   <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
                     Existencia: {product.quantityOnHand}
                   </span>
-                )}
+                ) : null}
               </div>
               {/* Tiered stats + manual ± moved from the old InventoryScreen
                   (unified-products): Disponible/Comprometido/Físico right on
                   the card. stopPropagation so the buttons don't open the edit
                   sheet (the whole card is clickable). */}
-              {typeof product.quantityOnHand === "number" && (
+              {typeof product.quantityOnHand === "number" && !isVariantProduct(product) && (
                 <div className="mt-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2">
                     <IconButton

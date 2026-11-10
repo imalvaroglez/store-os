@@ -8,7 +8,12 @@ import {
   type PurchaseExpenseAdjustment,
   type PurchaseTicket,
 } from "../types";
-import { applyPurchaseLines, type ProductStockUpdate } from "./inventory";
+import { applyPurchaseLines, weightedAverageCost, type ProductStockUpdate } from "./inventory";
+import { isVariantProduct } from "./variants";
+import type { ProductVariant } from "../types";
+
+/** #124: per-color reception result — the variant array replaces the doc's. */
+export type VariantReceptionUpdate = { productId: string; variants: ProductVariant[] };
 
 export function legacyPurchaseTicket(purchase: Purchase): PurchaseTicket {
   return {
@@ -158,8 +163,14 @@ export function purchaseProductSaleCosts(purchase: Purchase): Map<string, { quan
 }
 
 /** Latest purchase is one journey: repeated product lines fold within that purchase only. */
-export function purchaseInventoryUpdates(products: Product[], purchase: Purchase): { stockUpdates: Map<string, ProductStockUpdate>; costAllocations?: PurchaseCostAllocation[] } {
-  if (purchase.costingMethod !== "latest_purchase") return { stockUpdates: applyPurchaseLines(products, purchase.lines) };
+export function purchaseInventoryUpdates(
+  products: Product[],
+  purchase: Purchase
+): { stockUpdates: Map<string, ProductStockUpdate>; costAllocations?: PurchaseCostAllocation[]; variantUpdates?: Map<string, VariantReceptionUpdate> } {
+  if (purchase.costingMethod !== "latest_purchase") {
+    const result = applyPurchaseLines(products, purchase.lines);
+    return splitVariantLines(products, purchase.lines, result, undefined);
+  }
   if (recalcPurchaseStatus(purchase) !== "ready") throw new Error("Revisa los productos y los totales de cada ticket antes de recibir.");
   if (purchase.sourcingExpenses?.some((expense) => !Number.isFinite(expense.amount) || expense.amount <= 0)) {
     throw new Error("Completa el importe de cada gasto antes de recibir.");
@@ -178,7 +189,86 @@ export function purchaseInventoryUpdates(products: Product[], purchase: Purchase
     if (!Number.isSafeInteger(previousQuantity) || !Number.isSafeInteger(quantityOnHand)) throw new Error("Revisa las existencias del producto antes de recibir.");
     stockUpdates.set(id, { quantityOnHand, cost: value.cents / value.quantity / 100 });
   }
-  return { stockUpdates, costAllocations };
+  return splitVariantLines(products, purchase.lines, stockUpdates, costAllocations);
+}
+
+/**
+ * #124 (decisión 2): lines that carry a variantId adjust THAT color's shelf
+ * and cost (weighted with the color's own stock) and leave the product-level
+ * update to the non-variant lines only. Fail-closed: a variant line on a
+ * product that no longer sells by color, or a vanished color, throws.
+ */
+function splitVariantLines(
+  products: Product[],
+  lines: Purchase["lines"],
+  stockUpdates: Map<string, ProductStockUpdate>,
+  costAllocations: PurchaseCostAllocation[] | undefined
+): { stockUpdates: Map<string, ProductStockUpdate>; costAllocations?: PurchaseCostAllocation[]; variantUpdates?: Map<string, VariantReceptionUpdate> } {
+  const byId = new Map(products.map((product) => [product.id, product]));
+  // #124/H2 runs BEFORE any early return: a colorless line on a design sold
+  // by color strands invisible stock even when the WHOLE purchase is colorless.
+  for (const line of lines) {
+    const product = byId.get(line.productId);
+    if (product && !line.variantId && isVariantProduct(product)) {
+      throw new Error(`Elige el color comprado de ${product.name}: se vende por color y la existencia va por color.`);
+    }
+  }
+  const hasVariantLine = lines.some((line) => !!line.variantId);
+  if (!hasVariantLine) return costAllocations ? { stockUpdates, costAllocations } : { stockUpdates };
+  const perVariant = new Map<string, { quantity: number; cents: number }>();
+  const perProductNonVariant = new Map<string, { quantity: number; cents: number }>();
+  const unitCostOf = (line: Purchase["lines"][number]) =>
+    line.unitCost != null && Number.isFinite(line.unitCost) && line.unitCost > 0
+      ? line.unitCost
+      : undefined;
+  // #124/H3: LANDED cost first — the ticket's discounts/taxes/shipping are
+  // part of the real cost of each color (PO decision 2); the raw line price
+  // is only the fallback when no allocation exists (legacy costing).
+  lines.forEach((line, index) => {
+    const landedUnit = costAllocations ? costAllocations[index].totalCents / 100 / (line.quantity || 1) : undefined;
+    const unit = landedUnit ?? unitCostOf(line) ?? 0;
+    if (!line.variantId) {
+      const current = perProductNonVariant.get(line.productId) ?? { quantity: 0, cents: 0 };
+      perProductNonVariant.set(line.productId, { quantity: current.quantity + line.quantity, cents: current.cents + Math.round(unit * 100) * line.quantity });
+      return;
+    }
+    const key = `${line.productId}:${line.variantId}`;
+    const current = perVariant.get(key) ?? { quantity: 0, cents: 0 };
+    perVariant.set(key, { quantity: current.quantity + line.quantity, cents: current.cents + Math.round(unit * 100) * line.quantity });
+  });
+  // Rebuild product-level updates from the non-variant lines only.
+  // #124/H2: a line WITHOUT color on a design sold by color would strand
+  // invisible, unsellable stock on the design-level field — fail closed and
+  // name the product (the purchase line picks its color instead).
+  const nextStock = new Map<string, ProductStockUpdate>();
+  for (const [productId, value] of perProductNonVariant) {
+    const product = byId.get(productId);
+    if (!product) throw new Error("No se encontró un producto de esta tienda para recibir la compra.");
+    const quantityOnHand = (product.quantityOnHand ?? 0) + value.quantity;
+    nextStock.set(productId, { quantityOnHand, cost: value.cents / (value.quantity || 1) / 100 });
+  }
+  const variantUpdates = new Map<string, VariantReceptionUpdate>();
+  for (const [key, value] of perVariant) {
+    const [productId, variantId] = key.split(":");
+    const product = byId.get(productId);
+    if (!product) throw new Error("No se encontró un producto de esta tienda para recibir la compra.");
+    if (!isVariantProduct(product)) throw new Error("Esa pieza ya no se vende por color; quita el color de la línea de compra.");
+    const variant = product.variants!.find((v) => v.id === variantId);
+    if (!variant) throw new Error("El color de una línea de compra ya no existe en el diseño.");
+    const now = new Date().toISOString();
+    const updated = product.variants!.map((v) =>
+      v.id === variantId
+        ? {
+            ...v,
+            quantityOnHand: (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0) + value.quantity,
+            cost: weightedAverageCost(v.cost, v.quantityOnHand, value.quantity, value.cents / (value.quantity || 1) / 100),
+            updatedAt: now,
+          }
+        : v
+    );
+    variantUpdates.set(productId, { productId, variants: updated });
+  }
+  return costAllocations ? { stockUpdates: nextStock, costAllocations, variantUpdates } : { stockUpdates: nextStock, variantUpdates };
 }
 
 export function purchaseProductCosts(purchase: Purchase, allocations = purchaseCostAllocation(purchase)): Map<string, { quantity: number; cents: number }> {

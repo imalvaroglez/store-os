@@ -97,6 +97,19 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
             {catalog.products.map((product) => <Card key={product.productSlug} className="overflow-hidden p-0">
               <ProductImage src={product.imageUrl ?? undefined} alt={product.name} size="full" />
               <div className="p-4"><h2 className="serif-display text-lg font-semibold text-ink">{product.name}</h2>
+                {/* #124: one design, its colors listed — never N loose fichas. */}
+                {product.variants && product.variants.length > 0 && (
+                  <p className="mt-1 flex flex-wrap gap-1 text-xs text-ink-soft">
+                    {product.variants.map((variant) => (
+                      <span
+                        key={variant.id}
+                        className={`rounded-full border border-ink/15 px-2 py-0.5 ${variant.stockSignal === "agotado" ? "opacity-50 line-through" : ""}`}
+                      >
+                        {variant.color}
+                      </span>
+                    ))}
+                  </p>
+                )}
                 {product.publicDescription && <p className="text-sm text-ink-soft mt-1">{product.publicDescription}</p>}
                 <PublicTierPrices store={store} product={product} />
                 <CartProductControl

@@ -71,4 +71,62 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order transactions with F
     await expect(saveOrderWithStockTx(user, makeOrder("foreign-order", "foreign", 1), null, "foreign-op")).rejects.toThrow();
     expect((await getDoc(doc(holder.db, "orders/foreign-order"))).exists()).toBe(false);
   });
+// #124: per-exact-color stock inside the SAME order transaction — confirming
+// reserves the chosen color, cancelling restores it, and nothing ever lands
+// on the design-level field.
+
+  const designId = "p_variants";
+  const variantLine = (quantity: number, variantId: string) => ({
+    lineId: "lv", productId: designId, productName: "Anillo Sol", quantity,
+    unitPrice: 300, subtotal: 300 * quantity, variantId, variantColor: variantId === "v_gold" ? "Dorado" : "Plateado", variantSku: `SKU-${variantId}`,
+  });
+
+  it("reserves the exact color once; sibling intact; design field untouched; cancel restores", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products", designId), {
+        storeId: "tx-store",
+        variants: [
+          { id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", quantityOnHand: 2, createdAt: "", updatedAt: "" },
+          { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "SOL-P", quantityOnHand: 1, createdAt: "", updatedAt: "" },
+        ],
+      });
+    });
+    const order: Order = {
+      ...makeOrder("variant-order", designId, 1),
+      items: [variantLine(1, "v_gold")],
+    };
+    await saveOrderWithStockTx(user, order, null, "variant-create");
+    const saved = (await getDoc(doc(holder.db, "products", designId))).data() as { variants: Array<{ id: string; quantityOnHand?: number }>; quantityOnHand?: number };
+    expect(saved.variants!.find((v) => v.id === "v_gold")!.quantityOnHand).toBe(1);
+    expect(saved.variants!.find((v) => v.id === "v_silver")!.quantityOnHand).toBe(1);
+    expect(saved.quantityOnHand).toBeUndefined();
+
+    // Cancel restores the exact color (the delta model, not a special case).
+    await saveOrderWithStockTx(user, { ...order, orderStatus: "cancelled" }, 1, "variant-cancel");
+    const restored = (await getDoc(doc(holder.db, "products", designId))).data() as { variants: Array<{ id: string; quantityOnHand?: number }> };
+    expect(restored.variants!.find((v) => v.id === "v_gold")!.quantityOnHand).toBe(2);
+
+    // Switching colors in an edit moves both shelves.
+    await saveOrderWithStockTx(user, { ...order, orderStatus: "asked", items: [variantLine(1, "v_silver")] }, 2, "variant-switch");
+    const switched = (await getDoc(doc(holder.db, "products", designId))).data() as { variants: Array<{ id: string; quantityOnHand?: number }> };
+    expect(switched.variants!.find((v) => v.id === "v_gold")!.quantityOnHand).toBe(2);
+    expect(switched.variants!.find((v) => v.id === "v_silver")!.quantityOnHand).toBe(0);
+
+    // A vanished color fails closed — stock never lands on the design level.
+    await expect(
+      saveOrderWithStockTx(user, { ...order, items: [variantLine(1, "v_fantasma")] }, 3, "variant-ghost")
+    ).rejects.toThrow(/color elegido ya no existe/);
+    const afterGhost = (await getDoc(doc(holder.db, "products", designId))).data() as { variants: Array<{ id: string; quantityOnHand?: number }> };
+    expect(afterGhost.variants!.find((v) => v.id === "v_silver")!.quantityOnHand).toBe(0);
+
+    // #124/H1-twin: DELETING a color order returns the exact colors, and the
+    // result carries the shelves for in-memory reconcile.
+    await saveOrderWithStockTx(user, { ...order, items: [variantLine(1, "v_gold"), variantLine(1, "v_silver")] }, 3, "variant-both");
+    const deleteResult = await deleteOrderWithStockTx(user, "variant-order", 4);
+    const afterDelete = (await getDoc(doc(holder.db, "products", designId))).data() as { variants: Array<{ id: string; quantityOnHand?: number }> };
+    expect(afterDelete.variants!.find((v) => v.id === "v_gold")!.quantityOnHand).toBe(2);
+    expect(afterDelete.variants!.find((v) => v.id === "v_silver")!.quantityOnHand).toBe(1);
+    expect(deleteResult.variantStock?.find((v) => v.productId === designId)?.variants).toBeTruthy();
+  });
+
 });
