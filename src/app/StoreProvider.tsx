@@ -986,6 +986,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // approximation diverged from the persisted latest_purchase cost.
       const at = nowIso();
       const receivedProducts = receivedProductsFromStockUpdates(state.products, result.stockUpdates, at);
+      // #124: color receptions carry their variants array — apply it to the
+      // in-memory design too, or the shelf (and the republished signal) would
+      // show the pre-reception stock all session.
+      if (result.variantUpdates) {
+        for (const update of result.variantUpdates.values()) {
+          const current = state.products.find((p) => p.id === update.productId);
+          if (!current) continue;
+          const merged = { ...current, variants: update.variants, updatedAt: at };
+          if (!receivedProducts.some((p) => p.id === merged.id)) receivedProducts.push(merged);
+        }
+      }
       for (const product of receivedProducts) {
         dispatch({ type: "UPDATE_PRODUCT", product });
       }

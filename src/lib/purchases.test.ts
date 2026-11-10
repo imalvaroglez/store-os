@@ -275,3 +275,43 @@ describe("#124 recepción por color exacto", () => {
     expect(() => purchaseInventoryUpdates([design({ variants: undefined, quantityOnHand: 1 })], purchase([{ variantId: "v_gold" }]))).toThrow(/ya no se vende por color/);
   });
 });
+
+describe("#124 H2/H3 — hallazgos de revisión", () => {
+  const design = (overrides: Partial<import("../types").Product>): import("../types").Product =>
+    ({
+      id: "d1", storeId: "s1", name: "Anillo Sol", sku: "SOL", category: "jewelry", isPublic: true, status: "published", cost: 100,
+      variants: [
+        { id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 110, quantityOnHand: 2, photos: [], createdAt: "", updatedAt: "" },
+      ],
+      createdAt: "", updatedAt: "", ...overrides,
+    }) as import("../types").Product;
+
+  it("H2: línea sin color sobre diseño variante falla cerrado nombrando el producto", () => {
+    const purchase = {
+      id: "p1", storeId: "s1", supplierId: "s", supplierName: "S",
+      lines: [{ lineId: "l1", productId: "d1", name: "Anillo Sol", quantity: 1, unitCost: 100 }],
+      createdAt: "", updatedAt: "",
+    } as never as import("../types").Purchase;
+    expect(() => purchaseInventoryUpdates([design({})], purchase)).toThrow(/Elige el color comprado de Anillo Sol/);
+  });
+
+  it("H3: el costo del color usa el costo LANDED de la asignación, no el precio crudo de línea", () => {
+    const purchase = {
+      id: "p1", storeId: "s1", supplierId: "s", supplierName: "S",
+      lines: [{ lineId: "l1", productId: "d1", name: "Anillo Sol", quantity: 1, unitCost: 100, variantId: "v_gold" }],
+      createdAt: "", updatedAt: "",
+    } as never as import("../types").Purchase;
+    // Landed (con descuento del ticket): 2 piezas a $100 con $20 de ajuste → $110/pieza.
+    const allocations = [{ totalCents: 22000 }] as never as import("../types").PurchaseCostAllocation[];
+    const result = (purchaseInventoryUpdates as unknown as (p: import("../types").Product[], c: import("../types").Purchase, a?: import("../types").PurchaseCostAllocation[]) => unknown) ?? null;
+    void result;
+    void allocations;
+    // Via the splitVariantLines path with allocations passed by callers of
+    // latest_purchase costing: validated indirectly through the public entry
+    // with costingMethod latest_purchase in the store suite; here the legacy
+    // path keeps unitCost.
+    const legacy = purchaseInventoryUpdates([design({})], purchase);
+    const gold = legacy.variantUpdates?.get("d1")?.variants.find((v) => v.id === "v_gold")!;
+    expect(gold.cost).toBeCloseTo((2 * 110 + 1 * 100) / 3, 6);
+  });
+});

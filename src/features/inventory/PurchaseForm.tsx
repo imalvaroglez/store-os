@@ -599,13 +599,11 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   value={line.variantId ?? ""}
                   disabled={editDisabled}
                   onChange={(value) => updateLine(idx, { variantId: value || undefined })}
-                  options={[
-                    { value: "", label: "Todo el diseño (sin color)" },
-                    ...product.variants.map((variant) => ({
-                      value: variant.id,
-                      label: variant.color + (variant.sku ? ` · ${variant.sku}` : ""),
-                    })),
-                  ]}
+                  hint="Se vende por color: la compra va a un color concreto."
+                  options={product.variants.map((variant) => ({
+                    value: variant.id,
+                    label: variant.color + (variant.sku ? ` · ${variant.sku}` : ""),
+                  }))}
                 />
               );
             })()}

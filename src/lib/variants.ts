@@ -50,6 +50,10 @@ export function variantPublishError(product: Pick<Product, "sku" | "variants">):
  * own quantityOnHand otherwise (null = untracked). */
 export function totalStock(product: Pick<Product, "variants" | "quantityOnHand">): number | null {
   if (isVariantProduct(product)) {
+    // No color with a tracked shelf = untracked design (null), NOT zero —
+    // "sin dato" must never read as "agotado" (#124 review M5).
+    const tracked = product.variants!.some((v) => typeof v.quantityOnHand === "number");
+    if (!tracked) return null;
     return product.variants!.reduce((sum, v) => sum + (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0), 0);
   }
   return typeof product.quantityOnHand === "number" && Number.isFinite(product.quantityOnHand) ? product.quantityOnHand : null;

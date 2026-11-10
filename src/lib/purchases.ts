@@ -205,6 +205,14 @@ function splitVariantLines(
   costAllocations: PurchaseCostAllocation[] | undefined
 ): { stockUpdates: Map<string, ProductStockUpdate>; costAllocations?: PurchaseCostAllocation[]; variantUpdates?: Map<string, VariantReceptionUpdate> } {
   const byId = new Map(products.map((product) => [product.id, product]));
+  // #124/H2 runs BEFORE any early return: a colorless line on a design sold
+  // by color strands invisible stock even when the WHOLE purchase is colorless.
+  for (const line of lines) {
+    const product = byId.get(line.productId);
+    if (product && !line.variantId && isVariantProduct(product)) {
+      throw new Error(`Elige el color comprado de ${product.name}: se vende por color y la existencia va por color.`);
+    }
+  }
   const hasVariantLine = lines.some((line) => !!line.variantId);
   if (!hasVariantLine) return costAllocations ? { stockUpdates, costAllocations } : { stockUpdates };
   const perVariant = new Map<string, { quantity: number; cents: number }>();
@@ -213,19 +221,25 @@ function splitVariantLines(
     line.unitCost != null && Number.isFinite(line.unitCost) && line.unitCost > 0
       ? line.unitCost
       : undefined;
+  // #124/H3: LANDED cost first — the ticket's discounts/taxes/shipping are
+  // part of the real cost of each color (PO decision 2); the raw line price
+  // is only the fallback when no allocation exists (legacy costing).
   lines.forEach((line, index) => {
+    const landedUnit = costAllocations ? costAllocations[index].totalCents / 100 / (line.quantity || 1) : undefined;
+    const unit = landedUnit ?? unitCostOf(line) ?? 0;
     if (!line.variantId) {
       const current = perProductNonVariant.get(line.productId) ?? { quantity: 0, cents: 0 };
-      const unit = unitCostOf(line) ?? (costAllocations ? costAllocations[index].totalCents / 100 / (line.quantity || 1) : 0);
       perProductNonVariant.set(line.productId, { quantity: current.quantity + line.quantity, cents: current.cents + Math.round(unit * 100) * line.quantity });
       return;
     }
     const key = `${line.productId}:${line.variantId}`;
     const current = perVariant.get(key) ?? { quantity: 0, cents: 0 };
-    const unit = unitCostOf(line) ?? (costAllocations ? costAllocations[index].totalCents / 100 / (line.quantity || 1) : 0);
     perVariant.set(key, { quantity: current.quantity + line.quantity, cents: current.cents + Math.round(unit * 100) * line.quantity });
   });
   // Rebuild product-level updates from the non-variant lines only.
+  // #124/H2: a line WITHOUT color on a design sold by color would strand
+  // invisible, unsellable stock on the design-level field — fail closed and
+  // name the product (the purchase line picks its color instead).
   const nextStock = new Map<string, ProductStockUpdate>();
   for (const [productId, value] of perProductNonVariant) {
     const product = byId.get(productId);

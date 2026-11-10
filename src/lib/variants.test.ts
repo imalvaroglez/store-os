@@ -135,3 +135,20 @@ describe("#124 isVariantProduct", () => {
     expect(isVariantProduct({})).toBe(false);
   });
 });
+
+describe("#124 hallazgos de revisión", () => {
+  it("M5: diseño sin ningún color con existencia = sin dato (null), no agotado (0)", () => {
+    const untracked = design({ variants: [variant({ quantityOnHand: undefined }), variant({ id: "v2", color: "Plateado", quantityOnHand: undefined })] });
+    expect(totalStock(untracked)).toBeNull();
+    const mixed = design({ variants: [variant({ quantityOnHand: undefined }), variant({ id: "v2", color: "Plateado", quantityOnHand: 3 })] });
+    expect(totalStock(mixed)).toBe(3);
+  });
+
+  it("dos líneas del mismo color acumulan un solo delta combinado", () => {
+    const a = { productId: "p1", productName: "X", quantity: 2, unitPrice: 1, subtotal: 2, variantId: "v_gold", variantColor: "Dorado" } as const;
+    const b = { ...a, quantity: 1, subtotal: 1 };
+    const deltas = variantReservationDeltas([], [a, b] as never);
+    expect(deltas.get("p1:v_gold")?.delta).toBe(-3);
+    expect(deltas.size).toBe(1);
+  });
+});
