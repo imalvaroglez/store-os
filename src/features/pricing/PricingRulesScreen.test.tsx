@@ -354,3 +354,23 @@ describe("PricingRulesScreen #289 — hallazgos de revisión", () => {
     expect(await screen.findByLabelText("Pieza Huérfana")).toBeTruthy();
   });
 });
+
+describe("PricingRulesScreen #289 — config sin byTier (hallazgo misión UX)", () => {
+  it("una tienda que empieza precios por Estrategia (solo byCategory) no truena y sugiere por tabla", async () => {
+    state.categories = [
+      { id: "c_reloj", storeId: "store_olivia", name: "Reloj", active: true, createdAt: "", updatedAt: "" },
+    ] as typeof state.categories;
+    state.stores[0].pricingRules = {
+      byCategory: { c_reloj: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 90 }], rounding: "none" } } },
+    } as typeof state.stores[0].pricingRules;
+    state.products = [
+      product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 40, prices: { t_iconic: 60 } }),
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    // Antes del fix: "Cannot convert undefined or null to object" (Object.keys
+    // sobre byTier ausente) y la pantalla quedaba inservible.
+    expect(await screen.findByText(/1 pieza mostrada · 1 con cambios/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Seleccionar todo \(1 con cambios\)/ })).toBeTruthy();
+    expect(screen.getAllByText(/categoría/).length).toBeGreaterThan(0);
+  });
+});

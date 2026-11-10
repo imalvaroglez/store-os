@@ -29,7 +29,12 @@ function emptyConfig(): PricingRulesConfig {
 }
 
 function cloneConfig(config: PricingRulesConfig | undefined): PricingRulesConfig {
-  return config ? JSON.parse(JSON.stringify(config)) : emptyConfig();
+  const cloned = config ? JSON.parse(JSON.stringify(config)) : emptyConfig();
+  // #289 (misión de operadora, hallazgo 5a): a store whose FIRST pricing
+  // config is a category table from Estrategia carries `byCategory` WITHOUT
+  // `byTier` — every `byTier` reader below must tolerate that shape.
+  cloned.byTier = cloned.byTier ?? {};
+  return cloned;
 }
 
 type DraftState = { config: PricingRulesConfig; dirty: boolean };
