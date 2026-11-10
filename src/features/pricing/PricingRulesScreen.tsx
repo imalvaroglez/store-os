@@ -2,7 +2,7 @@
 // price derives from cost (percentage, fixed increment, or a cost-band table),
 // with category and product overrides. Suggestions are PROPOSALS: applying
 // them is always an explicit, per-product or batch action — never automatic.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -61,7 +61,14 @@ export function PricingRulesScreen() {
   );
   // #289: the list opens where the operator came from — Estrategia hands off
   // the category she just configured — instead of an unfiltered wall of SKUs.
-  const [categoryFilter, setCategoryFilter] = useState<string>(() => takeSuggestionsFocus() ?? "");
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  // Consume the one-shot AFTER mount: StrictMode double-invokes useState
+  // initializers in dev, which would eat the handoff and render the unfiltered
+  // wall. The effect's second run takes null and no-ops.
+  useEffect(() => {
+    const focus = takeSuggestionsFocus();
+    if (focus) setCategoryFilter(focus);
+  }, []);
 
   function patchConfig(mutate: (config: PricingRulesConfig) => void) {
     setDraft((current) => {
@@ -161,7 +168,9 @@ export function PricingRulesScreen() {
   );
 
   function selectAllWithChanges() {
-    setSelected(Object.fromEntries(changedIds.map((id) => [id, true])));
+    // UNION: a manual pick from another filter survives — "Seleccionar todo"
+    // adds this filter's changed pieces, never silently drops what she chose.
+    setSelected((current) => ({ ...current, ...Object.fromEntries(changedIds.map((id) => [id, true])) }));
   }
 
   function clearSelection() {

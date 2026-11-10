@@ -598,7 +598,7 @@ export function PricingStrategyScreen() {
 
         {categoryId && (
           <Card className="space-y-2">
-            {draft && !draft.dirty && existing ? (
+            {draft && !draft.dirty && existing?.compatible ? (
               <>
                 <p className="text-sm text-on-surface-soft">
                   La tabla de <span className="font-semibold text-on-surface">{categories.find((c) => c.id === categoryId)?.name ?? "esta categoría"}</span> está
