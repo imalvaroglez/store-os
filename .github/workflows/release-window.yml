@@ -1,11 +1,11 @@
 name: release-window
 
 # #317 — Ventana diaria de liberación (PO, 10-nov-2026). Un ORQUESTADOR
-# programado que aprieta el botón QUE YA EXISTÍA: despacha ci.yml sobre un
-# SHA congelado de main con release_production=true. No abre ningún gate
-# nuevo: el dispatch corre las suites completas, deploy-rules con paridad,
-# el release guard (check-release.cjs contra lo que producción SIRVE) y el
-# deploy de Vercel production exactamente como el despacho manual.
+# programado que aprieta el botón QUE YA EXISTÍA: despacha ci.yml sobre main
+# con release_production=true. No abre ningún gate nuevo: el dispatch corre
+# las suites completas, deploy-rules con paridad, el release guard
+# (check-release.cjs contra lo que producción SIRVE) y el deploy de Vercel
+# production exactamente como el despacho manual.
 #
 #   schedule  11:25 UTC = 05:25 America/Mexico_City (UTC-6 fijo, sin DST).
 #             La cola de GitHub Actions puede retrasar el arranque (típico
@@ -15,9 +15,16 @@ name: release-window
 #   workflow_dispatch  respaldo manual de la ventana (dry_run para validar
 #             guards sin despachar nada).
 #
+# CONGELAMIENTO (revisión #318 B3): se despacha por la RAMA main — nunca por
+# SHA — porque los jobs deploy de ci.yml exigen github.ref_name == 'main'
+# (despachar por SHA los omitiría en silencio). El congelamiento real es el
+# par (SHA registrado → verificado contra el run despachado): si main se
+# mueve entre el registro y el dispatch, el run se CANCELA y la ventana falla
+# cerrado — jamás se libera un commit distinto del evaluado.
+#
 # Fail-closed en TODO: sin cambios aptos → no-op documentado (nunca versión
-# vacía); versión ya servida en producción → no-op; cualquier gate del run
-# en rojo → NO se libera, NO se reintenta solo; queda el job summary y el
+# vacía); versión ya servida en producción → no-op; cualquier gate del run en
+# rojo → NO se libera, NO se reintenta solo; queda el job summary y el
 # despacho manual. Concurrency única: jamás dos ventanas solapadas.
 on:
   schedule:
@@ -35,8 +42,11 @@ concurrency:
   group: release-window
   cancel-in-progress: false
 
+# actions: write — el paso de despacho necesita disparar ci.yml (API de
+# workflow_dispatch) y observar el run; contents: write — para taggear.
 permissions:
-  contents: write # solo para taggear release/<version> + release/last al verificar
+  contents: write
+  actions: write
 
 jobs:
   window:
@@ -51,11 +61,11 @@ jobs:
         id: candidate
         run: |
           set -euo pipefail
-          # CONGELAMIENTO: este SHA es EL candidato; el despacho usará --ref
-          # de este commit aunque main avance después (el corte manda: lo que
-          # llegue después espera a mañana).
+          # CONGELAMIENTO: este SHA es EL candidato; los guards se evalúan
+          # SOBRE ÉL (checkout explícito) y el run despachado debe coincidir.
           SHA="$(git rev-parse origin/main)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          git checkout -q "$SHA"
           echo "### Ventana de liberación — $(TZ=America/Mexico_City date '+%F %R CDMX')" >> "$GITHUB_STEP_SUMMARY"
           echo "- Candidato congelado: \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
 
@@ -96,26 +106,38 @@ jobs:
           fi
           echo "- Versión del candidato: **$VERSION** (guard de versión/notas ✔)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Despachar el release congelado (ci.yml sobre el SHA)
+      - name: Despachar el release (ci.yml sobre main, SHA verificado)
         id: dispatch
         if: steps.candidate.outputs.skip_reason == '' && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ steps.candidate.outputs.sha }}
+          FROZEN_SHA: ${{ steps.candidate.outputs.sha }}
         run: |
           set -euo pipefail
-          # Solo main: jamás construir desde una rama arbitraria. --ref con el
-          # SHA congelado pese a que el evento sea del workflow actual.
-          gh workflow run ci.yml --ref "$SHA" -f release_production=true
-          # Resolver el run ID del commit exacto (el dispatch tarda en aparecer).
+          # Por la RAMA main (los jobs deploy de ci.yml exigen
+          # ref_name == 'main'); el congelamiento se verifica abajo contra
+          # el run real: si main se movió, se cancela y falla cerrado.
+          gh workflow run ci.yml --ref main -f release_production=true
           RUN_ID=""
+          RUN_SHA=""
           for i in $(seq 1 30); do
-            RUN_ID="$(gh run list --workflow=ci.yml --limit 10 --json databaseId,headSha,status \
-              --jq ".[] | select(.headSha == \"$SHA\" and .status != \"completed\") | .databaseId" | head -1 || true)"
-            [ -n "$RUN_ID" ] && break
+            RUN_JSON="$(gh run list --workflow=ci.yml --event workflow_dispatch --limit 3 --json databaseId,headSha,status 2>/dev/null || true)"
+            RUN_ID="$(echo "$RUN_JSON" | jq -r ".[0].databaseId // empty")"
+            RUN_SHA="$(echo "$RUN_JSON" | jq -r ".[0].headSha // empty")"
+            if [ -n "$RUN_ID" ] && [ "$RUN_SHA" = "$FROZEN_SHA" ]; then break; fi
+            # El run más reciente es de OTRO SHA: main se movió tras el
+            # congelamiento. Cancelar (fail-closed) y abortar la ventana.
+            if [ -n "$RUN_ID" ] && [ "$RUN_SHA" != "$FROZEN_SHA" ] && [ "$(echo "$RUN_JSON" | jq -r '.[0].status')" != "completed" ]; then
+              gh run cancel "$RUN_ID" || true
+              echo "### ✘ main se movió tras el congelamiento (esperaba $FROZEN_SHA, run en $RUN_SHA). Run cancelado; NADA se liberó. Reintentar con despacho manual." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             sleep 10
           done
-          if [ -z "$RUN_ID" ]; then echo "No se pudo identificar el run del release." >&2; exit 1; fi
+          if [ -z "$RUN_ID" ] || [ "$RUN_SHA" != "$FROZEN_SHA" ]; then
+            echo "### ✘ No se pudo confirmar un run del SHA congelado. NADA se liberó." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "- Dispatch: run $RUN_ID sobre el SHA congelado. Esperando gates…" >> "$GITHUB_STEP_SUMMARY"
           if ! gh run watch "$RUN_ID" --exit-status --interval 30; then
@@ -125,9 +147,9 @@ jobs:
           # Qué entró en esta versión (para la nota a Fer y la reconciliación).
           echo "#### En esta versión:" >> "$GITHUB_STEP_SUMMARY"
           if git rev-parse -q --verify "refs/tags/release/last" >/dev/null; then
-            git log --oneline "$(git rev-parse release/last)..$SHA" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY" || true
+            git log --oneline "$(git rev-parse release/last)..$FROZEN_SHA" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY" || true
           else
-            git log -1 --oneline "$SHA" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+            git log -1 --oneline "$FROZEN_SHA" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Verificar producción sirve la versión del candidato
@@ -138,6 +160,7 @@ jobs:
           set -euo pipefail
           # El deploy ya escribió el artefacto; el DNS/edge puede tardar unos
           # segundos más. Fail-closed: sin coincidencia, la ventana falla.
+          SERVED=""
           for i in $(seq 1 12); do
             SERVED="$(curl -fsS https://store-os-alpha.vercel.app/ | grep -o 'store-os-version[^>]*content="[0-9.]*"' | grep -o '[0-9]*\.[0-9]*\.[0-9]*' || true)"
             if [ "$SERVED" = "$EXPECTED" ]; then
@@ -164,10 +187,14 @@ jobs:
       - name: Dry-run — plan sin ejecución
         if: inputs.dry_run == true
         run: |
-          echo "### DRY-RUN ✔ — todos los guards pasaron; NO se despachó ni taggeó nada." >> "$GITHUB_STEP_SUMMARY"
-          echo "- Candidato: ${{ steps.candidate.outputs.sha }}"
-          echo "- Versión: ${{ steps.candidate.outputs.version }}"
+          echo "### DRY-RUN — guards evaluados; NO se despachó ni taggeó nada." >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${{ steps.candidate.outputs.skip_reason }}" ]; then
+            echo "- La ventana sería NO-OP: ${{ steps.candidate.outputs.skip_reason }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Se liberaría: ${{ steps.candidate.outputs.sha }} (versión ${{ steps.candidate.outputs.version }})" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Reporte de omisión
-        if: steps.candidate.outputs.skip_reason != ''
-        run: echo "Omitido: ${{ steps.candidate.outputs.skip_reason }} (correcto: nunca versión vacía)"
+        if: steps.candidate.outputs.skip_reason != '' && inputs.dry_run != true
+        run: |
+          echo "Omitido: ${{ steps.candidate.outputs.skip_reason }} — correcto, nunca versión vacía."
