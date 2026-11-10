@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="1010" viewBox="0 0 500 1010" role="img" aria-labelledby="title description">
+<title id="title">Carrito de Olivia: dos estimaciones visibles sin interacción extra</title>
+<desc id="description">Propuesta móvil del resumen: subtotal de referencia, subtotal Iconic hipotético siempre visible, explicación breve, nombre, confirmación comercial y botón WhatsApp. Los precios son ficticios.</desc>
+<rect width="500" height="1010" fill="#F8F6F3"/>
+<text x="250" y="30" fill="#77716C" font-family="Arial,sans-serif" font-weight="700" font-size="12" text-anchor="middle" letter-spacing="1.2">MAQUETA · IMPORTES FICTICIOS</text>
+<rect x="36" y="50" width="428" height="924" rx="22" fill="#C9C1BC" opacity=".25"/>
+<rect x="35" y="45" width="428" height="924" rx="22" fill="white" stroke="#E7E1DC"/>
+<g font-family="Arial,Helvetica,sans-serif" fill="#2D2927">
+<text x="62" y="108" font-size="24" font-weight="700">Tu solicitud a Olivia</text>
+<g transform="translate(411,83)" stroke="#625C57" fill="none" stroke-width="2" stroke-linejoin="round"><path d="M0 7H24L22 28H2Z M7 9V5A5 5 0 0 1 17 5V9"/></g>
+<text x="62" y="145" font-size="14" fill="#79726B">4 productos · 6 piezas</text>
+<line x1="62" y1="173" x2="436" y2="173" stroke="#E5E0DB"/>
+<text x="62" y="222" font-size="16" font-weight="700">Subtotal de referencia</text>
+<text x="435" y="228" font-size="27" font-weight="700" text-anchor="end">$770</text>
+<text x="62" y="252" font-size="12.5" fill="#77706B">Estimado según tus piezas y precios del catálogo</text>
+<rect x="60" y="271" width="380" height="164" rx="16" fill="#F8F1F1" stroke="#E9DCDD"/>
+<g transform="translate(83,291)" stroke="#854457" fill="none" stroke-width="1.8" stroke-linejoin="round"><path d="M5 1H22L27 9L13.5 25L0 9Z M0 9H27 M5 1L9 9L13.5 25L18 9L22 1"/></g>
+<text x="119" y="310" font-size="16" font-weight="700">¿Tienes Iconic vigente?</text>
+<text x="82" y="355" font-size="14">Tu subtotal estimado sería</text>
+<text x="418" y="361" text-anchor="end" font-size="27" font-weight="700" fill="#7E3B4D">$420</text>
+<text x="82" y="393" font-size="12.8" fill="#71676A">Fer confirmará que tu beneficio esté activo.</text>
+<circle cx="79" cy="475" r="11" fill="none" stroke="#827B76" stroke-width="1.5"/>
+<text x="79" y="480" text-anchor="middle" font-size="14" font-weight="700" fill="#706B66">i</text>
+<text x="102" y="473" font-size="13.5" fill="#605C57">Los precios son estimados. Confirmaremos</text>
+<text x="102" y="495" font-size="13.5" fill="#605C57">tu beneficio, disponibilidad y total final</text>
+<text x="102" y="517" font-size="13.5" fill="#605C57">por WhatsApp. Envío no incluido.</text>
+<line x1="62" y1="551" x2="437" y2="551" stroke="#E5E0DB"/>
+<text x="62" y="590" font-size="14.5" font-weight="700">Tu nombre</text>
+<rect x="62" y="607" width="375" height="48" rx="11" fill="white" stroke="#CDC6C1" stroke-width="1.4"/>
+<text x="78" y="637" font-size="13.5" fill="#9B948F">Para que Fer sepa quién hace el pedido</text>
+<rect x="62" y="685" width="22" height="22" rx="5" fill="white" stroke="#968F89" stroke-width="1.6"/>
+<text x="96" y="696" font-size="13.7" font-weight="700">Entiendo que estoy enviando una</text>
+<text x="96" y="717" font-size="13.7">solicitud sujeta a confirmación y he</text>
+<text x="96" y="738" font-size="13.7">consultado las</text>
+<text x="189" y="738" font-size="13.7" fill="#7E3B4D" text-decoration="underline">Condiciones de compra.</text>
+<text x="62" y="789" font-size="13.6" fill="#7E3B4D" text-decoration="underline">Aviso de privacidad</text>
+<rect x="61" y="820" width="377" height="59" rx="14" fill="#7E3B4D"/>
+<g transform="translate(93,833)" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3A15 15 0 0 0 5 26L3 33L11 30A15 15 0 1 0 17 3Z M12 13Q11 20 23 24L26 21"/></g>
+<text x="261" y="856" font-size="16.5" font-weight="700" text-anchor="middle" fill="white">Enviar solicitud por WhatsApp</text>
+<text x="249" y="920" font-size="12.4" fill="#79726B" text-anchor="middle">WhatsApp se abrirá; tú decides cuándo enviarlo.</text>
+</g></svg>
