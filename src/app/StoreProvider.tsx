@@ -339,7 +339,7 @@ type StoreContextValue = {
   deletePurchase: (purchaseId: string) => void;
   upsertCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (customerId: string) => Promise<void>;
-  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean }) => Promise<Order>;
+  upsertOrder: (order: Order, options?: { expectedRevision?: number | null; mutationId?: string; confirmDeliveredWithBalance?: boolean; depositCorrectionNote?: string }) => Promise<Order>;
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
   /** #203 after-sales incidents (ficha linked to the order). */
   openIncident: (order: Order, incident: Omit<OrderIncident, "events">) => Promise<void>;
@@ -1098,7 +1098,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         nextOrder,
         options?.expectedRevision ?? (prev ? (order.revision ?? 0) : null),
         options?.mutationId ?? uid("mutation"),
-        { confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance }
+        {
+          confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance,
+          ...(options?.depositCorrectionNote ? { depositCorrectionNote: options.depositCorrectionNote } : {}),
+        }
       );
       const reservedProducts: Product[] = [];
       for (const update of result.stock) {

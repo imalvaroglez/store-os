@@ -334,6 +334,17 @@ export function OrderPaymentsSheet({
           )
         )}
 
+        {order.depositCorrections?.length ? (
+          <div className="space-y-1 rounded-xl bg-surface p-3 ring-1 ring-edge">
+            <p className="text-xs font-semibold text-on-surface">Correcciones del anticipo</p>
+            {order.depositCorrections.map((correction, index) => (
+              <p key={`${correction.at}-${index}`} className="text-xs text-on-surface-soft">
+                {formatMoneyExact(correction.from)} → {formatMoneyExact(correction.to)} — {correction.note}
+              </p>
+            ))}
+          </div>
+        ) : null}
+
         <div className="space-y-3 border-t border-edge pt-4">
           <div className="grid grid-cols-2 gap-3">
             <TextField

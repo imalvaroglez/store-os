@@ -316,6 +316,23 @@ service cloud.firestore {
               && after.lastPaymentId != 'inherited_deposit' && receipt.amount == before.get('deposit', 0))
           : after.lastPaymentId == paymentId);
     }
+    // #271 (PO 2026-11-09): a deposit LOWERING on an order with an accumulator
+    // and no materialization is valid ONLY as a signed correction: exactly one
+    // new append-only entry whose from/to match the deposit change, with a
+    // non-empty note, authored by the caller. Silence is denied.
+    function validDepositCorrection(before, after) {
+      let prev = before.get('depositCorrections', []);
+      let next = after.get('depositCorrections', []);
+      // Guarded: indexing an empty list errors OUTSIDE short-circuit order.
+      let entry = next.size() > 0 ? next[next.size() - 1] : {};
+      return next is list && prev is list && next.size() == prev.size() + 1
+        && after.get('inheritedDepositMaterialized', false) == before.get('inheritedDepositMaterialized', false)
+        && entry.get('from', -1) == before.get('deposit', 0)
+        && entry.get('to', -1) == after.get('deposit', 0)
+        && entry.get('note', '') is string && entry.get('note', '').size() > 0
+        && entry.get('at', '') is string && entry.get('at', '').size() > 0
+        && entry.get('by', '') == request.auth.uid;
+    }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
@@ -326,16 +343,25 @@ service cloud.firestore {
         && resource.data.storeId == request.resource.data.storeId
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision'])
             || validMoneyUpdate(id, resource.data, request.resource.data))
-        // #218: legacy deposit cannot rise after receipts, and is frozen once materialized.
+        // #218: legacy deposit cannot rise after receipts, and is frozen once
+        // materialized. #271: with an accumulator and no materialization it can
+        // only stay equal or go DOWN as a signed correction entry.
         && (!('paymentsReceivedCents' in resource.data)
             || (('deposit' in request.resource.data || !('deposit' in resource.data))
-                && request.resource.data.get('deposit', 0) <= resource.data.get('deposit', 0)))
+                && (request.resource.data.get('deposit', 0) == resource.data.get('deposit', 0)
+                    || (request.resource.data.get('deposit', 0) < resource.data.get('deposit', 0)
+                        && validDepositCorrection(resource.data, request.resource.data)))))
         && (resource.data.get('inheritedDepositMaterialized', false) != true
             || (('deposit' in request.resource.data || !('deposit' in resource.data))
                 && request.resource.data.get('deposit', 0) == resource.data.get('deposit', 0)))
         // Editing cannot strip the evidence that prevents orphaning a parent.
         && (!('paymentsReceivedCents' in resource.data)
             || 'paymentsReceivedCents' in request.resource.data)
+        // #271: the deposit-corrections trail is append-only — it can never
+        // shrink or be emptied (that is how the signed evidence would vanish).
+        && (!('depositCorrections' in resource.data)
+            || request.resource.data.get('depositCorrections', []).size()
+                >= resource.data.get('depositCorrections', []).size())
         && (!('installmentsReservedAt' in resource.data)
             || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
         && (resource.data.get('inheritedDepositMaterialized', false) != true

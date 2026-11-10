@@ -128,6 +128,9 @@ export function OrderForm({
     () => restoredDraft?.customerQuery ?? customers.find((c) => c.id === order.customerId)?.name ?? ""
   );
   const hasPaymentEvidence = order.inheritedDepositMaterialized === true || typeof order.paymentsReceivedCents === "number";
+  // #271 (PO 2026-11-09): lowering the anticipo with payment evidence needs a
+  // SIGNED motive — a silent edit erased real money from the view.
+  const [depositCorrectionNote, setDepositCorrectionNote] = useState("");
   const [deposit, setDeposit] = useState(hasPaymentEvidence ? String(order.deposit ?? 0) : restoredDraft?.deposit ?? String(order.deposit ?? 0));
   // #165 installment capture. Nothing is defaulted: the count, the frequency
   // and the first due date are the operator's agreement, per order.
@@ -154,6 +157,9 @@ export function OrderForm({
   // operator's explicit confirmation; the confirmed save records the evidence.
   const [pendingDeliveryCents, setPendingDeliveryCents] = useState<number | null>(null);
   const pendingOrderRef = useRef<Order | null>(null);
+  // #271: the delivery-with-balance retry replays the SAME save — the deposit
+  // correction motive must survive it.
+  const pendingDepositNoteRef = useRef<string | null>(null);
   const savingRef = useRef(false);
   const expectedRevision = useRef(restoredDraft?.expectedRevision !== undefined ? restoredDraft.expectedRevision : isNew ? null : (order.revision ?? 0));
   const mutationId = useRef(restoredDraft?.mutationId ?? uid("mutation"));
@@ -462,6 +468,14 @@ export function OrderForm({
       toast.error("El anticipo no puede subir cuando el pedido ya tiene cobros. Registra un cobro.");
       return;
     }
+    const loweringWithEvidence =
+      hasPaymentEvidence &&
+      order.inheritedDepositMaterialized !== true &&
+      numberFromText(deposit) < (order.deposit ?? 0);
+    if (loweringWithEvidence && !depositCorrectionNote.trim()) {
+      toast.error("Escribe el motivo de la corrección del anticipo: queda como registro firmado de quién, cuánto y por qué.");
+      return;
+    }
     // #165: validate the whole agreement before saving anything. Errors are
     // the operator's exact reason, in Spanish.
     let installments: Order["installments"];
@@ -518,12 +532,12 @@ export function OrderForm({
       ...(JSON.parse(snapshotDraft()) as Omit<OrderDraftSnapshot, "savedAt">),
       savedAt: new Date().toISOString(),
     });
-    await persist(next);
+    await persist(next, false, loweringWithEvidence ? depositCorrectionNote.trim() : undefined);
   }
 
   /** Shared persistence tail: one place for the success path and the
    * delivery-with-balance confirmation (PO 2026-11-03 R9). */
-  async function persist(next: Order, confirmDeliveredWithBalance = false) {
+  async function persist(next: Order, confirmDeliveredWithBalance = false, depositCorrectionNote?: string) {
     try {
       savingRef.current = true;
       setSaving(true);
@@ -531,8 +545,11 @@ export function OrderForm({
         expectedRevision: expectedRevision.current,
         mutationId: mutationId.current,
         ...(confirmDeliveredWithBalance ? { confirmDeliveredWithBalance: true } : {}),
+        ...(depositCorrectionNote ? { depositCorrectionNote } : {}),
       });
       const cleared = clearOrderDraft(draftKey);
+      setDepositCorrectionNote("");
+      pendingDepositNoteRef.current = null;
       toast.success("Pedido guardado");
       if (!cleared) toast.error("No se pudo borrar el borrador de este dispositivo.");
       setPendingDeliveryCents(null);
@@ -546,6 +563,7 @@ export function OrderForm({
       // that gets RECORDED on the order (retroactive / contraentrega flows).
       if (error instanceof DeliveryWithBalanceError) {
         pendingOrderRef.current = next;
+        pendingDepositNoteRef.current = depositCorrectionNote ?? null;
         setPendingDeliveryCents(error.balanceCents);
         return;
       }
@@ -817,6 +835,22 @@ export function OrderForm({
         )}
         <TextField label="Fecha prometida" type="date" value={promisedDate} onChange={(event) => setPromisedDate(event.target.value)} />
       </div>
+      {hasPaymentEvidence &&
+        order.inheritedDepositMaterialized !== true &&
+        numberFromText(deposit) < (order.deposit ?? 0) && (
+          <div className="space-y-1 rounded-xl bg-surface p-3 ring-1 ring-edge">
+            <p className="text-xs text-on-surface-soft">
+              Estás bajando el anticipo de un pedido con cobros registrados. La corrección queda como registro
+              firmado (quién, de cuánto a cuánto, por qué); el dinero ya recibido no se borra en silencio.
+            </p>
+            <TextField
+              label="Motivo de la corrección del anticipo"
+              value={depositCorrectionNote}
+              onChange={(event) => setDepositCorrectionNote(event.target.value)}
+              placeholder="p. ej. anticipo capturado por error, era $100"
+            />
+          </div>
+        )}
       <SelectField label="Estado del pedido" value={orderStatus} onChange={setOrderStatus} options={STATUS_OPTIONS} />
       <TextArea label="Notas" value={notes} onChange={(event) => setNotes(event.target.value)} />
 
@@ -899,7 +933,7 @@ export function OrderForm({
               disabled={saving}
               onClick={() => {
                 const order = pendingOrderRef.current;
-                if (order) void persist(order, true);
+                if (order) void persist(order, true, pendingDepositNoteRef.current ?? undefined);
               }}
             >
               Entregar con saldo
