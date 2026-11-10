@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.12.0",
+    "date": "2026.11.10",
+    "title": "Dinero protegido al corregir el anticipo",
+    "notes": [
+      "Al bajar el anticipo de un pedido que ya tiene cobros, ahora se pide el motivo y queda un registro con quién, de cuánto a cuánto y por qué. El dinero recibido ya no puede desaparecer en silencio.",
+      "Las correcciones del anticipo se ven en Cobros del pedido, con su motivo y su fecha.",
+      "Arreglo interno: Reglas de venta ya no falla en tiendas que empiezan su configuración de precios con una tabla de categoría."
+    ]
+  },
+  {
     "version": "1.11.1",
     "date": "2026.11.09",
     "title": "Aplicar precios sugeridos sin fricción",
