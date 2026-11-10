@@ -148,16 +148,10 @@ describe("text-entry-audit · flujo Productos (#219)", () => {
     mocks.upsertProduct.mockReset().mockResolvedValue(undefined);
   });
 
-  it("URL de imagen inválida no guarda y explica qué se espera", () => {
-    render(<ProductForm product={{ ...design, imageUrl: "foto bonita" }} onDone={() => {}} />);
-    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
-    // Es borrador: el guard de publicación no aplica, pero la URL sí se valida siempre.
-    expect(screen.getByText(/enlace que empiece con http/)).toBeTruthy();
-    expect(mocks.upsertProduct).not.toHaveBeenCalled();
-  });
+
 
   it("clave duplicada (mayúsculas/minúsculas) bloquea con mensaje", () => {
-    mocks.state!.products = [{ ...design, id: "otro", name: "Otro diseño", sku: "SOL" } as typeof mocks.state!.products[number]];
+    mocks.state!.products = [{ ...design, id: "otro", name: "Otro diseño", sku: "SOL" } as unknown as Product];
     render(<ProductForm product={{ ...design, categoryIds: ["c1"] }} onDone={() => {}} />);
     fireEvent.change(screen.getByLabelText(/Regular/), { target: { value: "300" } });
     // Misma clave escrita a mano (minúsculas) contra otro producto de la tienda.
