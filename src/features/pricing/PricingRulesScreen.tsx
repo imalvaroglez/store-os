@@ -8,7 +8,7 @@
 // eligible pieces, and applying writes ONLY prices (scoped batch, never a
 // full product upsert) after an explicit summary confirmation.
 import { useMemo, useState } from "react";
-import { useStore } from "../../app/StoreProvider";
+import { useStore, PublicCatalogProjectionError } from "../../app/StoreProvider";
 import {
   Badge,
   Button,
@@ -236,8 +236,14 @@ export function PricingRulesScreen() {
           ? `Precios actualizados en ${updates.length} pieza(s); se omitieron ${skippedBelowCost} por quedar bajo el costo.`
           : `Precios actualizados en ${updates.length} pieza(s).`
       );
-    } catch {
-      toast.error("No se pudo aplicar. Ningún precio cambió: revisa tu conexión e inténtalo de nuevo.");
+    } catch (error) {
+      if (error instanceof PublicCatalogProjectionError) {
+        // Prices DID change; only the public projection failed — honest report.
+        setSelected({});
+        toast.error("Precios actualizados, pero el catálogo público no se actualizó: usa Republicar catálogo en la tienda.");
+      } else {
+        toast.error("No se pudo aplicar. Ningún precio cambió: revisa tu conexión e inténtalo de nuevo.");
+      }
     } finally {
       setApplying(false);
     }

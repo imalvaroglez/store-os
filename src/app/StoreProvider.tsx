@@ -43,7 +43,7 @@ import {
 } from "../features/orders/payments";
 import { creditAvailableCents, ordersForCustomer, planCreditApplications } from "../features/orders/customerCredit";
 import { useAuth } from "./firebase/AuthProvider";
-export { CategoryRulesConflictError } from "./firebase/firestoreData";
+export { CategoryRulesConflictError, PublicCatalogProjectionError } from "./firebase/firestoreData";
 import type { AppUser } from "./firebase/auth";
 import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
 import { normalizeEmail, sendInviteLink } from "./firebase/auth";
