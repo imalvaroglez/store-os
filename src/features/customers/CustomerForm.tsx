@@ -1,6 +1,22 @@
 import { useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { Button, SelectField, TextField, TextArea, useToast } from "../../design-system";
+import { Button, Dialog, SelectField, TextField, TextArea, useToast } from "../../design-system";
+
+/** #219 (Clientas): a phone typed or pasted from WhatsApp keeps the
+ * separators Fer uses (spaces, dashes, parens, dots, +) — anything else
+ * (letters, emojis) never reaches the draft. Persistence keeps as typed:
+ * search normalizes on both sides. */
+export function sanitizePhoneInput(value: string): string {
+  return value.replace(/[^\d+\s().-]/g, "").slice(0, 24);
+}
+
+/** #219: loose identity for duplicate-name detection (accents folded,
+ * letters+digits only) — the same normalization the search uses. */
+function sameNameLoose(a: string, b: string): boolean {
+  const loose = (text: string) =>
+    text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "").toLocaleLowerCase("es-MX");
+  return loose(a) === loose(b);
+}
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import type { Customer } from "../../types";
 
@@ -13,18 +29,39 @@ export function CustomerForm({
   onDone: () => void;
   onSaved?: (customer: Customer) => void;
 }) {
-  const { upsertCustomer, activeStore } = useStore();
+  const { upsertCustomer, activeStore, state } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<Customer>(customer);
   // FER-05: manual Iconic grant. Kept as plain strings while editing so the
   // dates can be cleared; validated (both or none, until >= since) on submit.
+  const [confirmDuplicate, setConfirmDuplicate] = useState<string | null>(null);
   const [iconicSince, setIconicSince] = useState(customer.iconic?.since ?? "");
   const [iconicUntil, setIconicUntil] = useState(customer.iconic?.until ?? "");
 
-  async function submit() {
+  async function submit(force = false) {
     if (!draft.name.trim()) return;
     if (draft.assignedPriceTierId && !tiersForStore(activeStore).some((tier) => tier.id === draft.assignedPriceTierId)) {
       toast.error("Elige un nivel de precio disponible.");
+      return;
+    }
+    // #219: a phone needs enough digits to be a phone — a stray letter-less
+    // "12" is a capture error, not a contact. Separators are fine.
+    const phoneDigits = (draft.phone ?? "").replace(/\D/g, "");
+    if ((draft.phone ?? "").trim() && phoneDigits.length < 8) {
+      toast.error("El teléfono necesita al menos 8 dígitos (con lada).");
+      return;
+    }
+    if (draft.instagram && /\s/.test(draft.instagram)) {
+      toast.error("El usuario de Instagram no lleva espacios.");
+      return;
+    }
+    // #219: duplicate name — SOFT warning, never a block (two Marías exist);
+    // accent/case-insensitive so "Maria Lopez" warns against "María López".
+    const clash = state.customers.find(
+      (c) => c.id !== draft.id && c.storeId === activeStore?.id && sameNameLoose(c.name, draft.name)
+    );
+    if (clash && !force) {
+      setConfirmDuplicate(clash.name);
       return;
     }
     if ((iconicSince || iconicUntil) && !(iconicSince && iconicUntil)) {
@@ -38,6 +75,8 @@ export function CustomerForm({
     const saved = {
       ...draft,
       name: draft.name.trim(),
+      phone: draft.phone?.trim() || undefined,
+      instagram: draft.instagram?.trim() || undefined,
       // undefined (both dates empty) removes a previous manual grant —
       // saveEntity turns it into a deleteField() so Firestore actually clears it.
       iconic: iconicSince && iconicUntil ? { since: iconicSince, until: iconicUntil } : undefined,
@@ -66,13 +105,13 @@ export function CustomerForm({
         inputMode="tel"
         placeholder="5512345678"
         value={draft.phone ?? ""}
-        onChange={(e) => setDraft({ ...draft, phone: e.target.value || undefined })}
+        onChange={(e) => setDraft({ ...draft, phone: sanitizePhoneInput(e.target.value).trim() || undefined })}
       />
       <TextField
         label="Instagram"
         placeholder="@usuario"
         value={draft.instagram ?? ""}
-        onChange={(e) => setDraft({ ...draft, instagram: e.target.value || undefined })}
+        onChange={(e) => setDraft({ ...draft, instagram: e.target.value.replace(/\s+/g, "").trim() || undefined })}
       />
       <SelectField label="Tipo de cliente" value={draft.segment ?? "regular"} onChange={(segment) => setDraft({ ...draft, segment })} options={[{ value: "regular", label: "Regular" }, { value: "entrepreneur", label: "Emprendedora" }]} />
       {activeStore?.type === "inventory_tiered" && <p className="text-sm text-ink-soft">El tipo identifica a tu clienta. Su precio se elige abajo; marcar Emprendedora no asigna Iconic automáticamente.</p>}
@@ -110,9 +149,30 @@ export function CustomerForm({
         value={draft.notes ?? ""}
         onChange={(e) => setDraft({ ...draft, notes: e.target.value || undefined })}
       />
-      <Button full size="lg" onClick={submit} disabled={!draft.name.trim()}>
+      <Button full size="lg" onClick={() => void submit()} disabled={!draft.name.trim()}>
         Guardar cliente
       </Button>
+
+      <Dialog
+        open={confirmDuplicate !== null}
+        title="¿Ya tienes una clienta con ese nombre?"
+        onClose={() => setConfirmDuplicate(null)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setConfirmDuplicate(null)}>
+              Revisar
+            </Button>
+            <Button size="sm" onClick={() => { setConfirmDuplicate(null); void submit(true); }}>
+              Guardar de todos modos
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Ya existe «{confirmDuplicate}» con un nombre muy parecido. Si es la misma persona, revisa
+          su ficha en lugar de crear un duplicado.
+        </p>
+      </Dialog>
     </div>
   );
 }

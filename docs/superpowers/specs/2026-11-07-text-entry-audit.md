@@ -29,10 +29,21 @@ Metodología: por campo se declara (1) significado y tipo persistido, (2) requer
 - Producto libre: los espacios extremos NO se recortan mientras se escribe (contrato de captura) y SÍ al persistir (nombre limpio en el pedido).
 - **Defecto encontrado y corregido (misión de operadora):** la búsqueda de clienta por teléfono dictado no encontraba el número guardado. SearchSelect ahora aplica una segunda pasada «laxa»: diacríticos plegados (maria jose → María José) y solo letras/dígitos («55-1234 5678», «(55) 1234-5678» → 5512345678, y la dirección inversa). La pasada literal conserva el comportamiento exacto previo. **Trade-off aceptado (revisión):** la fusión letras+dígitos puede teóricamente cruzar el borde label/keywords («os car» vs «Rios»+«Carpintería»); con keywords reales (clave/teléfono/instagram) el caso dominante es el buscado.
 
+## Flujo: Clientas (`CustomerForm`) — completo (2026-11-10)
+
+| # | Campo | Contrato | Cobertura |
+|---|---|---|---|
+| 1 | Nombre | Requerido; trim al guardar. Duplicado con acentos/caso insensible → **aviso suave** («¿es la misma persona?»), nunca bloqueo. | CustomerForm.test |
+| 2 | Teléfono | inputMode=tel; captura conserva separadores de WhatsApp (espacios/guiones/paréntesis/+/puntos) y rechaza letras/emojis (`sanitizePhoneInput`, máx 24); al guardar exige ≥8 dígitos; persiste tal cual (la búsqueda normaliza ambos lados). | CustomerForm.test |
+| 3 | Instagram | Sin espacios jamás (en escritura y al guardar); @ opcional; trim al guardar. | CustomerForm.test |
+| 4 | Nivel de precio / segmento | Selección cerrada; nivel inválido bloquea con mensaje. | preexistente + test nombre distinto |
+
+Menores UX del pedido integrados aquí: «+ Nuevo cliente» precarga lo tecleado (número→teléfono, texto→nombre); el Guardar deshabilitado explica «Elige o crea una clienta»; `autocomplete="off"` en búsquedas.
+
 ### Pendiente (fase 1b en adelante)
 
 - [x] Pedidos: fecha prometida (inválida/omitida), producto libre (espacios extremos), búsqueda de clienta por teléfono con espacios. — fase 1b completa (2026-11-10).
-- [ ] Clientas (`CustomerForm`): Nombre (unicidad), Teléfono (dígitos/`+`), Instagram (@), Nivel.
+- [x] Clientas (`CustomerForm`): Nombre (unicidad), Teléfono (dígitos/`+`), Instagram (@), Nivel. — completo (2026-11-10).
 - [ ] Productos (`ProductForm`): Nombre, Clave/SKU (única, mayúsculas), costos/precios por nivel, En existencia/Alerta en, URL de imagen.
 - [ ] Compras (`PurchaseForm`): folio, código del ticket (#206 ya cubre preservación), importes (#206/#207).
 - [ ] Público: búsqueda del catálogo, carrito por WhatsApp.

@@ -884,3 +884,33 @@ describe("text-entry-audit · fase 1b (#219)", () => {
   });
 
 });
+
+describe("text-entry-audit · flujo Clientas en Pedidos (#219)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockUpsertOrder.mockClear().mockResolvedValue({});
+    state.customers = [];
+  });
+
+  it("el botón deshabilitado explica qué falta (clienta)", () => {
+    const order = { id: "cli-hint", storeId: "store_olivia", customerId: "", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    expect(screen.getByText("Elige o crea una clienta para poder guardar.")).toBeTruthy();
+  });
+
+  it("«+ Nuevo cliente» precarga lo tecleado: número → teléfono; texto → nombre", () => {
+    const order = { id: "cli-pre", storeId: "store_olivia", customerId: "", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    const cliente = screen.getByLabelText("Cliente");
+    // Parece teléfono → precarga teléfono, no nombre.
+    fireEvent.change(cliente, { target: { value: "55-1234 5678" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Nuevo cliente" }));
+    expect((screen.getByLabelText("Teléfono") as HTMLInputElement).value).toBe("55-1234 5678");
+    expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe("");
+    // Cerrar el diálogo y repetir con texto → precarga nombre.
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "María Nueva" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Nuevo cliente" }));
+    expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe("María Nueva");
+  });
+});

@@ -82,6 +82,7 @@ export function SearchSelect({
           id={inputId}
           className={fieldBase}
           aria-label={label}
+          autoComplete="off"
           disabled={disabled}
           role="combobox"
           aria-autocomplete="list"

@@ -948,6 +948,9 @@ export function OrderForm({
             </div>
             {onCancel && <Button variant="ghost" full onClick={onCancel}>Cancelar</Button>}
             <Button full size="lg" onClick={submit} disabled={saving || !!conflictingDraft || !customerId || lines.length === 0 || !totals}>Guardar pedido</Button>
+            {!customerId && (
+              <p className="text-xs text-on-surface-soft -mt-2">Elige o crea una clienta para poder guardar.</p>
+            )}
           </div>
         </div>
         {/* Room so the fixed bar (mobile) never covers the last form fields. */}
@@ -962,7 +965,16 @@ export function OrderForm({
       </Dialog>
       <Dialog open={newCustomerOpen} title="Nuevo cliente" onClose={() => setNewCustomerOpen(false)}>
         <CustomerForm
-          customer={activeStore ? newCustomer(activeStore.id) : newCustomer(order.storeId)}
+          customer={{
+            ...(activeStore ? newCustomer(activeStore.id) : newCustomer(order.storeId)),
+            // #219 (UX menor): what Fer already typed seeds the new ficha —
+            // a phone-like query becomes the phone, anything else the name.
+            ...(customerQuery.trim()
+              ? /^\+?[\d\s().-]{8,}$/.test(customerQuery.trim())
+                ? { phone: customerQuery.trim() }
+                : { name: customerQuery.trim() }
+              : {}),
+          }}
           onDone={() => setNewCustomerOpen(false)}
           onSaved={(customer) => {
             // Creating a customer inline IS the explicit choice to switch:
