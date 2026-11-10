@@ -633,10 +633,8 @@ export async function saveOrderWithStockTx(
         if (vDelta.delta > 0) {
           // Route through the SINGLE product-level write below (never a second
           // tx.update on the same doc — last-write-wins would lose one).
-          const current = typeof data.quantityOnHand === "number" ? (data.quantityOnHand as number) : 0;
           const existing = releases.get(vDelta.productId);
           releases.set(vDelta.productId, (existing ?? 0) + vDelta.delta);
-          void current;
           continue;
         }
         throw new Error(isVariantProduct({ variants })
