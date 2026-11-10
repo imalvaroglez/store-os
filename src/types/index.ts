@@ -358,6 +358,11 @@ export type Order = {
    * the inherited payment record, so the doc never counts that deposit twice
    * (accumulator + pending deposit). */
   inheritedDepositMaterialized?: boolean;
+  /** #271 (PO 2026-11-09): signed evidence of every deposit correction made
+   * with payment evidence in the doc — who, how much (from → to), why, when.
+   * Append-only like the rest of the money evidence; carried verbatim by
+   * ordinary saves. A lowering without its entry is denied by the rules. */
+  depositCorrections?: OrderDepositCorrection[];
   /** PO 2026-11-03 R9: evidence stamped when the operator explicitly confirmed
    * delivering with an uncovered balance (retroactive / cash-on-delivery
    * flows). The delivery gate still fires by default — this is the recorded
@@ -398,6 +403,18 @@ export type Order = {
 /** How money was received. "unknown" is ONLY for the inherited legacy deposit
  * (decision i on #123): real receptions always carry cash or transfer. */
 export type OrderPaymentMethod = "cash" | "transfer" | "unknown";
+
+/** #271 (PO 2026-11-09): one SIGNED deposit correction — the lowering of a
+ * still-unmaterialized deposit on an order that already has payment
+ * evidence. `from`/`to` are the deposit's decimal pesos before/after; `note`
+ * is the operator's mandatory motive. Append-only evidence. */
+export type OrderDepositCorrection = {
+  from: number;
+  to: number;
+  note: string;
+  by: string;
+  at: string;
+};
 
 /** #189: one compensation event between orders of the same clienta/store.
  * Immutable evidence on the DESTINATION order: corrections are new entries,
