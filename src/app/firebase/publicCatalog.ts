@@ -32,6 +32,15 @@ export type PublicCategory = {
   sortOrder: number;
 };
 
+/** #124: one color of a design, public view — name + photo + a coarse
+ * availability signal (never counts, never costs). */
+export type PublicProductVariant = {
+  id: string;
+  color: string;
+  imageUrl: string | null;
+  stockSignal: PublicStockSignal;
+};
+
 export type PublicProductSummary = {
   storeId: string;
   productSlug: string;
@@ -46,6 +55,7 @@ export type PublicProductSummary = {
   /** Prices per visible tier (owner decision 2026-08-29). Absent on stale docs. */
   prices?: Record<string, number>;
   stockSignal?: PublicStockSignal;
+  variants?: PublicProductVariant[];
   availability?: string;
   finish?: string | null;
   isFeatured?: boolean;
@@ -100,6 +110,7 @@ export type PublicProductDetail = {
   /** Prices per visible tier. Absent on stale projections. */
   prices?: Record<string, number>;
   stockSignal?: PublicStockSignal;
+  variants?: PublicProductVariant[];
   categories: { id: string; name: string; slug: string }[];
 };
 
