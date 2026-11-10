@@ -90,7 +90,7 @@ describe("#176 publications — publicStores sin datos de membresía (H3 de revi
       defaultTierId: "t_retail", storefront: { hero: { title: "Hola" } },
       createdAt: "", updatedAt: "",
     } as never;
-    const projected = projectPublicStore(store, "olivia-audit") as Record<string, unknown>;
+    const projected = projectPublicStore(store) as Record<string, unknown>;
     const serialized = JSON.stringify(projected);
     for (const marker of ["uid-secreto-dueno", "uid-secreto-miembro", "memberUids", "ownerUid", "pendingInvites", "maria@clienta.test"]) {
       expect(serialized.includes(marker), `publicStores filtró "${marker}"`).toBe(false);
