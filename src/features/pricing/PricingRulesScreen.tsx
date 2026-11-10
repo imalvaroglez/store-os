@@ -7,7 +7,7 @@
 // rows cannot be selected, bulk selection only touches the current filter's
 // eligible pieces, and applying writes ONLY prices (scoped batch, never a
 // full product upsert) after an explicit summary confirmation.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore, PublicCatalogProjectionError } from "../../app/StoreProvider";
 import {
   Badge,
@@ -77,6 +77,15 @@ export function PricingRulesScreen() {
     () => new URLSearchParams(window.location.search).get("categoria") ?? ""
   );
   const [includeUnavailable, setIncludeUnavailable] = useState(false);
+  // #289 UX: arriving from Estrategia's bridge, land ON the review list —
+  // not above the general-rule cards (operator review finding 1).
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (categoryFilter && suggestionsRef.current) {
+      suggestionsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Pre-apply summary (#289): what will change, what is omitted, what needs
   // explicit loss confirmation — nothing writes before Fer sees this.
   const [review, setReview] = useState<{
@@ -359,8 +368,8 @@ export function PricingRulesScreen() {
           </p>
         </div>
 
-        <Card className="space-y-3">
-          <div className="flex flex-wrap items-end justify-between gap-2">
+        <Card className="space-y-3" >
+          <div ref={suggestionsRef} className="flex flex-wrap items-end justify-between gap-2">
             <div className="w-full sm:w-72">
               <SelectField
                 label="Categoría a revisar"

@@ -3,7 +3,7 @@
 // it, and save ONLY that category's rules — transactionally, so other
 // categories, level rules and product exceptions are never touched. Applying
 // prices to products stays in Reglas de venta; this screen never edits prices.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore, CategoryRulesConflictError } from "../../app/StoreProvider";
 import {
   Badge,
@@ -143,12 +143,16 @@ export function PricingStrategyScreen() {
     });
   }
 
+  // UX operadora #3: choosing a category is the big decision — take Fer to
+  // the analysis/proposal, not the top of the page.
+  const proposalRef = useRef<HTMLDivElement>(null);
   function adopt(categoryIdNext: string) {
     setCategoryId(categoryIdNext);
     setReplaceExisting(false);
     // Draft re-adoption on category switch is driven by the effect below.
     setDraft(null);
     setDraftBase("");
+    if (categoryIdNext) requestAnimationFrame(() => proposalRef.current?.scrollIntoView({ behavior: "smooth" }));
   }
 
   // Adopt the saved table (when compatible) or start from the proposal card.
@@ -394,6 +398,7 @@ export function PricingStrategyScreen() {
               ...categories.map((c) => ({ value: c.id, label: c.name })),
             ]}
           />
+          <div ref={proposalRef} />
           {categoryId && analysis && (
             <div className="space-y-1 text-sm text-on-surface-soft">
               <p>
@@ -412,25 +417,38 @@ export function PricingStrategyScreen() {
                   {analysis.withoutCost} piezas sin costo confiable quedan fuera (nunca reciben precio inventado).
                 </p>
               )}
-              {tiers.map((tier) => {
-                const gaps = packagingGaps(activeStore?.packaging, tier.id);
-                if (gaps.length > 0) {
+              {(() => {
+                // UX operadora #2: three identical red lines are noise — one
+                // clear line when NO level is configured; keep per-tier detail
+                // only for the mixed cases (some configured, some missing costs).
+                const unconfigured = tiers.filter((t) => !packagingConfigured(activeStore?.packaging, t.id));
+                const withGaps = tiers
+                  .map((t) => ({ tier: t, gaps: packagingGaps(activeStore?.packaging, t.id) }))
+                  .filter((entry) => entry.gaps.length > 0);
+                if (unconfigured.length === tiers.length && withGaps.length === 0) {
                   return (
-                    <p key={tier.id} className="text-danger">
-                      Costo base de {tier.label} incompleto: faltan costos de empaque ({gaps.join(", ")}).
+                    <p className="text-danger">
+                      Empaques individuales sin configurar: el costo base es solo adquisición (contribuciones
+                      preliminares). Configúralo en Productos → Empaques.
                     </p>
                   );
                 }
-                if (!packagingConfigured(activeStore?.packaging, tier.id)) {
-                  return (
-                    <p key={tier.id} className="text-danger">
-                      Empaque individual de {tier.label} sin configurar: el costo base es solo adquisición
-                      (preliminar). Configúralo en Productos → Empaques.
-                    </p>
-                  );
-                }
-                return null;
-              })}
+                return (
+                  <>
+                    {unconfigured.length > 0 && unconfigured.length < tiers.length && (
+                      <p className="text-danger">
+                        Empaque individual sin configurar en: {unconfigured.map((t) => t.label).join(", ")} — costo
+                        base preliminar (solo adquisición).
+                      </p>
+                    )}
+                    {withGaps.map(({ tier, gaps }) => (
+                      <p key={tier.id} className="text-danger">
+                        Costo base de {tier.label} incompleto: faltan costos de empaque ({gaps.join(", ")}).
+                      </p>
+                    ))}
+                  </>
+                );
+              })()}
             </div>
           )}
         </Card>
