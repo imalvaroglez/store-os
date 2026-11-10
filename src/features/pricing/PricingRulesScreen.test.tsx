@@ -6,7 +6,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { PricingRulesScreen } from "./PricingRulesScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
-import type { Product, Store } from "../../types";
+import type { Product, Store, PricingRulesConfig } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
@@ -211,5 +211,24 @@ describe("PricingRulesScreen orientación y lote (#289)", () => {
     expect(await screen.findByText(/Precios actualizados en 1 pieza/)).toBeTruthy();
     expect(mocks.applyProductPrices).toHaveBeenCalledTimes(1);
     expect(mocks.applyProductPrices.mock.calls[0][0][0].prices.t_iconic).toBe(200);
+  });
+});
+
+describe("#289 misión 5a — config sin byTier (regresión)", () => {
+  it("una tienda que empieza precios por Estrategia (solo byCategory) renderiza y sugiere por tabla", async () => {
+    state.categories = [
+      { id: "c_reloj", storeId: "store_olivia", name: "Reloj", active: true, createdAt: "", updatedAt: "" },
+    ] as typeof state.categories;
+    state.stores[0].pricingRules = {
+      byCategory: { c_reloj: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 90 }], rounding: "none" } } },
+    } as PricingRulesConfig;
+    state.products = [
+      product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 40, prices: { t_iconic: 60 } }),
+    ];
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    // Candado de regresión: cloneConfig ya normalizaba byTier pre-PR; el tipo
+    // opcional + guardas mantienen el contrato a medida que crecen lectores.
+    expect(await screen.findByText(/Reloj Madrid/)).toBeTruthy();
+    expect(screen.getAllByText(/\$90/).length).toBeGreaterThan(0);
   });
 });
