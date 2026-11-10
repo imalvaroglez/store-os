@@ -33,11 +33,21 @@ describe("canonical legacy deposit on full saves (#218)", () => {
     { name: "defaults an absent raw deposit to zero", raw: { deposit: undefined, paymentsReceivedCents: 59000 }, requested: 590, expected: 0 },
   ])("$name", async ({ raw, requested, expected }) => {
     tx.get.mockResolvedValue({ exists: () => true, data: () => ({ ...order, ...raw }) });
-    const result = await saveOrderWithStockTx(user, { ...order, deposit: requested, paymentStatus: "paid" }, 0, "edit");
+    // #271: a lowering with evidence now carries its signed motive (ignored
+    // by the non-lowering cases).
+    const result = await saveOrderWithStockTx(user, { ...order, deposit: requested, paymentStatus: "paid" }, 0, "edit", { depositCorrectionNote: "Depósito duplicado: el cobro ya lo cubre" });
     expect(result.order.deposit).toBe(expected);
     expect(result.order.paymentStatus).toBe(paymentStatusForOrder(result.order));
     expect(tx.set.mock.calls[0][1].deposit).toBe(expected);
     if (expected === 0 && raw.paymentsReceivedCents === 59000) expect(docReceivedCents(result.order)).toBe(59000);
+    // The signed record lands exactly on the lowering case.
+    if (raw.deposit !== undefined && requested < raw.deposit && raw.paymentsReceivedCents !== undefined && !raw.inheritedDepositMaterialized) {
+      expect(result.order.depositCorrections).toEqual([
+        expect.objectContaining({ from: raw.deposit, to: expected, note: "Depósito duplicado: el cobro ya lo cubre", by: user.uid }),
+      ]);
+    } else {
+      expect(result.order.depositCorrections).toBeUndefined();
+    }
   });
 
   it("preserves an actual legacy deposit after an adjustment-first record", async () => {
