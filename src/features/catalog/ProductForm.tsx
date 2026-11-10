@@ -380,7 +380,9 @@ export function ProductForm({
       next.prices = Object.fromEntries(
         Object.entries(tierPrices).map(([k, v]) => [k, parseAmount(v) ?? 0])
       );
-      next.quantityOnHand = parseAmount(qty) ?? 0;
+      // #124: a variant design keeps NO product-level shelf — each color owns
+      // its own; writing 0 here would be a second, lying source of truth.
+      if (!variantsEnabled) next.quantityOnHand = parseAmount(qty) ?? 0;
       next.lowStockAt = parseAmount(lowAt);
       next.price = undefined;
     } else {
