@@ -339,7 +339,8 @@ export function OrderPaymentsSheet({
             <p className="text-xs font-semibold text-on-surface">Correcciones del anticipo</p>
             {order.depositCorrections.map((correction, index) => (
               <p key={`${correction.at}-${index}`} className="text-xs text-on-surface-soft">
-                {formatMoneyExact(correction.from)} → {formatMoneyExact(correction.to)} — {correction.note}
+                {formatMoneyExact(correction.from)} → {formatMoneyExact(correction.to)} — {correction.note} ·{" "}
+                {formatDateLabel(correction.at.slice(0, 10))}
               </p>
             ))}
           </div>

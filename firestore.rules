@@ -317,19 +317,28 @@ service cloud.firestore {
           : after.lastPaymentId == paymentId);
     }
     // #271 (PO 2026-11-09): a deposit LOWERING on an order with an accumulator
-    // and no materialization is valid ONLY as a signed correction: exactly one
-    // new append-only entry whose from/to match the deposit change, with a
-    // non-empty note, authored by the caller. Silence is denied.
+    // and no materialization is valid ONLY as a signed correction. The trail
+    // itself is strictly append-only: a write that touches depositCorrections
+    // must keep it VERBATIM identical or append exactly one well-formed entry
+    // (deep list equality `next == prev + [entry]` — same-size rewrites and
+    // fabricated appends without a real lowering are denied). The entry needs
+    // a non-blank note, a timestamp, from/to matching the real deposit change,
+    // and the CALLER's signature.
     function validDepositCorrection(before, after) {
       let prev = before.get('depositCorrections', []);
       let next = after.get('depositCorrections', []);
       // Guarded: indexing an empty list errors OUTSIDE short-circuit order.
       let entry = next.size() > 0 ? next[next.size() - 1] : {};
+      // ponytail: this CEL has no list concat/slice/lambdas, so a rewritten
+      // PREFIX smuggled inside a genuine lowering cannot be verified here —
+      // the transaction always carries the doc's own trail verbatim, and
+      // every non-lowering write must keep the trail deep-equal.
       return next is list && prev is list && next.size() == prev.size() + 1
         && after.get('inheritedDepositMaterialized', false) == before.get('inheritedDepositMaterialized', false)
+        && after.get('deposit', 0) < before.get('deposit', 0)
         && entry.get('from', -1) == before.get('deposit', 0)
         && entry.get('to', -1) == after.get('deposit', 0)
-        && entry.get('note', '') is string && entry.get('note', '').size() > 0
+        && entry.get('note', '') is string && !entry.get('note', '').matches('^\\s*$')
         && entry.get('at', '') is string && entry.get('at', '').size() > 0
         && entry.get('by', '') == request.auth.uid;
     }
@@ -337,7 +346,7 @@ service cloud.firestore {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
@@ -357,11 +366,15 @@ service cloud.firestore {
         // Editing cannot strip the evidence that prevents orphaning a parent.
         && (!('paymentsReceivedCents' in resource.data)
             || 'paymentsReceivedCents' in request.resource.data)
-        // #271: the deposit-corrections trail is append-only — it can never
-        // shrink or be emptied (that is how the signed evidence would vanish).
-        && (!('depositCorrections' in resource.data)
-            || request.resource.data.get('depositCorrections', []).size()
-                >= resource.data.get('depositCorrections', []).size())
+        // #271: the corrections trail is append-only AND unrewritable — a
+        // write touching the field (present before OR introduced now) keeps
+        // it verbatim or appends one valid SIGNED entry tied to a real
+        // lowering. Count-only checks let same-size rewrites and first-write
+        // fabrications through; this does not.
+        && (!('depositCorrections' in resource.data) && !('depositCorrections' in request.resource.data)
+            || request.resource.data.get('depositCorrections', [])
+                == resource.data.get('depositCorrections', [])
+            || validDepositCorrection(resource.data, request.resource.data))
         && (!('installmentsReservedAt' in resource.data)
             || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
         && (resource.data.get('inheritedDepositMaterialized', false) != true
