@@ -350,6 +350,6 @@ describe("#271 correcciones del anticipo visibles en Cobros", () => {
       </ToastProvider>
     );
     expect(await screen.findByText("Correcciones del anticipo")).toBeInTheDocument();
-    expect(screen.getByText(/\$500\.00 → \$100\.00 — Anticipo capturado por error: era \$100/)).toBeInTheDocument();
+    expect(screen.getByText(/\$500\.00 → \$100\.00 — Anticipo capturado por error: era \$100 · 9\/11\/2026/)).toBeInTheDocument();
   });
 });

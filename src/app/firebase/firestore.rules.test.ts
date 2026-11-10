@@ -776,13 +776,26 @@ describe("legacy deposit cannot rise after payment evidence (#218)", () => {
     // #271 (PO 2026-11-09): the raw lowering is no longer silent either — it
     // requires the signed correction entry (from/to/note/author) in the same
     // write; the end-to-end path is covered in the orderPayments suite.
+    // Forged variants FIRST (the doc is still pristine at deposit 590).
     await assertFails(updateDoc(ref, { deposit: 0 }));
+    await assertFails(updateDoc(ref, { deposit: 0, depositCorrections: [{ from: 590, to: 0, note: "No fui yo", by: "someone-else", at: "2026-11-09T00:00:00.000Z" }] }));
+    await assertFails(updateDoc(ref, { deposit: 0, depositCorrections: [{ from: 999, to: 0, note: "Monto inventado", by: "deposit-218-user", at: "2026-11-09T00:00:00.000Z" }] }));
+    await assertFails(updateDoc(ref, { deposit: 0, depositCorrections: [{ from: 590, to: 0, note: "   ", by: "deposit-218-user", at: "2026-11-09T00:00:00.000Z" }] }));
+    // Review probes: the trail cannot be rewritten or fabricated without a
+    // real lowering — same-size swap, silent append, and cover edit inside a
+    // common edit are all denied.
+    await assertFails(updateDoc(ref, { depositCorrections: [{ from: 999, to: 0, note: "Falsificado", by: "attacker", at: "2026-11-09T00:00:00.000Z" }] }));
+    await assertFails(updateDoc(ref, { depositCorrections: [{ from: 590, to: 590, note: "Nunca pasó", by: "deposit-218-user", at: "2026-11-09T00:00:00.000Z" }] }));
+    await assertFails(updateDoc(ref, { notes: "edición común", depositCorrections: [{ from: 999, to: 0, note: "Encubierto", by: "deposit-218-user", at: "2026-11-09T00:00:00.000Z" }] }));
+    // The legitimate signed lowering passes — and afterwards the trail is
+    // frozen verbatim (no same-size rewrite, no strip).
     await assertSucceeds(updateDoc(ref, {
       deposit: 0,
       depositCorrections: [{ from: 590, to: 0, note: "Depósito duplicado: el cobro ya lo cubre", by: "deposit-218-user", at: "2026-11-09T00:00:00.000Z" }],
     }));
-    // A forged signature or mismatched amounts never pass.
-    await assertFails(updateDoc(ref, { deposit: 0, depositCorrections: [{ from: 590, to: 0, note: "No fui yo", by: "someone-else", at: "2026-11-09T00:00:00.000Z" }] }));
+    await assertFails(updateDoc(ref, { depositCorrections: [] }));
+    await assertFails(updateDoc(ref, { depositCorrections: [{ from: 590, to: 0, note: "Reescrito", by: "deposit-218-user", at: "2026-11-10T00:00:00.000Z" }] }));
+    await assertSucceeds(updateDoc(ref, { notes: "edición común sin tocar dinero" }));
     await assertFails(updateDoc(doc(db, "orders/deposit-218-zero"), { deposit: 1 }));
     await assertSucceeds(updateDoc(doc(db, "orders/deposit-218-zero"), { deposit: 0 }));
   });
