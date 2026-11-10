@@ -18,7 +18,8 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { reservationDeltasForOrderChange } from "../../lib/inventory";
+import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
+import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
@@ -32,7 +33,7 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule } from "../../types";
+import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
@@ -496,7 +497,7 @@ export async function saveOrderWithStockTx(
   expectedRevision: number | null,
   mutationId: string,
   options?: { confirmDeliveredWithBalance?: boolean; depositCorrectionNote?: string }
-): Promise<{ order: Order; stock: StockAdjustment[] }> {
+): Promise<{ order: Order; stock: StockAdjustment[]; variantStock?: Array<{ productId: string; variants: ProductVariant[] }> }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", order.id);
   return runTransaction(db, async (tx) => {
@@ -612,12 +613,30 @@ export async function saveOrderWithStockTx(
       next.deliveredWithBalanceConfirmedBy = user.uid;
     }
     const deltas = reservationDeltasForOrderChange(previous, next);
+    // #124: per-exact-color reservations — a variant line moves its color's
+    // stock inside the same transaction (cancel/restore comes free from the
+    // delta model). Fail-closed on a missing color: stock never lands on the
+    // design level by accident.
+    const variantDeltas = variantReservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
     const shortages: { productId: string; missing: number }[] = [];
     for (const [productId, delta] of deltas) {
       const product = await tx.get(doc(db, "products", productId));
       if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
-      const current = product.exists() ? product.data().quantityOnHand as number | undefined : undefined;
+      // #124/M2: a legacy line (no color) on a design that NOW sells by color
+      // would take phantom, unsellable stock — fail closed and say which
+      // product. Releases still land at the design level (real pieces back on
+      // a visible shelf) so an old order can always be cancelled.
+      const productIsVariant = product.exists() && isVariantProduct({ variants: (product.data().variants as Product["variants"]) ?? [] });
+      if (productIsVariant && delta < 0) {
+        const name = (product.data().name as string | undefined) ?? "una pieza";
+        throw new Error(`${name} ya se vende por color: elige el color en el artículo del pedido.`);
+      }
+      let current = product.exists() ? product.data().quantityOnHand as number | undefined : undefined;
+      // #124/M2: a legacy-line RELEASE on a variant design lands on its
+      // design-level shelf — seeded at 0 when the field was never used, so
+      // the release is never dropped into the skipped bucket.
+      if (productIsVariant && delta > 0 && typeof current !== "number") current = 0;
       canonical.set(productId, current);
       // Expanding an existing reservation uses the same sufficiency guarantee
       // as its first abono. Releases remain possible even with a prior shortage.
@@ -628,11 +647,70 @@ export async function saveOrderWithStockTx(
     if (shortages.length > 0) throw new InsufficientStockError(shortages);
     const { updates } = applyRelativeDeltas(canonical, deltas);
     const at = new Date().toISOString();
+    // Variant writes: read the design doc canonically, apply each color delta
+    // to the variant's own quantityOnHand, write the whole variants array.
+    const variantWrites = new Map<string, unknown[]>();
+    const releases = new Map<string, number>();
+    for (const vDelta of variantDeltas.values()) {
+      const product = await tx.get(doc(db, "products", vDelta.productId));
+      if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
+      const data = product.exists() ? product.data() as Record<string, unknown> : {};
+      const variants = data.variants as Product["variants"];
+      const variant = variants?.find((v) => v.id === vDelta.variantId);
+      // #124/M3: a vanished color — the release (cancellation) returns REAL
+      // pieces somewhere visible: the design-level shelf. A take always fails
+      // closed (you cannot reserve a color that no longer exists).
+      if (!isVariantProduct({ variants }) || !variant) {
+        if (vDelta.delta > 0) {
+          // Route through the SINGLE product-level write below (never a second
+          // tx.update on the same doc — last-write-wins would lose one).
+          const existing = releases.get(vDelta.productId);
+          releases.set(vDelta.productId, (existing ?? 0) + vDelta.delta);
+          continue;
+        }
+        throw new Error(isVariantProduct({ variants })
+          ? "El color elegido ya no existe en este diseño."
+          : "Esa pieza ya no se vende por color; revisa el pedido.");
+      }
+      if (next.installmentsReservedAt && vDelta.delta < 0) {
+        const current = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
+        if (current + vDelta.delta < 0) {
+          throw new InsufficientStockError([{ productId: vDelta.productId, missing: -(current + vDelta.delta) }]);
+        }
+      }
+      let working = variants!;
+      const accumulated = variantWrites.get(vDelta.productId) as Product["variants"] | undefined;
+      if (accumulated) working = accumulated;
+      const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);
+      if (!nextVariants) throw new Error("El color elegido ya no existe en este diseño.");
+      variantWrites.set(vDelta.productId, nextVariants);
+    }
     const saved = { ...next, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
-    for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    // Merge vanished-color releases into the same product-level updates (or
+    // add them from the canonically-read value).
+    const finalUpdates = [...updates];
+    for (const [productId, release] of releases) {
+      const target = finalUpdates.find((u) => u.productId === productId);
+      if (target) target.quantityOnHand += release;
+      else {
+        const releaseSnap = await tx.get(doc(db, "products", productId));
+        const current = typeof (releaseSnap.data() as Record<string, unknown> | undefined)?.quantityOnHand === "number"
+          ? ((releaseSnap.data() as Record<string, unknown>).quantityOnHand as number)
+          : 0;
+        finalUpdates.push({ productId, quantityOnHand: current + release });
+      }
+    }
+    for (const update of finalUpdates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    for (const [productId, variants] of variantWrites) tx.update(doc(db, "products", productId), { variants, updatedAt: at });
     const { id, ...data } = saved;
     tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
-    return { order: saved, stock: updates };
+    // #124/H1-twin: the caller reconciles in-memory state and republishes the
+    // public signal from these — the color shelves must ride along.
+    const variantStock = [...variantWrites.entries()].map(([productId, variants]) => ({
+      productId,
+      variants: variants as ProductVariant[],
+    }));
+    return { order: saved, stock: finalUpdates, ...(variantStock.length > 0 ? { variantStock } : {}) };
   });
 }
 
@@ -964,7 +1042,7 @@ export async function deleteOrderWithStockTx(
   _user: AppUser,
   orderId: string,
   expectedRevision: number
-): Promise<StockAdjustment[]> {
+): Promise<StockAdjustment[] & { variantStock?: Array<{ productId: string; variants: ProductVariant[] }> }> {
   const { db } = getFirebase();
   const orderRef = doc(db, "orders", orderId);
   return runTransaction(db, async (tx) => {
@@ -990,7 +1068,11 @@ export async function deleteOrderWithStockTx(
     if (previous.installmentsReservedAt || "paymentsReceivedCents" in data || data.inheritedDepositMaterialized === true) {
       throw new OrderEvidenceDeletionError();
     }
-    const deltas = reservationDeltasForOrderChange(previous, { ...previous, orderStatus: "cancelled" });
+    const cancelled = { ...previous, orderStatus: "cancelled" as const };
+    const deltas = reservationDeltasForOrderChange(previous, cancelled);
+    // #124: deleting releases COLOR shelves too — the same delta model, or
+    // the exact-color pieces would never return to their shelf.
+    const variantDeltas = variantReservationDeltasForOrderChange(previous, cancelled);
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
       const product = await tx.get(doc(db, "products", productId));
@@ -999,9 +1081,39 @@ export async function deleteOrderWithStockTx(
     }
     const { updates } = applyRelativeDeltas(canonical, deltas);
     const at = new Date().toISOString();
-    for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    const variantWrites = new Map<string, ProductVariant[]>();
+    const releases = new Map<string, number>();
+    for (const vDelta of variantDeltas.values()) {
+      const product = await tx.get(doc(db, "products", vDelta.productId));
+      if (product.exists() && product.data().storeId !== previous.storeId) throw new Error("El producto pertenece a otra tienda.");
+      const data = (product.exists() ? product.data() : {}) as Record<string, unknown>;
+      const variants = data.variants as Product["variants"];
+      const variant = variants?.find((v) => v.id === vDelta.variantId);
+      if (!variant) {
+        // Vanished color: return the real pieces to the design-level shelf.
+        releases.set(vDelta.productId, (releases.get(vDelta.productId) ?? 0) + vDelta.delta);
+        continue;
+      }
+      const working = (variantWrites.get(vDelta.productId) ?? variants!) as ProductVariant[];
+      const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);
+      if (nextVariants) variantWrites.set(vDelta.productId, nextVariants);
+    }
+    const finalUpdates = [...updates];
+    for (const [productId, release] of releases) {
+      const target = finalUpdates.find((u) => u.productId === productId);
+      if (target) target.quantityOnHand += release;
+      else {
+        const releaseSnap = await tx.get(doc(db, "products", productId));
+        const data = (releaseSnap.data() ?? {}) as Record<string, unknown>;
+        const current = typeof data.quantityOnHand === "number" ? (data.quantityOnHand as number) : 0;
+        finalUpdates.push({ productId, quantityOnHand: current + release });
+      }
+    }
+    for (const update of finalUpdates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    for (const [productId, variants] of variantWrites) tx.update(doc(db, "products", productId), { variants, updatedAt: at });
     tx.delete(orderRef);
-    return updates;
+    const variantStock = [...variantWrites.entries()].map(([productId, variants]) => ({ productId, variants: variants as ProductVariant[] }));
+    return Object.assign(finalUpdates, variantStock.length > 0 ? { variantStock } : {});
   });
 }
 
@@ -1149,6 +1261,14 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
         updatedAt: at,
       });
     }
+    // #124 (decisión 2): color lines adjust their own shelf and cost — one
+    // commit with the rest of the reception, the variants array atomically
+    // replacing the doc's (re-read canonically above).
+    if (result.variantUpdates) {
+      for (const [productId, update] of result.variantUpdates) {
+        tx.update(productRefs.get(productId)!, { variants: update.variants, updatedAt: at });
+      }
+    }
     tx.update(purchaseRef, {
       status: "received", receivedAt: at, updatedAt: at,
       ...(result.costAllocations ? { costAllocations: result.costAllocations } : {}),
@@ -1237,8 +1357,32 @@ function primaryImage(product: Product): string | null {
 }
 
 /** Coarse stock signal for the public catalog: NEVER an exact count. */
+/** #124: one color's PUBLIC signal — coarse like the design-level one
+ * (never a count), derived from the variant's own shelf. */
+function variantPublicStockSignal(v: ProductVariant): "agotado" | "pocas" | "disponible" {
+  const qty = v.quantityOnHand;
+  if (typeof qty !== "number") return "disponible";
+  if (qty <= 0) return "agotado";
+  if (typeof v.lowStockAt === "number" && qty <= v.lowStockAt) return "pocas";
+  return "disponible";
+}
+
+/** #124: the public color list of a design — one product, N colors, each with
+ * its photo; NEVER per-color counts or costs (same policy as the rest of the
+ * projection). */
+function publicVariants(product: Product) {
+  if (!isVariantProduct(product)) return undefined;
+  return product.variants!.map((v) => ({
+    id: v.id,
+    color: v.color,
+    imageUrl: v.photos?.find((photo) => photo.isPrimary)?.url ?? v.photos?.[0]?.url ?? null,
+    stockSignal: variantPublicStockSignal(v),
+  }));
+}
+
 export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible" {
-  const qty = p.quantityOnHand;
+  // #124: a design sold by color signals over the SUM of its colors.
+  const qty = isVariantProduct(p) ? totalStock(p) : p.quantityOnHand;
   if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
   if (qty <= 0) return "agotado";
   if (typeof p.lowStockAt === "number" && qty <= p.lowStockAt) return "pocas";
@@ -1322,6 +1466,8 @@ export function projectPublicProductSummary(
     sortOrder: product.sortOrder ?? 0,
     stockSignal: publicStockSignal(product),
   };
+  const variants = publicVariants(product);
+  if (variants) summary.variants = variants;
   const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") summary.price = resolved;
   const prices = publicPricesByTier(product, pricing);
@@ -1370,6 +1516,8 @@ export function projectPublicProductDetail(
     categories: named,
     stockSignal: publicStockSignal(product),
   };
+  const variants = publicVariants(product);
+  if (variants) detail.variants = variants;
   const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") detail.price = resolved;
   const prices = publicPricesByTier(product, pricing);

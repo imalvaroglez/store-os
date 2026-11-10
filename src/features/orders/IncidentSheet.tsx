@@ -85,6 +85,8 @@ export function IncidentSheet({ order, open, onClose }: { order: Order; open: bo
         id: uid("inc"),
         lineId: item.lineId,
         productId: item.productId,
+        // #124/#203: the incident conserves the line's exact color.
+        ...(item.variantId ? { variantId: item.variantId, variantColor: item.variantColor, variantSku: item.variantSku } : {}),
         productName: item.productName,
         quantity,
         reason: reason.trim(),

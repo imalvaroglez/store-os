@@ -31,6 +31,11 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
         ...(item.priceSource === "automatic" || item.priceSource === "manual" ? { priceSource: item.priceSource } : {}),
         ...(typeof category?.id === "string" && category.id && typeof category.name === "string" && category.name ? { categorySnapshot: { id: category.id, name: category.name } } : {}),
         ...(typeof item.productId === "string" && item.productId ? { productId: item.productId } : {}),
+        // #124: the exact color survives every read model (snapshots keep
+        // tickets/history readable even if the variety later changes).
+        ...(typeof item.variantId === "string" && item.variantId ? { variantId: item.variantId } : {}),
+        ...(typeof item.variantColor === "string" && item.variantColor ? { variantColor: item.variantColor } : {}),
+        ...(typeof item.variantSku === "string" && item.variantSku ? { variantSku: item.variantSku } : {}),
         productName: String(item.productName ?? item.name ?? "Producto").trim() || "Producto",
         quantity,
         ...(tierId(item.priceTier) ? { priceTier: tierId(item.priceTier) } : {}),

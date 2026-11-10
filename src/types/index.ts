@@ -192,6 +192,30 @@ export type ProductImage = {
   isPrimary: boolean;
 };
 
+/**
+ * #124 (PO 2026-11-09): one COLOR variety of a design. A product that
+ * carries `variants` sells per exact color: stock, cost and clave live on
+ * the variant; the sale price stays per design (shared across colors).
+ * Photos: at least one per variant or the design cannot publish.
+ */
+export type ProductVariant = {
+  id: string;
+  /** Color shown to clients ("Dorado", "Plateado"). */
+  color: string;
+  /** Editable key suffix; full clave = design sku + "-" + suffix. */
+  skuSuffix?: string;
+  /** Materialized full clave (distinct in purchases, tickets, returns). */
+  sku?: string;
+  /** >=1 photo per variant (PO decision 1) — gallery, first is primary. */
+  photos?: ProductImage[];
+  /** Per-color acquisition cost; starts from the design's cost (decision 2). */
+  cost?: number;
+  quantityOnHand?: number;
+  lowStockAt?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ProductStatus = "draft" | "published" | "archived";
 export type ProductAvailability = "available" | "low_stock" | "sold_out";
 
@@ -243,6 +267,11 @@ export type Product = {
   quantityQuarantined?: number;
   lowStockAt?: number;
 
+  // #124: color varieties of a design. Non-empty = variant product: the
+  // product-level quantityOnHand/cost/sku are NOT used for selling; each
+  // color owns its stock/cost/clave, prices stay shared per design.
+  variants?: ProductVariant[];
+
   // Schema version for the idempotent migration. Absent = not yet migrated.
   schemaVersion?: number;
 
@@ -289,6 +318,11 @@ export type OrderItem = {
   /** OLI-012: frozen category at capture time, powers grouping and the ticket. */
   categorySnapshot?: { id: string; name: string };
   productId?: string;
+  // #124: the exact color this line sold/reserves. Snapshots keep tickets
+  // and history readable even if the variety is later edited or removed.
+  variantId?: string;
+  variantColor?: string;
+  variantSku?: string;
   productName: string;
   quantity: number;
   priceTier?: string;
@@ -488,6 +522,10 @@ export type OrderIncident = {
   /** Line of the origin order the incident is about. */
   lineId?: string;
   productId?: string;
+  /** #124/#203: the exact color the incident is about (kept from the line). */
+  variantId?: string;
+  variantColor?: string;
+  variantSku?: string;
   productName: string;
   quantity: number;
   reason: string;
@@ -570,6 +608,9 @@ export type PurchaseLine = {
   lineId?: string;
   ticketId?: string;
   productId: string;
+  /** #124 (decisión 2): the exact color this line bought — reception adjusts
+   * THAT color's cost and shelf. Absent = whole-product line (legacy). */
+  variantId?: string;
   name: string; // snapshot at purchase time
   quantity: number;
   unitCost: number;

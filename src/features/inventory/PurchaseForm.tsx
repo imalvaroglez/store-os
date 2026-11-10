@@ -352,6 +352,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         productId,
         name: captured || product.name,
         matchStatus: "matched",
+        // #124: the color belongs to the newly linked product.
+        variantId: undefined,
       });
     } else {
       // Unlinking clears the association only — the captured ticket text
@@ -582,10 +584,36 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                     setProductQueries((previous) => ({ ...previous, [line.lineId!]: value }));
                     if (line.productId) updateLine(idx, { productId: "", matchStatus: "unmatched" });
                   }} onSelect={(option) => pickProduct(idx, option.value)}
-                  options={products.map((product) => ({ value: product.id, label: product.name, detail: `Existencia: ${product.quantityOnHand ?? 0}`, keywords: product.sku }))}
+                  options={products.map((product) => ({
+                    value: product.id,
+                    label: product.name,
+                    detail: product.variants?.length
+                      ? `Por colores: ${product.variants.map((v) => `${v.color} ${v.quantityOnHand ?? 0}`).join(", ")}`
+                      : `Existencia: ${product.quantityOnHand ?? 0}`,
+                    keywords: [product.sku, ...(product.variants?.map((v) => v.sku) ?? [])].filter(Boolean).join(" "),
+                  }))}
                   placeholder="Buscar por nombre o clave…" action={{ label: "+ Crear nuevo producto", onClick: () => openMiniForm(idx) }} />
               </div>
             </div>
+            {(() => {
+              // #124 (decisión 2): buying a design sold by color targets the
+              // exact color — reception adjusts that color's cost and shelf.
+              const product = products.find((item) => item.id === line.productId);
+              if (!product || !product.variants?.length) return null;
+              return (
+                <SelectField
+                  label="Color comprado"
+                  value={line.variantId ?? ""}
+                  disabled={editDisabled}
+                  onChange={(value) => updateLine(idx, { variantId: value || undefined })}
+                  hint="Se vende por color: la compra va a un color concreto."
+                  options={product.variants.map((variant) => ({
+                    value: variant.id,
+                    label: variant.color + (variant.sku ? ` · ${variant.sku}` : ""),
+                  }))}
+                />
+              );
+            })()}
             <div className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_auto] gap-3 items-start">
               <TextField id={`quantity:${line.lineId}`} aria-label="Cantidad" label="Cantidad" inputMode="numeric"
                 value={amountDrafts[`quantity:${line.lineId}`] ?? line.quantity.toString()} disabled={editDisabled}

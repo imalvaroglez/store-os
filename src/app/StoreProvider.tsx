@@ -986,6 +986,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // approximation diverged from the persisted latest_purchase cost.
       const at = nowIso();
       const receivedProducts = receivedProductsFromStockUpdates(state.products, result.stockUpdates, at);
+      // #124: color receptions carry their variants array — apply it to the
+      // in-memory design too, or the shelf (and the republished signal) would
+      // show the pre-reception stock all session.
+      if (result.variantUpdates) {
+        for (const update of result.variantUpdates.values()) {
+          const current = state.products.find((p) => p.id === update.productId);
+          if (!current) continue;
+          const merged = { ...current, variants: update.variants, updatedAt: at };
+          if (!receivedProducts.some((p) => p.id === merged.id)) receivedProducts.push(merged);
+        }
+      }
       for (const product of receivedProducts) {
         dispatch({ type: "UPDATE_PRODUCT", product });
       }
@@ -1112,6 +1123,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           dispatch({ type: "UPDATE_PRODUCT", product: next });
         }
       }
+      // #124/H1-twin: the order save also moved COLOR shelves — reconcile
+      // them into memory (and the republish set) exactly like product-level
+      // stock; otherwise the per-color shelf and the public signal stay stale
+      // all session.
+      if (result.variantStock) {
+        for (const variantUpdate of result.variantStock) {
+          const product = state.products.find((p) => p.id === variantUpdate.productId);
+          if (!product) continue;
+          const already = reservedProducts.find((p) => p.id === product.id);
+          const next = {
+            ...(already ?? product),
+            variants: variantUpdate.variants,
+            updatedAt: result.order.updatedAt,
+          };
+          const index = reservedProducts.findIndex((p) => p.id === product.id);
+          if (index >= 0) reservedProducts[index] = next;
+          else reservedProducts.push(next);
+          dispatch({ type: "UPDATE_PRODUCT", product: next });
+        }
+      }
       dispatch({ type: prev ? "UPDATE_ORDER" : "ADD_ORDER", order: result.order });
       // #229: reserved/released pieces update the public signal too.
       if (reservedProducts.length > 0) {
@@ -1160,6 +1191,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (product) {
           const next = { ...product, quantityOnHand: update.quantityOnHand, updatedAt: nowIso() };
           releasedProducts.push(next);
+          dispatch({ type: "UPDATE_PRODUCT", product: next });
+        }
+      }
+      // #124: released COLOR shelves reconcile in memory too (same discipline
+      // as product-level releases and the republish below).
+      if (updates.variantStock) {
+        for (const variantUpdate of updates.variantStock) {
+          const product = state.products.find((p) => p.id === variantUpdate.productId);
+          if (!product) continue;
+          const index = releasedProducts.findIndex((p) => p.id === product.id);
+          const next = { ...(index >= 0 ? releasedProducts[index] : product), variants: variantUpdate.variants, updatedAt: nowIso() };
+          if (index >= 0) releasedProducts[index] = next;
+          else releasedProducts.push(next);
           dispatch({ type: "UPDATE_PRODUCT", product: next });
         }
       }

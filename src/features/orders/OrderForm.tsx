@@ -18,6 +18,7 @@ import {
 } from "../../design-system";
 import { customersForStore } from "../../lib/selectors";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
+import { isVariantProduct } from "../../lib/variants";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { orderAmountCents } from "../../lib/orderMoney";
@@ -59,6 +60,9 @@ function lineFromItem(item?: OrderItem): DraftLine {
     priceSource: item ? (item.priceSource ?? "manual") : "automatic",
     categorySnapshot: item?.categorySnapshot,
     productId: item?.productId,
+    variantId: item?.variantId,
+    variantColor: item?.variantColor,
+    variantSku: item?.variantSku,
     productName: item?.productName ?? "",
     productQuery: item?.productName ?? "",
     quantity,
@@ -309,6 +313,7 @@ export function OrderForm({
         ...order,
         items: lines.map((line) => ({
           productId: line.productId,
+          ...(line.variantId ? { variantId: line.variantId, variantColor: line.variantColor, variantSku: line.variantSku } : {}),
           productName: line.productName,
           quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
           priceTier: line.priceTier,
@@ -335,6 +340,7 @@ export function OrderForm({
           .filter((line) => line.productId || line.productName.trim())
           .map((line) => ({
             ...(line.productId ? { productId: line.productId } : {}),
+            ...(line.variantId ? { variantId: line.variantId, variantColor: line.variantColor, variantSku: line.variantSku } : {}),
             productName: line.productName,
             quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
             unitPrice: numberFromText(line.unitPriceText),
@@ -396,6 +402,11 @@ export function OrderForm({
     updateLine(line.key, {
       productId: product.id,
       priceSource: manualTier ? "manual" : "automatic",
+      // #124: the color choice belongs to the new product; a design sold by
+      // color starts unchosen (mandatory) and per-color cost lands on pick.
+      variantId: undefined,
+      variantColor: undefined,
+      variantSku: undefined,
       categorySnapshot,
       productName: product.name,
       productQuery: product.name,
@@ -404,6 +415,24 @@ export function OrderForm({
       unitPriceText: unitPrice == null ? "" : String(unitPrice),
       cost: product.cost,
       costText: product.cost == null ? "" : String(product.cost),
+    });
+  }
+
+  /** #124: choosing the exact color — snapshots color/clave and adopts the
+   * color's own cost (decision 2) while the price stays the design's. */
+  function selectVariant(line: DraftLine, variantId: string) {
+    const product = products.find((item) => item.id === line.productId);
+    if (!product) return;
+    const variant = product.variants?.find((v) => v.id === variantId);
+    if (!variant) {
+      updateLine(line.key, { variantId: undefined, variantColor: undefined, variantSku: undefined });
+      return;
+    }
+    updateLine(line.key, {
+      variantId: variant.id,
+      variantColor: variant.color,
+      variantSku: variant.sku ?? (variant.skuSuffix ? `${product.sku ?? ""}-${variant.skuSuffix}` : undefined),
+      ...(variant.cost != null ? { cost: variant.cost, costText: String(variant.cost) } : {}),
     });
   }
 
@@ -428,6 +457,15 @@ export function OrderForm({
       toast.error("Elige un nivel de precio disponible.");
       return;
     }
+    // #124 (decisión 5): la venta identifica el color exacto — sin color no
+    // se puede reservar la existencia correcta.
+    for (const [index, line] of lines.entries()) {
+      const product = line.productId ? products.find((item) => item.id === line.productId) : undefined;
+      if (product && isVariantProduct(product) && line.productId && !line.variantId) {
+        toast.error(`Elige el color del artículo ${index + 1} (${product.name}).`);
+        return;
+      }
+    }
     const normalizedItems: OrderItem[] = [];
     for (const line of lines) {
       const productName = line.productName.trim();
@@ -450,6 +488,7 @@ export function OrderForm({
         // line keeps the lineId it was loaded with.
         lineId: line.lineId ?? line.key,
         ...(line.productId ? { productId: line.productId } : {}),
+        ...(line.variantId ? { variantId: line.variantId, variantColor: line.variantColor, variantSku: line.variantSku } : {}),
         priceSource: line.productId ? (line.priceSource ?? "manual") : "manual",
         ...(line.categorySnapshot ? { categorySnapshot: line.categorySnapshot } : {}),
         productName,
@@ -703,7 +742,29 @@ export function OrderForm({
                   if (product) selectProduct(line, product);
                 }}
               />
-              <OrderLinePhoto products={products} productId={line.productId} />
+              <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} />
+              {(() => {
+                // #124: designs sold by color REQUIRE the exact color (decision 5).
+                const product = products.find((item) => item.id === line.productId);
+                if (!product || !isVariantProduct(product)) return null;
+                return (
+                  <SelectField
+                    label="Color"
+                    value={line.variantId ?? ""}
+                    onChange={(value) => selectVariant(line, value)}
+                    options={[
+                      { value: "", label: "Elige el color…" },
+                      ...product.variants!.map((variant) => ({
+                        value: variant.id,
+                        label:
+                          variant.color +
+                          (typeof variant.quantityOnHand === "number" ? ` (existencia ${variant.quantityOnHand})` : "") +
+                          (variant.sku ? ` · ${variant.sku}` : ""),
+                      })),
+                    ]}
+                  />
+                );
+              })()}
               {line.priceSource === "manual" && <p className="text-xs text-on-surface-soft">Precio ajustado manualmente.</p>}
               {line.productId && !line.unitPriceText && <p className="text-danger">Falta capturar el precio de este producto.</p>}
               <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(7rem,0.65fr)_minmax(10rem,1fr)_minmax(11rem,1fr)]">
@@ -945,10 +1006,13 @@ export function OrderForm({
   );
 }
 
-function OrderLinePhoto({ products, productId }: { products: Product[]; productId?: string }) {
+function OrderLinePhoto({ products, productId, variantId }: { products: Product[]; productId?: string; variantId?: string }) {
   const product = products.find((candidate) => candidate.id === productId);
   if (!product) return null;
-  const cover = product.images?.find((image) => image.isPrimary) ?? product.images?.[0];
+  // #124: a chosen color shows ITS photo (the exact piece leaving the shelf).
+  const variant = variantId ? product.variants?.find((v) => v.id === variantId) : undefined;
+  const variantCover = variant?.photos?.find((image) => image.isPrimary) ?? variant?.photos?.[0];
+  const cover = variantCover ?? product.images?.find((image) => image.isPrimary) ?? product.images?.[0];
   const src = cover?.url ?? product.imageUrl;
   return (
     <ProductImage
