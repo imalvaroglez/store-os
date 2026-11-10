@@ -226,8 +226,8 @@ describe("#289 misión 5a — config sin byTier (regresión)", () => {
       product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 40, prices: { t_iconic: 60 } }),
     ];
     render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
-    // Antes del fix de tipo+guardas: "Cannot convert undefined or null to
-    // object" (Object.entries/Object.keys sobre byTier ausente).
+    // Candado de regresión: cloneConfig ya normalizaba byTier pre-PR; el tipo
+    // opcional + guardas mantienen el contrato a medida que crecen lectores.
     expect(await screen.findByText(/Reloj Madrid/)).toBeTruthy();
     expect(screen.getAllByText(/\$90/).length).toBeGreaterThan(0);
   });
