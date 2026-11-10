@@ -262,3 +262,22 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Pedidos")).toBeTruthy();
   });
 });
+
+describe("Dialog anidado (#304 H2)", () => {
+  it("Escape cierra SOLO el diálogo interno; el externo conserva su contenido", async () => {
+    let outerClosed = false;
+    let innerClosed = false;
+    render(
+      <Dialog open title="Externo" onClose={() => { outerClosed = true; }}>
+        <p>borrador del formulario externo</p>
+        <Dialog open title="Interno" onClose={() => { innerClosed = true; }}>
+          <p>confirmación</p>
+        </Dialog>
+      </Dialog>
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    // El más interno responde; el externo NO se cierra (el borrador sobrevive).
+    expect(innerClosed).toBe(true);
+    expect(outerClosed).toBe(false);
+  });
+});
