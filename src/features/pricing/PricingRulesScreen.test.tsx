@@ -6,7 +6,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { PricingRulesScreen } from "./PricingRulesScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
-import type { Product, Store } from "../../types";
+import type { Product, Store, PricingRulesConfig } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
@@ -221,7 +221,7 @@ describe("#289 misión 5a — config sin byTier (regresión)", () => {
     ] as typeof state.categories;
     state.stores[0].pricingRules = {
       byCategory: { c_reloj: { t_iconic: { kind: "bands", bands: [{ min: 0, price: 90 }], rounding: "none" } } },
-    } as typeof state.stores[0].pricingRules;
+    } as PricingRulesConfig;
     state.products = [
       product({ id: "p1", name: "Reloj Madrid", categoryIds: ["c_reloj"], cost: 40, prices: { t_iconic: 60 } }),
     ];
