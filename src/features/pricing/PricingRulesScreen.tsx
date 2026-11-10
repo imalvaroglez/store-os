@@ -17,6 +17,8 @@ import {
   TextField,
   useToast,
 } from "../../design-system";
+import { navigate } from "../../lib/router";
+import { takeSuggestionsFocus } from "./suggestionsFocus";
 import { tiersForStore } from "../../lib/pricing";
 import { sanitizeMoneyInput } from "../../lib/money";
 import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands } from "../../lib/pricingRules";
@@ -53,6 +55,13 @@ export function PricingRulesScreen() {
     () => state.products.filter((p) => p.storeId === activeStore?.id),
     [state.products, activeStore?.id]
   );
+  const categories = useMemo(
+    () => state.categories.filter((c) => c.storeId === activeStore?.id && c.active).sort((a, b) => a.name.localeCompare(b.name, "es")),
+    [state.categories, activeStore?.id]
+  );
+  // #289: the list opens where the operator came from — Estrategia hands off
+  // the category she just configured — instead of an unfiltered wall of SKUs.
+  const [categoryFilter, setCategoryFilter] = useState<string>(() => takeSuggestionsFocus() ?? "");
 
   function patchConfig(mutate: (config: PricingRulesConfig) => void) {
     setDraft((current) => {
@@ -125,6 +134,39 @@ export function PricingRulesScreen() {
   }, [products, tiers, draft.config, activeStore?.packaging]);
 
   const selectedCount = Object.values(selected).filter(Boolean).length;
+
+  // #289: category filter + mass selection. "With changes" = at least one
+  // level suggests a price different from the current one — selecting more
+  // (unchanged rows) would only add noise to the explicit apply step.
+  const hasAnyConfig =
+    Object.keys(draft.config.byTier).length > 0 ||
+    Object.keys(draft.config.byProduct ?? {}).length > 0 ||
+    Object.values(draft.config.byCategory ?? {}).some((rules) => Object.keys(rules).length > 0);
+  const categoryOptions = useMemo(() => {
+    const present = new Set<string>();
+    for (const entry of suggestions) for (const id of entry.product.categoryIds ?? []) present.add(id);
+    if (categoryFilter) present.add(categoryFilter); // a handed-off category stays selectable even with no suggestions yet
+    return categories.filter((c) => present.has(c.id)).map((c) => ({ value: c.id, label: c.name }));
+  }, [suggestions, categories, categoryFilter]);
+  const visibleSuggestions = useMemo(
+    () => (categoryFilter ? suggestions.filter((s) => s.product.categoryIds?.includes(categoryFilter)) : suggestions),
+    [suggestions, categoryFilter]
+  );
+  const changedIds = useMemo(
+    () =>
+      visibleSuggestions
+        .filter((s) => tiers.some((t) => s.byTier[t.id]?.suggested != null && s.byTier[t.id].suggested !== s.byTier[t.id].current))
+        .map((s) => s.product.id),
+    [visibleSuggestions, tiers]
+  );
+
+  function selectAllWithChanges() {
+    setSelected(Object.fromEntries(changedIds.map((id) => [id, true])));
+  }
+
+  function clearSelection() {
+    setSelected({});
+  }
 
   async function runApply(
     updates: Array<{ product: Product; prices: Record<string, number> }>,
@@ -203,7 +245,9 @@ export function PricingRulesScreen() {
       toast.error(
         skippedBelowCost > 0
           ? `Solo había precios sugeridos bajo el costo (${skippedBelowCost}); no se aplicó nada. Vender con pérdida requiere una excepción por producto.`
-          : "Nada seleccionado con sugerencias distintas al precio actual."
+          : changedIds.length > 0
+            ? "No hay piezas seleccionadas. Usa «Seleccionar todo» o marca las piezas a actualizar."
+            : "Ninguna pieza mostrada tiene un precio sugerido distinto al actual."
       );
       return;
     }
@@ -249,13 +293,51 @@ export function PricingRulesScreen() {
               {applying ? "Aplicando…" : `Aplicar seleccionados (${selectedCount})`}
             </Button>
           </div>
-          {suggestions.length === 0 ? (
+          {!hasAnyConfig ? (
+            <div className="space-y-2">
+              <p className="text-sm text-on-surface-soft">
+                Aún no hay reglas ni tablas de precios, por eso esta lista está vacía. Crea primero la tabla de una
+                categoría en Estrategia de precios; sus sugerencias aparecen aquí para que las revises y apliques.
+              </p>
+              <Button size="sm" onClick={() => navigate("/productos/estrategia")}>
+                Ir a Estrategia de precios
+              </Button>
+            </div>
+          ) : suggestions.length === 0 ? (
             <p className="text-sm text-on-surface-soft">
               Captura el costo de compra de tus piezas para ver sugerencias aquí.
             </p>
           ) : (
-            <div className="space-y-2">
-              {suggestions.map(({ product, byTier }) => (
+            <div className="space-y-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <SelectField
+                  label="Categoría"
+                  value={categoryFilter}
+                  onChange={setCategoryFilter}
+                  options={[{ value: "", label: "Todas las categorías" }, ...categoryOptions]}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={changedIds.length === 0 || applying}
+                    onClick={selectAllWithChanges}
+                  >
+                    Seleccionar todo ({changedIds.length} con cambios)
+                  </Button>
+                  {selectedCount > 0 && (
+                    <Button size="sm" variant="ghost" disabled={applying} onClick={clearSelection}>
+                      Limpiar selección
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-on-surface-soft">
+                {visibleSuggestions.length} {visibleSuggestions.length === 1 ? "pieza mostrada" : "piezas mostradas"} ·{" "}
+                {changedIds.length} con cambios sugeridos.
+              </p>
+              <div className="space-y-2">
+              {visibleSuggestions.map(({ product, byTier }) => (
                 <div key={product.id} className="space-y-1 rounded-lg border border-edge bg-surface px-3 py-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -283,6 +365,7 @@ export function PricingRulesScreen() {
                   </div>
                 </div>
               ))}
+              </div>
             </div>
           )}
         </Card>
@@ -375,6 +458,9 @@ function RuleCard({
         <h3 className="font-semibold text-ink">{label}</h3>
         <Badge tone={rule ? "success" : "neutral"}>{rule ? "regla configurada" : "sin regla"}</Badge>
       </div>
+      <p className="text-xs text-on-surface-soft">
+        Opcional: se usa cuando una pieza no tiene tabla de su categoría (Estrategia de precios) ni excepción propia.
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <SelectField
           label="Método"

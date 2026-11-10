@@ -19,6 +19,7 @@ import {
   useToast,
 } from "../../design-system";
 import { navigate } from "../../lib/router";
+import { setSuggestionsFocus } from "./suggestionsFocus";
 import { tiersForStore } from "../../lib/pricing";
 import { parseAmount, sanitizeMoneyInput } from "../../lib/money";
 import { suggestedPriceFor, baseCostForTier, validateBands, rulesSignature } from "../../lib/pricingRules";
@@ -316,7 +317,9 @@ export function PricingStrategyScreen() {
       setDraft((current) => (current ? { ...current, dirty: false } : current));
       setDraftBase(rulesSignature(serialized));
       setReplaceExisting(false);
-      toast.success("Tabla guardada. Los precios de tus productos no cambiaron.");
+      // #289: the saved table lights up the suggestions in Reglas — say so,
+      // and offer the direct hop instead of leaving the connection invisible.
+      toast.success("Tabla guardada. Sus sugerencias ya están activas en Reglas de venta; tus precios no cambiaron.");
     } catch (error) {
       // P0-2: a same-category concurrent edit REFUSES the save (nothing is
       // lost); the banner below then offers to reload the fresh table.
@@ -595,13 +598,36 @@ export function PricingStrategyScreen() {
 
         {categoryId && (
           <Card className="space-y-2">
-            <p className="text-sm text-on-surface-soft">
-              Para aplicar precios a productos, usa las sugerencias por pieza en Reglas de venta: eliges qué productos
-              cambian y confirmas ahí.
-            </p>
-            <Button size="sm" variant="secondary" onClick={() => navigate("/productos/reglas")}>
-              Ir a Reglas de venta
-            </Button>
+            {draft && !draft.dirty && existing ? (
+              <>
+                <p className="text-sm text-on-surface-soft">
+                  La tabla de <span className="font-semibold text-on-surface">{categories.find((c) => c.id === categoryId)?.name ?? "esta categoría"}</span> está
+                  guardada y sus sugerencias ya están activas en Reglas de venta. Tus precios no cambian hasta que los
+                  revises y apliques ahí, pieza por pieza o con selección por lote.
+                </p>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    // #289: Reglas opens pre-filtered to THIS category — Fer
+                    // never re-searches what she just configured.
+                    setSuggestionsFocus(categoryId);
+                    navigate("/productos/reglas");
+                  }}
+                >
+                  Revisar y aplicar precios de esta categoría
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-on-surface-soft">
+                  Para aplicar precios a productos, usa las sugerencias por pieza en Reglas de venta: eliges qué productos
+                  cambian y confirmas ahí.
+                </p>
+                <Button size="sm" variant="secondary" onClick={() => navigate("/productos/reglas")}>
+                  Ir a Reglas de venta
+                </Button>
+              </>
+            )}
           </Card>
         )}
       </div>
