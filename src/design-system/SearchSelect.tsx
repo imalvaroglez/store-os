@@ -43,8 +43,19 @@ export function SearchSelect({
   const filtered = useMemo(() => {
     const needle = value.trim().toLocaleLowerCase("es-MX");
     if (!needle) return options.slice(0, 50);
+    // #219 fase 1b (misión UX): a phone dictated with spaces/dashes/parens
+    // ("55-1234 5678") must find the stored "5512345678", and a name typed
+    // without accents ("maria jose") must find "María José". Loose pass =
+    // diacritics folded + only letters/digits; the verbatim pass keeps the
+    // exact previous behavior for everything else.
+    const loose = (text: string) =>
+      text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
+    const looseNeedle = loose(needle);
     return options
-      .filter((option) => `${option.label} ${option.keywords ?? ""}`.toLocaleLowerCase("es-MX").includes(needle))
+      .filter((option) => {
+        const haystack = `${option.label} ${option.keywords ?? ""}`.toLocaleLowerCase("es-MX");
+        return haystack.includes(needle) || (looseNeedle.length > 0 && loose(haystack).includes(looseNeedle));
+      })
       .slice(0, 50);
   }, [options, value]);
 
