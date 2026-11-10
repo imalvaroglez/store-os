@@ -484,13 +484,9 @@ export function ProductForm({
           onMove={handleMove}
         />
       ) : (
-        <TextField
-          label="Imagen (URL)"
-          hint="Pega un enlace. La subida de fotos está disponible al iniciar sesión."
-          placeholder="https://..."
-          value={draft.imageUrl ?? ""}
-          onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value || undefined })}
-        />
+        <p className="text-xs text-on-surface-soft">
+          La subida de fotos estará disponible al iniciar sesión.
+        </p>
       )}
 
       {/* Categories: primary (first selected) + up to 2 secondary. */}
