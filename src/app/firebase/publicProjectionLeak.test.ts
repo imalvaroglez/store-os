@@ -76,3 +76,24 @@ describe("#176 publications — proyecciones públicas sin campos privados", () 
     expect(detail.images).toBeTruthy();
   });
 });
+
+const STORE_ID = "store_secret";
+
+describe("#176 publications — publicStores sin datos de membresía (H3 de revisión)", () => {
+  it("la proyección de tienda no lleva memberUids/ownerUid/pendingInvites ni teléfonos", async () => {
+    const { projectPublicStore } = await import("./firestoreData");
+    const store = {
+      id: STORE_ID, name: "Tienda Auditada", slug: "olivia-audit", type: "inventory_tiered",
+      ownerUid: "uid-secreto-dueno", memberUids: ["uid-secreto-dueno", "uid-secreto-miembro"],
+      pendingInvites: ["maria@clienta.test"], whatsappPhone: "55 0000 0000",
+      priceTiers: [{ id: "t_retail", label: "Regular", order: 1, minimum: 0 }],
+      defaultTierId: "t_retail", storefront: { hero: { title: "Hola" } },
+      createdAt: "", updatedAt: "",
+    } as never;
+    const projected = projectPublicStore(store, "olivia-audit") as Record<string, unknown>;
+    const serialized = JSON.stringify(projected);
+    for (const marker of ["uid-secreto-dueno", "uid-secreto-miembro", "memberUids", "ownerUid", "pendingInvites", "maria@clienta.test"]) {
+      expect(serialized.includes(marker), `publicStores filtró "${marker}"`).toBe(false);
+    }
+  });
+});

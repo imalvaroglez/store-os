@@ -52,7 +52,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#176 security matrix — 
       await setDoc(doc(fs, "users/sec-member-a"), { role: "member" });
       await setDoc(doc(fs, "users/sec-member-b"), { role: "member" });
       await setDoc(doc(fs, "users/sec-super"), { role: "super_admin" });
-      await setDoc(doc(fs, `adminStores/${STORE_A}`), { ownerUid: "sec-member-a", memberUids: ["sec-member-a"] });
+      // memberA is a NON-owner member (the owner path writes full docs via
+      // setDoc; the partial-update evaluation quirk of the emulator would
+      // otherwise deny for the wrong reason — same approach as #253/#274).
+      await setDoc(doc(fs, `adminStores/${STORE_A}`), { ownerUid: "sec-owner-a", memberUids: ["sec-owner-a", "sec-member-a"] });
       await setDoc(doc(fs, `adminStores/${STORE_B}`), { ownerUid: "sec-member-b", memberUids: ["sec-member-b"] });
       for (const spec of BUSINESS_DOCS) {
         for (const store of [STORE_A, STORE_B]) {
@@ -114,6 +117,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#176 security matrix — 
     });
   }
 
+  // ── stores (H2): settings collection in the grid ──────────────────────────
+  it("memberB cannot read or hijack store A's settings document", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `stores/${STORE_A}`), { ownerUid: "sec-owner-a", memberUids: ["sec-owner-a", "sec-member-a"], name: "Tienda A" });
+    });
+    const db = dbOf("memberB");
+    await expect(getDoc(doc(db, `stores/${STORE_A}`))).rejects.toThrow();
+    await expect(updateDoc(doc(db, `stores/${STORE_A}`), { name: "Hackeada" })).rejects.toThrow();
+    await expect(deleteDoc(doc(db, `stores/${STORE_A}`))).rejects.toThrow();
+  });
+
+  it("#274 member can touch ONLY packaging/pricingRules of their own store settings", async () => {
+    const db = dbOf("memberA");
+    await expect(updateDoc(doc(db, `stores/${STORE_A}`), { packaging: { byTier: {} }, updatedAt: "2026-11-10T00:00:00.000Z" })).resolves.toBeUndefined();
+    await expect(updateDoc(doc(db, `stores/${STORE_A}`), { name: "Renombrada por miembro" })).rejects.toThrow();
+    await expect(updateDoc(doc(db, `stores/${STORE_A}`), { ownerUid: "sec-member-b" })).rejects.toThrow();
+  });
+
+  it("memberB cannot write into publicCatalogs of store A", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "publicCatalogs/sec-catalog-a"), { storeId: STORE_A, products: [] });
+    });
+    const db = dbOf("memberB");
+    await expect(updateDoc(doc(db, "publicCatalogs/sec-catalog-a"), { products: [{ name: "falso" }] })).rejects.toThrow();
+  });
+
   // ── Direct-SDK attack probes ──────────────────────────────────────────────
   it("memberB cannot move their own doc into store A (storeId invariance)", async () => {
     const db = dbOf("memberB");
@@ -130,14 +159,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#176 security matrix — 
     ).rejects.toThrow();
   });
 
-  it("member cannot self-escalate to super_admin in their own profile", async () => {
-    const db = dbOf("memberA");
+  it("member with a VERIFIED non-allowlisted email cannot self-escalate to super_admin", async () => {
+    // Review H1: claims must include a verified email so the denial comes
+    // from the ALLOWLIST branch, not from hasVerifiedEmail() failing earlier.
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "users/sec-member-a"), {
-        role: "member", email: "a@a.test", emailNormalized: "a@a.test", emailVerified: true,
+        role: "member", email: "member@olivia.test", emailNormalized: "member@olivia.test", emailVerified: true,
       });
     });
+    const db = env.authenticatedContext("sec-member-a", { email: "member@olivia.test", email_verified: true }).firestore();
     await expect(updateDoc(doc(db, "users/sec-member-a"), { role: "super_admin" })).rejects.toThrow();
+  });
+
+  it("the allowlisted platform email CAN hold super_admin (guard is the allowlist, not luck)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users/sec-allowlisted"), {
+        role: "member", email: "admin@store.os", emailNormalized: "admin@store.os", emailVerified: true,
+      });
+    });
+    const db = env.authenticatedContext("sec-allowlisted", { email: "admin@store.os", email_verified: true }).firestore();
+    await expect(updateDoc(doc(db, "users/sec-allowlisted"), { role: "super_admin" })).resolves.toBeUndefined();
   });
 
   it("member cannot list the adminStores control plane", async () => {
