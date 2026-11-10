@@ -18,7 +18,8 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { reservationDeltasForOrderChange } from "../../lib/inventory";
+import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
+import { applyVariantDelta, isVariantProduct } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
@@ -581,6 +582,11 @@ export async function saveOrderWithStockTx(
       next.deliveredWithBalanceConfirmedBy = user.uid;
     }
     const deltas = reservationDeltasForOrderChange(previous, next);
+    // #124: per-exact-color reservations — a variant line moves its color's
+    // stock inside the same transaction (cancel/restore comes free from the
+    // delta model). Fail-closed on a missing color: stock never lands on the
+    // design level by accident.
+    const variantDeltas = variantReservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
     const shortages: { productId: string; missing: number }[] = [];
     for (const [productId, delta] of deltas) {
@@ -597,8 +603,35 @@ export async function saveOrderWithStockTx(
     if (shortages.length > 0) throw new InsufficientStockError(shortages);
     const { updates } = applyRelativeDeltas(canonical, deltas);
     const at = new Date().toISOString();
+    // Variant writes: read the design doc canonically, apply each color delta
+    // to the variant's own quantityOnHand, write the whole variants array.
+    const variantWrites = new Map<string, unknown[]>();
+    for (const vDelta of variantDeltas.values()) {
+      const product = await tx.get(doc(db, "products", vDelta.productId));
+      if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
+      const data = product.exists() ? product.data() as Record<string, unknown> : {};
+      const variants = data.variants as Product["variants"];
+      if (!isVariantProduct({ variants })) {
+        throw new Error("Esa pieza ya no se vende por color; revisa el pedido.");
+      }
+      const variant = variants!.find((v) => v.id === vDelta.variantId);
+      if (!variant) throw new Error(`El color elegido ya no existe en este diseño.`);
+      if (next.installmentsReservedAt && vDelta.delta < 0) {
+        const current = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
+        if (current + vDelta.delta < 0) {
+          throw new InsufficientStockError([{ productId: vDelta.productId, missing: -(current + vDelta.delta) }]);
+        }
+      }
+      let working = variants!;
+      const accumulated = variantWrites.get(vDelta.productId) as Product["variants"] | undefined;
+      if (accumulated) working = accumulated;
+      const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);
+      if (!nextVariants) throw new Error("El color elegido ya no existe en este diseño.");
+      variantWrites.set(vDelta.productId, nextVariants);
+    }
     const saved = { ...next, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
     for (const update of updates) tx.update(doc(db, "products", update.productId), { quantityOnHand: update.quantityOnHand, updatedAt: at });
+    for (const [productId, variants] of variantWrites) tx.update(doc(db, "products", productId), { variants, updatedAt: at });
     const { id, ...data } = saved;
     tx.set(orderRef, stripUndefined(data) as Record<string, unknown>, { merge: false });
     return { order: saved, stock: updates };

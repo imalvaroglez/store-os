@@ -6,6 +6,7 @@ import {
 } from "../../app/firebase/storage";
 import {
   Button,
+  Dialog,
   TextField,
   TextArea,
   CheckboxField,
@@ -25,7 +26,9 @@ import {
   MAX_PRODUCT_IMAGES,
   type Product,
   type ProductImage as ProductImageType,
+  type ProductVariant,
 } from "../../types";
+import { suggestSkuSuffix, variantPublishError, variantSku as buildVariantSku } from "../../lib/variants";
 
 // Staged gallery image: a resized Blob chosen but not yet uploaded. Upload
 // happens on submit so cancelling leaves no orphan in Storage.
@@ -69,6 +72,12 @@ export function ProductForm({
   );
   const [qty, setQty] = useState(product.quantityOnHand?.toString() ?? "");
   const [lowAt, setLowAt] = useState(product.lowStockAt?.toString() ?? "");
+  // #124: color varieties — stock/cost/clave per color; prices stay shared.
+  const [variantsEnabled, setVariantsEnabled] = useState((product.variants?.length ?? 0) > 0);
+  const [variants, setVariants] = useState<ProductVariant[]>(product.variants ?? []);
+  const [variantStaged, setVariantStaged] = useState<Record<string, StagedImage[]>>({});
+  const [variantPhotoError, setVariantPhotoError] = useState<string | null>(null);
+  const [confirmDisableVariants, setConfirmDisableVariants] = useState(false);
 
   if (!activeStore) return null;
   // Capture the non-null store so async closures (submit/handleAdd) stay narrowed.
@@ -162,6 +171,78 @@ export function ProductForm({
     });
   }
 
+  // ── #124: variant handlers ─────────────────────────────────────────────
+  function addColor() {
+    const now = new Date().toISOString();
+    setVariants((vs) => [
+      ...vs,
+      { id: uid("var"), color: "", skuSuffix: "", cost: parseAmount(cost), createdAt: now, updatedAt: now },
+    ]);
+  }
+
+  function patchVariant(id: string, patch: Partial<ProductVariant>) {
+    setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...patch, updatedAt: new Date().toISOString() } : v)));
+  }
+
+  /** Color rename keeps the clave suffix in sync while it still looks
+   * auto-suggested (empty or the previous color's letter) — always editable. */
+  function renameColor(variant: ProductVariant, color: string) {
+    const wasAuto = !variant.skuSuffix || variant.skuSuffix === suggestSkuSuffix(variant.color);
+    patchVariant(variant.id, { color, ...(wasAuto ? { skuSuffix: color ? suggestSkuSuffix(color) : "" } : {}) });
+  }
+
+  function removeColor(id: string) {
+    setVariants((vs) => vs.filter((v) => v.id !== id));
+    setVariantStaged((m) => {
+      const next = { ...m };
+      delete next[id];
+      return next;
+    });
+  }
+
+  async function handleVariantAdd(variantId: string, file: File) {
+    const current = variants.find((v) => v.id === variantId);
+    const total = (current?.photos?.length ?? 0) + (variantStaged[variantId]?.length ?? 0);
+    if (total >= MAX_PRODUCT_IMAGES) {
+      setVariantPhotoError(`Máximo ${MAX_PRODUCT_IMAGES} fotos por color.`);
+      return;
+    }
+    setBusyId(`resize-${variantId}`);
+    setVariantPhotoError(null);
+    try {
+      const resized = await resizeImageFile(file);
+      const stagedImage: StagedImage = { id: uid("img"), blob: resized.blob, width: resized.width, height: resized.height, previewUrl: URL.createObjectURL(resized.blob) };
+      setVariantStaged((m) => ({ ...m, [variantId]: [...(m[variantId] ?? []), stagedImage] }));
+    } catch {
+      setVariantPhotoError("No se pudo leer la foto. Prueba con otra.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function handleVariantRemovePhoto(variantId: string, photoId: string) {
+    setVariantStaged((m) => ({ ...m, [variantId]: (m[variantId] ?? []).filter((s) => s.id !== photoId) }));
+    patchVariant(variantId, {
+      photos: (variants.find((v) => v.id === variantId)?.photos ?? []).filter((img) => img.id !== photoId),
+    });
+  }
+
+  function handleVariantPrimary(variantId: string, photoId: string) {
+    patchVariant(variantId, {
+      photos: (variants.find((v) => v.id === variantId)?.photos ?? []).map((img) => ({ ...img, isPrimary: img.id === photoId })),
+    });
+  }
+
+  function variantTiles(variantId: string): GalleryTile[] {
+    const variant = variants.find((v) => v.id === variantId);
+    const saved = variant?.photos ?? [];
+    const stagedList = variantStaged[variantId] ?? [];
+    return [
+      ...saved.map((img) => ({ id: img.id, url: img.url, isPrimary: img.isPrimary })),
+      ...stagedList.map((s) => ({ id: s.id, url: s.previewUrl, isPrimary: saved.length === 0 && stagedList[0]?.id === s.id })),
+    ];
+  }
+
   async function submit() {
     setValidationError(null);
     const fail = (msg: string) => {
@@ -204,6 +285,35 @@ export function ProductForm({
     // Merge saved + uploaded into the final gallery; ensure exactly one primary.
     const merged = reorderGallery([...savedImages, ...uploaded]);
 
+    // #124: upload each color's staged photos (variant id in the object path),
+    // then materialize the full variant array with claves.
+    let finalVariants: ProductVariant[] = variants;
+    if (variantsEnabled && cloud) {
+      const withPhotos: ProductVariant[] = [];
+      for (const variant of variants) {
+        const stagedList = variantStaged[variant.id] ?? [];
+        let uploadedVariant: ProductImageType[] = [];
+        if (stagedList.length > 0) {
+          setSaving(true);
+          try {
+            uploadedVariant = await Promise.all(
+              stagedList.map(async (s, idx) => {
+                const { url, storagePath } = await uploadGalleryImage(store.id, product.id, `${variant.id}-${s.id}`, s.blob);
+                return { id: s.id, url, storagePath, width: s.width, height: s.height, order: (variant.photos?.length ?? 0) + idx, isPrimary: false };
+              })
+            );
+          } catch {
+            setVariantPhotoError("No se pudieron subir las fotos del color. Revisa tu conexión.");
+            setSaving(false);
+            return;
+          }
+        }
+        const gallery = reorderGallery([...(variant.photos ?? []), ...uploadedVariant]);
+        withPhotos.push({ ...variant, photos: gallery });
+      }
+      finalVariants = withPhotos;
+    }
+
     // PUBLISH VALIDATION: a published product needs a price and (when the store
     // has categories) a primary category. Drafts bypass validation. A photo is
     // encouraged but not hard-required — a product without one renders a
@@ -218,6 +328,16 @@ export function ProductForm({
       if ((draft.categoryIds ?? []).length === 0) return fail("Para publicar, elige al menos una categoría.");
       const hasPhoto = cloud ? merged.length > 0 && merged.some((image) => image.isPrimary) : !!draft.imageUrl;
       if (!hasPhoto) return fail("Para publicar, agrega una foto de portada.");
+      // #124: per-color publish gates (photo, clave, distinct names) on the
+      // FINAL array (staged photos already uploaded into finalVariants).
+      if (variantsEnabled) {
+        if (finalVariants.length === 0) return fail("Activa colores solo cuando agregues al menos uno.");
+        const variantError = variantPublishError({ sku: draft.sku, variants: finalVariants });
+        if (variantError) return fail(variantError);
+      }
+    }
+    if (variantsEnabled && variants.length === 0) {
+      return fail("Agrega al menos un color o desactiva «Se vende por color».");
     }
 
     // Assign a stable slug if missing (survives renames thereafter).
@@ -239,6 +359,9 @@ export function ProductForm({
       if (clashes) return fail("Esa clave ya la usa otro producto. Elige otra.");
     }
 
+    if (variantsEnabled) {
+      finalVariants = finalVariants.map((v) => ({ ...v, color: v.color.trim(), sku: buildVariantSku(sku, v) ?? v.sku }));
+    }
     const next: Product = {
       ...draft,
       name: draft.name.trim(),
@@ -248,6 +371,9 @@ export function ProductForm({
       imageUrl: merged.find((i) => i.isPrimary)?.url ?? merged[0]?.url,
       cost: parseAmount(cost),
       updatedAt: new Date().toISOString(),
+      // #124: variant designs carry their stock per color; the product-level
+      // field would be a second, lying source of truth.
+      ...(variantsEnabled ? { variants: finalVariants, quantityOnHand: undefined } : { variants: undefined }),
     };
 
     if (isTiered) {
@@ -466,6 +592,92 @@ export function ProductForm({
               onChange={(e) => setLowAt(sanitizeIntegerInput(e.target.value))}
             />
           </div>
+
+          {/* #124: color varieties. Opt-in per design (transition B: existing */}
+          {/* products are untouched unless Fer explicitly activates this). */}
+          <div className="space-y-3 rounded-xl border border-edge bg-surface p-3">
+            <CheckboxField
+              label="Se vende por color (cada color con su propia existencia, costo y clave)"
+              checked={variantsEnabled}
+              onChange={(next) => {
+                if (!next && variants.some((v) => (v.quantityOnHand ?? 0) !== 0)) {
+                  setConfirmDisableVariants(true);
+                  return;
+                }
+                setVariantsEnabled(next);
+                if (!next) setVariants([]);
+              }}
+            />
+            {variantsEnabled ? (
+              <div className="space-y-3">
+                <p className="text-xs text-on-surface-soft">
+                  El precio de venta se comparte entre colores del mismo diseño. Cada color necesita su foto para
+                  publicarse; su clave se sugiere sola (p. ej. {draft.sku || "CLAVE"}-D) y puedes editarla.
+                </p>
+                {variants.map((variant) => (
+                  <div key={variant.id} className="space-y-2 rounded-lg border border-edge bg-paper p-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <TextField
+                        label="Color"
+                        placeholder="p. ej. Dorado"
+                        value={variant.color}
+                        onChange={(e) => renameColor(variant, e.target.value)}
+                      />
+                      <TextField
+                        label={`Clave ${variant.skuSuffix ? `(${draft.sku ?? "CLAVE"}-${variant.skuSuffix})` : "(sufijo)"}`}
+                        hint={variant.skuSuffix ? undefined : "Se sugiere con la inicial del color."}
+                        placeholder="D"
+                        value={variant.skuSuffix ?? ""}
+                        onChange={(e) => patchVariant(variant.id, { skuSuffix: e.target.value.toUpperCase().slice(0, 4) })}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <TextField
+                        label="Costo del color"
+                        inputMode="decimal"
+                        placeholder={cost || "0"}
+                        value={variant.cost?.toString() ?? ""}
+                        onChange={(e) => patchVariant(variant.id, { cost: parseAmount(e.target.value) })}
+                        hint="Hereda el costo del diseño; ajústalo si tu proveedor cobra distinto."
+                      />
+                      <TextField
+                        label="En existencia"
+                        inputMode="numeric"
+                        placeholder="0"
+                        value={variant.quantityOnHand?.toString() ?? ""}
+                        onChange={(e) => patchVariant(variant.id, { quantityOnHand: parseAmount(e.target.value) ? Math.round(parseAmount(e.target.value)!) : undefined })}
+                      />
+                    </div>
+                    {cloud ? (
+                      <MultiPhotoPicker
+                        tiles={variantTiles(variant.id)}
+                        max={MAX_PRODUCT_IMAGES}
+                        busy={busyId === `resize-${variant.id}`}
+                        error={variantPhotoError ?? undefined}
+                        onAdd={(file) => void handleVariantAdd(variant.id, file)}
+                        onRemove={(photoId) => handleVariantRemovePhoto(variant.id, photoId)}
+                        onMakePrimary={(photoId) => handleVariantPrimary(variant.id, photoId)}
+                        onMove={() => {/* order within a color's gallery is positional; reorder via primary */}}
+                      />
+                    ) : (
+                      <p className="text-xs text-on-surface-soft">Las fotos por color requieren iniciar sesión.</p>
+                    )}
+                    <Button size="sm" variant="ghost" onClick={() => removeColor(variant.id)}>
+                      Quitar color {variant.color || "(sin nombre)"}
+                    </Button>
+                  </div>
+                ))}
+                <Button size="sm" variant="secondary" onClick={addColor}>
+                  + Color
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-on-surface-soft">
+                Actívalo para diseños que llegan en varios acabados: la venta pedirá el color exacto y la existencia
+                se descuenta por color.
+              </p>
+            )}
+          </div>
         </>
       ) : (
         <TextField
@@ -537,6 +749,36 @@ export function ProductForm({
       <Button full size="lg" onClick={submit} disabled={!draft.name.trim() || saving}>
         {saving ? "Guardando…" : "Guardar producto"}
       </Button>
+
+      <Dialog
+        open={confirmDisableVariants}
+        title="¿Dejar de vender por color?"
+        onClose={() => setConfirmDisableVariants(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setConfirmDisableVariants(false)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => {
+                setConfirmDisableVariants(false);
+                setVariantsEnabled(false);
+                setVariants([]);
+                setVariantStaged({});
+              }}
+            >
+              Dejar de vender por color
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Hay colores con existencia. Al dejar de vender por color, las existencias por color se descartan y la pieza
+          vuelve a manejarse como un solo producto (captura su existencia total de nuevo).
+        </p>
+      </Dialog>
     </div>
   );
 }
