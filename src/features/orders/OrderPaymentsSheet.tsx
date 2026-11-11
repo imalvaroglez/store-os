@@ -402,7 +402,12 @@ export function OrderPaymentsSheet({
                   )}
                   Para devolver más, usa el botón «Incidencia» de este pedido
                   {summary.inheritedPendingCents > 0
-                    ? "; y para corregir el anticipo, edítalo en el pedido (te pedirá el motivo)."
+                    ? // #288 UX mission: the motive is only demanded when the order has
+                      // payment evidence — with a bare pending anticipo the edit is free,
+                      // and the parenthetical must not over-promise.
+                      `; y para corregir el anticipo, edítalo en el pedido${
+                        summary.records.length > 0 || (order.paymentsReceivedCents ?? 0) > 0 ? " (te pedirá el motivo)" : ""
+                      }.`
                     : "."}
                 </p>
               )}
