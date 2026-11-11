@@ -914,3 +914,59 @@ describe("text-entry-audit · flujo Clientas en Pedidos (#219)", () => {
     expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe("María Nueva");
   });
 });
+
+// #309 — per-line shortage indicator: the exact line/variant that is short,
+// in Capturar and in Revisar por categoría, from the shared canonical source.
+describe("faltantes por línea (#309)", () => {
+  it("muestra Falta N en la línea exacta (variante) y el resumen, en captura y en revisión", async () => {
+    state.products.push({
+      ...state.products[0],
+      id: "prod_variant_short",
+      name: "Moño glitter",
+      prices: undefined,
+      variants: [
+        { id: "v_dorado", color: "Dorado", quantityOnHand: -2, createdAt: "" },
+        { id: "v_plateado", color: "Plateado", quantityOnHand: 3, createdAt: "" },
+      ],
+    } as never);
+    const order = {
+      id: "shortage-order",
+      storeId: "store_olivia",
+      customerId: "customer_1",
+      items: [{
+        productId: "prod_variant_short",
+        variantId: "v_dorado",
+        variantColor: "Dorado",
+        productName: "Moño glitter",
+        quantity: 3,
+        unitPrice: 100,
+        subtotal: 300,
+      }],
+      deposit: 0,
+      createdAt: "",
+      updatedAt: "",
+    } as unknown as Order;
+    render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
+    expect(await screen.findByText("Faltan 2 piezas en 1 producto")).toBeTruthy();
+    expect(screen.getByText("Falta 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Revisar por categoría" }));
+    expect(screen.getByText("Falta 2")).toBeTruthy();
+    expect(screen.queryByText("Ver faltantes")).toBeNull(); // sólo aplica en captura
+  });
+
+  it("sin faltantes no muestra resumen ni insignias", async () => {
+    const order = {
+      id: "healthy-order",
+      storeId: "store_olivia",
+      customerId: "customer_1",
+      items: [{ productId: "prod_olivia_1", productName: "Arete dorado", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      deposit: 0,
+      createdAt: "",
+      updatedAt: "",
+    } as unknown as Order;
+    render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
+    await screen.findByText("Productos");
+    expect(screen.queryByText(/Falta(n)? \d+ pieza(s)?/)).toBeNull();
+    expect(screen.queryByText(/^Falta \d+$/)).toBeNull();
+  });
+});
