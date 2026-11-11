@@ -6,6 +6,7 @@ import { buildCartOrderUrl, type CartOrderLine } from "../../lib/whatsapp";
 import {
   calculateOrderPricing,
   cartRequestSummary,
+  isIdentityGatedTier,
   type CartQtyLine,
 } from "../../lib/pricing";
 import { loadCartName, pruneCartLines, saveCartName, type CartLine } from "../../lib/cart";
@@ -30,6 +31,25 @@ function tierRequirement(tier: PublicPriceTier): string | null {
     parts.push(`desde ${formatMoney(tier.minAmount)} en productos a precio ${tier.label}`);
   }
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * Visible condition for the product sheet's price ladder (1.13.1): what the
+ * client needs to KNOW, phrased from the store's own configuration. An
+ * identity benefit (money-gated, #130) says it depends on a standing benefit
+ * — never that adding pieces unlocks it for the current request.
+ */
+function tierCondition(tier: PublicPriceTier): string {
+  const parts: string[] = [];
+  if (tier.minPieces != null) {
+    parts.push(`Desde ${tier.minPieces} ${tier.minPieces === 1 ? "pieza" : "piezas"}`);
+  }
+  if (tier.minAmount != null) {
+    parts.push(tier.minPieces == null
+      ? `Con beneficio ${tier.label} vigente`
+      : `Desde ${formatMoney(tier.minAmount)} en precio ${tier.label}`);
+  }
+  return parts.join(" · ");
 }
 
 function PriceRequirement({ tier }: { tier: PublicPriceTier }) {
@@ -96,27 +116,30 @@ export function PublicTierPrices({
     : null;
 
   if (mode === "detail") {
+    const identityAspirational = isIdentityGatedTier(aspirational);
     return (
       <section className="olv-price-block olv-price-detail mt-3" aria-label="Precios por pieza">
         <p className="olv-price-caption">Precio por pieza</p>
+        {/* 1.13.1: one 3-column ladder — level, amount on a shared axis,
+            condition visible. No "?" help, no floating tooltip, no title. */}
         <dl className="olv-price-ladder">
           {tiers.map((tier) => {
             const featured = tier.id === aspirational.id;
             return (
               <div key={tier.id} className={`olv-price-row${featured ? " olv-price-row--featured" : ""}`}>
-                <dt className="olv-price-row-label">
-                  {tier.label}
-                </dt>
-                <dd className="olv-price-row-value">
-                  <span className="olv-price-row-amount">{formatMoney(product.prices?.[tier.id])}</span>
-                  <PriceRequirement tier={tier} />
-                </dd>
+                <dt className="olv-price-row-label">{tier.label}</dt>
+                <dd className="olv-price-row-amount">{formatMoney(product.prices?.[tier.id])}</dd>
+                <dd className="olv-price-row-condition">{tierCondition(tier)}</dd>
               </div>
             );
           })}
         </dl>
         {savings !== null && (
-          <p className="olv-price-savings">Hasta {formatMoney(savings)} menos por pieza al desbloquear {aspirational.label}</p>
+          <p className="olv-price-savings">
+            {identityAspirational
+              ? `Hasta ${formatMoney(savings)} menos por pieza con beneficio ${aspirational.label} vigente`
+              : `Hasta ${formatMoney(savings)} menos por pieza al desbloquear ${aspirational.label}`}
+          </p>
         )}
       </section>
     );
