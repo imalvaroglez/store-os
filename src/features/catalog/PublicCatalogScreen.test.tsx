@@ -57,8 +57,8 @@ describe("PublicCatalogScreen carrito", () => {
     expect(within(list).queryByText("Cantidad")).toBeNull();
     expect(within(list).getAllByText("Precio por pieza")).toHaveLength(2);
     expect(within(list).getAllByText("Subtotal")).toHaveLength(2);
-    expect(within(list).getByText("$1,500")).toBeTruthy();
-    expect(within(list).getByText("$3,000")).toBeTruthy();
+    expect(within(list).getByText("$1,500.00")).toBeTruthy();
+    expect(within(list).getByText("$3,000.00")).toBeTruthy();
     const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
     expect(send.href).toContain("wa.me/5215512345678");
     const text = decodeURIComponent(send.href.split("text=")[1]);

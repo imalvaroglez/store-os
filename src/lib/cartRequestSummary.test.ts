@@ -141,3 +141,62 @@ describe("cruce del umbral en tiempo real (mismo carrito, cantidades)", () => {
     expect(at(3).showIdentityHint).toBe(true);  // volver a bajar la reenciende
   });
 });
+
+// 1.13.1 — the cart lines share the headline's derivation. The reproduced
+// defect: 19 pieces at $140/$105/$55 showed Iconic lines ($55/$1,045) next to
+// a Girly headline ($1,995). Lines must always carry the habitual tier.
+describe("lineBreakdown — una sola derivación con el titular", () => {
+  it("caso reproducido: 19 piezas $140/$105/$55 → línea Girly $105/$1,995, no Iconic", () => {
+    const summary = cartRequestSummary(OLIVIA_TIERS, [
+      line({ t_retail: 140, t_wholesale: 105, t_reseller: 55 }, 19),
+    ])!;
+    expect(summary.habitualTier.id).toBe("t_wholesale");
+    expect(summary.habitualSubtotal).toBe(1995);
+    expect(summary.lineBreakdown).toEqual([{ unitPrice: 105, subtotal: 1995 }]);
+    expect(summary.showIdentityHint).toBe(false); // $1,995 ≥ $1,000
+  });
+
+  it("las líneas siguen al titular al cruzar $1,000 en ambos sentidos (centavos reales)", () => {
+    const at = (qty: number) => cartRequestSummary(OLIVIA_TIERS, [
+      line({ t_retail: 70, t_wholesale: 52.63, t_reseller: 25 }, qty),
+    ])!;
+    const below = at(19); // 19 × $52.63 = $999.97
+    expect(below.habitualSubtotal).toBeCloseTo(999.97, 6);
+    expect(below.showIdentityHint).toBe(true);
+    expect(below.lineBreakdown[0].unitPrice).toBe(52.63);
+    expect(below.lineBreakdown[0].subtotal).toBeCloseTo(999.97, 6);
+    const above = at(20); // 20 × $52.63 = $1,052.60
+    expect(above.habitualSubtotal).toBeCloseTo(1052.6, 6);
+    expect(above.showIdentityHint).toBe(false);
+    expect(above.lineBreakdown[0].unitPrice).toBe(52.63);
+    expect(above.lineBreakdown[0].subtotal).toBeCloseTo(1052.6, 6);
+  });
+
+  it("Σ lineBreakdown === habitualSubtotal, multi-línea con precios mixtos", () => {
+    const lines = [
+      line({ t_retail: 140, t_wholesale: 105, t_reseller: 55 }, 7),
+      line({ t_retail: 90.5, t_wholesale: 70.25, t_reseller: 40 }, 3),
+    ];
+    const summary = cartRequestSummary(OLIVIA_TIERS, lines)!; // 10 piezas → Girly
+    expect(summary.lineBreakdown).toEqual([
+      { unitPrice: 105, subtotal: 735 },
+      { unitPrice: 70.25, subtotal: 210.75 },
+    ]);
+    expect(summary.lineBreakdown.reduce((sum, l) => sum + l.subtotal, 0))
+      .toBeCloseTo(summary.habitualSubtotal, 6);
+  });
+
+  it("una línea sin precio Iconic no contamina las líneas habituales", () => {
+    const lines = [
+      line({ t_retail: 100, t_wholesale: 80, t_reseller: 35 }, 4),
+      line({ t_retail: 100, t_wholesale: 80 }), // sin Iconic
+    ];
+    const summary = cartRequestSummary(OLIVIA_TIERS, lines)!; // 5 piezas → Girly
+    expect(summary.lineBreakdown).toEqual([
+      { unitPrice: 80, subtotal: 320 },
+      { unitPrice: 80, subtotal: 80 },
+    ]);
+    expect(summary.habitualSubtotal).toBe(400);
+    expect(summary.identitySubtotal).toBeUndefined(); // «Por confirmar», sin cifra
+  });
+});

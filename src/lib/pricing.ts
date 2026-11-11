@@ -223,6 +223,10 @@ export type CartRequestSummary = {
   /** True when the identity row is shown: habitual < threshold AND an
    * identity tier exists. Recomputed live; never persisted. */
   showIdentityHint: boolean;
+  /** Per-line prices at the HABITUAL tier (own price on every line). One
+   *  derivation with the headline (1.13.1): the anonymous cart lines can
+   *  never show an identity-tier price while the total uses the habitual. */
+  lineBreakdown: OrderLinePricing[];
 };
 
 export function cartRequestSummary(tiers: PriceTierDef[], lines: CartQtyLine[]): CartRequestSummary | null {
@@ -247,12 +251,18 @@ export function cartRequestSummary(tiers: PriceTierDef[], lines: CartQtyLine[]):
     ? ownSubtotal(identityTier)
     : undefined;
   const habitualSubtotal = ownSubtotal(habitual);
+  // Same reduction order as ownSubtotal, so Σ lines === headline to the cent.
+  const lineBreakdown = lines.map((line) => {
+    const unitPrice = line.unitPrices[habitual.id] as number; // habitual is own-priced
+    return { unitPrice, subtotal: unitPrice * line.qty };
+  });
   return {
     totalQuantity,
     habitualTier: habitual,
     habitualSubtotal,
     identityTier,
     identitySubtotal,
+    lineBreakdown,
     // Exact-cents comparison (#320 review H2): double sums can land at
     // 999.9999999999999 and flip the row the wrong way at the boundary.
     showIdentityHint:

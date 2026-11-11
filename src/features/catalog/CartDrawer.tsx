@@ -282,7 +282,9 @@ export function CartDrawer({
             {shown.map((l, index) => {
               const signal = signalBySlug?.[l.productSlug];
               const legend = signal ? STOCK_LEGENDS[signal] : null;
-              const linePricing = pricing?.lineBreakdown[index];
+              // #305/1.13.1: lines share the summary's single derivation —
+              // the habitual tier, never a divergent active/identity tier.
+              const linePricing = request?.lineBreakdown[index];
               const unitPrice = linePricing?.unitPrice ?? l.unitPrice;
               const lineSubtotal = linePricing?.subtotal ?? (typeof unitPrice === "number" ? unitPrice * l.qty : undefined);
               return (
@@ -318,11 +320,11 @@ export function CartDrawer({
                       <dl className="olv-cart-line-prices">
                         <div>
                           <dt>Precio por pieza</dt>
-                          <dd>{typeof unitPrice === "number" ? formatMoney(unitPrice) : "Por confirmar"}</dd>
+                          <dd>{typeof unitPrice === "number" ? formatMoneyExact(unitPrice) : "Por confirmar"}</dd>
                         </div>
                         <div>
                           <dt>Subtotal</dt>
-                          <dd>{typeof lineSubtotal === "number" ? formatMoney(lineSubtotal) : "Por confirmar"}</dd>
+                          <dd>{typeof lineSubtotal === "number" ? formatMoneyExact(lineSubtotal) : "Por confirmar"}</dd>
                         </div>
                       </dl>
                     </div>
