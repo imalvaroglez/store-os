@@ -5,7 +5,10 @@
 export function formatMoney(amount: number | undefined | null): string {
   if (amount == null || Number.isNaN(amount)) return "$0";
   const rounded = Math.round(amount);
-  return "$" + rounded.toLocaleString("es-MX");
+  // Signed corrections (#327 review): keep the sign BEFORE the currency so a
+  // negative cobrado reads "-$100", never the confusing "$-100".
+  const sign = rounded < 0 ? "-" : "";
+  return sign + "$" + Math.abs(rounded).toLocaleString("es-MX");
 }
 
 /** Exact MXN format with cents — purchase review totals must not round. */
