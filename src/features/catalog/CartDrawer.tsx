@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
-import { formatMoney, publicPrice } from "../../lib/money";
+import { formatMoney, formatMoneyExact, publicPrice } from "../../lib/money";
 import { buildCartOrderUrl, type CartOrderLine } from "../../lib/whatsapp";
 import {
   calculateOrderPricing,
@@ -345,7 +345,7 @@ export function CartDrawer({
                   <div className="flex items-baseline justify-between gap-3">
                     <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado</dt>
                     <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
-                      {formatMoney(request.habitualSubtotal)} MXN
+                      {formatMoneyExact(request.habitualSubtotal)} MXN
                     </dd>
                   </div>
                   {request.showIdentityHint && request.identityTier && (
@@ -354,7 +354,7 @@ export function CartDrawer({
                         ¿Eres {request.identityTier.label}? Subtotal estimado
                       </dt>
                       <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
-                        {request.identitySubtotal != null ? `${formatMoney(request.identitySubtotal)} MXN` : "Por confirmar"}
+                        {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
                       </dd>
                     </div>
                   )}
@@ -380,7 +380,7 @@ export function CartDrawer({
                 saveCartName(store.slug, event.target.value);
               }}
             />
-            <a href={buildCartOrderUrl(store, store.slug, orderLines, pricing, customerName, request)} target="_blank" rel="noreferrer">
+            <a href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)} target="_blank" rel="noreferrer">
               <Button full size="lg" variant="primary" className="bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90">
                 Enviar pedido por WhatsApp
               </Button>

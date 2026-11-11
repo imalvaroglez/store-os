@@ -77,19 +77,42 @@ describe("umbral de visibilidad — fronteras obligatorias", () => {
 });
 
 describe("sin precio propio Iconic — Por confirmar, jamás fallback", () => {
-  it("línea sin precio Iconic: identitySubtotal undefined (no $0, no precio ajeno)", () => {
+  it("línea sin precio Iconic: fila visible con «Por confirmar» (no $0, no precio ajeno)", () => {
     const lines = [line({ t_retail: 100, t_wholesale: 80 })]; // sin t_reseller
     const summary = cartRequestSummary(OLIVIA_TIERS, lines)!;
     expect(summary.habitualSubtotal).toBe(100);
     expect(summary.identitySubtotal).toBeUndefined();
-    expect(summary.showIdentityHint).toBe(false); // sin cifra que mostrar
+    expect(summary.showIdentityHint).toBe(true); // fila visible: «Por confirmar»
   });
   it("una sola línea sin precio Iconic contamina el total completo (sin mezclar)", () => {
     const lines = [
       line({ t_retail: 100, t_wholesale: 80, t_reseller: 35 }, 2),
       line({ t_retail: 100, t_wholesale: 80 }), // sin Iconic
     ];
-    expect(cartRequestSummary(OLIVIA_TIERS, lines)!.identitySubtotal).toBeUndefined();
+    const summary = cartRequestSummary(OLIVIA_TIERS, lines)!;
+    expect(summary.identitySubtotal).toBeUndefined();
+    expect(summary.showIdentityHint).toBe(true); // habitual $300 < 1000 → «Por confirmar»
+  });
+
+  it("exact-cents: una suma de centavos reales que EXACTO cruza $1,000 oculta la fila", () => {
+    // 123.45 + 876.55 = 1,000.00 exactos en centavos — la fila NO se muestra.
+    const lines = [
+      line({ t_retail: 123.45, t_wholesale: 99, t_reseller: 45 }),
+      line({ t_retail: 876.55, t_wholesale: 700, t_reseller: 300 }),
+    ];
+    const summary = cartRequestSummary(OLIVIA_TIERS, lines)!;
+    expect(Math.round(summary.habitualSubtotal * 100)).toBe(100000);
+    expect(summary.showIdentityHint).toBe(false);
+  });
+
+  it("exact-cents: 999.99 exactos MANTIENE la fila aunque el double roce $1,000", () => {
+    // 0.1+0.2-style: combinación cuyos centavos suman 99,999 (< 100,000).
+    const lines = [
+      line({ t_retail: 333.33, t_wholesale: 280, t_reseller: 120 }, 3),
+    ]; // 999.99 exactos
+    const summary = cartRequestSummary(OLIVIA_TIERS, lines)!;
+    expect(summary.habitualSubtotal).toBeCloseTo(999.99, 6);
+    expect(summary.showIdentityHint).toBe(true);
   });
 });
 
