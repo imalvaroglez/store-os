@@ -21,7 +21,7 @@ import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { isVariantProduct } from "../../lib/variants";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
-import { attributeShortageToLines } from "../../lib/inventory";
+import { attributeProjectedShortageToLines, orderWillHoldPieces } from "../../lib/inventory";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
@@ -281,14 +281,19 @@ export function OrderForm({
   // The just-added line plays the theme's riseIn entrance once (mount only).
   const [enteringKey, setEnteringKey] = useState<string | null>(null);
   const [focusLine, setFocusLine] = useState<string | null>(null);
+  // #325: shortage hops land on the QUANTITY input — that is where Fer fixes
+  // the faltante; review-mode "Editar" jumps keep the product selector.
+  const [focusPrefersQuantity, setFocusPrefersQuantity] = useState(false);
   const productInputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const quantityInputs = useRef<Record<string, HTMLInputElement | null>>({});
   useLayoutEffect(() => {
     if (reviewing || !focusLine) return;
-    const input = productInputs.current[focusLine];
+    const input = (focusPrefersQuantity ? quantityInputs.current[focusLine] : undefined) ?? productInputs.current[focusLine];
     input?.focus({ preventScroll: true });
     input?.scrollIntoView?.({ block: "center", behavior: "auto" });
     setFocusLine(null);
-  }, [reviewing, focusLine]);
+    setFocusPrefersQuantity(false);
+  }, [reviewing, focusLine, focusPrefersQuantity]);
 
   const customerOptions = customers.map((customer) => ({
     value: customer.id,
@@ -329,26 +334,55 @@ export function OrderForm({
       throw error;
     }
   }, [deposit, lines, order]);
-  // #309: per-line shortage from the SHARED canonical derivation — the same
-  // source as the card's "Faltan N" badge (negative stock on the exact
-  // dimension each line moves). The FIRST line with pieces claims the
-  // dimension's FULL missing count, so editor summary, line badges and card
-  // badge always show the SAME totals. Observability only; never mutates.
+  // #309 + #325: per-line shortage from the SHARED canonical derivation —
+  // PROJECTED onto the draft in progress. The SAVED order's holds return to
+  // the shelf first, and the gate uses the DRAFT's lifecycle state: a draft
+  // being cancelled holds nothing and must not read as shortage (review P2).
+  // Editor summary, line badges and, after Guardar, the card's "Faltan N"
+  // badge all show the SAME totals — and the faltante appears the moment Fer
+  // raises a line, not after saving. The FIRST line with pieces claims the
+  // dimension's FULL missing count. Observability only; never mutates.
+  const draftWillHold = useMemo(
+    () => orderWillHoldPieces({ ...order, orderStatus }),
+    [order, orderStatus]
+  );
   const lineShortage = useMemo(
     () =>
-      attributeShortageToLines(
+      attributeProjectedShortageToLines(
         lines.map((line) => ({
           key: line.key,
           ...(line.productId ? { productId: line.productId } : {}),
           ...(line.variantId ? { variantId: line.variantId } : {}),
           quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
         })),
+        order,
+        draftWillHold,
         products
       ),
-    [lines, products]
+    [lines, order, draftWillHold, products]
   );
   const shortagePieces = [...lineShortage.values()].reduce((sum, missing) => sum + missing, 0);
-  const firstShortageKey = lines.find((line) => (lineShortage.get(line.key) ?? 0) > 0)?.key;
+  // #325: "Ver faltantes" hops through EVERY short line, advancing from the
+  // LAST visited one. Fixing a line removes it from the list; advancing from
+  // the last VISITED line (instead of a plain counter) never skips an
+  // unvisited one (review P3).
+  const shortageKeys = lines.filter((line) => (lineShortage.get(line.key) ?? 0) > 0).map((line) => line.key);
+  const [lastShortageKey, setLastShortageKey] = useState<string | null>(null);
+  const focusNextShortage = () => {
+    if (shortageKeys.length === 0) return;
+    const lastIndex = lastShortageKey ? shortageKeys.indexOf(lastShortageKey) : -1;
+    const next = shortageKeys[(lastIndex + 1) % shortageKeys.length];
+    setLastShortageKey(next);
+    setFocusPrefersQuantity(true);
+    setFocusLine(next);
+  };
+  // The label reports the stop the LAST click landed on (or the first one
+  // before any click) — not the next stop, which read as "already saw both".
+  // When the visited line was just fixed (no longer short) the position falls
+  // back to 1 — "(0/N)" would read as if nothing were left.
+  const visitedIndex = lastShortageKey ? shortageKeys.indexOf(lastShortageKey) : -1;
+  const shortageStop = visitedIndex > -1 ? visitedIndex + 1 : 1;
+  const firstShortageKey = shortageKeys[0];
 
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
   // pieza. Only lines with content enter the estimate; an empty placeholder
@@ -698,7 +732,9 @@ export function OrderForm({
             {lineShortage.size === 1 ? "producto" : "productos"}
           </Badge>
           {!reviewing && firstShortageKey && (
-            <Button variant="ghost" size="sm" onClick={() => setFocusLine(firstShortageKey)}>Ver faltantes</Button>
+            <Button variant="ghost" size="sm" onClick={focusNextShortage}>
+              {shortageKeys.length > 1 ? `Ver faltantes (${shortageStop}/${shortageKeys.length})` : "Ver faltantes"}
+            </Button>
           )}
         </div>
       )}
@@ -823,6 +859,9 @@ export function OrderForm({
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
+                  inputRef={(input) => {
+                    quantityInputs.current[line.key] = input;
+                  }}
                   value={line.quantityText}
                   onChange={(event) => {
                     const value = sanitizeIntegerInput(event.target.value);
