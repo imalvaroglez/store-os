@@ -3,13 +3,13 @@
 // The committed fallback logo carried a baked flat background (cream). This
 // script converts that background color to REAL transparency — same artwork,
 // no invented pixels: every pixel's alpha comes from its distance to the
-// sampled background color (GIMP's color-to-alpha math), and antialiased
-// edges are unblended so they keep their hue.
+// dominant background color with distance thresholds, and antialiased edges
+// are unblended so they keep their hue.
 //
 // Zero dependencies: a minimal PNG codec (8-bit RGB/RGBA, no interlace) on
 // top of node:zlib. Fails closed on anything it does not understand.
 //
-// Usage: node scripts/remove-logo-bg.mjs <input.png> <output.png>
+// Usage: node scripts/remove-logo-bg.mjs <input.png> <output.png> [tLow=40] [tHigh=150]
 
 import { deflateSync, inflateSync } from "node:zlib";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -181,10 +181,14 @@ writeFileSync(output, writePngRgba(png.width, png.height, rgba));
 
 const total = png.width * png.height;
 const cornerCheck = ((x, y) => rgba[((y * png.width + x) * 4) + 3]);
+const corners = [
+  cornerCheck(0, 0), cornerCheck(png.width - 1, 0),
+  cornerCheck(0, png.height - 1), cornerCheck(png.width - 1, png.height - 1),
+];
 console.log(`background (dominant color): rgb(${bg.join(",")})`);
 console.log(`pixels: ${total} · fully transparent: ${transparent} (${(transparent / total * 100).toFixed(1)}%) · opaque artwork: ${kept} (${(kept / total * 100).toFixed(1)}%)`);
-console.log(`corner alphas (must be 0): ${cornerCheck(0, 0)}, ${cornerCheck(png.width - 1, 0)}, ${cornerCheck(0, png.height - 1)}, ${cornerCheck(png.width - 1, png.height - 1)}`);
-if (cornerCheck(0, 0) !== 0 || cornerCheck(png.width - 1, 0) !== 0) {
+console.log(`corner alphas (must be 0): ${corners.join(", ")}`);
+if (corners.some((alpha) => alpha !== 0)) {
   console.error("FAIL: corners are not transparent — background sample was wrong");
   process.exit(1);
 }

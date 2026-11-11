@@ -38,19 +38,23 @@ describe("saveStorefrontBatch", () => {
   // #332 (1.13.1): a cleared storefront text slot must DELETE the remote
   // field in the two docs that carry `storefront` — a plain merge write keeps
   // the old value and it "resurrects" after reload. adminStores stays a ping.
-  it("borrar shipping/hours escribe deleteField en stores y publicStores; el resto se preserva", async () => {
-    await saveStorefrontBatch({ id: "s1", slug: "olivia" }, { shipping: "", hours: "", notice: "Aviso" } as Storefront, "2026-11-11T00:00:00.000Z");
+  it("borrar los textos de una sola línea escribe deleteField en stores y publicStores; el resto se preserva", async () => {
+    await saveStorefrontBatch(
+      { id: "s1", slug: "olivia" },
+      { shipping: "", hours: "", notice: "", instagram: "", hero: { body: "Texto" } } as Storefront,
+      "2026-11-11T00:00:00.000Z"
+    );
 
     const storesWrite = mocks.batch.set.mock.calls[0][1] as { storefront: Record<string, unknown> };
-    expect((storesWrite.storefront.shipping as FieldValue).isEqual(deleteField())).toBe(true);
-    expect((storesWrite.storefront.hours as FieldValue).isEqual(deleteField())).toBe(true);
-    expect(storesWrite.storefront.notice).toBe("Aviso");
+    for (const slot of ["shipping", "hours", "notice", "instagram"]) {
+      expect((storesWrite.storefront[slot] as FieldValue).isEqual(deleteField())).toBe(true);
+    }
+    expect(storesWrite.storefront.hero).toEqual({ body: "Texto" }); // los demás campos sobreviven
 
     expect(mocks.batch.set.mock.calls[1][1]).toEqual({ storeId: "s1" }); // adminStores: control ping intacto
 
     const publicWrite = mocks.batch.set.mock.calls[2][1] as { storefront: Record<string, unknown> };
     expect((publicWrite.storefront.shipping as FieldValue).isEqual(deleteField())).toBe(true);
-    expect((publicWrite.storefront.hours as FieldValue).isEqual(deleteField())).toBe(true);
-    expect(publicWrite.storefront.notice).toBe("Aviso");
+    expect(publicWrite.storefront.hero).toEqual({ body: "Texto" });
   });
 });

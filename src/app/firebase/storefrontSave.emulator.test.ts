@@ -57,15 +57,18 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("storefront save + public 
         name: "Olivia",
         type: "inventory_tiered",
         // Local state can carry nested undefineds (cleared inline fields);
-        // setDoc would reject them ("Unsupported field value: undefined").
-        storefront: { notice: undefined, shipping: "Envíos", hero: { heading: "H", body: undefined } } as Storefront,
+        // setDoc would reject them ("Unsupported field value: undefined"). A
+        // cleared slot ("") must land ABSENT here, same shape as the editor
+        // batch — not as an empty string.
+        storefront: { notice: undefined, shipping: "Envíos", hours: "", hero: { heading: "H", body: undefined } } as Storefront,
       } as unknown as Store;
 
       await expect(projectPublicForStore(store, [] as Product[], [] as Category[])).resolves.toBeUndefined();
 
       const pub = (await getDoc(doc(db, "publicStores/olivia-emul2"))).data()!;
       expect(pub.storefront.shipping).toBe("Envíos");
-      expect(pub.storefront.notice).toBeUndefined();
+      expect(pub.storefront.notice).toBeUndefined(); // undefined anidado: fuera
+      expect(pub.storefront.hours).toBeUndefined(); // "" → deleteField, no ""
     });
   });
 });
