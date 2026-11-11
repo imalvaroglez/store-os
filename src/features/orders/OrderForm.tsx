@@ -362,20 +362,23 @@ export function OrderForm({
     [lines, order, draftWillHold, products]
   );
   const shortagePieces = [...lineShortage.values()].reduce((sum, missing) => sum + missing, 0);
-  // #325: "Ver faltantes" hops through EVERY short line, not just the first.
+  // #325: "Ver faltantes" hops through EVERY short line, advancing from the
+  // LAST visited one. Fixing a line removes it from the list; advancing from
+  // the last VISITED line (instead of a plain counter) never skips an
+  // unvisited one (review P3).
   const shortageKeys = lines.filter((line) => (lineShortage.get(line.key) ?? 0) > 0).map((line) => line.key);
-  const [shortageHop, setShortageHop] = useState(0);
+  const [lastShortageKey, setLastShortageKey] = useState<string | null>(null);
   const focusNextShortage = () => {
     if (shortageKeys.length === 0) return;
+    const lastIndex = lastShortageKey ? shortageKeys.indexOf(lastShortageKey) : -1;
+    const next = shortageKeys[(lastIndex + 1) % shortageKeys.length];
+    setLastShortageKey(next);
     setFocusPrefersQuantity(true);
-    setFocusLine(shortageKeys[shortageHop % shortageKeys.length]);
-    setShortageHop((hop) => hop + 1);
+    setFocusLine(next);
   };
   // The label reports the stop the LAST click landed on (or the first one
   // before any click) — not the next stop, which read as "already saw both".
-  const shortageStop = shortageKeys.length
-    ? (shortageHop === 0 ? 0 : (shortageHop - 1) % shortageKeys.length) + 1
-    : 0;
+  const shortageStop = lastShortageKey ? shortageKeys.indexOf(lastShortageKey) + 1 : 1;
   const firstShortageKey = shortageKeys[0];
 
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por

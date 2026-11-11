@@ -265,22 +265,19 @@ function attributeShortageMap<T extends { key: string; productId?: string; varia
  * progress. Two DISTINCT inputs, matching what the save will actually do:
  * - `savedOrder`'s holds are what quantityOnHand ALREADY excludes (return them
  *   to the shelf before the draft takes pieces again);
- * - `draftWillHold` gates whether the draft takes pieces AT ALL — a draft
- *   being cancelled releases its remainder and must read as no shortage, same
- *   as the card. Post-save, the card badge (negative stock from the
- *   reservation deltas) shows the same number, so the two can never disagree.
- * Pure — never mutates stock or orders. */
+ * - `draftWillHold` sets how many pieces the draft TAKES: a draft being
+ *   cancelled takes none, so only a shelf already negative from OTHER orders
+ *   still reads as faltante — exactly what the card shows, whatever the
+ *   order's status (the card never filters by it).
+ * Post-save, the card badge (negative stock from the reservation deltas)
+ * shows the same number, so the two can never disagree. Pure — never mutates
+ * stock or orders. */
 export function projectedShortageByDimension<T extends { productId?: string; variantId?: string; quantity: number }>(
   draftLines: ReadonlyArray<T>,
   savedOrder: Order | undefined,
   draftWillHold: boolean,
   products: ReadonlyArray<ShortageProduct>
 ): Map<string, DimensionShortage> {
-  if (!draftWillHold) {
-    // The draft releases everything back to the shelf and takes nothing:
-    // cancelling the order's remainder must not read as a shortage.
-    return new Map();
-  }
   const held = new Map<string, number>();
   if (savedOrder && holdsPieces(savedOrder)) {
     for (const item of orderItems(savedOrder)) {
@@ -317,7 +314,10 @@ export function projectedShortageByDimension<T extends { productId?: string; var
       if (typeof product.quantityOnHand !== "number" || !Number.isFinite(product.quantityOnHand)) continue;
       stock = product.quantityOnHand;
     }
-    const missing = total.quantity - (stock + (held.get(key) ?? 0));
+    // A draft that will not hold takes nothing; the shelf's own deficit (other
+    // orders' oversell) still shows, exactly as the card does post-save.
+    const take = draftWillHold ? total.quantity : 0;
+    const missing = take - (stock + (held.get(key) ?? 0));
     if (missing > 0) {
       result.set(key, {
         key,
