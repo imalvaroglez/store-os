@@ -5,7 +5,7 @@ export const OLIVIA_BRAND = {
   surface: "#FFFFFF",
   ink: "#171717",
   inkSoft: "#585858",
-  accent: "#552E43",
+  accent: "#740003",
   accentSoft: "#FFFFFF",
   rule: "#E7E7E7",
   fontDisplay: '"Space Grotesk", sans-serif',
