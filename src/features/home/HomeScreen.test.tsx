@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
@@ -92,6 +92,106 @@ describe("HomeScreen alertas de existencias (FER-09)", () => {
     );
 
     expect(screen.queryByText("⚠️ Por surtir")).toBeNull();
+  });
+
+  it("#337 cuenta PRODUCTOS con alerta y declara la unidad — 40 productos aunque falten cientos de piezas", () => {
+    const state = fixtureState();
+    // 40 alerted products whose pieces-to-threshold add up to 280+ — the card
+    // must count products, never sum quantities as if they were products.
+    state.products = Array.from({ length: 40 }, (_, i) =>
+      product({
+        id: `p${i}`,
+        name: `Pieza ${i}`,
+        quantityOnHand: i < 20 ? 0 : 3,
+        lowStockAt: i < 20 ? 7 : 15,
+      })
+    );
+    const piecesToThreshold = state.products.reduce(
+      (sum, p) => sum + ((p.lowStockAt ?? 3) - (p.quantityOnHand ?? 0)),
+      0
+    );
+    expect(piecesToThreshold).toBeGreaterThanOrEqual(280); // fixture guard: the trap is real
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <HomeScreen />
+      </Wrapper>
+    );
+
+    expect(screen.getByText("40 productos")).toBeTruthy();
+    expect(screen.queryByText(/^40$/)).toBeNull(); // nunca un número sin unidad
+    expect(screen.queryByText(String(piecesToThreshold))).toBeNull(); // jamás la suma de piezas
+  });
+
+  it("#337 con 280 productos en alerta dice 280 productos; con uno, 1 producto", () => {
+    const state = fixtureState();
+    state.products = Array.from({ length: 280 }, (_, i) =>
+      product({ id: `p${i}`, name: `Pieza ${i}`, quantityOnHand: 0 })
+    );
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <HomeScreen />
+      </Wrapper>
+    );
+    expect(screen.getByText("280 productos")).toBeTruthy();
+
+    const single = fixtureState();
+    single.products = [product({ id: "only", name: "Único agotado", quantityOnHand: 0 })];
+    const WrapperOne = withState(single);
+    cleanup();
+    render(
+      <WrapperOne>
+        <HomeScreen />
+      </WrapperOne>
+    );
+    expect(screen.getByText("1 producto")).toBeTruthy();
+  });
+
+  it("#337 un producto sin inventario rastreable no se cuenta aunque la tienda siga existencias", () => {
+    const state = fixtureState();
+    state.products = [
+      product({ id: "tracked", name: "Rastreado", quantityOnHand: 0 }),
+      product({ id: "untracked", name: "Sin rastreo", quantityOnHand: undefined }),
+    ];
+    const Wrapper = withState(state);
+    render(
+      <Wrapper>
+        <HomeScreen />
+      </Wrapper>
+    );
+
+    expect(screen.getByText("1 producto")).toBeTruthy();
+    expect(screen.queryByText(/Sin rastreo/)).toBeNull();
+  });
+
+  it("#337 el total es de la tienda activa: cambiar de tienda cambia el conjunto, sin arrastrar conteos", () => {
+    const state = fixtureState();
+    state.products = [
+      product({ id: "olivia1", storeId: OLIVIA, name: "De Olivia", quantityOnHand: 0 }),
+      product({ id: "olivia2", storeId: OLIVIA, name: "De Olivia 2", quantityOnHand: 0 }),
+      product({ id: "santi1", storeId: SANTI, name: "De Santi", quantityOnHand: 0 }),
+    ];
+    // fixtureState's SANTI store is on-demand: switch its type so it tracks
+    // stock and its product can legitimately alert.
+    state.stores = state.stores.map((st) => (st.id === SANTI ? { ...st, type: "inventory_tiered" } : st));
+    const Wrapper = withState(state);
+    const view = render(
+      <Wrapper>
+        <HomeScreen />
+      </Wrapper>
+    );
+    expect(screen.getByText("2 productos")).toBeTruthy();
+
+    // The operator switches store: same synced products, new active store.
+    mocks.state = { ...state, activeStoreId: SANTI };
+    view.rerender(
+      <Wrapper>
+        <HomeScreen />
+      </Wrapper>
+    );
+    expect(screen.getByText("1 producto")).toBeTruthy();
+    expect(screen.queryByText(/De Olivia/)).toBeNull();
   });
 
   it("Cobrar on an order with payment records OPENS the sheet — no fake success (Codex P1)", async () => {
