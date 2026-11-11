@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.13.0",
+    "date": "2026.11.11",
+    "title": "Variantes por color y solicitud WhatsApp más clara",
+    "notes": [
+      "Nuevo: ahora puedes dar de alta un mismo diseño en varios colores. Cada color tiene su propia existencia, su costo y su clave (por ejemplo SOL-D para dorado), y le pides foto propia. Al vender se elige el color exacto y la existencia baja solo de ese color; las compras recibidas suman al color que compraste.",
+      "El carrito del catálogo público ahora muestra tu subtotal estimado siempre y, si tu pedido va por debajo de $1,000, también un subtotal estimado para clientas Iconic, sin botones ni registros: solo referencia. A partir de $1,000 solo se muestra el subtotal habitual.",
+      "El mensaje de WhatsApp que se arma con tu pedido va agrupado por categoría (Anillos, Collares…), con las cantidades y los subtotales estimados etiquetados como estimación, y deja claro que precios y disponibilidad los confirma la tienda.",
+      "Buscar clientas por teléfono funciona aunque lo escribas con espacios o guiones, y los nombres sin acentos también encuentran (maria jose encuentra a María José).",
+      "Al crear una clienta, el teléfono acepta el formato que pegues de WhatsApp y avisa si le faltan dígitos; si ya tienes una clienta con un nombre muy parecido, te pregunta antes de crear un duplicado.",
+      "Correcciones de confianza en el dinero: el anticipo de un pedido con cobros ya no puede bajarse sin dejar motivo (queda quién, cuánto y por qué), y las devoluciones no pueden restar más de lo que ese pedido recibió."
+    ]
+  },
+  {
     "version": "1.12.0",
     "date": "2026.11.10",
     "title": "Dinero protegido al corregir el anticipo",
