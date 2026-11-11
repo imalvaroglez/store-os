@@ -314,20 +314,35 @@ describe("shortageByDimension / attributeShortageToLines (#309)", () => {
     expect(shortageByDimension([{ productId: "p2" }], [product("p2", 0)]).size).toBe(0);
   });
 
-  it("la atribución por líneas suma EXACTO al total de la insignia", () => {
+  it("la primera línea con piezas reclama el total de la dimensión (déficit compartido entre pedidos)", () => {
     const products = [product("p1", -5)];
     const perLine = attributeShortageToLines(
       [
         { key: "l1", productId: "p1", quantity: 3 },
         { key: "l2", productId: "p1", quantity: 3 },
-        { key: "l3", productId: "p1", quantity: 2 },
       ],
       products
     );
-    expect(perLine.get("l1")).toBe(3);
-    expect(perLine.get("l2")).toBe(2);
-    expect(perLine.has("l3")).toBe(false);
+    expect(perLine.get("l1")).toBe(5);
+    expect(perLine.has("l2")).toBe(false);
     expect([...perLine.values()].reduce((a, b) => a + b, 0)).toBe(5);
+  });
+
+  it("Q<M: la insignia de la línea muestra el total del estante aunque su cantidad sea menor (como la tarjeta)", () => {
+    const perLine = attributeShortageToLines([{ key: "l1", productId: "p1", quantity: 2 }], [product("p1", -5)]);
+    expect(perLine.get("l1")).toBe(5);
+  });
+
+  it("una línea sin piezas no reclama la dimensión", () => {
+    const perLine = attributeShortageToLines(
+      [
+        { key: "l0", productId: "p1", quantity: 0 },
+        { key: "l1", productId: "p1", quantity: 1 },
+      ],
+      [product("p1", -5)]
+    );
+    expect(perLine.has("l0")).toBe(false);
+    expect(perLine.get("l1")).toBe(5);
   });
 
   it("línea sin producto o con producto desaparecido no produce falta", () => {

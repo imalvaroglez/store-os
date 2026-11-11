@@ -947,7 +947,7 @@ describe("faltantes por línea (#309)", () => {
       updatedAt: "",
     } as unknown as Order;
     render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
-    expect(await screen.findByText("Faltan 2 piezas en 1 línea")).toBeTruthy();
+    expect(await screen.findByText("Faltan 2 piezas en 1 producto")).toBeTruthy();
     expect(screen.getByText("Falta 2")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Revisar por categoría" }));
     expect(screen.getByText("Falta 2")).toBeTruthy();
@@ -966,7 +966,7 @@ describe("faltantes por línea (#309)", () => {
     } as unknown as Order;
     render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
     await screen.findByText("Productos");
-    expect(screen.queryByText(/Faltan \d+ piezas/)).toBeNull();
+    expect(screen.queryByText(/Falta(n)? \d+ pieza(s)?/)).toBeNull();
     expect(screen.queryByText(/^Falta \d+$/)).toBeNull();
   });
 });
