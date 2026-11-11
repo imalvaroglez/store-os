@@ -21,7 +21,7 @@ import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { isVariantProduct } from "../../lib/variants";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
-import { attributeProjectedShortageToLines } from "../../lib/inventory";
+import { attributeProjectedShortageToLines, orderWillHoldPieces } from "../../lib/inventory";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
@@ -281,14 +281,19 @@ export function OrderForm({
   // The just-added line plays the theme's riseIn entrance once (mount only).
   const [enteringKey, setEnteringKey] = useState<string | null>(null);
   const [focusLine, setFocusLine] = useState<string | null>(null);
+  // #325: shortage hops land on the QUANTITY input — that is where Fer fixes
+  // the faltante; review-mode "Editar" jumps keep the product selector.
+  const [focusPrefersQuantity, setFocusPrefersQuantity] = useState(false);
   const productInputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const quantityInputs = useRef<Record<string, HTMLInputElement | null>>({});
   useLayoutEffect(() => {
     if (reviewing || !focusLine) return;
-    const input = productInputs.current[focusLine];
+    const input = (focusPrefersQuantity ? quantityInputs.current[focusLine] : undefined) ?? productInputs.current[focusLine];
     input?.focus({ preventScroll: true });
     input?.scrollIntoView?.({ block: "center", behavior: "auto" });
     setFocusLine(null);
-  }, [reviewing, focusLine]);
+    setFocusPrefersQuantity(false);
+  }, [reviewing, focusLine, focusPrefersQuantity]);
 
   const customerOptions = customers.map((customer) => ({
     value: customer.id,
@@ -330,12 +335,17 @@ export function OrderForm({
     }
   }, [deposit, lines, order]);
   // #309 + #325: per-line shortage from the SHARED canonical derivation —
-  // PROJECTED onto the draft in progress (the order's own saved holds return
-  // to the shelf first), so the editor summary, the line badges and, after
-  // Guardar, the card's "Faltan N" badge all show the SAME totals — and the
-  // faltante appears the moment Fer raises a line, not after saving. The
-  // FIRST line with pieces claims the dimension's FULL missing count.
-  // Observability only; never mutates.
+  // PROJECTED onto the draft in progress. The SAVED order's holds return to
+  // the shelf first, and the gate uses the DRAFT's lifecycle state: a draft
+  // being cancelled holds nothing and must not read as shortage (review P2).
+  // Editor summary, line badges and, after Guardar, the card's "Faltan N"
+  // badge all show the SAME totals — and the faltante appears the moment Fer
+  // raises a line, not after saving. The FIRST line with pieces claims the
+  // dimension's FULL missing count. Observability only; never mutates.
+  const draftWillHold = useMemo(
+    () => orderWillHoldPieces({ ...order, orderStatus }),
+    [order, orderStatus]
+  );
   const lineShortage = useMemo(
     () =>
       attributeProjectedShortageToLines(
@@ -346,9 +356,10 @@ export function OrderForm({
           quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
         })),
         order,
+        draftWillHold,
         products
       ),
-    [lines, order, products]
+    [lines, order, draftWillHold, products]
   );
   const shortagePieces = [...lineShortage.values()].reduce((sum, missing) => sum + missing, 0);
   // #325: "Ver faltantes" hops through EVERY short line, not just the first.
@@ -356,9 +367,15 @@ export function OrderForm({
   const [shortageHop, setShortageHop] = useState(0);
   const focusNextShortage = () => {
     if (shortageKeys.length === 0) return;
+    setFocusPrefersQuantity(true);
     setFocusLine(shortageKeys[shortageHop % shortageKeys.length]);
     setShortageHop((hop) => hop + 1);
   };
+  // The label reports the stop the LAST click landed on (or the first one
+  // before any click) — not the next stop, which read as "already saw both".
+  const shortageStop = shortageKeys.length
+    ? (shortageHop === 0 ? 0 : (shortageHop - 1) % shortageKeys.length) + 1
+    : 0;
   const firstShortageKey = shortageKeys[0];
 
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
@@ -710,7 +727,7 @@ export function OrderForm({
           </Badge>
           {!reviewing && firstShortageKey && (
             <Button variant="ghost" size="sm" onClick={focusNextShortage}>
-              {shortageKeys.length > 1 ? `Ver faltantes (${(shortageHop % shortageKeys.length) + 1}/${shortageKeys.length})` : "Ver faltantes"}
+              {shortageKeys.length > 1 ? `Ver faltantes (${shortageStop}/${shortageKeys.length})` : "Ver faltantes"}
             </Button>
           )}
         </div>
@@ -836,6 +853,9 @@ export function OrderForm({
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
+                  inputRef={(input) => {
+                    quantityInputs.current[line.key] = input;
+                  }}
                   value={line.quantityText}
                   onChange={(event) => {
                     const value = sanitizeIntegerInput(event.target.value);

@@ -262,18 +262,25 @@ function attributeShortageMap<T extends { key: string; productId?: string; varia
 
 /** #325: LIVE shortage projection for a DRAFT (pre-save). Same canonical
  * dimension math as shortageByDimension, but projected onto the capture in
- * progress: the order's own saved holds return to the shelf before the draft
- * takes pieces again, so the editor shows "Falta N" the moment a line goes
- * above the existence — not after Guardar. Post-save, the card badge (negative
- * stock from the reservation deltas) shows the same number, so the two can
- * never disagree. Pure — never mutates stock or orders. */
+ * progress. Two DISTINCT inputs, matching what the save will actually do:
+ * - `savedOrder`'s holds are what quantityOnHand ALREADY excludes (return them
+ *   to the shelf before the draft takes pieces again);
+ * - `draftWillHold` gates whether the draft takes pieces AT ALL — a draft
+ *   being cancelled releases its remainder and must read as no shortage, same
+ *   as the card. Post-save, the card badge (negative stock from the
+ *   reservation deltas) shows the same number, so the two can never disagree.
+ * Pure — never mutates stock or orders. */
 export function projectedShortageByDimension<T extends { productId?: string; variantId?: string; quantity: number }>(
   draftLines: ReadonlyArray<T>,
   savedOrder: Order | undefined,
+  draftWillHold: boolean,
   products: ReadonlyArray<ShortageProduct>
 ): Map<string, DimensionShortage> {
-  // What THIS order currently holds per dimension (already netted out of
-  // quantityOnHand by its own reservation).
+  if (!draftWillHold) {
+    // The draft releases everything back to the shelf and takes nothing:
+    // cancelling the order's remainder must not read as a shortage.
+    return new Map();
+  }
   const held = new Map<string, number>();
   if (savedOrder && holdsPieces(savedOrder)) {
     for (const item of orderItems(savedOrder)) {
@@ -298,10 +305,18 @@ export function projectedShortageByDimension<T extends { productId?: string; var
     if (total.quantity <= 0) continue;
     const product = byId.get(total.productId);
     if (!product) continue;
-    const stock = total.variantId
-      ? product.variants?.find((variant) => variant.id === total.variantId)?.quantityOnHand
-      : product.quantityOnHand;
-    if (typeof stock !== "number" || !Number.isFinite(stock)) continue; // untracked: no estimate
+    let stock: number;
+    if (total.variantId) {
+      const variant = product.variants?.find((v) => v.id === total.variantId);
+      if (!variant) continue; // stale variant reference — nothing to project against
+      // An untracked COLOR saves from base 0 (applyVariantDelta) — the editor
+      // must estimate from the same base or the card would disagree (#325 review P2).
+      stock = variant.quantityOnHand ?? 0;
+    } else {
+      // An untracked DESIGN is skipped by the save entirely — no estimate.
+      if (typeof product.quantityOnHand !== "number" || !Number.isFinite(product.quantityOnHand)) continue;
+      stock = product.quantityOnHand;
+    }
     const missing = total.quantity - (stock + (held.get(key) ?? 0));
     if (missing > 0) {
       result.set(key, {
@@ -315,13 +330,20 @@ export function projectedShortageByDimension<T extends { productId?: string; var
   return result;
 }
 
+/** Whether an order (or the order a draft would save) holds shelf pieces —
+ * the same truth the reservation save applies (#325 editor projection). */
+export function orderWillHoldPieces(order: Order): boolean {
+  return holdsPieces(order);
+}
+
 /** #325: per-LINE attribution of the PROJECTED draft shortage (see
  *  projectedShortageByDimension) — same first-line-wins rule so editor badges
  *  sum exactly to the live summary and, after save, to the card badge. */
 export function attributeProjectedShortageToLines<T extends { key: string; productId?: string; variantId?: string; quantity: number }>(
   lines: ReadonlyArray<T>,
   savedOrder: Order | undefined,
+  draftWillHold: boolean,
   products: ReadonlyArray<ShortageProduct>
 ): Map<string, number> {
-  return attributeShortageMap(lines, projectedShortageByDimension(lines, savedOrder, products));
+  return attributeShortageMap(lines, projectedShortageByDimension(lines, savedOrder, draftWillHold, products));
 }

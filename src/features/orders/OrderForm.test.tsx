@@ -1028,7 +1028,7 @@ describe("faltantes en vivo y Ver faltantes (#325)", () => {
         createdAt: "",
         updatedAt: "",
       } as unknown as Order;
-      const rendered = render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
+      const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
       expect(screen.queryByText(/Falta \d/)).toBeNull(); // 1 ≤ 1+1: sin faltante
       fireEvent.change(screen.getByLabelText(/Cantidad/), { target: { value: "4" } });
       // 4 − (estante 1 + reservado propio 1) = 2, visible sin guardar.
@@ -1059,28 +1059,70 @@ describe("faltantes en vivo y Ver faltantes (#325)", () => {
         createdAt: "",
         updatedAt: "",
       } as unknown as Order;
-      const rendered = render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
-      const quantities = screen.getAllByLabelText(/Cantidad/);
+      const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+      const quantityInputs = screen.getAllByLabelText(/Cantidad/) as HTMLInputElement[];
       // DOM shows the newest capture on top; both lines go 2 over their shelf.
-      fireEvent.change(quantities[0], { target: { value: "4" } });
-      fireEvent.change(quantities[1], { target: { value: "4" } });
+      fireEvent.change(quantityInputs[0], { target: { value: "4" } });
+      fireEvent.change(quantityInputs[1], { target: { value: "4" } });
       expect(screen.getByText(/Faltan 4 piezas en 2 productos/)).toBeInTheDocument();
       const hop = () => screen.getByRole("button", { name: /Ver faltantes/ });
-      expect(hop().textContent).toContain("1/2");
-      // The product inputs, DOM order (reverse of capture order).
-      const productInputs = screen.getAllByLabelText("Producto") as HTMLInputElement[];
-      const lineAInput = productInputs.find((input) => input.value.includes("Aro falta A"))!;
-      const lineBInput = productInputs.find((input) => input.value.includes("Aro falta B"))!;
+      expect(hop().textContent).toContain("1/2"); // next stop before any click: the 1st
+      // Each hop lands on the QUANTITY input (that is where the fix happens),
+      // capture order: A first, then B — DOM order is reversed (newest on top).
+      const lineA = quantityInputs[1];
+      const lineB = quantityInputs[0];
       fireEvent.click(hop()); // primero: A (orden de captura)
-      expect(document.activeElement).toBe(lineAInput);
-      expect(hop().textContent).toContain("2/2");
+      expect(document.activeElement).toBe(lineA);
+      expect(hop().textContent).toContain("1/2"); // reports the stop it LANDED on
       fireEvent.click(hop()); // segundo: B
-      expect(document.activeElement).toBe(lineBInput);
+      expect(document.activeElement).toBe(lineB);
+      expect(hop().textContent).toContain("2/2");
       fireEvent.click(hop()); // vuelve a empezar: A
-      expect(document.activeElement).toBe(lineAInput);
+      expect(document.activeElement).toBe(lineA);
+      expect(hop().textContent).toContain("1/2");
       rendered.unmount();
     } finally {
       state.products.pop();
+      state.products.pop();
+    }
+  });
+});
+
+// Review P2: a draft that will NOT hold pieces (cancelled) takes nothing from
+// the shelf — the card shows no badge, so the editor must not either, and
+// moving an open order to cancelled clears the live estimate.
+describe("faltantes en vivo — pedidos que no retienen piezas (#325 P2)", () => {
+  it("un pedido cancelado no proyecta faltante; cancelar en el editor limpia el aviso", () => {
+    state.products.push({
+      ...state.products[0],
+      id: "prod_325_cancel",
+      name: "Aro cancelado",
+      quantityOnHand: 3,
+    } as never);
+    localStorage.clear();
+    try {
+      const order = {
+        id: "cancelled-shortage-order",
+        storeId: "store_olivia",
+        customerId: "customer_1",
+        items: [{ productId: "prod_325_cancel", productName: "Aro cancelado", quantity: 5, unitPrice: 100, subtotal: 500 }],
+        deposit: 0,
+        orderStatus: "cancelled",
+        createdAt: "",
+        updatedAt: "",
+      } as unknown as Order;
+      const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+      // Cancelled: its pieces are back on the shelf — no badge, like the card.
+      expect(screen.queryByText(/Falta \d/)).toBeNull();
+
+      // Same order still open: the live estimate appears…
+      fireEvent.change(screen.getByLabelText("Estado del pedido"), { target: { value: "asked" } });
+      expect(screen.getByText(/Faltan 2 piezas en 1 producto/)).toBeInTheDocument();
+      // …and cancelling it in the editor clears it immediately.
+      fireEvent.change(screen.getByLabelText("Estado del pedido"), { target: { value: "cancelled" } });
+      expect(screen.queryByText(/Falta \d/)).toBeNull();
+      rendered.unmount();
+    } finally {
       state.products.pop();
     }
   });
