@@ -138,7 +138,11 @@ export function HomeScreen() {
         <Card className="mb-5">
           <div className="flex items-baseline justify-between">
             <h3 className="font-semibold text-ink text-sm">⚠️ Por surtir</h3>
-            <span className="text-xs text-ink-soft/70">{restock.length}</span>
+            {/* #337: the count is PRODUCTS in alert, not missing pieces — say so,
+                or a store with 40 products / 280 missing pieces reads backwards. */}
+            <span className="text-xs text-ink-soft/70">
+              {restock.length} {restock.length === 1 ? "producto" : "productos"}
+            </span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {restock.map((p) => (
