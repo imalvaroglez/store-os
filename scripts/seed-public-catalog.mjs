@@ -132,7 +132,9 @@ await env.withSecurityRulesDisabled(async (ctx) => {
     ],
     defaultTierId: "t_retail",
   });
-  await setDoc(doc(db, "publicCatalogs", SLUG), { categories, products });
+  // storeId is REQUIRED by the rules on publicCatalogs updates — without it
+  // the admin dialog's save→reproject flow fails in the synthetic env.
+  await setDoc(doc(db, "publicCatalogs", SLUG), { storeId: "store_olivia", categories, products });
   console.log(`seeded: ${categories.length} categories · ${products.length} products · ${IMAGES} local images`);
 });
 await env.cleanup();
