@@ -970,3 +970,34 @@ describe("faltantes por línea (#309)", () => {
     expect(screen.queryByText(/^Falta \d+$/)).toBeNull();
   });
 });
+
+// #310 — densidad útil: la foto acompaña al selector (no cuelga abajo), el
+// subtotal vive en la misma fila de campos y no hay textos redundantes.
+describe("compactación de filas (#310)", () => {
+  it("foto en la fila del selector, subtotal alineado en la rejilla, sin subtítulo redundante; Revisar conserva la foto", async () => {
+    // Dedicated product: earlier tests in this file mutate the shared catalog.
+    state.products.push({
+      ...state.products[0],
+      id: "prod_310_compact",
+      name: "Aro compacto",
+      imageUrl: "https://example.test/aro310.jpg",
+    } as never);
+    const order = {
+      id: "compact-order",
+      storeId: "store_olivia",
+      customerId: "customer_1",
+      items: [{ productId: "prod_310_compact", productName: "Aro compacto", quantity: 2, unitPrice: 100, subtotal: 200 }],
+      deposit: 0,
+      createdAt: "",
+      updatedAt: "",
+    } as unknown as Order;
+    render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
+    await screen.findByText("Productos");
+    expect(screen.queryByText("Agrega una o varias líneas al pedido.")).toBeNull();
+    const photo = screen.getByRole("img", { name: "Foto de Aro compacto" });
+    expect(photo.closest("div.flex")?.querySelector("input")).not.toBeNull();
+    expect(screen.getByText("Subtotal")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Revisar por categoría" }));
+    expect(screen.getByRole("img", { name: "Foto de Aro compacto" })).toBeTruthy();
+  });
+});
