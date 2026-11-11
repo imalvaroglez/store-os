@@ -352,7 +352,11 @@ test("copy the saved order detail", async ({ sharedPage: page }) => {
   await expect(detail.getByLabel("Detalle del pedido")).toHaveValue(/\*Total\* \$/);
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
   await detail.getByRole("button", { name: "Copiar detalle" }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).toContain("*Saldo* $");
+  // #306: sin abonos el Saldo repetiría el Total — el detalle copiado lleva
+  // el Total y OMITE el Saldo (los caminos con Saldo visible viven en
+  // orderTicket.test.ts: parcial, incidencias, saldo a favor).
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).toContain("*Total* $");
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedOrder)).not.toContain("*Saldo*");
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
 });
 
