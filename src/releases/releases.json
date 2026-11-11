@@ -9,7 +9,9 @@
       "El mensaje de WhatsApp que se arma con tu pedido va agrupado por categoría (Anillos, Collares…), con las cantidades y los subtotales estimados etiquetados como estimación, y deja claro que precios y disponibilidad los confirma la tienda.",
       "Buscar clientas por teléfono funciona aunque lo escribas con espacios o guiones, y los nombres sin acentos también encuentran (maria jose encuentra a María José).",
       "Al crear una clienta, el teléfono acepta el formato que pegues de WhatsApp y avisa si le faltan dígitos; si ya tienes una clienta con un nombre muy parecido, te pregunta antes de crear un duplicado.",
-      "Correcciones de confianza en el dinero: el anticipo de un pedido con cobros ya no puede bajarse sin dejar motivo (queda quién, cuánto y por qué), y las devoluciones no pueden restar más de lo que ese pedido recibió."
+      "Correcciones de confianza en el dinero: el anticipo de un pedido con cobros ya no puede bajarse sin dejar motivo (queda quién, cuánto y por qué), y las devoluciones no pueden restar más de lo que ese pedido recibió.",
+      "Editar pedido te dice exactamente qué piezas faltan: un aviso al entrar («Faltan N piezas en M productos»), «Falta N» junto al producto correcto —también por color— y un botón para ir directo a la línea. Lo mismo en Revisar por categoría.",
+      "Las filas del pedido quedaron más compactas: la foto va junto al producto (ya no debajo), el subtotal se alinea con cantidad y precio, y Revisar por categoría muestra la foto de cada pieza. El mismo pedido se edita con bastante menos scroll."
     ]
   },
   {
