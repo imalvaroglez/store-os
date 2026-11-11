@@ -6,6 +6,7 @@ import { buildCartOrderUrl, type CartOrderLine } from "../../lib/whatsapp";
 import {
   calculateOrderPricing,
   cartRequestSummary,
+  isIdentityGatedTier,
   type CartQtyLine,
 } from "../../lib/pricing";
 import { loadCartName, pruneCartLines, saveCartName, type CartLine } from "../../lib/cart";
@@ -19,6 +20,11 @@ const STOCK_LEGENDS: Record<PublicStockSignal, string | null> = {
   disponible: null,
 };
 
+// 1.13.1: the single shared estimate notice — next to the estimates, also when
+// a price is still "Por confirmar". Nothing repeated under the action.
+const ESTIMATE_NOTICE =
+  "Los precios son estimados. Por WhatsApp confirmamos tu beneficio, disponibilidad, total y entrega. Envío no incluido. Tu selección no reserva las piezas.";
+
 type PublicPricedProduct = { price?: number; prices?: Record<string, number> };
 
 function tierRequirement(tier: PublicPriceTier): string | null {
@@ -30,6 +36,25 @@ function tierRequirement(tier: PublicPriceTier): string | null {
     parts.push(`desde ${formatMoney(tier.minAmount)} en productos a precio ${tier.label}`);
   }
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * Visible condition for the product sheet's price ladder (1.13.1, spec v2):
+ * what the client needs to KNOW, phrased from the store's own configuration.
+ * An identity benefit (money-gated, #130) says it depends on a standing
+ * benefit — never that adding pieces unlocks it for the current request.
+ */
+function tierCondition(tier: PublicPriceTier): string {
+  const parts: string[] = [];
+  if (tier.minPieces != null) {
+    parts.push(`Desde ${tier.minPieces} ${tier.minPieces === 1 ? "pieza" : "piezas"}`);
+  }
+  if (tier.minAmount != null) {
+    parts.push(tier.minPieces == null
+      ? "Con beneficio vigente"
+      : `Desde ${formatMoney(tier.minAmount)} en precio ${tier.label}`);
+  }
+  return parts.join(" · ");
 }
 
 function PriceRequirement({ tier }: { tier: PublicPriceTier }) {
@@ -96,27 +121,32 @@ export function PublicTierPrices({
     : null;
 
   if (mode === "detail") {
+    const identityAspirational = isIdentityGatedTier(aspirational);
     return (
       <section className="olv-price-block olv-price-detail mt-3" aria-label="Precios por pieza">
         <p className="olv-price-caption">Precio por pieza</p>
+        {/* 1.13.1 (spec v2): one 3-column ladder — level, condition, amount.
+            Names share one typographic weight, conditions sit between the
+            name and the amount, and every amount hugs the right edge. No "?"
+            help, no floating tooltip, no title. */}
         <dl className="olv-price-ladder">
           {tiers.map((tier) => {
             const featured = tier.id === aspirational.id;
             return (
               <div key={tier.id} className={`olv-price-row${featured ? " olv-price-row--featured" : ""}`}>
-                <dt className="olv-price-row-label">
-                  {tier.label}
-                </dt>
-                <dd className="olv-price-row-value">
-                  <span className="olv-price-row-amount">{formatMoney(product.prices?.[tier.id])}</span>
-                  <PriceRequirement tier={tier} />
-                </dd>
+                <dt className="olv-price-row-label">{tier.label}</dt>
+                <dd className="olv-price-row-condition">{tierCondition(tier)}</dd>
+                <dd className="olv-price-row-amount">{formatMoney(product.prices?.[tier.id])}</dd>
               </div>
             );
           })}
         </dl>
         {savings !== null && (
-          <p className="olv-price-savings">Hasta {formatMoney(savings)} menos por pieza al desbloquear {aspirational.label}</p>
+          <p className="olv-price-savings">
+            {identityAspirational
+              ? `Hasta ${formatMoney(savings)} menos por pieza con beneficio vigente`
+              : `Hasta ${formatMoney(savings)} menos por pieza al desbloquear ${aspirational.label}`}
+          </p>
         )}
       </section>
     );
@@ -282,12 +312,16 @@ export function CartDrawer({
             {shown.map((l, index) => {
               const signal = signalBySlug?.[l.productSlug];
               const legend = signal ? STOCK_LEGENDS[signal] : null;
-              const linePricing = pricing?.lineBreakdown[index];
+              // #305/1.13.1: lines share the summary's single derivation —
+              // the habitual tier, never a divergent active/identity tier.
+              const linePricing = request?.lineBreakdown[index];
               const unitPrice = linePricing?.unitPrice ?? l.unitPrice;
               const lineSubtotal = linePricing?.subtotal ?? (typeof unitPrice === "number" ? unitPrice * l.qty : undefined);
               return (
                 <li key={l.productSlug} className="olv-cart-line flex gap-3 py-3">
-                  <ProductImage src={l.image} alt={l.name} size="thumb" />
+                  {/* 1.13.1: neutral thumbnail — no decorative ring/background
+                      in rest; focus stays for interactive controls only. */}
+                  <ProductImage src={l.image} alt={l.name} size="thumb" natural />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -300,7 +334,7 @@ export function CartDrawer({
                         <div className="flex items-center gap-2">
                           <IconButton
                             variant="secondary"
-                            aria-label="Restar una pieza"
+                            aria-label={`Restar una pieza de ${l.name}`}
                             onClick={() => onSetQty(l.productSlug, l.qty - 1)}
                           >
                             −
@@ -308,7 +342,7 @@ export function CartDrawer({
                           <span className="w-8 text-center font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums" aria-live="polite">{l.qty}</span>
                           <IconButton
                             variant="secondary"
-                            aria-label="Sumar una pieza"
+                            aria-label={`Sumar una pieza de ${l.name}`}
                             onClick={() => onSetQty(l.productSlug, l.qty + 1)}
                           >
                             +
@@ -318,11 +352,11 @@ export function CartDrawer({
                       <dl className="olv-cart-line-prices">
                         <div>
                           <dt>Precio por pieza</dt>
-                          <dd>{typeof unitPrice === "number" ? formatMoney(unitPrice) : "Por confirmar"}</dd>
+                          <dd>{typeof unitPrice === "number" ? formatMoneyExact(unitPrice) : "Por confirmar"}</dd>
                         </div>
                         <div>
                           <dt>Subtotal</dt>
-                          <dd>{typeof lineSubtotal === "number" ? formatMoney(lineSubtotal) : "Por confirmar"}</dd>
+                          <dd>{typeof lineSubtotal === "number" ? formatMoneyExact(lineSubtotal) : "Por confirmar"}</dd>
                         </div>
                       </dl>
                     </div>
@@ -359,35 +393,41 @@ export function CartDrawer({
                     </div>
                   )}
                 </dl>
-                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">
-                  Los precios son estimados. Confirmamos tu beneficio, disponibilidad, total final y
-                  entrega por WhatsApp. Envío no incluido.
-                </p>
+                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">{ESTIMATE_NOTICE}</p>
               </div>
             ) : pricing ? (
               <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
-                <p className="text-[var(--olv-ink-soft,var(--ink-soft))]">
-                  Te confirmo precios y existencia por WhatsApp.
-                </p>
+                <p className="text-[var(--olv-ink-soft,var(--ink-soft))]">{ESTIMATE_NOTICE}</p>
               </div>
-            ) : null}
+            ) : (
+              // Legacy single-price stores keep the same single notice — the
+              // WhatsApp confirmation, shipping and no-reservation terms apply
+              // to their requests too.
+              <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))]">{ESTIMATE_NOTICE}</p>
+            )}
+            {/* 1.13.1: visual label retired — placeholder carries the hint, the
+                accessible name stays "Tu nombre". */}
             <TextField
               label="Tu nombre"
-              placeholder="Para que sepa quién pide"
+              labelClassName="sr-only"
+              placeholder="Escribe tu nombre para identificarte"
               value={customerName}
               onChange={(event) => {
                 setCustomerName(event.target.value);
                 saveCartName(store.slug, event.target.value);
               }}
             />
-            <a href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)} target="_blank" rel="noreferrer">
-              <Button full size="lg" variant="primary" className="bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90">
-                Enviar pedido por WhatsApp
-              </Button>
+            {/* 1.13.1: ONE semantic control — a single link styled as the
+                primary action. No nested button inside the anchor (invalid
+                HTML, two Tab stops for one action). */}
+            <a
+              href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex w-full items-center justify-center rounded-xl px-5 py-3.5 text-base font-semibold tracking-tight shadow-sm transition-all active:translate-y-px active:scale-[0.98] bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90"
+            >
+              Enviar solicitud por WhatsApp
             </a>
-            <p className="text-[var(--olv-ink-soft,var(--ink-soft))] text-xs text-center">
-              Precio y existencia por confirmar por WhatsApp. Enviar tu selección no confirma ni reserva el pedido.
-            </p>
           </div>
         </div>
       )}

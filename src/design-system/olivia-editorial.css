@@ -1,7 +1,9 @@
 /* Olivia's first approved editorial iteration. Only the public storefront uses
    this sheet; pricing, product photos and administration keep their contracts. */
-.olivia-root { --olv-heading-weight: 600; --olv-footer-bg: var(--olv-accent); --olv-footer-ink: var(--olv-surface); }
-.olivia-root h1,.olivia-root h2,.olivia-root .olv-footer-brand { font-weight: var(--olv-heading-weight); }
+/* 1.13.1: the footer drops the accent strip — white background, ink text,
+   the transparent logo carries the brand (no giant name text). */
+.olivia-root { --olv-heading-weight: 600; --olv-footer-bg: var(--olv-bg); --olv-footer-ink: var(--olv-ink); }
+.olivia-root h1,.olivia-root h2 { font-weight: var(--olv-heading-weight); }
 .olivia-root .olv-container { width: calc(100% - 28px); max-width: 1600px; }
 .olivia-root .olv-notice { background: var(--olv-bg); border-bottom: 1px solid var(--olv-rule); padding: 7px 20px; font-size: 10px; color: var(--olv-ink-soft); letter-spacing: .03em; }
 .olivia-root .olv-header { background: var(--olv-bg); }
@@ -25,6 +27,17 @@
 .olivia-root .olv-main { padding-top: 0; }
 .olivia-root .olv-category-section { margin: 0; padding: 14px 0; border-block: 1px solid var(--olv-rule); }
 .olivia-root .olv-category-section-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* 1.13.1: brief soft dim on hover/touch — the label and focus stay legible,
+   and identifying/opening a category never depends on hover. */
+.olivia-root .olv-category-image { transition: opacity var(--motion-fast) var(--ease-smooth); }
+.olivia-root .olv-category-card:hover .olv-category-image { opacity: .82; }
+@media (hover: none) {
+  .olivia-root .olv-category-card:active .olv-category-image { opacity: .82; }
+}
+/* Brief entry for the section heading when switching categories — the
+   product grid itself never animates and content shows without waiting. */
+@keyframes olv-cat-enter { from { opacity: 0; transform: translateY(8px); } }
+.olivia-root .olv-section-heading { animation: olv-cat-enter var(--motion-base) var(--ease-smooth); }
 .olivia-root .olv-category-grid { display: flex; overflow-x: auto; gap: 16px; padding-bottom: 4px; }
 .olivia-root .olv-category-card { flex: 0 0 104px; border: 0; background: transparent; }
 .olivia-root .olv-category-image { height: 84px; aspect-ratio: auto; object-fit: contain; background: var(--olv-bg); }
@@ -57,10 +70,12 @@
 .olivia-root .olv-product-labels > * { font-size: 10px; border-radius: 0; padding: 2px 4px; }
 .olivia-root .olv-how { margin-top: 64px; padding: 38px 0; border-block: 1px solid var(--olv-rule); background: var(--olv-bg); }
 .olivia-root .olv-about-grid { padding-block: 48px; gap: 48px; }
-.olivia-root .olv-footer { margin-top: 0; background: var(--olv-footer-bg); color: var(--olv-footer-ink); padding: 48px 0 90px; }
-.olivia-root .olv-footer p:not(.olv-footer-brand) { color: inherit; }
-.olivia-root .olv-footer-brand { font-size: clamp(60px,10vw,160px); line-height: .85; letter-spacing: -.04em; margin-bottom: 22px; }
-.olivia-root .olv-footer-bottom { border-color: currentColor; }
+.olivia-root .olv-footer { margin-top: 0; background: var(--olv-footer-bg); color: var(--olv-footer-ink); padding: 48px 0 90px; border-top: 1px solid var(--olv-rule); }
+.olivia-root .olv-footer p { color: var(--olv-ink-soft); }
+/* Same asset as the header wordmark; modest display size, intrinsic ratio.
+   Element-scoped (not just img) so the placeholder fallback keeps it too. */
+.olivia-root .olv-footer .olv-footer-logo { width: auto; aspect-ratio: auto; max-width: min(300px, 100%); height: clamp(56px, 8vw, 96px); margin-bottom: 18px; }
+.olivia-root .olv-footer-bottom { border-color: var(--olv-rule); }
 .olivia-root .olv-detail { padding-top: 10px; }
 .olivia-root .olv-detail-grid { grid-template-columns: 1fr; gap: 24px; }
 .olivia-root .olv-detail h1 { font-size: 36px; line-height: 1.03; letter-spacing: -.03em; margin-bottom: 18px; }
@@ -81,7 +96,12 @@
   .olivia-root .olv-hero-photo { grid-column: 2; grid-row: 1 / span 6; align-self: stretch; display: flex; flex-direction: column; justify-content: center; margin: 0; min-height: 420px; }
   .olivia-root .olv-hero-photo img { height: 400px; }
   .olivia-root .olv-category-section { padding: 18px 0 20px; }
-  .olivia-root .olv-category-grid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 20px; overflow: visible; padding: 0; }
+  /* 1.13.1: five equal columns from this breakpoint up — ten categories read
+     as 5 + 5, and a short last row (7 → 5+2, 11 → 5+5+1) centers instead of
+     hugging the left. min-width 0 lets long names wrap inside their cell
+     instead of re-flowing the row to 4 columns. */
+  .olivia-root .olv-category-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; overflow: visible; padding: 0; }
+  .olivia-root .olv-category-grid .olv-category-card { flex: 0 1 calc((100% - 80px) / 5); min-width: 0; }
   .olivia-root .olv-category-card { min-width: 0; }
   .olivia-root .olv-category-image { height: 96px; }
   .olivia-root .olv-category-card-name { font-size: 11px; }

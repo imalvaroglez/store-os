@@ -188,7 +188,7 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
           </StorefrontLink>)}
         </div>
       </section>}
-      <div className="olv-section-heading"><div><p className="olv-eyebrow">Elige lo que va contigo</p><h2>{category?.name || "Encuentra tus favoritas"}</h2></div><p className="olv-muted">{products.length} {products.length === 1 ? "pieza" : "piezas"}</p></div>
+      <div className="olv-section-heading" key={category?.id ?? "todas"}><div><p className="olv-eyebrow">Elige lo que va contigo</p><h2>{category?.name || "Encuentra tus favoritas"}</h2></div><p className="olv-muted">{products.length} {products.length === 1 ? "pieza" : "piezas"}</p></div>
       {category?.description && <p className="olv-muted">{category.description}</p>}
       {focusCategory && <nav aria-label="Categorías" className="olv-categories">
         <StorefrontLink to={`/catalogo/${slug}`} current={!focusCategory}>Todas las piezas</StorefrontLink>
@@ -309,7 +309,7 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
   const style = Object.fromEntries(Object.entries(OLIVIA_BRAND).filter(([key]) => !key.startsWith("font")).map(([key, value]) => [`--olv-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, value]));
   const body = <div className="olivia-root" style={style}>
     {store && <>
-      <InlineEditable enabled={editing} label="Aviso" value={sf.notice ?? ""} displayValue={sf.notice || "Tu próxima pieza favorita empieza aquí"} placeholder="Toca para añadir un aviso" render={(text) => <div className="olv-notice">{text}</div>} onChange={(value) => patchStorefront("notice", value || undefined)} />
+      <InlineEditable enabled={editing} label="Aviso" value={sf.notice ?? ""} displayValue={sf.notice || "Tu próxima pieza favorita empieza aquí"} placeholder="Toca para añadir un aviso" render={(text) => <div className="olv-notice">{text}</div>} onChange={(value) => patchStorefront("notice", value)} />
       <header className={`olv-header${isHomeRoute ? " olv-header--home" : ""}`}><div className={`olv-container olv-header-inner ${isHomeRoute ? "olv-header-inner--home" : ""}`}>
         <StorefrontLink to={`/catalogo/${store.slug}`} className="olv-wordmark">{sf.logoUrl ? <ProductImage src={sf.logoUrl} alt={`Logo de ${store.name}`} size="full" natural loading="eager" /> : <ProductImage src={OLIVIA_LOGO_URL} alt={`Logo de ${store.name}`} size="full" natural loading="eager" />}</StorefrontLink>
         <nav aria-label="Principal"><StorefrontLink to={`/catalogo/${store.slug}`} className="olv-header-catalog">Catálogo</StorefrontLink><Button variant="ghost" aria-label="Ver mi selección" onClick={openCart}>Mi pedido <span className="olv-count">{pieces}</span></Button></nav>
@@ -317,13 +317,15 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
     </>}
     {children}
     {store && <footer className="olv-footer"><div className="olv-container olv-footer-grid">
-      <div><p className="olv-footer-brand">{store.name}</p><p>Pequeños detalles para hacerlos tuyos.</p><a className="olv-text-link" href={createStorefrontContactUrl(store, store.slug)} target="_blank" rel="noreferrer">Hablemos por WhatsApp ↗</a></div>
+      {/* 1.13.1: white footer, the transparent logo replaces the giant brand
+          text — same source as the header wordmark (configured logo wins). */}
+      <div><ProductImage src={sf.logoUrl ?? OLIVIA_LOGO_URL} alt={store.name} size="full" natural loading="lazy" className="olv-footer-logo" /><p>Pequeños detalles para hacerlos tuyos.</p><a className="olv-text-link" href={createStorefrontContactUrl(store, store.slug)} target="_blank" rel="noreferrer">Hablemos por WhatsApp ↗</a></div>
       <div><h2>Explora</h2><nav className="olv-footer-links" aria-label="Categorías del catálogo"><StorefrontLink to={`/catalogo/${store.slug}`}>Todas las piezas</StorefrontLink>{categories.map((category) => <StorefrontLink key={category.id} to={`/catalogo/${store.slug}/categoria/${category.slug}`}>{category.name}</StorefrontLink>)}</nav></div>
       <div><h2>Entregas y atención</h2>
-        <InlineEditable enabled={editing} label="Entregas y envíos" value={sf.shipping ?? ""} displayValue={sf.shipping || OLIVIA_CONTENT.shipping} placeholder="Toca para añadir información de entregas" multiline render={(text) => <p>{text}</p>} onChange={(value) => patchStorefront("shipping", value || undefined)} />
-        <InlineEditable enabled={editing} label="Horarios" value={sf.hours ?? ""} displayValue={sf.hours ?? ""} placeholder="Toca para añadir horarios" render={(text) => text ? <p>Horarios: {text}</p> : null} onChange={(value) => patchStorefront("hours", value || undefined)} />
+        <InlineEditable enabled={editing} label="Entregas y envíos" value={sf.shipping ?? ""} displayValue={sf.shipping || OLIVIA_CONTENT.shipping} placeholder="Toca para añadir información de entregas" multiline render={(text) => <p>{text}</p>} onChange={(value) => patchStorefront("shipping", value)} />
+        <InlineEditable enabled={editing} label="Horarios" value={sf.hours ?? ""} displayValue={sf.hours ?? ""} placeholder="Toca para añadir horarios" render={(text) => text ? <p>Horarios: {text}</p> : null} onChange={(value) => patchStorefront("hours", value)} />
         <InlineEditable enabled={editing} label="Métodos de pago" value={(sf.payments ?? []).join("\n")} displayValue={(sf.payments ?? []).join("\n")} placeholder="Toca para añadir métodos de pago, uno por línea" multiline render={(text) => text.trim() ? <p>Pagos: {text.split(/\r?\n/).filter(Boolean).join(", ")}</p> : null} onChange={(value) => patchStorefront("payments", value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))} />
-        <InlineEditable enabled={editing} label="Instagram" value={sf.instagram ?? ""} displayValue={sf.instagram ?? ""} placeholder="Toca para añadir Instagram" render={(text) => text ? <p>Instagram: {text}</p> : null} onChange={(value) => patchStorefront("instagram", value || undefined)} />
+        <InlineEditable enabled={editing} label="Instagram" value={sf.instagram ?? ""} displayValue={sf.instagram ?? ""} placeholder="Toca para añadir Instagram" render={(text) => text ? <p>Instagram: {text}</p> : null} onChange={(value) => patchStorefront("instagram", value)} />
       </div>
     </div><div className="olv-container olv-footer-bottom">© {store.name}<span>Elige. Combina. Hazlo tuyo.</span></div></footer>}
     {store && <>
