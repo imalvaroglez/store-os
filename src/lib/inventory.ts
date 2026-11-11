@@ -179,3 +179,75 @@ export function reservationDeltasForOrderChange(previous: Order | undefined, nex
     order && holdsPieces(order) ? orderItems(order) : [];
   return reservationDeltas(heldItems(previous), heldItems(next));
 }
+
+// --- #309: canonical shortage derivation (observability only) ------------
+
+/** The stock dimension an order line moves — variant stock for variant lines,
+ * product stock otherwise (#124: variant stock never lands on the design
+ * level). Keyed exactly like variantReservationDeltas. */
+export function stockDimensionKey(productId: string, variantId?: string): string {
+  return variantId ? `${productId}:${variantId}` : productId;
+}
+
+export type DimensionShortage = {
+  key: string;
+  productId: string;
+  variantId?: string;
+  missing: number;
+};
+
+type ShortageProduct = Pick<Product, "id" | "quantityOnHand" | "variants">;
+
+/** Pieces each stock dimension is SHORT (negative stock), derived from the
+ * exact dimension every item moves. The card's "Faltan N" badge, the order
+ * editor and the category review ALL share this function so they can never
+ * disagree (#309). Pure — never mutates stock or orders. */
+export function shortageByDimension(
+  items: ReadonlyArray<Pick<OrderItem, "productId" | "variantId">>,
+  products: ReadonlyArray<ShortageProduct>
+): Map<string, DimensionShortage> {
+  const byId = new Map(products.map((product) => [product.id, product]));
+  const result = new Map<string, DimensionShortage>();
+  for (const item of items) {
+    if (!item.productId) continue;
+    const key = stockDimensionKey(item.productId, item.variantId);
+    if (result.has(key)) continue;
+    const product = byId.get(item.productId);
+    if (!product) continue;
+    const stock = item.variantId
+      ? product.variants?.find((variant) => variant.id === item.variantId)?.quantityOnHand
+      : product.quantityOnHand;
+    if (typeof stock === "number" && stock < 0) {
+      result.set(key, {
+        key,
+        productId: item.productId,
+        ...(item.variantId ? { variantId: item.variantId } : {}),
+        missing: -stock,
+      });
+    }
+  }
+  return result;
+}
+
+/** Deterministic per-LINE attribution of dimension shortages (#309): the
+ * FIRST line (capture order) with pieces on a short dimension claims that
+ * dimension's FULL missing count — never capped by the line's quantity,
+ * because the card badge shows the dimension total (a shared deficit across
+ * orders reabasts the shelf, not just one line). Line badges therefore sum
+ * EXACTLY to the card badge. Lines without pieces never claim. */
+export function attributeShortageToLines<T extends { key: string; productId?: string; variantId?: string; quantity: number }>(
+  lines: ReadonlyArray<T>,
+  products: ReadonlyArray<ShortageProduct>
+): Map<string, number> {
+  const perLine = new Map<string, number>();
+  for (const shortage of shortageByDimension(lines, products).values()) {
+    const line = lines.find(
+      (candidate) =>
+        candidate.productId != null &&
+        candidate.quantity > 0 &&
+        stockDimensionKey(candidate.productId, candidate.variantId) === shortage.key
+    );
+    if (line) perLine.set(line.key, shortage.missing);
+  }
+  return perLine;
+}
