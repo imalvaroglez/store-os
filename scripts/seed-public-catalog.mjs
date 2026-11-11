@@ -9,7 +9,10 @@ import { readFileSync } from "node:fs";
 import { setDoc, doc, deleteDoc, getDocs, query, collection, where } from "firebase/firestore";
 
 const SLUG = "olivia";
-const CATEGORIES = ["Cadenas", "Aretes", "Anillos", "Brazaletes", "Collares", "Dijes", "Tobilleras", "Broches", "Sets", "Pulseras"]; // 10 → 5 + 5
+// CAT_COUNT lets evidence runs try other compositions (7, 11, …); default 10 → 5 + 5.
+const CAT_COUNT = Math.min(12, Math.max(1, Number(process.env.CAT_COUNT ?? 10)));
+const ALL_CATEGORIES = ["Cadenas", "Aretes", "Anillos", "Brazaletes", "Collares", "Dijes", "Tobilleras", "Broches", "Sets", "Pulseras", "Pañuelos", "Sombreros"];
+const CATEGORIES = ALL_CATEGORIES.slice(0, CAT_COUNT);
 const PER_CATEGORY = 6;
 const IMAGES = 12;
 
@@ -110,6 +113,10 @@ await env.withSecurityRulesDisabled(async (ctx) => {
       });
       await setDoc(doc(db, "publicProducts", `store_olivia__${slug}`), {
         ...products[n], sku: `S-${n}`, stockSignal: products[n].stockSignal,
+        // The detail projection always carries an images array (the gallery
+        // walks it) — mirror the real projection shape.
+        images: [{ url: imageUrls[n % imageUrls.length], width: 360 + (n % 4) * 140, height: 360 + (n % 4) * 140 }],
+        categories: [category],
       });
       n++;
     }
