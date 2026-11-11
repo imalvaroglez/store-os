@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, within, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { OliviaStorefront } from "./OliviaStorefront";
 import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
+import { PublicCatalogNotFoundError, PublicCatalogUnpublishedError } from "../../app/firebase/publicCatalog";
 import type {
   PublicStore,
   PublicCatalog,
@@ -16,6 +17,11 @@ import type { Storefront } from "../../types";
 // $90 (desde $1,000 a precio Iconic).
 const mocks = vi.hoisted(() => ({
   loadPublicCatalog: vi.fn(),
+  // #286: independent store/catalog mocks so race tests can reject each read
+  // in a chosen order; the defaults keep deriving from the shared fixture so
+  // every existing mockResolvedValue keeps working.
+  loadPublicStore: vi.fn(),
+  loadPublicCatalogSummary: vi.fn(),
   loadPublicProduct: vi.fn(),
   saveStorefront: vi.fn(),
   toastSuccess: vi.fn(),
@@ -27,14 +33,17 @@ vi.mock("../../design-system", async (importOriginal) => ({
 }));
 vi.mock("../../app/firebase/publicCatalog", () => ({
   loadPublicCatalog: mocks.loadPublicCatalog,
-  // The storefront progressively loads store + catalog; derive both from the
-  // same fixture so every existing mockResolvedValue keeps working.
-  loadPublicStore: vi.fn(async () => (await mocks.loadPublicCatalog()).store),
-  loadPublicCatalogSummary: vi.fn(async () => (await mocks.loadPublicCatalog()).catalog),
+  loadPublicStore: mocks.loadPublicStore,
+  loadPublicCatalogSummary: mocks.loadPublicCatalogSummary,
   loadPublicProduct: mocks.loadPublicProduct,
   PublicCatalogNotFoundError: class PublicCatalogNotFoundError extends Error {
     constructor(public slug: string) {
       super(`No hay catálogo público para "${slug}".`);
+    }
+  },
+  PublicCatalogUnpublishedError: class PublicCatalogUnpublishedError extends Error {
+    constructor(public slug: string) {
+      super(`El catálogo de "${slug}" aún no está publicado.`);
     }
   },
 }));
@@ -125,8 +134,19 @@ beforeEach(() => {
   mocks.toastSuccess.mockReset();
   mocks.toastError.mockReset();
   mocks.loadPublicCatalog.mockReset().mockResolvedValue({ store, catalog });
+  // Defaults derive from the shared fixture; race tests override per-call
+  // with mockRejectedValueOnce / a deferred mockImplementationOnce (#286).
+  mocks.loadPublicStore.mockReset().mockImplementation(async () => (await mocks.loadPublicCatalog()).store);
+  mocks.loadPublicCatalogSummary.mockReset().mockImplementation(async () => (await mocks.loadPublicCatalog()).catalog);
   mocks.loadPublicProduct.mockReset().mockResolvedValue({ product: detail, store });
 });
+
+// #291: the 'filtra por acabado' flake (2nd CI occurrence) matched a stale
+// article from a previous test's mount surviving in document.body — an
+// unfiltered grid plus the filtered one. Explicit per-file cleanup makes
+// cross-test DOM bleed structurally impossible, whatever made the auto
+// cleanup miss once on a loaded CI runner.
+afterEach(() => { cleanup(); });
 
 describe("filtro por acabado", () => {
   it("no muestra un selector cuando solo hay un acabado", async () => {
@@ -137,17 +157,74 @@ describe("filtro por acabado", () => {
   });
 
   it("filtra por acabado sin repetirlo en cada tarjeta", async () => {
-    render(<OliviaStorefront route={categoryRoute} />);
-    await screen.findByRole("article", { name: "Anillo Blossom" });
-    expect(screen.getByLabelText("Acabado")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Acabado"), { target: { value: "plateado" } });
-    expect(screen.getByRole("article", { name: "Aretes Luna" })).toBeTruthy();
+    // #291: scoped to THIS render's container so a stale mount from another
+    // test can never satisfy or defeat the query (the 2nd CI flake signature:
+    // the previous test's single-product grid persisting unfiltered).
+    const view = render(<OliviaStorefront route={categoryRoute} />);
+    const grid = within(view.container);
+    await grid.findByRole("article", { name: "Anillo Blossom" });
+    expect(grid.getByLabelText("Acabado")).toBeTruthy();
+    fireEvent.change(grid.getByLabelText("Acabado"), { target: { value: "plateado" } });
+    expect(grid.getByRole("article", { name: "Aretes Luna" })).toBeTruthy();
     // The list re-renders asynchronously after the filter change — wait for the
     // filtered-out card to leave the DOM instead of asserting synchronously.
     // #252: CI runners can take longer than the default 1s to settle that
     // re-render; an explicit generous timeout removes the flake without
     // weakening the assertion.
-    await waitFor(() => expect(screen.queryByRole("article", { name: "Anillo Blossom" })).toBeNull(), { timeout: 5000 });
+    await waitFor(() => expect(grid.queryByRole("article", { name: "Anillo Blossom" })).toBeNull(), { timeout: 5000 });
+  });
+});
+
+describe("#286 la tienda es la señal autoritativa", () => {
+  /** Settles when the test decides — controls WHICH read classifies first. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+  }
+
+  it("catálogo falla primero y la tienda 404a después: gana 'Tienda no encontrada'", async () => {
+    const storeRead = deferred<PublicStore>();
+    mocks.loadPublicStore.mockImplementationOnce(() => storeRead.promise);
+    mocks.loadPublicCatalogSummary.mockRejectedValueOnce(new Error("Firestore REST 503"));
+    render(<OliviaStorefront route={storeRoute} />);
+    // Interim verdict while the store is still in flight: the catalog spoke.
+    expect(await screen.findByText("No se pudo cargar")).toBeTruthy();
+    // The store doc settles LAST and overrides — it is the existence signal.
+    storeRead.reject(new PublicCatalogNotFoundError("olivia"));
+    expect(await screen.findByText("Tienda no encontrada")).toBeTruthy();
+    expect(screen.queryByText(/No se pudo cargar/)).toBeNull();
+  });
+
+  it("tienda 404a primero: el fallo tardío del catálogo no pisa 'Tienda no encontrada'", async () => {
+    mocks.loadPublicStore.mockRejectedValueOnce(new PublicCatalogNotFoundError("olivia"));
+    const catalogRead = deferred<PublicCatalog>();
+    mocks.loadPublicCatalogSummary.mockImplementationOnce(() => catalogRead.promise);
+    render(<OliviaStorefront route={storeRoute} />);
+    expect(await screen.findByText("Tienda no encontrada")).toBeTruthy();
+    catalogRead.reject(new Error("Firestore REST 503"));
+    // A rejection cascade must not flip the verdict back to "failed".
+    await waitFor(() => expect(screen.getByText("Tienda no encontrada")).toBeTruthy());
+    expect(screen.queryByText(/No se pudo cargar/)).toBeNull();
+  });
+
+  it("tienda ok + catálogo sin publicar: mensaje honesto, sin bucle de reintento", async () => {
+    mocks.loadPublicCatalogSummary.mockRejectedValueOnce(new PublicCatalogUnpublishedError("olivia"));
+    render(<OliviaStorefront route={storeRoute} />);
+    expect(await screen.findByText("Catálogo no disponible por ahora")).toBeTruthy();
+    expect(screen.getByText(/todavía no publica sus piezas/)).toBeTruthy();
+    // A clienta with a fine connection must never read "revisa tu conexión",
+    // and an unpublished catalog has nothing to reload.
+    expect(screen.queryByText(/Revisa tu conexión/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+  });
+
+  it("tienda ok + fallo de red del catálogo: 'No se pudo cargar' CON Reintentar", async () => {
+    mocks.loadPublicCatalogSummary.mockRejectedValueOnce(new Error("Firestore REST 503"));
+    render(<OliviaStorefront route={storeRoute} />);
+    expect(await screen.findByText("No se pudo cargar")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
   });
 });
 

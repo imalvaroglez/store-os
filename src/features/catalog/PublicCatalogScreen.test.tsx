@@ -163,4 +163,15 @@ describe("missing real vs fallo de red (#276)", () => {
     expect(screen.queryByText(/no existe o no está disponible/)).toBeNull();
     expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
   });
+
+  it("#286 catálogo aún no publicado (tienda ok): mensaje honesto, sin 'revisa tu conexión' ni reintento", async () => {
+    const { PublicCatalogUnpublishedError } = await import("../../app/firebase/publicCatalog");
+    mocks.loadPublicCatalog.mockRejectedValue(new PublicCatalogUnpublishedError("olivia"));
+    render(<PublicCatalogScreen slug="olivia" />);
+    expect(await screen.findByText("Catálogo no disponible por ahora")).toBeTruthy();
+    expect(screen.getByText(/todavía no publica sus piezas/)).toBeTruthy();
+    expect(screen.queryByText(/Revisa tu conexión/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+    expect(screen.queryByText(/no existe o no está disponible/)).toBeNull();
+  });
 });
