@@ -1001,3 +1001,87 @@ describe("compactación de filas (#310)", () => {
     expect(screen.getByRole("img", { name: "Foto de Aro compacto" })).toBeTruthy();
   });
 });
+
+// #325 — faltantes EN VIVO durante la captura y "Ver faltantes" que visita
+// cada línea corta. La proyección usa la misma fuente canónica que la insignia
+// de la tarjeta (attributeProjectedShortageToLines), con las reservas propias
+// del pedido devueltas al estante antes de proyectar.
+describe("faltantes en vivo y Ver faltantes (#325)", () => {
+  const trackedProduct = (id: string, name: string, quantityOnHand: number) => ({
+    ...state.products[0],
+    id,
+    name,
+    quantityOnHand,
+    imageUrl: `https://example.test/${id}.jpg`,
+  } as never);
+
+  it("el faltante estimado aparece en vivo al subir la cantidad y se limpia al bajar — sin guardar", () => {
+    state.products.push(trackedProduct("prod_325_short", "Aro corto", 1)); // estante 1, ya neto de la reserva propia
+    localStorage.clear(); // the NEW-order draft slot is shared across tests — restore nothing
+    try {
+      const order = {
+        id: "live-shortage-order",
+        storeId: "store_olivia",
+        customerId: "customer_1",
+        items: [{ productId: "prod_325_short", productName: "Aro corto", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0,
+        createdAt: "",
+        updatedAt: "",
+      } as unknown as Order;
+      const rendered = render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
+      expect(screen.queryByText(/Falta \d/)).toBeNull(); // 1 ≤ 1+1: sin faltante
+      fireEvent.change(screen.getByLabelText(/Cantidad/), { target: { value: "4" } });
+      // 4 − (estante 1 + reservado propio 1) = 2, visible sin guardar.
+      expect(screen.getByText("Falta 2")).toBeInTheDocument();
+      expect(screen.getByText(/Faltan 2 piezas en 1 producto/)).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(/Cantidad/), { target: { value: "2" } });
+      expect(screen.queryByText(/Falta \d/)).toBeNull();
+      rendered.unmount();
+    } finally {
+      state.products.pop();
+    }
+  });
+
+  it("Ver faltantes visita cada línea corta y vuelve a empezar", async () => {
+    state.products.push(trackedProduct("prod_325_a", "Aro falta A", 1));
+    state.products.push(trackedProduct("prod_325_b", "Aro falta B", 1));
+    localStorage.clear(); // the NEW-order draft slot is shared across tests — restore nothing
+    try {
+      const order = {
+        id: "cycle-shortage-order",
+        storeId: "store_olivia",
+        customerId: "customer_1",
+        items: [
+          { productId: "prod_325_a", productName: "Aro falta A", quantity: 1, unitPrice: 100, subtotal: 100 },
+          { productId: "prod_325_b", productName: "Aro falta B", quantity: 1, unitPrice: 100, subtotal: 100 },
+        ],
+        deposit: 0,
+        createdAt: "",
+        updatedAt: "",
+      } as unknown as Order;
+      const rendered = render(<ToastProvider><OrderForm order={order} isNew onDone={() => {}} /></ToastProvider>);
+      const quantities = screen.getAllByLabelText(/Cantidad/);
+      // DOM shows the newest capture on top; both lines go 2 over their shelf.
+      fireEvent.change(quantities[0], { target: { value: "4" } });
+      fireEvent.change(quantities[1], { target: { value: "4" } });
+      expect(screen.getByText(/Faltan 4 piezas en 2 productos/)).toBeInTheDocument();
+      const hop = () => screen.getByRole("button", { name: /Ver faltantes/ });
+      expect(hop().textContent).toContain("1/2");
+      // The product inputs, DOM order (reverse of capture order).
+      const productInputs = screen.getAllByLabelText("Producto") as HTMLInputElement[];
+      const lineAInput = productInputs.find((input) => input.value.includes("Aro falta A"))!;
+      const lineBInput = productInputs.find((input) => input.value.includes("Aro falta B"))!;
+      fireEvent.click(hop()); // primero: A (orden de captura)
+      expect(document.activeElement).toBe(lineAInput);
+      expect(hop().textContent).toContain("2/2");
+      fireEvent.click(hop()); // segundo: B
+      expect(document.activeElement).toBe(lineBInput);
+      fireEvent.click(hop()); // vuelve a empezar: A
+      expect(document.activeElement).toBe(lineAInput);
+      rendered.unmount();
+    } finally {
+      state.products.pop();
+      state.products.pop();
+    }
+  });
+});
