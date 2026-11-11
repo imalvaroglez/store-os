@@ -95,8 +95,10 @@
   .olivia-root .olv-hero-photo { grid-column: 2; grid-row: 1 / span 6; align-self: stretch; display: flex; flex-direction: column; justify-content: center; margin: 0; min-height: 420px; }
   .olivia-root .olv-hero-photo img { height: 400px; }
   .olivia-root .olv-category-section { padding: 18px 0 20px; }
-  /* 1.13.1: five equal columns — ten categories read as 5 + 5. */
-  .olivia-root .olv-category-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 20px; overflow: visible; padding: 0; }
+  /* 1.13.1: five equal columns — ten categories read as 5 + 5, and a short
+     last row (7 → 5+2, 11 → 5+5+1) centers instead of hugging the left. */
+  .olivia-root .olv-category-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; overflow: visible; padding: 0; }
+  .olivia-root .olv-category-grid .olv-category-card { flex: 0 1 calc((100% - 80px) / 5); min-width: 160px; }
   .olivia-root .olv-category-card { min-width: 0; }
   .olivia-root .olv-category-image { height: 96px; }
   .olivia-root .olv-category-card-name { font-size: 11px; }
