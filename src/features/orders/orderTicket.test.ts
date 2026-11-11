@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderTicketText } from "./orderTicket";
+import { orderTicketText, receiptFileName } from "./orderTicket";
 import type { Order } from "../../types";
 
 describe("orderTicketText — Fer's WhatsApp format", () => {
@@ -182,5 +182,26 @@ describe("orderTicketText · incidencias sin efectivo (#306 revisión)", () => {
   it("sin incidencias ni dinero: el Saldo no repite el Total (regla original #306)", () => {
     const order = { ...base, items: [{ productName: "Arracada", quantity: 1, unitPrice: 720, subtotal: 720 }], deposit: 0 } as unknown as Order;
     expect(orderTicketText(order, "Olivia")).not.toContain("*Saldo*");
+  });
+});
+
+// #308 — nombre de archivo ordenable: referencia primero, luego clienta.
+describe("receiptFileName (#308)", () => {
+  it("referencia primero y clienta sanitizada", () => {
+    expect(receiptFileName("order_4ddabf", "María José Pérez")).toBe("Pedido-4DDABF-Maria-Jose-Perez");
+  });
+  it("sin clienta queda sólo la referencia; vacío y espacios no rompen", () => {
+    expect(receiptFileName("order_4ddabf")).toBe("Pedido-4DDABF");
+    expect(receiptFileName("order_4ddabf", "   ")).toBe("Pedido-4DDABF");
+  });
+  it("nombre larguísimo se acota", () => {
+    expect(receiptFileName("o1", "a".repeat(120)).length).toBeLessThanOrEqual("Pedido-O1-".length + 40);
+  });
+});
+
+// Revisión adversarial #329: el corte de 40 no deja guion colgante.
+describe("receiptFileName · corte limpio (#329 revisión)", () => {
+  it("un corte a mitad de separador no termina en guion", () => {
+    expect(receiptFileName("o1", "x".repeat(39) + " y")).not.toMatch(/-$/);
   });
 });
