@@ -47,12 +47,12 @@ describe("OrderReceipt (#139)", () => {
     const row = (label: string) => preview.getByText(label).closest("li")!.textContent;
     expect(row("2 × Aretes Luna")).toContain("1.");
     expect(row("Anillo Sol")).toContain("2.");
-    expect(preview.getByText("$301.00")).toBeTruthy();
-    expect(preview.getByText("$320.00")).toBeTruthy();
+    expect(preview.getByText("$301")).toBeTruthy();
+    expect(preview.getByText("$320")).toBeTruthy();
     // …y el dinero coincide EXACTO con el texto que Fer manda por WhatsApp.
     expect(preview.getByText(data.total).textContent).toBe(data.total);
     expect(preview.getByText("Cobrado").parentElement?.textContent).toContain(data.cobrado);
-    expect(data.cobrado).toBe("$400.00");
+    expect(data.cobrado).toBe("$400");
     expect(data.saldo).toBeDefined(); // 621 − 400 abonados
     expect(preview.getByText(data.saldo!)).toBeTruthy();
     // El texto de WhatsApp (#222) ya no lleva Cobrado: la coherencia texto↔PDF
@@ -70,19 +70,19 @@ describe("OrderReceipt (#139)", () => {
     expect(data.saldo).toBeUndefined();
     const preview = within(screen.getByTestId("receipt-preview"));
     expect(preview.queryByText("Saldo")).toBeNull();
-    expect(preview.getByText("Cobrado").parentElement?.textContent).toContain("$621.00");
+    expect(preview.getByText("Cobrado").parentElement?.textContent).toContain("$621");
     expect(orderTicketText(paid, "Olivia")).not.toContain("Saldo");
   });
 
-  it("muestra $0.00 cobrado y el saldo completo si no hay anticipos ni pagos", () => {
+  it("muestra $0 cobrado y SIN línea de Saldo si no hay anticipos ni pagos (#306)", () => {
     const unpaid = { ...order, deposit: 0, paymentsReceivedCents: 0 } as unknown as Order;
     const data = orderTicketData(unpaid, "Olivia");
     render(<OrderReceipt data={data} />);
     const preview = within(screen.getByTestId("receipt-preview"));
-    expect(data.cobrado).toBe("$0.00");
-    expect(data.saldo).toBe(data.total);
-    expect(preview.getByText("Cobrado").parentElement?.textContent).toContain("$0.00");
-    expect(orderTicketText(unpaid, "Olivia")).toContain(`*Saldo* ${data.saldo!}`);
+    expect(data.cobrado).toBe("$0");
+    expect(data.saldo).toBeUndefined(); // sin dinero recibido, el Saldo no repite el Total
+    expect(preview.getByText("Cobrado").parentElement?.textContent).toContain("$0");
+    expect(orderTicketText(unpaid, "Olivia")).not.toContain("*Saldo*");
   });
 
   it("el botón del Sheet dispara la impresión del navegador", () => {
