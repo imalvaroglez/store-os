@@ -200,3 +200,28 @@ describe("one-tap collection reconciliation (#218)", () => {
     }
   });
 });
+
+// #307 — modal de compartir en dos columnas: texto+Copiar (izquierda) y
+// recibo+Imprimir (derecha) conviven al ancho; en angosto se apilan en orden
+// de tarea. Cada panel es dueño de su acción.
+describe("modal de compartir en dos columnas (#307)", () => {
+  it("abre con texto, recibo y ambas acciones juntos; layout de dos columnas", () => {
+    render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalle para compartir" }));
+    const textArea = screen.getByLabelText("Detalle del pedido") as HTMLTextAreaElement;
+    expect(textArea.value).toContain("Anillo");
+    expect(screen.getByRole("button", { name: "Copiar detalle" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Imprimir / Guardar PDF" })).toBeInTheDocument();
+    expect(screen.getAllByText(/Solo el recibo sale en papel/).length).toBeGreaterThan(0); // una por panel (móvil/escritorio)
+    // Two panels on one grid row at wide widths (lg:grid-cols-2).
+    const grid = textArea.closest("div.grid");
+    expect(grid?.className).toContain("lg:grid-cols-2");
+    // The copy button lives in the text's panel; the print button in the receipt's.
+    const textPanel = textArea.closest("div.min-w-0");
+    const receiptButton = screen.getByRole("button", { name: "Imprimir / Guardar PDF" });
+    const receiptPanel = receiptButton.closest("div.min-w-0");
+    expect(textPanel?.contains(screen.getByRole("button", { name: "Copiar detalle" }))).toBe(true);
+    expect(receiptPanel?.contains(receiptButton)).toBe(true);
+    expect(textPanel).not.toBe(receiptPanel);
+  });
+});

@@ -200,21 +200,27 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       )}
     </Card>
     <Sheet open={ticketOpen} onClose={() => setTicketOpen(false)} title="Detalle para compartir">
-      <div className="space-y-4">
-        <TextArea label="Detalle del pedido" value={ticket} readOnly rows={Math.min(16, Math.max(6, ticket.split("\n").length))} />
-        {copyFailed && <p className="text-danger">No se pudo copiar. Selecciona el texto y cópialo manualmente.</p>}
-        {/* Printable receipt (#139): same canonical money as the text above. */}
-        <OrderReceipt
-          data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)}
-          whatsapp={activeStore?.whatsappPhone}
-        />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <Button full onClick={copyTicket}>Copiar detalle</Button>
-          <Button full variant="secondary" onClick={() => window.print()}>Imprimir / Guardar PDF</Button>
+      {/* #307: wide screens put the copyable text (left) beside the receipt
+          (right) — each panel owns its action; narrow screens stack them in
+          task order (texto → copiar → recibo → imprimir) without horizontal
+          scroll. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-3">
+          <TextArea label="Detalle del pedido" value={ticket} readOnly rows={Math.min(16, Math.max(6, ticket.split("\n").length))} />
+          {copyFailed && <p className="text-danger">No se pudo copiar. Selecciona el texto y cópialo manualmente.</p>}
+          <Button full className="mt-auto" onClick={copyTicket}>Copiar detalle</Button>
         </div>
-        <p className="text-xs text-on-surface-soft">
-          Al imprimir elige «Guardar como PDF» para compartirlo por WhatsApp. Solo el recibo sale en papel.
-        </p>
+        <div className="flex min-w-0 flex-col gap-3">
+          {/* Printable receipt (#139): same canonical money as the text above. */}
+          <OrderReceipt
+            data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)}
+            whatsapp={activeStore?.whatsappPhone}
+          />
+          <Button full className="mt-auto" variant="secondary" onClick={() => window.print()}>Imprimir / Guardar PDF</Button>
+          <p className="text-xs text-on-surface-soft">
+            Al imprimir elige «Guardar como PDF» para compartirlo por WhatsApp. Solo el recibo sale en papel.
+          </p>
+        </div>
       </div>
     </Sheet>
     <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
