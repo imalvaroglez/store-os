@@ -118,3 +118,11 @@ describe("sanitizeSignedIntegerInput (#266)", () => {
     expect(sanitizeSignedIntegerInput("-")).toBe("-");
   });
 });
+
+describe("formatMoney · negativos (#327 revisión)", () => {
+  it("el signo va antes del símbolo: -$100, nunca $-100", () => {
+    expect(formatMoney(-100)).toBe("-$100");
+    expect(formatMoney(-1250)).toBe("-$1,250");
+    expect(formatMoney(100)).toBe("$100");
+  });
+});
