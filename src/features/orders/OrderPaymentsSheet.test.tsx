@@ -332,6 +332,38 @@ describe("#270 subtract cap: Restar is limited to what this order received", () 
       )
     );
   });
+
+  it("#288 with a pending legacy anticipo the hint connects Recibido with the cap and names both routes", async () => {
+    // Fer's reported case: Recibido $500.00 (pending anticipo) vs cap $0.00 —
+    // two numbers on one screen that read like a bug unless connected. With NO
+    // payment evidence the motive parenthetical must not over-promise.
+    await openAdjust({ ...order, deposit: 500 });
+    expect(await screen.findByText(/Puedes restar hasta \$0\.00 — lo cobrado en este pedido/)).toBeInTheDocument();
+    expect(screen.getByText(/anticipo previo de \$500\.00 se cuenta al recibir, no al restar/)).toBeInTheDocument();
+    expect(screen.getByText(/se materializa con el primer cobro/)).toBeInTheDocument();
+    // Real routes, named — no dead-end advice.
+    expect(screen.getByText(/botón «Incidencia» de este pedido/)).toBeInTheDocument();
+    expect(screen.getByText(/para corregir el anticipo, edítalo en el pedido\./)).toBeInTheDocument();
+    expect(screen.queryByText(/te pedirá el motivo/)).toBeNull(); // sin evidencia, la edición es libre
+  });
+
+  it("#288 rare variant: finite accumulator + still-unmaterialized anticipo also connects the gap", async () => {
+    // §2 of the issue: first record was an adjustment, so the accumulator is
+    // finite while the anticipo never materialized — Recibido $600.00 vs cap
+    // $100.00. With payment evidence, the motive parenthetical DOES apply.
+    await openAdjust({ ...order, deposit: 500, paymentsReceivedCents: 10000 });
+    expect(await screen.findByText(/Puedes restar hasta \$100\.00 — lo cobrado en este pedido/)).toBeInTheDocument();
+    expect(screen.getByText(/anticipo previo de \$500\.00 se cuenta al recibir, no al restar/)).toBeInTheDocument();
+    expect(screen.getByText(/te pedirá el motivo/)).toBeInTheDocument();
+  });
+
+  it("#288 without a pending anticipo the hint stays lean: no anticipo line, incidencia route named", async () => {
+    await openAdjust({ ...order, paymentsReceivedCents: 10000 });
+    expect(await screen.findByText(/Puedes restar hasta \$100\.00/)).toBeInTheDocument();
+    expect(screen.queryByText(/se cuenta al recibir/)).toBeNull();
+    expect(screen.queryByText(/corregir el anticipo/)).toBeNull();
+    expect(screen.getByText(/botón «Incidencia» de este pedido/)).toBeInTheDocument();
+  });
 });
 
 describe("#271 correcciones del anticipo visibles en Cobros", () => {
