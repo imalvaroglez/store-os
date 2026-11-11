@@ -253,7 +253,10 @@ export function cartRequestSummary(tiers: PriceTierDef[], lines: CartQtyLine[]):
     habitualSubtotal,
     identityTier,
     identitySubtotal,
+    // Exact-cents comparison (#320 review H2): double sums can land at
+    // 999.9999999999999 and flip the row the wrong way at the boundary.
     showIdentityHint:
-      identityTier != null && identitySubtotal != null && habitualSubtotal < IDENTITY_HINT_MAX_SUBTOTAL,
+      identityTier != null
+      && Math.round(habitualSubtotal * 100) < Math.round(IDENTITY_HINT_MAX_SUBTOTAL * 100),
   };
 }
