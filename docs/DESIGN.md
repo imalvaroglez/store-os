@@ -79,6 +79,15 @@ Una tarjeta ancha gana su ancho con contenido que importa — no con vacío:
 - La acción primaria de cada pantalla vive en el `ScreenHeader` (`+ Nuevo`,
   `+ Agregar`) — nunca un botón gigante full-width perdiendo una fila.
 
+## Acciones, ayuda y movimiento
+
+- **Acciones equivalentes:** usa la misma variante y altura del sistema de diseño. Si aparecen en columnas vecinas, alínea ambas en un eje común y haz que el contenido de cada columna fluya de manera independiente. Usa el contraste de color cuando comunique una prioridad real o una acción destructiva. En móvil, cada acción puede ir junto a su contenido con el mismo tratamiento visual.
+- **Etiquetas y ayuda:** empieza por una etiqueta que explique qué hará el botón. Si una aclaración aporta valor adicional, usa un tooltip de solo texto del sistema de diseño. Muéstralo tras una pausa breve con el puntero sobre el control, cerca de su punto de entrada, y también con foco de teclado. Permite cerrarlo con Esc y mantén el foco en el control. La tarea debe poder completarse por toque con la etiqueta visible. Los requisitos, riesgos, errores y pasos indispensables se muestran en el flujo.
+- **Respuesta y transiciones:** usa los tokens de movimiento del tema para dar respuesta breve a un toque o clic y para abrir, cerrar o cambiar estados con continuidad visual. Conserva la posición y el tamaño del control cuando cambia su etiqueta. Respeta la preferencia de movimiento reducido y permite continuar de inmediato. Confirma el éxito cuando la operación realmente termina.
+- **Revisión UX:** comprueba en el flujo real la alineación y jerarquía de las acciones, el acceso con cursor, teclado y toque, y el feedback con y sin movimiento reducido cuando aplique. Incluye un caso en que una columna tiene más contenido. Usa la evidencia del PR y la misión de operadora existentes.
+
+Ejemplo en «Detalle para compartir»: «Copiar detalle» e «Imprimir / Guardar PDF» son dos opciones de la misma tarea. En escritorio, sus botones comparten variante, altura y eje. Una aclaración opcional de impresión va en el tooltip. Al terminar de copiar, el botón puede mostrar «Copiado» brevemente y conservar su tamaño.
+
 ## Identidad y tokens
 
 - Jerarquía: `serif-display` para títulos y cifras de fondo, grotesk para UI.
