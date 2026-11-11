@@ -229,7 +229,7 @@ test("generic public catalog accumulates pieces and sends one WhatsApp order", a
   await open.click();
   await expect(anon.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
 
-  const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
+  const send = anon.getByRole("link", { name: "Enviar solicitud por WhatsApp" });
   const href = (await send.getAttribute("href")) ?? "";
   expect(href).toContain("wa.me/5215512345678");
   const text = decodeURIComponent(href.split("text=")[1]);
@@ -336,7 +336,7 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   await expect(dialog.getByText(/Quedan pocas/)).toBeVisible();
 
   // ONE wa.me message with both lines, calculated price and catalog link.
-  const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
+  const send = anon.getByRole("link", { name: "Enviar solicitud por WhatsApp" });
   const href = (await send.getAttribute("href")) ?? "";
   expect(href).toContain("wa.me/5213344836691");
   const text = decodeURIComponent(href.split("text=")[1]);

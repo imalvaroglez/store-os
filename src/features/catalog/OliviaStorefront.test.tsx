@@ -339,7 +339,7 @@ describe("carrito del storefront — acumular y pedir", () => {
     expect(within(list).getAllByText("$140.00")).toHaveLength(2);
     expect(within(list).getAllByText("$120.00")).toHaveLength(2);
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     expect(send.href).toContain("wa.me/5213344836691");
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("Pedido:");
@@ -354,6 +354,15 @@ describe("carrito del storefront — acumular y pedir", () => {
     expect(text).toContain("Subtotal estimado: $260.00 MXN");
     expect(text).toContain("¿Eres Iconic? Subtotal estimado: $170.00 MXN"); // 90 + 80
     expect(text).toContain("sujetos a confirmación");
+
+    // 1.13.1: un solo aviso común junto a los estimados, nada repetido bajo
+    // la acción; nombre sin etiqueta visual pero con nombre accesible.
+    const dialog = screen.getByRole("dialog", { name: "Tu pedido" });
+    expect(within(dialog).getAllByText(/Los precios son estimados\./)).toHaveLength(1);
+    expect(within(dialog).getByText(/Tu selección no reserva las piezas/)).toBeTruthy();
+    expect(within(dialog).queryByText(/Enviar tu selección no confirma ni reserva/)).toBeNull();
+    const nameField = within(dialog).getByLabelText("Tu nombre");
+    expect(nameField).toHaveAttribute("placeholder", "Escribe tu nombre para identificarte");
   });
 
   it("stepper ± actualiza líneas y reduce a cero para quitar", async () => {
@@ -363,13 +372,13 @@ describe("carrito del storefront — acumular y pedir", () => {
 
     const list = screen.getByRole("list");
     const row = within(list).getByText("Anillo Blossom").closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
     expect(within(row).getByText("2")).toBeTruthy();
     expect(within(screen.getByRole("dialog", { name: "Tu pedido" })).getByText("2 piezas")).toBeTruthy();
     expect(within(row).queryByRole("button", { name: "Quitar" })).toBeNull();
 
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
     expect(screen.getByText("Tu pedido está vacío")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Abrir pedido" })).toBeNull();
   });
@@ -396,7 +405,7 @@ describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
     expect(screen.getByText(/Quedan pocas — tu pedido puede reabastecerse/)).toBeTruthy();
     expect(screen.getByText(/Se puede hacer sobre pedido/)).toBeTruthy();
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("• 1× Collar Vega — sobre pedido");
     expect(text).toContain("• 1× Aretes Luna\n");
@@ -429,7 +438,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("$360.00 MXN")).toBeTruthy(); // 4 × 90 Iconic
 
     const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
     // 5 piezas → Girly habitual (demostrable por cantidad), nunca Iconic.
     expect(await screen.findByText("$600.00 MXN")).toBeTruthy(); // 5 × 120
     expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
@@ -462,8 +471,8 @@ describe("carrito — progreso hacia Iconic", () => {
 
     // Bajar a 8 piezas → Girly $960 (< $1,000): la fila Iconic reaparece.
     const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
     expect(await screen.findByText("$960.00 MXN")).toBeTruthy();
     expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
     expect(screen.getByText("$720.00 MXN")).toBeTruthy(); // 8 × 90
@@ -521,7 +530,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(within(list).queryByText("$55.00")).toBeNull();
     expect(within(list).queryByText("$1,045.00")).toBeNull();
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("Subtotal estimado: $1,995.00 MXN");
     expect(text).not.toContain("1,045");
