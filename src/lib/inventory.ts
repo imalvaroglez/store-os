@@ -239,8 +239,16 @@ export function attributeShortageToLines<T extends { key: string; productId?: st
   lines: ReadonlyArray<T>,
   products: ReadonlyArray<ShortageProduct>
 ): Map<string, number> {
+  return attributeShortageMap(lines, shortageByDimension(lines, products));
+}
+
+/** First-line-wins attribution shared by the saved and the projected paths. */
+function attributeShortageMap<T extends { key: string; productId?: string; variantId?: string; quantity: number }>(
+  lines: ReadonlyArray<T>,
+  shortages: Map<string, DimensionShortage>
+): Map<string, number> {
   const perLine = new Map<string, number>();
-  for (const shortage of shortageByDimension(lines, products).values()) {
+  for (const shortage of shortages.values()) {
     const line = lines.find(
       (candidate) =>
         candidate.productId != null &&
@@ -250,4 +258,70 @@ export function attributeShortageToLines<T extends { key: string; productId?: st
     if (line) perLine.set(line.key, shortage.missing);
   }
   return perLine;
+}
+
+/** #325: LIVE shortage projection for a DRAFT (pre-save). Same canonical
+ * dimension math as shortageByDimension, but projected onto the capture in
+ * progress: the order's own saved holds return to the shelf before the draft
+ * takes pieces again, so the editor shows "Falta N" the moment a line goes
+ * above the existence — not after Guardar. Post-save, the card badge (negative
+ * stock from the reservation deltas) shows the same number, so the two can
+ * never disagree. Pure — never mutates stock or orders. */
+export function projectedShortageByDimension<T extends { productId?: string; variantId?: string; quantity: number }>(
+  draftLines: ReadonlyArray<T>,
+  savedOrder: Order | undefined,
+  products: ReadonlyArray<ShortageProduct>
+): Map<string, DimensionShortage> {
+  // What THIS order currently holds per dimension (already netted out of
+  // quantityOnHand by its own reservation).
+  const held = new Map<string, number>();
+  if (savedOrder && holdsPieces(savedOrder)) {
+    for (const item of orderItems(savedOrder)) {
+      if (!item.productId) continue;
+      const key = stockDimensionKey(item.productId, item.variantId);
+      held.set(key, (held.get(key) ?? 0) + item.quantity);
+    }
+  }
+  type DraftTotal = { productId: string; variantId?: string; quantity: number };
+  const draftQty = new Map<string, DraftTotal>();
+  for (const line of draftLines) {
+    if (!line.productId) continue;
+    const key = stockDimensionKey(line.productId, line.variantId);
+    const current = draftQty.get(key);
+    const add = Math.max(0, line.quantity);
+    if (current) current.quantity += add;
+    else draftQty.set(key, { productId: line.productId, ...(line.variantId ? { variantId: line.variantId } : {}), quantity: add });
+  }
+  const byId = new Map(products.map((product) => [product.id, product]));
+  const result = new Map<string, DimensionShortage>();
+  for (const [key, total] of draftQty) {
+    if (total.quantity <= 0) continue;
+    const product = byId.get(total.productId);
+    if (!product) continue;
+    const stock = total.variantId
+      ? product.variants?.find((variant) => variant.id === total.variantId)?.quantityOnHand
+      : product.quantityOnHand;
+    if (typeof stock !== "number" || !Number.isFinite(stock)) continue; // untracked: no estimate
+    const missing = total.quantity - (stock + (held.get(key) ?? 0));
+    if (missing > 0) {
+      result.set(key, {
+        key,
+        productId: total.productId,
+        ...(total.variantId ? { variantId: total.variantId } : {}),
+        missing,
+      });
+    }
+  }
+  return result;
+}
+
+/** #325: per-LINE attribution of the PROJECTED draft shortage (see
+ *  projectedShortageByDimension) — same first-line-wins rule so editor badges
+ *  sum exactly to the live summary and, after save, to the card badge. */
+export function attributeProjectedShortageToLines<T extends { key: string; productId?: string; variantId?: string; quantity: number }>(
+  lines: ReadonlyArray<T>,
+  savedOrder: Order | undefined,
+  products: ReadonlyArray<ShortageProduct>
+): Map<string, number> {
+  return attributeShortageMap(lines, projectedShortageByDimension(lines, savedOrder, products));
 }

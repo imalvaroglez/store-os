@@ -21,7 +21,7 @@ import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { isVariantProduct } from "../../lib/variants";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
-import { attributeShortageToLines } from "../../lib/inventory";
+import { attributeProjectedShortageToLines } from "../../lib/inventory";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
@@ -329,26 +329,37 @@ export function OrderForm({
       throw error;
     }
   }, [deposit, lines, order]);
-  // #309: per-line shortage from the SHARED canonical derivation — the same
-  // source as the card's "Faltan N" badge (negative stock on the exact
-  // dimension each line moves). The FIRST line with pieces claims the
-  // dimension's FULL missing count, so editor summary, line badges and card
-  // badge always show the SAME totals. Observability only; never mutates.
+  // #309 + #325: per-line shortage from the SHARED canonical derivation —
+  // PROJECTED onto the draft in progress (the order's own saved holds return
+  // to the shelf first), so the editor summary, the line badges and, after
+  // Guardar, the card's "Faltan N" badge all show the SAME totals — and the
+  // faltante appears the moment Fer raises a line, not after saving. The
+  // FIRST line with pieces claims the dimension's FULL missing count.
+  // Observability only; never mutates.
   const lineShortage = useMemo(
     () =>
-      attributeShortageToLines(
+      attributeProjectedShortageToLines(
         lines.map((line) => ({
           key: line.key,
           ...(line.productId ? { productId: line.productId } : {}),
           ...(line.variantId ? { variantId: line.variantId } : {}),
           quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
         })),
+        order,
         products
       ),
-    [lines, products]
+    [lines, order, products]
   );
   const shortagePieces = [...lineShortage.values()].reduce((sum, missing) => sum + missing, 0);
-  const firstShortageKey = lines.find((line) => (lineShortage.get(line.key) ?? 0) > 0)?.key;
+  // #325: "Ver faltantes" hops through EVERY short line, not just the first.
+  const shortageKeys = lines.filter((line) => (lineShortage.get(line.key) ?? 0) > 0).map((line) => line.key);
+  const [shortageHop, setShortageHop] = useState(0);
+  const focusNextShortage = () => {
+    if (shortageKeys.length === 0) return;
+    setFocusLine(shortageKeys[shortageHop % shortageKeys.length]);
+    setShortageHop((hop) => hop + 1);
+  };
+  const firstShortageKey = shortageKeys[0];
 
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
   // pieza. Only lines with content enter the estimate; an empty placeholder
@@ -698,7 +709,9 @@ export function OrderForm({
             {lineShortage.size === 1 ? "producto" : "productos"}
           </Badge>
           {!reviewing && firstShortageKey && (
-            <Button variant="ghost" size="sm" onClick={() => setFocusLine(firstShortageKey)}>Ver faltantes</Button>
+            <Button variant="ghost" size="sm" onClick={focusNextShortage}>
+              {shortageKeys.length > 1 ? `Ver faltantes (${(shortageHop % shortageKeys.length) + 1}/${shortageKeys.length})` : "Ver faltantes"}
+            </Button>
           )}
         </div>
       )}

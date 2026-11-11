@@ -63,7 +63,10 @@ export function BottomNav({
                 aria-haspopup="menu"
                 aria-label="Expandir"
                 onClick={() => setProductosOpen((v) => !v)}
-                className="px-1"
+                // #325: the glyph is ~14×20px — a thumb needs ≥40px. The hit
+                // area grows via an invisible pseudo-element so the visual
+                // density of the nav row does not change.
+                className="relative px-1 after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']"
               >
                 <span className={`inline-block transition-transform ${productosOpen ? "rotate-180" : ""}`}>▾</span>
               </button>
