@@ -229,29 +229,25 @@ export function shortageByDimension(
   return result;
 }
 
-/** Deterministic per-LINE attribution of dimension shortages (#309): lines
- * consume their dimension's missing count in capture order, so the line
- * indicators always sum EXACTLY to the badge total. Only entries > 0 are
- * returned. `key` is the caller's line identity (DraftLine key / lineId). */
+/** Deterministic per-LINE attribution of dimension shortages (#309): the
+ * FIRST line (capture order) with pieces on a short dimension claims that
+ * dimension's FULL missing count — never capped by the line's quantity,
+ * because the card badge shows the dimension total (a shared deficit across
+ * orders reabasts the shelf, not just one line). Line badges therefore sum
+ * EXACTLY to the card badge. Lines without pieces never claim. */
 export function attributeShortageToLines<T extends { key: string; productId?: string; variantId?: string; quantity: number }>(
   lines: ReadonlyArray<T>,
   products: ReadonlyArray<ShortageProduct>
 ): Map<string, number> {
-  const remaining = new Map<string, number>();
-  for (const shortage of shortageByDimension(lines, products).values()) {
-    remaining.set(shortage.key, shortage.missing);
-  }
   const perLine = new Map<string, number>();
-  for (const line of lines) {
-    if (!line.productId) continue;
-    const dimensionKey = stockDimensionKey(line.productId, line.variantId);
-    const left = remaining.get(dimensionKey);
-    if (!left) continue;
-    const missing = Math.min(Math.max(0, line.quantity), left);
-    if (missing > 0) {
-      perLine.set(line.key, missing);
-      remaining.set(dimensionKey, left - missing);
-    }
+  for (const shortage of shortageByDimension(lines, products).values()) {
+    const line = lines.find(
+      (candidate) =>
+        candidate.productId != null &&
+        candidate.quantity > 0 &&
+        stockDimensionKey(candidate.productId, candidate.variantId) === shortage.key
+    );
+    if (line) perLine.set(line.key, shortage.missing);
   }
   return perLine;
 }
