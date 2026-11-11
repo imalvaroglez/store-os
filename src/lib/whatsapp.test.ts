@@ -9,6 +9,7 @@ import {
   type StorefrontProductRef,
   type CartOrderLine,
 } from "./whatsapp";
+import { cartRequestSummary } from "./pricing";
 import type { Store } from "../types";
 import { calculateOrderPricing } from "./pricing";
 
@@ -206,5 +207,77 @@ describe("buildCartOrderUrl — pedido de varias líneas", () => {
     );
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Soy Mar.");
+  });
+});
+
+describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
+  const store = { whatsappPhone: "5215512345678" };
+  const tiers = [
+    { id: "t_retail", label: "Regular", order: 0 },
+    { id: "t_reseller", label: "Iconic", order: 2, minAmount: 1000 },
+  ];
+  const request = cartRequestSummary(tiers, [
+    { qty: 2, unitPrices: { t_retail: 250, t_reseller: 90 } },
+    { qty: 1, unitPrices: { t_retail: 280, t_reseller: 100 } },
+  ])!;
+
+  it("agrupa por categoría con encabezados en negritas y Sin categoría", () => {
+    const url = buildCartOrderUrl(store, "olivia", [
+      { name: "Arracada Mimosa", qty: 2, category: "Aretes" },
+      { name: "Collar Aurora", qty: 1, category: "Collares" },
+      { name: "Pieza libre", qty: 1 },
+    ], undefined, undefined, request);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("*ARETES*");
+    expect(text).toContain("*COLLARES*");
+    expect(text).toContain("*SIN CATEGORÍA*");
+    expect(text).toContain("• 2× Arracada Mimosa");
+    // Orden estable por categoría de inserción.
+    expect(text.indexOf("*ARETES*")).toBeLessThan(text.indexOf("*COLLARES*"));
+  });
+
+  it("una sola categoría no imprime encabezado", () => {
+    const url = buildCartOrderUrl(store, "olivia", [
+      { name: "Arracada Mimosa", qty: 2, category: "Aretes" },
+    ], undefined, undefined, request);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).not.toContain("*ARETES*");
+  });
+
+  it("dos cifras etiquetadas cuando el carrito muestra la fila Iconic (< $1,000)", () => {
+    // habitual = 2×250 + 1×280 = 780 < 1000 → ambas.
+    expect(request.showIdentityHint).toBe(true);
+    const url = buildCartOrderUrl(store, "olivia", [
+      { name: "Arracada Mimosa", qty: 2, category: "Aretes" },
+      { name: "Collar Aurora", qty: 1, category: "Collares" },
+    ], undefined, undefined, request);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado: $780");
+    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $280");
+    expect(text).toContain("sujetos a confirmación");
+    expect(text).toContain("Envío no incluido");
+  });
+
+  it("desde $1,000 habitual el mensaje OMITE la cifra Iconic (coherencia con el carrito)", () => {
+    const bigRequest = cartRequestSummary(tiers, [
+      { qty: 4, unitPrices: { t_retail: 250, t_reseller: 90 } },
+    ])!; // habitual $1,000 exacto
+    expect(bigRequest.showIdentityHint).toBe(false);
+    const url = buildCartOrderUrl(store, "olivia", [
+      { name: "Arracada Mimosa", qty: 4, category: "Aretes" },
+    ], undefined, undefined, bigRequest);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado: $1,000");
+    expect(text).not.toContain("Iconic");
+  });
+
+  it("escapa Markdown de WhatsApp en nombres de piezas y de clienta", () => {
+    const url = buildCartOrderUrl(store, "olivia", [
+      { name: "Collar *Brillante_1*", qty: 1 },
+    ], undefined, "Ana*laís", request);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Collar \\*Brillante\\_1\\*");
+    expect(text).toContain("Ana\\*laís");
+    // Ningún asterisco SIN escapar fuera de los encabezados *CATEGORÍA* legítimos.
   });
 });

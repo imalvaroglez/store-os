@@ -192,3 +192,71 @@ export function calculateOrderPricing(
     }),
   };
 }
+
+// ── #305: public cart request summary (habitual + conditional Iconic) ──────
+
+/**
+ * PO decision 2026-11-10: the identity-gated tier (Olivia's Iconic) never
+ * headlines the anonymous cart. Identified by CONFIGURATION, not by label
+ * text: a pure money threshold (minAmount, no minPieces) is the signature of
+ * a spend-window identity benefit (#130) — quantity thresholds (minPieces,
+ * e.g. Girly's 5 pieces) are provable from the cart itself and stay habitual.
+ */
+export function isIdentityGatedTier(tier: PriceTierDef): boolean {
+  return tier.minAmount != null && tier.minPieces == null;
+}
+
+/** Visibility threshold (MXN) for the conditional identity-price row (#305). */
+export const IDENTITY_HINT_MAX_SUBTOTAL = 1000;
+
+export type CartRequestSummary = {
+  totalQuantity: number;
+  /** Deepest NON-identity tier the cart qualifies for, own-priced on every
+   * line (the honest headline; falls to the shallowest own-priced one). */
+  habitualTier: PriceTierDef;
+  habitualSubtotal: number;
+  /** The identity-gated tier, when the store configures one (else null). */
+  identityTier: PriceTierDef | null;
+  /** Σ qty × the identity tier's OWN price per line — undefined when ANY line
+   * lacks it ("Por confirmar", never a fallback price, never $0). */
+  identitySubtotal: number | undefined;
+  /** True when the identity row is shown: habitual < threshold AND an
+   * identity tier exists. Recomputed live; never persisted. */
+  showIdentityHint: boolean;
+};
+
+export function cartRequestSummary(tiers: PriceTierDef[], lines: CartQtyLine[]): CartRequestSummary | null {
+  if (lines.length === 0) return null;
+  const ordered = [...tiers].filter((t) => !t.hidden).sort((a, b) => a.order - b.order);
+  if (ordered.length === 0) return null;
+  const totalQuantity = lines.reduce((sum, l) => sum + l.qty, 0);
+  const hasOwn = (tier: PriceTierDef) => lines.every((l) => Number.isFinite(l.unitPrices[tier.id]));
+  const ownSubtotal = (tier: PriceTierDef) =>
+    lines.reduce((sum, l) => sum + (l.unitPrices[tier.id] as number) * l.qty, 0);
+
+  // Habitual: deepest qualifying own-priced NON-identity tier; the shallowest
+  // own-priced one when nothing qualifies (its label is what lines cost).
+  const habitualCandidates = ordered.filter((t) => !isIdentityGatedTier(t));
+  const pool = habitualCandidates.length > 0 ? habitualCandidates : ordered.slice(0, Math.max(1, ordered.length - 1));
+  const habitual =
+    [...pool].reverse().find((t) => hasOwn(t) && tierQualifies(t, lines)) ?? pool.find(hasOwn);
+  if (!habitual) return null;
+
+  const identityTier = [...ordered].reverse().find(isIdentityGatedTier) ?? null;
+  const identitySubtotal = identityTier && hasOwn(identityTier)
+    ? ownSubtotal(identityTier)
+    : undefined;
+  const habitualSubtotal = ownSubtotal(habitual);
+  return {
+    totalQuantity,
+    habitualTier: habitual,
+    habitualSubtotal,
+    identityTier,
+    identitySubtotal,
+    // Exact-cents comparison (#320 review H2): double sums can land at
+    // 999.9999999999999 and flip the row the wrong way at the boundary.
+    showIdentityHint:
+      identityTier != null
+      && Math.round(habitualSubtotal * 100) < Math.round(IDENTITY_HINT_MAX_SUBTOTAL * 100),
+  };
+}

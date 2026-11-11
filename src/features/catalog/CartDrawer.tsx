@@ -1,10 +1,11 @@
 import { useId, useState } from "react";
 import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
-import { formatMoney, publicPrice } from "../../lib/money";
+import { formatMoney, formatMoneyExact, publicPrice } from "../../lib/money";
 import { buildCartOrderUrl, type CartOrderLine } from "../../lib/whatsapp";
 import {
   calculateOrderPricing,
+  cartRequestSummary,
   type CartQtyLine,
 } from "../../lib/pricing";
 import { loadCartName, pruneCartLines, saveCartName, type CartLine } from "../../lib/cart";
@@ -235,6 +236,7 @@ export function CartDrawer({
   signalBySlug,
   visibleSlugs,
   onSetQty,
+  categoryNameBySlug,
 }: {
   open: boolean;
   onClose: () => void;
@@ -246,25 +248,25 @@ export function CartDrawer({
    *  pieces no longer projected are dropped silently. */
   visibleSlugs?: Set<string>;
   onSetQty: (productSlug: string, qty: number) => void;
+  /** #305: primary public category name per product slug (from the already
+   * downloaded catalog projection) for the WhatsApp grouping. */
+  categoryNameBySlug?: Record<string, string>;
 }) {
   const shown = visibleSlugs ? pruneCartLines(lines, visibleSlugs) : lines;
   const [customerName, setCustomerName] = useState(() => loadCartName(store.slug));
 
   const tiers: PublicPriceTier[] = store.priceTiers ?? [];
   const qtyLines: CartQtyLine[] = shown.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
+  // #305: the request summary — habitual (non-identity) headline + the
+  // conditional identity row. Drives BOTH the drawer rows and the message.
+  const request = cartRequestSummary(tiers, qtyLines);
   const pricing = calculateOrderPricing(tiers, qtyLines);
-  const aspiration = pricing?.aspirationalTier;
-  const intermediate = pricing && aspiration && !aspiration.qualifies
-    ? pricing.tiers.find((entry) =>
-        entry.tier.order > pricing.baseTier.tier.order &&
-        entry.tier.order < aspiration.tier.order
-      )
-    : undefined;
 
   const orderLines: CartOrderLine[] = shown.map((l) => ({
     name: l.name,
     qty: l.qty,
     inquire: l.inquire || signalBySlug?.[l.productSlug] === "agotado",
+    category: categoryNameBySlug?.[l.productSlug],
   }));
 
   return (
@@ -331,97 +333,44 @@ export function CartDrawer({
           </ul>
 
           <div className="olv-cart-summary flex flex-col gap-3">
-            {pricing ? (
-              <>
+            {request ? (
               <div className="rounded-xl bg-[var(--olv-accent-soft,var(--paper-2))] ring-1 ring-[var(--olv-rule,var(--rule))] p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
-                      Precio {pricing.activeTier.tier.label} aplicado
-                    </p>
-                    <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
-                      {pricing.totalQuantity} {pricing.totalQuantity === 1 ? "pieza" : "piezas"}
-                    </p>
+                <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
+                  Tu solicitud a {store.name}
+                </p>
+                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
+                  {request.totalQuantity} {request.totalQuantity === 1 ? "pieza" : "piezas"}
+                </p>
+                <dl className="mt-3 space-y-1.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado</dt>
+                    <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
+                      {formatMoneyExact(request.habitualSubtotal)} MXN
+                    </dd>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))]">Subtotal estimado</p>
-                    <p className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))]">
-                      {formatMoney(pricing.estimatedSubtotal)} MXN
-                    </p>
-                  </div>
-                </div>
-                {pricing.activeTier.tier.id !== pricing.baseTier.tier.id && (
-                  <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2">
-                    Este precio ya está aplicado a cada pieza de tu pedido.
-                  </p>
-                )}
-                {pricing.savingsVsBase > 0 && (
-                  <p className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] mt-2">
-                    Ahorras {formatMoney(pricing.savingsVsBase)} frente a {pricing.baseTier.tier.label}.
-                  </p>
-                )}
-                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-2">Envío no incluido.</p>
+                  {request.showIdentityHint && request.identityTier && (
+                    <div className="flex items-baseline justify-between gap-3">
+                      <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
+                        ¿Eres {request.identityTier.label}? Subtotal estimado
+                      </dt>
+                      <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
+                        {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">
+                  Los precios son estimados. Confirmamos tu beneficio, disponibilidad, total final y
+                  entrega por WhatsApp. Envío no incluido.
+                </p>
               </div>
-
-              {intermediate && (
-                <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
-                  {intermediate.qualifies && intermediate.hasOwnPrices ? (
-                    <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
-                      ✨ Precio {intermediate.tier.label} desbloqueado
-                    </p>
-                  ) : intermediate.piecesRemaining > 0 ? (
-                    <p className="text-[var(--olv-ink,var(--ink))]">
-                      Te {intermediate.piecesRemaining === 1 ? "falta" : "faltan"} {intermediate.piecesRemaining}{" "}
-                      {intermediate.piecesRemaining === 1 ? "pieza" : "piezas"} para desbloquear {intermediate.tier.label}.
-                    </p>
-                  ) : null}
-                  {!intermediate.qualifies && intermediate.savingsVsActive > 0 && (
-                    <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">
-                      Con {intermediate.tier.label}, lo que ya llevas costaría {formatMoney(intermediate.savingsVsActive)} menos.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {aspiration && (
-                <div className="rounded-xl ring-2 ring-[var(--olv-accent,var(--terracotta))] bg-white/70 p-4">
-                  <p className="font-extrabold text-[var(--olv-ink,var(--ink))]">
-                    {aspiration.qualifies && aspiration.hasOwnPrices
-                      ? `✨ Precio ${aspiration.tier.label} desbloqueado`
-                      : `Meta final: precio ${aspiration.tier.label}`}
-                  </p>
-                  {!aspiration.qualifies && aspiration.amountRemaining > 0 && (
-                    <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-1">
-                      Te faltan {formatMoney(aspiration.amountRemaining)} en productos a precio {aspiration.tier.label}.
-                    </p>
-                  )}
-                  {!aspiration.qualifies && aspiration.piecesRemaining > 0 && (
-                    <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-1">
-                      Te {aspiration.piecesRemaining === 1 ? "falta" : "faltan"} {aspiration.piecesRemaining}{" "}
-                      {aspiration.piecesRemaining === 1 ? "pieza" : "piezas"} para desbloquear {aspiration.tier.label}.
-                    </p>
-                  )}
-                  {!aspiration.qualifies && aspiration.savingsVsActive > 0 && (
-                    <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">
-                      Con {aspiration.tier.label}, lo que ya llevas costaría {formatMoney(aspiration.savingsVsActive)} menos.
-                    </p>
-                  )}
-                  {aspiration.qualifies && aspiration.hasOwnPrices && aspiration.savingsVsBase > 0 && (
-                    <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-1">
-                      Ahorras {formatMoney(aspiration.savingsVsBase)} frente a {pricing.baseTier.tier.label}.
-                    </p>
-                  )}
-                </div>
-              )}
-              </>
-            ) : (
+            ) : pricing ? (
               <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
                 <p className="text-[var(--olv-ink-soft,var(--ink-soft))]">
                   Te confirmo precios y existencia por WhatsApp.
                 </p>
               </div>
-            )}
-
+            ) : null}
             <TextField
               label="Tu nombre"
               placeholder="Para que sepa quién pide"
@@ -431,7 +380,7 @@ export function CartDrawer({
                 saveCartName(store.slug, event.target.value);
               }}
             />
-            <a href={buildCartOrderUrl(store, store.slug, orderLines, pricing, customerName)} target="_blank" rel="noreferrer">
+            <a href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)} target="_blank" rel="noreferrer">
               <Button full size="lg" variant="primary" className="bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90">
                 Enviar pedido por WhatsApp
               </Button>

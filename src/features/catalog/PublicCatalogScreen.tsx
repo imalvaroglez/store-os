@@ -76,6 +76,12 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   const { store, catalog } = data;
   const visibleSlugs = new Set(catalog.products.map((product) => product.productSlug));
   const visibleLines = pruneCartLines(cart.lines, visibleSlugs);
+  // #305: primary category name per product, from the SAME projection the
+  // grid uses (no extra reads). "Sin categoría" is the drawer's fallback.
+  const categoryNameBySlug = Object.fromEntries(catalog.products.map((product) => [
+    product.productSlug,
+    catalog.categories.find((category) => product.categoryIds?.[0] === category.id)?.name ?? "",
+  ]));
   const pieces = cartPieces(visibleLines);
   const quantityBySlug = new Map(visibleLines.map((line) => [line.productSlug, line.qty]));
   const signalBySlug = catalog.products.reduce<Record<string, PublicStockSignal>>((signals, product) => {
@@ -137,6 +143,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         signalBySlug={signalBySlug}
         visibleSlugs={visibleSlugs}
         onSetQty={cart.setQty}
+        categoryNameBySlug={categoryNameBySlug}
       />
     </div>
   );
