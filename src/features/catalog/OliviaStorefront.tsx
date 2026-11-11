@@ -317,7 +317,9 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
     </>}
     {children}
     {store && <footer className="olv-footer"><div className="olv-container olv-footer-grid">
-      <div><p className="olv-footer-brand">{store.name}</p><p>Pequeños detalles para hacerlos tuyos.</p><a className="olv-text-link" href={createStorefrontContactUrl(store, store.slug)} target="_blank" rel="noreferrer">Hablemos por WhatsApp ↗</a></div>
+      {/* 1.13.1: white footer, the transparent logo replaces the giant brand
+          text — same source as the header wordmark (configured logo wins). */}
+      <div><ProductImage src={sf.logoUrl ?? OLIVIA_LOGO_URL} alt={store.name} size="full" natural loading="lazy" className="olv-footer-logo" /><p>Pequeños detalles para hacerlos tuyos.</p><a className="olv-text-link" href={createStorefrontContactUrl(store, store.slug)} target="_blank" rel="noreferrer">Hablemos por WhatsApp ↗</a></div>
       <div><h2>Explora</h2><nav className="olv-footer-links" aria-label="Categorías del catálogo"><StorefrontLink to={`/catalogo/${store.slug}`}>Todas las piezas</StorefrontLink>{categories.map((category) => <StorefrontLink key={category.id} to={`/catalogo/${store.slug}/categoria/${category.slug}`}>{category.name}</StorefrontLink>)}</nav></div>
       <div><h2>Entregas y atención</h2>
         <InlineEditable enabled={editing} label="Entregas y envíos" value={sf.shipping ?? ""} displayValue={sf.shipping || OLIVIA_CONTENT.shipping} placeholder="Toca para añadir información de entregas" multiline render={(text) => <p>{text}</p>} onChange={(value) => patchStorefront("shipping", value)} />

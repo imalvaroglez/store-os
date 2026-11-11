@@ -641,6 +641,28 @@ describe("editorial catalog", () => {
     expect(screen.getByRole("heading", { name: "Nueva colección" })).toBeTruthy();
   });
 
+  it("1.13.1 el pie muestra el logo (respaldo transparente; logoUrl configurado gana) y conserva sus enlaces", async () => {
+    const view = await renderStore();
+    const footer = document.querySelector(".olv-footer") as HTMLElement;
+    const fallback = within(footer).getByRole("img", { name: "Olivia" }) as HTMLImageElement;
+    expect(fallback).toHaveAttribute("src", "/images/olivia-logo.png");
+    expect(fallback).toHaveClass("olv-footer-logo");
+    // Enlaces vigentes del pie: WhatsApp, Explora y Entregas y atención.
+    expect(within(footer).getByRole("link", { name: /Hablemos por WhatsApp/ })).toBeTruthy();
+    expect(within(footer).getByRole("heading", { name: "Explora" })).toBeTruthy();
+    expect(within(footer).getByRole("heading", { name: "Entregas y atención" })).toBeTruthy();
+
+    view.unmount();
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { logoUrl: "https://storage.example/logo.png" } },
+      catalog,
+    });
+    render(<OliviaStorefront route={storeRoute} />);
+    await screen.findAllByRole("article");
+    const configured = within(document.querySelector(".olv-footer") as HTMLElement).getByRole("img", { name: "Olivia" }) as HTMLImageElement;
+    expect(configured).toHaveAttribute("src", "https://storage.example/logo.png");
+  });
+
   it("searches names/keys, sorts, and never duplicates featured/new products", async () => {
     mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: catalog.products.map((p) => ({ ...p, price: undefined, isFeatured: true, isNew: true })) } });
     await renderStore();
