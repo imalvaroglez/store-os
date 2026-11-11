@@ -417,10 +417,16 @@ export function CartDrawer({
                 saveCartName(store.slug, event.target.value);
               }}
             />
-            <a href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)} target="_blank" rel="noreferrer">
-              <Button full size="lg" variant="primary" className="bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90">
-                Enviar solicitud por WhatsApp
-              </Button>
+            {/* 1.13.1: ONE semantic control — a single link styled as the
+                primary action. No nested button inside the anchor (invalid
+                HTML, two Tab stops for one action). */}
+            <a
+              href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex w-full items-center justify-center rounded-xl px-5 py-3.5 text-base font-semibold tracking-tight shadow-sm transition-all active:translate-y-px active:scale-[0.98] bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90"
+            >
+              Enviar solicitud por WhatsApp
             </a>
           </div>
         </div>
