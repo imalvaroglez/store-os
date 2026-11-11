@@ -1,0 +1,200 @@
+name: release-window
+
+# #317 — Ventana diaria de liberación (PO, 10-nov-2026). Un ORQUESTADOR
+# programado que aprieta el botón QUE YA EXISTÍA: despacha ci.yml sobre main
+# con release_production=true. No abre ningún gate nuevo: el dispatch corre
+# las suites completas, deploy-rules con paridad, el release guard
+# (check-release.cjs contra lo que producción SIRVE) y el deploy de Vercel
+# production exactamente como el despacho manual.
+#
+#   schedule  11:25 UTC = 05:25 America/Mexico_City (UTC-6 fijo, sin DST).
+#             La cola de GitHub Actions puede retrasar el arranque (típico
+#             0-15 min); el margen hasta las 07:00 lo absorbe (run completo
+#             medido: 18-25 min). El scheduler SOLO INICIA a esa hora —
+#             no garantiza el minuto exacto de conclusión.
+#   workflow_dispatch  respaldo manual de la ventana (dry_run para validar
+#             guards sin despachar nada).
+#
+# CONGELAMIENTO (revisión #318 B3): se despacha por la RAMA main — nunca por
+# SHA — porque los jobs deploy de ci.yml exigen github.ref_name == 'main'
+# (despachar por SHA los omitiría en silencio). El congelamiento real es el
+# par (SHA registrado → verificado contra el run despachado): si main se
+# mueve entre el registro y el dispatch, el run se CANCELA y la ventana falla
+# cerrado — jamás se libera un commit distinto del evaluado.
+#
+# Fail-closed en TODO: sin cambios aptos → no-op documentado (nunca versión
+# vacía); versión ya servida en producción → no-op; cualquier gate del run en
+# rojo → NO se libera, NO se reintenta solo; queda el job summary y el
+# despacho manual. Concurrency única: jamás dos ventanas solapadas.
+on:
+  schedule:
+    - cron: "25 11 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validar todos los guards e imprimir el plan SIN despachar ni taggear"
+        required: false
+        default: false
+        type: boolean
+
+# Una ventana a la vez; una ventana tardía NUNCA cancela a la anterior.
+concurrency:
+  group: release-window
+  cancel-in-progress: false
+
+# actions: write — el paso de despacho necesita disparar ci.yml (API de
+# workflow_dispatch) y observar el run; contents: write — para taggear.
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  window:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # el diff contra release/last necesita historial
+
+      - name: Congelar candidato y decidir si hay algo que liberar
+        id: candidate
+        run: |
+          set -euo pipefail
+          # CONGELAMIENTO: este SHA es EL candidato; los guards se evalúan
+          # SOBRE ÉL (checkout explícito) y el run despachado debe coincidir.
+          SHA="$(git rev-parse origin/main)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          git checkout -q "$SHA"
+          echo "### Ventana de liberación — $(TZ=America/Mexico_City date '+%F %R CDMX')" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidato congelado: \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+          # GUARD DE CONTENIDO: ¿hay cambios aptos desde el último release?
+          # docs/* y *.md NO cuentan (merges documentales jamás producen
+          # versiones vacías). Primera ejecución (sin release/last): la
+          # decisión la toma el guard de versión — si producción ya sirve la
+          # versión del candidato, no-op; si es mayor, se libera.
+          LAST_TAG="release/last"
+          if git rev-parse -q --verify "refs/tags/$LAST_TAG" >/dev/null; then
+            BASE="$(git rev-parse "$LAST_TAG")"
+            CHANGED="$(git diff --name-only "$BASE" "$SHA" | grep -vE '^(docs/|.*\.md$)' || true)"
+            if [ -z "$CHANGED" ]; then
+              echo "skip_reason=sin cambios aptos desde $BASE" >> "$GITHUB_OUTPUT"
+              echo "- Resultado: **SIN LIBERAR** — solo cambios documentales desde $BASE. Ventana omitida sin versión vacía." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Cambios aptos: $(echo "$CHANGED" | wc -l | tr -d ' ') archivos desde $BASE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Primera ventana (sin tag release/last): decide el guard de versión." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # GUARD DE VERSIÓN/NOTAS + ya-servido: el release guard existente,
+          # reutilizado tal cual (compara package.json + releases.json del
+          # candidato contra lo que producción SIRVE — no un guard nuevo).
+          # "Ya sirve esa versión" es NO-OP de ventana, no un fallo.
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if ! node scripts/check-release.cjs --probe-url https://store-os-alpha.vercel.app 2>&1 | tee /tmp/guard.log; then
+            if grep -q "ya sirve" /tmp/guard.log; then
+              echo "skip_reason=producción ya sirve $VERSION (nada nuevo que liberar)" >> "$GITHUB_OUTPUT"
+              echo "- Resultado: **SIN LIBERAR** — producción ya sirve $VERSION." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            cat /tmp/guard.log >&2
+            echo "### ✘ Guard de versión/notas rechazó el candidato — ver log del paso." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "- Versión del candidato: **$VERSION** (guard de versión/notas ✔)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Despachar el release (ci.yml sobre main, SHA verificado)
+        id: dispatch
+        if: steps.candidate.outputs.skip_reason == '' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FROZEN_SHA: ${{ steps.candidate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Por la RAMA main (los jobs deploy de ci.yml exigen
+          # ref_name == 'main'); el congelamiento se verifica abajo contra
+          # el run real: si main se movió, se cancela y falla cerrado.
+          gh workflow run ci.yml --ref main -f release_production=true
+          RUN_ID=""
+          RUN_SHA=""
+          for i in $(seq 1 30); do
+            RUN_JSON="$(gh run list --workflow=ci.yml --event workflow_dispatch --limit 3 --json databaseId,headSha,status 2>/dev/null || true)"
+            RUN_ID="$(echo "$RUN_JSON" | jq -r ".[0].databaseId // empty")"
+            RUN_SHA="$(echo "$RUN_JSON" | jq -r ".[0].headSha // empty")"
+            if [ -n "$RUN_ID" ] && [ "$RUN_SHA" = "$FROZEN_SHA" ]; then break; fi
+            # El run más reciente es de OTRO SHA: main se movió tras el
+            # congelamiento. Cancelar (fail-closed) y abortar la ventana.
+            if [ -n "$RUN_ID" ] && [ "$RUN_SHA" != "$FROZEN_SHA" ] && [ "$(echo "$RUN_JSON" | jq -r '.[0].status')" != "completed" ]; then
+              gh run cancel "$RUN_ID" || true
+              echo "### ✘ main se movió tras el congelamiento (esperaba $FROZEN_SHA, run en $RUN_SHA). Run cancelado; NADA se liberó. Reintentar con despacho manual." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            sleep 10
+          done
+          if [ -z "$RUN_ID" ] || [ "$RUN_SHA" != "$FROZEN_SHA" ]; then
+            echo "### ✘ No se pudo confirmar un run del SHA congelado. NADA se liberó." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "- Dispatch: run $RUN_ID sobre el SHA congelado. Esperando gates…" >> "$GITHUB_STEP_SUMMARY"
+          if ! gh run watch "$RUN_ID" --exit-status --interval 30; then
+            echo "### ✘ Un gate del run $RUN_ID falló — NO se liberó (fail-closed). Recuperación: docs/runbook-release-window.md" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # Qué entró en esta versión (para la nota a Fer y la reconciliación).
+          echo "#### En esta versión:" >> "$GITHUB_STEP_SUMMARY"
+          if git rev-parse -q --verify "refs/tags/release/last" >/dev/null; then
+            git log --oneline "$(git rev-parse release/last)..$FROZEN_SHA" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            git log -1 --oneline "$FROZEN_SHA" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verificar producción sirve la versión del candidato
+        if: steps.candidate.outputs.skip_reason == '' && inputs.dry_run != true
+        env:
+          EXPECTED: ${{ steps.candidate.outputs.version }}
+        run: |
+          set -euo pipefail
+          # El deploy ya escribió el artefacto; el DNS/edge puede tardar unos
+          # segundos más. Fail-closed: sin coincidencia, la ventana falla.
+          SERVED=""
+          for i in $(seq 1 12); do
+            SERVED="$(curl -fsS https://store-os-alpha.vercel.app/ | grep -o 'store-os-version[^>]*content="[0-9.]*"' | grep -o '[0-9]*\.[0-9]*\.[0-9]*' || true)"
+            if [ "$SERVED" = "$EXPECTED" ]; then
+              echo "### ✔ Producción sirve **$EXPECTED**" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "producción aún sirve '${SERVED:-?}', esperando…"; sleep 20
+          done
+          echo "### ✘ Producción NO sirve $EXPECTED (sirve '${SERVED:-?}')." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Trazabilidad — tag release/<version> y release/last
+        if: steps.candidate.outputs.skip_reason == '' && inputs.dry_run != true
+        env:
+          SHA: ${{ steps.candidate.outputs.sha }}
+          VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          set -euo pipefail
+          git tag -f "release/$VERSION" "$SHA"
+          git tag -f release/last "$SHA"
+          git push -f origin "release/$VERSION" release/last
+          echo "- Tags: \`release/$VERSION\` y \`release/last\` → $SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry-run — plan sin ejecución
+        if: inputs.dry_run == true
+        run: |
+          echo "### DRY-RUN — guards evaluados; NO se despachó ni taggeó nada." >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${{ steps.candidate.outputs.skip_reason }}" ]; then
+            echo "- La ventana sería NO-OP: ${{ steps.candidate.outputs.skip_reason }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Se liberaría: ${{ steps.candidate.outputs.sha }} (versión ${{ steps.candidate.outputs.version }})" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Reporte de omisión
+        if: steps.candidate.outputs.skip_reason != '' && inputs.dry_run != true
+        run: |
+          echo "Omitido: ${{ steps.candidate.outputs.skip_reason }} — correcto, nunca versión vacía."
