@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import "../../design-system/olivia.css";
 import "../../design-system/olivia-editorial.css";
 import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
-import { loadPublicStore, loadPublicCatalogSummary, loadPublicProduct, PublicCatalogNotFoundError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
+import { loadPublicStore, loadPublicCatalogSummary, loadPublicProduct, PublicCatalogNotFoundError, PublicCatalogUnpublishedError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
 import { navigate, type RouteMatch } from "../../lib/router";
 import { publicPrice } from "../../lib/money";
 import { createStorefrontBuyUrl, createStorefrontContactUrl, createStorefrontResaleUrl } from "../../lib/whatsapp";
@@ -35,7 +35,7 @@ export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?
   const slug = "slug" in route.params ? route.params.slug : "";
   const [store, setStore] = useState<PublicStore | null>(null);
   const [catalog, setCatalog] = useState<PublicCatalog | null>(null);
-  const [error, setError] = useState<"missing" | "failed" | null>(null);
+  const [error, setError] = useState<"missing" | "unpublished" | "failed" | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Storefront>({});
   const [saving, setSaving] = useState(false);
@@ -73,16 +73,29 @@ export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?
   }
   useEffect(() => {
     let cancelled = false;
+    // #286: the STORE doc is the authoritative existence signal. Both reads
+    // still run in parallel (progressive rendering), but the catalog's catch
+    // may never stomp the store's verdict — whoever settles last used to win,
+    // so a transient 404 window during republication could flip a real
+    // "missing" into a dishonest "failed".
+    let storeVerdict: "missing" | "unpublished" | "failed" | null = null;
     setStore(null); setCatalog(null); setError(null);
-    // Progressive load: the hero paints from the tiny store doc while the big
-    // catalog doc (every product summary) is still in flight — the page's
-    // largest element never waits for the grid's data.
     loadPublicStore(slug)
       .then((next) => { if (!cancelled) setStore(next); })
-      .catch((err) => { if (!cancelled) setError(err instanceof PublicCatalogNotFoundError ? "missing" : "failed"); });
+      .catch((err) => {
+        if (cancelled) return;
+        storeVerdict = err instanceof PublicCatalogNotFoundError ? "missing" : "failed";
+        setError(storeVerdict);
+      });
     loadPublicCatalogSummary(slug)
       .then((next) => { if (!cancelled) setCatalog(next); })
-      .catch(() => { if (!cancelled) setError("failed"); });
+      .catch((err) => {
+        if (cancelled || storeVerdict) return; // the store already spoke
+        // The catalog doc alone being absent is honest "not published yet"
+        // (#286): a clienta with a fine connection must not read "revisa tu
+        // conexión" in a loop.
+        setError(err instanceof PublicCatalogUnpublishedError ? "unpublished" : "failed");
+      });
     return () => { cancelled = true; };
   }, [slug]);
   useEffect(() => { document.documentElement.scrollTop = 0; }, [route]);
@@ -91,7 +104,13 @@ export function OliviaStorefront({ route, editor }: { route: RouteMatch; editor?
   const viewStore = current && editorActive ? { ...current, storefront: draft } : current;
   return <>
     <StoreChrome store={viewStore} catalog={catalog} isHomeRoute={route.name === "public_store" || route.name === "storefront_editor"} editing={editorActive} patchStorefront={patchStorefront}>
-    {error ? <div className="olv-container olv-empty"><EmptyState title={error === "missing" ? "Tienda no encontrada" : "No se pudo cargar"} subtitle={error === "missing" ? "Este catálogo no existe o no está disponible." : "Revisa tu conexión e intenta de nuevo."} /></div>
+    {error ? <div className="olv-container olv-empty"><EmptyState
+        title={error === "missing" ? "Tienda no encontrada" : error === "unpublished" ? "Catálogo no disponible por ahora" : "No se pudo cargar"}
+        subtitle={error === "missing" ? "Este catálogo no existe o no está disponible." : error === "unpublished" ? "Esta tienda todavía no publica sus piezas. Vuelve pronto." : "Revisa tu conexión e intenta de nuevo."}
+        // Retry only makes sense for a real connection failure — a missing
+        // store or an unpublished catalog must not offer a reload loop (#286).
+        action={error === "failed" ? <Button onClick={() => window.location.reload()}>Reintentar</Button> : undefined}
+      /></div>
       : !current ? <div className="olv-container olv-grid olv-loading">{Array.from({ length: 8 }, (_, i) => <SkeletonCard key={i} />)}</div>
       : route.name === "public_product" ? <ProductView key={`${slug}/${route.params.productSlug}`} initialStore={current} productSlug={route.params.productSlug} />
       : <StoreView key={slug} store={viewStore!} catalog={catalog} focusCategory={route.name === "public_category" ? route.params.categorySlug : undefined} editing={editorActive} patchStorefront={patchStorefront} patchSection={patchSection} />}

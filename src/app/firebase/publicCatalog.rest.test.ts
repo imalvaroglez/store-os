@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadPublicCatalog, loadPublicProduct, loadPublicStore, PublicCatalogNotFoundError, PublicProductNotFoundError } from "./publicCatalog";
+import { loadPublicCatalog, loadPublicProduct, loadPublicStore, PublicCatalogNotFoundError, PublicCatalogUnpublishedError, PublicProductNotFoundError } from "./publicCatalog";
 
 // The REST loader is the public storefront's only data path; these tests pin
 // the wire-format decoder (integerValue arrives as a JSON string) and the
@@ -109,7 +109,7 @@ describe("loadPublicCatalog (REST)", () => {
     await expect(loadPublicCatalog("olivia")).rejects.toBeInstanceOf(PublicCatalogNotFoundError);
   });
 
-  it("throws a plain Error when the store exists but the catalog projection doesn't", async () => {
+  it("throws PublicCatalogUnpublishedError when the store exists but the catalog projection doesn't (#286)", async () => {
     vi.stubGlobal(
       "fetch",
       stubFetchByUrl({
@@ -117,7 +117,14 @@ describe("loadPublicCatalog (REST)", () => {
         "/publicCatalogs/olivia": jsonResponse(404, {}),
       })
     );
-    await expect(loadPublicCatalog("olivia")).rejects.toThrow("aún no está publicado");
+    // An honest "not published yet" state, distinguishable from a missing
+    // store and from a connection failure.
+    const rejection = await loadPublicCatalog("olivia").then(
+      () => { throw new Error("debía fallar"); },
+      (err: unknown) => err
+    );
+    expect(rejection).toBeInstanceOf(PublicCatalogUnpublishedError);
+    expect((rejection as Error).message).toMatch("aún no está publicado");
   });
 
   it("propagates non-404 HTTP failures instead of swallowing them", async () => {
@@ -242,6 +249,25 @@ describe("#282 reintento automático único ante fallas transitorias", () => {
     vi.stubGlobal("fetch", fetchMock);
     await expect(loadPublicStore("olivia")).rejects.toThrow(/Firestore REST 503/);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("#286 fallo transitorio en la SEGUNDA lectura (tienda 200, catálogo 503): falla de conexión, no missing", async () => {
+    // La tienda existe; el catálogo no se deja leer. Debe propagarse el error
+    // de red (pantalla de reintento), jamás clasificarse como tienda ausente.
+    const fetchMock = stubFetchSequence([
+      jsonResponse(200, STORE_DOC),
+      jsonResponse(503, {}),
+      jsonResponse(503, {}),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    const rejection = await loadPublicCatalog("olivia").then(
+      () => { throw new Error("debía fallar"); },
+      (err: unknown) => err
+    );
+    expect(rejection).not.toBeInstanceOf(PublicCatalogNotFoundError);
+    expect(rejection).not.toBeInstanceOf(PublicCatalogUnpublishedError);
+    expect((rejection as Error).message).toMatch(/Firestore REST 503/);
+    expect(fetchMock).toHaveBeenCalledTimes(3); // tienda + catálogo con su único reintento
   });
 });
 
