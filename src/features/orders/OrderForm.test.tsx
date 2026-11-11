@@ -1001,3 +1001,129 @@ describe("compactación de filas (#310)", () => {
     expect(screen.getByRole("img", { name: "Foto de Aro compacto" })).toBeTruthy();
   });
 });
+
+// #325 — faltantes EN VIVO durante la captura y "Ver faltantes" que visita
+// cada línea corta. La proyección usa la misma fuente canónica que la insignia
+// de la tarjeta (attributeProjectedShortageToLines), con las reservas propias
+// del pedido devueltas al estante antes de proyectar.
+describe("faltantes en vivo y Ver faltantes (#325)", () => {
+  const trackedProduct = (id: string, name: string, quantityOnHand: number) => ({
+    ...state.products[0],
+    id,
+    name,
+    quantityOnHand,
+    imageUrl: `https://example.test/${id}.jpg`,
+  } as never);
+
+  it("el faltante estimado aparece en vivo al subir la cantidad y se limpia al bajar — sin guardar", () => {
+    state.products.push(trackedProduct("prod_325_short", "Aro corto", 1)); // estante 1, ya neto de la reserva propia
+    localStorage.clear(); // the NEW-order draft slot is shared across tests — restore nothing
+    try {
+      const order = {
+        id: "live-shortage-order",
+        storeId: "store_olivia",
+        customerId: "customer_1",
+        items: [{ productId: "prod_325_short", productName: "Aro corto", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0,
+        createdAt: "",
+        updatedAt: "",
+      } as unknown as Order;
+      const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+      expect(screen.queryByText(/Falta \d/)).toBeNull(); // 1 ≤ 1+1: sin faltante
+      fireEvent.change(screen.getByLabelText(/Cantidad/), { target: { value: "4" } });
+      // 4 − (estante 1 + reservado propio 1) = 2, visible sin guardar.
+      expect(screen.getByText("Falta 2")).toBeInTheDocument();
+      expect(screen.getByText(/Faltan 2 piezas en 1 producto/)).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(/Cantidad/), { target: { value: "2" } });
+      expect(screen.queryByText(/Falta \d/)).toBeNull();
+      rendered.unmount();
+    } finally {
+      state.products.pop();
+    }
+  });
+
+  it("Ver faltantes visita cada línea corta y vuelve a empezar", async () => {
+    state.products.push(trackedProduct("prod_325_a", "Aro falta A", 1));
+    state.products.push(trackedProduct("prod_325_b", "Aro falta B", 1));
+    localStorage.clear(); // the NEW-order draft slot is shared across tests — restore nothing
+    try {
+      const order = {
+        id: "cycle-shortage-order",
+        storeId: "store_olivia",
+        customerId: "customer_1",
+        items: [
+          { productId: "prod_325_a", productName: "Aro falta A", quantity: 1, unitPrice: 100, subtotal: 100 },
+          { productId: "prod_325_b", productName: "Aro falta B", quantity: 1, unitPrice: 100, subtotal: 100 },
+        ],
+        deposit: 0,
+        createdAt: "",
+        updatedAt: "",
+      } as unknown as Order;
+      const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+      const quantityInputs = screen.getAllByLabelText(/Cantidad/) as HTMLInputElement[];
+      // DOM shows the newest capture on top; both lines go 2 over their shelf.
+      fireEvent.change(quantityInputs[0], { target: { value: "4" } });
+      fireEvent.change(quantityInputs[1], { target: { value: "4" } });
+      expect(screen.getByText(/Faltan 4 piezas en 2 productos/)).toBeInTheDocument();
+      const hop = () => screen.getByRole("button", { name: /Ver faltantes/ });
+      expect(hop().textContent).toContain("1/2"); // next stop before any click: the 1st
+      // Each hop lands on the QUANTITY input (that is where the fix happens),
+      // capture order: A first, then B — DOM order is reversed (newest on top).
+      const lineA = quantityInputs[1];
+      const lineB = quantityInputs[0];
+      fireEvent.click(hop()); // primero: A (orden de captura)
+      expect(document.activeElement).toBe(lineA);
+      expect(hop().textContent).toContain("1/2"); // reports the stop it LANDED on
+      fireEvent.click(hop()); // segundo: B
+      expect(document.activeElement).toBe(lineB);
+      expect(hop().textContent).toContain("2/2");
+      fireEvent.click(hop()); // vuelve a empezar: A
+      expect(document.activeElement).toBe(lineA);
+      expect(hop().textContent).toContain("1/2");
+      rendered.unmount();
+    } finally {
+      state.products.pop();
+      state.products.pop();
+    }
+  });
+});
+
+// Review P2: a draft that will NOT hold pieces (cancelled) takes nothing from
+// the shelf — the card shows no badge, so the editor must not either, and
+// moving an open order to cancelled clears the live estimate.
+describe("faltantes en vivo — pedidos que no retienen piezas (#325 P2)", () => {
+  it("un pedido cancelado no proyecta faltante; cancelar en el editor limpia el aviso", () => {
+    state.products.push({
+      ...state.products[0],
+      id: "prod_325_cancel",
+      name: "Aro cancelado",
+      quantityOnHand: 3,
+    } as never);
+    localStorage.clear();
+    try {
+      const order = {
+        id: "cancelled-shortage-order",
+        storeId: "store_olivia",
+        customerId: "customer_1",
+        items: [{ productId: "prod_325_cancel", productName: "Aro cancelado", quantity: 5, unitPrice: 100, subtotal: 500 }],
+        deposit: 0,
+        orderStatus: "cancelled",
+        createdAt: "",
+        updatedAt: "",
+      } as unknown as Order;
+      const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+      // Cancelled: its pieces are back on the shelf — no badge, like the card.
+      expect(screen.queryByText(/Falta \d/)).toBeNull();
+
+      // Same order still open: the live estimate appears…
+      fireEvent.change(screen.getByLabelText("Estado del pedido"), { target: { value: "asked" } });
+      expect(screen.getByText(/Faltan 2 piezas en 1 producto/)).toBeInTheDocument();
+      // …and cancelling it in the editor clears it immediately.
+      fireEvent.change(screen.getByLabelText("Estado del pedido"), { target: { value: "cancelled" } });
+      expect(screen.queryByText(/Falta \d/)).toBeNull();
+      rendered.unmount();
+    } finally {
+      state.products.pop();
+    }
+  });
+});

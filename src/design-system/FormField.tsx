@@ -4,6 +4,7 @@ import type {
   TextareaHTMLAttributes,
   SelectHTMLAttributes,
   ReactNode,
+  Ref,
 } from "react";
 
 // Unified field styling. Every input/select/textarea in the app uses this base.
@@ -33,13 +34,13 @@ export function FormField({
 }
 
 export function TextField({
-  label, hint, labelClassName, error, id: suppliedId, ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string; labelClassName?: string; error?: string }) {
+  label, hint, labelClassName, error, id: suppliedId, inputRef, ...rest
+}: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string; labelClassName?: string; error?: string; inputRef?: Ref<HTMLInputElement> } ) {
   const generatedId = useId();
   const id = suppliedId ?? generatedId;
   return (
     <FormField label={label} hint={hint} labelClassName={labelClassName}>
-      <input className={fieldBase} {...rest} id={id}
+      <input ref={inputRef} className={fieldBase} {...rest} id={id}
         aria-invalid={error ? true : rest["aria-invalid"]}
         aria-describedby={[rest["aria-describedby"], error ? `${id}-error` : ""].filter(Boolean).join(" ") || undefined} />
       {error && <span id={`${id}-error`} className="block text-sm text-danger mt-1">{error}</span>}

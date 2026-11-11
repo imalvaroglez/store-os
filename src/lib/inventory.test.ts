@@ -10,6 +10,8 @@ import {
   stockAlertLevel,
   shortageByDimension,
   attributeShortageToLines,
+  projectedShortageByDimension,
+  attributeProjectedShortageToLines,
   stockAlertText,
 } from "./inventory";
 import type { Product, PurchaseLine, Order } from "../types";
@@ -348,5 +350,110 @@ describe("shortageByDimension / attributeShortageToLines (#309)", () => {
   it("línea sin producto o con producto desaparecido no produce falta", () => {
     expect(attributeShortageToLines([{ key: "l1", quantity: 4 }], []).size).toBe(0);
     expect(attributeShortageToLines([{ key: "l1", productId: "gone", quantity: 4 }], []).size).toBe(0);
+  });
+});
+
+// #325 — LIVE projection for the draft in progress: same canonical dimension
+// math, but the order's own saved holds return to the shelf first, so the
+// editor shows the faltante while capturing — and the card badge (negative
+// stock after Guardar) shows the same number.
+describe("projectedShortageByDimension / attributeProjectedShortageToLines (#325)", () => {
+  const product = (id: string, quantityOnHand?: number, variants?: { id: string; quantityOnHand?: number }[]) =>
+    ({ id, ...(typeof quantityOnHand === "number" ? { quantityOnHand } : {}), ...(variants ? { variants } : {}) }) as never;
+  const savedOrder = (quantity: number, productId = "p1"): Order =>
+    ({ id: "o1", storeId: "s1", items: [{ productName: "X", productId, quantity, unitPrice: 100, subtotal: 100 * quantity }], orderStatus: "confirmed", createdAt: "2026-11-01", updatedAt: "2026-11-01" }) as Order;
+
+  it("aparece en vivo al subir la línea por encima de la existencia, sin guardar", () => {
+    const dims = projectedShortageByDimension([{ key: "l1", productId: "p1", quantity: 5 }], undefined, true, [product("p1", 3)]);
+    expect(dims.get("p1")?.missing).toBe(2);
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 5 }], undefined, true, [product("p1", 3)]).get("l1")).toBe(2);
+  });
+
+  it("editar un pedido: sus propias piezas reservadas vuelven al estante antes de proyectar", () => {
+    // Physical 3, this order already holds 2 → quantityOnHand 1. Draft raises to 5.
+    const perLine = attributeProjectedShortageToLines(
+      [{ key: "l1", productId: "p1", quantity: 5 }],
+      savedOrder(2),
+      true,
+      [product("p1", 1)]
+    );
+    expect(perLine.get("l1")).toBe(2); // 5 − (1 + 2)
+  });
+
+  it("bajar la cantidad limpia el faltante en vivo (el guardado lo confirma)", () => {
+    // Physical 3, saved holds 5 → quantityOnHand −2. Draft lowers to 3.
+    const perLine = attributeProjectedShortageToLines(
+      [{ key: "l1", productId: "p1", quantity: 3 }],
+      savedOrder(5),
+      true,
+      [product("p1", -2)]
+    );
+    expect(perLine.size).toBe(0); // 3 − (−2 + 5) = 0
+  });
+
+  it("coincide con la insignia de la tarjeta tras guardar (misma matemática de reservación REAL)", () => {
+    const draft = [{ key: "l1", productId: "p1", quantity: 5 }];
+    const projected = attributeProjectedShortageToLines(draft, undefined, true, [product("p1", 3)]).get("l1");
+    // Guardar aplica el delta de reservación REAL sobre el estante: 3 − 5.
+    const savedOrder = { id: "o", storeId: "s", items: [{ productId: "p1", productName: "X", quantity: 5, unitPrice: 1, subtotal: 5 }], orderStatus: "asked", deposit: 0 } as Order;
+    const deltas = reservationDeltasForOrderChange(undefined, savedOrder);
+    expect(deltas.get("p1")).toBe(-5); // la reservación REAL resta las piezas
+    const afterSave = shortageByDimension(draft, [product("p1", 3 + (deltas.get("p1") ?? 0))]).get("p1")?.missing;
+    expect(projected).toBe(2);
+    expect(afterSave).toBe(projected);
+  });
+
+  it("un borrador que NO retendrá piezas (cancelación en curso) no proyecta faltante (P2 revisión)", () => {
+    // ANY saved state projects to zero when the draft will not hold — the
+    // pieces return to the shelf and the draft takes nothing.
+    const openOrder = { id: "o1", storeId: "s1", items: [{ productId: "p1", productName: "X", quantity: 2, unitPrice: 1, subtotal: 2 }], orderStatus: "asked", deposit: 0 } as Order;
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 5 }], openOrder, false, [product("p1", 3)]).size).toBe(0);
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 5 }], undefined, false, [product("p1", 3)]).size).toBe(0);
+    // P2 re-review: a shelf ALREADY negative from other orders still reads as
+    // faltante on a non-holding draft — the card shows it regardless of status.
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 5 }], undefined, false, [product("p1", -2)]).get("l1")).toBe(2);
+    // Holding draft on the same shelf: the take adds its own deficit (2 − (−5+2)).
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 2 }], openOrder, true, [product("p1", -5)]).get("l1")).toBe(5);
+    // Live transition in the editor: cancelling that same draft (still holding
+    // 2 on the saved doc) must read Faltan 3 — what the card shows post-save.
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 2 }], openOrder, false, [product("p1", -5)]).get("l1")).toBe(3);
+  });
+
+  it("color sin existencia capturada estima desde 0 — igual que el guardado (P2 revisión)", () => {
+    // applyVariantDelta bases an untracked color at 0, so the shelf ends at
+    // −N and the card shows Faltan N; the live estimate must match.
+    const products = [product("p1", undefined, [{ id: "v_dorado" }])];
+    const perLine = attributeProjectedShortageToLines([{ key: "l1", productId: "p1", variantId: "v_dorado", quantity: 3 }], undefined, true, products);
+    expect(perLine.get("l1")).toBe(3);
+    // …mientras que un DISEÑO sin rastreo sigue sin estimar (el guardado lo omite).
+    expect(attributeProjectedShortageToLines([{ key: "l2", productId: "p9", quantity: 3 }], undefined, true, [product("p9")]).size).toBe(0);
+  });
+
+  it("proyecta sobre la dimensión exacta de la variante, sin tocar a su hermana", () => {
+    const products = [product("p1", undefined, [
+      { id: "v_dorado", quantityOnHand: 2 },
+      { id: "v_plateado", quantityOnHand: 5 },
+    ])];
+    const perLine = attributeProjectedShortageToLines(
+      [
+        { key: "l1", productId: "p1", variantId: "v_dorado", quantity: 3 },
+        { key: "l2", productId: "p1", variantId: "v_plateado", quantity: 1 },
+      ],
+      undefined,
+      true,
+      products
+    );
+    expect(perLine.get("l1")).toBe(1);
+    expect(perLine.has("l2")).toBe(false);
+  });
+
+  it("producto sin inventario rastreado no produce estimado", () => {
+    expect(projectedShortageByDimension([{ key: "l1", productId: "p1", quantity: 5 }], undefined, true, [product("p1")]).size).toBe(0);
+  });
+
+  it("déficit compartido: la línea del draft reclama el total del estante (como la tarjeta)", () => {
+    // Another order oversold p1 by 2 (stock −2); this draft adds 1 more piece.
+    const perLine = attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 1 }], undefined, true, [product("p1", -2)]);
+    expect(perLine.get("l1")).toBe(3);
   });
 });
