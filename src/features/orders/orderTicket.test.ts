@@ -165,3 +165,22 @@ describe("orderTicketText · saldo contextual (#306)", () => {
     expect(orderTicketText(order({}), "Olivia")).not.toContain("$770.00");
   });
 });
+
+// Revisión adversarial #327: la posventa sin efectivo cambia la deuda real —
+// ese Saldo NO se oculta, aunque no haya cobros.
+describe("orderTicketText · incidencias sin efectivo (#306 revisión)", () => {
+  const base = { id: "order_306i", storeId: "s1", customerId: "c1", customerName: "Lucía", createdAt: "2026-11-10", updatedAt: "" };
+  const refund = { id: "inc1", productName: "Pieza", quantity: 1, reason: "Defecto", originalUnitPriceCents: 36000, resolution: { kind: "refund" as const, saleAdjustmentUnitCents: 36000 }, events: [] };
+
+  it("reembolso por incidencia sin cobros: Total completo y Saldo real (≠ Total)", () => {
+    const order = { ...base, items: [{ productName: "Arracada", quantity: 1, unitPrice: 720, subtotal: 720 }], deposit: 0, incidents: [refund] } as unknown as Order;
+    const text = orderTicketText(order, "Olivia");
+    expect(text).toContain("*Total* $720");
+    expect(text).toContain("*Saldo* $360");
+  });
+
+  it("sin incidencias ni dinero: el Saldo no repite el Total (regla original #306)", () => {
+    const order = { ...base, items: [{ productName: "Arracada", quantity: 1, unitPrice: 720, subtotal: 720 }], deposit: 0 } as unknown as Order;
+    expect(orderTicketText(order, "Olivia")).not.toContain("*Saldo*");
+  });
+});

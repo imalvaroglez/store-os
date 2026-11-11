@@ -111,10 +111,15 @@ describe("modelo de dinero — invariantes sobre la matriz exhaustiva (#225 pre-
     expect(totalLine).toBe(`*Total* ${formatMoneyPlain(totals.estimatedTotal)}`);
     const saldoLine = text.split("\n").find((l) => l.startsWith("*Saldo* "));
     const moneyMoved = totals.paid > 0 || totals.appliedCredit > 0;
-    if (totals.balance > 0 && moneyMoved) {
-      expect(saldoLine, "con cobro parcial el ticket muestra el saldo igual que el modelo (#306)").toBe(`*Saldo* ${formatMoneyPlain(totals.balance)}`);
+    const totalCents = Math.round(totals.estimatedTotal * 100);
+    const balanceCents = Math.round(totals.balance * 100);
+    // #306 (revisión adversarial P1): the Saldo hides ONLY when it would repeat
+    // the Total verbatim. An incident without cash changes the real debt and
+    // MUST show — moneyMoved alone was too coarse.
+    if (balanceCents > 0 && (moneyMoved || balanceCents !== totalCents)) {
+      expect(saldoLine, "con cobro parcial o deuda ≠ Total, el ticket muestra el saldo del modelo").toBe(`*Saldo* ${formatMoneyPlain(totals.balance)}`);
     } else {
-      expect(saldoLine, "sin dinero movido o sin saldo pendiente, el ticket no repite el Total como Saldo (#306)").toBeUndefined();
+      expect(saldoLine, "sin saldo pendiente o cuando el Saldo repetiría el Total, no hay línea").toBeUndefined();
     }
     const favorLine = text.split("\n").find((l) => l.startsWith("*Saldo a favor* "));
     if (totals.availableCredit > 0) {
