@@ -1,5 +1,20 @@
 [
   {
+    "version": "1.14.0",
+    "date": "2026.11.11",
+    "title": "Detalles de pedido más claros y menos confusiones",
+    "notes": [
+      "El detalle para WhatsApp ahora muestra importes limpios: $770 en vez de $770.00, y con centavos cuando los hay ($770.50). El Saldo solo aparece cuando queda algo por pagar, y si la clienta pagó de más el mensaje dice «A tu favor», que ya no suena a deuda.",
+      "Al compartir un pedido, el texto para WhatsApp y el recibo se ven lado a lado en escritorio (en móvil va primero el texto con su botón de copiar y luego el recibo con el de imprimir), sin recorridos extra.",
+      "El PDF del recibo se guarda con nombre ordenable — «Pedido-REFERENCIA-Clienta», sin acentos (María Jose Lopez) — para encontrarlo rápido entre tus descargas.",
+      "En Productos, tocar el texto de una categoría ya no cierra el diálogo ni pierde la captura: el texto ahora activa su casilla, como la mano espera.",
+      "La tarjeta «Por surtir» de Inicio ahora dice «N productos»: queda claro que cuenta productos con alerta — cada uno con su Agotado, Faltan N o Quedan N — y no piezas.",
+      "El catálogo público deja de culpar a la clienta de problemas de conexión que no son suyos: un catálogo inexistente dice «Tienda no encontrada», uno aún no publicado dice «Catálogo no disponible por ahora», y solo el fallo real de red ofrece «Reintentar».",
+      "En Cobros, la pista de «Restar» explica por qué el tope puede ser menor que «Recibido» cuando hay un anticipo previo, y nombra las rutas reales: el botón «Incidencia» para devolver más, o editar el pedido para corregir el anticipo.",
+      "Al editar un pedido, el aviso «Falta N» aparece en vivo al subir una cantidad por encima de la existencia — sin guardar primero — y siempre coincide con la insignia de la tarjeta; «Ver faltantes» recorre todas las líneas con faltante una por una, y el botón ▾ del menú de abajo es más fácil de tocar."
+    ]
+  },
+  {
     "version": "1.13.2",
     "date": "2026.11.11",
     "title": "El rojo oficial de Olivia",
