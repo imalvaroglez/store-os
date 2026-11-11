@@ -195,7 +195,8 @@ describe("tarjetas — jerarquía de precios", () => {
     const prices = await screen.findByRole("region", { name: "Precios por pieza" });
     expect(within(prices).getByText("$90")).toBeTruthy();
     expect(within(prices).queryByText("$0")).toBeNull();
-    expect(within(prices).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toBeTruthy();
+    // 1.13.1: la condición del nivel único es visible, sin «?».
+    expect(within(prices).getByText("Con beneficio vigente")).toBeTruthy();
   });
 
   it.each([
@@ -288,6 +289,34 @@ describe("edición pública in-place", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Guardar$/ }));
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Sitio público actualizado"));
   });
+
+  // #332 (1.13.1): Fer's reported flow — open Editar sitio, find the delivery
+  // controls, change both texts. Clearing must travel as "" so the save can
+  // delete the remote field; undefined would resurrect the old value.
+  it("edita entregas y horarios; borrar viaja como \"\", y horarios vacíos no se publican", async () => {
+    await renderStore({ storeId: "store_olivia", storefront: { shipping: "Envíos viejos", hours: "Lunes a viernes", notice: "Aviso viejo" }, save: mocks.saveStorefront, notifySuccess: mocks.toastSuccess, notifyError: mocks.toastError });
+    fireEvent.click(await screen.findByRole("button", { name: "Editar sitio" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar Entregas y envíos" }));
+    fireEvent.change(screen.getByLabelText("Entregas y envíos"), { target: { value: "Entregas en punto medio" } });
+    fireEvent.click(screen.getByRole("button", { name: "Listo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar Horarios" }));
+    fireEvent.change(screen.getByLabelText("Horarios"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Listo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar Aviso" }));
+    fireEvent.change(screen.getByLabelText("Aviso"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Listo" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Guardar$/ }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Sitio público actualizado"));
+    expect(mocks.saveStorefront).toHaveBeenCalledWith("store_olivia", expect.objectContaining({
+      shipping: "Entregas en punto medio",
+      hours: "", // nunca undefined: el guardado debe poder borrar el campo
+      notice: "", // ídem Aviso — la aceptación de la spec es por campo (#332)
+    }));
+    expect(screen.getByText("Entregas en punto medio")).toBeTruthy();
+    expect(screen.queryByText(/Horarios:/)).toBeNull(); // vacío → no se publica
+  });
 });
 
 describe("carrito del storefront — acumular y pedir", () => {
@@ -310,10 +339,11 @@ describe("carrito del storefront — acumular y pedir", () => {
     expect(within(list).getByText("Aretes Luna")).toBeTruthy();
     expect(within(list).getAllByText("Precio por pieza")).toHaveLength(2);
     expect(within(list).getAllByText("Subtotal")).toHaveLength(2);
-    expect(within(list).getAllByText("$140")).toHaveLength(2);
-    expect(within(list).getAllByText("$120")).toHaveLength(2);
+    // 1.13.1: las líneas muestran centavos, igual que el titular.
+    expect(within(list).getAllByText("$140.00")).toHaveLength(2);
+    expect(within(list).getAllByText("$120.00")).toHaveLength(2);
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     expect(send.href).toContain("wa.me/5213344836691");
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("Pedido:");
@@ -325,9 +355,18 @@ describe("carrito del storefront — acumular y pedir", () => {
     // #305: dos cifras etiquetadas como estimación; ambas piezas comparten la
     // única categoría del fixture → sin encabezado de grupo.
     expect(text).toContain("*2 piezas en total*");
-    expect(text).toContain("Subtotal estimado: $260");
-    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $170"); // 90 + 80
+    expect(text).toContain("Subtotal estimado: $260.00 MXN");
+    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $170.00 MXN"); // 90 + 80
     expect(text).toContain("sujetos a confirmación");
+
+    // 1.13.1: un solo aviso común junto a los estimados, nada repetido bajo
+    // la acción; nombre sin etiqueta visual pero con nombre accesible.
+    const dialog = screen.getByRole("dialog", { name: "Tu pedido" });
+    expect(within(dialog).getAllByText(/Los precios son estimados\./)).toHaveLength(1);
+    expect(within(dialog).getByText(/Tu selección no reserva las piezas/)).toBeTruthy();
+    expect(within(dialog).queryByText(/Enviar tu selección no confirma ni reserva/)).toBeNull();
+    const nameField = within(dialog).getByLabelText("Tu nombre");
+    expect(nameField).toHaveAttribute("placeholder", "Escribe tu nombre para identificarte");
   });
 
   it("stepper ± actualiza líneas y reduce a cero para quitar", async () => {
@@ -337,13 +376,13 @@ describe("carrito del storefront — acumular y pedir", () => {
 
     const list = screen.getByRole("list");
     const row = within(list).getByText("Anillo Blossom").closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
     expect(within(row).getByText("2")).toBeTruthy();
     expect(within(screen.getByRole("dialog", { name: "Tu pedido" })).getByText("2 piezas")).toBeTruthy();
     expect(within(row).queryByRole("button", { name: "Quitar" })).toBeNull();
 
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
     expect(screen.getByText("Tu pedido está vacío")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Abrir pedido" })).toBeNull();
   });
@@ -370,7 +409,7 @@ describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
     expect(screen.getByText(/Quedan pocas — tu pedido puede reabastecerse/)).toBeTruthy();
     expect(screen.getByText(/Se puede hacer sobre pedido/)).toBeTruthy();
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("• 1× Collar Vega — sobre pedido");
     expect(text).toContain("• 1× Aretes Luna\n");
@@ -403,7 +442,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("$360.00 MXN")).toBeTruthy(); // 4 × 90 Iconic
 
     const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
     // 5 piezas → Girly habitual (demostrable por cantidad), nunca Iconic.
     expect(await screen.findByText("$600.00 MXN")).toBeTruthy(); // 5 × 120
     expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
@@ -436,8 +475,8 @@ describe("carrito — progreso hacia Iconic", () => {
 
     // Bajar a 8 piezas → Girly $960 (< $1,000): la fila Iconic reaparece.
     const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
     expect(await screen.findByText("$960.00 MXN")).toBeTruthy();
     expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
     expect(screen.getByText("$720.00 MXN")).toBeTruthy(); // 8 × 90
@@ -462,6 +501,45 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
     expect(screen.queryByText(/desbloqueado/i)).toBeNull();
   });
+
+  it("1.13.1 líneas y titular cuadran: 19 piezas $140/$105/$55, jamás $55/$1,045", async () => {
+    // Catálogo con los números de las capturas: Girly $105 (desde 5) e Iconic
+    // $55 (identidad, ≥ $1,000 a precio propio). El carrito se hidrata de aquí.
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: {
+        ...catalog,
+        products: catalog.products.map((p) =>
+          p.productSlug === "anillo-blossom"
+            ? { ...p, prices: { t_retail: 140, t_girly: 105, t_iconic: 55 } }
+            : p
+        ),
+      },
+    });
+    localStorage.setItem(cartKey, JSON.stringify({
+      v: 1,
+      lines: [{ productSlug: "anillo-blossom", name: "Anillo Blossom", sku: "AAN1385", qty: 19 }],
+    }));
+    await renderStore();
+    await openDrawer();
+
+    // Titular habitual: Girly 19 × $105 = $1,995.00 (≥ $1,000 → sin fila Iconic).
+    expect(screen.getByText("$1,995.00 MXN")).toBeTruthy();
+    expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
+    // La línea usa el MISMO nivel del titular: $105.00 por pieza, $1,995.00 de
+    // subtotal — nunca el precio Iconic ($55/$1,045) que el total no aplica.
+    const list = screen.getByRole("list");
+    expect(within(list).getByText("$105.00")).toBeTruthy();
+    expect(within(list).getByText("$1,995.00")).toBeTruthy();
+    expect(within(list).queryByText("$55.00")).toBeNull();
+    expect(within(list).queryByText("$1,045.00")).toBeNull();
+
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado: $1,995.00 MXN");
+    expect(text).not.toContain("1,045");
+    expect(text).not.toContain("Iconic");
+  });
 });
 
 describe("detalle de producto — precios por tier", () => {
@@ -470,13 +548,26 @@ describe("detalle de producto — precios por tier", () => {
     expect(await screen.findByText("Anillo Blossom")).toBeTruthy();
     const prices = screen.getByRole("region", { name: "Precios por pieza" });
     expect(screen.getByText("Precio por pieza")).toBeTruthy();
-    expect(within(prices).getByText("$90")).toBeTruthy();
-    expect(within(prices).getByText("Girly").closest("div")).toHaveTextContent(/Girly\s*\$120/);
-    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toHaveAttribute("title", "desde 5 piezas");
-    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
-    expect(within(prices).getByText("Regular").closest("div")).toHaveTextContent(/Regular\s*\$140/);
-    expect(Array.from(prices.querySelectorAll(".olv-price-row dt")).map((row) => row.textContent?.trim())).toEqual(["Regular", "Girly", "Iconic"]);
+    // 1.13.1: sin «?», sin ayuda flotante, sin title duplicado — la condición
+    // es texto visible en la tercera columna de cada fila.
+    expect(prices.querySelectorAll(".price-help-wrap")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /Cómo se obtiene/ })).toBeNull();
+    expect(within(prices).queryByTitle(/Obtén el mejor precio/)).toBeNull();
+    expect(within(prices).getByText("Desde 5 piezas")).toBeTruthy();
+    expect(within(prices).getByText("Con beneficio vigente")).toBeTruthy();
+    // Cada fila: nivel + importe + condición; Regular sin requisito deja la
+    // tercera celda vacía.
+    const rows = Array.from(prices.querySelectorAll(".olv-price-row"));
+    expect(rows.map((row) => row.querySelector("dt")?.textContent?.trim())).toEqual(["Regular", "Girly", "Iconic"]);
+    expect(rows[0].querySelector(".olv-price-row-amount")).toHaveTextContent("$140");
+    expect(rows[0].querySelector(".olv-price-row-condition")).toHaveTextContent("");
+    expect(rows[1].querySelector(".olv-price-row-amount")).toHaveTextContent("$120");
+    expect(rows[1].querySelector(".olv-price-row-condition")).toHaveTextContent("Desde 5 piezas");
+    expect(rows[2].querySelector(".olv-price-row-amount")).toHaveTextContent("$90");
+    expect(rows[2].querySelector(".olv-price-row-condition")).toHaveTextContent("Con beneficio vigente");
     expect(prices.querySelector(".olv-price-row--featured")).toHaveTextContent("Iconic");
+    // El ahorro de Iconic no promete desbloqueo por agregar piezas.
+    expect(within(prices).getByText("Hasta $50 menos por pieza con beneficio vigente")).toBeTruthy();
     // Agregar al carrito desde el detalle.
     fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
     expect(screen.getByRole("button", { name: "Abrir pedido" }).textContent).toContain("1");
@@ -552,6 +643,28 @@ describe("editorial catalog", () => {
     });
     await renderStore();
     expect(screen.getByRole("heading", { name: "Nueva colección" })).toBeTruthy();
+  });
+
+  it("1.13.1 el pie muestra el logo (respaldo transparente; logoUrl configurado gana) y conserva sus enlaces", async () => {
+    const view = await renderStore();
+    const footer = document.querySelector(".olv-footer") as HTMLElement;
+    const fallback = within(footer).getByRole("img", { name: "Olivia" }) as HTMLImageElement;
+    expect(fallback).toHaveAttribute("src", "/images/olivia-logo.png");
+    expect(fallback).toHaveClass("olv-footer-logo");
+    // Enlaces vigentes del pie: WhatsApp, Explora y Entregas y atención.
+    expect(within(footer).getByRole("link", { name: /Hablemos por WhatsApp/ })).toBeTruthy();
+    expect(within(footer).getByRole("heading", { name: "Explora" })).toBeTruthy();
+    expect(within(footer).getByRole("heading", { name: "Entregas y atención" })).toBeTruthy();
+
+    view.unmount();
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { logoUrl: "https://storage.example/logo.png" } },
+      catalog,
+    });
+    render(<OliviaStorefront route={storeRoute} />);
+    await screen.findAllByRole("article");
+    const configured = within(document.querySelector(".olv-footer") as HTMLElement).getByRole("img", { name: "Olivia" }) as HTMLImageElement;
+    expect(configured).toHaveAttribute("src", "https://storage.example/logo.png");
   });
 
   it("searches names/keys, sorts, and never duplicates featured/new products", async () => {

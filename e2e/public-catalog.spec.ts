@@ -229,7 +229,7 @@ test("generic public catalog accumulates pieces and sends one WhatsApp order", a
   await open.click();
   await expect(anon.getByRole("heading", { name: "Tu pedido" })).toBeVisible();
 
-  const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
+  const send = anon.getByRole("link", { name: "Enviar solicitud por WhatsApp" });
   const href = (await send.getAttribute("href")) ?? "";
   expect(href).toContain("wa.me/5215512345678");
   const text = decodeURIComponent(href.split("text=")[1]);
@@ -274,9 +274,10 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   await card.getByRole("link", { name: "Anillo Blossom", exact: true }).click();
   await expect(anon).toHaveURL(/\/catalogo\/olivia\/producto\/anillo-blossom$/);
   await expect(anon.getByRole("heading", { name: "Anillo Blossom" })).toBeVisible({ timeout: 15000 });
-  const iconicHelp = anon.getByRole("button", { name: "Cómo se obtiene el precio Iconic" });
-  await iconicHelp.hover();
-  await expect(anon.getByText(/desde \$1,000 en productos a precio Iconic/).first()).toBeVisible();
+  // 1.13.1: la condición de Iconic es texto visible en la ficha — sin «?» ni
+  // ayuda flotante que hacer aparecer.
+  await expect(anon.getByText("Con beneficio vigente").first()).toBeVisible();
+  await expect(anon.getByRole("button", { name: /Cómo se obtiene/ })).toHaveCount(0);
   await expect(anon.getByText("Pieza no encontrada")).toHaveCount(0);
   await ctx.close();
 });
@@ -336,7 +337,7 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   await expect(dialog.getByText(/Quedan pocas/)).toBeVisible();
 
   // ONE wa.me message with both lines, calculated price and catalog link.
-  const send = anon.getByRole("link", { name: "Enviar pedido por WhatsApp" });
+  const send = anon.getByRole("link", { name: "Enviar solicitud por WhatsApp" });
   const href = (await send.getAttribute("href")) ?? "";
   expect(href).toContain("wa.me/5213344836691");
   const text = decodeURIComponent(href.split("text=")[1]);

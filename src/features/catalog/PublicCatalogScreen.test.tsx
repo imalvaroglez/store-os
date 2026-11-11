@@ -57,9 +57,9 @@ describe("PublicCatalogScreen carrito", () => {
     expect(within(list).queryByText("Cantidad")).toBeNull();
     expect(within(list).getAllByText("Precio por pieza")).toHaveLength(2);
     expect(within(list).getAllByText("Subtotal")).toHaveLength(2);
-    expect(within(list).getByText("$1,500")).toBeTruthy();
-    expect(within(list).getByText("$3,000")).toBeTruthy();
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
+    expect(within(list).getByText("$1,500.00")).toBeTruthy();
+    expect(within(list).getByText("$3,000.00")).toBeTruthy();
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     expect(send.href).toContain("wa.me/5215512345678");
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("• 2× Perfume");
@@ -139,10 +139,10 @@ describe("PublicCatalogScreen carrito", () => {
     expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
     expect(within(screen.getByRole("list")).getByText("Precio por pieza")).toBeTruthy();
 
-    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("*12 piezas en total*");
-    expect(text).toContain("Subtotal estimado: $1,440");
+    expect(text).toContain("Subtotal estimado: $1,440.00 MXN");
     expect(text).not.toContain("Iconic");
   });
 });

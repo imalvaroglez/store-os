@@ -1,6 +1,6 @@
 import type { Store, Product } from "../types";
 import type { CartRequestSummary, OrderPricing } from "./pricing";
-import { formatMoney } from "./money";
+import { formatMoney, formatMoneyExact } from "./money";
 
 function storefrontBase(phone?: string | null): string {
   const digits = (phone || "").replace(/[^0-9]/g, "");
@@ -143,11 +143,13 @@ export function buildCartOrderUrl(
   const summary = request
     ? [
         `*${request.totalQuantity} ${request.totalQuantity === 1 ? "pieza" : "piezas"} en total*`,
-        `Subtotal estimado: ${formatMoney(request.habitualSubtotal)}`,
+        // Exact cents + MXN, identical to the drawer rows (1.13.1): the
+        // message can never round away a cent the client just saw on screen.
+        `Subtotal estimado: ${formatMoneyExact(request.habitualSubtotal)} MXN`,
         // The identity estimate travels ONLY when the cart shows it (< $1,000
         // habitual AND fully calculated) — same rule, same numbers.
         ...(request.showIdentityHint && request.identitySubtotal != null
-          ? [`¿Eres ${esc(request.identityTier?.label ?? "")}? Subtotal estimado: ${formatMoney(request.identitySubtotal)}`]
+          ? [`¿Eres ${esc(request.identityTier?.label ?? "")}? Subtotal estimado: ${formatMoneyExact(request.identitySubtotal)} MXN`]
           : []),
         "Precios, beneficio y disponibilidad sujetos a confirmación.",
         "Envío no incluido.",
