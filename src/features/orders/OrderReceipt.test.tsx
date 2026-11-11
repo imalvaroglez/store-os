@@ -102,14 +102,15 @@ describe("OrderReceipt (#139)", () => {
   });
 });
 
-// #306 (revisión adversarial P3): el recibo también muestra el Saldo a favor.
+// #306 (revisión adversarial P3 + Fer-reader): el recibo también muestra el
+// excedente, como "A tu favor" — "Saldo a favor" leía como deuda a una clienta.
 describe("OrderReceipt · saldo a favor (#306)", () => {
-  it("con excedente real imprime la línea Saldo a favor junto al Cobrado", () => {
+  it("con excedente real imprime la línea A tu favor junto al Cobrado", () => {
     const overpaid = { ...order, deposit: 921 } as unknown as Order;
     const data = orderTicketData(overpaid, "Olivia");
     render(<OrderReceipt data={data} />);
-    expect(data.saldoAFavor).toBe("$300");
-    expect(screen.getAllByText("Saldo a favor").length).toBeGreaterThan(0); // preview + copia de impresión
+    expect(data.availableCredit).toBe("$300");
+    expect(screen.getAllByText("A tu favor").length).toBeGreaterThan(0); // preview + copia de impresión
     expect(screen.queryAllByText("Saldo").length).toBe(0);
   });
 });

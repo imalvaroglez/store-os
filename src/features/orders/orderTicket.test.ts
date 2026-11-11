@@ -76,7 +76,7 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
     const order: Order = { id: "o1", storeId: "s1", customerId: "c1", items: [{ productName: "A", quantity: 1, unitPrice: 40, subtotal: 40 }], deposit: 50, orderStatus: "asked", paymentStatus: "paid", createdAt: "2026-11-04", updatedAt: "" };
     const ticket = orderTicketText(order, "Olivia");
     expect(ticket).toContain("*Total* $40");
-    expect(ticket).toContain("*Saldo a favor* $10");
+    expect(ticket).toContain("*A tu favor* $10");
     expect(ticket).not.toMatch(/^\*Saldo\* \$/m);
     expect(ticket).not.toContain("Recibido");
     expect(ticket).not.toContain("Anticipo");
@@ -150,10 +150,10 @@ describe("orderTicketText · saldo contextual (#306)", () => {
     expect(text).not.toContain("*Saldo*");
   });
 
-  it("excedente real: Saldo a favor, sin aparentar adeudo", () => {
+  it("excedente real: A tu favor, sin aparentar adeudo", () => {
     const text = orderTicketText(order({ deposit: 870 }), "Olivia");
     expect(text).toContain("*Total* $770");
-    expect(text).toContain("*Saldo a favor* $100");
+    expect(text).toContain("*A tu favor* $100");
     expect(text).not.toMatch(/\*Saldo\* \$/);
   });
 
