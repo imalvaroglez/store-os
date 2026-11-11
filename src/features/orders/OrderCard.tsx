@@ -14,7 +14,7 @@ import {
 } from "../../design-system";
 import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
 import { shortageByDimension } from "../../lib/inventory";
-import { orderTicketData, orderTicketText } from "./orderTicket";
+import { orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
@@ -59,6 +59,17 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const orderDate = order.promisedDate
     ? `Prometido: ${new Date(`${order.promisedDate}T00:00:00`).toLocaleDateString("es-MX")}`
     : order.createdAt ? `Creado: ${new Date(order.createdAt).toLocaleDateString("es-MX")}` : "Sin fecha";
+
+  /** #308: name the PDF the browser suggests — Pedido-<REF>-<Clienta> — via
+   * the document title while the print dialog is open (restored after). */
+  function printReceipt() {
+    const previous = document.title;
+    document.title = receiptFileName(order.id, order.customerName ?? customer?.name);
+    const restore = () => { document.title = previous; };
+    window.addEventListener("afterprint", restore, { once: true });
+    window.print();
+    window.setTimeout(restore, 1_000); // fallback where afterprint never fires
+  }
 
   async function advance() {
     const advanced = advanceOrder(order);
@@ -216,7 +227,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
             data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)}
             whatsapp={activeStore?.whatsappPhone}
           />
-          <Button full className="mt-auto" variant="secondary" onClick={() => window.print()}>Imprimir / Guardar PDF</Button>
+          <Button full className="mt-auto" variant="secondary" onClick={printReceipt}>Imprimir / Guardar PDF</Button>
           <p className="text-xs text-on-surface-soft">
             Al imprimir elige «Guardar como PDF» para compartirlo por WhatsApp. Solo el recibo sale en papel.
           </p>
