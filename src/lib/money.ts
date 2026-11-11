@@ -20,6 +20,13 @@ export function formatMoneyExact(amount: number | undefined | null): string {
   return exactMXN.format(amount);
 }
 
+/** #306 — ticket/share format: whole pesos without the ".00" noise, real
+ * cents kept ("$770", "$770.50"). Exact amounts underneath never round. */
+export function formatMoneyPlain(amount: number | undefined | null): string {
+  if (amount == null || Number.isNaN(amount)) return "$0";
+  return Number.isInteger(amount) ? formatMoney(amount) : exactMXN.format(amount);
+}
+
 /** Price a product shows to the public: single price (on-demand) or the store's default tier. */
 export function publicPrice(
   p: { price?: number; prices?: Record<string, number> },

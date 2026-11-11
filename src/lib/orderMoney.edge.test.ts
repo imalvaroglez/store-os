@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { orderTotals, paymentStatusForOrder } from "./orders";
 import { docReceivedCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { orderTicketText } from "../features/orders/orderTicket";
-import { formatMoneyExact } from "./money";
+import { formatMoneyExact, formatMoneyPlain } from "./money";
 import type { Order, OrderIncident } from "../types";
 
 type MatrixOrder = Partial<Order> & Record<string, unknown>;
@@ -108,12 +108,19 @@ describe("modelo de dinero — invariantes sobre la matriz exhaustiva (#225 pre-
     // #222: Fer's WhatsApp format renders the money lines in *bold*.
     const totalLine = text.split("\n").find((l) => l.startsWith("*Total* "));
     expect(totalLine, "el ticket siempre muestra Total").toBeTruthy();
-    expect(totalLine).toBe(`*Total* ${formatMoneyExact(totals.estimatedTotal)}`);
+    expect(totalLine).toBe(`*Total* ${formatMoneyPlain(totals.estimatedTotal)}`);
     const saldoLine = text.split("\n").find((l) => l.startsWith("*Saldo* "));
-    if (totals.balance > 0) {
-      expect(saldoLine, "con saldo pendiente el ticket lo muestra igual que el modelo").toBe(`*Saldo* ${formatMoneyExact(totals.balance)}`);
+    const moneyMoved = totals.paid > 0 || totals.appliedCredit > 0;
+    if (totals.balance > 0 && moneyMoved) {
+      expect(saldoLine, "con cobro parcial el ticket muestra el saldo igual que el modelo (#306)").toBe(`*Saldo* ${formatMoneyPlain(totals.balance)}`);
     } else {
-      expect(saldoLine, "sin saldo pendiente el ticket no muestra Saldo").toBeUndefined();
+      expect(saldoLine, "sin dinero movido o sin saldo pendiente, el ticket no repite el Total como Saldo (#306)").toBeUndefined();
+    }
+    const favorLine = text.split("\n").find((l) => l.startsWith("*Saldo a favor* "));
+    if (totals.availableCredit > 0) {
+      expect(favorLine, "el excedente real se etiqueta como saldo a favor").toBe(`*Saldo a favor* ${formatMoneyPlain(totals.availableCredit)}`);
+    } else {
+      expect(favorLine).toBeUndefined();
     }
 
     // I6 — payment status never contradicts a fully settled balance.
