@@ -48,9 +48,9 @@ window.__scrollMetrics = { frames: [], longTasks: [], shifts: [], resources: [] 
 
 async function scrollPage(page, mobile) {
   if (mobile) {
-    // Touch swipes: three screens down, back up one.
+    // Touch-style scroll: three screens down, back up one. No taps — a tap
+    // could land on a product card and navigate away from the catalog.
     for (let i = 0; i < 3; i++) {
-      await page.touchscreen.tap(195, 400).catch(() => {});
       await page.evaluate(() => window.scrollBy({ top: window.innerHeight * 0.8, behavior: "smooth" }));
       await page.waitForTimeout(700);
     }

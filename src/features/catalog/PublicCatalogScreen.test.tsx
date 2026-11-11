@@ -142,7 +142,7 @@ describe("PublicCatalogScreen carrito", () => {
     const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("*12 piezas en total*");
-    expect(text).toContain("Subtotal estimado: $1,440");
+    expect(text).toContain("Subtotal estimado: $1,440.00 MXN");
     expect(text).not.toContain("Iconic");
   });
 });

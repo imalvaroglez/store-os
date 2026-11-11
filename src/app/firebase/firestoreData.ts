@@ -392,21 +392,36 @@ export async function saveCategoryPricingRules(
 }
 
 /**
- * Storefront text slots whose CLEARED state ("") must delete the remote field.
- * A merge write with the key omitted would silently resurrect the old value
- * after reload (#332): the inline editor keeps "" in the draft precisely so
- * this boundary can turn it into an explicit delete.
+ * Single-value storefront text slots whose CLEARED state ("") must delete the
+ * remote field. A write with the key omitted (undefined) would silently
+ * resurrect the old value after reload (#332): the inline editor keeps "" in
+ * the draft precisely so this boundary can turn it into an explicit delete.
  */
-const STOREFRONT_TEXT_DELETE_SLOTS = ["shipping", "hours"] as const;
+const STOREFRONT_TEXT_DELETE_SLOTS = ["shipping", "hours", "notice", "instagram"] as const;
+
+/**
+ * Storefront map ready for Firestore: undefined stripped (setDoc rejects it)
+ * and cleared text slots deleted. `merge` maps them to deleteField() (the
+ * batch writes with merge:true); `replace` just drops the key — a full-replace
+ * set() rejects deleteField() and absence IS the deletion. Both end with the
+ * field absent remotely (#332).
+ */
+function storefrontForWrite(storefront: Storefront, mode: "merge" | "replace"): Record<string, unknown> {
+  const clean = stripUndefined(storefront) as Record<string, unknown>;
+  for (const slot of STOREFRONT_TEXT_DELETE_SLOTS) {
+    if (clean[slot] === "") {
+      if (mode === "merge") clean[slot] = deleteField();
+      else delete clean[slot];
+    }
+  }
+  return clean;
+}
 
 /** Save editable storefront text to its private, control, and public projections atomically. */
 export async function saveStorefrontBatch(store: Pick<Store, "id" | "slug">, storefront: Storefront, updatedAt: string): Promise<void> {
   const { db } = getFirebase();
   const batch = writeBatch(db);
-  const clean = stripUndefined(storefront) as Record<string, unknown>;
-  for (const slot of STOREFRONT_TEXT_DELETE_SLOTS) {
-    if (clean[slot] === "") clean[slot] = deleteField();
-  }
+  const clean = storefrontForWrite(storefront, "merge");
   batch.set(doc(db, "stores", store.id), { storefront: clean, updatedAt }, { merge: true });
   batch.set(doc(db, "adminStores", store.id), { storeId: store.id }, { merge: true });
   batch.set(doc(db, "publicStores", store.slug), { storeId: store.id, storefront: clean }, { merge: true });
@@ -1428,10 +1443,10 @@ export function projectPublicStore(store: Store) {
     slug: store.slug,
     type: store.type,
     whatsappPhone: store.whatsappPhone ?? null,
-    // Strip undefineds: local state can carry them (cleared inline fields) and
-    // setDoc rejects them outright — a poisoned storefront would break the
-    // whole "Republicar catálogo" projection until rewritten clean (#332).
-    storefront: sf ? stripUndefined(sf) : null,
+    // Undefined-stripped and ""-deleted via the shared write shape: local
+    // state can carry undefineds (setDoc rejects them outright) and a cleared
+    // slot must end up ABSENT here too, exactly like the editor batch (#332).
+    storefront: sf ? storefrontForWrite(sf, "replace") : null,
     // Visible tiers with their (informative) minimums; null for stores that
     // never set tiers so stale clients fall back to the single price.
     priceTiers: store.priceTiers
