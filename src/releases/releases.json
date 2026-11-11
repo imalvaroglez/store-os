@@ -1,5 +1,13 @@
 [
   {
+    "version": "1.13.2",
+    "date": "2026.11.11",
+    "title": "El rojo oficial de Olivia",
+    "notes": [
+      "El catálogo estrena el rojo oscuro oficial de Olivia: el logo nuevo y el color de los detalles (botones, enlaces y precios destacados) ahora son el mismo."
+    ]
+  },
+  {
     "version": "1.13.1",
     "date": "2026.11.11",
     "title": "Correcciones al catálogo público de Olivia",
@@ -9,7 +17,6 @@
       "La ficha de cada pieza muestra nivel, precio y condición alineados en tres columnas, sin «?» ni ayudas flotantes: Girly dice «Desde N piezas» con el mínimo real de la tienda e Iconic dice «Con beneficio vigente».",
       "Mi pedido quedó más claro: miniatura sin borde decorativo, botones de cantidad alineados con los importes, el campo de nombre solo con guía («Escribe tu nombre para identificarte»), un solo aviso de estimados y el botón ahora dice «Enviar solicitud por WhatsApp».",
       "El pie de página pasó a fondo blanco y lleva el logo transparente (sin rectángulo crema), igual que el encabezado; se conservan los enlaces de WhatsApp, Explora y Entregas y atención.",
-      "El catálogo estrena el rojo oscuro oficial de Olivia: el logo nuevo y el color de los detalles (botones, enlaces y precios destacados) ahora son el mismo.",
       "Las categorías de la portada se acomodan en cinco columnas al ancho de escritorio (diez categorías se leen 5 y 5) y la última fila queda centrada cuando no completa; al pasar el cursor la foto se atenúa suavemente.",
       "Medimos la fluidez del catálogo con trazas comparativas (fría y caliente, escritorio y móvil): no reproducimos los tirones reportados ni en la versión anterior ni en ésta. El medidor queda en el repo para repetir la prueba con un teléfono real."
     ]
