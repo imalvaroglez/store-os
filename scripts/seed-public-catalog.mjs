@@ -70,7 +70,7 @@ function gradientPng(width, height, rgb) {
 
 mkdirSync("public/images/synth", { recursive: true });
 const imageUrls = [];
-const PALETTE = [[217, 115, 147], [85, 46, 67], [231, 231, 231], [180, 160, 170], [120, 130, 150], [240, 225, 215]];
+const PALETTE = [[217, 115, 147], [116, 0, 3], [231, 231, 231], [180, 160, 170], [120, 130, 150], [240, 225, 215]];
 for (let i = 0; i < IMAGES; i++) {
   const width = 360 + (i % 4) * 140; // 360..780 px
   const height = width;
