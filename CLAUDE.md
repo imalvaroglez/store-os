@@ -109,6 +109,8 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 **Gate de revisión UX independiente:** para toda feature visual nueva o rediseño, además del recorrido completo, el revisor debe responder «¿qué espacio desperdicia esta UI?», «¿qué bloques o mensajes son redundantes?», «¿qué datos se podrían alinear en una fila?», «¿la compacidad sigue siendo legible, accesible y segura?». La fricción o el scroll evitables y significativos del recorrido principal son hallazgos de UX; no exigir rediseñar superficies fuera del alcance sin evidencia.
 
+**Acabado de interfaz:** las acciones equivalentes comparten alineación, altura y variante visual. Las etiquetas explican la acción y la ayuda opcional aparece con cursor o teclado. El movimiento da feedback sin retrasar la tarea. La revisión UX verifica estos puntos según [la guía de diseño](docs/DESIGN.md#acciones-ayuda-y-movimiento).
+
 ### Estándar de entrega UX (mandato del PO, 2026-11-09 — obligatorio en todo StoreOS)
 
 Nació del incidente 1.11.0 (Estrategia de precios/Reglas: técnicamente correcto, pruebas en verde, pero cientos de registros sin filtros ni selección masiva, descubierto al usarlo en vivo). Toda funcionalidad que entregue listas, configuración o trabajo sobre registros cumple esto **antes** de declararse lista:
@@ -161,6 +163,13 @@ Cada uno publica su veredicto independiente: **APROBADO, BLOQUEADO o NO APLICA j
 - Mensajes tipo Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
 - Haz commit/push solo cuando se te pida (o al cerrar un paso lógico).
 - Sin trailer `Co-Authored-By` en los commits (decisión del PO, 2026-11-09: no mezclar atribuciones de agentes con correos ajenos). (Esta convención se mantiene idéntica en `AGENTS.md` y `CLAUDE.md` — ambos archivos deben estar a la par.)
+
+### Cierre de cada entrega
+
+- Verifica `git status --short --untracked-files=all` al empezar y antes de entregar. Conserva los cambios ajenos. Guarda los cambios de la tarea en commits de su rama y usa una carpeta fuera del árbol de código para capturas, pruebas temporales y otros archivos auxiliares.
+- Si el PR sigue activo, conserva su worktree limpio. Si queda trabajo sin commit, registra en la issue o PR qué falta, quién lo retoma y la ruta del worktree.
+- Tras integrar o cerrar el PR, retira el worktree con `git worktree remove` cuando hayas verificado que sus commits, cambios y archivos locales necesarios están a salvo. Para rutas que ya desaparecieron, revisa primero `git worktree prune --dry-run --verbose`.
+- Indica en la entrega el estado del worktree: limpio y conservado, retirado o con trabajo pendiente documentado.
 
 ## Aplicación del feedback y continuidad
 
