@@ -208,7 +208,7 @@ describe("modal de compartir en dos columnas (#307)", () => {
   it("abre con texto, recibo y ambas acciones juntos; layout de dos columnas", () => {
     render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Ver detalle para compartir" }));
-    const textArea = screen.getByLabelText("Detalle del pedido");
+    const textArea = screen.getByLabelText("Detalle del pedido") as HTMLTextAreaElement;
     expect(textArea.value).toContain("Anillo");
     expect(screen.getByRole("button", { name: "Copiar detalle" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Imprimir / Guardar PDF" })).toBeInTheDocument();
