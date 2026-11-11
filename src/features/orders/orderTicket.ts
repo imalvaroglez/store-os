@@ -30,7 +30,8 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
   const balanceCents = Math.round(totals.balance * 100);
   // #306: a fresh order with nothing received owes exactly the Total — the
   // Saldo line would just repeat it. Show Saldo only when money/credit already
-  // moved (partial), and a real surplus as "Saldo a favor".
+  // moved (partial), and a real surplus as "A tu favor" (#306 Fer-reader
+  // verdict: "Saldo a favor" reads as debt to a clienta).
   const moneyMoved = totals.paid > 0 || totals.appliedCredit > 0;
   // #306 + revisión adversarial: hide the Saldo ONLY when it would repeat the
   // Total verbatim (nothing received, no credit, no posventa adjustment). An
@@ -62,7 +63,7 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
 
   lines.push(...(groups.length ? ["", ...groups] : []), "", `*Total* ${formatMoneyPlain(totalCents / 100)}`);
   if (showSaldo) lines.push(`*Saldo* ${formatMoneyPlain(balanceCents / 100)}`);
-  if (favorCents > 0) lines.push(`*Saldo a favor* ${formatMoneyPlain(favorCents / 100)}`);
+  if (favorCents > 0) lines.push(`*A tu favor* ${formatMoneyPlain(favorCents / 100)}`);
   return lines.join("\n");
 }
 
@@ -95,8 +96,9 @@ export type OrderTicketData = {
   cobrado: string;
   /** Present ONLY when money is still owed (partial) — mirrors the text format. */
   saldo?: string;
-  /** Real surplus in Fer's favor — paid beyond the effective total (#306). */
-  saldoAFavor?: string;
+  /** Real surplus in the clienta's favor — paid beyond the effective total;
+   * shown to the client as "A tu favor" (#306 Fer-reader verdict). */
+  availableCredit?: string;
 };
 
 export function orderTicketData(order: Order, storeName: string, currentCustomerName?: string): OrderTicketData {
@@ -124,6 +126,6 @@ export function orderTicketData(order: Order, storeName: string, currentCustomer
     total: formatMoneyPlain(totalCents / 100),
     cobrado: formatMoneyPlain(receivedCents / 100),
     ...(showSaldo ? { saldo: formatMoneyPlain(balanceCents / 100) } : {}),
-    ...(favorCents > 0 ? { saldoAFavor: formatMoneyPlain(favorCents / 100) } : {}),
+    ...(favorCents > 0 ? { availableCredit: formatMoneyPlain(favorCents / 100) } : {}),
   };
 }

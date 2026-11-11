@@ -121,9 +121,9 @@ describe("modelo de dinero — invariantes sobre la matriz exhaustiva (#225 pre-
     } else {
       expect(saldoLine, "sin saldo pendiente o cuando el Saldo repetiría el Total, no hay línea").toBeUndefined();
     }
-    const favorLine = text.split("\n").find((l) => l.startsWith("*Saldo a favor* "));
+    const favorLine = text.split("\n").find((l) => l.startsWith("*A tu favor* "));
     if (totals.availableCredit > 0) {
-      expect(favorLine, "el excedente real se etiqueta como saldo a favor").toBe(`*Saldo a favor* ${formatMoneyPlain(totals.availableCredit)}`);
+      expect(favorLine, "el excedente real se etiqueta como A tu favor (clienta), no como deuda").toBe(`*A tu favor* ${formatMoneyPlain(totals.availableCredit)}`);
     } else {
       expect(favorLine).toBeUndefined();
     }
