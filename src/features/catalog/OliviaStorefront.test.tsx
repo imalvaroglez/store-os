@@ -195,7 +195,8 @@ describe("tarjetas — jerarquía de precios", () => {
     const prices = await screen.findByRole("region", { name: "Precios por pieza" });
     expect(within(prices).getByText("$90")).toBeTruthy();
     expect(within(prices).queryByText("$0")).toBeNull();
-    expect(within(prices).getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toBeTruthy();
+    // 1.13.1: la condición del nivel único es visible, sin «?».
+    expect(within(prices).getByText("Con beneficio Iconic vigente")).toBeTruthy();
   });
 
   it.each([
@@ -534,13 +535,26 @@ describe("detalle de producto — precios por tier", () => {
     expect(await screen.findByText("Anillo Blossom")).toBeTruthy();
     const prices = screen.getByRole("region", { name: "Precios por pieza" });
     expect(screen.getByText("Precio por pieza")).toBeTruthy();
-    expect(within(prices).getByText("$90")).toBeTruthy();
-    expect(within(prices).getByText("Girly").closest("div")).toHaveTextContent(/Girly\s*\$120/);
-    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Girly" })).toHaveAttribute("title", "desde 5 piezas");
-    expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
-    expect(within(prices).getByText("Regular").closest("div")).toHaveTextContent(/Regular\s*\$140/);
-    expect(Array.from(prices.querySelectorAll(".olv-price-row dt")).map((row) => row.textContent?.trim())).toEqual(["Regular", "Girly", "Iconic"]);
+    // 1.13.1: sin «?», sin ayuda flotante, sin title duplicado — la condición
+    // es texto visible en la tercera columna de cada fila.
+    expect(prices.querySelectorAll(".price-help-wrap")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /Cómo se obtiene/ })).toBeNull();
+    expect(within(prices).queryByTitle(/Obtén el mejor precio/)).toBeNull();
+    expect(within(prices).getByText("Desde 5 piezas")).toBeTruthy();
+    expect(within(prices).getByText("Con beneficio Iconic vigente")).toBeTruthy();
+    // Cada fila: nivel + importe + condición; Regular sin requisito deja la
+    // tercera celda vacía.
+    const rows = Array.from(prices.querySelectorAll(".olv-price-row"));
+    expect(rows.map((row) => row.querySelector("dt")?.textContent?.trim())).toEqual(["Regular", "Girly", "Iconic"]);
+    expect(rows[0].querySelector(".olv-price-row-amount")).toHaveTextContent("$140");
+    expect(rows[0].querySelector(".olv-price-row-condition")).toHaveTextContent("");
+    expect(rows[1].querySelector(".olv-price-row-amount")).toHaveTextContent("$120");
+    expect(rows[1].querySelector(".olv-price-row-condition")).toHaveTextContent("Desde 5 piezas");
+    expect(rows[2].querySelector(".olv-price-row-amount")).toHaveTextContent("$90");
+    expect(rows[2].querySelector(".olv-price-row-condition")).toHaveTextContent("Con beneficio Iconic vigente");
     expect(prices.querySelector(".olv-price-row--featured")).toHaveTextContent("Iconic");
+    // El ahorro de Iconic no promete desbloqueo por agregar piezas.
+    expect(within(prices).getByText("Hasta $50 menos por pieza con beneficio Iconic vigente")).toBeTruthy();
     // Agregar al carrito desde el detalle.
     fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
     expect(screen.getByRole("button", { name: "Abrir pedido" }).textContent).toContain("1");

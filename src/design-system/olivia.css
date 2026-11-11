@@ -113,15 +113,26 @@
 .olv-price-compare-item .price-help-wrap { justify-self: end; }
 .olv-price-detail { padding: 16px; border-radius: 12px; background: var(--olv-surface); box-shadow: inset 0 0 0 1px var(--olv-rule); }
 .olv-price-caption { color: var(--olv-ink-soft); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+/* 1.13.1: the ladder is ONE 3-column grid — level | amount (shared axis,
+   right-aligned) | visible condition. Rows keep their own styling via
+   subgrid; without subgrid each row falls back to the same 3 columns. */
 .olv-price-ladder { display: grid; gap: 6px; margin-top: 10px; }
-.olv-price-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: 44px; gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--olv-rule); }
+.olv-price-row { display: grid; grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1.15fr); align-items: center; min-height: 44px; gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--olv-rule); }
+@supports (grid-template-columns: subgrid) {
+  .olv-price-ladder { grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1.15fr); column-gap: 12px; }
+  .olv-price-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
+}
 .olv-price-row:last-child { border-bottom: 0; }
 .olv-price-row--featured { border: 1px solid var(--olv-accent); border-radius: 8px; background: var(--olv-accent-soft); }
 .olv-price-row-label { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; }
-.olv-price-row-value { display: inline-flex; align-items: center; gap: 4px; }
-.olv-price-row-amount { font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.olv-price-row-amount { justify-self: end; white-space: nowrap; font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.olv-price-row-condition { color: var(--olv-ink-soft); font-size: 12px; line-height: 1.35; }
 .olv-price-row--featured .olv-price-row-label,.olv-price-row--featured .olv-price-row-amount { font-weight: 800; }
 .olv-price-row--featured .olv-price-row-amount { color: var(--olv-accent); }
+/* Narrow phones: the condition drops to its own line inside the row. */
+@media (max-width: 380px) {
+  .olv-price-row-condition { grid-column: 1 / -1; padding-left: 2px; margin-top: -4px; }
+}
 .olv-how { margin-top: 64px; padding: 32px 24px; background: var(--olv-accent-soft); border-radius: var(--olv-radius); }
 .olv-steps { display: grid; gap: 16px; margin-block: 28px; font-size: 13px; }
 .olv-steps span { font-family: var(--font-display); font-size: 22px; padding-right: 14px; color: var(--olv-accent); }
