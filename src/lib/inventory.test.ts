@@ -398,7 +398,7 @@ describe("projectedShortageByDimension / attributeProjectedShortageToLines (#325
     const savedOrder = { id: "o", storeId: "s", items: [{ productId: "p1", productName: "X", quantity: 5, unitPrice: 1, subtotal: 5 }], orderStatus: "asked", deposit: 0 } as Order;
     const deltas = reservationDeltasForOrderChange(undefined, savedOrder);
     expect(deltas.get("p1")).toBe(-5); // la reservación REAL resta las piezas
-    const afterSave = shortageByDimension(draft, [product("p1", 3 - 5)]).get("p1")?.missing;
+    const afterSave = shortageByDimension(draft, [product("p1", 3 + (deltas.get("p1") ?? 0))]).get("p1")?.missing;
     expect(projected).toBe(2);
     expect(afterSave).toBe(projected);
   });
@@ -409,6 +409,11 @@ describe("projectedShortageByDimension / attributeProjectedShortageToLines (#325
     const openOrder = { id: "o1", storeId: "s1", items: [{ productId: "p1", productName: "X", quantity: 2, unitPrice: 1, subtotal: 2 }], orderStatus: "asked", deposit: 0 } as Order;
     expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 5 }], openOrder, false, [product("p1", 3)]).size).toBe(0);
     expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 5 }], undefined, false, [product("p1", 3)]).size).toBe(0);
+    // P2 re-review: a shelf ALREADY negative from other orders still reads as
+    // faltante on a non-holding draft — the card shows it regardless of status.
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 5 }], undefined, false, [product("p1", -2)]).get("l1")).toBe(2);
+    // Holding draft on the same shelf: the take adds its own deficit (0 − (−2+2)).
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 2 }], openOrder, true, [product("p1", -5)]).get("l1")).toBe(5);
   });
 
   it("color sin existencia capturada estima desde 0 — igual que el guardado (P2 revisión)", () => {

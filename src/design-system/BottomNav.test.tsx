@@ -25,11 +25,11 @@ describe("BottomNav ▾ (#325)", () => {
     expect(chevron.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("el área de toque de 44px queda anclada al borde derecho de SU pestaña (sin invadir vecinos)", () => {
+  it("el área de toque de 40px queda anclada al borde derecho de SU pestaña (sin invadir vecinos)", () => {
     render(<BottomNav active="pedidos" storeType="inventory_tiered" />);
     const chevron = screen.getByRole("button", { name: "Expandir" });
     expect(chevron.className).toContain("after:right-0");
     expect(chevron.className).toContain("after:h-11");
-    expect(chevron.className).toContain("after:w-11");
+    expect(chevron.className).toContain("after:w-10");
   });
 });
