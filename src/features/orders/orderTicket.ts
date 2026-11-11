@@ -67,6 +67,23 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
   return lines.join("\n");
 }
 
+/** #308 — filesystem-safe receipt name: Pedido-<REF>-<Clienta>. The print
+ * flow sets it as document.title so the browser's "Guardar como PDF"
+ * suggests it (the only filename StoreOS controls); accents transliterate,
+ * anything else collapses to dashes, missing name falls back to ref-only. */
+export function receiptFileName(orderId: string, customerName?: string): string {
+  const safe = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-+/g, "")
+      .slice(0, 40)
+      .replace(/-+$/g, ""); // a cut can land mid-separator — no trailing dash
+  const client = safe(customerName ?? "");
+  return `Pedido-${orderReference(orderId)}${client ? `-${client}` : ""}`;
+}
+
 /** "31 de octubre, 2026" — Fer's date style. Calendar dates parse at local
  * noon so no UTC conversion moves the day (same trap as lib/dates). */
 function longDate(iso: string): string {

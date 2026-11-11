@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -14,7 +14,7 @@ import {
 } from "../../design-system";
 import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
 import { shortageByDimension } from "../../lib/inventory";
-import { orderTicketData, orderTicketText } from "./orderTicket";
+import { orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
@@ -59,6 +59,31 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const orderDate = order.promisedDate
     ? `Prometido: ${new Date(`${order.promisedDate}T00:00:00`).toLocaleDateString("es-MX")}`
     : order.createdAt ? `Creado: ${new Date(order.createdAt).toLocaleDateString("es-MX")}` : "Sin fecha";
+
+  /** #308 (+ revisión adversarial): name the PDF the browser suggests —
+   * Pedido-<REF>-<Clienta> — via document.title while the print dialog is
+   * open. Re-entry (iOS double-tap: print is non-blocking there and
+   * afterprint never fires) must not re-capture the receipt name as
+   * "previous" and stick it forever. */
+  const printingRef = useRef(false);
+  function printReceipt() {
+    if (printingRef.current) return;
+    printingRef.current = true;
+    const previous = document.title;
+    document.title = receiptFileName(order.id, order.customerName || customer?.name);
+    let timer = 0;
+    const restore = () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("afterprint", restore);
+      document.title = previous;
+      printingRef.current = false;
+    };
+    window.addEventListener("afterprint", restore, { once: true });
+    window.print();
+    // Fallback where afterprint never fires; long enough that non-blocking
+    // dialogs usually read the titled document before we restore.
+    timer = window.setTimeout(restore, 1_500);
+  }
 
   async function advance() {
     const advanced = advanceOrder(order);
@@ -216,7 +241,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
             data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)}
             whatsapp={activeStore?.whatsappPhone}
           />
-          <Button full className="mt-auto" variant="secondary" onClick={() => window.print()}>Imprimir / Guardar PDF</Button>
+          <Button full className="mt-auto" variant="secondary" onClick={printReceipt}>Imprimir / Guardar PDF</Button>
           <p className="text-xs text-on-surface-soft">
             Al imprimir elige «Guardar como PDF» para compartirlo por WhatsApp. Solo el recibo sale en papel.
           </p>

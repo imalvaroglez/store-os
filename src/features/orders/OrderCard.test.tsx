@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderCard } from "./OrderCard";
@@ -223,5 +223,27 @@ describe("modal de compartir en dos columnas (#307)", () => {
     expect(textPanel?.contains(screen.getByRole("button", { name: "Copiar detalle" }))).toBe(true);
     expect(receiptPanel?.contains(receiptButton)).toBe(true);
     expect(textPanel).not.toBe(receiptPanel);
+  });
+});
+
+// Revisión adversarial #329: doble toque en Imprimir (print no bloqueante,
+// sin afterprint) no deja el título clavado en el nombre del recibo.
+describe("printReceipt · reentrada (#329 revisión)", () => {
+  it("un doble toque restaura el título original una sola vez", async () => {
+    vi.useFakeTimers();
+    const printSpy = vi.fn();
+    window.print = printSpy as unknown as typeof window.print;
+    const original = document.title;
+    render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalle para compartir" }));
+    const button = screen.getByRole("button", { name: "Imprimir / Guardar PDF" });
+    fireEvent.click(button);
+    fireEvent.click(button); // reentrada ignorada
+    expect(printSpy).toHaveBeenCalledTimes(1);
+    expect(document.title).toMatch(/^Pedido-/);
+    act(() => { vi.advanceTimersByTime(1600); });
+    expect(document.title).toBe(original);
+    window.print = window.print; // noop cleanup guard
+    vi.useRealTimers();
   });
 });
