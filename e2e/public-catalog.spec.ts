@@ -344,8 +344,9 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   expect(text).toContain("• 1× Aretes Luna");
   expect(text).not.toContain("AAN1385");
   expect(text).not.toContain("OLI-002");
-  expect(text).toContain("Precio aplicable: Regular");
-  expect(text).toContain("Subtotal estimado: $260 MXN");
+  expect(text).toContain("*2 piezas en total*");
+  expect(text).toContain("Subtotal estimado: $260");
+  expect(text).not.toContain("Precio aplicable");
   expect(text).toContain("/catalogo/olivia");
 
   // The cart survives a full reload (localStorage per store slug).

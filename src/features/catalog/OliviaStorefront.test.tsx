@@ -322,9 +322,12 @@ describe("carrito del storefront — acumular y pedir", () => {
     expect(text).not.toContain("AAN1385");
     expect(text).not.toContain("OLI-002");
     expect(text).toContain("/catalogo/olivia");
-    expect(text).toContain("Total de piezas: 2");
-    expect(text).toContain("Precio aplicable: Regular");
-    expect(text).toContain("Subtotal estimado: $260 MXN");
+    // #305: dos cifras etiquetadas como estimación; ambas piezas comparten la
+    // única categoría del fixture → sin encabezado de grupo.
+    expect(text).toContain("*2 piezas en total*");
+    expect(text).toContain("Subtotal estimado: $260");
+    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $170"); // 90 + 80
+    expect(text).toContain("sujetos a confirmación");
   });
 
   it("stepper ± actualiza líneas y reduce a cero para quitar", async () => {
@@ -377,7 +380,7 @@ describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
 });
 
 describe("carrito — progreso hacia Iconic", () => {
-  it("mantiene Iconic como meta y Girly como escalón intermedio", async () => {
+  it("#305 el titular es el habitual (Girly por piezas), sin tarjetas de meta", async () => {
     localStorage.setItem(cartKey, JSON.stringify({
       v: 1,
       lines: [{
@@ -390,22 +393,24 @@ describe("carrito — progreso hacia Iconic", () => {
     await renderStore();
     await openDrawer();
 
-    expect(screen.getByText(/Meta final: precio Iconic/i)).toBeTruthy();
-    expect(screen.getByText(/Te faltan \$640 en productos a precio Iconic/i)).toBeTruthy();
-    const next = screen.getByText(/Te falta 1 pieza para desbloquear Girly/i);
-    const goal = screen.getByText(/Meta final: precio Iconic/i);
-    expect(next.compareDocumentPosition(goal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByText(/Agrega 1 pieza y ahorrarás/i)).toBeNull();
+    // Sin tarjetas de progreso: el resumen son filas compactas (#315/#305).
+    expect(screen.queryByText(/Meta final/i)).toBeNull();
+    expect(screen.queryByText(/desbloqueado/i)).toBeNull();
+    // 4 piezas < 5 → habitual Regular; fila Iconic visible (< $1,000).
+    expect(screen.getByText("Subtotal estimado")).toBeTruthy();
+    expect(screen.getByText("$560.00 MXN")).toBeTruthy(); // 4 × 140 Regular
+    expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
+    expect(screen.getByText("$360.00 MXN")).toBeTruthy(); // 4 × 90 Iconic
 
     const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
     fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza" }));
-    expect(screen.getByText("Precio Girly aplicado")).toBeTruthy();
-    expect(screen.getByText("Este precio ya está aplicado a cada pieza de tu pedido.")).toBeTruthy();
-    expect(within(row).getByText("Precio por pieza")).toBeTruthy();
-    expect(within(row).getByText("$600")).toBeTruthy();
+    // 5 piezas → Girly habitual (demostrable por cantidad), nunca Iconic.
+    expect(await screen.findByText("$600.00 MXN")).toBeTruthy(); // 5 × 120
+    expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
+    expect(screen.getByText("$450.00 MXN")).toBeTruthy(); // 5 × 90
   });
 
-  it("muestra subtotal Girly, monto exacto faltante y ahorro de la selección actual", async () => {
+  it("#305 muestra el habitual y la fila Iconic condicional; cruce del umbral", async () => {
     localStorage.setItem(
       cartKey,
       JSON.stringify({
@@ -424,18 +429,21 @@ describe("carrito — progreso hacia Iconic", () => {
     await renderStore();
     await openDrawer();
 
-    expect(screen.getAllByText(/Precio Girly desbloqueado/i).length).toBeGreaterThan(0);
-    expect(screen.getByText("Precio Girly aplicado")).toBeTruthy();
-    expect(screen.getByText("Este precio ya está aplicado a cada pieza de tu pedido.")).toBeTruthy();
-    expect(within(screen.getByRole("list")).getByText("Precio por pieza")).toBeTruthy();
-    expect(within(screen.getByRole("list")).getByText("$1,200")).toBeTruthy();
-    expect(screen.getByText("$1,200 MXN")).toBeTruthy();
-    expect(screen.getByText(/Te faltan \$100 en productos a precio Iconic/i)).toBeTruthy();
-    expect(screen.getByText(/Con Iconic, lo que ya llevas costaría \$300 menos/i)).toBeTruthy();
-    expect(screen.queryByText(/por .* más te llevas/i)).toBeNull();
+    // 10 piezas → Girly $1,200 habitual (≥ $1,000): SOLO la fila habitual.
+    expect(screen.getByText("$1,200.00 MXN")).toBeTruthy();
+    expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
+    expect(screen.queryByText(/Meta final/i)).toBeNull();
+
+    // Bajar a 8 piezas → Girly $960 (< $1,000): la fila Iconic reaparece.
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza" }));
+    expect(await screen.findByText("$960.00 MXN")).toBeTruthy();
+    expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
+    expect(screen.getByText("$720.00 MXN")).toBeTruthy(); // 8 × 90
   });
 
-  it("celebra Iconic a 12 piezas y deja de mostrar una siguiente meta", async () => {
+  it("#305 a 12 piezas el titular sigue siendo Girly (nunca Iconic por identidad)", async () => {
     localStorage.setItem(cartKey, JSON.stringify({
       v: 1,
       lines: [{
@@ -449,10 +457,10 @@ describe("carrito — progreso hacia Iconic", () => {
     await renderStore();
     await openDrawer();
 
-    expect(screen.getAllByText(/Precio Iconic desbloqueado/i).length).toBeGreaterThan(0);
-    expect(screen.getByText("$1,080 MXN")).toBeTruthy();
-    expect(screen.getAllByText(/Ahorras \$600 frente a Regular/i).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/Tu meta:/i)).toBeNull();
+    // Habitual Girly $1,440 (≥ $1,000) → sin fila Iconic, sin "desbloqueado".
+    expect(screen.getByText("$1,440.00 MXN")).toBeTruthy();
+    expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
+    expect(screen.queryByText(/desbloqueado/i)).toBeNull();
   });
 });
 
@@ -501,9 +509,10 @@ describe("detalle de producto — precios por tier", () => {
     const list = screen.getByRole("list");
     expect(within(list).getByText("Anillo Blossom")).toBeTruthy();
     expect(within(list).getByText("Aretes Luna")).toBeTruthy();
-    expect(screen.getAllByText(/Precio Girly desbloqueado/i).length).toBeGreaterThan(0);
-    expect(screen.getByText("$580 MXN")).toBeTruthy();
-    expect(screen.getByText(/Te faltan \$560 en productos a precio Iconic/i)).toBeTruthy();
+    // #305: 5 piezas hidratadas → habitual Girly $580; fila Iconic visible (< $1,000).
+    expect(screen.getByText("$580.00 MXN")).toBeTruthy();
+    expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
+    expect(screen.getByText("$440.00 MXN")).toBeTruthy(); // 4×90 + 1×80
   });
 });
 
