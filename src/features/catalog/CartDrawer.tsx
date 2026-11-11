@@ -20,6 +20,11 @@ const STOCK_LEGENDS: Record<PublicStockSignal, string | null> = {
   disponible: null,
 };
 
+// 1.13.1: the single shared estimate notice — next to the estimates, also when
+// a price is still "Por confirmar". Nothing repeated under the action.
+const ESTIMATE_NOTICE =
+  "Los precios son estimados. Por WhatsApp confirmamos tu beneficio, disponibilidad, total y entrega. Envío no incluido. Tu selección no reserva las piezas.";
+
 type PublicPricedProduct = { price?: number; prices?: Record<string, number> };
 
 function tierRequirement(tier: PublicPriceTier): string | null {
@@ -312,7 +317,9 @@ export function CartDrawer({
               const lineSubtotal = linePricing?.subtotal ?? (typeof unitPrice === "number" ? unitPrice * l.qty : undefined);
               return (
                 <li key={l.productSlug} className="olv-cart-line flex gap-3 py-3">
-                  <ProductImage src={l.image} alt={l.name} size="thumb" />
+                  {/* 1.13.1: neutral thumbnail — no decorative ring/background
+                      in rest; focus stays for interactive controls only. */}
+                  <ProductImage src={l.image} alt={l.name} size="thumb" natural />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -325,7 +332,7 @@ export function CartDrawer({
                         <div className="flex items-center gap-2">
                           <IconButton
                             variant="secondary"
-                            aria-label="Restar una pieza"
+                            aria-label={`Restar una pieza de ${l.name}`}
                             onClick={() => onSetQty(l.productSlug, l.qty - 1)}
                           >
                             −
@@ -333,7 +340,7 @@ export function CartDrawer({
                           <span className="w-8 text-center font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums" aria-live="polite">{l.qty}</span>
                           <IconButton
                             variant="secondary"
-                            aria-label="Sumar una pieza"
+                            aria-label={`Sumar una pieza de ${l.name}`}
                             onClick={() => onSetQty(l.productSlug, l.qty + 1)}
                           >
                             +
@@ -384,21 +391,19 @@ export function CartDrawer({
                     </div>
                   )}
                 </dl>
-                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">
-                  Los precios son estimados. Confirmamos tu beneficio, disponibilidad, total final y
-                  entrega por WhatsApp. Envío no incluido.
-                </p>
+                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">{ESTIMATE_NOTICE}</p>
               </div>
             ) : pricing ? (
               <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
-                <p className="text-[var(--olv-ink-soft,var(--ink-soft))]">
-                  Te confirmo precios y existencia por WhatsApp.
-                </p>
+                <p className="text-[var(--olv-ink-soft,var(--ink-soft))]">{ESTIMATE_NOTICE}</p>
               </div>
             ) : null}
+            {/* 1.13.1: visual label retired — placeholder carries the hint, the
+                accessible name stays "Tu nombre". */}
             <TextField
               label="Tu nombre"
-              placeholder="Para que sepa quién pide"
+              labelClassName="sr-only"
+              placeholder="Escribe tu nombre para identificarte"
               value={customerName}
               onChange={(event) => {
                 setCustomerName(event.target.value);
@@ -407,12 +412,9 @@ export function CartDrawer({
             />
             <a href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)} target="_blank" rel="noreferrer">
               <Button full size="lg" variant="primary" className="bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90">
-                Enviar pedido por WhatsApp
+                Enviar solicitud por WhatsApp
               </Button>
             </a>
-            <p className="text-[var(--olv-ink-soft,var(--ink-soft))] text-xs text-center">
-              Precio y existencia por confirmar por WhatsApp. Enviar tu selección no confirma ni reserva el pedido.
-            </p>
           </div>
         </div>
       )}
