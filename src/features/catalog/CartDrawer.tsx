@@ -39,10 +39,10 @@ function tierRequirement(tier: PublicPriceTier): string | null {
 }
 
 /**
- * Visible condition for the product sheet's price ladder (1.13.1): what the
- * client needs to KNOW, phrased from the store's own configuration. An
- * identity benefit (money-gated, #130) says it depends on a standing benefit
- * — never that adding pieces unlocks it for the current request.
+ * Visible condition for the product sheet's price ladder (1.13.1, spec v2):
+ * what the client needs to KNOW, phrased from the store's own configuration.
+ * An identity benefit (money-gated, #130) says it depends on a standing
+ * benefit — never that adding pieces unlocks it for the current request.
  */
 function tierCondition(tier: PublicPriceTier): string {
   const parts: string[] = [];
@@ -51,7 +51,7 @@ function tierCondition(tier: PublicPriceTier): string {
   }
   if (tier.minAmount != null) {
     parts.push(tier.minPieces == null
-      ? `Con beneficio ${tier.label} vigente`
+      ? "Con beneficio vigente"
       : `Desde ${formatMoney(tier.minAmount)} en precio ${tier.label}`);
   }
   return parts.join(" · ");
@@ -125,16 +125,18 @@ export function PublicTierPrices({
     return (
       <section className="olv-price-block olv-price-detail mt-3" aria-label="Precios por pieza">
         <p className="olv-price-caption">Precio por pieza</p>
-        {/* 1.13.1: one 3-column ladder — level, amount on a shared axis,
-            condition visible. No "?" help, no floating tooltip, no title. */}
+        {/* 1.13.1 (spec v2): one 3-column ladder — level, condition, amount.
+            Names share one typographic weight, conditions sit between the
+            name and the amount, and every amount hugs the right edge. No "?"
+            help, no floating tooltip, no title. */}
         <dl className="olv-price-ladder">
           {tiers.map((tier) => {
             const featured = tier.id === aspirational.id;
             return (
               <div key={tier.id} className={`olv-price-row${featured ? " olv-price-row--featured" : ""}`}>
                 <dt className="olv-price-row-label">{tier.label}</dt>
-                <dd className="olv-price-row-amount">{formatMoney(product.prices?.[tier.id])}</dd>
                 <dd className="olv-price-row-condition">{tierCondition(tier)}</dd>
+                <dd className="olv-price-row-amount">{formatMoney(product.prices?.[tier.id])}</dd>
               </div>
             );
           })}
@@ -142,7 +144,7 @@ export function PublicTierPrices({
         {savings !== null && (
           <p className="olv-price-savings">
             {identityAspirational
-              ? `Hasta ${formatMoney(savings)} menos por pieza con beneficio ${aspirational.label} vigente`
+              ? `Hasta ${formatMoney(savings)} menos por pieza con beneficio vigente`
               : `Hasta ${formatMoney(savings)} menos por pieza al desbloquear ${aspirational.label}`}
           </p>
         )}
@@ -397,7 +399,12 @@ export function CartDrawer({
               <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
                 <p className="text-[var(--olv-ink-soft,var(--ink-soft))]">{ESTIMATE_NOTICE}</p>
               </div>
-            ) : null}
+            ) : (
+              // Legacy single-price stores keep the same single notice — the
+              // WhatsApp confirmation, shipping and no-reservation terms apply
+              // to their requests too.
+              <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))]">{ESTIMATE_NOTICE}</p>
+            )}
             {/* 1.13.1: visual label retired — placeholder carries the hint, the
                 accessible name stays "Tu nombre". */}
             <TextField

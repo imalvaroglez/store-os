@@ -276,7 +276,7 @@ test("anonymous visitor opens a product detail from a stale publicStores doc", a
   await expect(anon.getByRole("heading", { name: "Anillo Blossom" })).toBeVisible({ timeout: 15000 });
   // 1.13.1: la condición de Iconic es texto visible en la ficha — sin «?» ni
   // ayuda flotante que hacer aparecer.
-  await expect(anon.getByText("Con beneficio Iconic vigente").first()).toBeVisible();
+  await expect(anon.getByText("Con beneficio vigente").first()).toBeVisible();
   await expect(anon.getByRole("button", { name: /Cómo se obtiene/ })).toHaveCount(0);
   await expect(anon.getByText("Pieza no encontrada")).toHaveCount(0);
   await ctx.close();
