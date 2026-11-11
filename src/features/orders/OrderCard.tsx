@@ -13,6 +13,7 @@ import {
   useToast,
 } from "../../design-system";
 import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { shortageByDimension } from "../../lib/inventory";
 import { orderTicketData, orderTicketText } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
@@ -48,14 +49,10 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   // pieza. A cancelled order is a full return: its profit is not realized, so
   // no estimate is shown. Cash collected (Total/Pagado/Saldo) stays separate.
   const profitView = status === "cancelled" ? undefined : orderProfitBreakdown(order, state.purchases);
-  const shortageByProduct = new Map<string, number>();
-  items.forEach((item) => {
-    if (!item.productId) return;
-    const product = state.products.find((candidate) => candidate.id === item.productId);
-    const stock = typeof product?.quantityOnHand === "number" ? product.quantityOnHand : undefined;
-    if (typeof stock === "number" && stock < 0) shortageByProduct.set(item.productId, -stock);
-  });
-  const shortages = [...shortageByProduct.values()];
+  // #309: the shared canonical derivation — negative stock on the exact
+  // dimension each line moves (variant stock for variant lines), so the card
+  // badge, the editor and the category review can never disagree.
+  const shortages = [...shortageByDimension(items, state.products).values()];
   const preview = items.slice(0, 3).map((item) => `${item.quantity} × ${item.productName}`).join(", ");
   // "T00:00:00" is load-bearing: a bare yyyy-mm-dd parses as UTC and shows the
   // previous day in Mexico (UTC-6).
@@ -170,7 +167,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         </p>
       )}
       {profitView && profitView.profitCents == null && <p className="text-xs text-ink-soft mt-2">Ganancia estimada: sin costo registrado.</p>}
-      {shortages.length > 0 && <Badge tone="warning">Faltan {shortages.reduce((sum, n) => sum + n, 0)} piezas</Badge>}
+      {shortages.length > 0 && <Badge tone="warning">Faltan {shortages.reduce((sum, shortage) => sum + shortage.missing, 0)} piezas</Badge>}
 
       <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
