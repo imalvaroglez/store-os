@@ -1,5 +1,19 @@
 [
   {
+    "version": "1.13.1",
+    "date": "2026.11.11",
+    "title": "Correcciones al catálogo público de Olivia",
+    "notes": [
+      "Precios cuadrados: el precio por pieza, el subtotal de cada línea, el total estimado y el mensaje de WhatsApp salen de un solo cálculo. Ya no puede verse una línea a precio Iconic junto a un total a precio Girly, y los importes muestran centavos.",
+      "Borrar el texto de entregas u horarios en Editar sitio ya no hace reaparecer el valor anterior al recargar: el borrado se guarda de verdad (envíos muestra el mensaje neutro de consultar; horarios vacíos no se publican).",
+      "La ficha de cada pieza muestra nivel, precio y condición alineados en tres columnas, sin «?» ni ayudas flotantes: Girly dice «Desde N piezas» con el mínimo real de la tienda e Iconic dice «Con beneficio Iconic vigente».",
+      "Mi pedido quedó más claro: miniatura sin borde decorativo, botones de cantidad alineados con los importes, el campo de nombre solo con guía («Escribe tu nombre para identificarte»), un solo aviso de estimados y el botón ahora dice «Enviar solicitud por WhatsApp».",
+      "El pie de página pasó a fondo blanco y lleva el logo transparente (sin rectángulo crema), igual que el encabezado; se conservan los enlaces de WhatsApp, Explora y Entregas y atención.",
+      "Las categorías de la portada se acomodan en cinco columnas al ancho de escritorio (diez categorías se leen 5 y 5) y la última fila queda centrada cuando no completa; al pasar el cursor la foto se atenúa suavemente.",
+      "Medimos la fluidez del catálogo con trazas comparativas (fría y caliente, escritorio y móvil): no reproducimos los tirones reportados ni en la versión anterior ni en ésta. El medidor queda en el repo para repetir la prueba con un teléfono real."
+    ]
+  },
+  {
     "version": "1.13.0",
     "date": "2026.11.11",
     "title": "Variantes por color y solicitud WhatsApp más clara",
