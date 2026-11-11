@@ -122,6 +122,16 @@ export class PublicCatalogNotFoundError extends Error {
   }
 }
 
+/** Thrown when the storefront exists but its catalog projection hasn't been
+ *  written yet (#286): an honest "not available yet" state, never a fake
+ *  connection failure with a useless retry loop. */
+export class PublicCatalogUnpublishedError extends Error {
+  constructor(public slug: string) {
+    super(`El catálogo de "${slug}" aún no está publicado.`);
+    this.name = "PublicCatalogUnpublishedError";
+  }
+}
+
 /** Thrown when a product slug has no public detail doc. */
 export class PublicProductNotFoundError extends Error {
   constructor(public productSlug: string) {
@@ -233,7 +243,7 @@ export async function loadPublicCatalogSummary(slug: string): Promise<PublicCata
 
 async function loadPublicCatalogDoc(slug: string): Promise<{ catalog: PublicCatalog; storeId?: string }> {
   const catalogSnap = await getDocRest(`publicCatalogs/${slug}`);
-  if (!catalogSnap.exists) throw new Error(`El catálogo de "${slug}" aún no está publicado.`);
+  if (!catalogSnap.exists) throw new PublicCatalogUnpublishedError(slug);
   const data = catalogSnap.data as {
     storeId?: string;
     categories?: PublicCategory[];
@@ -248,8 +258,8 @@ async function loadPublicCatalogDoc(slug: string): Promise<{ catalog: PublicCata
 /**
  * Load a store's public storefront + catalog (categories + product summaries).
  * Anonymous. 2 reads. Throws PublicCatalogNotFoundError if the store isn't
- * published, or a plain Error if the storefront exists but its catalog
- * projection hasn't been written yet. Screens that want progressive rendering
+ * published, or PublicCatalogUnpublishedError if the storefront exists but its
+ * catalog projection hasn't been written yet. Screens that want progressive rendering
  * (hero from the small store doc, grid from the big catalog doc) call
  * loadPublicStore + their own catalog read instead.
  *

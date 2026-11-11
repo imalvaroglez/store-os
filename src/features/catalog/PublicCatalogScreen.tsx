@@ -4,6 +4,7 @@ import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
 import {
   loadPublicCatalog,
   PublicCatalogNotFoundError,
+  PublicCatalogUnpublishedError,
   type PublicCatalog,
   type PublicStore,
   type PublicStockSignal,
@@ -20,7 +21,9 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   // #276: a missing store and a network failure are DIFFERENT things — a
   // clienta on flaky mobile data must never read "this catalog does not
   // exist" (and a wrong slug must not promise the store still exists).
-  const [loadState, setLoadState] = useState<"loading" | "missing" | "failed">("loading");
+  // #286: an unpublished catalog is a third thing — the store exists, the
+  // connection is fine; no fake "revisa tu conexión" with a useless retry.
+  const [loadState, setLoadState] = useState<"loading" | "missing" | "unpublished" | "failed">("loading");
   const cart = useCart(slug);
   const [cartOpen, setCartOpen] = useState(false);
 
@@ -31,7 +34,14 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
     loadPublicCatalog(slug).then((next) => {
       if (!cancelled) setData(next);
     }).catch((err: unknown) => {
-      if (!cancelled) setLoadState(err instanceof PublicCatalogNotFoundError ? "missing" : "failed");
+      if (cancelled) return;
+      setLoadState(
+        err instanceof PublicCatalogNotFoundError
+          ? "missing"
+          : err instanceof PublicCatalogUnpublishedError
+            ? "unpublished"
+            : "failed"
+      );
     });
     return () => { cancelled = true; };
   }, [slug]);
@@ -57,6 +67,16 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
 
   if (!data && loadState === "loading") {
     return <div className="min-h-full bg-paper p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}</div>;
+  }
+  if (!data && loadState === "unpublished") {
+    return (
+      <div className="min-h-full flex items-center justify-center p-6">
+        <EmptyState
+          title="Catálogo no disponible por ahora"
+          subtitle="Esta tienda todavía no publica sus piezas. Vuelve pronto."
+        />
+      </div>
+    );
   }
   if (!data && loadState === "failed") {
     return (
