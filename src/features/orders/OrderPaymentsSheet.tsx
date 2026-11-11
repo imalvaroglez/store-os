@@ -389,7 +389,21 @@ export function OrderPaymentsSheet({
               {adjustDirection === "subtract" && (
                 <p className="text-xs text-on-surface-soft">
                   Puedes restar hasta {formatMoneyExact(maxAdjustmentSubtractCents(order) / 100)} — lo
-                  cobrado en este pedido. Para devolver más, registra la incidencia o el reembolso.
+                  cobrado en este pedido.{" "}
+                  {/* #288: with a pending legacy anticipo, Recibido shows accumulator +
+                      anticipo while the cap counts only cobros — same screen, two
+                      numbers. One line connects them instead of reading like a bug. */}
+                  {summary.inheritedPendingCents > 0 && (
+                    <>
+                      El tope es menor que Recibido porque el anticipo previo de{" "}
+                      {formatMoneyExact(summary.inheritedPendingCents / 100)} se cuenta al recibir,
+                      no al restar; se materializa con el primer cobro.{" "}
+                    </>
+                  )}
+                  Para devolver más, usa el botón «Incidencia» de este pedido
+                  {summary.inheritedPendingCents > 0
+                    ? "; y para corregir el anticipo, edítalo en el pedido (te pedirá el motivo)."
+                    : "."}
                 </p>
               )}
               <SelectField
