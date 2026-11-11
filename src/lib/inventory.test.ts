@@ -8,6 +8,8 @@ import {
   DEFAULT_LOW_STOCK_AT,
   effectiveLowStockAt,
   stockAlertLevel,
+  shortageByDimension,
+  attributeShortageToLines,
   stockAlertText,
 } from "./inventory";
 import type { Product, PurchaseLine, Order } from "../types";
@@ -284,5 +286,52 @@ describe("installment reservation visibility and identity (#171 C3)", () => {
     const next = { ...previous, installments: undefined };
     expect(reservationDeltasForOrderChange(previous, next).size).toBe(0);
     expect(committedForProduct([next], "s1", "p1")).toBe(2);
+  });
+});
+
+// #309 — canonical shortage derivation: same source for card badge, editor
+// and category review; variant-aware by the exact dimension each line moves.
+describe("shortageByDimension / attributeShortageToLines (#309)", () => {
+  const product = (id: string, quantityOnHand?: number, variants?: { id: string; quantityOnHand?: number }[]) =>
+    ({ id, ...(typeof quantityOnHand === "number" ? { quantityOnHand } : {}), ...(variants ? { variants } : {}) }) as never;
+
+  it("marca el negativo de la dimensión exacta: variante, no diseño ni su hermana", () => {
+    const products = [product("p1", undefined, [
+      { id: "v_dorado", quantityOnHand: -2 },
+      { id: "v_plateado", quantityOnHand: 3 },
+    ])];
+    const dims = shortageByDimension(
+      [{ productId: "p1", variantId: "v_dorado" }, { productId: "p1", variantId: "v_plateado" }],
+      products
+    );
+    expect(dims.size).toBe(1);
+    expect(dims.get("p1:v_dorado")?.missing).toBe(2);
+  });
+
+  it("sin variante usa el stock del producto; positivo no genera falta", () => {
+    const dims = shortageByDimension([{ productId: "p1" }], [product("p1", -3)]);
+    expect(dims.get("p1")?.missing).toBe(3);
+    expect(shortageByDimension([{ productId: "p2" }], [product("p2", 0)]).size).toBe(0);
+  });
+
+  it("la atribución por líneas suma EXACTO al total de la insignia", () => {
+    const products = [product("p1", -5)];
+    const perLine = attributeShortageToLines(
+      [
+        { key: "l1", productId: "p1", quantity: 3 },
+        { key: "l2", productId: "p1", quantity: 3 },
+        { key: "l3", productId: "p1", quantity: 2 },
+      ],
+      products
+    );
+    expect(perLine.get("l1")).toBe(3);
+    expect(perLine.get("l2")).toBe(2);
+    expect(perLine.has("l3")).toBe(false);
+    expect([...perLine.values()].reduce((a, b) => a + b, 0)).toBe(5);
+  });
+
+  it("línea sin producto o con producto desaparecido no produce falta", () => {
+    expect(attributeShortageToLines([{ key: "l1", quantity: 4 }], []).size).toBe(0);
+    expect(attributeShortageToLines([{ key: "l1", productId: "gone", quantity: 4 }], []).size).toBe(0);
   });
 });

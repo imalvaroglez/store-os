@@ -21,6 +21,7 @@ import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { isVariantProduct } from "../../lib/variants";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
+import { attributeShortageToLines } from "../../lib/inventory";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
@@ -328,6 +329,25 @@ export function OrderForm({
       throw error;
     }
   }, [deposit, lines, order]);
+  // #309: per-line shortage from the SHARED canonical derivation — the same
+  // source as the card's "Faltan N" badge (negative stock on the exact
+  // dimension each line moves). Observability only; never mutates.
+  const lineShortage = useMemo(
+    () =>
+      attributeShortageToLines(
+        lines.map((line) => ({
+          key: line.key,
+          ...(line.productId ? { productId: line.productId } : {}),
+          ...(line.variantId ? { variantId: line.variantId } : {}),
+          quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
+        })),
+        products
+      ),
+    [lines, products]
+  );
+  const shortagePieces = [...lineShortage.values()].reduce((sum, missing) => sum + missing, 0);
+  const firstShortageKey = lines.find((line) => (lineShortage.get(line.key) ?? 0) > 0)?.key;
+
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
   // pieza. Only lines with content enter the estimate; an empty placeholder
   // line is not "sin costo". An unsafe amount throws RangeError here too —
@@ -669,6 +689,17 @@ export function OrderForm({
         )}
       </div>
 
+      {shortagePieces > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="warning">
+            Faltan {shortagePieces} {shortagePieces === 1 ? "pieza" : "piezas"} en {lineShortage.size}{" "}
+            {lineShortage.size === 1 ? "línea" : "líneas"}
+          </Badge>
+          {!reviewing && firstShortageKey && (
+            <Button variant="ghost" size="sm" onClick={() => setFocusLine(firstShortageKey)}>Ver faltantes</Button>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button variant={reviewing ? "secondary" : "primary"} aria-pressed={!reviewing} onClick={() => setReviewing(false)}>Capturar</Button>
         <Button variant={reviewing ? "primary" : "secondary"} aria-pressed={reviewing} onClick={() => setReviewing(true)}>Revisar por categoría</Button>
@@ -678,12 +709,18 @@ export function OrderForm({
           {groupOrderLines(lines).map((group, index) => (
             <Card key={`${group.name}-${index}`} className="space-y-3 p-4">
               <h2 className="font-semibold text-on-surface">{group.name}</h2>
-              {group.lines.map((line) => (
-                <div key={line.key} className="flex items-center justify-between gap-3">
-                  <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
-                  <Button variant="ghost" size="sm" aria-label={`Editar ${line.productName || "producto sin nombre"}`} onClick={() => { setFocusLine(line.key); setReviewing(false); }}>Editar</Button>
-                </div>
-              ))}
+              {group.lines.map((line) => {
+                const missing = lineShortage.get(line.key) ?? 0;
+                return (
+                  <div key={line.key} className="flex items-center justify-between gap-3">
+                    <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {missing > 0 && <Badge tone="warning">Falta {missing}</Badge>}
+                      <Button variant="ghost" size="sm" aria-label={`Editar ${line.productName || "producto sin nombre"}`} onClick={() => { setFocusLine(line.key); setReviewing(false); }}>Editar</Button>
+                    </span>
+                  </div>
+                );
+              })}
             </Card>
           ))}
         </div>
@@ -714,7 +751,10 @@ export function OrderForm({
               <div className="flex items-center justify-between gap-2">
                 {/* Article numbers follow CAPTURE order (stable per article);
                     the stack view shows the newest on top without renumbering. */}
-                <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Artículo {captureIndex + 1}</span>
+                <span className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Artículo {captureIndex + 1}</span>
+                  {(lineShortage.get(line.key) ?? 0) > 0 && <Badge tone="warning">Falta {lineShortage.get(line.key)}</Badge>}
+                </span>
                 {lines.length > 1 && (
                   <IconButton
                     variant="ghost"
