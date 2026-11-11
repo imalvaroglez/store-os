@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { orderTotals, paymentStatusForOrder } from "./orders";
 import { docReceivedCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { orderTicketText } from "../features/orders/orderTicket";
-import { formatMoneyExact } from "./money";
+import { formatMoneyPlain } from "./money";
 import type { Order, OrderIncident } from "../types";
 
 type MatrixOrder = Partial<Order> & Record<string, unknown>;
@@ -108,12 +108,24 @@ describe("modelo de dinero — invariantes sobre la matriz exhaustiva (#225 pre-
     // #222: Fer's WhatsApp format renders the money lines in *bold*.
     const totalLine = text.split("\n").find((l) => l.startsWith("*Total* "));
     expect(totalLine, "el ticket siempre muestra Total").toBeTruthy();
-    expect(totalLine).toBe(`*Total* ${formatMoneyExact(totals.estimatedTotal)}`);
+    expect(totalLine).toBe(`*Total* ${formatMoneyPlain(totals.estimatedTotal)}`);
     const saldoLine = text.split("\n").find((l) => l.startsWith("*Saldo* "));
-    if (totals.balance > 0) {
-      expect(saldoLine, "con saldo pendiente el ticket lo muestra igual que el modelo").toBe(`*Saldo* ${formatMoneyExact(totals.balance)}`);
+    const moneyMoved = totals.paid > 0 || totals.appliedCredit > 0;
+    const totalCents = Math.round(totals.estimatedTotal * 100);
+    const balanceCents = Math.round(totals.balance * 100);
+    // #306 (revisión adversarial P1): the Saldo hides ONLY when it would repeat
+    // the Total verbatim. An incident without cash changes the real debt and
+    // MUST show — moneyMoved alone was too coarse.
+    if (balanceCents > 0 && (moneyMoved || balanceCents !== totalCents)) {
+      expect(saldoLine, "con cobro parcial o deuda ≠ Total, el ticket muestra el saldo del modelo").toBe(`*Saldo* ${formatMoneyPlain(totals.balance)}`);
     } else {
-      expect(saldoLine, "sin saldo pendiente el ticket no muestra Saldo").toBeUndefined();
+      expect(saldoLine, "sin saldo pendiente o cuando el Saldo repetiría el Total, no hay línea").toBeUndefined();
+    }
+    const favorLine = text.split("\n").find((l) => l.startsWith("*A tu favor* "));
+    if (totals.availableCredit > 0) {
+      expect(favorLine, "el excedente real se etiqueta como A tu favor (clienta), no como deuda").toBe(`*A tu favor* ${formatMoneyPlain(totals.availableCredit)}`);
+    } else {
+      expect(favorLine).toBeUndefined();
     }
 
     // I6 — payment status never contradicts a fully settled balance.

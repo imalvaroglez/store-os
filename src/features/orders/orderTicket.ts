@@ -1,5 +1,5 @@
 import type { Order } from "../../types";
-import { formatMoneyExact } from "../../lib/money";
+import { formatMoneyPlain } from "../../lib/money";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { effectiveOrderStatus, orderItems, orderReference, orderTotals } from "../../lib/orders";
 import { groupOrderLines } from "./orderGrouping";
@@ -26,7 +26,19 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
   // the read model — net of applied saldo a favor and posventa adjustments —
   // never a hand-rolled subtraction (which overstated debt after refunds or
   // credit). "Total" stays the sum of the listed pieces.
-  const balanceCents = Math.round(orderTotals(order).balance * 100);
+  const totals = orderTotals(order);
+  const balanceCents = Math.round(totals.balance * 100);
+  // #306: a fresh order with nothing received owes exactly the Total — the
+  // Saldo line would just repeat it. Show Saldo only when money/credit already
+  // moved (partial), and a real surplus as "A tu favor" (#306 Fer-reader
+  // verdict: "Saldo a favor" reads as debt to a clienta).
+  const moneyMoved = totals.paid > 0 || totals.appliedCredit > 0;
+  // #306 + revisión adversarial: hide the Saldo ONLY when it would repeat the
+  // Total verbatim (nothing received, no credit, no posventa adjustment). An
+  // incident without cash changes the real debt — that Saldo must show.
+  const saldoDiffers = balanceCents !== totalCents;
+  const showSaldo = balanceCents > 0 && (moneyMoved || saldoDiffers);
+  const favorCents = Math.round(totals.availableCredit * 100);
   const date = order.createdAt ? longDate(order.createdAt) : "";
 
   const lines: string[] = [
@@ -45,12 +57,13 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
     ...group.lines.map((item) => {
       itemNumber += 1;
       const quantity = item.quantity > 1 ? `${item.quantity} × ` : "";
-      return `${itemNumber}. ${quantity}${clean(item.productName)} ${formatMoneyExact(orderAmountCents(item.unitPrice, item.quantity) / 100)}`;
+      return `${itemNumber}. ${quantity}${clean(item.productName)} ${formatMoneyPlain(orderAmountCents(item.unitPrice, item.quantity) / 100)}`;
     }),
   ]);
 
-  lines.push(...(groups.length ? ["", ...groups] : []), "", `*Total* ${formatMoneyExact(totalCents / 100)}`);
-  if (balanceCents > 0) lines.push(`*Saldo* ${formatMoneyExact(balanceCents / 100)}`);
+  lines.push(...(groups.length ? ["", ...groups] : []), "", `*Total* ${formatMoneyPlain(totalCents / 100)}`);
+  if (showSaldo) lines.push(`*Saldo* ${formatMoneyPlain(balanceCents / 100)}`);
+  if (favorCents > 0) lines.push(`*A tu favor* ${formatMoneyPlain(favorCents / 100)}`);
   return lines.join("\n");
 }
 
@@ -81,8 +94,11 @@ export type OrderTicketData = {
   total: string;
   /** Canonical amount received, including an unmaterialized legacy deposit. */
   cobrado: string;
-  /** Present ONLY when money is still owed — mirrors the text format. */
+  /** Present ONLY when money is still owed (partial) — mirrors the text format. */
   saldo?: string;
+  /** Real surplus in the clienta's favor — paid beyond the effective total;
+   * shown to the client as "A tu favor" (#306 Fer-reader verdict). */
+  availableCredit?: string;
 };
 
 export function orderTicketData(order: Order, storeName: string, currentCustomerName?: string): OrderTicketData {
@@ -90,9 +106,14 @@ export function orderTicketData(order: Order, storeName: string, currentCustomer
   const items = orderItems(order);
   const totalCents = items.reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
   const receivedCents = docReceivedCents(order);
+  const totals = orderTotals(order);
+  const moneyMoved = totals.paid > 0 || totals.appliedCredit > 0;
   // Canonical balance (#168 F4 + #189 + #203): net of applied saldo a favor
-  // and posventa adjustments — never a hand-rolled subtraction.
-  const balanceCents = Math.round(orderTotals(order).balance * 100);
+  // and posventa adjustments — never a hand-rolled subtraction. The Saldo
+  // hides only when it would repeat the Total verbatim (#306 review P1).
+  const balanceCents = Math.round(totals.balance * 100);
+  const favorCents = Math.round(totals.availableCredit * 100);
+  const showSaldo = balanceCents > 0 && (moneyMoved || balanceCents !== totalCents);
   return {
     storeName,
     customer: clean(order.customerName || currentCustomerName || "Sin cliente"),
@@ -100,10 +121,11 @@ export function orderTicketData(order: Order, storeName: string, currentCustomer
     lines: items.map((item, index) => ({
       index: index + 1,
       label: `${item.quantity > 1 ? `${item.quantity} × ` : ""}${clean(item.productName)}`,
-      amount: formatMoneyExact(orderAmountCents(item.unitPrice, item.quantity) / 100),
+      amount: formatMoneyPlain(orderAmountCents(item.unitPrice, item.quantity) / 100),
     })),
-    total: formatMoneyExact(totalCents / 100),
-    cobrado: formatMoneyExact(receivedCents / 100),
-    ...(balanceCents > 0 ? { saldo: formatMoneyExact(balanceCents / 100) } : {}),
+    total: formatMoneyPlain(totalCents / 100),
+    cobrado: formatMoneyPlain(receivedCents / 100),
+    ...(showSaldo ? { saldo: formatMoneyPlain(balanceCents / 100) } : {}),
+    ...(favorCents > 0 ? { availableCredit: formatMoneyPlain(favorCents / 100) } : {}),
   };
 }

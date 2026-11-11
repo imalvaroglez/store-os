@@ -80,6 +80,12 @@ function ReceiptContents({ data, whatsapp }: { data: OrderTicketData; whatsapp?:
             <span className="tabular-nums">{data.saldo}</span>
           </div>
         )}
+        {data.availableCredit && (
+          <div className="flex items-baseline justify-between gap-3 text-sm text-ink">
+            <span>A tu favor</span>
+            <span className="tabular-nums">{data.availableCredit}</span>
+          </div>
+        )}
       </div>
 
       {whatsapp && (

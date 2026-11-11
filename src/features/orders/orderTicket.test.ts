@@ -17,13 +17,13 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
       "*Fecha:* 6 de noviembre, 2026",
       "",
       "*Aretes*",
-      "1. Huggies Mezcalita Gold $60.00",
-      "2. Huggies Mezcalita Silver $50.00",
+      "1. Huggies Mezcalita Gold $60",
+      "2. Huggies Mezcalita Silver $50",
       "*Reloj*",
-      "3. Reloj Toscana Gold $160.00",
+      "3. Reloj Toscana Gold $160",
       "",
-      "*Total* $270.00",
-      "*Saldo* $220.00",
+      "*Total* $270",
+      "*Saldo* $220",
     ].join("\n"));
     // Private notes and costs never appear; the store now travels in the header.
   });
@@ -43,12 +43,11 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
       "",
       "*Anillos*",
       "1. 3 × Anillo $1.01",
-      "2. Pulsera torzal $40.00",
+      "2. Pulsera torzal $40",
       "*Sin categoría*",
-      "3. Encargo especial $50.00",
+      "3. Encargo especial $50",
       "",
       "*Total* $91.01",
-      "*Saldo* $91.01",
     ].join("\n"));
   });
 
@@ -67,18 +66,18 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
       "*Estado:* Preguntó",
       "",
       "*Sin categoría*",
-      "1. A $10.00",
+      "1. A $10",
       "",
-      "*Total* $10.00",
-      "*Saldo* $10.00",
+      "*Total* $10",
     ].join("\n"));
   });
 
   it("drops Saldo (and any payment line) when nothing is owed, even with an excess advance", () => {
     const order: Order = { id: "o1", storeId: "s1", customerId: "c1", items: [{ productName: "A", quantity: 1, unitPrice: 40, subtotal: 40 }], deposit: 50, orderStatus: "asked", paymentStatus: "paid", createdAt: "2026-11-04", updatedAt: "" };
     const ticket = orderTicketText(order, "Olivia");
-    expect(ticket).toContain("*Total* $40.00");
-    expect(ticket).not.toContain("Saldo");
+    expect(ticket).toContain("*Total* $40");
+    expect(ticket).toContain("*A tu favor* $10");
+    expect(ticket).not.toMatch(/^\*Saldo\* \$/m);
     expect(ticket).not.toContain("Recibido");
     expect(ticket).not.toContain("Anticipo");
     expect(ticket).not.toContain("Excedente");
@@ -95,8 +94,8 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
       createdAt: "2026-11-04", updatedAt: "",
     };
     const ticket = orderTicketText(order, "Olivia");
-    expect(ticket).toContain("*Total* $1,800.00");
-    expect(ticket).toContain("*Saldo* $300.00");
+    expect(ticket).toContain("*Total* $1,800");
+    expect(ticket).toContain("*Saldo* $300");
   });
 
   it("strips literal asterisks from names so WhatsApp bold pairing survives", () => {
@@ -107,7 +106,7 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
     expect(ticket).toContain("*Cliente:* Ana Fer");
     expect(ticket).toContain("*Tienda:* Olivia joyas");
     expect(ticket).toContain("*Aretes finos*");
-    expect(ticket).toContain("1. Aretes dorados $10.00");
+    expect(ticket).toContain("1. Aretes dorados $10");
   });
 
   it("counts an unmaterialized inherited deposit once", () => {
@@ -118,8 +117,70 @@ describe("orderTicketText — Fer's WhatsApp format", () => {
       paymentsReceivedCents: 10000,
       createdAt: "2026-11-04", updatedAt: "",
     };
-    expect(orderTicketText(order, "Olivia")).toContain("*Saldo* $500.00"); // $100 cobros + $400 anticipo aún sin materializar
+    expect(orderTicketText(order, "Olivia")).toContain("*Saldo* $500"); // $100 cobros + $400 anticipo aún sin materializar
     const materialized = { ...order, paymentsReceivedCents: 50000, inheritedDepositMaterialized: true as const };
-    expect(orderTicketText(materialized, "Olivia")).toContain("*Saldo* $500.00"); // ya dentro del acumulado
+    expect(orderTicketText(materialized, "Olivia")).toContain("*Saldo* $500"); // ya dentro del acumulado
+  });
+});
+
+// #306 — importes legibles y saldo contextual (misma fuente canónica).
+describe("orderTicketText · saldo contextual (#306)", () => {
+  const order = (over: Partial<Order>): Order => ({
+    id: "order_306", storeId: "s1", customerId: "c1", customerName: "Lucía",
+    items: [{ productName: "Arracada Mimosa", quantity: 1, unitPrice: 770, subtotal: 770 }],
+    deposit: 0, createdAt: "2026-11-10", updatedAt: "",
+    ...over,
+  }) as Order;
+
+  it("sin abonos: solo Total, sin Saldo redundante", () => {
+    const text = orderTicketText(order({}), "Olivia");
+    expect(text).toContain("*Total* $770");
+    expect(text).not.toContain("*Saldo*");
+  });
+
+  it("cobro parcial: Total y Saldo", () => {
+    const text = orderTicketText(order({ deposit: 200 }), "Olivia");
+    expect(text).toContain("*Total* $770");
+    expect(text).toContain("*Saldo* $570");
+  });
+
+  it("liquidado: solo Total", () => {
+    const text = orderTicketText(order({ deposit: 770 }), "Olivia");
+    expect(text).toContain("*Total* $770");
+    expect(text).not.toContain("*Saldo*");
+  });
+
+  it("excedente real: A tu favor, sin aparentar adeudo", () => {
+    const text = orderTicketText(order({ deposit: 870 }), "Olivia");
+    expect(text).toContain("*Total* $770");
+    expect(text).toContain("*A tu favor* $100");
+    expect(text).not.toMatch(/\*Saldo\* \$/);
+  });
+
+  it("$770.50 conserva los centavos; $770.00 se presenta $770", () => {
+    const withCents = orderTicketText(order({
+      items: [{ productName: "Arracada Mimosa", quantity: 1, unitPrice: 770.5, subtotal: 770.5 }],
+    }), "Olivia");
+    expect(withCents).toContain("$770.50");
+    expect(orderTicketText(order({}), "Olivia")).not.toContain("$770.00");
+  });
+});
+
+// Revisión adversarial #327: la posventa sin efectivo cambia la deuda real —
+// ese Saldo NO se oculta, aunque no haya cobros.
+describe("orderTicketText · incidencias sin efectivo (#306 revisión)", () => {
+  const base = { id: "order_306i", storeId: "s1", customerId: "c1", customerName: "Lucía", createdAt: "2026-11-10", updatedAt: "" };
+  const refund = { id: "inc1", productName: "Pieza", quantity: 1, reason: "Defecto", originalUnitPriceCents: 36000, resolution: { kind: "refund" as const, saleAdjustmentUnitCents: 36000 }, events: [] };
+
+  it("reembolso por incidencia sin cobros: Total completo y Saldo real (≠ Total)", () => {
+    const order = { ...base, items: [{ productName: "Arracada", quantity: 1, unitPrice: 720, subtotal: 720 }], deposit: 0, incidents: [refund] } as unknown as Order;
+    const text = orderTicketText(order, "Olivia");
+    expect(text).toContain("*Total* $720");
+    expect(text).toContain("*Saldo* $360");
+  });
+
+  it("sin incidencias ni dinero: el Saldo no repite el Total (regla original #306)", () => {
+    const order = { ...base, items: [{ productName: "Arracada", quantity: 1, unitPrice: 720, subtotal: 720 }], deposit: 0 } as unknown as Order;
+    expect(orderTicketText(order, "Olivia")).not.toContain("*Saldo*");
   });
 });
