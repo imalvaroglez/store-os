@@ -310,8 +310,9 @@ describe("carrito del storefront — acumular y pedir", () => {
     expect(within(list).getByText("Aretes Luna")).toBeTruthy();
     expect(within(list).getAllByText("Precio por pieza")).toHaveLength(2);
     expect(within(list).getAllByText("Subtotal")).toHaveLength(2);
-    expect(within(list).getAllByText("$140")).toHaveLength(2);
-    expect(within(list).getAllByText("$120")).toHaveLength(2);
+    // 1.13.1: las líneas muestran centavos, igual que el titular.
+    expect(within(list).getAllByText("$140.00")).toHaveLength(2);
+    expect(within(list).getAllByText("$120.00")).toHaveLength(2);
 
     const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
     expect(send.href).toContain("wa.me/5213344836691");
@@ -325,8 +326,8 @@ describe("carrito del storefront — acumular y pedir", () => {
     // #305: dos cifras etiquetadas como estimación; ambas piezas comparten la
     // única categoría del fixture → sin encabezado de grupo.
     expect(text).toContain("*2 piezas en total*");
-    expect(text).toContain("Subtotal estimado: $260");
-    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $170"); // 90 + 80
+    expect(text).toContain("Subtotal estimado: $260.00 MXN");
+    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $170.00 MXN"); // 90 + 80
     expect(text).toContain("sujetos a confirmación");
   });
 
@@ -461,6 +462,45 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("$1,440.00 MXN")).toBeTruthy();
     expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
     expect(screen.queryByText(/desbloqueado/i)).toBeNull();
+  });
+
+  it("1.13.1 líneas y titular cuadran: 19 piezas $140/$105/$55, jamás $55/$1,045", async () => {
+    // Catálogo con los números de las capturas: Girly $105 (desde 5) e Iconic
+    // $55 (identidad, ≥ $1,000 a precio propio). El carrito se hidrata de aquí.
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: {
+        ...catalog,
+        products: catalog.products.map((p) =>
+          p.productSlug === "anillo-blossom"
+            ? { ...p, prices: { t_retail: 140, t_girly: 105, t_iconic: 55 } }
+            : p
+        ),
+      },
+    });
+    localStorage.setItem(cartKey, JSON.stringify({
+      v: 1,
+      lines: [{ productSlug: "anillo-blossom", name: "Anillo Blossom", sku: "AAN1385", qty: 19 }],
+    }));
+    await renderStore();
+    await openDrawer();
+
+    // Titular habitual: Girly 19 × $105 = $1,995.00 (≥ $1,000 → sin fila Iconic).
+    expect(screen.getByText("$1,995.00 MXN")).toBeTruthy();
+    expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
+    // La línea usa el MISMO nivel del titular: $105.00 por pieza, $1,995.00 de
+    // subtotal — nunca el precio Iconic ($55/$1,045) que el total no aplica.
+    const list = screen.getByRole("list");
+    expect(within(list).getByText("$105.00")).toBeTruthy();
+    expect(within(list).getByText("$1,995.00")).toBeTruthy();
+    expect(within(list).queryByText("$55.00")).toBeNull();
+    expect(within(list).queryByText("$1,045.00")).toBeNull();
+
+    const send = screen.getByRole("link", { name: "Enviar pedido por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado: $1,995.00 MXN");
+    expect(text).not.toContain("1,045");
+    expect(text).not.toContain("Iconic");
   });
 });
 

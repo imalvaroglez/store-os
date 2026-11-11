@@ -252,8 +252,8 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
       { name: "Collar Aurora", qty: 1, category: "Collares" },
     ], undefined, undefined, request);
     const text = decodeURIComponent(url.split("text=")[1]);
-    expect(text).toContain("Subtotal estimado: $780");
-    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $280");
+    expect(text).toContain("Subtotal estimado: $780.00 MXN");
+    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $280.00 MXN");
     expect(text).toContain("sujetos a confirmación");
     expect(text).toContain("Envío no incluido");
   });
@@ -267,8 +267,39 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
       { name: "Arracada Mimosa", qty: 4, category: "Aretes" },
     ], undefined, undefined, bigRequest);
     const text = decodeURIComponent(url.split("text=")[1]);
-    expect(text).toContain("Subtotal estimado: $1,000");
+    expect(text).toContain("Subtotal estimado: $1,000.00 MXN");
     expect(text).not.toContain("Iconic");
+  });
+
+  it("cuadre exacto con el carrito (1.13.1): caso 19 piezas $140/$105/$55", () => {
+    const oliviaTiers = [
+      { id: "t_retail", label: "Regular", order: 0 },
+      { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
+      { id: "t_iconic", label: "Iconic", order: 2, minAmount: 1000 },
+    ];
+    const req = cartRequestSummary(oliviaTiers, [
+      { qty: 19, unitPrices: { t_retail: 140, t_girly: 105, t_iconic: 55 } },
+    ])!;
+    expect(req.habitualSubtotal).toBe(1995);
+    const url = buildCartOrderUrl(store, "olivia", [
+      { name: "Arracada Mimosa", qty: 19, category: "Aretes" },
+    ], undefined, undefined, req);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado: $1,995.00 MXN");
+    expect(text).not.toContain("1,045"); // jamás el subtotal Iconic divergente
+    expect(text).not.toContain("Iconic"); // $1,995 ≥ $1,000 → sin fila ni cifra
+  });
+
+  it("centavos reales en ambas cifras cuando el habitual los lleva (1.13.1)", () => {
+    const centsRequest = cartRequestSummary(tiers, [
+      { qty: 3, unitPrices: { t_retail: 260.17, t_reseller: 90.33 } },
+    ])!; // habitual $780.51 < 1,000 → ambas filas
+    const url = buildCartOrderUrl(store, "olivia", [
+      { name: "Arracada Mimosa", qty: 3, category: "Aretes" },
+    ], undefined, undefined, centsRequest);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado: $780.51 MXN");
+    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $270.99 MXN");
   });
 
   it("escapa Markdown de WhatsApp en nombres de piezas y de clienta", () => {
