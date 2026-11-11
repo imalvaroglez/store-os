@@ -196,7 +196,7 @@ describe("tarjetas — jerarquía de precios", () => {
     expect(within(prices).getByText("$90")).toBeTruthy();
     expect(within(prices).queryByText("$0")).toBeNull();
     // 1.13.1: la condición del nivel único es visible, sin «?».
-    expect(within(prices).getByText("Con beneficio Iconic vigente")).toBeTruthy();
+    expect(within(prices).getByText("Con beneficio vigente")).toBeTruthy();
   });
 
   it.each([
@@ -294,7 +294,7 @@ describe("edición pública in-place", () => {
   // controls, change both texts. Clearing must travel as "" so the save can
   // delete the remote field; undefined would resurrect the old value.
   it("edita entregas y horarios; borrar viaja como \"\", y horarios vacíos no se publican", async () => {
-    await renderStore({ storeId: "store_olivia", storefront: { shipping: "Envíos viejos", hours: "Lunes a viernes" }, save: mocks.saveStorefront, notifySuccess: mocks.toastSuccess, notifyError: mocks.toastError });
+    await renderStore({ storeId: "store_olivia", storefront: { shipping: "Envíos viejos", hours: "Lunes a viernes", notice: "Aviso viejo" }, save: mocks.saveStorefront, notifySuccess: mocks.toastSuccess, notifyError: mocks.toastError });
     fireEvent.click(await screen.findByRole("button", { name: "Editar sitio" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Editar Entregas y envíos" }));
@@ -303,12 +303,16 @@ describe("edición pública in-place", () => {
     fireEvent.click(screen.getByRole("button", { name: "Editar Horarios" }));
     fireEvent.change(screen.getByLabelText("Horarios"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Listo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar Aviso" }));
+    fireEvent.change(screen.getByLabelText("Aviso"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Listo" }));
 
     fireEvent.click(screen.getByRole("button", { name: /^Guardar$/ }));
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Sitio público actualizado"));
     expect(mocks.saveStorefront).toHaveBeenCalledWith("store_olivia", expect.objectContaining({
       shipping: "Entregas en punto medio",
       hours: "", // nunca undefined: el guardado debe poder borrar el campo
+      notice: "", // ídem Aviso — la aceptación de la spec es por campo (#332)
     }));
     expect(screen.getByText("Entregas en punto medio")).toBeTruthy();
     expect(screen.queryByText(/Horarios:/)).toBeNull(); // vacío → no se publica
@@ -550,7 +554,7 @@ describe("detalle de producto — precios por tier", () => {
     expect(screen.queryByRole("button", { name: /Cómo se obtiene/ })).toBeNull();
     expect(within(prices).queryByTitle(/Obtén el mejor precio/)).toBeNull();
     expect(within(prices).getByText("Desde 5 piezas")).toBeTruthy();
-    expect(within(prices).getByText("Con beneficio Iconic vigente")).toBeTruthy();
+    expect(within(prices).getByText("Con beneficio vigente")).toBeTruthy();
     // Cada fila: nivel + importe + condición; Regular sin requisito deja la
     // tercera celda vacía.
     const rows = Array.from(prices.querySelectorAll(".olv-price-row"));
@@ -560,10 +564,10 @@ describe("detalle de producto — precios por tier", () => {
     expect(rows[1].querySelector(".olv-price-row-amount")).toHaveTextContent("$120");
     expect(rows[1].querySelector(".olv-price-row-condition")).toHaveTextContent("Desde 5 piezas");
     expect(rows[2].querySelector(".olv-price-row-amount")).toHaveTextContent("$90");
-    expect(rows[2].querySelector(".olv-price-row-condition")).toHaveTextContent("Con beneficio Iconic vigente");
+    expect(rows[2].querySelector(".olv-price-row-condition")).toHaveTextContent("Con beneficio vigente");
     expect(prices.querySelector(".olv-price-row--featured")).toHaveTextContent("Iconic");
     // El ahorro de Iconic no promete desbloqueo por agregar piezas.
-    expect(within(prices).getByText("Hasta $50 menos por pieza con beneficio Iconic vigente")).toBeTruthy();
+    expect(within(prices).getByText("Hasta $50 menos por pieza con beneficio vigente")).toBeTruthy();
     // Agregar al carrito desde el detalle.
     fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
     expect(screen.getByRole("button", { name: "Abrir pedido" }).textContent).toContain("1");
