@@ -331,7 +331,9 @@ export function OrderForm({
   }, [deposit, lines, order]);
   // #309: per-line shortage from the SHARED canonical derivation — the same
   // source as the card's "Faltan N" badge (negative stock on the exact
-  // dimension each line moves). Observability only; never mutates.
+  // dimension each line moves). The FIRST line with pieces claims the
+  // dimension's FULL missing count, so editor summary, line badges and card
+  // badge always show the SAME totals. Observability only; never mutates.
   const lineShortage = useMemo(
     () =>
       attributeShortageToLines(
@@ -692,8 +694,8 @@ export function OrderForm({
       {shortagePieces > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="warning">
-            Faltan {shortagePieces} {shortagePieces === 1 ? "pieza" : "piezas"} en {lineShortage.size}{" "}
-            {lineShortage.size === 1 ? "línea" : "líneas"}
+            {shortagePieces === 1 ? "Falta 1 pieza" : `Faltan ${shortagePieces} piezas`} en {lineShortage.size}{" "}
+            {lineShortage.size === 1 ? "producto" : "productos"}
           </Badge>
           {!reviewing && firstShortageKey && (
             <Button variant="ghost" size="sm" onClick={() => setFocusLine(firstShortageKey)}>Ver faltantes</Button>
