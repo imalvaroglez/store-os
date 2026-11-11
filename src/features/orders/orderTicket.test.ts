@@ -198,3 +198,10 @@ describe("receiptFileName (#308)", () => {
     expect(receiptFileName("o1", "a".repeat(120)).length).toBeLessThanOrEqual("Pedido-O1-".length + 40);
   });
 });
+
+// Revisión adversarial #329: el corte de 40 no deja guion colgante.
+describe("receiptFileName · corte limpio (#329 revisión)", () => {
+  it("un corte a mitad de separador no termina en guion", () => {
+    expect(receiptFileName("o1", "x".repeat(39) + " y")).not.toMatch(/-$/);
+  });
+});
