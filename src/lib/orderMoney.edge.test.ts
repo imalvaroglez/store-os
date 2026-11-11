@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { orderTotals, paymentStatusForOrder } from "./orders";
 import { docReceivedCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { orderTicketText } from "../features/orders/orderTicket";
-import { formatMoneyExact, formatMoneyPlain } from "./money";
+import { formatMoneyPlain } from "./money";
 import type { Order, OrderIncident } from "../types";
 
 type MatrixOrder = Partial<Order> & Record<string, unknown>;
