@@ -75,19 +75,26 @@ export function CheckboxField({
   caption?: string;
   disabled?: boolean;
 }) {
+  // #324: a checkbox IS its own label — wrapping it in FormField's outer
+  // <label> produced nested labels (invalid HTML), and tapping the label
+  // text could close the hosting dialog and dump the operator's capture.
+  // Single label, checkbox + text inline: the tap toggles the checkbox,
+  // exactly what a hand expects.
   return (
-    <FormField label={label} hint={hint}>
-      <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          className="h-5 w-5 accent-ink"
-          checked={checked}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        {caption && <span className="text-sm text-ink">{caption}</span>}
-      </label>
-    </FormField>
+    <label className="flex items-start gap-2">
+      <input
+        type="checkbox"
+        className="mt-0.5 h-5 w-5 accent-ink"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="min-w-0">
+        <span className="block text-sm text-ink">{label}</span>
+        {caption && <span className="block text-xs text-ink-soft">{caption}</span>}
+        {hint && <span className="block text-xs text-on-surface-soft/70 mt-0.5">{hint}</span>}
+      </span>
+    </label>
   );
 }
 
