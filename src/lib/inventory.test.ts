@@ -412,8 +412,11 @@ describe("projectedShortageByDimension / attributeProjectedShortageToLines (#325
     // P2 re-review: a shelf ALREADY negative from other orders still reads as
     // faltante on a non-holding draft — the card shows it regardless of status.
     expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 5 }], undefined, false, [product("p1", -2)]).get("l1")).toBe(2);
-    // Holding draft on the same shelf: the take adds its own deficit (0 − (−2+2)).
+    // Holding draft on the same shelf: the take adds its own deficit (2 − (−5+2)).
     expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 2 }], openOrder, true, [product("p1", -5)]).get("l1")).toBe(5);
+    // Live transition in the editor: cancelling that same draft (still holding
+    // 2 on the saved doc) must read Faltan 3 — what the card shows post-save.
+    expect(attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 2 }], openOrder, false, [product("p1", -5)]).get("l1")).toBe(3);
   });
 
   it("color sin existencia capturada estima desde 0 — igual que el guardado (P2 revisión)", () => {

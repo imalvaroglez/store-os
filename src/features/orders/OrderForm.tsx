@@ -378,7 +378,10 @@ export function OrderForm({
   };
   // The label reports the stop the LAST click landed on (or the first one
   // before any click) — not the next stop, which read as "already saw both".
-  const shortageStop = lastShortageKey ? shortageKeys.indexOf(lastShortageKey) + 1 : 1;
+  // When the visited line was just fixed (no longer short) the position falls
+  // back to 1 — "(0/N)" would read as if nothing were left.
+  const visitedIndex = lastShortageKey ? shortageKeys.indexOf(lastShortageKey) : -1;
+  const shortageStop = visitedIndex > -1 ? visitedIndex + 1 : 1;
   const firstShortageKey = shortageKeys[0];
 
   // Full-cost profit preview (FER-03): precio − costo − gastos de venta por
