@@ -27,6 +27,17 @@
 .olivia-root .olv-main { padding-top: 0; }
 .olivia-root .olv-category-section { margin: 0; padding: 14px 0; border-block: 1px solid var(--olv-rule); }
 .olivia-root .olv-category-section-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* 1.13.1: brief soft dim on hover/touch — the label and focus stay legible,
+   and identifying/opening a category never depends on hover. */
+.olivia-root .olv-category-image { transition: opacity var(--motion-fast) var(--ease-smooth); }
+.olivia-root .olv-category-card:hover .olv-category-image { opacity: .82; }
+@media (hover: none) {
+  .olivia-root .olv-category-card:active .olv-category-image { opacity: .82; }
+}
+/* Brief entry for the section heading when switching categories — the
+   product grid itself never animates and content shows without waiting. */
+@keyframes olv-cat-enter { from { opacity: 0; transform: translateY(8px); } }
+.olivia-root .olv-section-heading { animation: olv-cat-enter var(--motion-base) var(--ease-smooth); }
 .olivia-root .olv-category-grid { display: flex; overflow-x: auto; gap: 16px; padding-bottom: 4px; }
 .olivia-root .olv-category-card { flex: 0 0 104px; border: 0; background: transparent; }
 .olivia-root .olv-category-image { height: 84px; aspect-ratio: auto; object-fit: contain; background: var(--olv-bg); }
@@ -84,7 +95,8 @@
   .olivia-root .olv-hero-photo { grid-column: 2; grid-row: 1 / span 6; align-self: stretch; display: flex; flex-direction: column; justify-content: center; margin: 0; min-height: 420px; }
   .olivia-root .olv-hero-photo img { height: 400px; }
   .olivia-root .olv-category-section { padding: 18px 0 20px; }
-  .olivia-root .olv-category-grid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 20px; overflow: visible; padding: 0; }
+  /* 1.13.1: five equal columns — ten categories read as 5 + 5. */
+  .olivia-root .olv-category-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 20px; overflow: visible; padding: 0; }
   .olivia-root .olv-category-card { min-width: 0; }
   .olivia-root .olv-category-image { height: 96px; }
   .olivia-root .olv-category-card-name { font-size: 11px; }

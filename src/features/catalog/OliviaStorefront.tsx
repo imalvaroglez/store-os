@@ -188,7 +188,7 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
           </StorefrontLink>)}
         </div>
       </section>}
-      <div className="olv-section-heading"><div><p className="olv-eyebrow">Elige lo que va contigo</p><h2>{category?.name || "Encuentra tus favoritas"}</h2></div><p className="olv-muted">{products.length} {products.length === 1 ? "pieza" : "piezas"}</p></div>
+      <div className="olv-section-heading" key={category?.id ?? "todas"}><div><p className="olv-eyebrow">Elige lo que va contigo</p><h2>{category?.name || "Encuentra tus favoritas"}</h2></div><p className="olv-muted">{products.length} {products.length === 1 ? "pieza" : "piezas"}</p></div>
       {category?.description && <p className="olv-muted">{category.description}</p>}
       {focusCategory && <nav aria-label="Categorías" className="olv-categories">
         <StorefrontLink to={`/catalogo/${slug}`} current={!focusCategory}>Todas las piezas</StorefrontLink>
