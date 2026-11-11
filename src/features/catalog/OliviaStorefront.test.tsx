@@ -288,6 +288,30 @@ describe("edición pública in-place", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Guardar$/ }));
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Sitio público actualizado"));
   });
+
+  // #332 (1.13.1): Fer's reported flow — open Editar sitio, find the delivery
+  // controls, change both texts. Clearing must travel as "" so the save can
+  // delete the remote field; undefined would resurrect the old value.
+  it("edita entregas y horarios; borrar viaja como \"\", y horarios vacíos no se publican", async () => {
+    await renderStore({ storeId: "store_olivia", storefront: { shipping: "Envíos viejos", hours: "Lunes a viernes" }, save: mocks.saveStorefront, notifySuccess: mocks.toastSuccess, notifyError: mocks.toastError });
+    fireEvent.click(await screen.findByRole("button", { name: "Editar sitio" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar Entregas y envíos" }));
+    fireEvent.change(screen.getByLabelText("Entregas y envíos"), { target: { value: "Entregas en punto medio" } });
+    fireEvent.click(screen.getByRole("button", { name: "Listo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar Horarios" }));
+    fireEvent.change(screen.getByLabelText("Horarios"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Listo" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Guardar$/ }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Sitio público actualizado"));
+    expect(mocks.saveStorefront).toHaveBeenCalledWith("store_olivia", expect.objectContaining({
+      shipping: "Entregas en punto medio",
+      hours: "", // nunca undefined: el guardado debe poder borrar el campo
+    }));
+    expect(screen.getByText("Entregas en punto medio")).toBeTruthy();
+    expect(screen.queryByText(/Horarios:/)).toBeNull(); // vacío → no se publica
+  });
 });
 
 describe("carrito del storefront — acumular y pedir", () => {
