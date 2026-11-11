@@ -32,6 +32,12 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
   // Saldo line would just repeat it. Show Saldo only when money/credit already
   // moved (partial), and a real surplus as "Saldo a favor".
   const moneyMoved = totals.paid > 0 || totals.appliedCredit > 0;
+  // #306 + revisión adversarial: hide the Saldo ONLY when it would repeat the
+  // Total verbatim (nothing received, no credit, no posventa adjustment). An
+  // incident without cash changes the real debt — that Saldo must show.
+  const saldoDiffers = balanceCents !== totalCents;
+  const showSaldo = balanceCents > 0 && (moneyMoved || saldoDiffers);
+  const favorCents = Math.round(totals.availableCredit * 100);
   const date = order.createdAt ? longDate(order.createdAt) : "";
 
   const lines: string[] = [
@@ -55,8 +61,8 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
   ]);
 
   lines.push(...(groups.length ? ["", ...groups] : []), "", `*Total* ${formatMoneyPlain(totalCents / 100)}`);
-  if (balanceCents > 0 && moneyMoved) lines.push(`*Saldo* ${formatMoneyPlain(balanceCents / 100)}`);
-  if (totals.availableCredit > 0) lines.push(`*Saldo a favor* ${formatMoneyPlain(totals.availableCredit)}`);
+  if (showSaldo) lines.push(`*Saldo* ${formatMoneyPlain(balanceCents / 100)}`);
+  if (favorCents > 0) lines.push(`*Saldo a favor* ${formatMoneyPlain(favorCents / 100)}`);
   return lines.join("\n");
 }
 
@@ -101,8 +107,11 @@ export function orderTicketData(order: Order, storeName: string, currentCustomer
   const totals = orderTotals(order);
   const moneyMoved = totals.paid > 0 || totals.appliedCredit > 0;
   // Canonical balance (#168 F4 + #189 + #203): net of applied saldo a favor
-  // and posventa adjustments — never a hand-rolled subtraction.
+  // and posventa adjustments — never a hand-rolled subtraction. The Saldo
+  // hides only when it would repeat the Total verbatim (#306 review P1).
   const balanceCents = Math.round(totals.balance * 100);
+  const favorCents = Math.round(totals.availableCredit * 100);
+  const showSaldo = balanceCents > 0 && (moneyMoved || balanceCents !== totalCents);
   return {
     storeName,
     customer: clean(order.customerName || currentCustomerName || "Sin cliente"),
@@ -114,7 +123,7 @@ export function orderTicketData(order: Order, storeName: string, currentCustomer
     })),
     total: formatMoneyPlain(totalCents / 100),
     cobrado: formatMoneyPlain(receivedCents / 100),
-    ...(balanceCents > 0 && moneyMoved ? { saldo: formatMoneyPlain(balanceCents / 100) } : {}),
-    ...(totals.availableCredit > 0 ? { saldoAFavor: formatMoneyPlain(totals.availableCredit) } : {}),
+    ...(showSaldo ? { saldo: formatMoneyPlain(balanceCents / 100) } : {}),
+    ...(favorCents > 0 ? { saldoAFavor: formatMoneyPlain(favorCents / 100) } : {}),
   };
 }

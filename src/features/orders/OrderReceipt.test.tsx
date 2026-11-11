@@ -101,3 +101,15 @@ describe("OrderReceipt (#139)", () => {
     expect(document.body.classList.contains("receipt-print-scope")).toBe(true);
   });
 });
+
+// #306 (revisión adversarial P3): el recibo también muestra el Saldo a favor.
+describe("OrderReceipt · saldo a favor (#306)", () => {
+  it("con excedente real imprime la línea Saldo a favor junto al Cobrado", () => {
+    const overpaid = { ...order, deposit: 921 } as unknown as Order;
+    const data = orderTicketData(overpaid, "Olivia");
+    render(<OrderReceipt data={data} />);
+    expect(data.saldoAFavor).toBe("$300");
+    expect(screen.getAllByText("Saldo a favor").length).toBeGreaterThan(0); // preview + copia de impresión
+    expect(screen.queryAllByText("Saldo").length).toBe(0);
+  });
+});
