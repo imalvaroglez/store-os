@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -60,15 +60,29 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     ? `Prometido: ${new Date(`${order.promisedDate}T00:00:00`).toLocaleDateString("es-MX")}`
     : order.createdAt ? `Creado: ${new Date(order.createdAt).toLocaleDateString("es-MX")}` : "Sin fecha";
 
-  /** #308: name the PDF the browser suggests — Pedido-<REF>-<Clienta> — via
-   * the document title while the print dialog is open (restored after). */
+  /** #308 (+ revisión adversarial): name the PDF the browser suggests —
+   * Pedido-<REF>-<Clienta> — via document.title while the print dialog is
+   * open. Re-entry (iOS double-tap: print is non-blocking there and
+   * afterprint never fires) must not re-capture the receipt name as
+   * "previous" and stick it forever. */
+  const printingRef = useRef(false);
   function printReceipt() {
+    if (printingRef.current) return;
+    printingRef.current = true;
     const previous = document.title;
-    document.title = receiptFileName(order.id, order.customerName ?? customer?.name);
-    const restore = () => { document.title = previous; };
+    document.title = receiptFileName(order.id, order.customerName || customer?.name);
+    let timer = 0;
+    const restore = () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("afterprint", restore);
+      document.title = previous;
+      printingRef.current = false;
+    };
     window.addEventListener("afterprint", restore, { once: true });
     window.print();
-    window.setTimeout(restore, 1_000); // fallback where afterprint never fires
+    // Fallback where afterprint never fires; long enough that non-blocking
+    // dialogs usually read the titled document before we restore.
+    timer = window.setTimeout(restore, 1_500);
   }
 
   async function advance() {

@@ -77,8 +77,9 @@ export function receiptFileName(orderId: string, customerName?: string): string 
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-zA-Z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40);
+      .replace(/^-+/g, "")
+      .slice(0, 40)
+      .replace(/-+$/g, ""); // a cut can land mid-separator — no trailing dash
   const client = safe(customerName ?? "");
   return `Pedido-${orderReference(orderId)}${client ? `-${client}` : ""}`;
 }
