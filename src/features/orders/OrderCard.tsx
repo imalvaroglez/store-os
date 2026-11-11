@@ -205,22 +205,19 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           task order (texto → copiar → recibo → imprimir) without horizontal
           scroll. */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="min-w-0 space-y-3">
+        <div className="flex min-w-0 flex-col gap-3">
           <TextArea label="Detalle del pedido" value={ticket} readOnly rows={Math.min(16, Math.max(6, ticket.split("\n").length))} />
           {copyFailed && <p className="text-danger">No se pudo copiar. Selecciona el texto y cópialo manualmente.</p>}
-          <Button full onClick={copyTicket}>Copiar detalle</Button>
-          <p className="text-xs text-on-surface-soft lg:hidden">
-            Al imprimir elige «Guardar como PDF» para compartirlo por WhatsApp. Solo el recibo sale en papel.
-          </p>
+          <Button full className="mt-auto" onClick={copyTicket}>Copiar detalle</Button>
         </div>
-        <div className="min-w-0 space-y-3">
+        <div className="flex min-w-0 flex-col gap-3">
           {/* Printable receipt (#139): same canonical money as the text above. */}
           <OrderReceipt
             data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)}
             whatsapp={activeStore?.whatsappPhone}
           />
-          <Button full variant="secondary" onClick={() => window.print()}>Imprimir / Guardar PDF</Button>
-          <p className="hidden text-xs text-on-surface-soft lg:block">
+          <Button full className="mt-auto" variant="secondary" onClick={() => window.print()}>Imprimir / Guardar PDF</Button>
+          <p className="text-xs text-on-surface-soft">
             Al imprimir elige «Guardar como PDF» para compartirlo por WhatsApp. Solo el recibo sale en papel.
           </p>
         </div>
