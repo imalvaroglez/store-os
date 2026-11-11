@@ -715,7 +715,10 @@ export function OrderForm({
                 const missing = lineShortage.get(line.key) ?? 0;
                 return (
                   <div key={line.key} className="flex items-center justify-between gap-3">
-                    <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} className="h-10 w-10 shrink-0" />
+                      <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
+                    </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {missing > 0 && <Badge tone="warning">Falta {missing}</Badge>}
                       <Button variant="ghost" size="sm" aria-label={`Editar ${line.productName || "producto sin nombre"}`} onClick={() => { setFocusLine(line.key); setReviewing(false); }}>Editar</Button>
@@ -730,7 +733,6 @@ export function OrderForm({
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="serif-display text-lg font-semibold text-ink">Productos</h2>
-            <p className="text-xs text-on-surface-soft mt-0.5">Agrega una o varias líneas al pedido.</p>
           </div>
           <Button variant="secondary" size="sm" onClick={addLine}>+ Agregar línea</Button>
         </div>
@@ -768,23 +770,29 @@ export function OrderForm({
                   </IconButton>
                 )}
               </div>
-              <SearchSelect
-                inputRef={(input) => {
-                  productInputs.current[line.key] = input;
-                  if (captureIndex === lines.length - 1) newProductInput.current = input; // addLine focuses the newest (rendered on top)
-                }}
-                label="Producto"
-                placeholder="Busca o escribe un producto"
-                value={line.productQuery}
-                options={productOptions}
-                emptyLabel="No aparece en el catálogo; puedes dejarlo como producto personalizado."
-                onChange={(value) => changeProductQuery(line, value)}
-                onSelect={(option) => {
-                  const product = products.find((item) => item.id === option.value);
-                  if (product) selectProduct(line, product);
-                }}
-              />
-              <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} />
+              {/* #310: thumbnail travels WITH the selector (aligned row) —
+                  the photo no longer hangs below the product field. */}
+              <div className="flex items-start gap-3">
+                <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} className="h-14 w-14 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <SearchSelect
+                    inputRef={(input) => {
+                      productInputs.current[line.key] = input;
+                      if (captureIndex === lines.length - 1) newProductInput.current = input; // addLine focuses the newest (rendered on top)
+                    }}
+                    label="Producto"
+                    placeholder="Busca o escribe un producto"
+                    value={line.productQuery}
+                    options={productOptions}
+                    emptyLabel="No aparece en el catálogo; puedes dejarlo como producto personalizado."
+                    onChange={(value) => changeProductQuery(line, value)}
+                    onSelect={(option) => {
+                      const product = products.find((item) => item.id === option.value);
+                      if (product) selectProduct(line, product);
+                    }}
+                  />
+                </div>
+              </div>
               {(() => {
                 // #124: designs sold by color REQUIRE the exact color (decision 5).
                 const product = products.find((item) => item.id === line.productId);
@@ -809,7 +817,7 @@ export function OrderForm({
               })()}
               {line.priceSource === "manual" && <p className="text-xs text-on-surface-soft">Precio ajustado manualmente.</p>}
               {line.productId && !line.unitPriceText && <p className="text-danger">Falta capturar el precio de este producto.</p>}
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(7rem,0.65fr)_minmax(10rem,1fr)_minmax(11rem,1fr)]">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(7rem,0.65fr)_minmax(9rem,1fr)_minmax(10rem,1fr)_minmax(8rem,0.9fr)]">
                 <TextField
                   label="Cantidad"
                   type="text"
@@ -823,7 +831,6 @@ export function OrderForm({
                 />
                 <TextField
                   label="Precio unitario"
-                  hint="Puedes ajustarlo para este pedido."
                   type="text"
                   inputMode="decimal"
                   pattern="[0-9]*[.]?[0-9]*"
@@ -837,7 +844,6 @@ export function OrderForm({
                   <div className="col-span-2 md:col-span-1">
                     <SelectField
                       label="Nivel de precio"
-                      hint="Se guarda en este pedido y no cambia el catálogo."
                       value={line.priceTier ?? currentTier ?? ""}
                       onChange={(value) => changeTier(line, value)}
                       options={tiers.map((tier) => ({ value: tier.id, label: tier.label }))}
@@ -845,14 +851,16 @@ export function OrderForm({
                   </div>
                 )}
                 {!isTiered && <div className="hidden md:block" aria-hidden />}
+                {/* #310: subtotal rides the same aligned row (4th column) — the
+                    one-line box below was a whole extra block per article. */}
+                <div className="col-span-2 flex min-h-[2.75rem] items-center md:col-span-1">
+                  <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
+                </div>
               </div>
               {/* No cost INPUT here: cost is catalog data that rides along in the
                   line snapshot to feed the saved order's estimated profit — it is
                   not something the operator captures, and an editable field with
                   no visible effect was noise (field feedback, dev trial). */}
-              <div className="rounded-md bg-surface-muted px-3 py-2.5 min-h-[3.25rem] flex items-center">
-                <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
-              </div>
               {warning && <Badge tone="warning">{warning}</Badge>}
             </Card>
           );
@@ -958,7 +966,7 @@ export function OrderForm({
       <TextArea label="Notas" value={notes} onChange={(event) => setNotes(event.target.value)} />
 
       <div className="sticky bottom-3 z-10 rounded-xl border border-edge bg-paper/95 p-4 shadow-lift backdrop-blur">
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-5">
           <StatRow label="Piezas">{totals?.pieces ?? "—"}</StatRow>
           <StatRow label="Total">{totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</StatRow>
           <StatRow label="Recibido">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
@@ -1060,7 +1068,7 @@ export function OrderForm({
   );
 }
 
-function OrderLinePhoto({ products, productId, variantId }: { products: Product[]; productId?: string; variantId?: string }) {
+function OrderLinePhoto({ products, productId, variantId, className = "h-20 w-20" }: { products: Product[]; productId?: string; variantId?: string; className?: string }) {
   const product = products.find((candidate) => candidate.id === productId);
   if (!product) return null;
   // #124: a chosen color shows ITS photo (the exact piece leaving the shelf).
@@ -1073,7 +1081,7 @@ function OrderLinePhoto({ products, productId, variantId }: { products: Product[
       src={src}
       alt={src ? `Foto de ${product.name}` : `Foto no disponible de ${product.name}`}
       size="thumb"
-      className="h-20 w-20"
+      className={className}
     />
   );
 }
