@@ -236,6 +236,34 @@ describe("#355 — conversión de una ficha existente a venta por color", () => 
     expect("quantityOnHand" in saved).toBe(false); // property absent: no tombstone
     expect("variants" in saved).toBe(false);
   });
+
+  it("on_demand con variante heredada: el spread inicial tampoco reintroduce lápidas (hueco M2 revisión)", async () => {
+    // The spread `...(variantsEnabled ? { variants, quantityOnHand: undefined } : { variants: undefined })`
+    // runs for on_demand too when the product CARRIES variants (switched store);
+    // the on_demand branch must delete both properties regardless.
+    const onDemandState = tieredState();
+    (onDemandState.stores[0] as Record<string, unknown>).type = "on_demand";
+    mocks.state = onDemandState;
+    render(
+      <ProductForm
+        product={{
+          ...design,
+          cost: 100,
+          price: 50,
+          categoryIds: ["c1"],
+          quantityOnHand: 3,
+          variants: [{ id: "v1", color: "Dorado", skuSuffix: "D", sku: "SOL-D", quantityOnHand: 2, photos: [{ id: "f1", url: "https://x.test/g.jpg", storagePath: "p/f1", order: 0, isPrimary: true }], createdAt: "", updatedAt: "" }],
+        }}
+        onDone={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByLabelText(/Precio/, { selector: "input" }), { target: { value: "60" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    const saved = mocks.upsertProduct.mock.calls[0][0] as Product;
+    expect("quantityOnHand" in saved).toBe(false);
+    expect("variants" in saved).toBe(false);
+  });
 });
 
 describe("#124 misión UX — portada derivada del primer color", () => {

@@ -862,7 +862,8 @@ export function ProductForm({
                 setVariantsEnabled(false);
                 // #361 review: symmetric conversion — the pieces return to the
                 // design-level shelf (reviewable) instead of requiring a full
-                // recapture. Untracked colors leave the field empty.
+                // recapture. Untracked colors contribute 0; the field stays
+                // empty only when NO color has a captured shelf.
                 const tracked = variants.some((v) => typeof v.quantityOnHand === "number");
                 const pieces = variants.reduce((sum, v) => sum + (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0), 0);
                 setQty(tracked ? String(pieces) : "");
@@ -876,8 +877,8 @@ export function ProductForm({
         }
       >
         <p className="text-sm text-on-surface-soft">
-          Hay colores con existencia. Al dejar de vender por color, las existencias por color se descartan y la pieza
-          vuelve a manejarse como un solo producto (captura su existencia total de nuevo).
+          Hay colores con existencia. Al dejar de vender por color, las piezas de todos los colores regresan al
+          estante único del producto (quedan anotadas en «En existencia» para que las revises antes de guardar).
         </p>
       </Dialog>
     </div>
