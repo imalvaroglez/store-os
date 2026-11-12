@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.15.0",
+    "date": "2026.11.12",
+    "title": "Entregas con evidencia y catálogo que cuadra",
+    "notes": [
+      "Al pulsar «Entregar», ahora registras exactamente qué piezas recibió la clienta (por pieza y por color), con la fecha real en que las recibió — si registras tarde, escribes la fecha que fue y queda la aclaración de cuándo se registró. Puedes entregar una parte hoy y el resto después; el pedido solo aparece como Entregado cuando ya no queda nada pendiente, y si al entregar queda saldo sin cobrar, la app te pide confirmarlo y guarda esa autorización.",
+      "Cancelar un pedido que ya tenía entregas devuelve al inventario solo las piezas que faltaban; las que la clienta ya recibió no vuelven a la venta.",
+      "Los pedidos entregados antes de este cambio muestran «Fecha de entrega por confirmar»; al registrar la siguiente entrega todo queda con su fecha.",
+      "La tarjeta «Por surtir» de Inicio y el filtro «Por surtir» del catálogo ahora usan la misma definición de alerta: el número que ves en Inicio es el mismo que te espera al filtrar, con o sin umbral guardado.",
+      "En «Revisar por categoría» a la anchura de escritorio, cada fila ahora muestra su precio unitario × cantidad y su subtotal, alineados entre filas; en móvil la fila sigue compacta."
+    ]
+  },
+  {
     "version": "1.14.0",
     "date": "2026.11.11",
     "title": "Detalles de pedido más claros y menos confusiones",
