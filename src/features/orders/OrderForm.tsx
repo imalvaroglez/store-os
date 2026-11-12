@@ -853,21 +853,24 @@ export function OrderForm({
               </div>
               {(() => {
                 // #124: designs sold by color REQUIRE the exact color (decision 5).
+                // #355: the color NAME is the option label; the full clave rides
+                // as a secondary detail in the hint once the color is chosen.
                 const product = products.find((item) => item.id === line.productId);
                 if (!product || !isVariantProduct(product)) return null;
+                const selected = product.variants!.find((v) => v.id === line.variantId);
                 return (
                   <SelectField
                     label="Color"
                     value={line.variantId ?? ""}
                     onChange={(value) => selectVariant(line, value)}
+                    hint={selected?.sku ? `Clave: ${selected.sku}.` : undefined}
                     options={[
                       { value: "", label: "Elige el color…" },
                       ...product.variants!.map((variant) => ({
                         value: variant.id,
                         label:
                           variant.color +
-                          (typeof variant.quantityOnHand === "number" ? ` (existencia ${variant.quantityOnHand})` : "") +
-                          (variant.sku ? ` · ${variant.sku}` : ""),
+                          (typeof variant.quantityOnHand === "number" ? ` (existencia ${variant.quantityOnHand})` : ""),
                       })),
                     ]}
                   />

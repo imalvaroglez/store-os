@@ -7,8 +7,9 @@ import type { PdfApplyPayload } from "./PurchasePdfImport";
 import type { Purchase } from "../../types";
 import { PurchaseForm } from "./PurchaseForm";
 
-const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, pdfPayloads, activeStore, state } = vi.hoisted(() => ({
+const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, pdfPayloads, activeStore, state, createDraftProductsForPurchase } = vi.hoisted(() => ({
   upsertPurchase: vi.fn().mockResolvedValue(undefined),
+  createDraftProductsForPurchase: vi.fn().mockResolvedValue(undefined),
   upsertProduct: vi.fn().mockResolvedValue(undefined),
   receivePurchase: vi.fn().mockResolvedValue("received"),
   adjustReceivedPurchase: vi.fn(),
@@ -28,7 +29,7 @@ const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, 
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../app/StoreProvider")>(),
-  useStore: () => ({ state, activeStore, upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, cloud: true }),
+  useStore: () => ({ state, activeStore, upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, createDraftProductsForPurchase, cloud: true }),
 }));
 vi.mock("./PurchasePdfImport", () => ({
   PurchasePdfImport: ({ onApply }: { onApply: (payload: PdfApplyPayload) => void }) => <Button onClick={() => onApply(pdfPayloads.shift()!)}>Importar PDF de prueba</Button>,
@@ -46,7 +47,7 @@ function open(value = purchase()) {
   render(<ToastProvider><PurchaseForm purchase={value} onDone={() => {}} /></ToastProvider>);
 }
 
-beforeEach(() => { upsertPurchase.mockClear(); upsertProduct.mockReset().mockResolvedValue(undefined); receivePurchase.mockReset().mockResolvedValue("received"); adjustReceivedPurchase.mockReset().mockResolvedValue(undefined); pdfPayloads.length = 0; });
+beforeEach(() => { createDraftProductsForPurchase.mockClear().mockResolvedValue(undefined); upsertPurchase.mockClear(); upsertProduct.mockReset().mockResolvedValue(undefined); receivePurchase.mockReset().mockResolvedValue("received"); adjustReceivedPurchase.mockReset().mockResolvedValue(undefined); pdfPayloads.length = 0; });
 
 describe("sale expenses and post-reception adjustments (FER-02)", () => {
   function receivedPurchase(): Purchase {
@@ -360,6 +361,23 @@ it("importing a new ticket preserves invalid text in the previous ticket", async
   await waitFor(() => expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveFocus());
   expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveValue("");
 });
+
+it("#356 bulk creation initializes slug and a tracked zero shelf like the mini form", async () => {
+    open();
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar línea" }));
+    fireEvent.click(screen.getByRole("button", { name: "Crear 2 productos" }));
+    await waitFor(() => expect(createDraftProductsForPurchase).toHaveBeenCalledTimes(1));
+    const batch = createDraftProductsForPurchase.mock.calls[0][0] as Array<{ slug?: string; quantityOnHand?: number; sku?: string }>;
+    expect(batch).toHaveLength(2);
+    for (const created of batch) {
+      // Same initialization the mini form got in 1.15.1: public route + tracked
+      // zero shelf — never a blank-inventory ficha.
+      expect(typeof created.slug).toBe("string");
+      expect(created.slug!.length).toBeGreaterThan(0);
+      expect(created.quantityOnHand).toBe(0);
+      expect(created.sku).toBeTruthy();
+    }
+  });
 
 it("does not let bulk product creation persist an invalid amount hidden in another ticket", () => {
   open();

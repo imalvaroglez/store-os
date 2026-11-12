@@ -529,8 +529,20 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         }
         const base = newProduct(activeStore.id);
         const fullName = l.variant ? `${l.name} ${l.variant}` : l.name;
-        const sku = uniqueProductSku([...batchProducts, ...products], activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
-        batchProducts.push({ ...base, name: fullName, cost: l.unitCost, sku });
+        const seen = [...batchProducts, ...products];
+        const sku = uniqueProductSku(seen, activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
+        // #356: the BULK path must initialize the ficha exactly like the
+        // mini form (hotfix 1.15.1): a public route and a tracked zero shelf —
+        // never a blank-inventory ficha waiting for its first reception.
+        const slug = uniqueProductSlug(seen, activeStore.id, base.id, slugify(fullName));
+        batchProducts.push({
+          ...base,
+          name: fullName,
+          cost: l.unitCost,
+          sku,
+          slug,
+          ...(activeStore.type === "inventory_tiered" ? { quantityOnHand: 0 } : {}),
+        });
         return { ...l, productId: base.id, matchStatus: "new_product" as const };
       });
       // The batch itself must carry the invalidation, not just local state.
@@ -598,18 +610,21 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             {(() => {
               // #124 (decisión 2): buying a design sold by color targets the
               // exact color — reception adjusts that color's cost and shelf.
+              // #355: the color NAME is the label; the full clave rides as a
+              // secondary detail in the hint, not inside the option label.
               const product = products.find((item) => item.id === line.productId);
               if (!product || !product.variants?.length) return null;
+              const selected = product.variants.find((v) => v.id === line.variantId);
               return (
                 <SelectField
                   label="Color comprado"
                   value={line.variantId ?? ""}
                   disabled={editDisabled}
                   onChange={(value) => updateLine(idx, { variantId: value || undefined })}
-                  hint="Se vende por color: la compra va a un color concreto."
+                  hint={`Se vende por color: la compra va a un color concreto.${selected?.sku ? ` Clave: ${selected.sku}.` : ""}`}
                   options={product.variants.map((variant) => ({
                     value: variant.id,
-                    label: variant.color + (variant.sku ? ` · ${variant.sku}` : ""),
+                    label: variant.color || "Color sin nombre",
                   }))}
                 />
               );
