@@ -529,8 +529,20 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         }
         const base = newProduct(activeStore.id);
         const fullName = l.variant ? `${l.name} ${l.variant}` : l.name;
-        const sku = uniqueProductSku([...batchProducts, ...products], activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
-        batchProducts.push({ ...base, name: fullName, cost: l.unitCost, sku });
+        const seen = [...batchProducts, ...products];
+        const sku = uniqueProductSku(seen, activeStore.id, base.id, suggestSkuBase(fullName, activeStore.skuPrefix ?? ""));
+        // #356: the BULK path must initialize the ficha exactly like the
+        // mini form (hotfix 1.15.1): a public route and a tracked zero shelf —
+        // never a blank-inventory ficha waiting for its first reception.
+        const slug = uniqueProductSlug(seen, activeStore.id, base.id, slugify(fullName));
+        batchProducts.push({
+          ...base,
+          name: fullName,
+          cost: l.unitCost,
+          sku,
+          slug,
+          ...(activeStore.type === "inventory_tiered" ? { quantityOnHand: 0 } : {}),
+        });
         return { ...l, productId: base.id, matchStatus: "new_product" as const };
       });
       // The batch itself must carry the invalidation, not just local state.
