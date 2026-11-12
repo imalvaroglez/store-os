@@ -19,6 +19,8 @@ import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { OrderPaymentsSheet } from "../orders/OrderPaymentsSheet";
+import { DeliverySheet } from "../orders/DeliverySheet";
+import { pendingDeliveries } from "../../lib/deliveries";
 import { navigate } from "../../lib/router";
 import { useToast } from "../../design-system";
 
@@ -31,6 +33,8 @@ export function HomeScreen() {
   // sync refreshes what the sheet shows — and the sheet simply closes if the
   // order leaves the current store context (Codex review of #186).
   const [paymentsOrderId, setPaymentsOrderId] = useState<string | null>(null);
+  // #333: delivery-evidence sheet for the "Entregar" rows (same as the card).
+  const [deliveryOrderId, setDeliveryOrderId] = useState<string | null>(null);
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const orders = ordersForStore(state.orders, activeStore.id);
@@ -189,7 +193,16 @@ export function HomeScreen() {
                       </p>
                     </div>
                     {verb ? (
-                      <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => advance(o.id)}>
+                      <Button
+                        size="sm"
+                        className="shrink-0 whitespace-nowrap"
+                        onClick={() => {
+                          // #333: delivering registers the evidence (per piece,
+                          // effective date) — Home must not bypass the sheet.
+                          if (verb === "Entregar" && pendingDeliveries(o).length > 0) setDeliveryOrderId(o.id);
+                          else void advance(o.id);
+                        }}
+                      >
                         {verb}
                       </Button>
                     ) : o.installments ? (
@@ -238,6 +251,16 @@ export function HomeScreen() {
       )}
 
     </Screen>
+      {deliveryOrderId && (() => {
+        const deliveryOrder = orders.find((x) => x.id === deliveryOrderId);
+        // The order can leave the store context while the sheet is open —
+        // close quietly instead of crashing on undefined (same guard as the
+        // payments sheet).
+        return deliveryOrder ? (
+          <DeliverySheet key={deliveryOrderId} order={deliveryOrder} open onClose={() => setDeliveryOrderId(null)} />
+        ) : null;
+      })()}
+
     {paymentsOrder && (
       <OrderPaymentsSheet order={paymentsOrder} open onClose={() => setPaymentsOrderId(null)} />
     )}

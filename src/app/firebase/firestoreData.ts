@@ -25,6 +25,7 @@ import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } f
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
+import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -33,7 +34,7 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import type { AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule } from "../../types";
+import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
@@ -595,6 +596,9 @@ export async function saveOrderWithStockTx(
       // #203: same verbatim discipline — incidents (append-only evidence on
       // this order) belong to the incident transactions, never to a form save.
       incidents: Array.isArray(docData?.incidents) ? (docData.incidents as Order["incidents"]) : undefined,
+      // #333: deliveries are append-only evidence owned by registerDeliveryTx;
+      // an ordinary save carries them verbatim and can never edit or drop them.
+      deliveries: Array.isArray(docData?.deliveries) ? (docData.deliveries as Order["deliveries"]) : undefined,
       // #271: deposit corrections are append-only signed evidence; a form
       // save carries them verbatim (plus its own entry on a justified lowering).
       ...(depositCorrections ? { depositCorrections } : {}),
@@ -2168,5 +2172,77 @@ export async function consumeSupplyTx(params: {
       };
       tx.update(orderRef, { saleExpenses: arrayUnion(stripUndefined(charge)), updatedAt: consumption.at });
     }
+  });
+}
+
+/**
+ * #333: register ONE delivery event — append-only, id-idempotent evidence of
+ * pieces handed to the clienta. Validity derives from the FRESH order doc:
+ * an event may never deliver more than the still-pending pieces (concurrent
+ * deliveries abort instead of over-delivering), and a cancelled order admits
+ * none. The event NEVER touches money or stock: the reservation already took
+ * the pieces when the order was confirmed, and cobros keep their own dates.
+ * When the event completes the order, the SAME commit moves it to "delivered"
+ * — honoring the #165/#168 gate (an uncovered saldo demands the operator's
+ * explicit confirmation and is stamped as evidence).
+ */
+export async function registerDeliveryTx(params: {
+  orderId: string;
+  storeId: string;
+  delivery: OrderDelivery;
+  confirmDeliveredWithBalance?: boolean;
+}): Promise<Order> {
+  const { db } = getFirebase();
+  const { orderId, storeId, delivery } = params;
+  const user = getFirebase().auth.currentUser;
+  if (!user) throw new Error("Se necesita sesión para registrar entregas.");
+  const orderRef = doc(db, "orders", orderId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) throw new Error("No se encontró el pedido.");
+    const data = snap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    if (data.orderStatus === "cancelled") throw new Error("Un pedido cancelado no admite entregas.");
+    const deliveries = Array.isArray(data.deliveries) ? [...(data.deliveries as OrderDelivery[])] : [];
+    // Idempotent retry: the same intent id already landed — nothing to do.
+    if (deliveries.some((existing) => existing.id === delivery.id)) {
+      return migrateOrder({ ...data, id: orderId });
+    }
+    const fresh = migrateOrder({ ...data, id: orderId });
+    const validation = deliveryValidationError(fresh, delivery);
+    if (validation) throw new Error(validation);
+    deliveries.push(delivery);
+    const next: Record<string, unknown> = {
+      deliveries: stripUndefined(deliveries),
+      updatedAt: new Date().toISOString(),
+      // Bump the revision so a form opened BEFORE this delivery cannot save
+      // its stale status over the evidence (it aborts stale and reloads) —
+      // same discipline as any other order transition.
+      revision: (typeof data.revision === "number" ? data.revision : 0) + 1,
+    };
+    const becomesDelivered =
+      orderFullyDelivered({ ...fresh, deliveries: [...deliveries] }) &&
+      effectiveOrderStatus(fresh) !== "delivered";
+    if (orderFullyDelivered({ ...fresh, deliveries: [...deliveries] })) {
+      next.orderStatus = "delivered";
+    }
+    // The saldo gate fires on the TRANSITION to delivered (like the save
+    // path) — an already-delivered order keeps its original authorization.
+    if (becomesDelivered) {
+      const docMoney = {
+        accumulatorCents: fresh.paymentsReceivedCents ?? 0,
+        receivedCents: docReceivedCents(fresh),
+      };
+      if (deliveryWithBalanceBlocked(fresh, docMoney)) {
+        if (!params.confirmDeliveredWithBalance) {
+          throw new DeliveryWithBalanceError(uncoveredBalanceCents(fresh, docMoney));
+        }
+        next.deliveredWithBalanceCents = uncoveredBalanceCents(fresh, docMoney);
+        next.deliveredWithBalanceConfirmedAt = new Date().toISOString();
+        next.deliveredWithBalanceConfirmedBy = user.uid;
+      }
+    }
+    tx.update(orderRef, next);
+    return migrateOrder({ ...data, id: orderId, ...next });
   });
 }

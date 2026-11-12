@@ -26,6 +26,7 @@ import { formatOrderUnitPrice, orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
 import { DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
+import { pendingDeliveries } from "../../lib/deliveries";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
 import { groupOrderLines } from "./orderGrouping";
 import { ORDER_STATUS_LABELS } from "./orderStatus";
@@ -557,6 +558,16 @@ export function OrderForm({
     }
     if (deposit.trim() && parseAmount(deposit) == null) {
       toast.error("Revisa el anticipo.");
+      return;
+    }
+    // #333: "Entregado" is EARNED by delivery evidence, not typed by hand —
+    // pieces still pending would become untrackable (review P2).
+    if (
+      orderStatus === "delivered" &&
+      effectiveOrderStatus(order) !== "delivered" &&
+      pendingDeliveries({ ...order, items: normalizedItems } as Order).length > 0
+    ) {
+      toast.error("Quedan piezas sin registrar su entrega: usa el botón «Entregar» de la tarjeta para registrar qué recibió la clienta.");
       return;
     }
     if (hasPaymentEvidence && numberFromText(deposit) > (order.deposit ?? 0)) {
