@@ -262,14 +262,13 @@ export function CatalogScreen() {
   // Filter matches REAL categories (categoryIds, primary or secondary) — not
   // the legacy `category` enum the badges paint. Sorting is local to this
   // screen; productsForStore (shared selector) stays untouched.
+  // #344: "Por surtir" uses the SAME derivation as Inicio's card
+  // (stockAlertLevel — the saved threshold or the conservative default);
+  // a hand-rolled lowStockAt-only check undercounted products without an
+  // explicit threshold and disagreed with the number that sent Fer here.
   const filtered = products.filter((product) =>
     (!categoryFilter || (product.categoryIds ?? []).includes(categoryFilter)) &&
-    (!isTiered || !restockOnly || (
-      typeof product.quantityOnHand === "number" && (
-        product.quantityOnHand <= 0 ||
-        (typeof product.lowStockAt === "number" && product.quantityOnHand <= product.lowStockAt)
-      )
-    ))
+    (!isTiered || !restockOnly || stockAlertLevel(product) !== null)
   );
   const sorted = [...filtered].sort((a, b) => {
     const cmp = compareBy(effectiveSortKey, a, b, defaultId);
