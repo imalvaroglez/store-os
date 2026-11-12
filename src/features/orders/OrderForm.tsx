@@ -47,6 +47,7 @@ type DraftLine = OrderItem & {
   unitPriceText: string;
   costText: string;
   productQuery: string;
+  needsProductChoice?: boolean;
 };
 
 const STATUS_OPTIONS: { value: OrderStatus; label: string }[] = (
@@ -304,14 +305,17 @@ export function OrderForm({
   }));
   const productOptions = products.map((product) => {
     const price = isTiered ? product.prices?.[currentTier ?? ""] : product.price;
+    const colors = product.variants?.map((variant) => variant.color).filter(Boolean) ?? [];
     return {
       value: product.id,
       label: product.name,
       detail: [
+        product.sku,
+        colors.length > 0 ? `Colores: ${colors.join(", ")}` : "",
         price == null ? "Sin precio" : formatMoney(price),
         isTiered && typeof product.quantityOnHand === "number" ? `Existencia ${product.quantityOnHand}` : "",
       ].filter(Boolean).join(" · "),
-      keywords: [product.sku, product.category].filter(Boolean).join(" "),
+      keywords: [product.sku, product.category, ...colors, ...(product.variants ?? []).map((variant) => variant.sku)].filter(Boolean).join(" "),
     };
   });
   const totals = useMemo(() => {
@@ -458,6 +462,7 @@ export function OrderForm({
     const categorySnapshot = line.productId === product.id ? line.categorySnapshot : category ? { id: category.id, name: category.name } : undefined;
     updateLine(line.key, {
       productId: product.id,
+      needsProductChoice: false,
       priceSource: manualTier ? "manual" : "automatic",
       // #124: the color choice belongs to the new product; a design sold by
       // color starts unchosen (mandatory) and per-color cost lands on pick.
@@ -493,10 +498,30 @@ export function OrderForm({
     });
   }
 
+  function exactProductMatches(query: string) {
+    const name = query.trim().toLocaleLowerCase("es-MX");
+    return products.filter((product) => product.name.trim().toLocaleLowerCase("es-MX") === name);
+  }
+
   function changeProductQuery(line: DraftLine, value: string) {
-    const product = products.find((candidate) => candidate.name === value || candidate.id === value);
-    if (product) selectProduct(line, product);
-    else updateLine(line.key, { productId: undefined, categorySnapshot: undefined, productName: value, productQuery: value, ...(line.productId ? { priceSource: "automatic", priceTier: undefined, unitPriceText: "" } : {}) });  }
+    const matches = exactProductMatches(value);
+    const product = products.find((candidate) => candidate.id === value) ?? (matches.length === 1 ? matches[0] : undefined);
+    if (product) {
+      selectProduct(line, product);
+      return;
+    }
+    updateLine(line.key, {
+      productId: undefined,
+      categorySnapshot: undefined,
+      productName: value,
+      productQuery: value,
+      needsProductChoice: matches.length > 1,
+      variantId: undefined,
+      variantColor: undefined,
+      variantSku: undefined,
+      ...(line.productId ? { priceSource: "automatic", priceTier: undefined, unitPriceText: "", cost: undefined, costText: "" } : {}),
+    });
+  }
 
   function changeTier(line: DraftLine, value: string) {
     const product = products.find((candidate) => candidate.id === line.productId);
@@ -517,6 +542,13 @@ export function OrderForm({
     // #124 (decisión 5): la venta identifica el color exacto — sin color no
     // se puede reservar la existencia correcta.
     for (const [index, line] of lines.entries()) {
+      if (line.needsProductChoice && exactProductMatches(line.productQuery).length > 1) {
+        toast.error(`Hay varias fichas con ese nombre. Elige el producto del artículo ${index + 1} en la lista.`);
+        setFocusPrefersQuantity(false);
+        setFocusLine(line.key);
+        setReviewing(false);
+        return;
+      }
       const product = line.productId ? products.find((item) => item.id === line.productId) : undefined;
       if (product && isVariantProduct(product) && line.productId && !line.variantId) {
         toast.error(`Elige el color del artículo ${index + 1} (${product.name}).`);
@@ -771,7 +803,7 @@ export function OrderForm({
                   <div key={line.key} className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2.5">
                       <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} className="h-10 w-10 shrink-0" />
-                      <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
+                      <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}{line.variantColor ? ` · ${line.variantColor}` : ""}</span>
                     </span>
                     <span className="ml-auto hidden items-baseline gap-2 text-sm text-ink-soft md:flex tabular-nums">
                       {unitPrice > 0 && <>{formatOrderUnitPrice(unitPrice)} × {reviewQty} =</>}
@@ -861,11 +893,12 @@ export function OrderForm({
                 return (
                   <SelectField
                     label="Color"
+                    aria-required="true"
                     value={line.variantId ?? ""}
                     onChange={(value) => selectVariant(line, value)}
                     hint={selected?.sku ? `Clave: ${selected.sku}.` : undefined}
                     options={[
-                      { value: "", label: "Elige el color…" },
+                      { value: "", label: "Elige el color de este producto" },
                       ...product.variants!.map((variant) => ({
                         value: variant.id,
                         label:
