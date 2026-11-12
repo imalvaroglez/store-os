@@ -11,14 +11,7 @@ import "../../design-system/receipt-print.css";
  * #receipt-print-root id is what the @media print scope isolates on paper;
  * on screen it previews inside the existing "Detalle para compartir" sheet.
  */
-export function OrderReceipt({
-  data,
-  whatsapp,
-}: {
-  data: OrderTicketData;
-  /** Store's public WhatsApp, printed as contact when available. */
-  whatsapp?: string;
-}) {
+export function OrderReceipt({ data }: { data: OrderTicketData }) {
   // The print scope only applies while a receipt is on screen — otherwise a
   // plain Ctrl+P elsewhere would print a blank page.
   useEffect(() => {
@@ -28,12 +21,14 @@ export function OrderReceipt({
 
   return (
     <>
-      <div data-testid="receipt-preview" className="rounded-card bg-surface ring-1 ring-edge p-6 max-w-md mx-auto [print-color-adjust:exact]">
-        <ReceiptContents data={data} whatsapp={whatsapp} />
+      {/* #405: no max-w cap — the preview fills its sheet column so it shares
+       * width and height with the shared-text panel beside it. */}
+      <div data-testid="receipt-preview" className="flex-1 min-w-0 rounded-card bg-surface ring-1 ring-edge p-6 [print-color-adjust:exact]">
+        <ReceiptContents data={data} />
       </div>
       {createPortal(
         <div id="receipt-print-root" className="receipt-print-document rounded-card bg-surface p-6 [print-color-adjust:exact]">
-          <ReceiptContents data={data} whatsapp={whatsapp} />
+          <ReceiptContents data={data} />
         </div>,
         document.body
       )}
@@ -41,7 +36,7 @@ export function OrderReceipt({
   );
 }
 
-function ReceiptContents({ data, whatsapp }: { data: OrderTicketData; whatsapp?: string }) {
+function ReceiptContents({ data }: { data: OrderTicketData }) {
   return (
     <>
       <header className="text-center space-y-1 border-b border-rule pb-3">
@@ -87,12 +82,8 @@ function ReceiptContents({ data, whatsapp }: { data: OrderTicketData; whatsapp?:
           </div>
         )}
       </div>
-
-      {whatsapp && (
-        <footer className="mt-4 pt-2 border-t border-rule text-xs text-on-surface-soft text-center">
-          Pedidos por WhatsApp: {whatsapp}
-        </footer>
-      )}
+      {/* #405: no "Pedidos por WhatsApp" footer — the catalog is the ordering
+       * channel; WhatsApp stays for sharing this very detail as text. */}
     </>
   );
 }

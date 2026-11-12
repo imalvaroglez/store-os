@@ -41,6 +41,19 @@ describe("sharing a saved order", () => {
     expect((screen.getByLabelText("Detalle del pedido") as HTMLTextAreaElement).value).toContain("Anillo");
     rendered.unmount();
   });
+
+  // #405 — la etiqueta del botón comunica la acción: sin párrafo fijo de ayuda
+  // bajo «Imprimir / Guardar PDF», y ambas acciones equivalentes comparten variante.
+  it("la hoja de detalle va sin ayuda fija de impresión y con acciones del mismo estilo (#405)", () => {
+    const rendered = render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalle para compartir" }));
+    expect(screen.queryByText(/Al imprimir elige/)).toBeNull();
+    expect(screen.queryByText(/Pedidos por WhatsApp/)).toBeNull();
+    const copy = screen.getByRole("button", { name: "Copiar detalle" });
+    const print = screen.getByRole("button", { name: "Imprimir / Guardar PDF" });
+    expect(copy.className).toBe(print.className);
+    rendered.unmount();
+  });
 });
 
 describe("installment order card (#165)", () => {
@@ -212,7 +225,8 @@ describe("modal de compartir en dos columnas (#307)", () => {
     expect(textArea.value).toContain("Anillo");
     expect(screen.getByRole("button", { name: "Copiar detalle" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Imprimir / Guardar PDF" })).toBeInTheDocument();
-    expect(screen.getAllByText(/Solo el recibo sale en papel/).length).toBeGreaterThan(0); // una por panel (móvil/escritorio)
+    // #405: sin párrafo fijo de ayuda — la etiqueta del botón comunica la acción.
+    expect(screen.queryByText(/Solo el recibo sale en papel/)).toBeNull();
     // Two panels on one grid row at wide widths (lg:grid-cols-2).
     const grid = textArea.closest("div.grid");
     expect(grid?.className).toContain("lg:grid-cols-2");
