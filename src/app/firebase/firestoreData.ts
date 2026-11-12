@@ -706,6 +706,9 @@ export async function saveOrderWithStockTx(
     for (const vDelta of variantDeltas.values()) {
       const product = await tx.get(doc(db, "products", vDelta.productId));
       if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
+      // A deleted design has no shelf to return stock to, just like a
+      // deleted non-variant product. A new reservation must still fail.
+      if (!product.exists() && vDelta.delta > 0) continue;
       const data = product.exists() ? product.data() as Record<string, unknown> : {};
       const variants = data.variants as Product["variants"];
       const variant = variants?.find((v) => v.id === vDelta.variantId);
@@ -1193,8 +1196,9 @@ export async function deleteOrderWithStockTx(
     const releases = new Map<string, number>();
     for (const vDelta of variantDeltas.values()) {
       const product = await tx.get(doc(db, "products", vDelta.productId));
-      if (product.exists() && product.data().storeId !== previous.storeId) throw new Error("El producto pertenece a otra tienda.");
-      const data = (product.exists() ? product.data() : {}) as Record<string, unknown>;
+      if (!product.exists()) continue;
+      const data = product.data();
+      if (data.storeId !== previous.storeId) throw new Error("El producto pertenece a otra tienda.");
       const variants = data.variants as Product["variants"];
       const variant = variants?.find((v) => v.id === vDelta.variantId);
       if (!variant) {
