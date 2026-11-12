@@ -342,11 +342,37 @@ service cloud.firestore {
         && entry.get('at', '') is string && entry.get('at', '').size() > 0
         && entry.get('by', '') == request.auth.uid;
     }
+    // #333: the delivery ledger is strictly append-only. A write touching
+    // `deliveries` keeps it VERBATIM identical or appends exactly ONE
+    // well-formed event signed by the caller. Structural essentials of the
+    // last entry are checked (ids, effective date shape, signature, non-empty
+    // lines); per-line quantities are validated by the registering
+    // transaction against the fresh doc (never more than pending) — the same
+    // split of concerns as depositCorrections above.
+    function validDeliveryAppend(orderId, before, after) {
+      let prev = before.get('deliveries', []);
+      let next = after.get('deliveries', []);
+      let entry = next.size() > 0 ? next[next.size() - 1] : {};
+      // ponytail: like depositCorrections, no list concat here — a rewritten
+      // PREFIX smuggled behind a genuine append can only be spot-checked
+      // (first element) ; the transaction always appends exactly one event.
+      return next is list && prev is list && next.size() == prev.size() + 1
+        && (prev.size() == 0 || next[0] == prev[0])
+        && entry.get('id', '') is string && entry.get('id', '').size() > 0
+        && entry.get('orderId', '') == orderId
+        && entry.get('storeId', '') == after.get('storeId', '')
+        && entry.get('deliveredAt', '') is string
+        && entry.get('deliveredAt', '').matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && entry.get('recordedAt', '') is string && entry.get('recordedAt', '').size() > 0
+        && entry.get('by', '') == request.auth.uid
+        && entry.get('lines', []) is list && entry.get('lines', []).size() > 0
+        && entry.get('lines', []).size() <= 200;
+    }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
@@ -375,15 +401,23 @@ service cloud.firestore {
             || request.resource.data.get('depositCorrections', [])
                 == resource.data.get('depositCorrections', [])
             || validDepositCorrection(resource.data, request.resource.data))
+        // #333: the delivery ledger is append-only (verbatim carry or one
+        // signed event per write); ordinary edits can never rewrite history.
+        && (!('deliveries' in resource.data) && !('deliveries' in request.resource.data)
+            || request.resource.data.get('deliveries', [])
+                == resource.data.get('deliveries', [])
+            || validDeliveryAppend(id, resource.data, request.resource.data))
         && (!('installmentsReservedAt' in resource.data)
             || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
         && (resource.data.get('inheritedDepositMaterialized', false) != true
             || request.resource.data.get('inheritedDepositMaterialized', false) == true);
       // Preserve the parent of immutable money evidence, including net-zero
-      // corrections, and any stock still held by an installment reservation.
+      // corrections, any stock still held by an installment reservation, and
+      // #333's delivery evidence (pieces handed to the clienta).
       allow delete: if canOperateStore(resource.data.storeId)
         && !('paymentsReceivedCents' in resource.data)
         && !('installmentsReservedAt' in resource.data)
+        && !('deliveries' in resource.data)
         && resource.data.get('inheritedDepositMaterialized', false) != true;
     }
 

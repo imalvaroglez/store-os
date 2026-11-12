@@ -247,3 +247,55 @@ describe("printReceipt · reentrada (#329 revisión)", () => {
     vi.useRealTimers();
   });
 });
+
+// #333: Entregar registers WHAT was handed (per piece, effective date) — the
+// sheet opens for orders with product lines; custom-only orders keep the
+// plain status advance; delivered-without-evidence orders say so.
+describe("entregar con evidencia (#333)", () => {
+  beforeEach(() => {
+    holder.upsertOrder.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("Entregar abre la hoja de entrega cuando hay líneas con producto", async () => {
+    const withProduct: Order = {
+      ...order,
+      items: [{ productId: "p1", productName: "Anillo", quantity: 2, unitPrice: 100, subtotal: 200 }],
+      orderStatus: "ready",
+    };
+    const rendered = render(<ToastProvider><OrderCard order={withProduct} onEdit={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Entregar" }));
+    expect(await screen.findByRole("dialog", { name: "Entrega del pedido" })).toBeTruthy();
+    // The plain status advance did NOT happen — the evidence flow owns it now.
+    expect(holder.upsertOrder).not.toHaveBeenCalled();
+    rendered.unmount();
+  });
+
+  it("sin líneas de producto, Entregar conserva el avance simple", async () => {
+    const customOnly: Order = { ...order, items: [{ productName: "Envoltura", quantity: 1, unitPrice: 20, subtotal: 20 }], orderStatus: "ready" };
+    const rendered = render(<ToastProvider><OrderCard order={customOnly} onEdit={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Entregar" }));
+    await waitFor(() => expect(holder.upsertOrder).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: "Entrega del pedido" })).toBeNull();
+    rendered.unmount();
+  });
+
+  it("entrega parcial muestra progreso; entregado sin evidencia dice «por confirmar»", () => {
+    const partial: Order = {
+      ...order,
+      items: [{ productId: "p1", productName: "Anillo", quantity: 5, unitPrice: 100, subtotal: 500 }],
+      orderStatus: "ready",
+      deliveries: [{
+        id: "dev1", orderId: "o1", storeId: "s1", deliveredAt: "2026-11-12",
+        recordedAt: "2026-11-12T10:00:00.000Z", by: "u1", lines: [{ productId: "p1", quantity: 2 }],
+      }],
+    };
+    const first = render(<ToastProvider><OrderCard order={partial} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.getByText("Entregadas 2 de 5 piezas")).toBeTruthy();
+    first.unmount();
+
+    const legacyDelivered: Order = { ...order, items: [{ productId: "p1", productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100 }], orderStatus: "delivered" };
+    const second = render(<ToastProvider><OrderCard order={legacyDelivered} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.getByText("Fecha de entrega por confirmar.")).toBeTruthy();
+    second.unmount();
+  });
+});

@@ -400,6 +400,11 @@ export type Order = {
    * Append-only like the rest of the money evidence; carried verbatim by
    * ordinary saves. A lowering without its entry is denied by the rules. */
   depositCorrections?: OrderDepositCorrection[];
+  /** #333: verifiable evidence of pieces handed to the clienta. Append-only
+   * (one entry per delivery event, id-idempotent); carried verbatim by
+   * ordinary saves. Quantities never touch money or stock on their own — the
+   * reservation already took the pieces when the order was confirmed. */
+  deliveries?: OrderDelivery[];
   /** PO 2026-11-03 R9: evidence stamped when the operator explicitly confirmed
    * delivering with an uncovered balance (retroactive / cash-on-delivery
    * flows). The delivery gate still fires by default — this is the recorded
@@ -451,6 +456,31 @@ export type OrderDepositCorrection = {
   note: string;
   by: string;
   at: string;
+};
+
+/** #333: pieces of one order line handed to the clienta in a delivery event.
+ * Keyed by the exact stock dimension (variant-aware), like the reservation. */
+export type OrderDeliveryLine = {
+  productId: string;
+  variantId?: string;
+  /** Integer pieces delivered in THIS event; strictly positive. */
+  quantity: number;
+};
+
+/** #333: one delivery event — append-only, id-idempotent evidence.
+ * `deliveredAt` is the EFFECTIVE local date the operator confirms
+ * (America/Mexico_City, YYYY-MM-DD — a late capture keeps the real date);
+ * `recordedAt`/`by` are the audit trail that distinguishes them. */
+export type OrderDelivery = {
+  /** Stable per intent: a retry after an error reuses the same id (idempotent
+   * append) and never duplicates the event. */
+  id: string;
+  orderId: string;
+  storeId: string;
+  deliveredAt: string;
+  recordedAt: string;
+  by: string;
+  lines: OrderDeliveryLine[];
 };
 
 /** #189: one compensation event between orders of the same clienta/store.

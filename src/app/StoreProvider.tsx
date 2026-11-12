@@ -23,6 +23,7 @@ import type {
   StorePackaging,
   PricingRulesConfig,
   PricingRule,
+  OrderDeliveryLine,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -74,6 +75,7 @@ import {
   applyCustomerCreditTx,
   releaseCustomerCreditTx,
   openIncidentTx,
+  registerDeliveryTx,
   applyIncidentEventTx,
   assignExpenseTx,
   consumeSupplyTx,
@@ -343,6 +345,14 @@ type StoreContextValue = {
   deleteOrder: (orderId: string, expectedRevision: number) => Promise<void>;
   /** #203 after-sales incidents (ficha linked to the order). */
   openIncident: (order: Order, incident: Omit<OrderIncident, "events">) => Promise<void>;
+  /** #333: register delivery evidence (pieces handed to the clienta) as ONE
+   * append-only, id-idempotent event. Completing the order honors the
+   * #165/#168 saldo gate via the thrown DeliveryWithBalanceError. */
+  registerDelivery: (
+    order: Order,
+    delivery: { id: string; lines: OrderDeliveryLine[]; deliveredAt: string },
+    options?: { confirmDeliveredWithBalance?: boolean }
+  ) => Promise<Order>;
   applyIncidentEvent: (
     order: Order,
     incidentId: string,
@@ -1265,6 +1275,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         incident: { ...incident, events: [{ id: uid("iev"), kind: "opened", at: nowIso(), by: currentUser.uid }] },
       });
       dispatch({ type: "UPDATE_ORDER", order: updated });
+    },
+    registerDelivery: async (order, delivery, options) => {
+      const currentUser = requireAuthenticatedUser();
+      const updated = await registerDeliveryTx({
+        orderId: order.id,
+        storeId: order.storeId,
+        confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance,
+        delivery: {
+          id: delivery.id,
+          orderId: order.id,
+          storeId: order.storeId,
+          deliveredAt: delivery.deliveredAt,
+          recordedAt: nowIso(),
+          by: currentUser.uid,
+          lines: delivery.lines,
+        },
+      });
+      dispatch({ type: "UPDATE_ORDER", order: updated });
+      return updated;
     },
     applyIncidentEvent: async (order, incidentId, event, extra) => {
       const currentUser = requireAuthenticatedUser();
