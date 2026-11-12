@@ -353,11 +353,13 @@ service cloud.firestore {
       let prev = before.get('deliveries', []);
       let next = after.get('deliveries', []);
       let entry = next.size() > 0 ? next[next.size() - 1] : {};
-      // ponytail: like depositCorrections, no list concat here — a rewritten
-      // PREFIX smuggled behind a genuine append can only be spot-checked
-      // (first element) ; the transaction always appends exactly one event.
+      // Per-line CONTENT checks are impossible here (no list lambdas; slice
+      // comparisons hit the 1000-expression limit) — the registering
+      // transaction owns them; the rules own structure, signature, order.
       return next is list && prev is list && next.size() == prev.size() + 1
-        && (prev.size() == 0 || next[0] == prev[0])
+        // hasAll: every previous event survives UNCHANGED behind the append
+        // (review P2 — closes the mid/prefix rewrite that next[0] missed).
+        && next.hasAll(prev)
         && entry.get('id', '') is string && entry.get('id', '').size() > 0
         && entry.get('orderId', '') == orderId
         && entry.get('storeId', '') == after.get('storeId', '')

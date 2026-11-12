@@ -861,6 +861,19 @@ describe("#333 delivery ledger append-only", () => {
     await assertFails(updateDoc(doc(other, "orders/" + ORDER), { deliveries: [event({ id: "dev-3" }), event()] }));
   });
 
+  it("reescribir un evento PREVIO detrás de un append genuino es denegado (hasAll, P2 revisión)", async () => {
+    await seed({ deliveries: [event(), event({ id: "dev-2" })] });
+    const db = await asUser("u333");
+    await assertFails(
+      // The last previous event is rewritten (quantity 99) behind a real append.
+      updateDoc(doc(db, "orders/" + ORDER), {
+        deliveries: [event(), event({ id: "dev-2", lines: [{ productId: "p1", quantity: 99 }] }), event({ id: "dev-3" })],
+      })
+    );
+    // The honest append still passes.
+    await assertSucceeds(updateDoc(doc(db, "orders/" + ORDER), { deliveries: [event(), event({ id: "dev-2" }), event({ id: "dev-3" })] }));
+  });
+
   it("un evento con fecha efectiva basura (2099) es denegado por las reglas", async () => {
     await seed({ deliveries: [event()] });
     const db = await asUser("u333");
