@@ -293,6 +293,93 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("stock projection with Fir
     ]);
   });
 
+  it("restores a missing summary at its sortOrder position, not at the end", async () => {
+    const early = { ...product, id: "stock-early", name: "Primera pieza", slug: "primera", sortOrder: 0 };
+    const late = { ...product, id: "stock-late", name: "Última pieza", slug: "ultima", sortOrder: 90 };
+    await env.withSecurityRulesDisabled(async (context) => {
+      const admin = context.firestore();
+      await setDoc(doc(admin, "products", early.id), early);
+      await setDoc(doc(admin, "products", late.id), late);
+      await updateDoc(doc(admin, productPath), { quantityOnHand: 4, sortOrder: 50 });
+      // The live catalog lost the middle piece's summary (the incident's shape).
+      await setDoc(doc(admin, "publicCatalogs", store.slug), {
+        storeId: store.id,
+        storeSlug: store.slug,
+        products: [
+          { productSlug: early.slug, sortOrder: 0, stockSignal: "agotado" },
+          { productSlug: late.slug, sortOrder: 90, stockSignal: "agotado" },
+        ],
+      });
+    });
+
+    await republishStockSignals(store, [{ ...product, quantityOnHand: 4 }, early, late], [], [product.id]);
+
+    const catalog = (await getDoc(doc(db, "publicCatalogs", store.slug))).data();
+    expect(catalog?.products.map((entry: { productSlug: string }) => entry.productSlug)).toEqual([
+      early.slug, product.slug, late.slug,
+    ]);
+  });
+
+  it("never writes this store's public docs for another store's product id", async () => {
+    const foreignStore = { ...store, id: "other-store", slug: "other-store" };
+    const foreign = { ...product, id: "foreign-piece", storeId: foreignStore.id, slug: "ajena" };
+    await env.withSecurityRulesDisabled(async (context) => {
+      const admin = context.firestore();
+      await setDoc(doc(admin, "adminStores", foreignStore.id), { ownerUid: "other-owner", memberUids: ["other-member"] });
+      await setDoc(doc(admin, "stores", foreignStore.id), foreignStore);
+      await setDoc(doc(admin, "products", foreign.id), { ...foreign, quantityOnHand: 4 });
+    });
+
+    // A member of THIS store cannot read the foreign canonical doc: the call
+    // fails loudly instead of silently leaking a public route.
+    await expect(republishStockSignals(store, [], [], [foreign.id])).rejects.toThrow();
+    expect((await getDoc(doc(db, "publicProducts", `${store.id}__ajena`))).exists()).toBe(false);
+    expect((await getDoc(doc(db, "publicCatalogs", store.slug))).exists()).toBe(false);
+  });
+
+  it("preserves per-color signals of untouched products when rebuilding after a delete", async () => {
+    const design = {
+      ...product, id: "stock-design", name: "Diseño con colores", slug: "diseno",
+      variants: [
+        { id: "color-g", color: "Gold", quantityOnHand: 3, createdAt: "", updatedAt: "" },
+        { id: "color-s", color: "Silver", quantityOnHand: 0, createdAt: "", updatedAt: "" },
+      ],
+    };
+    await env.withSecurityRulesDisabled(async (context) => {
+      const admin = context.firestore();
+      await setDoc(doc(admin, "products", design.id), design);
+      await setDoc(doc(admin, "publicCatalogs", store.slug), {
+        storeId: store.id,
+        storeSlug: store.slug,
+        products: [{
+          productSlug: design.slug,
+          stockSignal: "disponible",
+          variants: [
+            { id: "color-g", color: "Gold", stockSignal: "disponible" },
+            { id: "color-s", color: "Silver", stockSignal: "agotado" },
+          ],
+        }],
+      });
+    });
+    // The deleting client's memory still believes the silver shelf has stock.
+    const staleDesign = {
+      ...design,
+      variants: design.variants.map((variant) => ({ ...variant, quantityOnHand: 2 })),
+    };
+
+    await rebuildPublicCatalog(store.slug, store.id, [staleDesign], store);
+
+    const catalog = (await getDoc(doc(db, "publicCatalogs", store.slug))).data();
+    expect(catalog?.products[0]).toMatchObject({
+      productSlug: design.slug,
+      stockSignal: "disponible",
+      variants: [
+        { id: "color-g", stockSignal: "disponible" },
+        { id: "color-s", stockSignal: "agotado" },
+      ],
+    });
+  });
+
   // #353 (PO review, riesgo 3): Fer's real case — several arracadas with equal
   // sizes and different codes created from Compras, plus a color line.
   // Reception must keep every ficha's identity, cost and stock separate.
