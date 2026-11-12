@@ -3,7 +3,7 @@
 // contract tests the independent review asked for. Membership identities are
 // private: inviteMember must never resolve uids, and transferStoreOwnership
 // must only accept uids already in memberUids.
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, Store } from "../types";
 import type { AppUser } from "./firebase/auth";
@@ -52,7 +52,11 @@ function Probe() {
 }
 async function mount() {
   const view = render(<StoreProvider><Probe /></StoreProvider>);
-  await waitFor(() => expect(hooks.load).toHaveBeenCalled());
+  // #382: wait for the loaded state to be APPLIED, not merely for load() to
+  // have been called — under parallel load the dispatch can lag the call by a
+  // microtask, leaving state.stores empty and the membership tests racing
+  // against "Tienda no encontrada.".
+  await waitFor(() => expect(screen.getByTestId("stores").textContent).toBe("1"));
   return view;
 }
 
