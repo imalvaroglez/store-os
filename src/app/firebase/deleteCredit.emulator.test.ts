@@ -103,17 +103,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deletion vs outstanding c
     expect(after.revision).toBe(dest.revision);   // nothing written
   });
 
-  it("flujo legítimo: restituir el crédito y borrar con la revisión fresca elimina el pedido y deja el espejo en cero", async () => {
+  it("flujo con evidencia: restituir deja el espejo en cero y el ledger VIVO bloquea el borrado (#380 r2)", async () => {
     const released = await releaseCustomerCreditTx({ orderId: "dc-dest", storeId: "dc-store", by: "tx-user", reason: "deletion" });
     expect(released).toBe(20000);
 
-    const fresh = await getOrderFreshRevision("dc-dest");
-    expect(typeof fresh).toBe("number");
-    await deleteOrderWithStockTx(user, "dc-dest", fresh as number);
-
-    expect((await getDoc(doc(holder.db, "orders/dc-dest"))).exists()).toBe(false);
     const origin = (await getDoc(doc(holder.db, "orders/dc-origin"))).data()!;
     expect(origin.creditConsumedCents).toBe(0); // the clienta's credit is whole again
+    // #380 r2 (review #403 MAYOR-2): accumulators at zero are not enough —
+    // a signed fake release can produce exactly that. The ledger is money
+    // evidence, so the document stays: the rules deny the delete.
+    const fresh = await getOrderFreshRevision("dc-dest");
+    expect(typeof fresh).toBe("number");
+    await expect(deleteOrderWithStockTx(user, "dc-dest", fresh as number)).rejects.toThrow();
+    expect((await getDoc(doc(holder.db, "orders/dc-dest"))).exists()).toBe(true);
   });
 
   it("un pedido sin crédito pendiente se borra normalmente (sin regresión)", async () => {

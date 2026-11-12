@@ -407,8 +407,13 @@ service cloud.firestore {
       return after.get('creditLedger', []) == before.get('creditLedger', []);
     }
     function creditEntrySound(entry, storeId, customerId) {
-      return get(/databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''))).data.get('storeId', '') == storeId
-        && get(/databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''))).data.get('customerId', '') == customerId
+      // ONE get() per entry (store+clienta from the same read) — the CEL
+      // expression budget is the real limit on how many entries one write
+      // may append (review #403 MAYOR-1: two gets per entry broke 4-origin
+      // releases with "maximum of 1000 expressions").
+      let counterpart = get(/databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''))).data;
+      return counterpart.get('storeId', '') == storeId
+        && counterpart.get('customerId', '') == customerId
         && entry.get('id', '') is string && entry.get('id', '').size() > 0
         && entry.get('kind', '') in ['application', 'release', 'consumption', 'restitution']
         && entry.get('fromOrderId', '') is string && entry.get('fromOrderId', '').size() > 0
@@ -423,20 +428,23 @@ service cloud.firestore {
       let prev = before.get('creditLedger', []);
       let next = after.get('creditLedger', []);
       let n = prev.size();
-      // Bounded batch: multi-origin releases append a few entries at once.
-      let batched = next.size() > n && next.size() <= n + 4;
+      // Bounded batch: the transactions chunk multi-origin releases into
+      // commits of at most 3 entries (the CEL expression budget caps what a
+      // single rules evaluation can verify — review #403 MAYOR-1).
+      let batched = next.size() > n && next.size() <= n + 3;
       let e0 = next.size() > n ? next[n] : {};
       let e1 = next.size() > n + 1 ? next[n + 1] : e0;
       let e2 = next.size() > n + 2 ? next[n + 2] : e0;
-      let e3 = next.size() > n + 3 ? next[n + 3] : e0;
       let sum = e0.get('amountCents', 0)
         + (next.size() > n + 1 ? next[n + 1].get('amountCents', 0) : 0)
-        + (next.size() > n + 2 ? next[n + 2].get('amountCents', 0) : 0)
-        + (next.size() > n + 3 ? next[n + 3].get('amountCents', 0) : 0);
+        + (next.size() > n + 2 ? next[n + 2].get('amountCents', 0) : 0);
       let dApplied = after.get('creditAppliedCents', 0) - before.get('creditAppliedCents', 0);
       let dConsumed = after.get('creditConsumedCents', 0) - before.get('creditConsumedCents', 0);
       return next is list && prev is list
-        // Append-only: history survives UNCHANGED behind the batch.
+        // Append-only: history survives behind the batch. hasAll preserves
+        // every previous ENTRY but not their relative ORDER (CEL cannot
+        // compare order without slicing); reordering history has no monetary
+        // effect and the read models never depend on ledger order.
         && batched
         && next.hasAll(prev)
         // EVERY appended entry is sound, signed, and isolated (same store,
@@ -445,7 +453,6 @@ service cloud.firestore {
         && creditEntrySound(e0, after.get('storeId', ''), after.get('customerId', ''))
         && (next.size() <= n + 1 || creditEntrySound(e1, after.get('storeId', ''), after.get('customerId', '')))
         && (next.size() <= n + 2 || creditEntrySound(e2, after.get('storeId', ''), after.get('customerId', '')))
-        && (next.size() <= n + 3 || creditEntrySound(e3, after.get('storeId', ''), after.get('customerId', '')))
         // One accumulator moves per write, in the entries' direction, by the
         // EXACT sum of the appended amounts — a 1-cent entry can no longer
         // justify a 100-peso movement.
@@ -513,14 +520,20 @@ service cloud.firestore {
       // #333's delivery evidence (pieces handed to the clienta).
       // #363: OUTSTANDING clienta credit blocks deletion — applied (this order
       // consumed her credit) or consumed (this order BACKS credit a sister
-      // already applied). A fully released order (both zero) deletes normally.
+      // already applied).
+      // #380 r2 (review MAYOR-2): a NON-EMPTY creditLedger blocks deletion
+      // too. Accumulators alone are not enough: a signed fake release can
+      // zero them exactly, and deleting the doc would destroy the only trace.
+      // Orders that carried clienta credit are money evidence, like payments;
+      // a fully-restituted one is kept for its history.
       allow delete: if canOperateStore(resource.data.storeId)
         && !('paymentsReceivedCents' in resource.data)
         && !('installmentsReservedAt' in resource.data)
         && !('deliveries' in resource.data)
         && resource.data.get('inheritedDepositMaterialized', false) != true
         && resource.data.get('creditAppliedCents', 0) == 0
-        && resource.data.get('creditConsumedCents', 0) == 0;
+        && resource.data.get('creditConsumedCents', 0) == 0
+        && !(resource.data.get('creditLedger', []).size() > 0);
     }
 
     // orders/{orderId}/payments/{paymentId} — per-order money receptions (#123).

@@ -217,4 +217,44 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#380 — saldo a favor so
     expect((o1.creditLedger as OrderCreditLedgerEntry[]).some((e) => e.kind === "restitution")).toBe(true);
     expect((o2.creditLedger as OrderCreditLedgerEntry[]).some((e) => e.kind === "restitution")).toBe(true);
   });
+
+  it("#403 MAYOR-1: cuatro orígenes se restituyen completos vía chunks (reglas de presupuesto CEL)", async () => {
+    // Four overpaid origins for the same clienta + one big destination.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      for (const i of [3, 4, 5, 6]) {
+        await setDoc(doc(db, "orders/cr-origin" + i), orderDoc("cr-origin" + i, {
+          items: [{ lineId: `cr-origin${i}_L0`, productName: "Anillo " + i, quantity: 1, unitPrice: 200, subtotal: 200 }],
+          paymentsReceivedCents: 40000,
+          inheritedDepositMaterialized: true,
+        }));
+      }
+      await setDoc(doc(db, "orders/cr-dest-many"), orderDoc("cr-dest-many", {
+        items: [{ lineId: "cr-dest-many_L0", productName: "Pieza grande", quantity: 2, unitPrice: 500, subtotal: 1000 }],
+      }));
+    });
+    for (const i of [3, 4, 5, 6]) {
+      await applyCustomerCreditTx({ entry: entry(`app_many_${i}`, 20000, "cr-origin" + i), orderId: "cr-dest-many", storeId: "cr-store" });
+    }
+    const dest = (await getDoc(doc(holder.db, "orders/cr-dest-many"))).data()!;
+    expect(dest.creditAppliedCents).toBe(80000);
+    await updateDoc(doc(holder.db, "orders/cr-dest-many"), { orderStatus: "cancelled" });
+    const released = await releaseCustomerCreditTx({ orderId: "cr-dest-many", storeId: "cr-store", by: "tx-user" });
+    expect(released).toBe(80000);
+    const after = (await getDoc(doc(holder.db, "orders/cr-dest-many"))).data()!;
+    expect(after.creditAppliedCents).toBe(0);
+    for (const i of [3, 4, 5, 6]) {
+      const origin = (await getDoc(doc(holder.db, "orders/cr-origin" + i))).data()!;
+      expect(origin.creditConsumedCents).toBe(0);
+      expect((origin.creditLedger as OrderCreditLedgerEntry[]).some((e) => e.kind === "restitution")).toBe(true);
+    }
+  });
+
+  it("#403 MAYOR-2: tras restituir TODO, el borrado sigue bloqueado — el ledger es evidencia de dinero", async () => {
+    // cr-dest was fully released by the multi-origin test above; its ledger
+    // (applications + releases) survives as money evidence: a signed fake
+    // release can zero the accumulators, so the ledger itself must keep the
+    // document alive.
+    await expect(deleteDoc(doc(holder.db, "orders/cr-dest"))).rejects.toThrow();
+  });
 });
