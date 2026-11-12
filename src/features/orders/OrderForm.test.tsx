@@ -1127,3 +1127,37 @@ describe("faltantes en vivo — pedidos que no retienen piezas (#325 P2)", () =>
     }
   });
 });
+
+// #345: the review-by-category rows fill the desktop gap with price × qty and
+// the line's subtotal (density standard #315); mobile keeps the one-line row.
+describe("densidad en Revisar por categoría (#345)", () => {
+  it("muestra precio × cantidad y subtotal por fila en la revisión", () => {
+    state.products.push({
+      ...state.products[0],
+      id: "prod_345_review",
+      name: "Aro revisión",
+      quantityOnHand: 5,
+    } as never);
+    localStorage.clear();
+    try {
+      const order = {
+        id: "review-density-order",
+        storeId: "store_olivia",
+        customerId: "customer_1",
+        items: [{ productId: "prod_345_review", productName: "Aro revisión", quantity: 2, unitPrice: 150, subtotal: 300 }],
+        deposit: 0,
+        createdAt: "",
+        updatedAt: "",
+      } as unknown as Order;
+      const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+      fireEvent.click(screen.getByRole("button", { name: "Revisar por categoría" }));
+      expect(screen.getByText(/Aro revisión/)).toBeTruthy();
+      // price × quantity = subtotal, filling the row at md+.
+      expect(screen.getByText(/\$150\.00 × 2 =/)).toBeTruthy();
+      expect(screen.getAllByText("$300.00").length).toBeGreaterThanOrEqual(1); // fila + resumen
+      rendered.unmount();
+    } finally {
+      state.products.pop();
+    }
+  });
+});
