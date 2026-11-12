@@ -22,7 +22,7 @@ import { isVariantProduct } from "../../lib/variants";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { attributeProjectedShortageToLines, orderWillHoldPieces } from "../../lib/inventory";
-import { orderAmountCents } from "../../lib/orderMoney";
+import { formatOrderUnitPrice, orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
 import { DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
@@ -763,7 +763,7 @@ export function OrderForm({
                       <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
                     </span>
                     <span className="hidden items-baseline gap-2 text-sm text-ink-soft md:flex tabular-nums">
-                      {unitPrice > 0 && <>{unitPrice.toLocaleString("es-MX", { maximumFractionDigits: 2 })} × {reviewQty} =</>}
+                      {unitPrice > 0 && <>{formatOrderUnitPrice(unitPrice)} × {reviewQty} =</>}
                       <span className="serif-display tnum text-ink">{reviewSubtotal == null ? "—" : <Money exact amount={reviewSubtotal} />}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
