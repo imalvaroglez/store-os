@@ -749,11 +749,22 @@ export function OrderForm({
               <h2 className="font-semibold text-on-surface">{group.name}</h2>
               {group.lines.map((line) => {
                 const missing = lineShortage.get(line.key) ?? 0;
+                // #345: at md+ the price × quantity and its subtotal fill the
+                // ~700px gap between the name and the actions (density standard
+                // #315) — mobile keeps the one-line row.
+                const unitPrice = numberFromText(line.unitPriceText);
+                const reviewQty = Math.max(0, Math.round(numberFromText(line.quantityText)));
+                let reviewSubtotal: number | null;
+                try { reviewSubtotal = orderAmountCents(unitPrice, reviewQty) / 100; } catch { reviewSubtotal = null; }
                 return (
                   <div key={line.key} className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2.5">
                       <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} className="h-10 w-10 shrink-0" />
                       <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
+                    </span>
+                    <span className="hidden items-baseline gap-2 text-sm text-ink-soft md:flex tabular-nums">
+                      {unitPrice > 0 && <>{unitPrice.toLocaleString("es-MX", { maximumFractionDigits: 2 })} × {reviewQty} =</>}
+                      <span className="serif-display tnum text-ink">{reviewSubtotal == null ? "—" : <Money exact amount={reviewSubtotal} />}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {missing > 0 && <Badge tone="warning">Falta {missing}</Badge>}
