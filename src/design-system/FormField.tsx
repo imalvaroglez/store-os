@@ -16,14 +16,16 @@ export function FormField({
   hint,
   children,
   labelClassName = "",
+  className = "",
 }: {
   label: string;
   hint?: string;
   children: ReactNode;
   labelClassName?: string;
+  className?: string;
 }) {
   return (
-    <label className="block">
+    <label className={`block ${className}`}>
       <span className={`block text-xs font-semibold text-on-surface-soft uppercase tracking-wide mb-1.5 ${labelClassName}`}>
         {label}
       </span>
@@ -51,11 +53,19 @@ export function TextField({
 export function TextArea({
   label,
   hint,
+  fill = false,
   ...rest
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; hint?: string }) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  label: string;
+  hint?: string;
+  /** #405: stretch to fill the remaining height of a flex column, so the
+   * field's surface matches a sibling panel (e.g. the receipt in the share
+   * sheet). Without it the textarea keeps its rows-based height. */
+  fill?: boolean;
+}) {
   return (
-    <FormField label={label} hint={hint}>
-      <textarea className={`${fieldBase} min-h-[80px]`} {...rest} />
+    <FormField label={label} hint={hint} className={fill ? "flex min-h-0 flex-1 flex-col" : ""}>
+      <textarea className={`${fieldBase} min-h-[80px] ${fill ? "flex-1" : ""}`} {...rest} />
     </FormField>
   );
 }
