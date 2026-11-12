@@ -273,6 +273,20 @@ export async function saveEntity(
   if (name === "expenses" && Object.prototype.hasOwnProperty.call(data, "simplifiedOperation") && data.simplifiedOperation === undefined) {
     clean.simplifiedOperation = deleteField();
   }
+  // #355: a "se vende por color" transition must actually swap the shelf
+  // canonically. Enabling colors discards the design-level stock (each color
+  // owns its own); disabling discards the color array. Without deleteField,
+  // merge:true would keep the stale side alive in Firestore forever: a
+  // disabled design would STILL sell by color on every other device, and a
+  // converted one would show a ghost design-level shelf.
+  if (name === "products") {
+    if (Object.prototype.hasOwnProperty.call(data, "quantityOnHand") && data.quantityOnHand === undefined) {
+      clean.quantityOnHand = deleteField();
+    }
+    if (Object.prototype.hasOwnProperty.call(data, "variants") && data.variants === undefined) {
+      clean.variants = deleteField();
+    }
+  }
 
   // G-P02: a store write MUST also write its adminStores control doc in the SAME
   // batched write — the rules resolve membership/ownership exclusively from
