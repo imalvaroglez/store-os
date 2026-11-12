@@ -521,4 +521,34 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("stock projection with Fir
     expect(canonical?.availability).toBe("available");
     expect(canonical?.variants[0].quantityOnHand).toBe(2);
   });
+
+  it("keeps a deliberate availability choice that still has stock behind it", async () => {
+    // A paused piece (sold_out WITH stock) and a low_stock piece: a reception
+    // restocks both, and the operator's marks must survive it.
+    const paused = { ...product, id: "paused-piece", name: "Pieza pausada", slug: "pausada", availability: "sold_out" as const, quantityOnHand: 5 };
+    const low = { ...product, id: "low-piece", name: "Pieza pocas", slug: "pocas", availability: "low_stock" as const, quantityOnHand: 1 };
+    await env.withSecurityRulesDisabled(async (context) => {
+      const admin = context.firestore();
+      await setDoc(doc(admin, "products", paused.id), paused);
+      await setDoc(doc(admin, "products", low.id), low);
+    });
+    await setDoc(doc(db, "purchases", "marks-purchase"), {
+      storeId: store.id, status: "ready", costingMethod: "latest_purchase",
+      tickets: [{ id: "ticket", totalConfirmed: 70 }],
+      lines: [
+        { lineId: "l1", ticketId: "ticket", productId: paused.id, name: paused.name, quantity: 3, unitCost: 10 },
+        { lineId: "l2", ticketId: "ticket", productId: low.id, name: low.name, quantity: 4, unitCost: 10 },
+      ],
+      subtotal: 70, totalConfirmed: 70,
+    });
+
+    await receivePurchaseTx("marks-purchase");
+
+    expect((await getDoc(doc(db, "products", paused.id))).data()).toMatchObject({
+      availability: "sold_out", quantityOnHand: 8,
+    });
+    expect((await getDoc(doc(db, "products", low.id))).data()).toMatchObject({
+      availability: "low_stock", quantityOnHand: 5,
+    });
+  });
 });
