@@ -391,10 +391,14 @@ service cloud.firestore {
     // signed, traceable ledger appends. Two evidence families, one per side:
     // the DESTINATION ledger (application/release, #189) and the ORIGIN
     // mirror ledger (consumption/restitution, #380). Accumulators are FROZEN
-    // unless their ledger grows by a well-formed append signed by the caller,
-    // moving exactly one accumulator in the entry's direction, and the entry's
-    // counterpart order exists in the SAME store for the SAME clienta —
+    // unless their ledger grows by well-formed appends signed by the caller
+    // whose EXACT sum equals the accumulator delta, moving exactly one
+    // accumulator in the entries' direction; every appended entry's
+    // counterpart order must exist in the SAME store for the SAME clienta —
     // cross-store and cross-clienta fabrication dies at the rules layer.
+    // (Transactions are validated against the FINAL state per document —
+    // verified empirically — so a batch append is one rules evaluation and
+    // its exact-sum check covers the whole movement.)
     function creditAccumulatorsFrozen(before, after) {
       return after.get('creditAppliedCents', 0) == before.get('creditAppliedCents', 0)
         && after.get('creditConsumedCents', 0) == before.get('creditConsumedCents', 0);
@@ -402,19 +406,9 @@ service cloud.firestore {
     function creditLedgerUntouched(before, after) {
       return after.get('creditLedger', []) == before.get('creditLedger', []);
     }
-    function validCreditAppend(before, after) {
-      let prev = before.get('creditLedger', []);
-      let next = after.get('creditLedger', []);
-      let entry = next.size() > 0 ? next[next.size() - 1] : {};
-      let counterpart = get(/databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''))).data;
-      let dApplied = after.get('creditAppliedCents', 0) - before.get('creditAppliedCents', 0);
-      let dConsumed = after.get('creditConsumedCents', 0) - before.get('creditConsumedCents', 0);
-      return next is list && prev is list
-        // Append-only behind a bounded batch (multi-origin releases append
-        // a few entries at once); history is never rewritten or dropped.
-        && next.size() > prev.size()
-        && next.size() <= prev.size() + 8
-        && next.hasAll(prev)
+    function creditEntrySound(entry, storeId, customerId) {
+      return get(/databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''))).data.get('storeId', '') == storeId
+        && get(/databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''))).data.get('customerId', '') == customerId
         && entry.get('id', '') is string && entry.get('id', '').size() > 0
         && entry.get('kind', '') in ['application', 'release', 'consumption', 'restitution']
         && entry.get('fromOrderId', '') is string && entry.get('fromOrderId', '').size() > 0
@@ -423,17 +417,46 @@ service cloud.firestore {
         && entry.get('amountCents', 0) > 0
         && entry.get('amountCents', 0) <= 9000000000000
         && entry.get('at', '') is string && entry.get('at', '').size() > 0
-        && entry.get('by', '') == request.auth.uid
-        // One accumulator moves per write, in the entry's direction.
+        && entry.get('by', '') == request.auth.uid;
+    }
+    function validCreditAppend(before, after) {
+      let prev = before.get('creditLedger', []);
+      let next = after.get('creditLedger', []);
+      let n = prev.size();
+      // Bounded batch: multi-origin releases append a few entries at once.
+      let batched = next.size() > n && next.size() <= n + 4;
+      let e0 = next.size() > n ? next[n] : {};
+      let e1 = next.size() > n + 1 ? next[n + 1] : e0;
+      let e2 = next.size() > n + 2 ? next[n + 2] : e0;
+      let e3 = next.size() > n + 3 ? next[n + 3] : e0;
+      let sum = e0.get('amountCents', 0)
+        + (next.size() > n + 1 ? next[n + 1].get('amountCents', 0) : 0)
+        + (next.size() > n + 2 ? next[n + 2].get('amountCents', 0) : 0)
+        + (next.size() > n + 3 ? next[n + 3].get('amountCents', 0) : 0);
+      let dApplied = after.get('creditAppliedCents', 0) - before.get('creditAppliedCents', 0);
+      let dConsumed = after.get('creditConsumedCents', 0) - before.get('creditConsumedCents', 0);
+      return next is list && prev is list
+        // Append-only: history survives UNCHANGED behind the batch.
+        && batched
+        && next.hasAll(prev)
+        // EVERY appended entry is sound, signed, and isolated (same store,
+        // same clienta counterpart). Batches beyond the first reuse e0's
+        // checks via the aliased lets — out-of-range indices never evaluate.
+        && creditEntrySound(e0, after.get('storeId', ''), after.get('customerId', ''))
+        && (next.size() <= n + 1 || creditEntrySound(e1, after.get('storeId', ''), after.get('customerId', '')))
+        && (next.size() <= n + 2 || creditEntrySound(e2, after.get('storeId', ''), after.get('customerId', '')))
+        && (next.size() <= n + 3 || creditEntrySound(e3, after.get('storeId', ''), after.get('customerId', '')))
+        // One accumulator moves per write, in the entries' direction, by the
+        // EXACT sum of the appended amounts — a 1-cent entry can no longer
+        // justify a 100-peso movement.
         && (dApplied == 0 || dConsumed == 0)
-        && (dApplied > 0 ? entry.get('kind', '') == 'application'
-          : dApplied < 0 ? entry.get('kind', '') == 'release'
-          : dConsumed > 0 ? entry.get('kind', '') == 'consumption'
-          : entry.get('kind', '') == 'restitution')
-        // Isolation: the counterpart order belongs to the same store and the
-        // same clienta (the amounts are amounts of HER money).
-        && counterpart.get('storeId', '') == after.get('storeId', '')
-        && counterpart.get('customerId', '') == after.get('customerId', '');
+        && (dApplied > 0
+              ? e0.get('kind', '') == 'application' && dApplied == sum
+            : dApplied < 0
+              ? e0.get('kind', '') == 'release' && -dApplied == sum
+            : dConsumed > 0
+              ? e0.get('kind', '') == 'consumption' && dConsumed == sum
+              : e0.get('kind', '') == 'restitution' && -dConsumed == sum);
     }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
