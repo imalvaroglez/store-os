@@ -4,7 +4,8 @@
     "date": "2026.11.11",
     "title": "Disponibilidad después de recibir mercancía",
     "notes": [
-      "Cuando recibes mercancía, Store OS puede reconstruir una ficha pública faltante y mostrar la disponibilidad de las piezas en el catálogo."
+      "Cuando recibes mercancía, Store OS puede reconstruir una ficha pública faltante y mostrar la disponibilidad de las piezas en el catálogo.",
+      "Las piezas nuevas que creas desde Compras quedan con una ficha pública lista para publicar y empiezan con cero existencias hasta que recibes la mercancía."
     ]
   },
   {
