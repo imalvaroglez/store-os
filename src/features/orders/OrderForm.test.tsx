@@ -749,6 +749,61 @@ describe("OrderForm #124 — venta por color exacto", () => {
     expect(saved.items[0]).toMatchObject({ productId: "design_1", variantId: "v_gold", variantColor: "Dorado", variantSku: "SOL-D" });
   });
 
+  it.each([true, false])("requires a product and color choice for equal names (new: %s)", async (isNew) => {
+    const plainProduct = { ...state.products[0], id: "plain-same-name", sku: "SOL-SENCILLO", variants: undefined };
+    state.products.unshift(plainProduct);
+    const order = {
+      id: "similar-designs", storeId: "store_olivia", customerId: "customer_1",
+      items: isNew ? [] : [{ productName: "Pieza existente", quantity: 1, unitPrice: 50, subtotal: 50 }],
+      deposit: 0, orderStatus: "confirmed" as const, paymentStatus: "unpaid" as const,
+      schemaVersion: 2, createdAt: "", updatedAt: "",
+    };
+    render(<ToastProvider><OrderForm order={order} isNew={isNew} onDone={() => {}} /></ToastProvider>);
+    if (!isNew) fireEvent.click(screen.getByRole("button", { name: /Agregar línea/ }));
+    const product = screen.getAllByLabelText("Producto")[0];
+    fireEvent.change(product, { target: { value: "Anillo Sol" } });
+    const plainOption = screen.getByRole("option", { name: /SOL-SENCILLO/ });
+    expect(plainOption).toBeVisible();
+    expect(screen.getByRole("option", { name: /Dorado.*Plateado/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    expect(await screen.findByText(/Hay varias fichas con ese nombre/)).toBeVisible();
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+
+    fireEvent.focus(product);
+    fireEvent.click(screen.getByRole("option", { name: /Dorado.*Plateado/ }));
+    const color = screen.getByLabelText("Color") as HTMLSelectElement;
+    expect(color.value).toBe("");
+    expect(screen.getByRole("option", { name: /Dorado/ })).toBeVisible();
+    expect(screen.getByRole("option", { name: /Plateado/ })).toBeVisible();
+    fireEvent.change(color, { target: { value: "v_silver" } });
+    fireEvent.click(screen.getByRole("button", { name: "Revisar por categoría" }));
+    expect(screen.getByText(/Anillo Sol.*Plateado/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0] as { items: Array<Record<string, unknown>> };
+    expect(saved.items).toContainEqual(expect.objectContaining({
+      productId: "design_1", variantId: "v_silver", variantColor: "Plateado", cost: 90,
+    }));
+  });
+
+  it("keeps a saved custom line editable when catalog names overlap", async () => {
+    const plainProduct = { ...state.products[0], id: "another-same-name", variants: undefined };
+    state.products.push(plainProduct);
+    const order = {
+      id: "saved-custom-line", storeId: "store_olivia", customerId: "customer_1",
+      items: [{ lineId: "custom", productName: "Anillo Sol", quantity: 1, unitPrice: 50, subtotal: 50 }],
+      deposit: 0, orderStatus: "confirmed" as const, paymentStatus: "unpaid" as const,
+      schemaVersion: 2, createdAt: "", updatedAt: "",
+    };
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Notas"), { target: { value: "Nota de prueba" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0] as { items?: Array<{ productId?: string }>; notes?: string };
+    expect(saved.items?.[0]?.productId).toBeUndefined();
+    expect(saved.notes).toBe("Nota de prueba");
+  });
+
   it("un producto sin variantes no muestra selector de color", async () => {
     state.products = [{ ...state.products[0], id: "plain_1", name: "Collar Luna", variants: undefined } as typeof state.products[number]];
     const order = { id: "plain-order", storeId: "store_olivia", customerId: "customer_1", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" };
