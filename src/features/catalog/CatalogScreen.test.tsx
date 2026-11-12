@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, within, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { StoreProvider } from "../../app/StoreProvider";
 import { Button, ToastProvider } from "../../design-system";
@@ -114,6 +114,14 @@ function lastByLabel(label: string) {
 beforeEach(() => {
   resetListRestoreForTests(); // #233: la caché de lista es de sesión; cada prueba parte de defaults
   localStorage.clear();
+});
+
+// #346: the category-filter flake (CI run 43117392993) matched a stale card
+// from a previous test's mount surviving in document.body — the same class as
+// #291. Explicit per-file cleanup makes cross-test DOM bleed structurally
+// impossible, whatever made the auto cleanup miss once on a loaded runner.
+afterEach(() => {
+  cleanup();
 });
 
 describe("CatalogScreen filtro por categoría real", () => {
