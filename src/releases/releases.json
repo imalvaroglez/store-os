@@ -1,5 +1,13 @@
 [
   {
+    "version": "1.15.3",
+    "date": "2026.11.12",
+    "title": "Corrección de pedidos con productos eliminados",
+    "notes": [
+      "Puedes corregir un pedido existente y reemplazar colores de una ficha eliminada por productos vigentes. Las piezas se apartan en las fichas que seleccionaste."
+    ]
+  },
+  {
     "version": "1.15.2",
     "date": "2026.11.12",
     "title": "Administración de la plataforma con la cuenta real del dueño",
