@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.15.1",
+    "date": "2026.11.11",
+    "title": "Disponibilidad después de recibir mercancía",
+    "notes": [
+      "Cuando recibes mercancía, Store OS puede reconstruir una ficha pública faltante y mostrar la disponibilidad de las piezas en el catálogo.",
+      "Las piezas nuevas que creas desde Compras quedan con una ficha pública lista para publicar y empiezan con cero existencias hasta que recibes la mercancía."
+    ]
+  },
+  {
     "version": "1.15.0",
     "date": "2026.11.12",
     "title": "Entregas con evidencia y catálogo que cuadra",
