@@ -142,9 +142,10 @@ export function variantReservationDeltasForOrderChange(
   previous: Order | undefined,
   next: Order
 ): Map<string, VariantStockDelta> {
-  const heldItems = (order: Order | undefined): OrderItem[] =>
-    order && holdsPieces(order) ? orderItems(order) : [];
-  return variantReservationDeltas(heldItems(previous), heldItems(next));
+  // Same held-items truth as the plain reservation above (#333 partial cap
+  // included) — variant stock must not diverge from design stock on a
+  // partial-delivery cancellation.
+  return variantReservationDeltas(heldOrderItems(previous), heldOrderItems(next));
 }
 
 /**
@@ -159,6 +160,21 @@ export function variantReservationDeltasForOrderChange(
  * Everything else — ordinary orders and plans without money (PO decision
  * 2026-11-03 R8: plans reserve AT CREATION) — holds while open or delivered.
  */
+/** #333: pieces delivered so far per stock dimension (Σ delivery-event
+ * lines). Lives beside the reservation math because both speak the same
+ * dimension keys. */
+export function deliveredByDimension(order: Order): Map<string, number> {
+  const delivered = new Map<string, number>();
+  for (const event of order.deliveries ?? []) {
+    for (const line of event.lines) {
+      if (!Number.isInteger(line.quantity) || line.quantity <= 0) continue;
+      const key = stockDimensionKey(line.productId, line.variantId);
+      delivered.set(key, (delivered.get(key) ?? 0) + line.quantity);
+    }
+  }
+  return delivered;
+}
+
 function holdsPieces(o: Order): boolean {
   if (o.installmentsReservedAt || (o.installments && (o.paymentsReceivedCents ?? 0) > 0)) {
     return true;
@@ -175,9 +191,34 @@ function holdsPieces(o: Order): boolean {
  * cycle nets to exactly one consumption. Stateless — no provenance flag.
  */
 export function reservationDeltasForOrderChange(previous: Order | undefined, next: Order): Map<string, number> {
-  const heldItems = (order: Order | undefined): OrderItem[] =>
-    order && holdsPieces(order) ? orderItems(order) : [];
-  return reservationDeltas(heldItems(previous), heldItems(next));
+  return reservationDeltas(heldOrderItems(previous), heldOrderItems(next));
+}
+
+/** What an order still HOLDS on the shelf — the shared truth of both
+ * reservation-delta functions (#333: a cancelled order with delivery evidence
+ * keeps ONLY its delivered pieces consumed; money-backed holds R9 untouched). */
+function heldOrderItems(order: Order | undefined): OrderItem[] {
+  {
+    if (!order) return [];
+    const items = orderItems(order);
+    // #333: cancelling an order with delivery evidence returns only the
+    // STILL-PENDING pieces to the shelf; delivered pieces stay consumed (the
+    // clienta keeps them — cancelling the remainder is not a full return).
+    // Money-backed holds (#165 R9) are untouched: their pieces stay held.
+    if (effectiveOrderStatus(order) === "cancelled" && !holdsPieces(order)) {
+      if ((order.deliveries ?? []).length === 0) return [];
+      const remaining = new Map(deliveredByDimension(order));
+      return items.map((item) => {
+        if (!item.productId) return { ...item, quantity: 0 };
+        const key = stockDimensionKey(item.productId, item.variantId);
+        const left = Math.max(0, remaining.get(key) ?? 0);
+        const take = Math.min(item.quantity, left);
+        remaining.set(key, left - take);
+        return { ...item, quantity: take };
+      }).filter((item) => item.quantity > 0);
+    }
+    return holdsPieces(order) ? items : [];
+  }
 }
 
 // --- #309: canonical shortage derivation (observability only) ------------

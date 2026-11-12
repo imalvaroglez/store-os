@@ -1,4 +1,4 @@
-import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderIncident, OrderItem, OrderSaleExpense, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
+import type { InstallmentFrequency, Order, OrderCreditLedgerEntry, OrderDelivery, OrderDeliveryLine, OrderIncident, OrderItem, OrderSaleExpense, OrderStatus, PaymentStatus, PriceTierDef } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents } from "./orderMoney";
 import { formatMoney } from "./money";
@@ -228,6 +228,23 @@ function isWellFormedIncident(entry: unknown): entry is OrderIncident {
     && Array.isArray(incident.events);
 }
 
+/** #333: a well-formed delivery event — the migration carries the ledger
+ * verbatim only when every entry is intact (append-only evidence, like
+ * incidents); anything else means the doc predates the ledger. */
+function isWellFormedDelivery(entry: unknown): entry is OrderDelivery {
+  const delivery = entry as Partial<OrderDelivery> & Record<string, unknown>;
+  return typeof delivery.id === "string" && !!delivery.id
+    && typeof delivery.orderId === "string" && typeof delivery.storeId === "string"
+    && typeof delivery.deliveredAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(delivery.deliveredAt)
+    && typeof delivery.recordedAt === "string" && typeof delivery.by === "string"
+    && Array.isArray(delivery.lines)
+    && delivery.lines.every((line) => {
+      const candidate = line as Partial<OrderDeliveryLine>;
+      return typeof candidate.productId === "string" && !!candidate.productId
+        && Number.isInteger(candidate.quantity) && (candidate.quantity as number) > 0;
+    });
+}
+
 export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()): Order {
   const raw = (rawOrder ?? {}) as Partial<Order> & Record<string, unknown>;
   const id = String(raw.id ?? "");
@@ -282,6 +299,14 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
     // verbatim when the array is well-formed, never rebuilt or dropped.
     ...(Array.isArray(raw.incidents) && raw.incidents.length > 0
       ? { incidents: raw.incidents.filter(isWellFormedIncident) } : {}),
+    // #333: the delivery ledger and the saldo-gate authorization are
+    // evidence — carried verbatim, never rebuilt or dropped (UX review P1:
+    // a legacy paymentStatus used to erase them on every cloud load).
+    ...(Array.isArray(raw.deliveries) && raw.deliveries.some(isWellFormedDelivery)
+      ? { deliveries: raw.deliveries.filter(isWellFormedDelivery) } : {}),
+    ...(typeof raw.deliveredWithBalanceCents === "number" ? { deliveredWithBalanceCents: raw.deliveredWithBalanceCents } : {}),
+    ...(typeof raw.deliveredWithBalanceConfirmedAt === "string" ? { deliveredWithBalanceConfirmedAt: raw.deliveredWithBalanceConfirmedAt } : {}),
+    ...(typeof raw.deliveredWithBalanceConfirmedBy === "string" ? { deliveredWithBalanceConfirmedBy: raw.deliveredWithBalanceConfirmedBy } : {}),
     // #184: direct sale-side charges are append-only evidence on the order —
     // carried verbatim, never rebuilt or dropped.
     ...(Array.isArray(raw.saleExpenses) && raw.saleExpenses.length > 0

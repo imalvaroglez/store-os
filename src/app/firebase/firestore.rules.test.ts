@@ -813,3 +813,79 @@ describe("legacy deposit cannot rise after payment evidence (#218)", () => {
     await assertSucceeds(updateDoc(ref, { deposit: 720 }));
   });
 });
+
+// #333: the delivery ledger is append-only evidence — verbatim carries pass,
+// one well-formed signed event per write passes, rewrites and fabrications
+// fail, and delivered orders cannot be deleted.
+describe("#333 delivery ledger append-only", () => {
+  const STORE = "delivery-333-store";
+  const ORDER = "delivery-333-order";
+
+  async function seed(orderData: Record<string, unknown> = {}) {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "adminStores/" + STORE), { ownerUid: "u333", memberUids: ["u333"] });
+      await setDoc(doc(c.firestore(), `orders/${ORDER}`), { storeId: STORE, ...orderData });
+    });
+  }
+
+  const event = (over: Record<string, unknown> = {}) => ({
+    id: "dev-1",
+    orderId: ORDER,
+    storeId: STORE,
+    deliveredAt: "2026-11-12",
+    recordedAt: "2026-11-12T10:00:00.000Z",
+    by: "u333",
+    lines: [{ productId: "p1", quantity: 2 }],
+    ...over,
+  });
+
+  it("un append bien formado y firmado pasa; el carry verbatim pasa", async () => {
+    await seed();
+    const db = await asUser("u333");
+    const ref = doc(db, "orders/" + ORDER);
+    await assertSucceeds(updateDoc(ref, { deliveries: [event()] }));
+    // A later ordinary edit keeps the ledger verbatim.
+    await assertSucceeds(updateDoc(ref, { notes: "edit", deliveries: [event()] }));
+  });
+
+  it("reescribir o borrar el ledger falla; sin firma del autor falla", async () => {
+    await seed({ deliveries: [event()] });
+    const db = await asUser("u333");
+    const ref = doc(db, "orders/" + ORDER);
+    await assertFails(updateDoc(ref, { deliveries: [event({ deliveredAt: "2026-11-01" })] })); // reescritura
+    await assertFails(updateDoc(ref, { deliveries: [] })); // borrado
+    // Reescribir el historial DETRÁS de un append genuino también falla (el
+    // prefijo ya no es el mismo; verificación spot-check del primer elemento).
+    await assertFails(updateDoc(ref, { deliveries: [event({ deliveredAt: "2026-11-01" }), event({ id: "dev-2" })] }));
+    const other = await asUser("u_other");
+    await assertFails(updateDoc(doc(other, "orders/" + ORDER), { deliveries: [event({ id: "dev-3" }), event()] }));
+  });
+
+  it("reescribir un evento PREVIO detrás de un append genuino es denegado (hasAll, P2 revisión)", async () => {
+    await seed({ deliveries: [event(), event({ id: "dev-2" })] });
+    const db = await asUser("u333");
+    await assertFails(
+      // The last previous event is rewritten (quantity 99) behind a real append.
+      updateDoc(doc(db, "orders/" + ORDER), {
+        deliveries: [event(), event({ id: "dev-2", lines: [{ productId: "p1", quantity: 99 }] }), event({ id: "dev-3" })],
+      })
+    );
+    // The honest append still passes.
+    await assertSucceeds(updateDoc(doc(db, "orders/" + ORDER), { deliveries: [event(), event({ id: "dev-2" }), event({ id: "dev-3" })] }));
+  });
+
+  it("un evento con fecha efectiva basura (2099) es denegado por las reglas", async () => {
+    await seed({ deliveries: [event()] });
+    const db = await asUser("u333");
+    await assertFails(
+      updateDoc(doc(db, "orders/" + ORDER), { deliveries: [event(), event({ id: "dev-junk", deliveredAt: "2099-12-31" })] })
+    );
+  });
+
+  it("crear un pedido con entregas fabricadas falla; borrar un pedido con entregas falla", async () => {
+    await seed({ deliveries: [event()] });
+    const db = await asUser("u333");
+    await assertFails(setDoc(doc(db, "orders/delivery-333-new"), { storeId: STORE, deliveries: [event({ orderId: "delivery-333-new" })] }));
+    await assertFails(deleteDoc(doc(db, "orders/" + ORDER)));
+  });
+});

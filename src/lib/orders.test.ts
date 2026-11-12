@@ -176,3 +176,39 @@ describe("installment fields survive migration (#165)", () => {
     expect(migrateOrder(base()).installments).toBeUndefined();
   });
 });
+
+// #333: the delivery ledger and the saldo-gate authorization are evidence —
+// the migration must carry them verbatim (UX review P1: a legacy paymentStatus
+// used to erase them on every cloud load).
+describe("migrateOrder conserva la evidencia de entregas (#333)", () => {
+  it("arrastra el ledger y los sellos de autorización aunque el resto exija migración", () => {
+    const legacy = {
+      id: "o1",
+      storeId: "s1",
+      customerId: "c1",
+      items: [{ productName: "Anillo", quantity: 2, unitPrice: 100, subtotal: 200 }], // no lineId → migration needed
+      deposit: 150,
+      orderStatus: "delivered",
+      paymentStatus: "unpaid", // stale → forces the rebuild path
+      deliveries: [
+        { id: "dev1", orderId: "o1", storeId: "s1", deliveredAt: "2026-11-10", recordedAt: "2026-11-12T01:00:00.000Z", by: "u1", lines: [{ productId: "p1", quantity: 2 }] },
+      ],
+      deliveredWithBalanceCents: 5000,
+      deliveredWithBalanceConfirmedAt: "2026-11-12T01:00:00.000Z",
+      deliveredWithBalanceConfirmedBy: "u1",
+    };
+    const migrated = migrateOrder(legacy);
+    expect(migrated.deliveries).toHaveLength(1);
+    expect(migrated.deliveries![0].deliveredAt).toBe("2026-11-10");
+    expect(migrated.deliveredWithBalanceCents).toBe(5000);
+    expect(migrated.deliveredWithBalanceConfirmedBy).toBe("u1");
+  });
+
+  it("eventos mal formados se descartan (el ledger nunca se inventa)", () => {
+    const migrated = migrateOrder({
+      id: "o2", storeId: "s1", items: [{ productName: "X", quantity: 1, unitPrice: 1, subtotal: 1 }],
+      deliveries: [{ id: "", orderId: "o2", storeId: "s1", deliveredAt: "2026-13-45", recordedAt: "", by: "", lines: [] }],
+    });
+    expect(migrated.deliveries).toBeUndefined();
+  });
+});

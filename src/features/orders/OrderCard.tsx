@@ -21,6 +21,8 @@ import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrde
 import { installmentPlanView } from "./installments";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
 import { IncidentSheet } from "./IncidentSheet";
+import { DeliverySheet, deliveryProgressLabel } from "./DeliverySheet";
+import { pendingDeliveries, effectiveDeliveryDate } from "../../lib/deliveries";
 import { PackagingSheet } from "./PackagingSheet";
 import type { Order } from "../../types";
 
@@ -29,6 +31,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [packagingOpen, setPackagingOpen] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const toast = useToast();
@@ -200,6 +203,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         {order.orderStatus !== "cancelled" && (activeStore?.packaging?.materials.length ?? 0) > 0 && (
           <Button variant="ghost" onClick={() => setPackagingOpen(true)}>Empaques</Button>
         )}
+        {(order.deliveries ?? []).length > 0 && status !== "cancelled" && (
+          <Button variant="ghost" onClick={() => setDeliveryOpen(true)}>Entregas</Button>
+        )}
         {(status !== "cancelled" || (order.incidents?.length ?? 0) > 0) && (
           <Button variant="ghost" onClick={() => setIncidentOpen(true)}>Incidencia{(order.incidents?.length ?? 0) > 0 ? ` (${order.incidents!.length})` : ""}</Button>
         )}
@@ -207,7 +213,21 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       {(verb || owed) && (
         <div className="mt-3 flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
           <div className="flex gap-2">
-            {verb && <Button full disabled={deliveryHeld} onClick={advance}>{verb}</Button>}
+            {verb && (
+              <Button
+                full
+                disabled={deliveryHeld}
+                onClick={() => {
+                  // #333: delivering registers WHAT was handed (per piece, with
+                  // its effective date) instead of a bare status flip. Orders
+                  // without product lines keep the plain advance.
+                  if (verb === "Entregar" && pendingDeliveries(order).length > 0) setDeliveryOpen(true);
+                  else void advance();
+                }}
+              >
+                {verb}
+              </Button>
+            )}
             {planView ? (
               owed && (
                 <Button variant="secondary" full onClick={() => setPaymentsOpen(true)}>Abonar</Button>
@@ -222,6 +242,14 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
             <p className="text-xs text-on-surface-soft">La entrega se habilita al liquidar el total.</p>
           )}
         </div>
+      )}
+      {/* #333: delivery progress and the missing-evidence note show on ANY
+          status — a delivered-and-paid card had no action row to host them. */}
+      {deliveryProgressLabel(order) && (
+        <p className="text-xs text-ink-soft">{deliveryProgressLabel(order)}</p>
+      )}
+      {status === "delivered" && !effectiveDeliveryDate(order) && (order.deliveries ?? []).length === 0 && (
+        <p className="text-xs text-on-surface-soft">Fecha de entrega por confirmar.</p>
       )}
     </Card>
     <Sheet open={ticketOpen} onClose={() => setTicketOpen(false)} title="Detalle para compartir">
@@ -250,6 +278,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     </Sheet>
     <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
     <IncidentSheet order={order} open={incidentOpen} onClose={() => setIncidentOpen(false)} />
+    <DeliverySheet order={order} open={deliveryOpen} onClose={() => setDeliveryOpen(false)} />
     {packagingOpen && <PackagingSheet order={order} onClose={() => setPackagingOpen(false)} />}
     </>
   );
