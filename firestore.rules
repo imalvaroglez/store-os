@@ -55,7 +55,12 @@ service cloud.firestore {
     // PLATFORM_ADMIN_EMAILS in src/app/firebase/auth.ts (#353 recovery, 2026-11-12:
     // platform administration moved to the PO's real account).
     function isAllowlistedSuperAdmin() {
-      return verifiedEmail().lower() in [
+      // Canonical comparison, same semantics as the client's normalizeEmail:
+      // a legitimate dot variant (i.malvaroglez@gmail.com) or googlemail form
+      // of a platform email must not produce an "admin fantasma" — client-side
+      // super_admin with rules-side denial (#385 review, MAYOR-1). Callers
+      // already require hasVerifiedEmail(), so verifiedEmail() is non-null.
+      return canonicalEmail() in [
         'admin@store.os',
         'imalvaroglez@gmail.com'
       ];

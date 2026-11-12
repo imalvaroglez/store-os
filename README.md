@@ -82,7 +82,7 @@ App lista para producción (Vercel + Firebase). Ver la guía completa en
 2. Agregar las variables `VITE_FIREBASE_*` en Vercel.
 3. Desplegar `firestore.rules`.
 4. Importar el repo en Vercel (framework Vite auto-detectado). `super_admin` solo
-   por el correo de plataforma (`admin@store.os`).
+   por los correos de plataforma (`admin@store.os`, `imalvaroglez@gmail.com`).
 
 Todo desarrollo conectado usa `store-os-dev`. Copia `.env.example` a `.env`
 y coloca ahí las credenciales de ese proyecto. Las pruebas con emulador usan el

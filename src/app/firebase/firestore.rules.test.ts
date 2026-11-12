@@ -540,6 +540,22 @@ describe("reliable invitations — users anti-spoofing", () => {
     });
     const db = await asUserWithClaims("u_po", { email: "imalvaroglez@gmail.com", email_verified: true });
     await assertSucceeds(updateDoc(doc(db, "users/u_po"), { role: "super_admin" }));
+    // Legitimate Gmail variants of the same mailbox behave identically —
+    // canonical comparison on both sides (no "admin fantasma"). And the FIRST
+    // login (no doc yet) goes through create, not update.
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_po3"), {
+        email: "i.malvaroglez@gmail.com", emailNormalized: "imalvaroglez@gmail.com",
+        emailVerified: true, role: "member",
+      });
+    });
+    const dotted = await asUserWithClaims("u_po3", { email: "i.malvaroglez@gmail.com", email_verified: true });
+    await assertSucceeds(updateDoc(doc(dotted, "users/u_po3"), { role: "super_admin" }));
+    const fresh = await asUserWithClaims("u_po4", { email: "imalvaroglez@googlemail.com", email_verified: true });
+    await assertSucceeds(setDoc(doc(fresh, "users/u_po4"), {
+      email: "imalvaroglez@googlemail.com", emailNormalized: "imalvaroglez@gmail.com",
+      emailVerified: true, role: "super_admin",
+    }));
     // An unverified token of the same email escalates nothing (fresh member doc:
     // the doc above is already super_admin, whose profile edits follow admin rules).
     await env.withSecurityRulesDisabled(async (c) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeEmail } from "./auth";
+import { isPlatformAdminEmail, normalizeEmail } from "./auth";
 
 // normalizeEmail must stay IDENTICAL to canonicalEmail() in firestore.rules
 // (a rules test covers the Gmail cases end-to-end to catch drift).
@@ -20,8 +20,7 @@ describe("normalizeEmail", () => {
 });
 
 describe("isPlatformAdminEmail (#353 — platform administration moved to the PO's real account)", () => {
-  it("accepts both platform emails, canonically", async () => {
-    const { isPlatformAdminEmail } = await import("./auth");
+  it("accepts both platform emails, canonically", () => {
     expect(isPlatformAdminEmail("admin@store.os")).toBe(true);
     expect(isPlatformAdminEmail("imalvaroglez@gmail.com")).toBe(true);
     // Gmail dot variants normalize to the same identity.
