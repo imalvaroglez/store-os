@@ -1113,7 +1113,18 @@ async function releaseDestChunk(params: {
     for (const [fromOrderId, netCents] of netByOrigin) {
       if (netCents <= 0) continue; // this origin has nothing outstanding
       if (budget <= 0 || batch.length >= CHUNK) break;
-      const amount = Math.min(netCents, budget);
+      // #403 r5 (4th review, minor): cap by the origin's REAL committed
+      // mirror — a drifted origin (consumed < net) restitutes what it really
+      // mirrors instead of blowing the rules' backing bound with a raw
+      // PERMISSION_DENIED that would strand the whole incident.
+      const originSnapForCap = await tx.get(doc(db, "orders", fromOrderId));
+      if (!originSnapForCap.exists() || (originSnapForCap.data().storeId ?? "") !== storeId) continue;
+      const originConsumed = typeof originSnapForCap.data().creditConsumedCents === "number" && Number.isSafeInteger(originSnapForCap.data().creditConsumedCents)
+        ? Math.max(0, originSnapForCap.data().creditConsumedCents)
+        : 0;
+      const capped = Math.min(netCents, originConsumed);
+      if (capped <= 0) continue; // drifted to nothing: stranded, visible, conservative
+      const amount = Math.min(capped, budget);
       batch.push({
         // Deterministic per movement (dest + origin + ordinal + prefix): a
         // retry reuses the id and arrayUnion no-ops (self-healing).
@@ -2495,6 +2506,11 @@ export async function applyIncidentEventTx(params: {
         capCents: state.pending, idPrefix: `rel_${event.id}_`,
       });
       if (entries.length === 0) break; // nothing more releasable (drifted origin): conservative stop
+      // Mirror WITHIN the loop: the dest chunk's per-origin cap reads the
+      // origin's committed consumed — without the mirror each round, a
+      // drifted origin's remainder would be re-capped against stale state
+      // and released repeatedly (found by the drift regression).
+      await releaseOriginsFor({ db, storeId, by: event.by, destOrderId: orderId, entries });
     }
     const state = await incidentRestitutionState(orderRef, incidentId, event.id);
     await releaseOriginsFor({ db, storeId, by: event.by, destOrderId: orderId, entries: state.tagged });
