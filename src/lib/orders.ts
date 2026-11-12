@@ -110,6 +110,20 @@ export function orderTotals(order: Partial<Order> & Record<string, unknown>): Or
   };
 }
 
+/**
+ * #362: the shared core of the one-tap legacy collect (Home + order card).
+ * The deposit rises by the NET pending amount — saldo a favor applied from a
+ * sister order is the clienta's money already received there (#189), and an
+ * incident-adjusted total (#203) is what she really owes. Never the gross
+ * historical total: collecting it would destroy the clienta's credit.
+ */
+export function legacyCollectDeposit(order: Partial<Order> & Record<string, unknown>): number {
+  const current = typeof order.deposit === "number" && Number.isFinite(order.deposit) && order.deposit > 0
+    ? order.deposit
+    : 0;
+  return current + orderTotals(order).balance;
+}
+
 export function paymentStatusForOrder(order: Partial<Order> & Record<string, unknown>): PaymentStatus {
   // #189/#203 coherence: the badge, the card and the editor must agree on
   // "quedan deberes de cobro". A saldo a favor that covers the remainder, or a

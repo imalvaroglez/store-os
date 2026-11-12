@@ -12,7 +12,7 @@ import {
   TextArea,
   useToast,
 } from "../../design-system";
-import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { legacyCollectDeposit, orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
 import { shortageByDimension } from "../../lib/inventory";
 import { orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
@@ -104,10 +104,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
    * received there (#189) and must never be counted as cash here. */
   async function collect() {
     try {
-      const netPending = Math.max(0, totals.balance);
       const saved = await upsertOrder({
         ...order,
-        deposit: (typeof order.deposit === "number" ? order.deposit : 0) + netPending,
+        deposit: legacyCollectDeposit(order),
         updatedAt: new Date().toISOString(),
       });
       if (orderTotals(saved).balance > 0) {
