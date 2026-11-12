@@ -14,7 +14,7 @@ import {
 import { ordersForStore, productsToRestock, customersForStore } from "../../lib/selectors";
 import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
-import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
+import { effectiveOrderStatus, legacyCollectDeposit, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
@@ -85,9 +85,10 @@ export function HomeScreen() {
     const o = orders.find((x) => x.id === orderId);
     if (!o) return;
     try {
-      const total = orderTotals(o).estimatedTotal;
-      const saved = await upsertOrder({ ...o, deposit: total, updatedAt: new Date().toISOString() });
-      if ((saved.deposit ?? 0) < total) {
+      // #362: same rule as the order card (#267) — the NET pending amount,
+      // never the gross historical total (credit applied / incident-adjusted).
+      const saved = await upsertOrder({ ...o, deposit: legacyCollectDeposit(o), updatedAt: new Date().toISOString() });
+      if (orderTotals(saved).balance > 0) {
         toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
         setPaymentsOrderId(o.id);
         return;
