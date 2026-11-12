@@ -179,6 +179,10 @@ test("quitar la tabla elimina las reglas y no resucita tras recargar", async ({ 
 });
 
 test("recorrido completo: tabla de Relojes → revisar por categoría → aplicar SOLO precios autorizados (#289)", async ({ sharedPage: page }) => {
+  // #386 family: this journey legitimately waits up to 60s for the apply
+  // confirmation alone; the default 40s test timeout cut it short under
+  // emulator load.
+  test.setTimeout(120_000);
   // 1) Estrategia: proponer, ajustar un precio (Iconic banda baja 160→150) y guardar.
   await openStrategy(page);
   await expect(page.getByText(/Elegidas 2 bandas/)).toBeVisible();
