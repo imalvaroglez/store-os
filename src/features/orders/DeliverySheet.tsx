@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Order, OrderDeliveryLine } from "../../types";
 import { Badge, Button, Dialog, Money, Sheet, StatRow, TextField, useToast } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
@@ -33,6 +33,15 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
   // Stable per attempt: a retry after an error reuses the id so the append is
   // idempotent — a resend can never duplicate the entrega.
   const attemptIdRef = useRef<string>(uid("dev"));
+  // Every OPEN starts fresh: today's date (a card left open overnight must
+  // not propose a stale "today"), empty capture and a new intent id.
+  useEffect(() => {
+    if (open) {
+      setQuantityText({});
+      setDate(todayIso());
+      attemptIdRef.current = uid("dev");
+    }
+  }, [open]);
   const quantityFor = (key: string, remaining: number) => quantityText[key] ?? String(remaining);
 
   const nameFor = (productId: string, variantId?: string): string => {
