@@ -84,7 +84,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deletion vs outstanding c
     const dest = (await getDoc(doc(holder.db, "orders/dc-dest"))).data()!;
     await expect(
       deleteOrderWithStockTx(user, "dc-dest", dest.revision as number)
-    ).rejects.toThrow(/saldo a favor aplicado u originado/i);
+    ).rejects.toThrow(/usó saldo a favor de la clienta/i);
     // The doc (and its credit) survives.
     const after = (await getDoc(doc(holder.db, "orders/dc-dest"))).data()!;
     expect(after.creditAppliedCents).toBe(20000);
