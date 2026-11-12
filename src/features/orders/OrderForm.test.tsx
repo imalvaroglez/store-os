@@ -1153,7 +1153,7 @@ describe("densidad en Revisar por categoría (#345)", () => {
       fireEvent.click(screen.getByRole("button", { name: "Revisar por categoría" }));
       expect(screen.getByText(/Aro revisión/)).toBeTruthy();
       // price × quantity = subtotal, filling the row at md+.
-      expect(screen.getByText(/150 × 2 =/)).toBeTruthy();
+      expect(screen.getByText(/\$150\.00 × 2 =/)).toBeTruthy();
       expect(screen.getAllByText("$300.00").length).toBeGreaterThanOrEqual(1); // fila + resumen
       rendered.unmount();
     } finally {
