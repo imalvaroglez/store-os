@@ -116,26 +116,32 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-// #346: the category-filter flake (CI run 43117392993) matched a stale card
-// from a previous test's mount surviving in document.body — the same class as
-// #291. Explicit per-file cleanup makes cross-test DOM bleed structurally
-// impossible, whatever made the auto cleanup miss once on a loaded runner.
+// #346 (hardening): the flake's ORIGINAL diagnosis (residual DOM) was
+// refuted — the failing test was the first of the file and RTL auto-cleanup
+// was already active. The surviving candidates (a late filter reset from
+// useListRestore's store-key change, or an unsettled async render) stay open
+// in the issue. This keeps BOTH protections from the accepted #291 fix —
+// explicit cleanup (documentation of intent; harmless with auto-cleanup) and
+// queries scoped to each test's own container.
 afterEach(() => {
   cleanup();
 });
 
 describe("CatalogScreen filtro por categoría real", () => {
   it("filtra por categoría activa, muestra 'N de M piezas' y Limpiar restaura", async () => {
-    await renderCatalog(sortFilterState());
+    // #346: queries scoped to THIS render's container (the #291 technique) so
+    // only this screen's own grid can satisfy or defeat the assertion.
+    const view = await renderCatalog(sortFilterState());
+    const names = () => Array.from(view.container.querySelectorAll("h3")).map((h) => h.textContent ?? "");
 
     changeSelect("Categoría", CAT_ANILLOS);
     // Filter keeps the active sort (default: Fecha, recientes primero). The
     // list settles asynchronously — assert on the settled state (#252).
-    await waitFor(() => expect(cardNames()).toEqual(["anillo perla", "Anillo Blossom"]));
+    await waitFor(() => expect(names()).toEqual(["anillo perla", "Anillo Blossom"]));
     expect(screen.getByText("2 de 3 piezas")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Limpiar"));
-    await waitFor(() => expect(cardNames()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]));
+    await waitFor(() => expect(names()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]));
     expect(screen.queryByText("Limpiar")).toBeNull();
   });
 
