@@ -185,6 +185,57 @@ describe("#355 — conversión de una ficha existente a venta por color", () => 
     expect(saved.variants![0].quantityOnHand).toBe(4);
     expect(saved.variants![1].quantityOnHand).toBe(2);
   });
+
+  it("desactivar colores devuelve las piezas al estante de diseño (revisable) y el payload pide borrar el array", async () => {
+    render(
+      <ProductForm
+        product={{
+          ...design,
+          cost: 100,
+          categoryIds: ["c1"],
+          status: "draft",
+          variants: [
+            { id: "v1", color: "Dorado", skuSuffix: "D", sku: "SOL-D", quantityOnHand: 2, photos: [{ id: "f1", url: "https://x.test/g.jpg", storagePath: "p/f1", order: 0, isPrimary: true }], createdAt: "", updatedAt: "" },
+            { id: "v2", color: "Plateado", skuSuffix: "P", sku: "SOL-P", quantityOnHand: 3, photos: [{ id: "f2", url: "https://x.test/s.jpg", storagePath: "p/f2", order: 0, isPrimary: true }], createdAt: "", updatedAt: "" },
+          ],
+        }}
+        onDone={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByLabelText(/Regular/), { target: { value: "300" } });
+    fireEvent.click(screen.getByLabelText(/Se vende por color/));
+    // Colors hold pieces → the disable confirmation is required.
+    fireEvent.click(await screen.findByRole("button", { name: "Dejar de vender por color" }));
+    // The design-level shelf is pre-filled with the colors' pieces (reviewable).
+    expect((screen.getAllByLabelText(/^En existencia$/)[0] as HTMLInputElement).value).toBe("5");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    const saved = mocks.upsertProduct.mock.calls[0][0] as Product;
+    // The payload asks to canonically drop the color array (tombstone for saveEntity).
+    expect("variants" in saved).toBe(true);
+    expect(saved.variants).toBeUndefined();
+    expect(saved.quantityOnHand).toBe(5);
+  });
+
+  it("una edición de tienda «Bajo pedido» jamás pide borrar estantes ni colores (regresión revisión #361)", async () => {
+    // A store switched to on_demand keeps legacy shelves/colors canonically;
+    // a price edit must not tombstone them.
+    const onDemandState = tieredState();
+    (onDemandState.stores[0] as Record<string, unknown>).type = "on_demand";
+    mocks.state = onDemandState;
+    render(
+      <ProductForm
+        product={{ ...design, cost: 100, price: 50, quantityOnHand: 7, categoryIds: ["c1"] }}
+        onDone={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByLabelText(/Precio/, { selector: "input" }), { target: { value: "60" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    const saved = mocks.upsertProduct.mock.calls[0][0] as Product;
+    expect("quantityOnHand" in saved).toBe(false); // property absent: no tombstone
+    expect("variants" in saved).toBe(false);
+  });
 });
 
 describe("#124 misión UX — portada derivada del primer color", () => {
