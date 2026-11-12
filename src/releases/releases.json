@@ -11,7 +11,8 @@
       "Los productos creados desde Compras (de uno en uno o en lote) nacen con su página pública y su existencia en cero: se acabaron las fichas con el inventario en blanco.",
       "Puedes seguir editando pedidos aunque una ficha que tenían ya se haya eliminado del catálogo: antes el guardado se rechazaba completo.",
       "La autorización que dejas al entregar con saldo pendiente (quién, cuándo y cuánto) ya no se borra si después editas el pedido.",
-      "Si marcaste «Agotado» una ficha que se vende por color y luego recibes mercancía, la marca se limpia sola y el catálogo público vuelve a mostrarla disponible."
+      "Si marcaste «Agotado» una ficha que se vende por color y luego recibes mercancía, la marca se limpia sola y el catálogo público vuelve a mostrarla disponible.",
+      "Al agregar una pieza al pedido, si hay dos fichas con el mismo nombre (una individual y otra que se vende por colores), ya no se elige la primera automáticamente: el buscador muestra la clave y los colores de cada una, y el color se elige expresamente antes de guardar."
     ]
   },
   {
