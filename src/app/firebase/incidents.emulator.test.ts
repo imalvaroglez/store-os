@@ -478,6 +478,53 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     expect(clean.creditConsumedCents).toBe(0);     // fully restituted
   });
 
+  it("#403 PO: drenaje de incidencia interrumpido a mitad se RECUPERA exacto por reintento", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      // Crash state: confirm event committed; drain covered 4000 of a 10000
+      // obligation (tagged entries + mirrors present for the covered part).
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-resume"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "rs_L0", productName: "Origen", quantity: 1, unitPrice: 50, subtotal: 50 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 6000, // 10000 − 4000 already restituted
+        creditLedger: [{ id: "res_rel_e2_inc-order-resume_inc-origin-resume_1", kind: "restitution", fromOrderId: "inc-order-resume", amountCents: 4000, at: "2026-11-06T10:31:00.000Z", by: "inc-user" }],
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-resume"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "rsd_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 6000, // 10000 − 4000 released
+        creditLedger: [
+          { id: "app_rs", kind: "application", fromOrderId: "inc-origin-resume", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "rel_e2_inc-order-resume_inc-origin-resume_1", kind: "release", fromOrderId: "inc-origin-resume", amountCents: 4000, at: "2026-11-06T10:31:00.000Z", by: "inc-user" },
+        ],
+        incidents: [{
+          id: "inc-resume", productId: "inc-product", productName: "Pieza", quantity: 1,
+          reason: "Piedra fallada", originalUnitPriceCents: 10000,
+          resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 },
+          events: [
+            { id: "rs-open", kind: "opened", at: "2026-11-06T10:20:00.000Z", by: "inc-user" },
+            { id: "rs-e1", kind: "resolution_agreed", at: "2026-11-06T10:25:00.000Z", by: "inc-user" },
+            { id: "rs-e2", kind: "confirmed", at: "2026-11-06T10:30:00.000Z", by: "inc-user" },
+          ],
+        }],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    // Retrying the SAME confirm (idempotent) resumes the drain: the remaining
+    // 6000 land, no duplicates anywhere.
+    await applyIncidentEventTx({ orderId: "inc-order-resume", storeId: "inc-store", incidentId: "inc-resume", event: event("rs-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-resume"))).data()!;
+    const origin = (await getDoc(doc(holder.db, "orders/inc-origin-resume"))).data()!;
+    expect(order.creditAppliedCents).toBe(0); // exactly the full obligation
+    expect(origin.creditConsumedCents).toBe(0);
+    const releases = (order.creditLedger as any[]).filter((e) => e.kind === "release");
+    expect(releases.reduce((sum: number, e: any) => sum + e.amountCents, 0)).toBe(10000); // no duplicates
+    const mirrors = (origin.creditLedger as any[]).filter((e) => e.kind === "restitution");
+    expect(mirrors.reduce((sum: number, e: any) => sum + e.amountCents, 0)).toBe(10000);
+  });
+
   it("never crosses stores", async () => {
     await expect(
       openIncidentTx({ orderId: "inc-order", storeId: "inc-foreign", incident: incident("inc-x") })

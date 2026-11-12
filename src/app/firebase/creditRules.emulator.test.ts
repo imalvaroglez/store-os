@@ -311,6 +311,133 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#380 — saldo a favor so
     })).rejects.toThrow(); // the paired release entry (id without res_) does not exist on cr-dest
   });
 
+  // ── Evidencia final exigida por el PO (5º bloqueo) ─────────────────────
+  it("PO: ninguna operación compromete más saldo del disponible — apply excedente rechazado sin escrituras parciales", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cr-tight-origin"), orderDoc("cr-tight-origin", {
+        items: [{ lineId: "t_L0", productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        paymentsReceivedCents: 30000, inheritedDepositMaterialized: true, // $300 − $100 → surplus $200
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/cr-tight-dest"), orderDoc("cr-tight-dest", {
+        items: [{ lineId: "td_L0", productName: "Pieza", quantity: 1, unitPrice: 500, subtotal: 500 }],
+      }));
+    });
+    await expect(applyCustomerCreditTx({ entry: entry("app_over", 25000, "cr-tight-origin"), orderId: "cr-tight-dest", storeId: "cr-store" }))
+      .rejects.toThrow(/saldo a favor cambió|mayor/i);
+    const origin = (await getDoc(doc(holder.db, "orders/cr-tight-origin"))).data()!;
+    const dest = (await getDoc(doc(holder.db, "orders/cr-tight-dest"))).data()!;
+    expect(origin.creditConsumedCents ?? 0).toBe(0);   // no reservation slipped through
+    expect((origin.creditLedger ?? []) as unknown[]).toHaveLength(0);
+    expect(dest.creditAppliedCents ?? 0).toBe(0);
+    // The fitting amount passes afterwards.
+    await applyCustomerCreditTx({ entry: entry("app_fit", 20000, "cr-tight-origin"), orderId: "cr-tight-dest", storeId: "cr-store" });
+    const after = (await getDoc(doc(holder.db, "orders/cr-tight-origin"))).data()!;
+    expect(after.creditConsumedCents).toBe(20000); // exactly the surplus
+  });
+
+  it("PO: dos applies CONCURRENTOS sobre el mismo superávit no comprometen de más (serialización de transacciones)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cr-race-origin"), orderDoc("cr-race-origin", {
+        items: [{ lineId: "r_L0", productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        paymentsReceivedCents: 30000, inheritedDepositMaterialized: true, // surplus $200
+      }));
+      for (const d of ["cr-race-dest1", "cr-race-dest2"]) {
+        await setDoc(doc(ctx.firestore(), "orders/" + d), orderDoc(d, {
+          items: [{ lineId: `${d}_L0`, productName: "Pieza", quantity: 1, unitPrice: 500, subtotal: 500 }],
+        }));
+      }
+    });
+    const results = await Promise.allSettled([
+      applyCustomerCreditTx({ entry: entry("app_race_1", 20000, "cr-race-origin"), orderId: "cr-race-dest1", storeId: "cr-store" }),
+      applyCustomerCreditTx({ entry: entry("app_race_2", 20000, "cr-race-origin"), orderId: "cr-race-dest2", storeId: "cr-store" }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled").length;
+    expect(fulfilled).toBe(1); // only one $20 commitment fits the $20 surplus
+    const origin = (await getDoc(doc(holder.db, "orders/cr-race-origin"))).data()!;
+    expect(origin.creditConsumedCents).toBe(20000); // never over-committed
+    const consumed = origin.creditConsumedCents as number;
+    const surplus = 20000;
+    expect(consumed).toBeLessThanOrEqual(surplus);
+  });
+
+  it("PO: cada movimiento de crédito actualiza la REVISIÓN de ambos pedidos", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cr-rev-origin"), orderDoc("cr-rev-origin", {
+        items: [{ lineId: "rv_L0", productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        paymentsReceivedCents: 30000, inheritedDepositMaterialized: true, revision: 7, // surplus $200
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/cr-rev-dest"), orderDoc("cr-rev-dest", {
+        items: [{ lineId: "rvd_L0", productName: "Pieza", quantity: 1, unitPrice: 500, subtotal: 500 }],
+        revision: 3,
+      }));
+    });
+    await applyCustomerCreditTx({ entry: entry("app_rev", 20000, "cr-rev-origin"), orderId: "cr-rev-dest", storeId: "cr-store" });
+    let origin = (await getDoc(doc(holder.db, "orders/cr-rev-origin"))).data()!;
+    let dest = (await getDoc(doc(holder.db, "orders/cr-rev-dest"))).data()!;
+    expect(origin.revision).toBe(8); // reservation bumped the origin
+    expect(dest.revision).toBe(4);   // application bumped the destination
+    await updateDoc(doc(holder.db, "orders/cr-rev-dest"), { orderStatus: "cancelled" });
+    await releaseCustomerCreditTx({ orderId: "cr-rev-dest", storeId: "cr-store", by: "tx-user" });
+    origin = (await getDoc(doc(holder.db, "orders/cr-rev-origin"))).data()!;
+    dest = (await getDoc(doc(holder.db, "orders/cr-rev-dest"))).data()!;
+    expect(origin.revision).toBe(9); // mirror bumped the origin
+    expect(dest.revision).toBe(5);   // release bumped the destination
+  });
+
+  it("PO: apply interrumpido tras la fase 1 (reserva sin aplicación) se RECUPERA sin duplicar", async () => {
+    // Simulated crash: the origin's consumption mirror committed, the dest
+    // application never did (seeded admin-side = exactly the post-phase-1 state).
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cr-crash-origin"), orderDoc("cr-crash-origin", {
+        items: [{ lineId: "cr_L0", productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 20000,
+        creditLedger: [{ id: "con_app_crash", kind: "consumption", fromOrderId: "cr-crash-dest", amountCents: 20000, at: "2026-11-12T10:05:00.000Z", by: "tx-user" }],
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/cr-crash-dest"), orderDoc("cr-crash-dest", {
+        items: [{ lineId: "crd_L0", productName: "Pieza", quantity: 1, unitPrice: 500, subtotal: 500 }],
+      }));
+    });
+    // The retry with the SAME intent completes phase 2; phase 1 no-ops (id).
+    await applyCustomerCreditTx({ entry: entry("app_crash", 20000, "cr-crash-origin"), orderId: "cr-crash-dest", storeId: "cr-store" });
+    const origin = (await getDoc(doc(holder.db, "orders/cr-crash-origin"))).data()!;
+    const dest = (await getDoc(doc(holder.db, "orders/cr-crash-dest"))).data()!;
+    expect(origin.creditConsumedCents).toBe(20000); // NOT duplicated
+    expect((origin.creditLedger as OrderCreditLedgerEntry[]).filter((e) => e.kind === "consumption")).toHaveLength(1);
+    expect(dest.creditAppliedCents).toBe(20000);    // completed
+    expect((dest.creditLedger as OrderCreditLedgerEntry[]).filter((e) => e.kind === "application")).toHaveLength(1);
+  });
+
+  it("PO: restitución interrumpida tras el release del destino (espejo ausente) se RECUPERA sin duplicar ni dejar saldo varado", async () => {
+    // Simulated crash: the dest release committed, the origin mirror never did.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cr-crash2-origin"), orderDoc("cr-crash2-origin", {
+        items: [{ lineId: "c2_L0", productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 20000, // NOT yet restituted (mirror missing)
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/cr-crash2-dest"), orderDoc("cr-crash2-dest", {
+        items: [{ lineId: "c2d_L0", productName: "Pieza", quantity: 1, unitPrice: 500, subtotal: 500 }],
+        orderStatus: "cancelled",
+        creditAppliedCents: 0, // the release already landed
+        creditLedger: [
+          { id: "app_c2", kind: "application", fromOrderId: "cr-crash2-origin", amountCents: 20000, at: "2026-11-12T10:00:00.000Z", by: "tx-user" },
+          { id: "release_cr-crash2-dest_cr-crash2-origin_1", kind: "release", fromOrderId: "cr-crash2-origin", amountCents: 20000, at: "2026-11-12T10:10:00.000Z", by: "tx-user" },
+        ],
+      }));
+    });
+    // Any later release attempt heals the missing mirror (healing pass).
+    const released = await releaseCustomerCreditTx({ orderId: "cr-crash2-dest", storeId: "cr-store", by: "tx-user" });
+    expect(released).toBe(0); // nothing NEW to release (net already 0)
+    const origin = (await getDoc(doc(holder.db, "orders/cr-crash2-origin"))).data()!;
+    const dest = (await getDoc(doc(holder.db, "orders/cr-crash2-dest"))).data()!;
+    expect(origin.creditConsumedCents).toBe(0); // healed — no stranded credit
+    const mirrors = (origin.creditLedger as OrderCreditLedgerEntry[]).filter((e) => e.kind === "restitution");
+    expect(mirrors).toHaveLength(1);
+    const releases = (dest.creditLedger as OrderCreditLedgerEntry[]).filter((e) => e.kind === "release");
+    expect(releases).toHaveLength(1); // NOT duplicated
+  });
+
   it("#403 MAYOR-2: tras restituir TODO, el borrado sigue bloqueado — el ledger es evidencia de dinero", async () => {
     // cr-dest was fully released by the multi-origin test above; its ledger
     // (applications + releases) survives as money evidence: a signed fake
