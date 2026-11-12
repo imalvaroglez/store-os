@@ -529,6 +529,30 @@ describe("reliable invitations — users anti-spoofing", () => {
     const db = await asUserWithClaims("u_recover", { email: "admin@store.os", email_verified: true });
     await assertSucceeds(updateDoc(doc(db, "users/u_recover"), { role: "super_admin" }));
   });
+  it("the PO's real account is allowlisted for super_admin (#353)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_po"), {
+        email: "imalvaroglez@gmail.com",
+        emailNormalized: "imalvaroglez@gmail.com",
+        emailVerified: true,
+        role: "member",
+      });
+    });
+    const db = await asUserWithClaims("u_po", { email: "imalvaroglez@gmail.com", email_verified: true });
+    await assertSucceeds(updateDoc(doc(db, "users/u_po"), { role: "super_admin" }));
+    // An unverified token of the same email escalates nothing (fresh member doc:
+    // the doc above is already super_admin, whose profile edits follow admin rules).
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "users/u_po2"), {
+        email: "imalvaroglez@gmail.com",
+        emailNormalized: "imalvaroglez@gmail.com",
+        emailVerified: true,
+        role: "member",
+      });
+    });
+    const unverified = await asUserWithClaims("u_po2", { email: "imalvaroglez@gmail.com", email_verified: false });
+    await assertFails(updateDoc(doc(unverified, "users/u_po2"), { role: "super_admin" }));
+  });
   it("admin cross-user update: role change ok, identity change denied", async () => {
     await env.withSecurityRulesDisabled(async (c) => {
       await setDoc(doc(c.firestore(), "users/u_sa2"), { email: "sa@x.com", role: "super_admin" });

@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.15.2",
+    "date": "2026.11.12",
+    "title": "Administración de la plataforma con la cuenta real del dueño",
+    "notes": [
+      "La administración de Store OS ahora también funciona con la cuenta real del dueño de la plataforma (antes solo con el correo interno admin@store.os).",
+      "Necesario para transferir la propiedad de la tienda Olivia a Fer y completar la reapertura del incidente."
+    ]
+  },
+  {
     "version": "1.15.1",
     "date": "2026.11.11",
     "title": "Disponibilidad después de recibir mercancía",
