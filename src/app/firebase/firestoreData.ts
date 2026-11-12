@@ -1234,6 +1234,12 @@ export async function deleteOrderWithStockTx(
     if (consumed > 0) {
       throw new Error("Este pedido respalda un saldo a favor que otro pedido de la clienta ya usó. Restitúyelo desde ese otro pedido (cancelándolo) antes de borrar este.");
     }
+    // #380 r2 (review menor 3): a credit-history ledger also blocks deletion
+    // at the RULES layer (money evidence, MAYOR-2) — fail here with the
+    // operator's Spanish error instead of a raw PERMISSION_DENIED.
+    if (Array.isArray(data.creditLedger) && data.creditLedger.length > 0) {
+      throw new OrderEvidenceDeletionError();
+    }
     const cancelled = { ...previous, orderStatus: "cancelled" as const };
     const deltas = reservationDeltasForOrderChange(previous, cancelled);
     // #124: deleting releases COLOR shelves too — the same delta model, or
@@ -2160,6 +2166,10 @@ export async function applyIncidentEventTx(params: {
     const index = incidents.findIndex((existing) => existing.id === incidentId);
     if (index < 0) throw new Error("No se encontró la incidencia.");
     if (incidents.some((existing) => existing.events?.some((saved) => saved.id === event.id))) {
+      // #380 r2 (review menor 1): a retried CONFIRM resumes any restitution
+      // chunks orphaned by a post-commit failure — the drain below is a no-op
+      // when nothing is outstanding (chunk == 0 writes nothing).
+      if (event.kind === "confirmed") restitutionCappedOut = true;
       return { order: migrateOrder({ ...data, id: orderId }) }; // idempotent retry
     }
     const incident = incidents[index];
