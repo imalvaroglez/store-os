@@ -522,6 +522,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("stock projection with Fir
     expect(canonical?.variants[0].quantityOnHand).toBe(2);
   });
 
+  it("#372 clears a stale manual sold_out when the restocked design had UNTRACKED colors", async () => {
+    // Colors created without a captured shelf: totalStock is NULL (not 0) —
+    // the same "no pieces" for the clearing decision.
+    const design = {
+      ...product, id: "untracked-design", name: "Diseño sin rastrear", slug: "diseno-sin-rastrear",
+      availability: "sold_out" as const,
+      variants: [{ id: "u-g", color: "Gold", createdAt: "", updatedAt: "" }],
+    };
+    await env.withSecurityRulesDisabled(async (context) => {
+      const admin = context.firestore();
+      await setDoc(doc(admin, "products", design.id), design);
+    });
+    await setDoc(doc(db, "purchases", "untracked-design-purchase"), {
+      storeId: store.id, status: "ready", costingMethod: "latest_purchase",
+      tickets: [{ id: "ticket", totalConfirmed: 100 }],
+      lines: [{ lineId: "line", ticketId: "ticket", productId: design.id, variantId: "u-g", name: "Diseño sin rastrear Gold", quantity: 2, unitCost: 50 }],
+      subtotal: 100, totalConfirmed: 100,
+    });
+
+    await receivePurchaseTx("untracked-design-purchase");
+
+    const canonical = (await getDoc(doc(db, "products", design.id))).data();
+    expect(canonical?.availability).toBe("available");
+    expect(canonical?.variants[0].quantityOnHand).toBe(2);
+  });
+
   it("keeps a deliberate availability choice that still has stock behind it", async () => {
     // A paused piece (sold_out WITH stock) and a low_stock piece: a reception
     // restocks both, and the operator's marks must survive it.
