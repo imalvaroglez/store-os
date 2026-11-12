@@ -32,7 +32,11 @@ test("store owner edits Olivia's storefront in place and the public projection s
   const body = `Mensaje WYSIWYG ${Date.now()}`;
   await gotoClean(page, "/catalogo/olivia/editar");
   await page.getByRole("button", { name: "Editar sitio" }).click();
-  await page.getByRole("button", { name: "Editar Mensaje principal" }).click();
+  // #386 family: the editor renders asynchronously after "Editar sitio"; under
+  // emulator load the default 10s click budget is not always enough.
+  const mainMessage = page.getByRole("button", { name: "Editar Mensaje principal" });
+  await expect(mainMessage).toBeVisible({ timeout: 25000 });
+  await mainMessage.click();
   await page.getByLabel("Mensaje principal").fill(body);
   await page.getByRole("button", { name: "Listo" }).click();
   await page.getByRole("button", { name: /^Guardar$/ }).click();
