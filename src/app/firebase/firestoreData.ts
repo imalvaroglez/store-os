@@ -1731,7 +1731,19 @@ export async function republishStockSignals(
     });
     current.forEach((product, index) => {
       if (product?.slug && !present.has(product.slug) && details[index].status === "fulfilled") {
-        next.push(projectPublicProductSummary(product, activeStore.slug, activeStore));
+        // Insert at its sortOrder position, not at the end: the public grid
+        // renders the array as-is, and a repaired summary must not jump to the
+        // last row until the next full rebuild (#353 review, MENOR 1).
+        const summary = projectPublicProductSummary(product, activeStore.slug, activeStore) as Record<string, unknown>;
+        const order = typeof summary.sortOrder === "number" ? summary.sortOrder : 0;
+        let at = next.length;
+        for (let i = next.length - 1; i >= 0; i--) {
+          const previous = next[i] as Record<string, unknown>;
+          const previousOrder = typeof previous.sortOrder === "number" ? previous.sortOrder : 0;
+          if (previousOrder <= order) break;
+          at = i;
+        }
+        next.splice(at, 0, summary);
       }
     });
     if (next.length !== summaries.length || next.some((summary, index) => summary !== summaries[index])) {
