@@ -28,7 +28,7 @@ createRoot(document.getElementById("root")!).render(
           <button type="button">Control ajeno al recibo</button>
         </header>
         <Sheet open onClose={() => {}} title="Detalle para compartir">
-          <OrderReceipt data={data} whatsapp="5215512345678" />
+          <OrderReceipt data={data} />
         </Sheet>
       </div>
     </ThemeProvider>
