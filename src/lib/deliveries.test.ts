@@ -105,6 +105,20 @@ describe("effectiveDeliveryDate (#333)", () => {
     expect(effectiveDeliveryDate(order)).toBe("2026-12-02");
   });
 
+  it("la fecha efectiva es la del día en que llegó la ÚLTIMA pieza, no la de la captura completadora (P2 revisión)", () => {
+    // Piece B physically reached the clienta on Oct 15 but was captured Dec 1;
+    // piece A arrived Nov 30. The order was physically complete Nov 30.
+    const order = orderOf(
+      [RING],
+      [
+        delivery([{ productId: "p1", quantity: 3 }], "2026-11-30", "devA"),
+        delivery([{ productId: "p1", quantity: 2 }], "2026-10-15", "devB"),
+      ]
+    );
+    order.deliveries![1].recordedAt = "2026-12-01T09:00:00.000Z";
+    expect(effectiveDeliveryDate(order)).toBe("2026-11-30");
+  });
+
   it("captura tardía conserva la fecha real; sin eventos no hay fecha", () => {
     const lateCapture = orderOf(
       [RING],
@@ -124,6 +138,17 @@ describe("cancelación tras entrega parcial (#333)", () => {
     // Before #333 the cancellation released all 5; now only the 3 pending.
     const deltas = reservationDeltasForOrderChange(open, cancelled);
     expect(deltas.get("p1")).toBe(3);
+  });
+
+  it("con VARIANTE, cancelar tras entrega parcial también devuelve solo lo pendiente (P1 revisión)", async () => {
+    const { variantReservationDeltasForOrderChange } = await import("./inventory");
+    const open = orderOf(
+      [{ productId: "p1", variantId: "v_dorado", productName: "Sol dorado", quantity: 4, unitPrice: 50, subtotal: 200 }],
+      [delivery([{ productId: "p1", variantId: "v_dorado", quantity: 3 }], "2026-11-10")]
+    );
+    const cancelled = { ...open, orderStatus: "cancelled" as const };
+    const deltas = variantReservationDeltasForOrderChange(open, cancelled);
+    expect(deltas.get("p1:v_dorado")?.delta).toBe(1); // solo la pieza pendiente
   });
 
   it("repartir entre líneas de la misma dimensión no libera de más", () => {

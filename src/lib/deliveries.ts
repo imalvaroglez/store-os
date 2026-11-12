@@ -93,20 +93,11 @@ export function deliveryValidationError(order: Order, event: Pick<OrderDelivery,
  * confirmar" wherever the monthly close needs the fact). */
 export function effectiveDeliveryDate(order: Order): string | undefined {
   if (!orderFullyDelivered(order)) return undefined;
-  const ordered = [...orderedDimensions(order).entries()].map(([key, line]) => [key, line.quantity] as const);
-  const events = [...(order.deliveries ?? [])].sort((a, b) =>
-    (a.recordedAt ?? "").localeCompare(b.recordedAt ?? "")
-  );
-  // Replay in order; the first event after which nothing was pending is the
-  // completing one — its EFFECTIVE date is the date of record.
-  const delivered = new Map<string, number>();
-  for (const event of events) {
-    for (const line of event.lines) {
-      const key = stockDimensionKey(line.productId, line.variantId);
-      delivered.set(key, (delivered.get(key) ?? 0) + line.quantity);
-    }
-    const stillPending = ordered.some(([key, quantity]) => quantity - (delivered.get(key) ?? 0) > 0);
-    if (!stillPending) return event.deliveredAt;
-  }
-  return undefined;
+  // The order was physically complete the day its LAST piece reached the
+  // clienta: the MAX effective date across events. (Replaying by recordedAt
+  // returned the completing CAPTURE's date — wrong when a late capture hides
+  // an earlier physical delivery; review P2.)
+  const events = order.deliveries ?? [];
+  if (events.length === 0) return undefined;
+  return events.reduce((max, event) => (event.deliveredAt > max ? event.deliveredAt : max), events[0].deliveredAt);
 }

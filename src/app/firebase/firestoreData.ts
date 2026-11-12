@@ -2215,10 +2215,20 @@ export async function registerDeliveryTx(params: {
     const next: Record<string, unknown> = {
       deliveries: stripUndefined(deliveries),
       updatedAt: new Date().toISOString(),
+      // Bump the revision so a form opened BEFORE this delivery cannot save
+      // its stale status over the evidence (it aborts stale and reloads) —
+      // same discipline as any other order transition.
+      revision: (typeof data.revision === "number" ? data.revision : 0) + 1,
     };
+    const becomesDelivered =
+      orderFullyDelivered({ ...fresh, deliveries: [...deliveries] }) &&
+      effectiveOrderStatus(fresh) !== "delivered";
     if (orderFullyDelivered({ ...fresh, deliveries: [...deliveries] })) {
-      // Same gate as a delivered save (#165/#168): an uncovered saldo needs
-      // the operator's explicit confirmation, stamped as evidence.
+      next.orderStatus = "delivered";
+    }
+    // The saldo gate fires on the TRANSITION to delivered (like the save
+    // path) — an already-delivered order keeps its original authorization.
+    if (becomesDelivered) {
       const docMoney = {
         accumulatorCents: fresh.paymentsReceivedCents ?? 0,
         receivedCents: docReceivedCents(fresh),
@@ -2231,7 +2241,6 @@ export async function registerDeliveryTx(params: {
         next.deliveredWithBalanceConfirmedAt = new Date().toISOString();
         next.deliveredWithBalanceConfirmedBy = user.uid;
       }
-      next.orderStatus = "delivered";
     }
     tx.update(orderRef, next);
     return migrateOrder({ ...data, id: orderId, ...next });

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { Order, OrderDeliveryLine, Product } from "../../types";
+import type { Order, OrderDeliveryLine } from "../../types";
 import { Badge, Button, Dialog, Money, Sheet, StatRow, TextField, useToast } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
 import { pendingDeliveries, pendingDeliveryPieces, deliveryValidationError } from "../../lib/deliveries";
@@ -20,7 +20,11 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
   const toast = useToast();
   const pending = pendingDeliveries(order);
   const totals = orderTotals(order);
-  const orderedPieces = orderItems(order).reduce((sum, item) => sum + item.quantity, 0);
+  // #333: only product lines track delivery evidence; free-text lines count
+  // toward neither delivered nor pending (review P3).
+  const orderedPieces = orderItems(order)
+    .filter((item) => item.productId)
+    .reduce((sum, item) => sum + item.quantity, 0);
   const pendingPieces = pendingDeliveryPieces(order);
   const [quantityText, setQuantityText] = useState<Record<string, string>>({});
   const [date, setDate] = useState(todayIso());
@@ -38,6 +42,10 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
   };
 
   async function submit(confirmDeliveredWithBalance = false) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > todayIso() || date < "2000-01-01") {
+      toast.error("La fecha de entrega debe ser una fecha real de hoy o anterior.");
+      return;
+    }
     const lines: OrderDeliveryLine[] = pending
       .map((line) => ({
         productId: line.productId,
@@ -56,6 +64,11 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
       const entered = new Map(lines.map((line) => [`${line.productId}${line.variantId ? `:${line.variantId}` : ""}`, line.quantity]));
       const completes = pending.every((line) => entered.get(line.key) === line.quantity);
       toast.success(completes ? "Entrega registrada. Pedido entregado por completo." : "Entrega parcial registrada.");
+      // A NEW attempt gets a NEW id: the next delivery from this card must be
+      // its own event, never a silent no-op on the previous id (review P1).
+      attemptIdRef.current = uid("dev");
+      setQuantityText({});
+      setDate(todayIso());
       onClose();
     } catch (error) {
       if (error instanceof DeliveryWithBalanceError) {
@@ -148,9 +161,10 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
 }
 
 // Re-export for the card's compact progress line.
-export function deliveryProgressLabel(order: Order, products: Pick<Product, "id">[] = []): string | null {
-  void products;
-  const ordered = orderItems(order).reduce((sum, item) => sum + item.quantity, 0);
+export function deliveryProgressLabel(order: Order): string | null {
+  const ordered = orderItems(order)
+    .filter((item) => item.productId)
+    .reduce((sum, item) => sum + item.quantity, 0);
   const pending = pendingDeliveryPieces(order);
   if (ordered === 0 || (order.deliveries ?? []).length === 0) return null;
   if (pending === 0) return "Entregado por completo";

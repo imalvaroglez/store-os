@@ -108,6 +108,26 @@ describe("DeliverySheet (#333)", () => {
     expect(mocks.registerDelivery.mock.calls[0][1].id).toBe(mocks.registerDelivery.mock.calls[1][1].id);
   });
 
+  it("tras un éxito, la SIGUIENTE entrega usa un id NUEVO (nunca un no-op silencioso)", async () => {
+    mocks.registerDelivery.mockResolvedValue({ ...order });
+    renderSheet();
+    fireEvent.click(screen.getByRole("button", { name: "Registrar entrega" }));
+    await waitFor(() => expect(mocks.registerDelivery).toHaveBeenCalledTimes(1));
+    const firstId = mocks.registerDelivery.mock.calls[0][1].id;
+    // Fer cierra, reabre y registra otra entrega (partial left the order open).
+    fireEvent.click(screen.getByRole("button", { name: "Registrar entrega" }));
+    await waitFor(() => expect(mocks.registerDelivery).toHaveBeenCalledTimes(2));
+    expect(mocks.registerDelivery.mock.calls[1][1].id).not.toBe(firstId);
+  });
+
+  it("una fecha futura o malformada es rechazada antes de registrar (P2 revisión)", async () => {
+    renderSheet();
+    fireEvent.change(screen.getByLabelText("Fecha de entrega"), { target: { value: "2099-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar entrega" }));
+    expect(await screen.findByText(/debe ser una fecha real de hoy o anterior/)).toBeTruthy();
+    expect(mocks.registerDelivery).not.toHaveBeenCalled();
+  });
+
   it("entregar de más es rechazado sin perder la captura", async () => {
     renderSheet();
     const fields = screen.getAllByLabelText(/Entregar/);
