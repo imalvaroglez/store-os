@@ -84,9 +84,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
     await expect(
       applyCustomerCreditTx({ entry: entry("app_xstore", 1000, "foreign-origin"), orderId: "credit-dest", storeId: "credit-store" })
     ).rejects.toThrow();
+    // #380: cross-clienta credit dies at the RULES layer now (the origin
+    // reservation write is denied by per-entry customer isolation) — one
+    // layer deeper than the transaction's own Spanish check, same guarantee.
     await expect(
       applyCustomerCreditTx({ entry: entry("app_xclienta", 1000, "other-clienta"), orderId: "credit-dest", storeId: "credit-store" })
-    ).rejects.toThrow(/misma clienta/i);
+    ).rejects.toThrow();
     await updateDoc(doc(holder.db, "orders/credit-dest"), { orderStatus: "cancelled" });
     await expect(
       applyCustomerCreditTx({ entry: entry("app_cancelled", 100), orderId: "credit-dest", storeId: "credit-store" })

@@ -250,6 +250,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#380 — saldo a favor so
     }
   });
 
+  it("#403 B2: aplicación UNILATERAL (sin par de consumo en el origen) → DENEGADO", async () => {
+    const dest = (await getDoc(doc(holder.db, "orders/cr-dest"))).data()!;
+    const base = dest.creditLedger as OrderCreditLedgerEntry[];
+    await expect(updateDoc(doc(holder.db, "orders/cr-dest"), {
+      creditAppliedCents: (dest.creditAppliedCents as number) + 5000,
+      creditLedger: [...base, { ...entry("app_unilateral", 5000, "cr-origin"), by: "tx-user" }],
+    })).rejects.toThrow(); // no con_<id> mirror committed on cr-origin
+  });
+
+  it("#403 B2: restitución UNILATERAL (sin release emparejado en el destino) → DENEGADO", async () => {
+    const origin = (await getDoc(doc(holder.db, "orders/cr-origin"))).data()!;
+    const base = (origin.creditLedger ?? []) as OrderCreditLedgerEntry[];
+    await expect(updateDoc(doc(holder.db, "orders/cr-origin"), {
+      creditConsumedCents: (origin.creditConsumedCents as number) - 3000,
+      creditLedger: [...base, { id: "res_ghost_release_9", kind: "restitution", fromOrderId: "cr-dest", amountCents: 3000, at: "2026-11-12T10:00:00.000Z", by: "tx-user" }],
+    })).rejects.toThrow(); // the paired release entry (id without res_) does not exist on cr-dest
+  });
+
   it("#403 MAYOR-2: tras restituir TODO, el borrado sigue bloqueado — el ledger es evidencia de dinero", async () => {
     // cr-dest was fully released by the multi-origin test above; its ledger
     // (applications + releases) survives as money evidence: a signed fake
