@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Order } from "../types";
 import {
   effectiveOrderStatus,
+  legacyCollectDeposit,
   migrateOrder,
   migrateOrders,
   orderBucket,
@@ -210,5 +211,41 @@ describe("migrateOrder conserva la evidencia de entregas (#333)", () => {
       deliveries: [{ id: "", orderId: "o2", storeId: "s1", deliveredAt: "2026-13-45", recordedAt: "", by: "", lines: [] }],
     });
     expect(migrated.deliveries).toBeUndefined();
+  });
+});
+
+describe("legacyCollectDeposit (#362: Home/card one-tap collect)", () => {
+  const base = (extra: Record<string, unknown> = {}) => ({
+    id: "o1", storeId: "s1", customerId: "c1",
+    items: [{ lineId: "l1", productName: "Pieza", quantity: 1, unitPrice: 1000, subtotal: 1000 }],
+    deposit: 0, orderStatus: "confirmed" as const, paymentStatus: "unpaid" as const,
+    createdAt: "", updatedAt: "",
+    ...extra,
+  });
+
+  it("collects the NET pending — applied credit is never re-charged as cash", () => {
+    // $1,000 total with $400 of sister credit applied → collect $600.
+    expect(legacyCollectDeposit(base({ creditAppliedCents: 40000 }))).toBe(600);
+  });
+
+  it("an existing deposit adds exactly once; combined with credit it stays net", () => {
+    expect(legacyCollectDeposit(base({ deposit: 300 }))).toBe(1000);
+    expect(legacyCollectDeposit(base({ deposit: 300, creditAppliedCents: 40000 }))).toBe(600);
+  });
+
+  it("an incident refund lowers the effective total → the net follows", () => {
+    expect(legacyCollectDeposit(base({
+      incidents: [{
+        id: "i1", productName: "Pieza", quantity: 1, reason: "Defecto",
+        originalUnitPriceCents: 100000,
+        // The incident takes $250 off the sale (refund owed back to the clienta).
+        resolution: { kind: "refund", refundOwedCents: 25000, saleAdjustmentUnitCents: 25000 },
+        events: [],
+      }],
+    }))).toBe(750);
+  });
+
+  it("a corrupt deposit never poisons the collect", () => {
+    expect(legacyCollectDeposit(base({ deposit: Number.NaN }))).toBe(1000);
   });
 });

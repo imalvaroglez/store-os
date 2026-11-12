@@ -261,6 +261,29 @@ describe("HomeScreen alertas de existencias (FER-09)", () => {
     expect(mocks.upsertOrder.mock.calls[0][0].deposit).toBe(500);
     expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
   });
+
+  it("#362 Cobrar collects the NET pending — saldo a favor applied from a sister order is never re-charged as cash", async () => {
+    const state = fixtureState();
+    // Total $1,000, no payment records (legacy path), $500 of credit applied
+    // from a sister order: the clienta owes $500 in real money.
+    const legacy: Order = {
+      ...state.orders[0],
+      deposit: 0,
+      creditAppliedCents: 50000,
+      creditLedger: [{ id: "cl1", kind: "application", fromOrderId: "o_sister", amountCents: 50000, at: "2026-11-10T10:00:00.000Z", by: "u1" }],
+      items: [{ lineId: "l1", productName: "Pieza", quantity: 1, unitPrice: 1000, subtotal: 1000 }],
+    };
+    state.orders = [legacy];
+    const Wrapper = withState(state);
+    render(<Wrapper><HomeScreen /></Wrapper>);
+
+    await screen.findByText("Cobrar");
+    fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
+    await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledTimes(1));
+    // NET ($500), never the gross historical total ($1,000).
+    expect(mocks.upsertOrder.mock.calls[0][0].deposit).toBe(500);
+    expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
+  });
 });
 
 
