@@ -25,7 +25,14 @@ export function unique(prefix: string) {
   return `${prefix}+${Date.now()}_${counter}@example.com`;
 }
 
-export const FIRESTORE_REST = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
+// Standard Firebase emulator host vars (same names the rules tests use).
+// Defaults keep CI/shared behavior identical; setting them lets a parallel
+// session run its own emulator on private ports instead of wiping the shared
+// one (seeds and wipeEmulator below hit these hosts directly).
+const FIRESTORE_HOST = process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080";
+const AUTH_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || "127.0.0.1:9099";
+
+export const FIRESTORE_REST = `http://${FIRESTORE_HOST}/v1/projects/${PROJECT}/databases/(default)/documents`;
 
 export function encode(value: unknown): unknown {
   if (value === null || value === undefined) return { nullValue: null };
@@ -43,7 +50,7 @@ export function toFields(value: Record<string, unknown>) {
 
 export async function adminToken(email: string, password: string) {
   const response = await fetch(
-    "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key-for-emulator",
+    `http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key-for-emulator`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, returnSecureToken: true }) }
   );
   const value = (await response.json()) as { idToken?: string; localId?: string };
@@ -54,7 +61,7 @@ export async function adminToken(email: string, password: string) {
 // Create-or-sign-in an emulator account (REST fixtures can outlive a wipe, so
 // sign-up falls back to sign-in) and return its token + uid.
 export async function mintUserToken(email = ADMIN_EMAIL, password = "password123") {
-  const base = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
+  const base = `http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1`;
   const creds = { email, password, returnSecureToken: true };
   const post = (action: string) =>
     fetch(`${base}/accounts:${action}?key=fake-api-key-for-emulator`, {
@@ -133,11 +140,11 @@ export async function writeEmulatorDoc(
 // The explicit fixture login below always starts from this deterministic state.
 export async function wipeEmulator(): Promise<void> {
   try {
-    await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${PROJECT}/accounts`, {
+    await fetch(`http://${AUTH_HOST}/emulator/v1/projects/${PROJECT}/accounts`, {
       method: "DELETE",
     });
     await fetch(
-      `http://127.0.0.1:8080/emulator/v1/projects/${PROJECT}/databases/(default)/documents`,
+      `http://${FIRESTORE_HOST}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`,
       { method: "DELETE" }
     );
     // The Firestore emulator's bulk DELETE can return before the deletion is fully
@@ -203,7 +210,7 @@ export async function ensureSignedOut(page: Page) {
 // emulator's documented OOB-code endpoint. Password signups start unverified,
 // so tests must verify before Firestore accepts their identity token.
 export async function verifyEmulatorEmail(email: string, password: string) {
-  const base = "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1";
+  const base = `http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1`;
   const signedIn = await fetch(`${base}/accounts:signInWithPassword?key=fake`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -227,7 +234,7 @@ export async function verifyEmulatorEmail(email: string, password: string) {
   // this race in CI three runs in a row. Poll briefly before giving up.
   let verification: { email: string; requestType: string; oobLink: string } | undefined;
   for (let attempt = 0; attempt < 10 && !verification; attempt++) {
-    const codes = await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${PROJECT}/oobCodes`)
+    const codes = await fetch(`http://${AUTH_HOST}/emulator/v1/projects/${PROJECT}/oobCodes`)
       .then((r) => r.json() as Promise<{ oobCodes?: { email: string; requestType: string; oobLink: string }[] }>);
     verification = [...(codes.oobCodes ?? [])]
       .reverse()
