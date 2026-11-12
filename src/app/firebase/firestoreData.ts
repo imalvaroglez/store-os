@@ -1286,10 +1286,18 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
     }
     const result = purchaseInventoryUpdates([...productDocs.values()], purchase);
     for (const [productId, update] of result.stockUpdates) {
+      const previous = productDocs.get(productId);
       tx.update(productRefs.get(productId)!, {
         quantityOnHand: update.quantityOnHand,
         cost: update.cost,
         updatedAt: at,
+        // #353 (UX review): a manual «Agotado» mark is stale the moment the
+        // shelf has stock again — clear it in the SAME commit so the public
+        // catalog stops showing sold out after a restock. Only sold_out is
+        // touched; the operator's other availability choices stand.
+        ...(update.quantityOnHand > 0 && previous?.availability === "sold_out"
+          ? { availability: "available" as const }
+          : {}),
       });
     }
     // #124 (decisión 2): color lines adjust their own shelf and cost — one
@@ -1297,7 +1305,15 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
     // replacing the doc's (re-read canonically above).
     if (result.variantUpdates) {
       for (const [productId, update] of result.variantUpdates) {
-        tx.update(productRefs.get(productId)!, { variants: update.variants, updatedAt: at });
+        const previous = productDocs.get(productId);
+        const total = totalStock({ variants: update.variants, quantityOnHand: 0 });
+        tx.update(productRefs.get(productId)!, {
+          variants: update.variants,
+          updatedAt: at,
+          ...((total ?? 0) > 0 && previous?.availability === "sold_out"
+            ? { availability: "available" as const }
+            : {}),
+        });
       }
     }
     tx.update(purchaseRef, {
@@ -1607,6 +1623,13 @@ function publicStockPatch(current: Product, existing: Record<string, unknown>): 
   const patch: Record<string, unknown> = {};
   const stockSignal = publicStockSignal(current);
   if (stockSignal !== existing.stockSignal) patch.stockSignal = stockSignal;
+  // #353 (UX review): the public page reads availability OR stockSignal; a
+  // stale manual «sold_out» must travel with the stock sync when canonical
+  // carries an explicit value (a restock clears it in the same reception
+  // commit). Undefined stays untouched — nothing to say.
+  if (current.availability !== undefined && current.availability !== existing.availability) {
+    patch.availability = current.availability;
+  }
 
   const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant.stockSignal]));
   if (signals.size && Array.isArray(existing.variants)) {

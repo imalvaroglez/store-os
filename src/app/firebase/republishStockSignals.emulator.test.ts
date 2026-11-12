@@ -465,4 +465,60 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("stock projection with Fir
       "reloj-austin",
     ]);
   });
+
+  // #353 (UX review, hallazgo mayor): restocking a piece manually marked
+  // «Agotado» must refresh that manual mark too — the public page reads
+  // availability OR stockSignal, and a stale sold_out kept showing «Agotado»
+  // in silence after a reception.
+  it("clears a stale manual sold_out when the reception restocks the piece", async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      const admin = context.firestore();
+      await updateDoc(doc(admin, productPath), { availability: "sold_out" });
+      await setDoc(doc(admin, detailPath), { storeId: store.id, price: 80, availability: "sold_out", stockSignal: "agotado" });
+      await setDoc(doc(admin, "publicCatalogs", store.slug), {
+        storeId: store.id,
+        storeSlug: store.slug,
+        products: [{ productSlug: product.slug, price: 80, availability: "sold_out", stockSignal: "agotado" }],
+      });
+    });
+    await setDoc(doc(db, purchasePath), {
+      storeId: store.id, status: "ready", costingMethod: "latest_purchase",
+      tickets: [{ id: "ticket", totalConfirmed: 60 }],
+      lines: [{ lineId: "line", ticketId: "ticket", productId: product.id, name: product.name, quantity: 3, unitCost: 20 }],
+      subtotal: 60, totalConfirmed: 60,
+    });
+
+    await receivePurchaseTx("stock-test");
+    await republishStockSignals(store, [{ ...product, quantityOnHand: 3 }], [], [product.id]);
+
+    expect((await getDoc(doc(db, productPath))).data()?.availability).toBe("available");
+    const detail = (await getDoc(doc(db, detailPath))).data();
+    expect(detail).toMatchObject({ availability: "available", stockSignal: "disponible" });
+    const catalog = (await getDoc(doc(db, "publicCatalogs", store.slug))).data();
+    expect(catalog?.products[0]).toMatchObject({ availability: "available", stockSignal: "disponible" });
+  });
+
+  it("clears a stale manual sold_out when a color line restocks the design", async () => {
+    const design = {
+      ...product, id: "sold-design", name: "Diseño agotado", slug: "diseno-agotado",
+      availability: "sold_out" as const,
+      variants: [{ id: "d-g", color: "Gold", quantityOnHand: 0, createdAt: "", updatedAt: "" }],
+    };
+    await env.withSecurityRulesDisabled(async (context) => {
+      const admin = context.firestore();
+      await setDoc(doc(admin, "products", design.id), design);
+    });
+    await setDoc(doc(db, "purchases", "sold-design-purchase"), {
+      storeId: store.id, status: "ready", costingMethod: "latest_purchase",
+      tickets: [{ id: "ticket", totalConfirmed: 100 }],
+      lines: [{ lineId: "line", ticketId: "ticket", productId: design.id, variantId: "d-g", name: "Diseño agotado Gold", quantity: 2, unitCost: 50 }],
+      subtotal: 100, totalConfirmed: 100,
+    });
+
+    await receivePurchaseTx("sold-design-purchase");
+
+    const canonical = (await getDoc(doc(db, "products", design.id))).data();
+    expect(canonical?.availability).toBe("available");
+    expect(canonical?.variants[0].quantityOnHand).toBe(2);
+  });
 });
