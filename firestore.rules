@@ -425,11 +425,16 @@ service cloud.firestore {
       // Preserve the parent of immutable money evidence, including net-zero
       // corrections, any stock still held by an installment reservation, and
       // #333's delivery evidence (pieces handed to the clienta).
+      // #363: OUTSTANDING clienta credit blocks deletion — applied (this order
+      // consumed her credit) or consumed (this order BACKS credit a sister
+      // already applied). A fully released order (both zero) deletes normally.
       allow delete: if canOperateStore(resource.data.storeId)
         && !('paymentsReceivedCents' in resource.data)
         && !('installmentsReservedAt' in resource.data)
         && !('deliveries' in resource.data)
-        && resource.data.get('inheritedDepositMaterialized', false) != true;
+        && resource.data.get('inheritedDepositMaterialized', false) != true
+        && resource.data.get('creditAppliedCents', 0) == 0
+        && resource.data.get('creditConsumedCents', 0) == 0;
     }
 
     // orders/{orderId}/payments/{paymentId} — per-order money receptions (#123).

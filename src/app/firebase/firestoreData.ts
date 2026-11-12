@@ -984,14 +984,19 @@ export async function applyCustomerCreditTx(params: {
     if (pendingCents(destData) < entry.amountCents) {
       throw new Error("El saldo del pedido cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
     }
-    // WRITE PHASE — one atomic commit across both documents.
+    // WRITE PHASE — one atomic commit across both documents. #363: both docs
+    // bump `revision` so an editor holding a pre-credit snapshot fails with
+    // StaleOrderError instead of silently reverting the applied credit with
+    // its verbatim carry (fail-closed, same doctrine as money).
     tx.update(destRef, {
       creditAppliedCents: increment(entry.amountCents),
       creditLedger: arrayUnion(stripUndefined(entry)),
+      revision: increment(1),
       updatedAt: entry.at,
     });
     tx.update(originRef, {
       creditConsumedCents: increment(entry.amountCents),
+      revision: increment(1),
     });
   });
 }
@@ -1058,14 +1063,30 @@ export async function releaseCustomerCreditTx(params: {
       released += netCents;
     }
     if (entries.length === 0) return;
+    // #363: same revision bump as the application side — a stale editor must
+    // fail closed, never revert a release with its verbatim carry.
     tx.update(destRef, {
       creditAppliedCents: increment(-appliedDown),
       creditLedger: arrayUnion(...entries.map(stripUndefined)),
+      revision: increment(1),
       updatedAt: entries[0].at,
     });
-    for (const write of writes) tx.update(write.ref, write.data);
+    for (const write of writes) tx.update(write.ref, { ...write.data, revision: increment(1) });
   });
   return released;
+}
+
+/**
+ * #363: the order doc's CURRENT revision, or null when gone. The deletion flow
+ * re-reads it after a credit release — the release bumps `revision` (fail-closed
+ * for stale editors), and that own bump must not read as a foreign edit.
+ */
+export async function getOrderFreshRevision(orderId: string): Promise<number | null> {
+  const { db } = getFirebase();
+  const snap = await getDoc(doc(db, "orders", orderId));
+  if (!snap.exists()) return null;
+  const revision = snap.data().revision;
+  return typeof revision === "number" && Number.isSafeInteger(revision) ? revision : null;
 }
 
 /** Release the canonical reservation and delete the matching revision atomically. */
@@ -1097,6 +1118,24 @@ export async function deleteOrderWithStockTx(
     // Deleting the parent would orphan immutable evidence and retained stock.
     const data = snap.data();
     if (previous.installmentsReservedAt || "paymentsReceivedCents" in data || data.inheritedDepositMaterialized === true) {
+      throw new OrderEvidenceDeletionError();
+    }
+    // #363: OUTSTANDING credit blocks deletion, judged on the FRESH doc (the
+    // local state can lag an in-flight compensation and skip the pre-release).
+    // creditApplied > 0: the clienta's money is tied to this order — deleting
+    // would strand the origin's consumed mirror forever. creditConsumed > 0:
+    // this order BACKS credit a sister order already applied — deleting it
+    // orphans that application. A fully released order (both zero, ledger
+    // entries kept as evidence) deletes normally.
+    const outstandingCreditCents =
+      (typeof data.creditAppliedCents === "number" && Number.isSafeInteger(data.creditAppliedCents) ? data.creditAppliedCents : 0)
+      + (typeof data.creditConsumedCents === "number" && Number.isSafeInteger(data.creditConsumedCents) ? data.creditConsumedCents : 0);
+    if (outstandingCreditCents > 0) {
+      throw new Error("El pedido tiene saldo a favor aplicado u originado. Cancela el pedido para restituirlo antes de borrarlo.");
+    }
+    // #363 (menor): deliveries evidence must fail with the Spanish error here,
+    // not with a raw PERMISSION_DENIED from the rules below.
+    if (Array.isArray(data.deliveries) && data.deliveries.length > 0) {
       throw new OrderEvidenceDeletionError();
     }
     const cancelled = { ...previous, orderStatus: "cancelled" as const };
