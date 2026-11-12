@@ -12,9 +12,11 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   await loginAsFirstAdmin(page);
   await writeEmulatorDoc("products", "ticket_flow_product", {
     storeId: "store_joyeria", name: "Pieza QA por ticket", sku: "QA-TICKET",
-    category: "jewelry", cost: 10, quantityOnHand: 3, prices: { t_retail: 25 }, isPublic: false, status: "draft",
+    category: "jewelry", cost: 10, quantityOnHand: 3, prices: { t_retail: 25 }, isPublic: true, status: "published", slug: "pieza-qa-ticket",
     createdAt: "2026-11-05T12:00:00Z", updatedAt: "2026-11-05T12:00:00Z",
   });
+  const detailUrl = `${FIRESTORE_REST}/publicProducts/store_joyeria__pieza-qa-ticket`;
+  expect((await fetch(detailUrl)).status).toBe(404);
   const tickets = Array.from({ length: 7 }, (_, i) => ({ id: `qa-ticket-${i}`, folio: `QA-T-${i + 1}`, supplierName: `Proveedor QA ${i + 1}`, totalConfirmed: 50 }));
   const lines = tickets.flatMap((ticket, i) => Array.from({ length: 5 }, (_, j) => ({
     lineId: `qa-line-${i}-${j}`, ticketId: ticket.id, productId: "ticket_flow_product",
@@ -107,7 +109,7 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   await page.screenshot({ path: `test-results/ticket-capture-${testInfo.project.name}.png` });
 
   await page.getByRole("button", { name: "Recibir mercancía", exact: true }).click();
-  await expect(page.getByText("Compra recibida: el inventario se actualizó.")).toBeVisible();
+  await expect(page.getByText("Compra recibida: el inventario se actualizó.")).toBeVisible({ timeout: 30_000 });
   await openJourney(page);
   await expect(page.getByLabel("Costo unitario", { exact: true }).first()).toBeDisabled();
   await expect(page.getByRole("button", { name: "Recibir mercancía", exact: true })).toHaveCount(0);
@@ -116,4 +118,27 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   expect(response.ok).toBe(true);
   const persisted = await response.json();
   expect(Number(persisted.fields.quantityOnHand.integerValue)).toBe(39);
+
+  await expect.poll(async () => {
+    const response = await fetch(detailUrl);
+    if (!response.ok) return null;
+    const detail = await response.json();
+    return {
+      name: detail.fields.name.stringValue,
+      storeId: detail.fields.storeId.stringValue,
+      stockSignal: detail.fields.stockSignal.stringValue,
+    };
+  }).toEqual({ name: "Pieza QA por ticket", storeId: "store_joyeria", stockSignal: "disponible" });
+
+  await gotoClean(page, "/pedidos/nuevo");
+  await ensureStoreActive(page, "Joyería");
+  const product = page.getByRole("combobox", { name: "Producto", exact: true }).first();
+  await product.fill("Pieza QA por ticket");
+  await page.getByRole("option", { name: /Pieza QA por ticket/ }).click();
+  await expect(product).toHaveValue("Pieza QA por ticket");
+  const quantity = page.getByLabel("Cantidad", { exact: true }).first();
+  await quantity.fill("40");
+  await expect(page.getByText("Falta 1 pieza en 1 producto")).toBeVisible();
+  await quantity.fill("39");
+  await expect(page.getByText("Falta 1 pieza en 1 producto")).toHaveCount(0);
 });

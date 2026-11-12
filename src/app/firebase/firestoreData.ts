@@ -15,6 +15,7 @@ import {
   increment,
   arrayUnion,
   writeBatch,
+  type Transaction,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
@@ -1285,10 +1286,21 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
     }
     const result = purchaseInventoryUpdates([...productDocs.values()], purchase);
     for (const [productId, update] of result.stockUpdates) {
+      const previous = productDocs.get(productId);
       tx.update(productRefs.get(productId)!, {
         quantityOnHand: update.quantityOnHand,
         cost: update.cost,
         updatedAt: at,
+        // #353 (UX review): a manual «Agotado» mark is stale when the shelf
+        // was EMPTY and the reception restocks it — clear it in the SAME
+        // commit so the public catalog stops showing sold out. A deliberate
+        // pause (sold_out WITH stock) and every other availability choice
+        // stand: mechanical work is removed, not human decisions.
+        ...(update.quantityOnHand > 0
+          && (previous?.quantityOnHand ?? 0) === 0
+          && previous?.availability === "sold_out"
+          ? { availability: "available" as const }
+          : {}),
       });
     }
     // #124 (decisión 2): color lines adjust their own shelf and cost — one
@@ -1296,7 +1308,18 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
     // replacing the doc's (re-read canonically above).
     if (result.variantUpdates) {
       for (const [productId, update] of result.variantUpdates) {
-        tx.update(productRefs.get(productId)!, { variants: update.variants, updatedAt: at });
+        const previous = productDocs.get(productId);
+        const total = totalStock({ variants: update.variants, quantityOnHand: 0 });
+        const previousTotal = previous ? totalStock(previous) : null;
+        tx.update(productRefs.get(productId)!, {
+          variants: update.variants,
+          updatedAt: at,
+          ...((total ?? 0) > 0
+            && previousTotal === 0
+            && previous?.availability === "sold_out"
+            ? { availability: "available" as const }
+            : {}),
+        });
       }
     }
     tx.update(purchaseRef, {
@@ -1601,16 +1624,61 @@ export function buildPublicCatalogDoc(
   };
 }
 
+/** Refresh a published document's availability without replacing its other fields. */
+function publicStockPatch(current: Product, existing: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  const stockSignal = publicStockSignal(current);
+  if (stockSignal !== existing.stockSignal) patch.stockSignal = stockSignal;
+  // #353 (UX review): the public page reads availability OR stockSignal; a
+  // stale manual «sold_out» must travel with the stock sync when canonical
+  // carries an explicit value (a restock clears it in the same reception
+  // commit). Undefined stays untouched — nothing to say.
+  if (current.availability !== undefined && current.availability !== existing.availability) {
+    patch.availability = current.availability;
+  }
+
+  const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant.stockSignal]));
+  if (signals.size && Array.isArray(existing.variants)) {
+    const variants = existing.variants as Array<{ id: string; stockSignal?: string }>;
+    const next = variants.map((variant) => {
+      const signal = signals.get(variant.id);
+      return signal && signal !== variant.stockSignal ? { ...variant, stockSignal: signal } : variant;
+    });
+    if (next.some((variant, index) => variant !== variants[index])) patch.variants = next;
+  }
+  return patch;
+}
+
 /**
- * #229: canonical stock moved (purchase reception, order reservation/release)
- * and the public availability signal must follow without a manual "Republicar
- * catálogo". Targeted and READ-FREE: the caller passes the post-change
- * canonical products, so the catalog summary doc is rebuilt locally (1 write)
- * and each changed published product's detail doc is patched (1 write each).
- * Idempotent: recomputed from post-transaction values — a retry writes the
- * same thing and never re-applies a stock delta. A failure here must NOT
- * revert the reception/order (callers run it via persistInBackground).
+ * #353: keep the availability a concurrent writer (e.g. a reception on another
+ * device) already published. Content fields come from the caller's list;
+ * stockSignal and per-variant signals carry over from the live public summary
+ * so a stale snapshot never regresses them.
  */
+function preservePublicAvailability(
+  next: Record<string, unknown>,
+  prior: Record<string, unknown>
+): Record<string, unknown> {
+  const merged = { ...next };
+  if (typeof prior.stockSignal === "string" && prior.stockSignal !== next.stockSignal) {
+    merged.stockSignal = prior.stockSignal;
+  }
+  if (Array.isArray(next.variants) && Array.isArray(prior.variants)) {
+    const priorSignals = new Map(
+      (prior.variants as Array<{ id?: string; stockSignal?: string }>)
+        .filter((v) => typeof v.id === "string" && typeof v.stockSignal === "string")
+        .map((v) => [v.id as string, v.stockSignal as string])
+    );
+    const variants = (next.variants as Array<Record<string, unknown>>).map((variant) =>
+      typeof variant.id === "string" && priorSignals.has(variant.id) && priorSignals.get(variant.id) !== variant.stockSignal
+        ? { ...variant, stockSignal: priorSignals.get(variant.id) }
+        : variant
+    );
+    if (variants.some((variant, index) => variant !== (next.variants as unknown[])[index])) merged.variants = variants;
+  }
+  return merged;
+}
+
 export async function republishStockSignals(
   store: Store,
   products: Product[],
@@ -1618,20 +1686,102 @@ export async function republishStockSignals(
   changedProductIds: string[]
 ): Promise<void> {
   const { db } = getFirebase();
-  await setDoc(doc(db, "publicCatalogs", store.slug), buildPublicCatalogDoc(store, products, categories));
   const changed = new Set(changedProductIds);
-  const writes: Promise<unknown>[] = [];
-  for (const p of products) {
-    if (p.storeId !== store.id || !changed.has(p.id) || !isPublished(p) || !p.slug) continue;
-    writes.push(
-      setDoc(
-        doc(db, "publicProducts", publicProductId(store.id, p.slug)),
-        { stockSignal: publicStockSignal(p) },
-        { merge: true }
-      )
-    );
+  const published = products.filter((p) => p.storeId === store.id && isPublished(p));
+  const candidates = published.filter((p) => changed.has(p.id));
+  // #353: selection must not depend on the caller's local cache. A changed
+  // product missing from the in-memory list (stale client) is still repaired;
+  // canonical Firestore decides its slug, publication and stock.
+  const known = new Set(products.map((p) => p.id));
+  const orphans = [...changed]
+    .filter((id) => !known.has(id))
+    .map((id) => ({ id, storeId: store.id }) as Product);
+  const targets = [...candidates, ...orphans];
+  if (!targets.length) return;
+
+  async function currentProduct(tx: Transaction, previous: Product): Promise<Product | null> {
+    const snapshot = await tx.get(doc(db, "products", previous.id));
+    if (!snapshot.exists()) return null;
+    const current = { ...snapshot.data(), id: snapshot.id } as Product;
+    // previous.slug is unset for orphan stubs: canonical decides the route.
+    const slugOk = !previous.slug || current.slug === previous.slug;
+    return current.storeId === store.id && slugOk && isPublished(current) ? current : null;
   }
-  await Promise.all(writes);
+
+  async function currentStore(tx: Transaction): Promise<Store | null> {
+    const snapshot = await tx.get(doc(db, "stores", store.id));
+    if (!snapshot.exists() || snapshot.data().slug !== store.slug) return null;
+    return { ...snapshot.data(), id: snapshot.id } as Store;
+  }
+
+  // Keep detail transactions independent so a rejected legacy detail cannot
+  // prevent another product's missing detail from being repaired.
+  const details = await Promise.allSettled(targets.map((previous) =>
+    runTransaction(db, async (tx) => {
+      const current = await currentProduct(tx, previous);
+      if (!current?.slug) return;
+
+      const detailRef = doc(db, "publicProducts", publicProductId(store.id, current.slug));
+      const detail = await tx.get(detailRef);
+      if (!detail.exists()) {
+        const activeStore = await currentStore(tx);
+        if (activeStore) tx.set(detailRef, projectPublicProductDetail(current, activeStore.slug, categories, activeStore));
+      } else {
+        const patch = publicStockPatch(current, detail.data());
+        if (Object.keys(patch).length) tx.update(detailRef, patch);
+      }
+    })
+  ));
+
+  // Read the current catalog and changed stock in one transaction. A retry
+  // must not rewind pricing, categories, or products from a newer publication.
+  const catalogRef = doc(db, "publicCatalogs", store.slug);
+  await runTransaction(db, async (tx) => {
+    const [activeStore, catalog] = await Promise.all([currentStore(tx), tx.get(catalogRef)]);
+    if (!activeStore) return;
+    const summaries = catalog.data()?.products as Array<Record<string, unknown>> | undefined;
+
+    if (!Array.isArray(summaries)) {
+      // candidates ⊆ published; orphans extend the rebuild set beyond memory.
+      const rebuildFrom = [...published, ...orphans];
+      const current = await Promise.all(rebuildFrom.map((previous) => currentProduct(tx, previous)));
+      tx.set(catalogRef, buildPublicCatalogDoc(activeStore, current.filter((p): p is Product => p !== null), categories));
+      return;
+    }
+
+    const current = await Promise.all(targets.map((previous) => currentProduct(tx, previous)));
+    const currentBySlug = new Map(current.flatMap((product) => product?.slug ? [[product.slug, product] as const] : []));
+    const present = new Set(summaries.map((summary) => summary.productSlug));
+    const next = summaries.map((summary) => {
+      const product = typeof summary.productSlug === "string" ? currentBySlug.get(summary.productSlug) : undefined;
+      if (!product) return summary;
+      const patch = publicStockPatch(product, summary);
+      return Object.keys(patch).length ? { ...summary, ...patch } : summary;
+    });
+    current.forEach((product, index) => {
+      if (product?.slug && !present.has(product.slug) && details[index].status === "fulfilled") {
+        // Insert at its sortOrder position, not at the end: the public grid
+        // renders the array as-is, and a repaired summary must not jump to the
+        // last row until the next full rebuild (#353 review, MENOR 1).
+        const summary = projectPublicProductSummary(product, activeStore.slug, activeStore) as Record<string, unknown>;
+        const order = typeof summary.sortOrder === "number" ? summary.sortOrder : 0;
+        let at = next.length;
+        for (let i = next.length - 1; i >= 0; i--) {
+          const previous = next[i] as Record<string, unknown>;
+          const previousOrder = typeof previous.sortOrder === "number" ? previous.sortOrder : 0;
+          if (previousOrder <= order) break;
+          at = i;
+        }
+        next.splice(at, 0, summary);
+      }
+    });
+    if (next.length !== summaries.length || next.some((summary, index) => summary !== summaries[index])) {
+      tx.update(catalogRef, { products: next });
+    }
+  });
+
+  const failed = details.find((detail) => detail.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 export async function projectPublicForStore(
@@ -1646,33 +1796,48 @@ export async function projectPublicForStore(
   // the phone stale if it fails or is denied.
   await setDoc(doc(db, "publicStores", store.slug), projectPublicStore(store));
 
-  const writes: Promise<unknown>[] = [];
-
-  // 2. Catalog: active categories + published product summaries.
-  writes.push(
-    setDoc(doc(db, "publicCatalogs", store.slug), buildPublicCatalogDoc(store, products, categories))
-  );
+  // 2-4. Catalog, per-product details and pruning in ONE transaction, all
+  // projected from the CANONICAL product docs re-read inside it (#353): a full
+  // republish from a stale in-memory snapshot must never regress availability
+  // that a reception on another device already published. The in-memory list
+  // only nominates candidates; canonical decides existence, route and stock.
   const published = products.filter((p) => p.storeId === store.id && isPublished(p));
-
-  // 3. Per-product detail docs for published products.
-  const keepIds = new Set<string>();
-  for (const p of published) {
-    const id = publicProductId(store.id, p.slug!); // isPublished already guarantees a slug
-    keepIds.add(id);
-    writes.push(
-      setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories, store))
-    );
-  }
-
-  // Prune stale detail docs: any publicProducts/{storeId}__* not in keepIds.
-  const snap = await getDocs(
+  // Prune candidates are read BEFORE the transaction; inside it we only delete
+  // docs we actually saw, so a concurrent publish created after the read
+  // survives untouched.
+  const staleSnap = await getDocs(
     query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug))
   );
-  for (const d of snap.docs) {
-    if (!keepIds.has(d.id)) writes.push(deleteDoc(d.ref));
-  }
+  const seenDetailIds = staleSnap.docs.map((d) => d.id);
+  await runTransaction(db, async (tx) => {
+    const snaps = await Promise.all(published.map((p) => tx.get(doc(db, "products", p.id))));
+    const current = published
+      .map((p, index) => {
+        const snap = snaps[index];
+        if (!snap.exists()) return null;
+        const candidate = { ...snap.data(), id: p.id } as Product;
+        // A canonical rename/unpublish since the snapshot must not resurrect
+        // the remembered route; that product's own save republishes it.
+        return candidate.storeId === store.id && candidate.slug === p.slug && isPublished(candidate)
+          ? candidate
+          : null;
+      })
+      .filter((p): p is Product => p !== null);
 
-  await Promise.all(writes);
+    tx.set(doc(db, "publicCatalogs", store.slug), buildPublicCatalogDoc(store, current, categories));
+
+    const keepIds = new Set<string>();
+    for (const p of current) {
+      const id = publicProductId(store.id, p.slug!); // isPublished already guarantees a slug
+      keepIds.add(id);
+      tx.set(doc(db, "publicProducts", id), projectPublicProductDetail(p, store.slug, categories, store));
+    }
+
+    // Prune stale detail docs: any publicProducts/{storeId}__* not in keepIds.
+    for (const id of seenDetailIds) {
+      if (!keepIds.has(id)) tx.delete(doc(db, "publicProducts", id));
+    }
+  });
 }
 
 /** Remove a store's entire public projection (storefront + catalog + products + slug). */
@@ -1707,11 +1872,21 @@ export async function upsertPublicProduct(
   if (!isPublished(product)) {
     if (id) await deleteDoc(doc(db, "publicProducts", id)).catch(() => {});
   } else if (id) {
-    await setDoc(doc(db, "publicProducts", id), projectPublicProductDetail(product, storeSlug, categories, pricing));
+    // #353: project the detail from the CANONICAL product doc, re-read inside
+    // a transaction. The caller's copy may be stale; canonical already holds
+    // this save (persistEntity ran first) plus any fresher stock a concurrent
+    // reception wrote on another device.
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(doc(db, "products", product.id));
+      if (!snap.exists()) return;
+      const current = { ...snap.data(), id: snap.id } as Product;
+      if (current.storeId !== product.storeId || current.slug !== product.slug || !isPublished(current)) return;
+      tx.set(doc(db, "publicProducts", id), projectPublicProductDetail(current, storeSlug, categories, pricing));
+    });
   }
 
   // Refresh the catalog summaries for this store.
-  await rebuildPublicCatalog(storeSlug, product.storeId, allStoreProducts, pricing);
+  await rebuildPublicCatalog(storeSlug, product.storeId, allStoreProducts, pricing, [product.id]);
 }
 
 /** Remove one product's public detail doc by store + slug. Best-effort. */
@@ -1728,20 +1903,51 @@ export async function rebuildPublicCatalog(
   storeSlug: string,
   storeId: string,
   products: Product[],
-  pricing?: PublicPricingSource
+  pricing?: PublicPricingSource,
+  touchedProductIds: string[] = []
 ): Promise<void> {
   const { db } = getFirebase();
   const published = products.filter((p) => p.storeId === storeId && isPublished(p));
-  await setDoc(
-    doc(db, "publicCatalogs", storeSlug),
-    {
-      storeSlug,
-      products: published
-        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-        .map((p) => projectPublicProductSummary(p, storeSlug, pricing)),
-    },
-    { merge: true }
-  );
+  const touched = new Set(touchedProductIds);
+  const catalogRef = doc(db, "publicCatalogs", storeSlug);
+  // #353: availability (stockSignal, per-variant signals) must never regress to
+  // a stale in-memory snapshot. Content comes from the caller's list; untouched
+  // products carry their availability over from the live public catalog, and
+  // touched products re-read their canonical doc inside the transaction —
+  // canonical Firestore is the single source of truth.
+  await runTransaction(db, async (tx) => {
+    const catalogSnap = await tx.get(catalogRef);
+    const prior = new Map<string, Record<string, unknown>>();
+    const priorProducts = catalogSnap.data()?.products;
+    if (Array.isArray(priorProducts)) {
+      for (const summary of priorProducts) {
+        if (summary && typeof summary.productSlug === "string") prior.set(summary.productSlug, summary);
+      }
+    }
+
+    const canonical = new Map<string, Product>();
+    for (const p of published) {
+      if (!touched.has(p.id)) continue;
+      const snap = await tx.get(doc(db, "products", p.id));
+      if (!snap.exists()) continue;
+      const current = { ...snap.data(), id: p.id } as Product;
+      if (current.storeId !== storeId || !isPublished(current)) continue;
+      canonical.set(p.id, current);
+    }
+
+    const next = published
+      // A touched product deleted or unpublished concurrently is dropped, not
+      // resurrected from the caller's snapshot.
+      .filter((p) => !(touched.has(p.id) && !canonical.has(p.id)))
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      .map((p) => {
+        if (touched.has(p.id)) return projectPublicProductSummary(canonical.get(p.id)!, storeSlug, pricing);
+        const summary = projectPublicProductSummary(p, storeSlug, pricing) as Record<string, unknown>;
+        const existing = prior.get(p.slug!);
+        return existing ? preservePublicAvailability(summary, existing) : summary;
+      });
+    tx.set(catalogRef, { storeId, storeSlug, products: next }, { merge: true });
+  });
 }
 
 /**

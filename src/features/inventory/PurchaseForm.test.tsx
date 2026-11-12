@@ -418,7 +418,7 @@ describe("ticket code preservation (PO report in #206)", () => {
     expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "ring", name: "123-ABC", unitCost: 80 });
   });
 
-  it("keeps the ticket code and captured cost when creating a product with a different name", async () => {
+  it.each([false, true])("creates a complete product without overwriting the ticket when publishing is %s", async (publish) => {
     open(ticketPurchase());
     fireEvent.focus(screen.getByRole("combobox", { name: "Producto en Store OS" }));
     fireEvent.click(screen.getByRole("button", { name: "+ Crear nuevo producto" }));
@@ -426,8 +426,13 @@ describe("ticket code preservation (PO report in #206)", () => {
     expect(screen.getByLabelText("Nombre")).toHaveValue("123-ABC"); // prefill from the line
     fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "Aretes Dorados" } });
     fireEvent.change(screen.getByLabelText("Costo", { exact: true }), { target: { value: "120" } });
+    if (publish) fireEvent.click(within(sheet).getByRole("checkbox", { name: /^Publicar en el catálogo/ }));
     fireEvent.click(within(sheet).getByRole("button", { name: "Crear producto" }));
     await waitFor(() => expect(upsertProduct).toHaveBeenCalledOnce());
+    expect(upsertProduct.mock.calls[0][0]).toMatchObject({
+      name: "Aretes Dorados", slug: "aretes-dorados", quantityOnHand: 0,
+      status: publish ? "published" : "draft", isPublic: publish,
+    });
     expect(screen.getByLabelText("Producto del ticket")).toHaveValue("123-ABC");
     expect(screen.getByLabelText("Costo unitario")).toHaveValue("80");
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
