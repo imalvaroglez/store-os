@@ -142,9 +142,10 @@ export function variantReservationDeltasForOrderChange(
   previous: Order | undefined,
   next: Order
 ): Map<string, VariantStockDelta> {
-  const heldItems = (order: Order | undefined): OrderItem[] =>
-    order && holdsPieces(order) ? orderItems(order) : [];
-  return variantReservationDeltas(heldItems(previous), heldItems(next));
+  // Same held-items truth as the plain reservation above (#333 partial cap
+  // included) — variant stock must not diverge from design stock on a
+  // partial-delivery cancellation.
+  return variantReservationDeltas(heldOrderItems(previous), heldOrderItems(next));
 }
 
 /**
@@ -190,7 +191,14 @@ function holdsPieces(o: Order): boolean {
  * cycle nets to exactly one consumption. Stateless — no provenance flag.
  */
 export function reservationDeltasForOrderChange(previous: Order | undefined, next: Order): Map<string, number> {
-  const heldItems = (order: Order | undefined): OrderItem[] => {
+  return reservationDeltas(heldOrderItems(previous), heldOrderItems(next));
+}
+
+/** What an order still HOLDS on the shelf — the shared truth of both
+ * reservation-delta functions (#333: a cancelled order with delivery evidence
+ * keeps ONLY its delivered pieces consumed; money-backed holds R9 untouched). */
+function heldOrderItems(order: Order | undefined): OrderItem[] {
+  {
     if (!order) return [];
     const items = orderItems(order);
     // #333: cancelling an order with delivery evidence returns only the
@@ -210,8 +218,7 @@ export function reservationDeltasForOrderChange(previous: Order | undefined, nex
       }).filter((item) => item.quantity > 0);
     }
     return holdsPieces(order) ? items : [];
-  };
-  return reservationDeltas(heldItems(previous), heldItems(next));
+  }
 }
 
 // --- #309: canonical shortage derivation (observability only) ------------

@@ -366,7 +366,16 @@ service cloud.firestore {
         && entry.get('recordedAt', '') is string && entry.get('recordedAt', '').size() > 0
         && entry.get('by', '') == request.auth.uid
         && entry.get('lines', []) is list && entry.get('lines', []).size() > 0
-        && entry.get('lines', []).size() <= 200;
+        && entry.get('lines', []).size() <= 200
+        // A sane effective-date year — junk like 2099 never reaches the ledger.
+        // (Per-line content checks are IMPOSSIBLE here: this CEL has no list
+        // lambdas and the 1000-expression limit rejects slice comparisons —
+        // verified empirically. Content validity is the registering
+        // transaction's job; the rules own structure, signature, append-only.)
+        // Sanity bound, not a business rule: this CEL cannot parse dates, so
+        // the effective year must fall inside the app's plausible lifetime.
+        && int(entry.get('deliveredAt', '0000')[0:4]) >= 2020
+        && int(entry.get('deliveredAt', '0000')[0:4]) <= 2035;
     }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);

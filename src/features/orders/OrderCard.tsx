@@ -238,13 +238,15 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           {deliveryHeld && (
             <p className="text-xs text-on-surface-soft">La entrega se habilita al liquidar el total.</p>
           )}
-          {deliveryProgressLabel(order) && (
-            <p className="text-xs text-ink-soft">{deliveryProgressLabel(order)}</p>
-          )}
-          {status === "delivered" && !effectiveDeliveryDate(order) && (order.deliveries ?? []).length === 0 && (
-            <p className="text-xs text-on-surface-soft">Fecha de entrega por confirmar.</p>
-          )}
         </div>
+      )}
+      {/* #333: delivery progress and the missing-evidence note show on ANY
+          status — a delivered-and-paid card had no action row to host them. */}
+      {deliveryProgressLabel(order) && (
+        <p className="text-xs text-ink-soft">{deliveryProgressLabel(order)}</p>
+      )}
+      {status === "delivered" && !effectiveDeliveryDate(order) && (order.deliveries ?? []).length === 0 && (
+        <p className="text-xs text-on-surface-soft">Fecha de entrega por confirmar.</p>
       )}
     </Card>
     <Sheet open={ticketOpen} onClose={() => setTicketOpen(false)} title="Detalle para compartir">

@@ -861,6 +861,14 @@ describe("#333 delivery ledger append-only", () => {
     await assertFails(updateDoc(doc(other, "orders/" + ORDER), { deliveries: [event({ id: "dev-3" }), event()] }));
   });
 
+  it("un evento con fecha efectiva basura (2099) es denegado por las reglas", async () => {
+    await seed({ deliveries: [event()] });
+    const db = await asUser("u333");
+    await assertFails(
+      updateDoc(doc(db, "orders/" + ORDER), { deliveries: [event(), event({ id: "dev-junk", deliveredAt: "2099-12-31" })] })
+    );
+  });
+
   it("crear un pedido con entregas fabricadas falla; borrar un pedido con entregas falla", async () => {
     await seed({ deliveries: [event()] });
     const db = await asUser("u333");
