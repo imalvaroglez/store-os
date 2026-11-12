@@ -1310,12 +1310,17 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
       for (const [productId, update] of result.variantUpdates) {
         const previous = productDocs.get(productId);
         const total = totalStock({ variants: update.variants, quantityOnHand: 0 });
+        // #372: totalStock returns NULL when no color tracks a shelf — for
+        // the sold-out clearing decision that is the same "no pieces" as 0
+        // (normalize like the product-level branch does with ?? 0). Without
+        // this, a manual «Agotado» on an untracked-color design survived its
+        // own restock and the public catalog kept showing sold out.
         const previousTotal = previous ? totalStock(previous) : null;
         tx.update(productRefs.get(productId)!, {
           variants: update.variants,
           updatedAt: at,
           ...((total ?? 0) > 0
-            && previousTotal === 0
+            && (previousTotal ?? 0) === 0
             && previous?.availability === "sold_out"
             ? { availability: "available" as const }
             : {}),
