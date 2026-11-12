@@ -1,5 +1,13 @@
 [
   {
+    "version": "1.15.1",
+    "date": "2026.11.11",
+    "title": "Disponibilidad después de recibir mercancía",
+    "notes": [
+      "Cuando recibes mercancía, Store OS puede reconstruir una ficha pública faltante y mostrar la disponibilidad de las piezas en el catálogo."
+    ]
+  },
+  {
     "version": "1.15.0",
     "date": "2026.11.12",
     "title": "Entregas con evidencia y catálogo que cuadra",
