@@ -19,7 +19,7 @@ import { suppliersForStore, productsForStore } from "../../lib/selectors";
 import { todayIso, nowIso, parseSpanishDate, formatDate } from "../../lib/dates";
 import { formatMoney, formatMoneyExact, parseAmount, sanitizeDecimalInput } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
-import { suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
+import { slugify, suggestSkuBase, uniqueProductSku, uniqueProductSlug } from "../../lib/catalog";
 import { uid } from "../../lib/ids";
 import {
   legacyPurchaseTicket,
@@ -1155,7 +1155,11 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             isTiered={isTiered}
             tiers={tiersForStore(activeStore)}
             onDone={async (saved) => {
-              await upsertProduct(saved);
+              await upsertProduct({
+                ...saved,
+                slug: uniqueProductSlug(products, activeStore.id, saved.id, slugify(saved.name), saved.slug),
+                ...(isTiered ? { quantityOnHand: saved.quantityOnHand ?? 0 } : {}),
+              });
               setProductQueries((previous) => ({ ...previous, [draft.lines[productLineIdx].lineId!]: saved.name }));
               // Creating a product links it to the line but never rewrites
               // the ticket's captured text or cost (#206): the mini form was
