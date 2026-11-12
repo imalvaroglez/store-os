@@ -436,6 +436,48 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     }
   });
 
+  it("#403 r5 (4ª revisión): origen drifteado restituye lo REAL, no se atasca (deriva F4)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-drift2"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "dr_L0", productName: "Origen drift", quantity: 1, unitPrice: 50, subtotal: 50 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 2000, // drifted: net 6000 but mirror only 2000
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-clean2"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "cl_L0", productName: "Origen clean", quantity: 1, unitPrice: 50, subtotal: 50 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 4000,
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-drift2"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "d2_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [
+          { id: "app_dr2", kind: "application", fromOrderId: "inc-origin-drift2", amountCents: 6000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "app_cl2", kind: "application", fromOrderId: "inc-origin-clean2", amountCents: 4000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+        ],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-drift2", storeId: "inc-store", incident: incident("inc-dr2", { originalUnitPriceCents: 10000, events: [event("dr2-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-drift2", storeId: "inc-store", incidentId: "inc-dr2",
+      event: event("dr2-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 } });
+    // The confirm COMMITS (no raw denial): the drain restitutes the real
+    // mirrors — 2000 from the drifted origin, 4000 from the clean one.
+    await applyIncidentEventTx({ orderId: "inc-order-drift2", storeId: "inc-store", incidentId: "inc-dr2", event: event("dr2-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-drift2"))).data()!;
+    expect(order.creditAppliedCents).toBe(4000); // 10000 − 2000 − 4000 (rest real)
+    const drift = (await getDoc(doc(holder.db, "orders/inc-origin-drift2"))).data()!;
+    const clean = (await getDoc(doc(holder.db, "orders/inc-origin-clean2"))).data()!;
+    expect(drift.creditConsumedCents).toBe(0);     // its real 2000 returned
+    expect(clean.creditConsumedCents).toBe(0);     // fully restituted
+  });
+
   it("never crosses stores", async () => {
     await expect(
       openIncidentTx({ orderId: "inc-order", storeId: "inc-foreign", incident: incident("inc-x") })
