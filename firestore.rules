@@ -446,6 +446,10 @@ service cloud.firestore {
                 }])
             : kind == 'release'
               ? counterpart.get('creditConsumedCents', 0) >= entry.get('amountCents', 0)
+                // #403 r5: also THIS order must have had at least that much
+                // applied — a fabricated release on a sibling that never
+                // used the origin's credit cannot mint available credit.
+                && before.get('creditAppliedCents', 0) >= entry.get('amountCents', 0)
             : kind == 'restitution'
               ? counterpart.get('creditLedger', []).hasAll([{
                   'id': entry.get('id', '').replace('res_', ''),

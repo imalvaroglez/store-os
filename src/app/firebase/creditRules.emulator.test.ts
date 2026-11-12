@@ -250,6 +250,49 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#380 — saldo a favor so
     }
   });
 
+  it("#403 r5 P1: cancelación con 6 orígenes restituye completo (chunks de 2)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      for (const i of [7, 8, 9, 10, 11, 12]) {
+        await setDoc(doc(db, "orders/cr-origin" + i), orderDoc("cr-origin" + i, {
+          items: [{ lineId: `cr-origin${i}_L0`, productName: "Anillo " + i, quantity: 1, unitPrice: 200, subtotal: 200 }],
+          paymentsReceivedCents: 40000,
+          inheritedDepositMaterialized: true,
+        }));
+      }
+      await setDoc(doc(db, "orders/cr-dest-six"), orderDoc("cr-dest-six", {
+        items: [{ lineId: "cr-dest-six_L0", productName: "Pieza grande", quantity: 3, unitPrice: 500, subtotal: 1500 }],
+      }));
+    });
+    for (const i of [7, 8, 9, 10, 11, 12]) {
+      await applyCustomerCreditTx({ entry: entry(`app_six_${i}`, 20000, "cr-origin" + i), orderId: "cr-dest-six", storeId: "cr-store" });
+    }
+    await updateDoc(doc(holder.db, "orders/cr-dest-six"), { orderStatus: "cancelled" });
+    const released = await releaseCustomerCreditTx({ orderId: "cr-dest-six", storeId: "cr-store", by: "tx-user" });
+    expect(released).toBe(120000);
+    const after = (await getDoc(doc(holder.db, "orders/cr-dest-six"))).data()!;
+    expect(after.creditAppliedCents).toBe(0);
+    for (const i of [7, 8, 9, 10, 11, 12]) {
+      const o = (await getDoc(doc(holder.db, "orders/cr-origin" + i))).data()!;
+      expect(o.creditConsumedCents).toBe(0);
+      expect((o.creditLedger as OrderCreditLedgerEntry[]).some((e) => e.kind === "restitution")).toBe(true);
+    }
+  });
+
+  it("#403 r5: fabricar par release+espejo sobre un pedido que NO aplicó ese crédito → DENEGADO (acuñación)", async () => {
+    // cr-plain never applied anything: before.creditAppliedCents = 0, so a
+    // release entry of any size fails the new applied bound.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cr-plain-victim"), orderDoc("cr-plain-victim"));
+    });
+    await expect(updateDoc(doc(holder.db, "orders/cr-plain-victim"), {
+      creditAppliedCents: -5000,
+      creditLedger: [{ id: "release_mint_1", kind: "release", fromOrderId: "cr-origin", amountCents: 5000, at: "2026-11-12T10:00:00.000Z", by: "tx-user" }],
+    })).rejects.toThrow();
+    const victim = (await getDoc(doc(holder.db, "orders/cr-plain-victim"))).data()!;
+    expect(victim.creditAppliedCents ?? 0).toBe(0); // intact
+  });
+
   it("#403 B2: aplicación UNILATERAL (sin par de consumo en el origen) → DENEGADO", async () => {
     const dest = (await getDoc(doc(holder.db, "orders/cr-dest"))).data()!;
     const base = dest.creditLedger as OrderCreditLedgerEntry[];

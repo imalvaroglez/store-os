@@ -1088,7 +1088,9 @@ async function releaseDestChunk(params: {
   idPrefix?: string;
 }): Promise<{ entries: OrderCreditLedgerEntry[] }> {
   const { db, destRef, storeId, by, requireCancelled, capCents, idPrefix = "release_" } = params;
-  const CHUNK = 3;
+  // #403 r5 (review P0/P1): chunks of 2 keep the merged-write rules
+  // evaluation inside the CEL budget even on docs with incident history.
+  const CHUNK = 2;
   const entries = await runTransaction(db, async (tx) => {
     const destSnap = await tx.get(destRef);
     if (!destSnap.exists()) return [];
@@ -1210,12 +1212,23 @@ export async function releaseCustomerCreditTx(params: {
   const { orderId, storeId, by, reason = "cancellation" } = params;
   const destRef = doc(db, "orders", orderId);
   let released = 0;
-  // #403: each iteration commits a ≤3-entry dest chunk (backed by the
-  // origins' committed mirrors) and then writes the origin restitution
-  // mirrors in their own transactions (the rules require the dest release
-  // already committed for the pair check). Deterministic ids make both
-  // phases idempotent; re-reading the fresh ledger each round keeps the
-  // whole operation resumable.
+  // #403 r5 (review P2): HEAL first — any committed dest release whose
+  // origin mirror is missing (a chunk that died between phases) gets its
+  // mirror now, so an interrupted cancellation does not strand the credit
+  // forever. Idempotent per mirror id.
+  {
+    const snap = await getDoc(destRef);
+    if (snap.exists()) {
+      const ledger = Array.isArray(snap.data().creditLedger) ? (snap.data().creditLedger as OrderCreditLedgerEntry[]) : [];
+      await releaseOriginsFor({ db, storeId, by, destOrderId: orderId, entries: ledger.filter((e) => e.kind === "release") });
+    }
+  }
+  // Each iteration commits a ≤2-entry dest chunk (backed by the origins'
+  // committed mirrors) and then writes the origin restitution mirrors in
+  // their own transactions (the rules require the dest release already
+  // committed for the pair check). Deterministic ids make both phases
+  // idempotent; re-reading the fresh ledger each round keeps the whole
+  // operation resumable.
   for (;;) {
     const { entries } = await releaseDestChunk({
       db, destRef, storeId, by,
@@ -2211,10 +2224,21 @@ async function incidentRestitutionState(
   const incidents = Array.isArray(data.incidents) ? (data.incidents as OrderIncident[]) : [];
   const incident = incidents.find((existing) => existing.id === incidentId);
   if (!incident) return { owed: 0, released: 0, pending: 0, tagged: [] };
-  const owed = reconcileIncidentMoney(migrateOrder({ ...data, id: orderRef.id }), incident).restitutionCents;
-  const tagged = (Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [])
-    .filter((saved) => saved.kind === "release" && saved.id.startsWith(`rel_${eventId}_`));
+  const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
+  const tagged = ledger.filter((saved) => saved.kind === "release" && saved.id.startsWith(`rel_${eventId}_`));
   const released = tagged.reduce((sum, saved) => sum + (Number.isSafeInteger(saved.amountCents) ? saved.amountCents : 0), 0);
+  // #403 r5 (review P2): reconstruct the PRE-release state of THIS event —
+  // remove its tagged entries and restore the applied cents — so the
+  // reconciled obligation is computed from the same base every time.
+  // Otherwise owed shrinks with every release and pending double-counts.
+  const baseLedger = ledger.filter((saved) => !(saved.kind === "release" && saved.id.startsWith(`rel_${eventId}_`)));
+  const baseApplied = (typeof data.creditAppliedCents === "number" && Number.isSafeInteger(data.creditAppliedCents)
+    ? Math.max(0, data.creditAppliedCents)
+    : 0) + released;
+  const owed = reconcileIncidentMoney(
+    migrateOrder({ ...data, creditLedger: baseLedger, creditAppliedCents: baseApplied, id: orderRef.id } as Record<string, unknown>),
+    incident
+  ).restitutionCents;
   return { owed, released, pending: Math.max(0, owed - released), tagged };
 }
 
@@ -2336,34 +2360,32 @@ export async function applyIncidentEventTx(params: {
     if (kind === "provider_compensation" && (incident.events ?? []).some((saved) => saved.kind === "provider_compensation")) {
       throw new Error("La compensación del proveedor ya está registrada en esta incidencia.");
     }
-    // #203 r2-criterio 1: at confirm (the piece is physically back), the
-    // applied credit that covered the reconciled value is RESTITUTED to its
-    // origins — that is how the clienta's money becomes available again in
-    // #189 (the reconcile effect re-applies it). Reads happen before writes.
-    const creditReleases: Array<{ originRef: ReturnType<typeof doc>; cents: number; entry: OrderCreditLedgerEntry }> = [];
-    let restitutionTotal = 0;
+    // #203 r2-criterio 1 + #403 r5: at confirm, the applied credit that
+    // covered the reconciled value is restituted to its origins — but the
+    // release ENTRIES now go out through the state-driven drain AFTER this
+    // transaction (the main update carries the incident ledger, and the
+    // per-entry pair checks blow the CEL expression budget when combined —
+    // review P0). This block only VALIDATES fail-closed (PO directive r4: a
+    // needed origin that is missing, foreign or inconsistent aborts the
+    // confirmation); it writes nothing.
     if (kind === "confirmed") {
       const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), incident);
       let remaining = money.restitutionCents;
       const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
       const netByOrigin = new Map<string, number>();
       for (const saved of ledger) {
-        if (saved.kind === "application" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
-        if (saved.kind === "release" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
+        if (saved.kind !== "application" && saved.kind !== "release") continue;
+        if (!Number.isSafeInteger(saved.amountCents)) continue;
+        const sign = saved.kind === "application" ? 1 : -1;
+        netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + sign * saved.amountCents);
       }
       for (const [fromOrderId, netCents] of netByOrigin) {
         if (remaining <= 0) break;
         if (netCents <= 0) continue;
-        // #403: the main transaction carries at most 3 release entries (the
-        // rules' CEL budget); any remainder goes out through the state-driven
-        // drain below, which is bounded by THIS event's obligation.
-        if (creditReleases.length >= 3) break;
         const originRef = doc(db, "orders", fromOrderId);
         const originSnap = await tx.get(originRef);
         // PO directive (r4): a NEEDED origin that is missing, foreign or
         // inconsistent ABORTS the whole confirmation — never a silent skip.
-        // The clienta's credit would vanish with no signal; fail closed and
-        // explain so the operator can repair the data first.
         if (!originSnap.exists()) {
           throw new Error(`No se encontró el pedido origen del saldo a favor (${fromOrderId}). Repara ese pedido antes de confirmar: la devolución necesita devolverle su crédito.`);
         }
@@ -2371,23 +2393,13 @@ export async function applyIncidentEventTx(params: {
         if ((originData.storeId ?? "") !== storeId) {
           throw new Error("El pedido origen del saldo a favor pertenece a otra tienda. Revisa la ficha antes de confirmar.");
         }
-        // F4: cap against the origin's REAL mirror so a release can never
-        // drive creditConsumed negative (manual-repair scenarios included).
         const originConsumed = typeof originData.creditConsumedCents === "number" && Number.isSafeInteger(originData.creditConsumedCents)
           ? Math.max(0, originData.creditConsumedCents)
           : 0;
         if (originConsumed <= 0) {
           throw new Error(`El pedido origen del saldo a favor no refleja el crédito consumido (${fromOrderId}). Revisa sus cobros de saldo antes de confirmar.`);
         }
-        const release = Math.min(netCents, remaining, originConsumed);
-        if (release <= 0) continue;
-        remaining -= release;
-        creditReleases.push({
-          originRef,
-          cents: release,
-          entry: { id: `rel_${event.id}_${fromOrderId}`, kind: "release", fromOrderId, amountCents: release, at: event.at, by: event.by },
-        });
-        restitutionTotal += release;
+        remaining -= Math.min(netCents, originConsumed);
       }
     }
 
@@ -2463,21 +2475,9 @@ export async function applyIncidentEventTx(params: {
     };
     const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));
     const updatedAt = event.at;
-    if (restitutionTotal > 0) {
-      // #403: the main transaction writes the DEST side only — the origin
-      // restitution mirrors go out afterwards (their rules require this
-      // release already committed). #363: revision bump with every credit
-      // write.
-      tx.update(orderRef, {
-        incidents: stripUndefined(nextIncidents),
-        updatedAt,
-        creditAppliedCents: increment(-restitutionTotal),
-        creditLedger: arrayUnion(...creditReleases.map((release) => stripUndefined(release.entry))),
-        revision: increment(1),
-      });
-    } else {
-      tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
-    }
+    // #403 r5: incidents-only update — every credit movement happens in the
+    // state-driven drain below (cheap, rules-verifiable chunks).
+    tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
     return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }) };
   });
   // #403 (PO halt): state-driven restitution drain, bounded by THIS event's

@@ -399,6 +399,43 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     expect(b2.creditConsumedCents).toBe(0);
   });
 
+  it("#403 r5 P0: confirmar incidencia con 3 orígenes restituye completo (presupuesto CEL)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      for (const [i, amount] of [["1", 4000], ["2", 3000], ["3", 3000]] as const) {
+        await setDoc(doc(ctx.firestore(), "orders/inc-origin-cel-" + i), {
+          storeId: "inc-store", customerId: "inc-clienta",
+          items: [{ lineId: `cel${i}_L0`, productName: "Origen " + i, quantity: 1, unitPrice: 50, subtotal: 50 }],
+          deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+          creditConsumedCents: amount,
+          createdAt: "", updatedAt: "",
+        });
+      }
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-cel"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "cel_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [
+          { id: "app_cel1", kind: "application", fromOrderId: "inc-origin-cel-1", amountCents: 4000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "app_cel2", kind: "application", fromOrderId: "inc-origin-cel-2", amountCents: 3000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "app_cel3", kind: "application", fromOrderId: "inc-origin-cel-3", amountCents: 3000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+        ],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-cel", storeId: "inc-store", incident: incident("inc-cel", { originalUnitPriceCents: 10000, events: [event("cel-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-cel", storeId: "inc-store", incidentId: "inc-cel",
+      event: event("cel-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 } });
+    await applyIncidentEventTx({ orderId: "inc-order-cel", storeId: "inc-store", incidentId: "inc-cel", event: event("cel-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-cel"))).data()!;
+    expect(order.creditAppliedCents).toBe(0);
+    for (const i of ["1", "2", "3"]) {
+      const o = (await getDoc(doc(holder.db, "orders/inc-origin-cel-" + i))).data()!;
+      expect(o.creditConsumedCents).toBe(0);
+      expect((o.creditLedger ?? []).some((e: { kind: string }) => e.kind === "restitution")).toBe(true);
+    }
+  });
+
   it("never crosses stores", async () => {
     await expect(
       openIncidentTx({ orderId: "inc-order", storeId: "inc-foreign", incident: incident("inc-x") })
