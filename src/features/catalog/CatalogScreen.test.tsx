@@ -149,6 +149,23 @@ describe("CatalogScreen filtro por categoría real", () => {
     expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("#344 cuenta también lo que está bajo el umbral POR DEFECTO — igual que la tarjeta de Inicio", async () => {
+    // Fer's reported case: existence 2 without a saved threshold counts in
+    // Inicio's "Por surtir" card (default 3); the catalog filter used to
+    // require an explicit lowStockAt and showed a smaller number.
+    const state = sortFilterState();
+    state.products[0].lowStockAt = undefined; // Anillo Blossom, qty 5 > default 3
+    state.products[1].quantityOnHand = 2;     // anillo perla, no threshold → 2 ≤ 3
+    state.products[1].lowStockAt = undefined;
+    state.products[2].lowStockAt = undefined; // Aretes Luna, qty −2 → agotada
+    await renderCatalog(state);
+
+    fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
+    await waitFor(() => expect(cardNames()).toEqual(["Aretes Luna", "anillo perla"]));
+    expect(screen.getByText("2 de 3 piezas")).toBeTruthy();
+    // Anillo Blossom (5 existencias, sin umbral) no cuenta en ninguna de las dos superficies.
+  });
+
   it("limpia Por surtir al cambiar de tienda", async () => {
     const state = sortFilterState();
     state.stores.find((store) => store.id === SANTI)!.type = "on_demand";
