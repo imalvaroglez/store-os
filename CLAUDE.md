@@ -76,7 +76,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Arquitectura (lo esencial)
 
-- **Auth + roles:** `src/app/firebase/`. Email/password + Google; `super_admin` solo por el correo de plataforma (`admin@store.os`); los demás `member`. Las rutas administrativas requieren sesión; las rutas públicas del catálogo no.
+- **Auth + roles:** `src/app/firebase/`. Email/password + Google; `super_admin` solo por los correos de plataforma (`admin@store.os`, `imalvaroglez@gmail.com`); los demás `member`. Las rutas administrativas requieren sesión; las rutas públicas del catálogo no.
 - **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules` (super-admin + miembros por tienda). El adaptador `firestoreData.ts` acota lecturas a las tiendas accesibles.
 - **Estado:** `StoreProvider` mantiene el estado administrativo en memoria y lo sincroniza con Firestore. `localStorage` conserva únicamente preferencias, carrito público y borradores asociados a una persona autenticada.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
@@ -218,7 +218,7 @@ Sin pagos/checkout/carrito, sin facturas, sin códigos de barras (la Clave/SKU d
 
 ## Despliegue
 
-Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno + reglas). `super_admin` solo por el correo de plataforma (`admin@store.os`).
+Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno + reglas). `super_admin` solo por los correos de plataforma (`admin@store.os`, `imalvaroglez@gmail.com`).
 
 ### Ambientes y backends (cableado)
 

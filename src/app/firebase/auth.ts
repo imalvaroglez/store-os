@@ -35,7 +35,11 @@ export type AppUser = {
 };
 
 const GOOGLE = new GoogleAuthProvider();
-const PLATFORM_ADMIN_EMAIL = "admin@store.os";
+// Platform super-admins. admin@store.os is the legacy platform identity (kept
+// while the real owner account below takes over in production); the PO moved
+// platform administration to their real account (#353 recovery, 2026-11-12).
+// Must stay in sync with isAllowlistedSuperAdmin() in firestore.rules.
+const PLATFORM_ADMIN_EMAILS = ["admin@store.os", "imalvaroglez@gmail.com"];
 
 const GMAIL_DOMAINS = ["gmail.com", "googlemail.com"];
 
@@ -52,6 +56,11 @@ export function normalizeEmail(email: string): string {
   const domain = clean.slice(at + 1);
   if (GMAIL_DOMAINS.includes(domain)) return `${local.replace(/\./g, "")}@gmail.com`;
   return clean;
+}
+
+/** Platform super-admin test — canonical (gmail dots stripped) comparison. */
+export function isPlatformAdminEmail(email: string | null): boolean {
+  return email != null && PLATFORM_ADMIN_EMAILS.includes(normalizeEmail(email));
 }
 
 /**
@@ -78,7 +87,7 @@ async function ensureUserDoc(fbUser: FbUser): Promise<AppUser> {
     const data = snap.data() as { role: Role; emailNormalized?: string; emailVerified?: boolean };
     // Recover the designated platform account if it was created after the
     // first signup. The Firestore rule requires the same verified allowlist.
-    const isPlatformAdmin = normalizeEmail(fbUser.email) === PLATFORM_ADMIN_EMAIL;
+    const isPlatformAdmin = isPlatformAdminEmail(fbUser.email);
     let role = data.role ?? "member";
     if (isPlatformAdmin && data.role !== "super_admin") {
       try {
@@ -107,7 +116,7 @@ async function ensureUserDoc(fbUser: FbUser): Promise<AppUser> {
   // (isAllowlistedSuperAdmin) is the only path to a super_admin doc, and
   // counting the directory would mean listing other accounts' identities
   // (#176). A non-allowlisted first signup is a member by design.
-  const role: Role = normalizeEmail(fbUser.email) === PLATFORM_ADMIN_EMAIL ? "super_admin" : "member";
+  const role: Role = isPlatformAdminEmail(fbUser.email) ? "super_admin" : "member";
   await setDoc(ref, {
     ...identity,
     displayName: fbUser.displayName ?? "",
@@ -169,7 +178,7 @@ async function afterLogin(fbUser: FbUser): Promise<AppUser> {
       uid: fbUser.uid,
       email: fbUser.email,
       displayName: fbUser.displayName,
-      role: fbUser.emailVerified && normalizeEmail(fbUser.email ?? "") === PLATFORM_ADMIN_EMAIL
+      role: fbUser.emailVerified && isPlatformAdminEmail(fbUser.email)
         ? "super_admin"
         : "member",
     };

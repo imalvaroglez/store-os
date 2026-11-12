@@ -49,12 +49,20 @@ service cloud.firestore {
     }
     // Defense-in-depth: even if the prod users/ collection is emptied by accident,
     // only these verified email(s) may create a super_admin doc. The next arbitrary
-    // signup cannot escalate. Keep member self-signup open. The platform
-    // super-admin (admin@store.os) operates in both dev and prod by design; tenant
-    // owners like Olivia are members/owners and do NOT need to be listed here.
+    // signup cannot escalate. Keep member self-signup open. Platform super-admins
+    // operate in both dev and prod by design; tenant owners like Olivia are
+    // members/owners and do NOT need to be listed here. Keep in sync with
+    // PLATFORM_ADMIN_EMAILS in src/app/firebase/auth.ts (#353 recovery, 2026-11-12:
+    // platform administration moved to the PO's real account).
     function isAllowlistedSuperAdmin() {
-      return verifiedEmail().lower() in [
-        'admin@store.os'
+      // Canonical comparison, same semantics as the client's normalizeEmail:
+      // a legitimate dot variant (i.malvaroglez@gmail.com) or googlemail form
+      // of a platform email must not produce an "admin fantasma" — client-side
+      // super_admin with rules-side denial (#385 review, MAYOR-1). Callers
+      // already require hasVerifiedEmail(), so verifiedEmail() is non-null.
+      return canonicalEmail() in [
+        'admin@store.os',
+        'imalvaroglez@gmail.com'
       ];
     }
 
