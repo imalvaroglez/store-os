@@ -455,3 +455,54 @@ test("canonical money in the order editor survives a notes save and reload (#225
 
 
 
+
+test("choose the exact color when adding a line to an existing order (#394)", async ({ sharedPage: page }, testInfo) => {
+  await page.setViewportSize(testInfo.project.use.viewport ?? { width: 1280, height: 800 });
+  const now = new Date().toISOString();
+  const baseProduct = {
+    storeId: "store_santi", name: "Reloj de prueba", category: "jewelry", price: 300, createdAt: now, updatedAt: now,
+  };
+  await writeEmulatorDoc("products", "clock_plain", { ...baseProduct, sku: "RELOJ-INDIVIDUAL" });
+  await writeEmulatorDoc("products", "clock_colors", {
+    ...baseProduct, sku: "RELOJ-COLORES",
+    variants: [
+      { id: "gold", color: "Dorado", sku: "RELOJ-DORADO", quantityOnHand: 4 },
+      { id: "silver", color: "Plateado", sku: "RELOJ-PLATEADO", quantityOnHand: 4 },
+    ],
+  });
+  const orderId = "order_color394";
+  await writeEmulatorDoc("orders", orderId, {
+    storeId: "store_santi", customerId: "cust_santi_1",
+    items: [{ lineId: "existing", productName: "Pieza anterior", quantity: 1, unitPrice: 50, subtotal: 50 }],
+    deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid", schemaVersion: 2, createdAt: now, updatedAt: now,
+  });
+
+  await gotoSantiHome(page);
+  await gotoClean(page, `/pedidos/${orderId}`);
+  await expect(page.getByRole("heading", { name: "Editar pedido", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "+ Agregar línea" }).click();
+  const product = page.getByRole("combobox", { name: "Producto", exact: true }).first();
+  await product.fill(baseProduct.name);
+  await expect(page.getByRole("option", { name: /RELOJ-INDIVIDUAL/ })).toBeVisible();
+  const design = page.getByRole("option", { name: /RELOJ-COLORES.*Dorado.*Plateado/ });
+  await expect(design).toBeVisible();
+  if (testInfo.project.name === "desktop") {
+    if (await design.getAttribute("aria-selected") !== "true") await product.press("ArrowDown");
+    await expect(design).toHaveAttribute("aria-selected", "true");
+    await product.press("Enter");
+  } else {
+    await design.click();
+  }
+  const color = page.getByRole("combobox", { name: /^Color\b/ });
+  await expect(color).toHaveValue("");
+  await color.selectOption("silver");
+  await page.getByRole("button", { name: "Revisar por categoría" }).click();
+  await expect(page.getByText(/Reloj de prueba · Plateado/)).toBeVisible();
+  await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true);
+  await page.getByRole("button", { name: "Guardar pedido", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
+
+  await gotoClean(page, `/pedidos/${orderId}`);
+  await expect(page.getByRole("combobox", { name: /^Color\b/ })).toHaveValue("silver");
+  await expect(page.getByLabel("Producto", { exact: true }).first()).toHaveValue(baseProduct.name);
+});
