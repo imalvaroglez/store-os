@@ -14,6 +14,7 @@ import {
   signedAmountCents,
 } from "./payments";
 import type { Order, OrderPayment } from "../../types";
+import { orderTotals } from "../../lib/orders";
 
 const order = (overrides: Partial<Order> = {}): Order => ({
   id: "o1",
@@ -198,13 +199,17 @@ describe("favor side nets like the customer card (#357: stale «A favor» in Cob
     }] as Order["incidents"];
 
   it("a surplus fully consumed by a sister order reads $0 — the real Fernanda case", () => {
-    // Total $1,460, pagó $1,550 ($90 de más) y el pedido hermano consumió ese
-    // $90: la ficha y el ticket muestran $0 a favor; Cobros debe coincidir.
-    const summary = paymentSummary(
-      order({ items: [{ lineId: "l1", productName: "Reloj", quantity: 1, unitPrice: 1460, subtotal: 1460 }], paymentsReceivedCents: 155000, creditConsumedCents: 9000 }),
-      []
-    );
+    // Total $1,460, paid $1,550 ($90 extra) and the sister order consumed
+    // those $90: the customer card and ticket show $0 available; Cobros must
+    // agree (orderTotals parity is asserted at the bottom of this block).
+    const o = order({
+      items: [{ lineId: "l1", productName: "Reloj", quantity: 1, unitPrice: 1460, subtotal: 1460 }],
+      paymentsReceivedCents: 155000,
+      creditConsumedCents: 9000,
+    });
+    const summary = paymentSummary(o, []);
     expect(summary.balanceCents).toBe(0);
+    expect(orderTotals(o).availableCredit).toBe(0);
   });
 
   it("partial consumption keeps only the unconsumed surplus as favor", () => {
@@ -223,8 +228,8 @@ describe("favor side nets like the customer card (#357: stale «A favor» in Cob
   });
 
   it("an applied-credit overshoot mints no favor here (its ledger lives on the sister order)", () => {
-    // $1,000 total, $600 recibidos, $500 aplicados: el sobrepaso del crédito
-    // aplicado NO produce saldo a favor en ESTE pedido.
+    // $1,000 total, $600 received, $500 applied: the applied-credit overshoot
+    // does NOT mint favor on THIS order.
     const summary = paymentSummary(order({ paymentsReceivedCents: 60000, creditAppliedCents: 50000 }), []);
     expect(summary.balanceCents).toBe(0);
   });
@@ -234,6 +239,40 @@ describe("favor side nets like the customer card (#357: stale «A favor» in Cob
     expect(corrupt.balanceCents).toBe(-20000);
     const negative = paymentSummary(order({ paymentsReceivedCents: 120000, creditConsumedCents: -5000 }), []);
     expect(negative.balanceCents).toBe(-20000);
+  });
+
+  it("exact payment (received == total) reads a neutral $0 — and the favor side equals orderTotals().availableCredit across the matrix", () => {
+    // Exact payment: neither owed nor favor.
+    const exact = paymentSummary(order({ paymentsReceivedCents: 100000 }), []);
+    expect(exact.balanceCents).toBe(0);
+
+    // Direct equivalence contract (#357): every netting input combination
+    // produces the SAME available figure as the card/ticket read model.
+    const surplus = (received: number, consumed: number, refundOwed: number) =>
+      order({
+        paymentsReceivedCents: received,
+        ...(consumed ? { creditConsumedCents: consumed } : {}),
+        ...(refundOwed
+          ? {
+              incidents: [{
+                id: "inc1", productName: "Arracada", quantity: 1, reason: "Defecto",
+                originalUnitPriceCents: 100000,
+                resolution: { kind: "refund", refundOwedCents: refundOwed },
+                events: [],
+              }] as Order["incidents"],
+            }
+          : {}),
+      });
+    const cases: Array<[number, number, number]> = [
+      [120000, 0, 0], [120000, 5000, 0], [155000, 9000, 0],
+      [120000, 0, 2500], [120000, 5000, 2500], [120000, 30000, 0],
+    ];
+    for (const [received, consumed, refundOwed] of cases) {
+      const doc = surplus(received, consumed, refundOwed);
+      const summary = paymentSummary(doc, []);
+      const totals = orderTotals(doc);
+      expect(Math.max(0, -summary.balanceCents)).toBe(totals.availableCredit * 100);
+    }
   });
 });
 
