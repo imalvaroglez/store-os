@@ -984,14 +984,24 @@ export async function applyCustomerCreditTx(params: {
     if (pendingCents(destData) < entry.amountCents) {
       throw new Error("El saldo del pedido cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
     }
-    // WRITE PHASE — one atomic commit across both documents.
+    // WRITE PHASE — one atomic commit across both documents. #363: both docs
+    // bump `revision` so concurrent writers (an open editor, the deletion
+    // flow) fail closed on their revision check while the clienta's money
+    // position just changed — instead of saving a stale business state over
+    // it. (saveOrderWithStockTx re-reads credit verbatim from the fresh doc,
+    // so the bump is not needed to protect the credit fields themselves; it
+    // is the fail-closed signal. Trade-off: an editor open when the auto
+    // compensation lands gets a StaleOrderError and its capture goes to the
+    // local draft — documented in #363.)
     tx.update(destRef, {
       creditAppliedCents: increment(entry.amountCents),
       creditLedger: arrayUnion(stripUndefined(entry)),
+      revision: increment(1),
       updatedAt: entry.at,
     });
     tx.update(originRef, {
       creditConsumedCents: increment(entry.amountCents),
+      revision: increment(1),
     });
   });
 }
@@ -1058,14 +1068,32 @@ export async function releaseCustomerCreditTx(params: {
       released += netCents;
     }
     if (entries.length === 0) return;
+    // #363: same revision bump as the application side — a fail-closed signal
+    // for concurrent writers while the clienta's money position changes.
+    // (Known exception documented in #363: applyIncidentEventTx also writes
+    // credit fields without a bump — its own guards cover it.)
     tx.update(destRef, {
       creditAppliedCents: increment(-appliedDown),
       creditLedger: arrayUnion(...entries.map(stripUndefined)),
+      revision: increment(1),
       updatedAt: entries[0].at,
     });
-    for (const write of writes) tx.update(write.ref, write.data);
+    for (const write of writes) tx.update(write.ref, { ...write.data, revision: increment(1) });
   });
   return released;
+}
+
+/**
+ * #363: the order doc's CURRENT revision, or null when gone. The deletion flow
+ * re-reads it after a credit release — the release bumps `revision` (fail-closed
+ * for stale editors), and that own bump must not read as a foreign edit.
+ */
+export async function getOrderFreshRevision(orderId: string): Promise<number | null> {
+  const { db } = getFirebase();
+  const snap = await getDoc(doc(db, "orders", orderId));
+  if (!snap.exists()) return null;
+  const revision = snap.data().revision;
+  return typeof revision === "number" && Number.isSafeInteger(revision) ? revision : null;
 }
 
 /** Release the canonical reservation and delete the matching revision atomically. */
@@ -1098,6 +1126,34 @@ export async function deleteOrderWithStockTx(
     const data = snap.data();
     if (previous.installmentsReservedAt || "paymentsReceivedCents" in data || data.inheritedDepositMaterialized === true) {
       throw new OrderEvidenceDeletionError();
+    }
+    // #363 (menor): deliveries evidence must fail with the Spanish error here,
+    // not with a raw PERMISSION_DENIED from the rules below. It runs BEFORE the
+    // credit guard (#378 review H2): deliveries block deletion FOREVER, so
+    // promising a credit-release path when deliveries also block would send
+    // the operator to cancel an order for nothing.
+    if (Array.isArray(data.deliveries) && data.deliveries.length > 0) {
+      throw new OrderEvidenceDeletionError();
+    }
+    // #363: OUTSTANDING credit blocks deletion, judged on the FRESH doc (the
+    // local state can lag an in-flight compensation and skip the pre-release).
+    // Each side gets the exit that actually works (#378 review H2):
+    // - creditApplied > 0 (this order USED her credit): cancelling THIS order
+    //   restitutes it (releaseCustomerCreditTx reads this doc's own ledger).
+    // - creditConsumed > 0 (this order BACKS credit a sister already applied):
+    //   only restituting from THAT sister order clears this mirror — cancelling
+    //   this one does nothing. A fully released order (both zero) deletes
+    //   normally. Negative/corrupt accumulators clamp to 0 like the incident
+    //   transactions do (rules still deny them).
+    const applied = typeof data.creditAppliedCents === "number" && Number.isSafeInteger(data.creditAppliedCents)
+      ? Math.max(0, data.creditAppliedCents) : 0;
+    const consumed = typeof data.creditConsumedCents === "number" && Number.isSafeInteger(data.creditConsumedCents)
+      ? Math.max(0, data.creditConsumedCents) : 0;
+    if (applied > 0) {
+      throw new Error("Este pedido usó saldo a favor de la clienta. Cancela el pedido para restituirlo y luego bórralo.");
+    }
+    if (consumed > 0) {
+      throw new Error("Este pedido respalda un saldo a favor que otro pedido de la clienta ya usó. Restitúyelo desde ese otro pedido (cancelándolo) antes de borrar este.");
     }
     const cancelled = { ...previous, orderStatus: "cancelled" as const };
     const deltas = reservationDeltasForOrderChange(previous, cancelled);
