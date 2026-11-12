@@ -85,6 +85,59 @@ Ensayar en dev con incidentes sintéticos, sin tocar producción:
 6. Retorno compatible: ensayar el flujo de rollback de Vercel en el entorno de
    preview (elegibilidad del plan, sin contratar nada).
 
+## 6. Vía extrema: publicación directa sobre la base activa (excepción del PO)
+
+La vía de §3 reusa CI. Cuando NI SIQUIERA eso sirve — el arreglo no debe
+arrastrar cambios de `main` ajenos al incidente, o CI/infraestructura no está
+disponible — el PO puede autorizar explícitamente una **publicación directa**:
+compilar el hotfix sobre la base que producción YA sirve y desplegarla encima.
+Se usó el 2026-11-12 (incidente #391 → hotfix 1.15.3; la operadora confirmó el
+desbloqueo). El CI ordinario NO cambia; esta vía es la excepción registrada.
+
+Condiciones duras (todas obligatorias):
+
+1. **Doble declaración explícita del PO**: Sev-1 activo Y autorización para
+   esta vía en particular (una no implica la otra).
+2. **Base = lo servido**: ramificar desde el commit exacto que producción
+   sirve (no desde `main`), para no liberar nada ajeno al incidente.
+3. **Mínimo**: parche + regresión exacta del incidente + versión incrementada
+   y notas (el release guard sigue vigente — no se omite en ninguna vía).
+4. **Verificación enfocada en emulador ANTES de publicar**, con un caso
+   sintético derivado del patrón del respaldo (#396): nunca datos reales ni
+   respaldos/extractos dentro de Git o CI. El caso reproduce el bloqueo antes
+   del parche y el desbloqueo después.
+5. **Comprobación y retorno**:
+   - Registrar en la issue: autorización (quién/cuándo), SHAs del backport y
+     del despliegue, versión, hora de disponibilidad y evidencia (versión
+     servida + señal de que el error cesó).
+   - **Retorno obligatorio a la línea principal**: PR con el MISMO parche
+     (idealmente idéntico byte a byte) contra `main`, CI completo y revisiones
+     independientes post-hoc. El siguiente release ordinario desde `main`
+     restaura la paridad — recordar que la base activa puede quedar por
+     detrás de `main` (p. ej. 1.15.3 se construyó sobre 1.15.1) y el próximo
+     release debe asumir que llega con TODO el tren acumulado.
+6. **Sin datos productivos**: la reproducción usa el caso sintético de #396;
+   los respaldos reales y sus extractos viven solo en el área privada local.
+
+## 7. Reconstrucción de escenarios sintéticos desde un respaldo (#396)
+
+Procedimiento local (fuera de Git/CI) para convertir un patrón de respaldo en
+caso reproducible de emulador:
+
+1. Del respaldo se toma ÚNICAMENTE el patrón estructural: colecciones,
+   formas de documento y relaciones (p. ej. pedido abierto con líneas
+   `productId`+`variantId` apuntando a una ficha eliminada).
+2. Todos los valores se sustituyen por sintéticos redondos.
+3. Verificación de privacidad automática: deny-list con los marcadores
+   reales del caso; el seed ABORTA si alguno aparece.
+4. Verificación de equivalencia automática: huella estructural afirmada
+   antes de escribir.
+5. Siembra idempotente contra emuladores + recorrido esperado documentado.
+
+Artefacto vigente (privado, del PO): `synthetic-case-391.cjs` — caso del
+incidente #391/#393. Los próximos patrones (crédito consumido + pedido
+hermano, recepción con fichas en blanco) se agregan al mismo lugar.
+
 ## Fuentes
 
 - Workflow vigente: `.github/workflows/ci.yml`
