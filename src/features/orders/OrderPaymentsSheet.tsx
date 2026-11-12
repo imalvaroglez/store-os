@@ -97,6 +97,8 @@ export function OrderPaymentsSheet({
 
   const summary = paymentSummary(order, payments);
   const owed = summary.balanceCents > 0;
+  // #357: a fully-consumed surplus reads "Saldo $0.00", never "A favor $0.00".
+  const favor = summary.balanceCents < 0;
   // #165/#168: the expected calendar for plan orders. The calendar's money
   // comes from the order DOC (transactional accumulator) — by construction the
   // same Σ as the records listed below; the breakdown loads with this sheet.
@@ -191,7 +193,7 @@ export function OrderPaymentsSheet({
           <StatRow label="Recibido">
             <Money exact amount={summary.receivedCents / 100} />
           </StatRow>
-          <StatRow label={owed ? "Saldo" : "A favor"} tone={owed ? "danger" : "success"}>
+          <StatRow label={favor ? "A favor" : "Saldo"} tone={owed ? "danger" : favor ? "success" : "default"}>
             <Money exact amount={Math.abs(summary.balanceCents) / 100} />
           </StatRow>
         </div>
