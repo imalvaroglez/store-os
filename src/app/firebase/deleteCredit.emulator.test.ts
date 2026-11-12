@@ -8,6 +8,7 @@ import type { Order, OrderCreditLedgerEntry } from "../../types";
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
 import {
+  OrderEvidenceDeletionError,
   applyCustomerCreditTx,
   deleteOrderWithStockTx,
   getOrderFreshRevision,
@@ -116,6 +117,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deletion vs outstanding c
     expect(typeof fresh).toBe("number");
     await expect(deleteOrderWithStockTx(user, "dc-dest", fresh as number)).rejects.toThrow();
     expect((await getDoc(doc(holder.db, "orders/dc-dest"))).exists()).toBe(true);
+  });
+
+  it("#380 r2: borrar un pedido con historial de crédito falla con el error en español (no PERMISSION_DENIED crudo)", async () => {
+    // Seeded admin-side: the create rules forbid creditLedger on new docs.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/dc-history"), orderDoc("dc-history", {
+        creditAppliedCents: 0,
+        creditLedger: [
+          { id: "h1", kind: "application", fromOrderId: "dc-origin", amountCents: 5000, at: "2026-11-12T10:00:00.000Z", by: "tx-user" },
+          { id: "r1", kind: "release", fromOrderId: "dc-origin", amountCents: 5000, at: "2026-11-12T11:00:00.000Z", by: "tx-user" },
+        ],
+      }));
+    });
+    const fresh = await getOrderFreshRevision("dc-history");
+    await expect(deleteOrderWithStockTx(user, "dc-history", fresh as number)).rejects.toBeInstanceOf(OrderEvidenceDeletionError);
+    expect((await getDoc(doc(holder.db, "orders/dc-history"))).exists()).toBe(true);
   });
 
   it("un pedido sin crédito pendiente se borra normalmente (sin regresión)", async () => {
