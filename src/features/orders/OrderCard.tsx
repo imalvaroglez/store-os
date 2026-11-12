@@ -203,7 +203,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         {order.orderStatus !== "cancelled" && (activeStore?.packaging?.materials.length ?? 0) > 0 && (
           <Button variant="ghost" onClick={() => setPackagingOpen(true)}>Empaques</Button>
         )}
-        {(order.deliveries ?? []).length > 0 && (
+        {(order.deliveries ?? []).length > 0 && status !== "cancelled" && (
           <Button variant="ghost" onClick={() => setDeliveryOpen(true)}>Entregas</Button>
         )}
         {(status !== "cancelled" || (order.incidents?.length ?? 0) > 0) && (

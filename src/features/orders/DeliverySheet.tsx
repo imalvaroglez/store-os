@@ -138,10 +138,14 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
               </div>
             </div>
           ))}
-          <TextField label="Fecha de entrega" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-          <p className="text-xs text-on-surface-soft">
-            La fecha es la del día en que la clienta recibió las piezas; si registras tarde, escribe la fecha real.
-          </p>
+          {pending.length > 0 && (
+            <>
+              <TextField label="Fecha de entrega" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+              <p className="text-xs text-on-surface-soft">
+                La fecha es la del día en que la clienta recibió las piezas; si registras tarde, escribe la fecha real.
+              </p>
+            </>
+          )}
         </div>
         <Button full disabled={saving || pending.length === 0} onClick={() => void submit()}>
           {saving ? "Registrando…" : "Registrar entrega"}

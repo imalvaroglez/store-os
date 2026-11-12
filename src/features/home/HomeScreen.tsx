@@ -251,14 +251,15 @@ export function HomeScreen() {
       )}
 
     </Screen>
-      {deliveryOrderId && (
-        <DeliverySheet
-          key={deliveryOrderId}
-          order={orders.find((x) => x.id === deliveryOrderId)!}
-          open
-          onClose={() => setDeliveryOrderId(null)}
-        />
-      )}
+      {deliveryOrderId && (() => {
+        const deliveryOrder = orders.find((x) => x.id === deliveryOrderId);
+        // The order can leave the store context while the sheet is open —
+        // close quietly instead of crashing on undefined (same guard as the
+        // payments sheet).
+        return deliveryOrder ? (
+          <DeliverySheet key={deliveryOrderId} order={deliveryOrder} open onClose={() => setDeliveryOrderId(null)} />
+        ) : null;
+      })()}
 
     {paymentsOrder && (
       <OrderPaymentsSheet order={paymentsOrder} open onClose={() => setPaymentsOrderId(null)} />
