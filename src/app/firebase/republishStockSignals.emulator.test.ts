@@ -546,6 +546,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("stock projection with Fir
     const canonical = (await getDoc(doc(db, "products", design.id))).data();
     expect(canonical?.availability).toBe("available");
     expect(canonical?.variants[0].quantityOnHand).toBe(2);
+
+    // Review follow-up: the PUBLIC side follows (detail + catalog) after the
+    // post-reception republish, same as the product-level case.
+    await republishStockSignals(store, [{ ...design, availability: "available" as const, variants: canonical!.variants }], [], [design.id]);
+    const detail = (await getDoc(doc(db, "publicProducts", `${store.id}__${design.slug}`))).data();
+    expect(detail).toMatchObject({ availability: "available", stockSignal: "disponible" });
+    const catalog = (await getDoc(doc(db, "publicCatalogs", store.slug))).data();
+    expect(catalog?.products.find((entry: { productSlug?: string }) => entry.productSlug === design.slug))
+      .toMatchObject({ availability: "available", stockSignal: "disponible" });
   });
 
   it("keeps a deliberate availability choice that still has stock behind it", async () => {
