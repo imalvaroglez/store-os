@@ -762,7 +762,7 @@ export function OrderForm({
                       <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} className="h-10 w-10 shrink-0" />
                       <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}</span>
                     </span>
-                    <span className="hidden items-baseline gap-2 text-sm text-ink-soft md:flex tabular-nums">
+                    <span className="ml-auto hidden items-baseline gap-2 text-sm text-ink-soft md:flex tabular-nums">
                       {unitPrice > 0 && <>{formatOrderUnitPrice(unitPrice)} × {reviewQty} =</>}
                       <span className="serif-display tnum text-ink">{reviewSubtotal == null ? "—" : <Money exact amount={reviewSubtotal} />}</span>
                     </span>
