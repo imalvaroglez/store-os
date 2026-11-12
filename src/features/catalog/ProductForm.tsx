@@ -432,7 +432,12 @@ export function ProductForm({
     } else {
       next.price = parseAmount(price) ?? 0;
       next.prices = undefined;
-      next.quantityOnHand = undefined;
+      // #361 review: an on_demand edit must NEVER canonically delete stock
+      // fields. A store that switched type keeps its captured shelves and
+      // colors; deleting the properties (instead of undefined) leaves the
+      // saveEntity tombstones untouched for them.
+      delete next.quantityOnHand;
+      delete next.variants;
     }
     try {
       await upsertProduct(next);
@@ -855,6 +860,12 @@ export function ProductForm({
               onClick={() => {
                 setConfirmDisableVariants(false);
                 setVariantsEnabled(false);
+                // #361 review: symmetric conversion — the pieces return to the
+                // design-level shelf (reviewable) instead of requiring a full
+                // recapture. Untracked colors leave the field empty.
+                const tracked = variants.some((v) => typeof v.quantityOnHand === "number");
+                const pieces = variants.reduce((sum, v) => sum + (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0), 0);
+                setQty(tracked ? String(pieces) : "");
                 setVariants([]);
                 setVariantStaged({});
               }}
