@@ -1291,11 +1291,14 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
         quantityOnHand: update.quantityOnHand,
         cost: update.cost,
         updatedAt: at,
-        // #353 (UX review): a manual «Agotado» mark is stale the moment the
-        // shelf has stock again — clear it in the SAME commit so the public
-        // catalog stops showing sold out after a restock. Only sold_out is
-        // touched; the operator's other availability choices stand.
-        ...(update.quantityOnHand > 0 && previous?.availability === "sold_out"
+        // #353 (UX review): a manual «Agotado» mark is stale when the shelf
+        // was EMPTY and the reception restocks it — clear it in the SAME
+        // commit so the public catalog stops showing sold out. A deliberate
+        // pause (sold_out WITH stock) and every other availability choice
+        // stand: mechanical work is removed, not human decisions.
+        ...(update.quantityOnHand > 0
+          && (previous?.quantityOnHand ?? 0) === 0
+          && previous?.availability === "sold_out"
           ? { availability: "available" as const }
           : {}),
       });
@@ -1307,10 +1310,13 @@ export async function receivePurchaseTx(purchaseId: string): Promise<ReturnType<
       for (const [productId, update] of result.variantUpdates) {
         const previous = productDocs.get(productId);
         const total = totalStock({ variants: update.variants, quantityOnHand: 0 });
+        const previousTotal = previous ? totalStock(previous) : null;
         tx.update(productRefs.get(productId)!, {
           variants: update.variants,
           updatedAt: at,
-          ...((total ?? 0) > 0 && previous?.availability === "sold_out"
+          ...((total ?? 0) > 0
+            && previousTotal === 0
+            && previous?.availability === "sold_out"
             ? { availability: "available" as const }
             : {}),
         });
