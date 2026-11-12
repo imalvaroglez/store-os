@@ -154,7 +154,7 @@ work on refresh) and long-cache headers for `/assets/*`.
 
 ## 6. Platform super-admin
 
-Only the allowlisted platform email (`admin@store.os`) becomes **super_admin**
+Only the allowlisted platform emails (`admin@store.os`, `imalvaroglez@gmail.com`) become **super_admin**
 (see `isAllowlistedSuperAdmin` in `firestore.rules`; there is no first-signup
 bootstrap). Sign up with it, then invite store owners by email from each
 store's settings.
@@ -244,7 +244,7 @@ what isolates Olivia's real data.
 
 | Project | Firebase project id | Purpose | Who writes |
 |---|---|---|---|
-| Production | `store-os-f7cf8` | Olivia's real business | Only the platform super-admin (`admin@store.os`) and the tenant owners she invites |
+| Production | `store-os-f7cf8` | Olivia's real business | Only the platform super-admins (`admin@store.os`, `imalvaroglez@gmail.com`) and the tenant owners they invite |
 | Development | `store-os-dev` | Dev/testing against realistic-but-fake data | Development only |
 
 Local emulator tests also use the `store-os-dev` project ID, with every service
@@ -296,7 +296,7 @@ the SDK — that's by Firebase design (access is enforced by Security Rules).
 
 ### Lock production (one-time, console)
 
-1. Confirm `admin@store.os` is the **only** super-admin in prod (Firestore `users/` where `role == super_admin`). `firestore.rules` gates `super_admin` creation on the verified email `admin@store.os`, so no other signup can escalate even if `users/` were emptied.
+1. Confirm the only super-admins in prod (Firestore `users/` where `role == super_admin`) are the allowlisted platform emails: `admin@store.os` (legacy, to be retired) and `imalvaroglez@gmail.com` (the PO's real account). `firestore.rules` gates `super_admin` creation on those verified emails — canonically compared (Gmail dot variants included) — so no other signup can escalate even if `users/` were emptied. **Retiring the legacy account** requires BOTH removing it from `PLATFORM_ADMIN_EMAILS`/the rules allowlist AND changing its `users/{uid}.doc` role away from `super_admin` (rules read the doc's role, not the allowlist) — then disable the Auth user in the console.
 2. Olivia is a **tenant owner** (a `member`/`owner` of her store), not a super-admin — she does not need to be in the allowlist.
 3. **Restrict the prod API key** by HTTP referrer in Google Cloud Console → APIs & Services → Credentials → the prod API key → Application restrictions → HTTP referrers → add the Vercel prod domains (`*.vercel.app` of this project + any custom domain).
 4. **Rotate** the prod key (it was briefly exposed early in the project): delete + recreate the prod Web App for a fresh `apiKey`/`appId`, update the Vercel **Production** env group, and re-auth.
