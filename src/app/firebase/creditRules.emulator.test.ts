@@ -8,6 +8,7 @@ const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
 import {
   applyCustomerCreditTx,
+  releaseCustomerCreditTx,
   saveOrderWithStockTx,
 } from "./firestoreData";
 
@@ -49,8 +50,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#380 — saldo a favor so
         paymentsReceivedCents: 40000,
         inheritedDepositMaterialized: true,
       }));
-      // Destination owing $200.
-      await setDoc(doc(db, "orders/cr-dest"), orderDoc("cr-dest"));
+      // Destination owing $500 (room for two credit applications).
+      await setDoc(doc(db, "orders/cr-dest"), orderDoc("cr-dest", {
+        items: [{ lineId: "cr-dest_L0", productName: "Pieza", quantity: 1, unitPrice: 500, subtotal: 500 }],
+      }));
       // A cross-clienta sister (same store, other clienta) for isolation probes.
       await setDoc(doc(db, "orders/cr-other-clienta"), { ...orderDoc("cr-other-clienta", { paymentsReceivedCents: 40000, inheritedDepositMaterialized: true }), customerId: "cr-otra" });
       // A foreign-store order for cross-store probes.
@@ -153,7 +156,65 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#380 — saldo a favor so
     })).rejects.toThrow();
   });
 
+  it("SDK: magnitud fabricada — entrada válida de 1 centavo que 'justifica' +100 pesos → DENEGADO", async () => {
+    const dest = (await getDoc(doc(holder.db, "orders/cr-dest"))).data()!;
+    await expect(updateDoc(doc(holder.db, "orders/cr-dest"), {
+      creditAppliedCents: (dest.creditAppliedCents as number) + 10000,
+      creditLedger: [...(dest.creditLedger as OrderCreditLedgerEntry[]), { ...entry("app_mag_fraud", 1, "cr-origin"), by: "tx-user" }],
+    })).rejects.toThrow();
+  });
+
+  it("SDK: lote cuya suma NO cuadra con el delta (60+40 moviendo 200) → DENEGADO", async () => {
+    const dest = (await getDoc(doc(holder.db, "orders/cr-dest"))).data()!;
+    const base = dest.creditLedger as OrderCreditLedgerEntry[];
+    await expect(updateDoc(doc(holder.db, "orders/cr-dest"), {
+      creditAppliedCents: (dest.creditAppliedCents as number) - 20000,
+      creditLedger: [
+        ...base,
+        { ...entry("rel_sum_a", 6000, "cr-origin", "release"), by: "tx-user" },
+        { ...entry("rel_sum_b", 4000, "cr-origin", "release"), by: "tx-user" },
+      ],
+    })).rejects.toThrow();
+  });
+
+  it("SDK: lote con entrada intermedia malformada aunque la última sea válida → DENEGADO", async () => {
+    const dest = (await getDoc(doc(holder.db, "orders/cr-dest"))).data()!;
+    const base = dest.creditLedger as OrderCreditLedgerEntry[];
+    await expect(updateDoc(doc(holder.db, "orders/cr-dest"), {
+      creditAppliedCents: (dest.creditAppliedCents as number) - 7000,
+      creditLedger: [
+        ...base,
+        { kind: "release", fromOrderId: "cr-origin", amountCents: 3000 } as never as OrderCreditLedgerEntry, // sin id/at/by
+        { ...entry("rel_mid_ok", 4000, "cr-origin", "release"), by: "tx-user" },
+      ],
+    })).rejects.toThrow();
+  });
+
   it("SDK: borrar el pedido con crédito pendiente sigue DENEGADO (#363 intacto)", async () => {
     await expect(deleteDoc(doc(holder.db, "orders/cr-dest"))).rejects.toThrow();
+  });
+  it("flujo legítimo multi-origen: dos aplicaciones → cancelación restituye a ambos orígenes con espejos", async () => {
+    // Second overpaid origin for the same clienta.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cr-origin2"), orderDoc("cr-origin2", {
+        items: [{ lineId: "cr-origin2_L0", productName: "Anillo 2", quantity: 1, unitPrice: 200, subtotal: 200 }],
+        paymentsReceivedCents: 30000,
+        inheritedDepositMaterialized: true,
+      }));
+    });
+    await applyCustomerCreditTx({ entry: entry("app_2", 10000, "cr-origin2"), orderId: "cr-dest", storeId: "cr-store" });
+    // Cancel the destination: the release must restitute BOTH origins in one
+    // transaction — a multi-entry batch that the strict exact-sum rules allow.
+    await updateDoc(doc(holder.db, "orders/cr-dest"), { orderStatus: "cancelled" }).catch(() => {});
+    const released = await releaseCustomerCreditTx({ orderId: "cr-dest", storeId: "cr-store", by: "tx-user" });
+    expect(released).toBe(30000);
+    const dest = (await getDoc(doc(holder.db, "orders/cr-dest"))).data()!;
+    expect(dest.creditAppliedCents).toBe(0);
+    const o1 = (await getDoc(doc(holder.db, "orders/cr-origin"))).data()!;
+    const o2 = (await getDoc(doc(holder.db, "orders/cr-origin2"))).data()!;
+    expect(o1.creditConsumedCents).toBe(0);
+    expect(o2.creditConsumedCents).toBe(0);
+    expect((o1.creditLedger as OrderCreditLedgerEntry[]).some((e) => e.kind === "restitution")).toBe(true);
+    expect((o2.creditLedger as OrderCreditLedgerEntry[]).some((e) => e.kind === "restitution")).toBe(true);
   });
 });
