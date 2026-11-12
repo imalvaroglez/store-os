@@ -165,6 +165,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     expect(confirmed.order.orderStatus).toBe("delivered");
     expect(confirmed.order.deliveredWithBalanceCents).toBeGreaterThan(0);
     expect(confirmed.order.deliveredWithBalanceConfirmedBy).toBe(user.uid);
+
+    // #370: an ordinary edit of the delivered order must NOT erase the signed
+    // authorization (the delivery dialog promises quién/cuándo/cuánto).
+    const delivered = (await orderDoc("confirm-order"))!;
+    const edited = makeOrder("confirm-order", "p-plan", 1, {
+      revision: delivered.revision,
+      orderStatus: "delivered",
+      installmentsReservedAt: delivered.installmentsReservedAt,
+      notes: "corrección de nota tras la entrega",
+    });
+    const resaved = await saveOrderWithStockTx(user, edited, delivered.revision, "confirm-edit");
+    expect(resaved.order.notes).toBe("corrección de nota tras la entrega");
+    expect(resaved.order.deliveredWithBalanceCents).toBe(delivered.deliveredWithBalanceCents);
+    expect(resaved.order.deliveredWithBalanceConfirmedBy).toBe(delivered.deliveredWithBalanceConfirmedBy);
+    expect(resaved.order.deliveredWithBalanceConfirmedAt).toBe(delivered.deliveredWithBalanceConfirmedAt);
   });
 
   it("converting an order that already received money keeps the pieces apartadas (#168 F2/C1)", async () => {
