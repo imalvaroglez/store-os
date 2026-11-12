@@ -181,6 +181,30 @@ export function ProductForm({
     ]);
   }
 
+  /**
+   * #355: the first color of a conversion — the ficha's current identity.
+   * Activating "se vende por color" on a simple product must seed the previous
+   * finish as the first color, carrying its pieces, cost, alert threshold and
+   * gallery (reviewable in the form before saving; never silently discarded).
+   */
+  function seedConversionVariant(): ProductVariant {
+    const now = new Date().toISOString();
+    const finishName = draft.finish?.trim() ?? "";
+    const seededQty = parseAmount(qty);
+    const seededLowAt = parseAmount(lowAt);
+    return {
+      id: uid("var"),
+      color: finishName,
+      skuSuffix: finishName ? suggestSkuSuffix(finishName) : "",
+      cost: parseAmount(cost),
+      ...(seededQty != null ? { quantityOnHand: Math.round(seededQty) } : {}),
+      ...(seededLowAt != null ? { lowStockAt: Math.round(seededLowAt) } : {}),
+      ...(draft.images && draft.images.length > 0 ? { photos: draft.images } : {}),
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   function patchVariant(id: string, patch: Partial<ProductVariant>) {
     setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...patch, updatedAt: new Date().toISOString() } : v)));
   }
@@ -408,7 +432,12 @@ export function ProductForm({
     } else {
       next.price = parseAmount(price) ?? 0;
       next.prices = undefined;
-      next.quantityOnHand = undefined;
+      // #361 review: an on_demand edit must NEVER canonically delete stock
+      // fields. A store that switched type keeps its captured shelves and
+      // colors; deleting the properties (instead of undefined) leaves the
+      // saveEntity tombstones untouched for them.
+      delete next.quantityOnHand;
+      delete next.variants;
     }
     try {
       await upsertProduct(next);
@@ -618,19 +647,27 @@ export function ProductForm({
               label="Se vende por color (cada color con su propia existencia, costo y clave)"
               checked={variantsEnabled}
               onChange={(next) => {
-                if (!next && variants.some((v) => (v.quantityOnHand ?? 0) !== 0)) {
-                  setConfirmDisableVariants(true);
+                if (!next) {
+                  if (variants.some((v) => (v.quantityOnHand ?? 0) !== 0)) {
+                    setConfirmDisableVariants(true);
+                    return;
+                  }
+                  setVariantsEnabled(false);
+                  setVariants([]);
                   return;
                 }
-                // #124/M1: ENABLING colors on a product that already has a
-                // design-level shelf discards it (each color owns its own) —
-                // never silently.
-                if (next && (parseAmount(qty) ?? 0) > 0) {
+                // #355: enabling colors on a simple ficha CONVERTS it — the
+                // previous finish becomes the first color with its pieces,
+                // cost and photos (reviewable before saving). With pieces on
+                // the design-level shelf, confirm first: it is real inventory
+                // moving between shelves.
+                if ((parseAmount(qty) ?? 0) > 0) {
                   setConfirmEnableVariants(true);
                   return;
                 }
-                setVariantsEnabled(next);
-                if (!next) setVariants([]);
+                setVariantsEnabled(true);
+                setVariants([seedConversionVariant()]);
+                setQty("");
               }}
             />
             {variantsEnabled ? (
@@ -792,6 +829,7 @@ export function ProductForm({
               onClick={() => {
                 setConfirmEnableVariants(false);
                 setVariantsEnabled(true);
+                setVariants([seedConversionVariant()]);
                 setQty("");
               }}
             >
@@ -801,8 +839,9 @@ export function ProductForm({
         }
       >
         <p className="text-sm text-on-surface-soft">
-          Este producto tiene existencias capturadas como pieza única. Al vender por color, esa cantidad se descarta:
-          captura la existencia de cada color en su tarjeta.
+          Este producto tiene {parseAmount(qty) ?? 0} pieza(s) capturadas como pieza única. Al vender por color, esas
+          piezas y su acabado actual{draft.finish?.trim() ? ` (${draft.finish.trim()})` : ""} pasan al primer color con
+          sus fotos — revísalos antes de guardar y ajusta lo que haga falta.
         </p>
       </Dialog>
 
@@ -821,6 +860,13 @@ export function ProductForm({
               onClick={() => {
                 setConfirmDisableVariants(false);
                 setVariantsEnabled(false);
+                // #361 review: symmetric conversion — the pieces return to the
+                // design-level shelf (reviewable) instead of requiring a full
+                // recapture. Untracked colors contribute 0; the field stays
+                // empty only when NO color has a captured shelf.
+                const tracked = variants.some((v) => typeof v.quantityOnHand === "number");
+                const pieces = variants.reduce((sum, v) => sum + (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0), 0);
+                setQty(tracked ? String(pieces) : "");
                 setVariants([]);
                 setVariantStaged({});
               }}
@@ -831,8 +877,8 @@ export function ProductForm({
         }
       >
         <p className="text-sm text-on-surface-soft">
-          Hay colores con existencia. Al dejar de vender por color, las existencias por color se descartan y la pieza
-          vuelve a manejarse como un solo producto (captura su existencia total de nuevo).
+          Hay colores con existencia. Al dejar de vender por color, las piezas de todos los colores regresan al
+          estante único del producto (quedan anotadas en «En existencia» para que las revises antes de guardar).
         </p>
       </Dialog>
     </div>
