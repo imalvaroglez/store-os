@@ -1,7 +1,7 @@
 {
   "name": "store-os",
   "private": true,
-  "version": "1.15.2",
+  "version": "1.16.0",
   "type": "module",
   "description": "A lightweight operating system for small stores. Cloud-first PWA.",
   "engines": {
