@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderTicketText, receiptFileName } from "./orderTicket";
+import { orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import type { Order } from "../../types";
 
 describe("orderTicketText — Fer's WhatsApp format", () => {
@@ -182,6 +182,38 @@ describe("orderTicketText · incidencias sin efectivo (#306 revisión)", () => {
   it("sin incidencias ni dinero: el Saldo no repite el Total (regla original #306)", () => {
     const order = { ...base, items: [{ productName: "Arracada", quantity: 1, unitPrice: 720, subtotal: 720 }], deposit: 0 } as unknown as Order;
     expect(orderTicketText(order, "Olivia")).not.toContain("*Saldo*");
+  });
+});
+
+// #399 — el color capturado en la línea viaja con el nombre: texto para
+// WhatsApp, recibo y vista previa de la lista distinguen fichas homónimas
+// aunque la ficha del catálogo cambie después (el dato vive en la línea).
+describe("color por línea (#399)", () => {
+  const austin: Order = {
+    id: "order_399", storeId: "s1", customerId: "c1", customerName: "Mar",
+    items: [
+      { lineId: "l1", productName: "Reloj Austin", variantId: "v_silver", variantColor: "Plateado", quantity: 1, unitPrice: 1200, subtotal: 1200, categorySnapshot: { id: "watches", name: "Reloj" } },
+      { lineId: "l2", productName: "Reloj Austin", quantity: 1, unitPrice: 950, subtotal: 950, categorySnapshot: { id: "watches", name: "Reloj" } },
+    ],
+    deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid",
+    createdAt: "2026-11-12", updatedAt: "",
+  };
+
+  it("el texto de WhatsApp distingue las fichas homónimas por su color", () => {
+    const text = orderTicketText(austin, "Olivia");
+    expect(text).toContain("1. Reloj Austin · Plateado $1,200");
+    // La línea sin color (pedido antiguo o ficha individual) queda igual.
+    expect(text).toContain("2. Reloj Austin $950");
+  });
+
+  it("el recibo lleva el mismo color en la etiqueta de la línea", () => {
+    const data = orderTicketData(austin, "Olivia");
+    expect(data.lines.map((line) => line.label)).toEqual(["Reloj Austin · Plateado", "Reloj Austin"]);
+  });
+
+  it("un color con '*' no rompe el bold del mensaje", () => {
+    const loud = { ...austin, items: [{ ...austin.items[0], variantColor: "Plateado *premium*" }] } as Order;
+    expect(orderTicketText(loud, "Olivia")).toContain("1. Reloj Austin · Plateado premium $1,200");
   });
 });
 
