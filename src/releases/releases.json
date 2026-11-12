@@ -1,5 +1,19 @@
 [
   {
+    "version": "1.16.0",
+    "date": "2026.11.12",
+    "title": "Dinero que cuadra y fichas que no pierden piezas",
+    "notes": [
+      "Si una clienta ya usó su saldo a favor en un pedido nuevo, la hoja de Cobros de su pedido anterior ya no dice «A favor» con dinero que ya no está disponible: todas las pantallas (Inicio, pedido, cobros y ficha de la clienta) muestran lo mismo.",
+      "El botón «Cobrar» de Inicio ahora cobra solo lo que falta de verdad: si la clienta ya aplicó saldo a favor, cobra el neto. Antes cobraba el total completo y su saldo se perdía del registro.",
+      "Ya no se puede borrar un pedido que tenga saldo a favor de la clienta aplicado o respaldado: el sistema te dice exactamente qué hacer antes (cancelar para restituir) y el saldo queda protegido.",
+      "Cuando conviertas una ficha a «se vende por color», el acabado actual pasa como primer color con sus piezas, su costo y sus fotos — nada se descarta y todo se puede revisar antes de guardar. Los selectores de color muestran el nombre del color (p. ej. «Plateado»), ya no la clave larga.",
+      "Los productos creados desde Compras (de uno en uno o en lote) nacen con su página pública y su existencia en cero: se acabaron las fichas con el inventario en blanco.",
+      "La autorización que dejas al entregar con saldo pendiente (quién, cuándo y cuánto) ya no se borra si después editas el pedido.",
+      "Si marcaste «Agotado» una ficha que se vende por color y luego recibes mercancía, la marca se limpia sola y el catálogo público vuelve a mostrarla disponible."
+    ]
+  },
+  {
     "version": "1.15.2",
     "date": "2026.11.12",
     "title": "Administración de la plataforma con la cuenta real del dueño",
