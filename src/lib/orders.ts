@@ -216,7 +216,8 @@ export function effectiveOrderStatus(order: Partial<Order> & Record<string, unkn
 function isWellFormedCreditEntry(entry: unknown): entry is OrderCreditLedgerEntry {
   const e = entry as Record<string, unknown>;
   return typeof e?.id === "string" && !!e.id
-    && (e.kind === "application" || e.kind === "release")
+    && (e.kind === "application" || e.kind === "release"
+      || e.kind === "consumption" || e.kind === "restitution")
     && typeof e.fromOrderId === "string" && !!e.fromOrderId
     && typeof e.amountCents === "number" && Number.isSafeInteger(e.amountCents) && e.amountCents > 0
     && typeof e.at === "string" && typeof e.by === "string";

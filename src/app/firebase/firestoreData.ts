@@ -1023,8 +1023,19 @@ export async function applyCustomerCreditTx(params: {
       revision: increment(1),
       updatedAt: entry.at,
     });
+    // #380: the ORIGIN keeps its own signed mirror entry — every movement of
+    // creditConsumedCents leaves evidence the Firestore rules can anchor
+    // (accumulator ⇔ appended ledger, one side per write).
     tx.update(originRef, {
       creditConsumedCents: increment(entry.amountCents),
+      creditLedger: arrayUnion(stripUndefined({
+        id: `con_${entry.id}`,
+        kind: "consumption",
+        fromOrderId: orderId,
+        amountCents: entry.amountCents,
+        at: entry.at,
+        by: entry.by,
+      })),
       revision: increment(1),
     });
   });
@@ -1079,23 +1090,38 @@ export async function releaseCustomerCreditTx(params: {
       const originRef = doc(db, "orders", fromOrderId);
       const originSnap = await tx.get(originRef);
       if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
-      entries.push({
+      const releaseEntry: OrderCreditLedgerEntry = {
         id: `release_${orderId}_${fromOrderId}_${(ledger.filter((e) => e.kind === "release" && e.fromOrderId === fromOrderId).length) + 1}`,
         kind: "release",
         fromOrderId,
         amountCents: netCents,
         at: new Date().toISOString(),
         by,
+      };
+      entries.push(releaseEntry);
+      // #380: the origin-side mirror — the same signed movement that the
+      // rules require to accompany any creditConsumedCents change. Its id
+      // derives from the paired destination entry (unique per movement).
+      writes.push({
+        ref: originRef,
+        data: {
+          creditConsumedCents: increment(-netCents),
+          creditLedger: arrayUnion(stripUndefined({
+            id: `res_${releaseEntry.id}`,
+            kind: "restitution",
+            fromOrderId: orderId,
+            amountCents: netCents,
+            at: releaseEntry.at,
+            by,
+          })),
+        },
       });
-      writes.push({ ref: originRef, data: { creditConsumedCents: increment(-netCents) } });
       appliedDown += netCents;
       released += netCents;
     }
     if (entries.length === 0) return;
     // #363: same revision bump as the application side — a fail-closed signal
     // for concurrent writers while the clienta's money position changes.
-    // (Known exception documented in #363: applyIncidentEventTx also writes
-    // credit fields without a bump — its own guards cover it.)
     tx.update(destRef, {
       creditAppliedCents: increment(-appliedDown),
       creditLedger: arrayUnion(...entries.map(stripUndefined)),
@@ -2305,14 +2331,29 @@ export async function applyIncidentEventTx(params: {
     const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));
     const updatedAt = event.at;
     if (restitutionTotal > 0) {
+      // #380: origin-side mirrors + the #363 revision invariant — every
+      // credit write bumps revision and leaves signed ledger evidence on
+      // BOTH documents.
       for (const release of creditReleases) {
-        tx.update(release.originRef, { creditConsumedCents: increment(-release.cents) });
+        tx.update(release.originRef, {
+          creditConsumedCents: increment(-release.cents),
+          creditLedger: arrayUnion(stripUndefined({
+            id: `res_${release.entry.id}`,
+            kind: "restitution",
+            fromOrderId: orderId,
+            amountCents: release.cents,
+            at: release.entry.at,
+            by: release.entry.by,
+          })),
+          revision: increment(1),
+        });
       }
       tx.update(orderRef, {
         incidents: stripUndefined(nextIncidents),
         updatedAt,
         creditAppliedCents: increment(-restitutionTotal),
         creditLedger: arrayUnion(...creditReleases.map((release) => stripUndefined(release.entry))),
+        revision: increment(1),
       });
     } else {
       tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });

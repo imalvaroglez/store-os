@@ -387,11 +387,59 @@ service cloud.firestore {
         && int(entry.get('deliveredAt', '0000')[0:4]) >= 2020
         && int(entry.get('deliveredAt', '0000')[0:4]) <= 2035;
     }
+    // ── #380: the clienta's credit (saldo a favor) moves ONLY through
+    // signed, traceable ledger appends. Two evidence families, one per side:
+    // the DESTINATION ledger (application/release, #189) and the ORIGIN
+    // mirror ledger (consumption/restitution, #380). Accumulators are FROZEN
+    // unless their ledger grows by a well-formed append signed by the caller,
+    // moving exactly one accumulator in the entry's direction, and the entry's
+    // counterpart order exists in the SAME store for the SAME clienta —
+    // cross-store and cross-clienta fabrication dies at the rules layer.
+    function creditAccumulatorsFrozen(before, after) {
+      return after.get('creditAppliedCents', 0) == before.get('creditAppliedCents', 0)
+        && after.get('creditConsumedCents', 0) == before.get('creditConsumedCents', 0);
+    }
+    function creditLedgerUntouched(before, after) {
+      return after.get('creditLedger', []) == before.get('creditLedger', []);
+    }
+    function validCreditAppend(before, after) {
+      let prev = before.get('creditLedger', []);
+      let next = after.get('creditLedger', []);
+      let entry = next.size() > 0 ? next[next.size() - 1] : {};
+      let counterpart = get(/databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''))).data;
+      let dApplied = after.get('creditAppliedCents', 0) - before.get('creditAppliedCents', 0);
+      let dConsumed = after.get('creditConsumedCents', 0) - before.get('creditConsumedCents', 0);
+      return next is list && prev is list
+        // Append-only behind a bounded batch (multi-origin releases append
+        // a few entries at once); history is never rewritten or dropped.
+        && next.size() > prev.size()
+        && next.size() <= prev.size() + 8
+        && next.hasAll(prev)
+        && entry.get('id', '') is string && entry.get('id', '').size() > 0
+        && entry.get('kind', '') in ['application', 'release', 'consumption', 'restitution']
+        && entry.get('fromOrderId', '') is string && entry.get('fromOrderId', '').size() > 0
+        // Exact cents, positive, inside the app's safe-precision bound.
+        && entry.get('amountCents', 0) is int
+        && entry.get('amountCents', 0) > 0
+        && entry.get('amountCents', 0) <= 9000000000000
+        && entry.get('at', '') is string && entry.get('at', '').size() > 0
+        && entry.get('by', '') == request.auth.uid
+        // One accumulator moves per write, in the entry's direction.
+        && (dApplied == 0 || dConsumed == 0)
+        && (dApplied > 0 ? entry.get('kind', '') == 'application'
+          : dApplied < 0 ? entry.get('kind', '') == 'release'
+          : dConsumed > 0 ? entry.get('kind', '') == 'consumption'
+          : entry.get('kind', '') == 'restitution')
+        // Isolation: the counterpart order belongs to the same store and the
+        // same clienta (the amounts are amounts of HER money).
+        && counterpart.get('storeId', '') == after.get('storeId', '')
+        && counterpart.get('customerId', '') == after.get('customerId', '');
+    }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries', 'creditAppliedCents', 'creditConsumedCents', 'creditLedger']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
@@ -426,6 +474,13 @@ service cloud.firestore {
             || request.resource.data.get('deliveries', [])
                 == resource.data.get('deliveries', [])
             || validDeliveryAppend(id, resource.data, request.resource.data))
+        // #380: saldo a favor only moves through signed, traceable ledger
+        // appends — accumulators frozen otherwise (a bare
+        // {creditAppliedCents: 0} can no longer bypass the #363 delete guard,
+        // and invented/destroyed credit dies here).
+        && ((creditAccumulatorsFrozen(resource.data, request.resource.data)
+              && creditLedgerUntouched(resource.data, request.resource.data))
+            || validCreditAppend(resource.data, request.resource.data))
         && (!('installmentsReservedAt' in resource.data)
             || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
         && (resource.data.get('inheritedDepositMaterialized', false) != true
