@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, setDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import type { Order } from "../../types";
 
@@ -127,6 +127,63 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order transactions with F
     expect(afterDelete.variants!.find((v) => v.id === "v_gold")!.quantityOnHand).toBe(2);
     expect(afterDelete.variants!.find((v) => v.id === "v_silver")!.quantityOnHand).toBe(1);
     expect(deleteResult.variantStock?.find((v) => v.productId === designId)?.variants).toBeTruthy();
+  });
+
+  it("replaces both colors of a deleted design with separate products in the same order", async () => {
+    const db = holder.db;
+    const deleted = doc(db, "products/deleted-watch");
+    await setDoc(deleted, {
+      storeId: "tx-store",
+      variants: [
+        { id: "v_gold", color: "Dorado", quantityOnHand: 2 },
+        { id: "v_silver", color: "Plateado", quantityOnHand: 2 },
+      ],
+    });
+    const order = {
+      ...makeOrder("watch-order", deleted.id, 1),
+      orderStatus: "confirmed" as const,
+      items: ["v_gold", "v_silver"].map((color) => ({
+        ...variantLine(1, color), lineId: color, productId: deleted.id,
+      })),
+    };
+    const created = await saveOrderWithStockTx(user, order, null, "watch-create");
+    await deleteDoc(deleted);
+    const replacementIds = ["watch-gold", "watch-silver"];
+    for (const id of replacementIds) {
+      await setDoc(doc(db, "products", id), { storeId: order.storeId, quantityOnHand: 2 });
+    }
+    const corrected = {
+      ...order,
+      items: replacementIds.map((id) => ({ ...makeOrder(id, id, 1).items![0], lineId: id })),
+    };
+
+    const saved = await saveOrderWithStockTx(user, corrected, created.order.revision!, "watch-replace");
+    await saveOrderWithStockTx(user, corrected, created.order.revision!, "watch-replace");
+
+    expect(saved.order.revision).toBe(2);
+    expect((await getDoc(doc(db, "orders", order.id))).data()?.items).toEqual(corrected.items);
+    expect((await getDoc(deleted)).exists()).toBe(false);
+    for (const id of replacementIds) {
+      expect((await getDoc(doc(db, "products", id))).data()?.quantityOnHand).toBe(1);
+    }
+  });
+
+  it("deletes an order whose reserved color product no longer exists", async () => {
+    const db = holder.db;
+    const product = doc(db, "products/deleted-for-order-removal");
+    await setDoc(product, {
+      storeId: "tx-store", variants: [{ id: "v_gold", color: "Dorado", quantityOnHand: 1 }],
+    });
+    const order = {
+      ...makeOrder("remove-watch-order", product.id, 1),
+      items: [{ ...variantLine(1, "v_gold"), productId: product.id }],
+    };
+    const saved = await saveOrderWithStockTx(user, order, null, "removal-create");
+    await deleteDoc(product);
+
+    expect(await deleteOrderWithStockTx(user, order.id, saved.order.revision!)).toEqual([]);
+    expect((await getDoc(doc(db, "orders", order.id))).exists()).toBe(false);
+    expect((await getDoc(product)).exists()).toBe(false);
   });
 
 });
