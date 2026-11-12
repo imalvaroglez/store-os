@@ -598,18 +598,21 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             {(() => {
               // #124 (decisión 2): buying a design sold by color targets the
               // exact color — reception adjusts that color's cost and shelf.
+              // #355: the color NAME is the label; the full clave rides as a
+              // secondary detail in the hint, not inside the option label.
               const product = products.find((item) => item.id === line.productId);
               if (!product || !product.variants?.length) return null;
+              const selected = product.variants.find((v) => v.id === line.variantId);
               return (
                 <SelectField
                   label="Color comprado"
                   value={line.variantId ?? ""}
                   disabled={editDisabled}
                   onChange={(value) => updateLine(idx, { variantId: value || undefined })}
-                  hint="Se vende por color: la compra va a un color concreto."
+                  hint={`Se vende por color: la compra va a un color concreto.${selected?.sku ? ` Clave: ${selected.sku}.` : ""}`}
                   options={product.variants.map((variant) => ({
                     value: variant.id,
-                    label: variant.color + (variant.sku ? ` · ${variant.sku}` : ""),
+                    label: variant.color || "Color sin nombre",
                   }))}
                 />
               );

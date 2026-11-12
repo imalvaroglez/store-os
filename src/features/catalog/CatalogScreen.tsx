@@ -114,6 +114,9 @@ function ProductCard({
   const est = p != null ? profit(p, product.cost) : undefined;
   // FER-09: one derivation for the whole app (default threshold included).
   const alert = isTiered ? stockAlertLevel(product) : null;
+  // #124/M5 via #355: "sin dato" is NOT "agotado" — a color design with no
+  // captured shelf shows no existence line at all, never a lying 0.
+  const variantStock = isVariantProduct(product) ? totalStock(product) : null;
 
   return (
     <Card onClick={onEdit} className="p-4 sm:p-5">
@@ -163,10 +166,12 @@ function ProductCard({
                   {defaultLabel} <b>{formatMoney(product.prices?.[defaultId])}</b>
                 </span>
                 {isVariantProduct(product) ? (
-                  <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
-                    Existencia: {totalStock(product) ?? 0} en {product.variants!.length}{" "}
-                    {product.variants!.length === 1 ? "color" : "colores"}
-                  </span>
+                  variantStock != null ? (
+                    <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
+                      Existencia: {variantStock} en {product.variants!.length}{" "}
+                      {product.variants!.length === 1 ? "color" : "colores"}
+                    </span>
+                  ) : null
                 ) : typeof product.quantityOnHand === "number" ? (
                   <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
                     Existencia: {product.quantityOnHand}
