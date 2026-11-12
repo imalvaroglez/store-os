@@ -15,6 +15,7 @@ import {
   increment,
   arrayUnion,
   writeBatch,
+  type Transaction,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
@@ -1601,16 +1602,24 @@ export function buildPublicCatalogDoc(
   };
 }
 
-/**
- * #229: canonical stock moved (purchase reception, order reservation/release)
- * and the public availability signal must follow without a manual "Republicar
- * catálogo". Targeted and READ-FREE: the caller passes the post-change
- * canonical products, so the catalog summary doc is rebuilt locally (1 write)
- * and each changed published product's detail doc is patched (1 write each).
- * Idempotent: recomputed from post-transaction values — a retry writes the
- * same thing and never re-applies a stock delta. A failure here must NOT
- * revert the reception/order (callers run it via persistInBackground).
- */
+/** Refresh a published document's availability without replacing its other fields. */
+function publicStockPatch(current: Product, existing: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  const stockSignal = publicStockSignal(current);
+  if (stockSignal !== existing.stockSignal) patch.stockSignal = stockSignal;
+
+  const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant.stockSignal]));
+  if (signals.size && Array.isArray(existing.variants)) {
+    const variants = existing.variants as Array<{ id: string; stockSignal?: string }>;
+    const next = variants.map((variant) => {
+      const signal = signals.get(variant.id);
+      return signal && signal !== variant.stockSignal ? { ...variant, stockSignal: signal } : variant;
+    });
+    if (next.some((variant, index) => variant !== variants[index])) patch.variants = next;
+  }
+  return patch;
+}
+
 export async function republishStockSignals(
   store: Store,
   products: Product[],
@@ -1618,20 +1627,78 @@ export async function republishStockSignals(
   changedProductIds: string[]
 ): Promise<void> {
   const { db } = getFirebase();
-  await setDoc(doc(db, "publicCatalogs", store.slug), buildPublicCatalogDoc(store, products, categories));
   const changed = new Set(changedProductIds);
-  const writes: Promise<unknown>[] = [];
-  for (const p of products) {
-    if (p.storeId !== store.id || !changed.has(p.id) || !isPublished(p) || !p.slug) continue;
-    writes.push(
-      setDoc(
-        doc(db, "publicProducts", publicProductId(store.id, p.slug)),
-        { stockSignal: publicStockSignal(p) },
-        { merge: true }
-      )
-    );
+  const published = products.filter((p) => p.storeId === store.id && isPublished(p));
+  const candidates = published.filter((p) => changed.has(p.id));
+  if (!candidates.length) return;
+
+  async function currentProduct(tx: Transaction, previous: Product): Promise<Product | null> {
+    const snapshot = await tx.get(doc(db, "products", previous.id));
+    if (!snapshot.exists()) return null;
+    const current = { ...snapshot.data(), id: snapshot.id } as Product;
+    return current.storeId === store.id && current.slug === previous.slug && isPublished(current) ? current : null;
   }
-  await Promise.all(writes);
+
+  async function currentStore(tx: Transaction): Promise<Store | null> {
+    const snapshot = await tx.get(doc(db, "stores", store.id));
+    if (!snapshot.exists() || snapshot.data().slug !== store.slug) return null;
+    return { ...snapshot.data(), id: snapshot.id } as Store;
+  }
+
+  // Keep detail transactions independent so a rejected legacy detail cannot
+  // prevent another product's missing detail from being repaired.
+  const details = await Promise.allSettled(candidates.map((previous) =>
+    runTransaction(db, async (tx) => {
+      const current = await currentProduct(tx, previous);
+      if (!current?.slug) return;
+
+      const detailRef = doc(db, "publicProducts", publicProductId(store.id, current.slug));
+      const detail = await tx.get(detailRef);
+      if (!detail.exists()) {
+        const activeStore = await currentStore(tx);
+        if (activeStore) tx.set(detailRef, projectPublicProductDetail(current, activeStore.slug, categories, activeStore));
+      } else {
+        const patch = publicStockPatch(current, detail.data());
+        if (Object.keys(patch).length) tx.update(detailRef, patch);
+      }
+    })
+  ));
+
+  // Read the current catalog and changed stock in one transaction. A retry
+  // must not rewind pricing, categories, or products from a newer publication.
+  const catalogRef = doc(db, "publicCatalogs", store.slug);
+  await runTransaction(db, async (tx) => {
+    const [activeStore, catalog] = await Promise.all([currentStore(tx), tx.get(catalogRef)]);
+    if (!activeStore) return;
+    const summaries = catalog.data()?.products as Array<Record<string, unknown>> | undefined;
+
+    if (!Array.isArray(summaries)) {
+      const current = await Promise.all(published.map((previous) => currentProduct(tx, previous)));
+      tx.set(catalogRef, buildPublicCatalogDoc(activeStore, current.filter((p): p is Product => p !== null), categories));
+      return;
+    }
+
+    const current = await Promise.all(candidates.map((previous) => currentProduct(tx, previous)));
+    const currentBySlug = new Map(current.flatMap((product) => product?.slug ? [[product.slug, product] as const] : []));
+    const present = new Set(summaries.map((summary) => summary.productSlug));
+    const next = summaries.map((summary) => {
+      const product = typeof summary.productSlug === "string" ? currentBySlug.get(summary.productSlug) : undefined;
+      if (!product) return summary;
+      const patch = publicStockPatch(product, summary);
+      return Object.keys(patch).length ? { ...summary, ...patch } : summary;
+    });
+    current.forEach((product, index) => {
+      if (product?.slug && !present.has(product.slug) && details[index].status === "fulfilled") {
+        next.push(projectPublicProductSummary(product, activeStore.slug, activeStore));
+      }
+    });
+    if (next.length !== summaries.length || next.some((summary, index) => summary !== summaries[index])) {
+      tx.update(catalogRef, { products: next });
+    }
+  });
+
+  const failed = details.find((detail) => detail.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 export async function projectPublicForStore(
