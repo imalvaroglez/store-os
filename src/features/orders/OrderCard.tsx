@@ -167,15 +167,22 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         {planView ? (
           <>
             <StatRow label="Recibido"><Money exact amount={planView.receivedCents / 100} /></StatRow>
-            <StatRow label={planView.balanceCents > 0 ? "Saldo" : "A favor"} tone={planView.balanceCents > 0 ? "danger" : "success"}>
-              {/* #189: a creditor's real "A favor" is the UNCONSUMED surplus. */}
+            <StatRow
+              label={planView.balanceCents > 0 ? "Saldo" : totals.availableCredit > 0 ? "A favor" : "Saldo"}
+              tone={planView.balanceCents > 0 ? "danger" : totals.availableCredit > 0 ? "success" : "default"}
+            >
+              {/* #189: a creditor's real "A favor" is the UNCONSUMED surplus.
+               * #357: fully consumed reads "Saldo $0.00", matching Cobros. */}
               <Money exact amount={planView.balanceCents > 0 ? planView.balanceCents / 100 : totals.availableCredit} />
             </StatRow>
           </>
         ) : (
           <>
             <StatRow label={hasPaymentRecords ? "Recibido" : "Pagado"}><Money exact amount={totals.paid} /></StatRow>
-            <StatRow label={totals.availableCredit > 0 ? "A favor" : "Saldo"} tone={totals.balance > 0 ? "danger" : "success"}>
+            <StatRow
+              label={totals.availableCredit > 0 ? "A favor" : "Saldo"}
+              tone={totals.balance > 0 ? "danger" : totals.availableCredit > 0 ? "success" : "default"}
+            >
               <Money exact amount={totals.availableCredit > 0 ? totals.availableCredit : totals.balance} />
             </StatRow>
           </>
