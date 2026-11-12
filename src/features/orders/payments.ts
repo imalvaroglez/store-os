@@ -8,9 +8,9 @@
 // exact-cents helpers; NaN never enters the state.
 import type { Order, OrderPayment, OrderPaymentMethod } from "../../types";
 import { parseAmount } from "../../lib/money";
-import { docReceivedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
+import { docReceivedCents, incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 export { docReceivedCents } from "../../lib/orderMoney";
-import { orderItems } from "../../lib/orders";
+import { creditFieldCents, orderItems } from "../../lib/orders";
 
 /** Deterministic id of the one-time materialization of the legacy `deposit`. */
 export const INHERITED_DEPOSIT_PAYMENT_ID = "inherited_deposit";
@@ -248,7 +248,10 @@ export type PaymentSummary = {
   receivedCents: number;
   /** total − received − creditApplied, signed: negative means money in the
    * customer's favor. #189: saldo a favor applied from sister orders reduces
-   * what she owes here (never counted as received money). */
+   * what she owes here (never counted as received money). #357: the favor side
+   * nets exactly like the customer card and ticket (orderTotals().
+   * availableCredit) — a surplus consumed by sister orders or committed to a
+   * refund is no longer available, so Cobros never shows a stale "A favor". */
   balanceCents: number;
   /** #189: saldo a favor applied TO this order (destination accumulator). */
   creditAppliedCents: number;
@@ -285,10 +288,23 @@ export function paymentSummary(
     : paymentsCents(records) + inheritedPendingCents;
   const creditAppliedCents = typeof order.creditAppliedCents === "number" && Number.isSafeInteger(order.creditAppliedCents)
     ? Math.max(0, order.creditAppliedCents) : 0;
+  // #357: split the signed balance into its two sides so the favor side nets
+  // EXACTLY like orderTotals().availableCredit (customer card and ticket):
+  // surplus of real received money over the effective total, minus what sister
+  // orders consumed and refunds already committed. Applied credit is never
+  // "received" money, so it cannot mint favor here — its overshoot belongs to
+  // the sister order's ledger. The owed side keeps its old arithmetic.
+  const owedCents = Math.max(0, totalCents - receivedCents - creditAppliedCents);
+  const favorCents = Math.max(
+    0,
+    Math.max(0, receivedCents - totalCents)
+      - creditFieldCents(order, "creditConsumedCents")
+      - incidentsRefundCommittedCents(order.incidents)
+  );
   return {
     totalCents,
     receivedCents,
-    balanceCents: totalCents - receivedCents - creditAppliedCents,
+    balanceCents: owedCents > 0 ? owedCents : favorCents > 0 ? -favorCents : 0,
     creditAppliedCents,
     inheritedPendingCents,
     records,

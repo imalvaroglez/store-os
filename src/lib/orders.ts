@@ -75,7 +75,7 @@ export type OrderTotals = {
 };
 
 /** Safe cents read of an optional credit accumulator (corrupt → 0, never NaN). */
-function creditFieldCents(order: Partial<Order> & Record<string, unknown>, field: "creditAppliedCents" | "creditConsumedCents"): number {
+export function creditFieldCents(order: Partial<Order> & Record<string, unknown>, field: "creditAppliedCents" | "creditConsumedCents"): number {
   const value = order[field];
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
 }

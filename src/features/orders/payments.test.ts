@@ -185,6 +185,58 @@ describe("total changes with registered payments (decision iv)", () => {
   });
 });
 
+describe("favor side nets like the customer card (#357: stale «A favor» in Cobros)", () => {
+  const incident = (refundOwedCents: number) =>
+    [{
+      id: "inc1",
+      productName: "Arracada",
+      quantity: 1,
+      reason: "Defecto de fábrica",
+      originalUnitPriceCents: 100000,
+      resolution: { kind: "refund", refundOwedCents },
+      events: [],
+    }] as Order["incidents"];
+
+  it("a surplus fully consumed by a sister order reads $0 — the real Fernanda case", () => {
+    // Total $1,460, pagó $1,550 ($90 de más) y el pedido hermano consumió ese
+    // $90: la ficha y el ticket muestran $0 a favor; Cobros debe coincidir.
+    const summary = paymentSummary(
+      order({ items: [{ lineId: "l1", productName: "Reloj", quantity: 1, unitPrice: 1460, subtotal: 1460 }], paymentsReceivedCents: 155000, creditConsumedCents: 9000 }),
+      []
+    );
+    expect(summary.balanceCents).toBe(0);
+  });
+
+  it("partial consumption keeps only the unconsumed surplus as favor", () => {
+    const summary = paymentSummary(order({ paymentsReceivedCents: 120000, creditConsumedCents: 5000 }), []);
+    expect(summary.balanceCents).toBe(-15000);
+  });
+
+  it("a refund committed to the clienta is not available credit either", () => {
+    const summary = paymentSummary(order({ paymentsReceivedCents: 120000, incidents: incident(2500) }), []);
+    expect(summary.balanceCents).toBe(-17500);
+  });
+
+  it("consumption never touches the owed side", () => {
+    const summary = paymentSummary(order({ paymentsReceivedCents: 40000, creditAppliedCents: 20000, creditConsumedCents: 30000 }), []);
+    expect(summary.balanceCents).toBe(40000);
+  });
+
+  it("an applied-credit overshoot mints no favor here (its ledger lives on the sister order)", () => {
+    // $1,000 total, $600 recibidos, $500 aplicados: el sobrepaso del crédito
+    // aplicado NO produce saldo a favor en ESTE pedido.
+    const summary = paymentSummary(order({ paymentsReceivedCents: 60000, creditAppliedCents: 50000 }), []);
+    expect(summary.balanceCents).toBe(0);
+  });
+
+  it("corrupt consumption fields (floats, negatives) are ignored — never NaN nor phantom debts", () => {
+    const corrupt = paymentSummary(order({ paymentsReceivedCents: 120000, creditConsumedCents: Number.NaN }), []);
+    expect(corrupt.balanceCents).toBe(-20000);
+    const negative = paymentSummary(order({ paymentsReceivedCents: 120000, creditConsumedCents: -5000 }), []);
+    expect(negative.balanceCents).toBe(-20000);
+  });
+});
+
 describe("adjustments keep the evidence (decision iii)", () => {
   it("builds a signed adjustment with a required note", () => {
     const record = buildAdjustmentRecord(order(), { kind: "adjustment", id: "adj1", direction: "subtract", amountText: "150", note: " Devolución en efectivo " }, "u1", "2026-11-02T10:00:00.000Z");
