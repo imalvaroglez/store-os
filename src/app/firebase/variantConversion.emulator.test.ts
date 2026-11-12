@@ -110,4 +110,48 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("conversión «se vende po
       expect(saved.variants[0].quantityOnHand).toBe(1);
     });
   });
+
+  it("la conversión actualiza la ficha pública (colores) SIN «Republicar catálogo» manual (#361 UX)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      holder.db = db;
+      // A published simple design with its public detail + catalog summary.
+      await setDoc(doc(db, "stores/vc-store"), { id: "vc-store", storeId: "vc-store", name: "VC", slug: "vc-slug", type: "inventory_tiered" });
+      const simple = {
+        id: "vc-conv", storeId: "vc-store", slug: "reloj-vc", name: "Reloj VC", sku: "VC-R",
+        category: "other", status: "published", isPublic: true,
+        finish: "Plateado", quantityOnHand: 4, cost: 500,
+        images: [{ id: "g1", url: "https://x.test/p.jpg", order: 0, isPrimary: true }],
+      };
+      await setDoc(doc(db, "products/vc-conv"), simple);
+      await setDoc(doc(db, "publicProducts/vc-store__reloj-vc"), {
+        storeId: "vc-store", storeSlug: "vc-slug", productSlug: "reloj-vc", name: "Reloj VC",
+        price: 1200, imageUrl: "https://x.test/p.jpg", stockSignal: "disponible",
+      });
+      await setDoc(doc(db, "publicCatalogs/vc-slug"), {
+        storeId: "vc-store",
+        products: [{ storeId: "vc-store", productSlug: "reloj-vc", name: "Reloj VC", price: 1200, imageUrl: "https://x.test/p.jpg", stockSignal: "disponible" }],
+      });
+
+      // The form's save path: persistEntity writes the canonical doc FIRST,
+      // then upsertProduct's projection step re-reads it — no manual republish
+      // anywhere. (The detail projection re-reads canonical inside its tx.)
+      const { upsertPublicProduct } = await import("./firestoreData");
+      const converted = {
+        ...simple,
+        variants: [{ id: "v1", color: "Plateado", skuSuffix: "P", sku: "VC-R-P", quantityOnHand: 4, photos: [{ id: "g1", url: "https://x.test/p.jpg", order: 0, isPrimary: true }], createdAt: "", updatedAt: "" }],
+      } as unknown as Product;
+      delete (converted as Record<string, unknown>).quantityOnHand; // tombstone side
+      await setDoc(doc(db, "products/vc-conv"), { ...converted, id: "vc-conv" });
+      await upsertPublicProduct(converted as Product, "vc-slug", [converted as Product], [], undefined);
+
+      const detail = (await getDoc(doc(db, "publicProducts/vc-store__reloj-vc"))).data()!;
+      expect(detail.name).toBe("Reloj VC");
+      // The public detail now carries the colors — what the public page renders.
+      expect(Array.isArray(detail.variants)).toBe(true);
+      expect(detail.variants[0]).toMatchObject({ color: "Plateado" });
+      const catalog = (await getDoc(doc(db, "publicCatalogs/vc-slug"))).data();
+      expect(catalog?.products[0]).toMatchObject({ productSlug: "reloj-vc", name: "Reloj VC" });
+    });
+  });
 });
