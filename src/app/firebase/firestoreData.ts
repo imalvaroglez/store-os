@@ -600,6 +600,13 @@ export async function saveOrderWithStockTx(
       // #333: deliveries are append-only evidence owned by registerDeliveryTx;
       // an ordinary save carries them verbatim and can never edit or drop them.
       deliveries: Array.isArray(docData?.deliveries) ? (docData.deliveries as Order["deliveries"]) : undefined,
+      // #370: the signed "delivered with balance" authorization (who/when/how
+      // much) is evidence stamped by the R9 delivery gate — an ordinary save
+      // carries it verbatim and can never drop it. A FRESH delivery stamps
+      // newer values below, after this carry.
+      deliveredWithBalanceCents: typeof docData?.deliveredWithBalanceCents === "number" ? docData.deliveredWithBalanceCents : undefined,
+      deliveredWithBalanceConfirmedAt: typeof docData?.deliveredWithBalanceConfirmedAt === "string" ? docData.deliveredWithBalanceConfirmedAt : undefined,
+      deliveredWithBalanceConfirmedBy: typeof docData?.deliveredWithBalanceConfirmedBy === "string" ? docData.deliveredWithBalanceConfirmedBy : undefined,
       // #271: deposit corrections are append-only signed evidence; a form
       // save carries them verbatim (plus its own entry on a justified lowering).
       ...(depositCorrections ? { depositCorrections } : {}),
