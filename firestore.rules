@@ -406,25 +406,58 @@ service cloud.firestore {
     function creditLedgerUntouched(before, after) {
       return after.get('creditLedger', []) == before.get('creditLedger', []);
     }
-    function creditEntrySound(entry, storeId, customerId) {
-      // ONE get() per entry (store+clienta from the same read) — the CEL
-      // expression budget is the real limit on how many entries one write
-      // may append (review #403 MAYOR-1: two gets per entry broke 4-origin
-      // releases with "maximum of 1000 expressions").
-      let counterpart = get(/databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''))).data;
+    // Per-entry soundness. #403 (PO halt): beyond signature/exactness/
+    // isolation, every entry is BACKED —
+    // - application (DEST, applied ↑A): the ORIGIN already carries the exact
+    //   paired consumption mirror (id con_<entry.id>, same amount/date/signer,
+    //   pointing back at THIS order). get() reads committed pre-transaction
+    //   state (verified empirically), so the apply transactions commit the
+    //   origin reservation FIRST — a unilateral application has no pair.
+    // - release (DEST, applied ↓A): the origin's committed mirror covers at
+    //   least A (creditConsumedCents ≥ A) — never restitute thin air.
+    // - restitution (ORIGIN, consumed ↓A): the DEST already carries the exact
+    //   paired release entry (id = this mirror's id without the res_ prefix).
+    // - consumption (ORIGIN, consumed ↑A): the signed reservation itself —
+    //   its only unilateral effect is REDUCING available credit (conservative,
+    //   visible, repairable by a paired release); documented residual.
+    function creditEntrySound(entry, before, orderId, storeId, customerId) {
+      let counterpartPath = /databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''));
+      let counterpart = get(counterpartPath).data;
+      let kind = entry.get('kind', '');
       return counterpart.get('storeId', '') == storeId
         && counterpart.get('customerId', '') == customerId
         && entry.get('id', '') is string && entry.get('id', '').size() > 0
-        && entry.get('kind', '') in ['application', 'release', 'consumption', 'restitution']
+        && kind in ['application', 'release', 'consumption', 'restitution']
         && entry.get('fromOrderId', '') is string && entry.get('fromOrderId', '').size() > 0
         // Exact cents, positive, inside the app's safe-precision bound.
         && entry.get('amountCents', 0) is int
         && entry.get('amountCents', 0) > 0
         && entry.get('amountCents', 0) <= 9000000000000
         && entry.get('at', '') is string && entry.get('at', '').size() > 0
-        && entry.get('by', '') == request.auth.uid;
+        && entry.get('by', '') == request.auth.uid
+        && (kind == 'application'
+              ? counterpart.get('creditLedger', []).hasAll([{
+                  'id': 'con_' + entry.get('id', ''),
+                  'kind': 'consumption',
+                  'fromOrderId': orderId,
+                  'amountCents': entry.get('amountCents', 0),
+                  'at': entry.get('at', ''),
+                  'by': request.auth.uid
+                }])
+            : kind == 'release'
+              ? counterpart.get('creditConsumedCents', 0) >= entry.get('amountCents', 0)
+            : kind == 'restitution'
+              ? counterpart.get('creditLedger', []).hasAll([{
+                  'id': entry.get('id', '').replace('res_', ''),
+                  'kind': 'release',
+                  'fromOrderId': orderId,
+                  'amountCents': entry.get('amountCents', 0),
+                  'at': entry.get('at', ''),
+                  'by': request.auth.uid
+                }])
+              : true);
     }
-    function validCreditAppend(before, after) {
+    function validCreditAppend(orderId, before, after) {
       let prev = before.get('creditLedger', []);
       let next = after.get('creditLedger', []);
       let n = prev.size();
@@ -432,14 +465,13 @@ service cloud.firestore {
       // commits of at most 3 entries (the CEL expression budget caps what a
       // single rules evaluation can verify — review #403 MAYOR-1).
       let batched = next.size() > n && next.size() <= n + 3;
-      let e0 = next.size() > n ? next[n] : {};
-      let e1 = next.size() > n + 1 ? next[n + 1] : e0;
-      let e2 = next.size() > n + 2 ? next[n + 2] : e0;
-      let sum = e0.get('amountCents', 0)
+      let sum = (next.size() > n ? next[n].get('amountCents', 0) : 0)
         + (next.size() > n + 1 ? next[n + 1].get('amountCents', 0) : 0)
         + (next.size() > n + 2 ? next[n + 2].get('amountCents', 0) : 0);
       let dApplied = after.get('creditAppliedCents', 0) - before.get('creditAppliedCents', 0);
       let dConsumed = after.get('creditConsumedCents', 0) - before.get('creditConsumedCents', 0);
+      let storeId = after.get('storeId', '');
+      let customerId = after.get('customerId', '');
       return next is list && prev is list
         // Append-only: history survives behind the batch. hasAll preserves
         // every previous ENTRY but not their relative ORDER (CEL cannot
@@ -447,23 +479,23 @@ service cloud.firestore {
         // effect and the read models never depend on ledger order.
         && batched
         && next.hasAll(prev)
-        // EVERY appended entry is sound, signed, and isolated (same store,
-        // same clienta counterpart). Batches beyond the first reuse e0's
-        // checks via the aliased lets — out-of-range indices never evaluate.
-        && creditEntrySound(e0, after.get('storeId', ''), after.get('customerId', ''))
-        && (next.size() <= n + 1 || creditEntrySound(e1, after.get('storeId', ''), after.get('customerId', '')))
-        && (next.size() <= n + 2 || creditEntrySound(e2, after.get('storeId', ''), after.get('customerId', '')))
+        // EVERY appended entry is sound, signed, backed and isolated.
+        && (next.size() <= n
+            || creditEntrySound(next[n], before, orderId, storeId, customerId))
+        && (next.size() <= n + 1
+            || creditEntrySound(next[n + 1], before, orderId, storeId, customerId))
+        && (next.size() <= n + 2
+            || creditEntrySound(next[n + 2], before, orderId, storeId, customerId))
         // One accumulator moves per write, in the entries' direction, by the
-        // EXACT sum of the appended amounts — a 1-cent entry can no longer
-        // justify a 100-peso movement.
+        // EXACT sum of the appended amounts.
         && (dApplied == 0 || dConsumed == 0)
         && (dApplied > 0
-              ? e0.get('kind', '') == 'application' && dApplied == sum
+              ? next[n].get('kind', '') == 'application' && dApplied == sum
             : dApplied < 0
-              ? e0.get('kind', '') == 'release' && -dApplied == sum
+              ? next[n].get('kind', '') == 'release' && -dApplied == sum
             : dConsumed > 0
-              ? e0.get('kind', '') == 'consumption' && dConsumed == sum
-              : e0.get('kind', '') == 'restitution' && -dConsumed == sum);
+              ? next[n].get('kind', '') == 'consumption' && dConsumed == sum
+              : next[n].get('kind', '') == 'restitution' && -dConsumed == sum);
     }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
@@ -510,7 +542,7 @@ service cloud.firestore {
         // and invented/destroyed credit dies here).
         && ((creditAccumulatorsFrozen(resource.data, request.resource.data)
               && creditLedgerUntouched(resource.data, request.resource.data))
-            || validCreditAppend(resource.data, request.resource.data))
+            || validCreditAppend(id, resource.data, request.resource.data))
         && (!('installmentsReservedAt' in resource.data)
             || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
         && (resource.data.get('inheritedDepositMaterialized', false) != true

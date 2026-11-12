@@ -119,6 +119,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deletion vs outstanding c
     expect((await getDoc(doc(holder.db, "orders/dc-dest"))).exists()).toBe(true);
   });
 
+  it("#403 PO: un borrado RECHAZADO no mueve saldo (applied queda intacto)", async () => {
+    // Outstanding applied credit + ledger history: the delete is rejected by
+    // the fresh-doc guard BEFORE any release runs — the clienta's money
+    // position must be identical after the failed attempt.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/dc-nomove"), orderDoc("dc-nomove", {
+        creditAppliedCents: 15000,
+        creditLedger: [{ id: "nm1", kind: "application", fromOrderId: "dc-origin", amountCents: 15000, at: "2026-11-12T10:00:00.000Z", by: "tx-user" }],
+      }));
+    });
+    const fresh = await getOrderFreshRevision("dc-nomove");
+    await expect(deleteOrderWithStockTx(user, "dc-nomove", fresh as number)).rejects.toThrow(/saldo a favor|conserva cobros/i);
+    const doc0 = (await getDoc(doc(holder.db, "orders/dc-nomove"))).data()!;
+    expect(doc0.creditAppliedCents).toBe(15000);      // intact
+    expect((doc0.creditLedger as unknown[]).length).toBe(1); // intact
+    const origin = (await getDoc(doc(holder.db, "orders/dc-origin"))).data()!;
+    expect(origin.creditConsumedCents ?? 0).toBe(0);   // nothing released anywhere
+  });
+
   it("#380 r2: borrar un pedido con historial de crédito falla con el error en español (no PERMISSION_DENIED crudo)", async () => {
     // Seeded admin-side: the create rules forbid creditLedger on new docs.
     await env.withSecurityRulesDisabled(async (ctx) => {

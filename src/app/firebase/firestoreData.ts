@@ -20,7 +20,6 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { uid } from "../../lib/ids";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
 import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
@@ -984,8 +983,51 @@ export async function applyCustomerCreditTx(params: {
   }
   const destRef = doc(db, "orders", orderId);
   const originRef = doc(db, "orders", entry.fromOrderId);
+
+  // #403 (PO halt): the rules require every DEST application to find its
+  // exact paired consumption mirror COMMITTED on the origin (get() reads
+  // pre-transaction state — verified empirically), so the compensation runs
+  // as TWO sequential transactions: reserve on the origin first, apply on
+  // the destination second. Both phases are idempotent (deterministic ids);
+  // a crash between them leaves a conservative reservation (the clienta's
+  // available credit reduced, never invented) that the retry completes.
+  const mirrorId = `con_${entry.id}`;
   await runTransaction(db, async (tx) => {
-    // READ PHASE (Firestore requires every read before any write).
+    const originSnap = await tx.get(originRef);
+    const destSnap = await tx.get(destRef);
+    if (!originSnap.exists()) throw new Error("No se encontró el pedido con el saldo a favor.");
+    if (!destSnap.exists()) throw new Error("No se encontró el pedido a compensar.");
+    const originData = originSnap.data() as Record<string, unknown>;
+    const destData = destSnap.data() as Record<string, unknown>;
+    if ((originData.storeId ?? "") !== storeId || (destData.storeId ?? "") !== storeId) {
+      throw new Error("Los pedidos pertenecen a otra tienda.");
+    }
+    if ((destData.customerId ?? "") !== (originData.customerId ?? "") || !destData.customerId) {
+      throw new Error("El saldo a favor solo compensa pedidos de la misma clienta.");
+    }
+    if (destData.orderStatus === "cancelled" || originData.orderStatus === "cancelled") {
+      throw new Error("Un pedido cancelado no participa en la compensación.");
+    }
+    const originLedger = Array.isArray(originData.creditLedger) ? (originData.creditLedger as OrderCreditLedgerEntry[]) : [];
+    if (originLedger.some((saved) => saved.id === mirrorId)) return; // idempotent retry
+    if (creditAvailableCents(originData) < entry.amountCents) {
+      throw new Error("El saldo a favor cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
+    }
+    tx.update(originRef, {
+      creditConsumedCents: increment(entry.amountCents),
+      creditLedger: arrayUnion(stripUndefined({
+        id: mirrorId,
+        kind: "consumption",
+        fromOrderId: orderId,
+        amountCents: entry.amountCents,
+        at: entry.at,
+        by: entry.by,
+      })),
+      revision: increment(1),
+    });
+  });
+
+  await runTransaction(db, async (tx) => {
     const destSnap = await tx.get(destRef);
     const originSnap = await tx.get(originRef);
     if (!destSnap.exists()) throw new Error("No se encontró el pedido a compensar.");
@@ -1004,69 +1046,55 @@ export async function applyCustomerCreditTx(params: {
     const ledger = Array.isArray(destData.creditLedger) ? (destData.creditLedger as OrderCreditLedgerEntry[]) : [];
     if (ledger.some((saved) => saved.id === entry.id)) return; // idempotent retry
     // Fresh-doc validation: the planned amount must still fit both sides.
-    if (creditAvailableCents(originData) < entry.amountCents) {
-      throw new Error("El saldo a favor cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
-    }
     if (pendingCents(destData) < entry.amountCents) {
       throw new Error("El saldo del pedido cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
     }
-    // WRITE PHASE — one atomic commit across both documents. #363: both docs
-    // bump `revision` so concurrent writers (an open editor, the deletion
-    // flow) fail closed on their revision check while the clienta's money
-    // position just changed — instead of saving a stale business state over
-    // it. (saveOrderWithStockTx re-reads credit verbatim from the fresh doc,
-    // so the bump is not needed to protect the credit fields themselves; it
-    // is the fail-closed signal. Trade-off: an editor open when the auto
-    // compensation lands gets a StaleOrderError and its capture goes to the
-    // local draft — documented in #363.)
+    // The reservation mirror must be on the committed origin (the rules
+    // enforce the pair — fail closed with a clear reason if it is missing).
+    const originLedger = Array.isArray(originData.creditLedger) ? (originData.creditLedger as OrderCreditLedgerEntry[]) : [];
+    if (!originLedger.some((saved) => saved.id === mirrorId)) {
+      throw new Error("La reserva del saldo a favor no se encontró en el pedido origen. Se reintentará.");
+    }
+    // WRITE PHASE. #363: revision bump = fail-closed signal for concurrent
+    // writers while the clienta's money position changes.
     tx.update(destRef, {
       creditAppliedCents: increment(entry.amountCents),
       creditLedger: arrayUnion(stripUndefined(entry)),
       revision: increment(1),
       updatedAt: entry.at,
     });
-    // #380: the ORIGIN keeps its own signed mirror entry — every movement of
-    // creditConsumedCents leaves evidence the Firestore rules can anchor
-    // (accumulator ⇔ appended ledger, one side per write).
-    tx.update(originRef, {
-      creditConsumedCents: increment(entry.amountCents),
-      creditLedger: arrayUnion(stripUndefined({
-        id: `con_${entry.id}`,
-        kind: "consumption",
-        fromOrderId: orderId,
-        amountCents: entry.amountCents,
-        at: entry.at,
-        by: entry.by,
-      })),
-      revision: increment(1),
-    });
   });
 }
 
 /**
- * #380 r2 (review MAYOR-1): ONE transaction restituting up to 3 origins of a
- * destination's outstanding credit net (release entries + origin mirrors +
- * revision bumps, all rules-exact). Returns the cents released; 0 = nothing
- * outstanding (or the guard rejected). Multi-origin releases loop this chunk
- * — the Firestore rules' CEL budget caps what a single merged write can
- * verify, and each chunk re-reads the fresh ledger so the whole operation is
- * resumable and idempotent from the committed evidence.
+ * #380/#403: ONE dest-phase transaction appending up to 3 release entries
+ * (rules: exact-sum batch, every entry backed by the origin's committed
+ * creditConsumedCents mirror). The ORIGIN mirrors (restitution entries,
+ * whose rules require the dest release already committed) go out in a SECOND
+ * transaction right after — see releaseOriginsFor. A crash between the two
+ * leaves the conservative direction only (credit stranded, never invented);
+ * deterministic ids make every piece idempotent.
  */
-async function restituteCreditChunk(params: {
+async function releaseDestChunk(params: {
   db: Firestore;
   destRef: ReturnType<typeof doc>;
   storeId: string;
   by: string;
   requireCancelled: boolean;
-}): Promise<number> {
-  const { db, destRef, storeId, by, requireCancelled } = params;
+  /** Only release AT MOST this many cents (the incident's own unmet
+   * obligation). Unbounded for cancellations (release all outstanding). */
+  capCents?: number;
+  /** Entry-id prefix: incident drains tag entries to their event. */
+  idPrefix?: string;
+}): Promise<{ entries: OrderCreditLedgerEntry[] }> {
+  const { db, destRef, storeId, by, requireCancelled, capCents, idPrefix = "release_" } = params;
   const CHUNK = 3;
-  return runTransaction(db, async (tx) => {
+  const entries = await runTransaction(db, async (tx) => {
     const destSnap = await tx.get(destRef);
-    if (!destSnap.exists()) return 0;
+    if (!destSnap.exists()) return [];
     const destData = destSnap.data() as Record<string, unknown>;
-    if ((destData.storeId ?? "") !== storeId) return 0;
-    if (requireCancelled && destData.orderStatus !== "cancelled") return 0;
+    if ((destData.storeId ?? "") !== storeId) return [];
+    if (requireCancelled && destData.orderStatus !== "cancelled") return [];
     const ledger = Array.isArray(destData.creditLedger) ? (destData.creditLedger as OrderCreditLedgerEntry[]) : [];
     const netByOrigin = new Map<string, number>();
     for (const saved of ledger) {
@@ -1077,56 +1105,87 @@ async function restituteCreditChunk(params: {
       if (saved.kind !== "release" || !Number.isSafeInteger(saved.amountCents)) continue;
       netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
     }
-    const entries: OrderCreditLedgerEntry[] = [];
-    const writes: Array<{ ref: ReturnType<typeof doc>; data: Record<string, unknown> }> = [];
+    const batch: OrderCreditLedgerEntry[] = [];
     let appliedDown = 0;
+    let budget = capCents ?? Number.POSITIVE_INFINITY;
     for (const [fromOrderId, netCents] of netByOrigin) {
-      if (netCents <= 0) continue;
-      if (entries.length >= CHUNK) break;
-      const originRef = doc(db, "orders", fromOrderId);
-      const originSnap = await tx.get(originRef);
-      if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
-      const releaseEntry: OrderCreditLedgerEntry = {
-        // uid() suffix: uniqueness per movement even if a legacy duplicate
-        // ever collides with the counter (review #403 minor 2).
-        id: `release_${destRef.id}_${fromOrderId}_${(ledger.filter((e) => e.kind === "release" && e.fromOrderId === fromOrderId).length) + 1}_${uid("s")}`,
+      if (netCents <= 0) continue; // this origin has nothing outstanding
+      if (budget <= 0 || batch.length >= CHUNK) break;
+      const amount = Math.min(netCents, budget);
+      batch.push({
+        // Deterministic per movement (dest + origin + ordinal + prefix): a
+        // retry reuses the id and arrayUnion no-ops (self-healing).
+        id: `${idPrefix}${destRef.id}_${fromOrderId}_${ledger.filter((e) => e.kind === "release" && e.fromOrderId === fromOrderId && e.id.startsWith(idPrefix)).length + 1}`,
         kind: "release",
         fromOrderId,
-        amountCents: netCents,
+        amountCents: amount,
         at: new Date().toISOString(),
         by,
-      };
-      entries.push(releaseEntry);
-      // #380: the origin-side mirror — the same signed movement that the
-      // rules require to accompany any creditConsumedCents change.
-      writes.push({
-        ref: originRef,
-        data: {
-          creditConsumedCents: increment(-netCents),
-          creditLedger: arrayUnion(stripUndefined({
-            id: `res_${releaseEntry.id}`,
-            kind: "restitution",
-            fromOrderId: destRef.id,
-            amountCents: netCents,
-            at: releaseEntry.at,
-            by,
-          })),
-        },
       });
-      appliedDown += netCents;
+      appliedDown += amount;
+      budget -= amount;
     }
-    if (entries.length === 0) return 0;
+    if (batch.length === 0) return [];
     // #363: revision bump — fail-closed signal for concurrent writers while
     // the clienta's money position changes.
     tx.update(destRef, {
       creditAppliedCents: increment(-appliedDown),
-      creditLedger: arrayUnion(...entries.map(stripUndefined)),
+      creditLedger: arrayUnion(...batch.map(stripUndefined)),
       revision: increment(1),
-      updatedAt: entries[0].at,
+      updatedAt: batch[0].at,
     });
-    for (const write of writes) tx.update(write.ref, { ...write.data, revision: increment(1) });
-    return appliedDown;
+    return batch;
   });
+  return { entries };
+}
+
+/**
+ * #403: write the ORIGIN-side restitution mirrors for dest release entries —
+ * one transaction per origin doc, idempotent by mirror id, bounded by the
+ * origin's committed mirror (rules bound it too). The dest release entry is
+ * already committed, so the rules' pair check finds it (get() reads
+ * committed pre-transaction state — verified empirically).
+ */
+async function releaseOriginsFor(params: {
+  db: Firestore;
+  storeId: string;
+  by: string;
+  destOrderId: string;
+  entries: OrderCreditLedgerEntry[];
+}): Promise<number> {
+  const { db, storeId, by, destOrderId, entries } = params;
+  let mirrored = 0;
+  for (const entry of entries) {
+    const originRef = doc(db, "orders", entry.fromOrderId);
+    mirrored += await runTransaction(db, async (tx) => {
+      const originSnap = await tx.get(originRef);
+      if (!originSnap.exists()) return 0;
+      const originData = originSnap.data() as Record<string, unknown>;
+      if ((originData.storeId ?? "") !== storeId) return 0;
+      const originLedger = Array.isArray(originData.creditLedger) ? (originData.creditLedger as OrderCreditLedgerEntry[]) : [];
+      const mirrorId = `res_${entry.id}`;
+      if (originLedger.some((saved) => saved.id === mirrorId)) return 0; // idempotent
+      const consumed = typeof originData.creditConsumedCents === "number" && Number.isSafeInteger(originData.creditConsumedCents)
+        ? Math.max(0, originData.creditConsumedCents)
+        : 0;
+      const amount = Math.min(entry.amountCents, consumed);
+      if (amount <= 0) return 0;
+      tx.update(originRef, {
+        creditConsumedCents: increment(-amount),
+        creditLedger: arrayUnion(stripUndefined({
+          id: mirrorId,
+          kind: "restitution",
+          fromOrderId: destOrderId,
+          amountCents: amount,
+          at: entry.at,
+          by,
+        })),
+        revision: increment(1),
+      });
+      return amount;
+    });
+  }
+  return mirrored;
 }
 
 /**
@@ -1142,22 +1201,29 @@ export async function releaseCustomerCreditTx(params: {
   orderId: string;
   storeId: string;
   by: string;
-  /** "cancellation" (default): only a cancelled order restitutes — the PO
-   * rule. "deletion": the order is about to be deleted; its consumed credit
-   * is restituted so the origin's mirror never overstates consumption. */
+  /** Kept for callers that pre-condition on cancellation (the default).
+   * The "deletion" reason is obsolete since #403: orders with credit
+   * history are money evidence and cannot be deleted at all. */
   reason?: "cancellation" | "deletion";
 }): Promise<number> {
   const { db } = getFirebase();
   const { orderId, storeId, by, reason = "cancellation" } = params;
   const destRef = doc(db, "orders", orderId);
   let released = 0;
+  // #403: each iteration commits a ≤3-entry dest chunk (backed by the
+  // origins' committed mirrors) and then writes the origin restitution
+  // mirrors in their own transactions (the rules require the dest release
+  // already committed for the pair check). Deterministic ids make both
+  // phases idempotent; re-reading the fresh ledger each round keeps the
+  // whole operation resumable.
   for (;;) {
-    const chunk = await restituteCreditChunk({
+    const { entries } = await releaseDestChunk({
       db, destRef, storeId, by,
       requireCancelled: reason === "cancellation",
     });
-    if (chunk === 0) break;
-    released += chunk;
+    if (entries.length === 0) break;
+    released += entries.reduce((sum, entry) => sum + entry.amountCents, 0);
+    await releaseOriginsFor({ db, storeId, by, destOrderId: orderId, entries });
   }
   return released;
 }
@@ -2129,6 +2195,30 @@ export async function openIncidentTx(params: {
 }
 
 /**
+ * #403: the FRESH restitution state of one incident event — what the event
+ * still owes (recomputed from the incident's reconciled money) minus the
+ * release entries already tagged to it on the destination ledger. Pure read;
+ * the drain uses it to bound and to detect completion.
+ */
+async function incidentRestitutionState(
+  orderRef: ReturnType<typeof doc>,
+  incidentId: string,
+  eventId: string
+): Promise<{ owed: number; released: number; pending: number; tagged: OrderCreditLedgerEntry[] }> {
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) return { owed: 0, released: 0, pending: 0, tagged: [] };
+  const data = snap.data() as Record<string, unknown>;
+  const incidents = Array.isArray(data.incidents) ? (data.incidents as OrderIncident[]) : [];
+  const incident = incidents.find((existing) => existing.id === incidentId);
+  if (!incident) return { owed: 0, released: 0, pending: 0, tagged: [] };
+  const owed = reconcileIncidentMoney(migrateOrder({ ...data, id: orderRef.id }), incident).restitutionCents;
+  const tagged = (Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [])
+    .filter((saved) => saved.kind === "release" && saved.id.startsWith(`rel_${eventId}_`));
+  const released = tagged.reduce((sum, saved) => sum + (Number.isSafeInteger(saved.amountCents) ? saved.amountCents : 0), 0);
+  return { owed, released, pending: Math.max(0, owed - released), tagged };
+}
+
+/**
  * #203: append ONE event to an incident and apply its effects atomically.
  * Validity is derived from the FRESH order document (the incident's own
  * history), so a repeated or out-of-order action aborts instead of inventing
@@ -2156,7 +2246,6 @@ export async function applyIncidentEventTx(params: {
   // restitution still owed — the only case where the post-transaction
   // chunk loop below may run. Never for other events (a resolution_agreed
   // must not move any money).
-  let restitutionCappedOut = false;
   const result = await runTransaction(db, async (tx) => {
     const snap = await tx.get(orderRef);
     if (!snap.exists()) throw new Error("No se encontró el pedido.");
@@ -2166,11 +2255,7 @@ export async function applyIncidentEventTx(params: {
     const index = incidents.findIndex((existing) => existing.id === incidentId);
     if (index < 0) throw new Error("No se encontró la incidencia.");
     if (incidents.some((existing) => existing.events?.some((saved) => saved.id === event.id))) {
-      // #380 r2 (review menor 1): a retried CONFIRM resumes any restitution
-      // chunks orphaned by a post-commit failure — the drain below is a no-op
-      // when nothing is outstanding (chunk == 0 writes nothing).
-      if (event.kind === "confirmed") restitutionCappedOut = true;
-      return { order: migrateOrder({ ...data, id: orderId }) }; // idempotent retry
+      return { order: migrateOrder({ ...data, id: orderId }) }; // idempotent retry (the state-driven drain below no-ops when covered)
     }
     const incident = incidents[index];
     const state = incidentState(incident);
@@ -2257,7 +2342,6 @@ export async function applyIncidentEventTx(params: {
     // #189 (the reconcile effect re-applies it). Reads happen before writes.
     const creditReleases: Array<{ originRef: ReturnType<typeof doc>; cents: number; entry: OrderCreditLedgerEntry }> = [];
     let restitutionTotal = 0;
-    restitutionCappedOut = false; // transaction retries reset it
     if (kind === "confirmed") {
       const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), incident);
       let remaining = money.restitutionCents;
@@ -2270,10 +2354,10 @@ export async function applyIncidentEventTx(params: {
       for (const [fromOrderId, netCents] of netByOrigin) {
         if (remaining <= 0) break;
         if (netCents <= 0) continue;
-        // #380 r2: the rules' CEL budget caps a single merged ledger write at
-        // 3 entries — the first 3 origins restitute inside THIS transaction
-        // (with the incident event); any remainder goes out chunked below.
-        if (creditReleases.length >= 3) { restitutionCappedOut = true; break; }
+        // #403: the main transaction carries at most 3 release entries (the
+        // rules' CEL budget); any remainder goes out through the state-driven
+        // drain below, which is bounded by THIS event's obligation.
+        if (creditReleases.length >= 3) break;
         const originRef = doc(db, "orders", fromOrderId);
         const originSnap = await tx.get(originRef);
         // PO directive (r4): a NEEDED origin that is missing, foreign or
@@ -2380,23 +2464,10 @@ export async function applyIncidentEventTx(params: {
     const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));
     const updatedAt = event.at;
     if (restitutionTotal > 0) {
-      // #380: origin-side mirrors + the #363 revision invariant — every
-      // credit write bumps revision and leaves signed ledger evidence on
-      // BOTH documents.
-      for (const release of creditReleases) {
-        tx.update(release.originRef, {
-          creditConsumedCents: increment(-release.cents),
-          creditLedger: arrayUnion(stripUndefined({
-            id: `res_${release.entry.id}`,
-            kind: "restitution",
-            fromOrderId: orderId,
-            amountCents: release.cents,
-            at: release.entry.at,
-            by: release.entry.by,
-          })),
-          revision: increment(1),
-        });
-      }
+      // #403: the main transaction writes the DEST side only — the origin
+      // restitution mirrors go out afterwards (their rules require this
+      // release already committed). #363: revision bump with every credit
+      // write.
       tx.update(orderRef, {
         incidents: stripUndefined(nextIncidents),
         updatedAt,
@@ -2409,16 +2480,24 @@ export async function applyIncidentEventTx(params: {
     }
     return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }) };
   });
-  // #380 r2: restitute any origins beyond the first chunk (rules budget) —
-  // each chunk re-reads the fresh ledger, so this resumes from the evidence
-  // the transaction above already committed. Release-netting semantics: a
-  // drifted later origin is skipped (resumable), not a hard abort — the r4
-  // fail-closed check covered the first three inside the transaction.
-  if (restitutionCappedOut) {
-    for (;;) {
-      const chunk = await restituteCreditChunk({ db, destRef: orderRef, storeId, by: event.by, requireCancelled: false });
-      if (chunk === 0) break;
+  // #403 (PO halt): state-driven restitution drain, bounded by THIS event's
+  // obligation and self-healing. Part A extends the dest release entries
+  // (chunked ≤3, rules budget) until the event's owed amount is covered;
+  // Part B writes the origin mirrors for every tagged entry (idempotent per
+  // mirror id). A retried confirm whose obligation is fully covered and
+  // mirrored does nothing — the $200→$100→retry case leaves $100 intact.
+  if (event.kind === "confirmed") {
+    for (let round = 0; round < 12; round++) {
+      const state = await incidentRestitutionState(orderRef, incidentId, event.id);
+      if (state.pending <= 0) break;
+      const { entries } = await releaseDestChunk({
+        db, destRef: orderRef, storeId, by: event.by, requireCancelled: false,
+        capCents: state.pending, idPrefix: `rel_${event.id}_`,
+      });
+      if (entries.length === 0) break; // nothing more releasable (drifted origin): conservative stop
     }
+    const state = await incidentRestitutionState(orderRef, incidentId, event.id);
+    await releaseOriginsFor({ db, storeId, by: event.by, destOrderId: orderId, entries: state.tagged });
   }
   return result;
 }

@@ -317,6 +317,88 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     expect(releases[0].amountCents).toBe(10000);
   });
 
+  it("#403 PO: $200 aplicados → devolución de $100 → REINTENTO deja intactos los $100 restantes", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      // Origin: $150 received of a $50 sale → $100 of credit; consumed $200? No:
+      // mirror $200 against a real $100 surplus would be drift. Use TWO
+      // origins? Keep the PO case exactly: $200 applied from ONE origin with
+      // a consistent mirror (surplus $200).
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-pohalt"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "ph_L0", productName: "Origen PO", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 30000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 20000,
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-pohalt"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "phd_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 20000,
+        creditLedger: [{ id: "app_pohalt", kind: "application", fromOrderId: "inc-origin-pohalt", amountCents: 20000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-pohalt", storeId: "inc-store", incident: incident("inc-pohalt", { originalUnitPriceCents: 10000, events: [event("ph-open", "opened")] }) });
+    // Refund of $100, accepted as credit: the confirm restitutes exactly $100.
+    await applyIncidentEventTx({ orderId: "inc-order-pohalt", storeId: "inc-store", incidentId: "inc-pohalt",
+      event: event("ph-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 } });
+    await applyIncidentEventTx({ orderId: "inc-order-pohalt", storeId: "inc-store", incidentId: "inc-pohalt", event: event("ph-e2", "confirmed") });
+    let order = (await getDoc(doc(holder.db, "orders/inc-order-pohalt"))).data()!;
+    expect(order.creditAppliedCents).toBe(10000); // $200 − $100 restituted
+    let origin = (await getDoc(doc(holder.db, "orders/inc-origin-pohalt"))).data()!;
+    expect(origin.creditConsumedCents).toBe(10000);
+    // RETRY the same confirmation: idempotent — the remaining $100 STAYS.
+    await applyIncidentEventTx({ orderId: "inc-order-pohalt", storeId: "inc-store", incidentId: "inc-pohalt", event: event("ph-e2", "confirmed") });
+    order = (await getDoc(doc(holder.db, "orders/inc-order-pohalt"))).data()!;
+    expect(order.creditAppliedCents).toBe(10000);
+    origin = (await getDoc(doc(holder.db, "orders/inc-origin-pohalt"))).data()!;
+    expect(origin.creditConsumedCents).toBe(10000);
+  });
+
+  it("#403 PO: devolución desde varios pedidos de origen (2 orígenes) queda completa y el reintento no mueve nada", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      for (const [suffix, amount] of [["a", 6000], ["b", 4000]] as const) {
+        await setDoc(doc(ctx.firestore(), "orders/inc-origin-multi-" + suffix), {
+          storeId: "inc-store", customerId: "inc-clienta",
+          items: [{ lineId: `m${suffix}_L0`, productName: "Origen " + suffix, quantity: 1, unitPrice: 50, subtotal: 50 }],
+          deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+          creditConsumedCents: amount,
+          createdAt: "", updatedAt: "",
+        });
+      }
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-multi"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "md_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [
+          { id: "app_m1", kind: "application", fromOrderId: "inc-origin-multi-a", amountCents: 6000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "app_m2", kind: "application", fromOrderId: "inc-origin-multi-b", amountCents: 4000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+        ],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-multi", storeId: "inc-store", incident: incident("inc-multi", { originalUnitPriceCents: 10000, events: [event("mu-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-multi", storeId: "inc-store", incidentId: "inc-multi",
+      event: event("mu-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 } });
+    await applyIncidentEventTx({ orderId: "inc-order-multi", storeId: "inc-store", incidentId: "inc-multi", event: event("mu-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-multi"))).data()!;
+    expect(order.creditAppliedCents).toBe(0);
+    const a = (await getDoc(doc(holder.db, "orders/inc-origin-multi-a"))).data()!;
+    const b = (await getDoc(doc(holder.db, "orders/inc-origin-multi-b"))).data()!;
+    expect(a.creditConsumedCents).toBe(0);
+    expect(b.creditConsumedCents).toBe(0);
+    // Retry: idempotent, nothing extra moves.
+    await applyIncidentEventTx({ orderId: "inc-order-multi", storeId: "inc-store", incidentId: "inc-multi", event: event("mu-e2", "confirmed") });
+    const order2 = (await getDoc(doc(holder.db, "orders/inc-order-multi"))).data()!;
+    const a2 = (await getDoc(doc(holder.db, "orders/inc-origin-multi-a"))).data()!;
+    const b2 = (await getDoc(doc(holder.db, "orders/inc-origin-multi-b"))).data()!;
+    expect(order2.creditAppliedCents).toBe(0);
+    expect(a2.creditConsumedCents).toBe(0);
+    expect(b2.creditConsumedCents).toBe(0);
+  });
+
   it("never crosses stores", async () => {
     await expect(
       openIncidentTx({ orderId: "inc-order", storeId: "inc-foreign", incident: incident("inc-x") })
