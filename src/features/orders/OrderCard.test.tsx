@@ -54,6 +54,21 @@ describe("sharing a saved order", () => {
     expect(copy.className).toBe(print.className);
     rendered.unmount();
   });
+
+  // #399 — la vista previa de la lista lleva el color capturado en la línea:
+  // dos fichas homónimas se distinguen sin abrir el pedido.
+  it("la vista previa distingue fichas homónimas por su color (#399)", () => {
+    const homonym: Order = {
+      ...order,
+      items: [
+        { productName: "Reloj Austin", variantId: "v_silver", variantColor: "Plateado", quantity: 1, unitPrice: 1200, subtotal: 1200 },
+        { productName: "Reloj Austin", quantity: 1, unitPrice: 950, subtotal: 950 },
+      ],
+    };
+    const rendered = render(<ToastProvider><OrderCard order={homonym} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.getByText("1 × Reloj Austin · Plateado, 1 × Reloj Austin")).toBeTruthy();
+    rendered.unmount();
+  });
 });
 
 describe("installment order card (#165)", () => {

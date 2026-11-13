@@ -14,7 +14,7 @@ import {
 } from "../../design-system";
 import { legacyCollectDeposit, orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
 import { shortageByDimension } from "../../lib/inventory";
-import { orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
+import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
@@ -56,7 +56,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   // dimension each line moves (variant stock for variant lines), so the card
   // badge, the editor and the category review can never disagree.
   const shortages = [...shortageByDimension(items, state.products).values()];
-  const preview = items.slice(0, 3).map((item) => `${item.quantity} × ${item.productName}`).join(", ");
+  // #399: each previewed line carries its captured color so homonymous fichas
+  // are tellable apart in the list; lines without color render as before.
+  const preview = items.slice(0, 3).map((item) => `${item.quantity} × ${orderLineLabel(item)}`).join(", ");
   // "T00:00:00" is load-bearing: a bare yyyy-mm-dd parses as UTC and shows the
   // previous day in Mexico (UTC-6).
   const orderDate = order.promisedDate
