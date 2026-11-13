@@ -1,0 +1,105 @@
+// @vitest-environment jsdom
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ToastProvider } from "../../design-system";
+import { MonthlyCloseScreen } from "./MonthlyCloseScreen";
+import type { LooseExpense, Order, OrderPayment } from "../../types";
+
+// #129 stage: the read-only preview renders the monthly close from the store's
+// own data — the $500/$150/$350 contract case must read correctly on screen.
+
+const mocks = vi.hoisted(() => ({
+  state: {
+    orders: [] as Order[],
+    expenses: [] as LooseExpense[],
+  },
+  activeStore: { id: "s1", name: "Tienda", type: "inventory_tiered" },
+  loadOrderPaymentsDocs: vi.fn(),
+}));
+vi.mock("../../app/StoreProvider", () => ({ useStore: () => ({ state: mocks.state, activeStore: mocks.activeStore }) }));
+vi.mock("../../app/firebase/firestoreData", () => ({ loadOrderPaymentsDocs: mocks.loadOrderPaymentsDocs }));
+
+// The CURRENT CDMX month is dynamic; fixtures are built relative to it so the
+// suite never breaks at a month boundary. Contract case: delivery THIS month
+// ($500 / cost $200), anticipo LAST month ($150), saldo THIS month ($350).
+function currentMonthIso(day: number, hourUtc = 12): string {
+  const now = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit" }).format(new Date());
+  const [year, month] = now.split("-").map(Number);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hourUtc).padStart(2, "0")}:00:00.000Z`;
+}
+
+const contractOrder: Order = {
+  id: "o1",
+  storeId: "s1",
+  customerId: "c1",
+  items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 500, subtotal: 500, cost: 200 }],
+  deposit: 0,
+  orderStatus: "delivered",
+  paymentStatus: "paid",
+  createdAt: "2026-10-01T00:00:00.000Z",
+  updatedAt: "2026-10-01T00:00:00.000Z",
+  deliveries: [{
+    id: "d1", orderId: "o1", storeId: "s1",
+    deliveredAt: currentMonthIso(10), recordedAt: currentMonthIso(10), by: "u1",
+    lines: [{ productId: "p1", quantity: 1 }],
+  }],
+};
+
+const payments: Record<string, OrderPayment[]> = {
+  o1: [
+    { id: "pay_now", orderId: "o1", storeId: "s1", method: "cash", kind: "payment", amount: 350, date: currentMonthIso(20).slice(0, 10), createdAt: "", createdBy: "u1" },
+  ],
+};
+
+beforeEach(() => {
+  mocks.state.orders = [contractOrder];
+  mocks.state.expenses = [];
+  mocks.loadOrderPaymentsDocs.mockReset().mockResolvedValue(payments);
+});
+
+describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
+  it("muestra el cierre del mes vigente con el caso del contrato", async () => {
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(mocks.loadOrderPaymentsDocs).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText("Ventas (entregas verificadas)")).toBeTruthy());
+    // Venta $500 / costo $200 / margen $300 / cobros $350.
+    expect(screen.getByText("$500.00")).toBeTruthy();
+    expect(screen.getByText("$200.00")).toBeTruthy();
+    // Margen bruto y resultado operativo comparten $300 (gastos 0): ambos.
+    expect(screen.getAllByText("$300.00").length).toBe(2);
+    expect(screen.getByText("$350.00")).toBeTruthy();
+    expect(screen.getByText("Cobertura del periodo")).toBeTruthy();
+    expect(screen.getByText(/completa/i)).toBeTruthy();
+    expect(screen.getByText(/solo lectura/i)).toBeTruthy();
+  });
+
+  it("navega al mes anterior y muestra el anticipo cobrado allí", async () => {
+    // Anticipo del mes anterior + entrega de este mes (el contrato).
+    const prevIso = currentMonthIso(1);
+    const prev = new Date(new Date(prevIso).getTime() - 15 * 24 * 60 * 60 * 1000);
+    const prevDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(prev);
+    mocks.loadOrderPaymentsDocs.mockResolvedValue({
+      o1: [
+        { id: "pay_prev", orderId: "o1", storeId: "s1", method: "cash", kind: "payment", amount: 150, date: prevDate, createdAt: "", createdBy: "u1" },
+      ],
+    });
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText("Ventas (entregas verificadas)")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Mes anterior" }));
+    await waitFor(() => expect(screen.getByText("$150.00")).toBeTruthy()); // cobros del mes anterior
+    expect(screen.queryByText("$500.00")).toBeNull(); // sin ventas allá
+  });
+
+  it("la cobertura incompleta queda a la vista y avisa que no habilita cierre", async () => {
+    // Dos huecos: un entregado legado sin evidencia y una entrega con fecha
+    // cuya línea no conoce el costo.
+    mocks.state.orders = [
+      { ...contractOrder, id: "o_legacy", deliveries: undefined },
+      { ...contractOrder, id: "o_nocost", items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 500, subtotal: 500 }] },
+    ];
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText(/incompleta — no habilita cierre/i)).toBeTruthy());
+    expect(screen.getByText(/Entregados sin fecha verificable/i)).toBeTruthy();
+    expect(screen.getByText(/Líneas sin costo conocido/i)).toBeTruthy();
+  });
+});
