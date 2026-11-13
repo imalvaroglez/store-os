@@ -824,6 +824,9 @@ export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, st
 export type Purchase = {
   id: string;
   storeId: string;
+  /** #373: optimistic-concurrency counter (like orders) — a save from a
+   * stale clone is rejected instead of silently winning. */
+  revision?: number;
   name?: string;
   tickets?: PurchaseTicket[];
   costingMethod?: "latest_purchase";

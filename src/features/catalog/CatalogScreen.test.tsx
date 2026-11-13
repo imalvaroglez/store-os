@@ -26,6 +26,9 @@ vi.mock("../../app/firebase/firestoreData", async (importOriginal) => {
     loadCloudState: mocks.loadCloudState,
     subscribeCloudState: vi.fn(() => () => {}),
     saveEntity: vi.fn(async () => {}),
+    // #373: product saves persist through the concurrent-preserving tx; in
+    // unit tests it behaves as a passthrough of the incoming product.
+    saveProductPreservingConcurrentTx: vi.fn(async (_baseline: unknown, next: import("../../types").Product) => next),
     projectPublicForStore: vi.fn(async () => {}),
   };
 });
