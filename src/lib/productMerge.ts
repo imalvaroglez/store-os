@@ -77,9 +77,15 @@ function mergeVariants(
     const base = baseById.get(variant.id);
     const current = freshById.get(variant.id);
     if (!base || !current) return variant; // new color (or no history) — captured as-is
+    // #373 r2: the COLOR's cost follows the product-level rule — untouched
+    // carries the concurrent reception's average, an explicit manual edit
+    // lands as captured. Only quantityOnHand used to be merged; the stale
+    // clone's cost silently reverted a concurrent re-average.
+    const sameCost = JSON.stringify(variant.cost ?? null) === JSON.stringify(base.cost ?? null);
+    const cost = sameCost ? current.cost : variant.cost;
     const sameStock = JSON.stringify(variant.quantityOnHand ?? null) === JSON.stringify(base.quantityOnHand ?? null);
-    if (sameStock) return { ...variant, quantityOnHand: current.quantityOnHand }; // carry the fresh shelf
+    if (sameStock) return { ...variant, quantityOnHand: current.quantityOnHand, cost }; // carry the fresh shelf
     const delta = (variant.quantityOnHand ?? 0) - (base.quantityOnHand ?? 0);
-    return { ...variant, quantityOnHand: Math.max(0, (current.quantityOnHand ?? 0) + delta) };
+    return { ...variant, quantityOnHand: Math.max(0, (current.quantityOnHand ?? 0) + delta), cost };
   });
 }

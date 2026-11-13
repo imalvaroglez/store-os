@@ -448,7 +448,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       // #373: revision contract — the save is rejected if the purchase changed
       // in another tab/device since THIS form loaded it (no silent last-wins).
       // The saved revision is kept for the in-place "Borrador guardado" loop.
-      const saved = await upsertPurchase(next, revisionRef.current);
+      const saved = await upsertPurchase(next, revisionRef.current, purchase);
       // The provider returns the SAVED purchase (with its fresh revision);
       // stay defensive for a void return so the receive step below never
       // depends on it.

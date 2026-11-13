@@ -6,6 +6,7 @@ import { Button, ToastProvider } from "../../design-system";
 import type { PdfApplyPayload } from "./PurchasePdfImport";
 import type { Purchase } from "../../types";
 import { PurchaseForm } from "./PurchaseForm";
+import { StalePurchaseError } from "../../app/firebase/firestoreData";
 
 const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, pdfPayloads, activeStore, state, createDraftProductsForPurchase } = vi.hoisted(() => ({
   upsertPurchase: vi.fn().mockResolvedValue(undefined),
@@ -482,3 +483,32 @@ describe("ticket code preservation (PO report in #206)", () => {
     expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "", name: "123-ABC" });
   });
 });
+
+describe("#373 revisión de compras en el formulario", () => {
+  it("un guardado rechazado por revisión vencida se explica en pantalla y el formulario sigue abierto", async () => {
+    open();
+    upsertPurchase.mockRejectedValueOnce(new StalePurchaseError());
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    expect(await screen.findByText("La compra cambió en otra pestaña o dispositivo. Vuelve a abrirla antes de guardar.")).toBeVisible();
+    // Nada de éxito falso: el editor permanece con la captura.
+    expect(screen.queryByText("Borrador guardado.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Guardar borrador" })).toBeEnabled();
+  });
+
+  it("el segundo guardado usa la revisión devuelta y viaja con el baseline de gastos", async () => {
+    open();
+    upsertPurchase.mockClear();
+    upsertPurchase.mockResolvedValueOnce({ ...purchase(), revision: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    expect(upsertPurchase.mock.calls[0][1]).toBeNull(); // carga inicial sin revisión
+    expect(upsertPurchase.mock.calls[0][2]).toMatchObject({ id: "purchase" }); // baseline = lo cargado
+
+    upsertPurchase.mockResolvedValueOnce({ ...purchase(), revision: 2 });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(2));
+    expect(upsertPurchase.mock.calls[1][1]).toBe(1); // la revisión viva del primer guardado
+    expect(await screen.findByText("Borrador guardado.")).toBeVisible();
+  });
+});
+

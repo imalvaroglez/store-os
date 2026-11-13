@@ -90,6 +90,28 @@ describe("mergeProductOperational (#373 productos)", () => {
     expect(merged.variants![0]).toMatchObject({ color: "Verde", quantityOnHand: 3 });
   });
 
+  it("el costo por color actualizado en paralelo se conserva cuando solo se ajustan existencias (#373 r2)", () => {
+    const withCost = (v: ProductVariant, cost: number) => Object.assign(v, { cost });
+    const baseline = product({ id: "p1", variants: [withCost(variant("v1", "Dorado", 4), 10), withCost(variant("v2", "Plata", 2), 10)] });
+    // La operadora solo ajusta el estante de Dorado (4→5); los costos viajan del clon (10).
+    const next = product({ id: "p1", variants: [withCost(variant("v1", "Dorado", 5), 10), withCost(variant("v2", "Plata", 2), 10)] });
+    // Una recepción concurrente movió estantes y PROMEDIÓ los costos por color.
+    const fresh = product({ id: "p1", variants: [withCost(variant("v1", "Dorado", 7), 10.63), withCost(variant("v2", "Plata", 2), 10.5)] });
+    const merged = mergeProductOperational(baseline, next, fresh);
+    const byColor = new Map(merged.variants!.map((v) => [v.color, v]));
+    expect(byColor.get("Dorado")).toMatchObject({ quantityOnHand: 8, cost: 10.63 }); // delta del estante, costo FRESCO
+    expect(byColor.get("Plata")).toMatchObject({ quantityOnHand: 2, cost: 10.5 }); // intacta → fresco completo
+  });
+
+  it("un costo por color editado a mano es explícito y aterriza tal cual", () => {
+    const withCost = (v: ProductVariant, cost: number) => Object.assign(v, { cost });
+    const baseline = product({ id: "p1", variants: [withCost(variant("v1", "Dorado", 4), 10)] });
+    const next = product({ id: "p1", variants: [withCost(variant("v1", "Dorado", 4), 12)] });
+    const fresh = product({ id: "p1", variants: [withCost(variant("v1", "Dorado", 7), 10.63)] });
+    const merged = mergeProductOperational(baseline, next, fresh);
+    expect(merged.variants![0]).toMatchObject({ quantityOnHand: 7, cost: 12 }); // costo explícito, estante fresco
+  });
+
   it("borrado explícito (prop presente en undefined, transición #355) se conserva como intención", () => {
     const baseline = product({ id: "p1", quantityOnHand: 5, variants: [variant("v1", "Dorado", 5)] });
     const next = product({ id: "p1" }) as Product & { quantityOnHand?: number; variants?: ProductVariant[] };
