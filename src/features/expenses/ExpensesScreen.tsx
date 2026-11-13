@@ -4,6 +4,7 @@
 // in one tap. Mobile-first; every step explains itself in Spanish.
 import { useMemo, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
+import { navigate } from "../../lib/router";
 import {
   Badge,
   Button,
@@ -174,7 +175,13 @@ export function ExpensesScreen() {
       <ScreenHeader
         title="Gastos"
         subtitle={`${expenses.length} ${expenses.length === 1 ? "gasto suelto" : "gastos sueltos"}`}
-        action={<Button onClick={openCreate}>+ Agregar</Button>}
+        action={
+          <div className="flex items-center gap-2">
+            {/* #129 stage: read-only monthly close preview lives next to money. */}
+            <Button variant="ghost" onClick={() => navigate("/productos/cierre")}>Cierre mensual</Button>
+            <Button onClick={openCreate}>+ Agregar</Button>
+          </div>
+        }
       />
       {expenses.length === 0 ? (
         <EmptyState
