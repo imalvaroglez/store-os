@@ -114,3 +114,26 @@ describe("OrderReceipt · saldo a favor (#306)", () => {
     expect(screen.queryAllByText("Saldo").length).toBe(0);
   });
 });
+
+// #399 — el color capturado en la línea del pedido distingue fichas
+// homónimas dentro del recibo, aunque la ficha del catálogo cambie después.
+describe("OrderReceipt · color por línea (#399)", () => {
+  it("cada línea lleva su color y la línea sin color queda igual", () => {
+    const homonym = {
+      ...order,
+      items: [
+        { productName: "Reloj Austin", variantId: "v_silver", variantColor: "Plateado", quantity: 1, unitPrice: 1200, subtotal: 1200 },
+        { productName: "Reloj Austin", quantity: 1, unitPrice: 950, subtotal: 950 },
+      ],
+    } as unknown as Order;
+    const data = orderTicketData(homonym, "Olivia");
+    render(<OrderReceipt data={data} />);
+    const preview = within(screen.getByTestId("receipt-preview"));
+    const colored = preview.getByText("Reloj Austin · Plateado").closest("li")!;
+    expect(colored.textContent).toContain("1.");
+    expect(colored.textContent).toContain("$1,200");
+    const plain = preview.getByText("Reloj Austin").closest("li")!;
+    expect(plain.textContent).toContain("2.");
+    expect(plain.textContent).toContain("$950");
+  });
+});
