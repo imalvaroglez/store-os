@@ -315,6 +315,37 @@ for (const width of [390, 1280]) {
   });
 }
 
+for (const width of [390, 1280]) {
+  test(`cart: Iconic estimate stays visible as quantities change (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openCatalogAnonymous(page, "olivia");
+    await addOliviaPiece(page, "Anillo Blossom");
+    await page.getByRole("button", { name: "Abrir pedido" }).click();
+
+    const cart = page.getByRole("dialog", { name: "Tu pedido" });
+    const add = cart.getByRole("button", { name: "Sumar una pieza de Anillo Blossom" });
+    const remove = cart.getByRole("button", { name: "Restar una pieza de Anillo Blossom" });
+    const iconic = cart.getByText("¿Eres Iconic? Subtotal estimado", { exact: true }).locator("..");
+    for (let i = 1; i < 8; i++) await add.click();
+    await expect(iconic).toContainText("$720.00 MXN");
+    await add.click(); // Girly crosses $1,000 at 9 pieces.
+    await expect(iconic).toContainText("$810.00 MXN");
+    for (let i = 9; i < 12; i++) await add.click(); // Iconic itself crosses $1,000.
+    await expect(iconic).toContainText("$1,080.00 MXN");
+    await expect(cart.getByText("$1,440.00 MXN", { exact: true })).toBeVisible();
+
+    const href = await cart.getByRole("link", { name: "Enviar solicitud por WhatsApp" }).getAttribute("href");
+    const message = new URL(href!).searchParams.get("text");
+    expect(message).toContain("Subtotal estimado: $1,440.00 MXN");
+    expect(message).toContain("¿Eres Iconic? Subtotal estimado: $1,080.00 MXN");
+
+    await remove.focus();
+    await page.keyboard.press("Enter");
+    await expect(iconic).toContainText("$990.00 MXN");
+    expect(await cart.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  });
+}
+
 test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", async ({ browser }) => {
   const ctx = await browser.newContext();
   const anon = await ctx.newPage();

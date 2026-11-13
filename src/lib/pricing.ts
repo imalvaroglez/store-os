@@ -193,7 +193,7 @@ export function calculateOrderPricing(
   };
 }
 
-// ── #305: public cart request summary (habitual + conditional Iconic) ──────
+// ── #305: public cart request summary (habitual + Iconic estimate) ──────
 
 /**
  * PO decision 2026-11-10: the identity-gated tier (Olivia's Iconic) never
@@ -206,9 +206,6 @@ export function isIdentityGatedTier(tier: PriceTierDef): boolean {
   return tier.minAmount != null && tier.minPieces == null;
 }
 
-/** Visibility threshold (MXN) for the conditional identity-price row (#305). */
-export const IDENTITY_HINT_MAX_SUBTOTAL = 1000;
-
 export type CartRequestSummary = {
   totalQuantity: number;
   /** Deepest NON-identity tier the cart qualifies for, own-priced on every
@@ -220,9 +217,6 @@ export type CartRequestSummary = {
   /** Σ qty × the identity tier's OWN price per line — undefined when ANY line
    * lacks it ("Por confirmar", never a fallback price, never $0). */
   identitySubtotal: number | undefined;
-  /** True when the identity row is shown: habitual < threshold AND an
-   * identity tier exists. Recomputed live; never persisted. */
-  showIdentityHint: boolean;
   /** Per-line prices at the HABITUAL tier (own price on every line). One
    *  derivation with the headline (1.13.1): the anonymous cart lines can
    *  never show an identity-tier price while the total uses the habitual. */
@@ -263,10 +257,5 @@ export function cartRequestSummary(tiers: PriceTierDef[], lines: CartQtyLine[]):
     identityTier,
     identitySubtotal,
     lineBreakdown,
-    // Exact-cents comparison (#320 review H2): double sums can land at
-    // 999.9999999999999 and flip the row the wrong way at the boundary.
-    showIdentityHint:
-      identityTier != null
-      && Math.round(habitualSubtotal * 100) < Math.round(IDENTITY_HINT_MAX_SUBTOTAL * 100),
   };
 }
