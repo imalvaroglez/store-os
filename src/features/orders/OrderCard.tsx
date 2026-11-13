@@ -262,25 +262,29 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     </Card>
     <Sheet open={ticketOpen} onClose={() => setTicketOpen(false)} title="Detalle para compartir">
       {/* #307: wide screens put the copyable text (left) beside the receipt
-          (right) — each panel owns its action; narrow screens stack them in
-          task order (texto → copiar → recibo → imprimir) without horizontal
-          scroll. */}
+          (right); narrow screens stack them in task order (texto → copiar →
+          recibo → imprimir) without horizontal scroll.
+          #405: both panels fill equal columns and surfaces (textarea and
+          receipt stretch), so the two equivalent actions — Copiar detalle /
+          Imprimir / Guardar PDF — share axis, height and variant regardless
+          of which side carries more content. The print button's label states
+          the action; no fixed help paragraph below it. */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-3">
-          <TextArea label="Detalle del pedido" value={ticket} readOnly rows={Math.min(16, Math.max(6, ticket.split("\n").length))} />
+          <TextArea fill label="Detalle del pedido" value={ticket} readOnly rows={Math.min(16, Math.max(6, ticket.split("\n").length))} />
           {copyFailed && <p className="text-danger">No se pudo copiar. Selecciona el texto y cópialo manualmente.</p>}
           <Button full className="mt-auto" onClick={copyTicket}>Copiar detalle</Button>
         </div>
         <div className="flex min-w-0 flex-col gap-3">
-          {/* Printable receipt (#139): same canonical money as the text above. */}
-          <OrderReceipt
-            data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)}
-            whatsapp={activeStore?.whatsappPhone}
-          />
-          <Button full className="mt-auto" variant="secondary" onClick={printReceipt}>Imprimir / Guardar PDF</Button>
-          <p className="text-xs text-on-surface-soft">
-            Al imprimir elige «Guardar como PDF» para compartirlo por WhatsApp. Solo el recibo sale en papel.
-          </p>
+          {/* Printable receipt (#139): same canonical money as the text above.
+              #405: the receipt carries the same field label as the text panel
+              so both bordered surfaces start (and, stretched, end) at the same
+              heights in the two-column layout. */}
+          <div className="flex min-h-0 flex-1 flex-col">
+            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Recibo</span>
+            <OrderReceipt data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)} />
+          </div>
+          <Button full className="mt-auto" onClick={printReceipt}>Imprimir / Guardar PDF</Button>
         </div>
       </div>
     </Sheet>

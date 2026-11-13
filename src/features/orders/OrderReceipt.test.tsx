@@ -36,7 +36,7 @@ const order = {
 describe("OrderReceipt (#139)", () => {
   it("muestra el recibo con el dinero canónico del ticket de texto", () => {
     const data = orderTicketData(order, "Olivia");
-    render(<OrderReceipt data={data} whatsapp="5215512345678" />);
+    render(<OrderReceipt data={data} />);
     const preview = within(screen.getByTestId("receipt-preview"));
     const printRoot = document.getElementById("receipt-print-root");
     expect(printRoot?.parentElement).toBe(document.body);
@@ -60,7 +60,10 @@ describe("OrderReceipt (#139)", () => {
     const text = orderTicketText(order, "Olivia");
     expect(text).toContain(`*Total* ${data.total}`);
     expect(text).toContain(`*Saldo* ${data.saldo}`);
-    expect(preview.getByText(/Pedidos por WhatsApp/)).toBeTruthy();
+    // #405: el recibo no ofrece canal de pedidos — el catálogo es el canal;
+    // WhatsApp queda para compartir el detalle como texto.
+    expect(preview.queryByText(/Pedidos por WhatsApp/)).toBeNull();
+    expect(printRoot?.textContent).not.toContain("Pedidos por WhatsApp");
   });
 
   it("sin saldo pendiente no imprime línea de Saldo (espejo del formato de texto)", () => {
