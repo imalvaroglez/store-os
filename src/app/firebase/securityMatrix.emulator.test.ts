@@ -219,3 +219,59 @@ function specPath(name: string, store: string): string {
   const spec = BUSINESS_DOCS.find((s) => s.name === name)!;
   return spec.path(store);
 }
+
+// ── #374: public projections — the doc ID is bound to the content ──────────
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#374 public projection squatting — id ligado al contenido", () => {
+  let env374: RulesTestEnvironment;
+  beforeAll(async () => {
+    env374 = await initializeTestEnvironment({
+      projectId: "store-os-dev",
+      firestore: { rules: readFileSync("firestore.rules", "utf-8") },
+    });
+    await env374.withSecurityRulesDisabled(async (ctx) => {
+      const fs = ctx.firestore();
+      await setDoc(doc(fs, "users/sec-member-a"), { role: "member" });
+      await setDoc(doc(fs, "users/sec-member-b"), { role: "member" });
+      await setDoc(doc(fs, `adminStores/${STORE_A}`), { ownerUid: "sec-owner-a", memberUids: ["sec-owner-a", "sec-member-a"] });
+      await setDoc(doc(fs, `adminStores/${STORE_B}`), { ownerUid: "sec-member-b", memberUids: ["sec-member-b"] });
+      // The create rules verify the projection id against the STORE's own slug.
+      await setDoc(doc(fs, `stores/${STORE_A}`), { slug: "matrix-a", name: "A", type: "on_demand", createdAt: "", updatedAt: "" });
+      await setDoc(doc(fs, `stores/${STORE_B}`), { slug: "matrix-b", name: "B", type: "on_demand", createdAt: "", updatedAt: "" });
+    });
+  });
+  afterAll(async () => {
+    await env374?.cleanup();
+  });
+  const dbA = () => env374.authenticatedContext("sec-member-a").firestore();
+  const dbB = () => env374.authenticatedContext("sec-member-b").firestore();
+
+  it("un miembro de A no puede ocupar la ruta pública futura de B (publicProducts)", async () => {
+    await expect(
+      setDoc(doc(dbA(), `publicProducts/${STORE_B}__anillo-futuro`), { storeId: STORE_A, productSlug: "anillo-futuro", name: "Falso" })
+    ).rejects.toThrow();
+  });
+
+  it("su propia ruta sí se crea (id = storeId__slug del cuerpo)", async () => {
+    await expect(
+      setDoc(doc(dbA(), `publicProducts/${STORE_A}__anillo-propio`), { storeId: STORE_A, productSlug: "anillo-propio", name: "Válido" })
+    ).resolves.toBeUndefined();
+  });
+
+  it("publicStores/{slug} exige que el slug sea de la tienda del cuerpo", async () => {
+    await expect(
+      setDoc(doc(dbA(), "publicStores/matrix-b"), { storeId: STORE_A, slug: "matrix-b", name: "Falsa B" })
+    ).rejects.toThrow();
+    await expect(
+      setDoc(doc(dbB(), "publicStores/matrix-b"), { storeId: STORE_B, slug: "matrix-b", name: "B" })
+    ).resolves.toBeUndefined();
+  });
+
+  it("publicCatalogs/{slug} igual — la dueña publica el suyo", async () => {
+    await expect(
+      setDoc(doc(dbA(), "publicCatalogs/matrix-b"), { storeId: STORE_A, categories: [], products: [] })
+    ).rejects.toThrow();
+    await expect(
+      setDoc(doc(dbB(), "publicCatalogs/matrix-b"), { storeId: STORE_B, categories: [], products: [] })
+    ).resolves.toBeUndefined();
+  });
+});

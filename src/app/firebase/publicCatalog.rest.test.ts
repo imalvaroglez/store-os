@@ -184,6 +184,32 @@ describe("loadPublicProduct (REST)", () => {
     expect(product.productSlug).toBe("anillo-luna");
   });
 
+  // #374: a squatted detail doc (foreign storeId in the body) must read as
+  // NOT FOUND — the public reader only serves the store it was asked for.
+  it("#374 un detalle con storeId ajeno se trata como inexistente", async () => {
+    const squatted = restDoc({
+      storeId: "sec-store-atacante",
+      productSlug: "anillo-luna",
+      name: "Falso Anillo",
+      sku: "FAKE-1",
+      images: [],
+    });
+    vi.stubGlobal(
+      "fetch",
+      stubFetchByUrl({
+        "/publicProducts/store_olivia__anillo-luna": jsonResponse(200, squatted),
+      })
+    );
+    await expect(
+      loadPublicProduct("olivia", "anillo-luna", {
+        storeId: "store_olivia",
+        slug: "olivia",
+        name: "Olivia",
+        type: "on_demand",
+      })
+    ).rejects.toBeInstanceOf(PublicProductNotFoundError);
+  });
+
   it("throws PublicProductNotFoundError when the detail doc 404s", async () => {
     vi.stubGlobal(
       "fetch",

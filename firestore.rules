@@ -480,6 +480,15 @@ service cloud.firestore {
         || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
     }
 
+    // #374: projection ids are BOUND to their content — a member of another
+    // store must not be able to occupy a rival's FUTURE public route by
+    // creating the doc first with a body naming their own store. The create
+    // rules tie the id to the store that owns it (its own slug in the stores
+    // doc, or the storeId prefix of the product id).
+    function ownsStoreSlug(storeId, slug) {
+      return get(/databases/$(database)/documents/stores/$(storeId)).data.slug == slug;
+    }
+
     match /publicStores/{slug} {
       // get is public (the storefront + prerender read by slug); list requires a
       // signed-in platform user so the public apiKey alone cannot enumerate the
@@ -488,7 +497,9 @@ service cloud.firestore {
       // by CI e2e.) The deploy-time prerender lists via firebase-admin.
       allow get: if true;
       allow list: if isSignedIn();
-      allow create: if isSuperAdmin() || isOwner(request.resource.data.storeId);
+      allow create: if isSuperAdmin()
+        || (isOwner(request.resource.data.storeId)
+            && ownsStoreSlug(request.resource.data.storeId, slug));
       allow update: if (isSuperAdmin() || isOwner(resource.data.storeId))
         && resource.data.storeId == request.resource.data.storeId;
       allow delete: if isSuperAdmin() || isOwner(resource.data.storeId);
@@ -500,7 +511,8 @@ service cloud.firestore {
     match /publicCatalogs/{slug} {
       allow get: if true;
       allow list: if isSignedIn();
-      allow create: if canOperateStore(request.resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && ownsStoreSlug(request.resource.data.storeId, slug);
       allow update: if canOperateStore(resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
       allow delete: if canOperateStore(resource.data.storeId);
@@ -513,7 +525,10 @@ service cloud.firestore {
       // (where storeSlug ==) runs as the store owner.
       allow get: if true;
       allow list: if isSignedIn();
-      allow create: if canOperateStore(request.resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        // #374: the id IS the address ({storeId}__{slug}) — it must name the
+        // store in the body, or a member could squat another store's route.
+        && id.split('__')[0] == request.resource.data.storeId;
       allow update: if canOperateStore(resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
       allow delete: if canOperateStore(resource.data.storeId);

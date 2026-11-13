@@ -316,6 +316,9 @@ export async function loadPublicProduct(
 
   if (!productSnap.exists) throw new PublicProductNotFoundError(productSlug);
   const product = productSnap.data as PublicProductDetail;
+  // #374 defense in depth: only serve details that belong to the store being
+  // browsed. A doc planted under this route by another tenant reads as absent.
+  if (product.storeId !== store.storeId) throw new PublicProductNotFoundError(productSlug);
 
   return { product, store };
 }
