@@ -328,7 +328,7 @@ type StoreContextValue = {
   deleteCategory: (categoryId: string) => Promise<void>;
   upsertSupplier: (supplier: Supplier) => Promise<void>;
   deleteSupplier: (supplierId: string) => Promise<void>;
-  upsertPurchase: (purchase: Purchase, expectedRevision?: number | null) => Promise<Purchase>;
+  upsertPurchase: (purchase: Purchase, expectedRevision?: number | null, baseline?: Purchase) => Promise<Purchase>;
   /**
    * Bulk-create private draft products and save the purchase that links them
    * in one atomic commit (cloud-only: the PDF import flow requires cloud).
@@ -964,12 +964,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "DELETE_SUPPLIER", supplierId });
       await deleteEntity(currentUser, "suppliers", supplierId);
     },
-    upsertPurchase: async (purchase, expectedRevision) => {
+    upsertPurchase: async (purchase, expectedRevision, baseline) => {
       requireAuthenticatedUser();
       // #373: persist-first with the revision contract — a save from a stale
       // clone is REJECTED (the caller surfaces it) instead of silently winning,
       // and the local dispatch follows the SAVED truth.
-      const saved = await savePurchaseTx(purchase, expectedRevision ?? purchase.revision ?? null);
+      const saved = await savePurchaseTx(purchase, expectedRevision ?? purchase.revision ?? null, baseline);
       dispatch({ type: state.purchases.some((p) => p.id === purchase.id) ? "UPDATE_PURCHASE" : "ADD_PURCHASE", purchase: saved });
       return saved;
     },

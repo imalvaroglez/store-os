@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { deleteDoc, doc, getDoc, setDoc } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import type { Product, Purchase } from "../../types";
 
@@ -13,6 +13,7 @@ const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
 import {
   applyMembershipChangeTx,
+  receivePurchaseTx,
   saveProductPreservingConcurrentTx,
   savePurchaseTx,
   StalePurchaseError,
@@ -36,7 +37,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#373 stale full-doc write
       await setDoc(doc(db, "users/tx-u3"), { role: "member" });
       // Hermetic per run: a long-lived emulator may hold docs from a previous
       // suite execution (revisions would make every create look stale).
-      for (const id of ["sw-pur1", "sw-pur2", "sw-pur3"]) await deleteDoc(doc(db, "purchases", id));
+      for (const id of ["sw-pur1", "sw-pur2", "sw-pur3", "sw-pur-exp", "sw-pur-asg", "sw-pur-recv", "sw-pur-legacy"]) await deleteDoc(doc(db, "purchases", id));
       await deleteDoc(doc(db, "products", "sw-p1"));
       await deleteDoc(doc(db, "products", "sw-p2"));
       await setDoc(doc(db, "adminStores/sw-store"), { ownerUid: "tx-owner", memberUids: ["tx-owner", "tx-user"], createdAt: NOW, updatedAt: NOW });
@@ -206,6 +207,80 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#373 stale full-doc write
     const docData = (await getDoc(doc(holder.db, "purchases/sw-pur2"))).data()!;
     expect(docData.sourcingExpenses).toHaveLength(1); // la evidencia concurrente sobrevive
     expect(docData.sourcingExpenses[0].amount).toBe(33);
+  });
+
+  // ── #373 ronda 2: el formulario ES dueño de sus gastos de surtido ─────────
+  // (agregar/editar/quitar); lo asignado en paralelo (otra pestaña, la vía
+  // nativa de gastos) viaja con el guardado. Antes: el segundo guardado
+  // revertía la edición con toast de éxito.
+
+  it("el segundo guardado conserva agregar, editar y quitar gastos del formulario", async () => {
+    const e1 = { id: "e1", category: "sourcing_transport" as const, amount: 44 };
+    const created = await savePurchaseTx({ ...basePurchase, id: "sw-pur-exp", sourcingExpenses: [e1] } as unknown as Purchase, null);
+    // Agregar e2 y editar e1 44→50, con el baseline que cargó el formulario.
+    const saved2 = await savePurchaseTx(
+      { ...created, sourcingExpenses: [{ ...e1, amount: 50 }, { id: "e2", category: "other" as const, amount: 33 }] } as Purchase,
+      created.revision ?? 1,
+      created
+    );
+    expect(saved2.sourcingExpenses).toEqual([{ ...e1, amount: 50 }, { id: "e2", category: "other", amount: 33 }]);
+    // Quitar e1: el doc queda solo con e2.
+    const saved3 = await savePurchaseTx(
+      { ...saved2, sourcingExpenses: [{ id: "e2", category: "other", amount: 33 }] } as Purchase,
+      saved2.revision ?? 2,
+      saved2
+    );
+    expect(saved3.sourcingExpenses).toEqual([{ id: "e2", category: "other", amount: 33 }]);
+    const docData = (await getDoc(doc(holder.db, "purchases/sw-pur-exp"))).data()!;
+    expect(docData.sourcingExpenses).toHaveLength(1);
+    expect(docData.sourcingExpenses[0].amount).toBe(33);
+  });
+
+  it("una asignación concurrente (no vista por el formulario) sobrevive a su edición", async () => {
+    const e1 = { id: "e1", category: "sourcing_transport" as const, amount: 44 };
+    const created = await savePurchaseTx({ ...basePurchase, id: "sw-pur-asg", sourcingExpenses: [e1] } as unknown as Purchase, null);
+    // La otra pestaña anexó evidencia asignada (vía assignExpenseTx).
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "purchases/sw-pur-asg"), {
+        sourcingExpenses: [e1, { id: "asg_1", category: "sourcing_transport" as const, amount: 60, description: "Transporte asignado" }],
+      }, { merge: true });
+    });
+    const saved = await savePurchaseTx(
+      { ...created, sourcingExpenses: [{ ...e1, amount: 50 }] } as Purchase, // el formulario editó SU gasto
+      created.revision ?? 1,
+      created
+    );
+    expect(saved.sourcingExpenses).toEqual([
+      { ...e1, amount: 50 },
+      { id: "asg_1", category: "sourcing_transport", amount: 60, description: "Transporte asignado" },
+    ]);
+  });
+
+  it("recibir mercancía con el gasto añadido: la evidencia del gasto sobrevive a la recepción", async () => {
+    const e1 = { id: "e1", category: "sourcing_transport" as const, amount: 50, includeInInventoryCost: true };
+    const created = await savePurchaseTx({ ...basePurchase, id: "sw-pur-recv", lines: [], sourcingExpenses: [e1] } as unknown as Purchase, null);
+    const saved = await savePurchaseTx({ ...created, notes: "edit" } as Purchase, created.revision ?? 1, created);
+    await receivePurchaseTx("sw-pur-recv");
+    const docData = (await getDoc(doc(holder.db, "purchases/sw-pur-recv"))).data()!;
+    expect(docData.status).toBe("received");
+    expect(docData.sourcingExpenses).toEqual([e1]); // ni perdido ni duplicado por la recepción
+    expect(saved.notes).toBe("edit");
+  });
+
+  it("regla: una compra legada SIN campo status es evidencia inmutable (solo ajuste de venta)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "purchases/sw-pur-legacy"), {
+        storeId: "sw-store", lines: [], createdAt: NOW, updatedAt: NOW,
+        // sin status ni revision: legado cuyo inventario ya se aplicó al guardar
+      });
+    });
+    const parent = doc(holder.db, "purchases/sw-pur-legacy");
+    await expect(updateDoc(parent, { notes: "cambio" })).rejects.toThrow();
+    // La única mutación permitida sobre evidencia recibida: el ajuste de venta.
+    await updateDoc(parent, { saleCostAdjustments: [{ id: "adj1", amount: 10, note: "Ajuste", by: "tx-owner", at: NOW }], updatedAt: NOW });
+    const docData = (await getDoc(parent)).data()!;
+    expect(docData.saleCostAdjustments).toHaveLength(1);
+    expect(docData.notes).toBeUndefined();
   });
 
   it("crear con revisión esperada se rechaza; la compra nueva arranca en revisión 1", async () => {

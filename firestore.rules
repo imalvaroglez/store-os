@@ -235,9 +235,11 @@ service cloud.firestore {
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
         && (
-          // .get(): a legacy purchase may predate the status field — an absent
-          // status must not blow up the whole evaluation (#373).
-          resource.data.get('status', '') != 'received'
+          // .get(): a legacy purchase predating the status field already
+          // applied its stock at save time (receivePurchaseTx treats missing
+          // status as received) — so absent means RECEIVED evidence, immutable
+          // like any other (#373 review: '' reopened legacy mutation by SDK).
+          resource.data.get('status', 'received') != 'received'
           || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'updatedAt'])
         );
       allow delete: if canOperateStore(resource.data.storeId)

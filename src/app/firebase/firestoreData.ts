@@ -2668,7 +2668,8 @@ export class StalePurchaseError extends Error {
  */
 export async function savePurchaseTx(
   purchase: Purchase,
-  expectedRevision: number | null
+  expectedRevision: number | null,
+  baseline?: Purchase
 ): Promise<Purchase> {
   const { db } = getFirebase();
   const ref = doc(db, "purchases", purchase.id);
@@ -2689,12 +2690,29 @@ export async function savePurchaseTx(
       if (expectedRevision !== (freshRevision ?? null)) throw new StalePurchaseError();
     }
     const freshData = snap.data() as Record<string, unknown>;
-    // Verbatim carry: fields owned by the receive/expense flows, never by the
-    // form — a concurrent assignment or reception must survive the edit.
+    // #373 r2: `sourcingExpenses` is OWNED by the purchase form (add/edit/
+    // remove via «+ Agregar gasto») — a verbatim carry silently reverted the
+    // operator's own second save (review bloqueante). With the form's
+    // BASELINE, the form's list is the intent and anything the baseline never
+    // saw (a concurrent assignExpenseTx append, another tab) rides along.
+    // Without a baseline (other callers), it stays verbatim — untouched.
+    const freshExpenses = freshData.sourcingExpenses as Purchase["sourcingExpenses"] | undefined;
+    let sourcingExpenses: Purchase["sourcingExpenses"];
+    if (baseline) {
+      const known = new Set((baseline.sourcingExpenses ?? []).map((expense) => expense.id));
+      const unseen = (freshExpenses ?? []).filter((expense) => !known.has(expense.id));
+      sourcingExpenses = unseen.length
+        ? [...(purchase.sourcingExpenses ?? []), ...unseen]
+        : purchase.sourcingExpenses;
+    } else {
+      sourcingExpenses = freshExpenses ?? purchase.sourcingExpenses;
+    }
+    // Verbatim carry: fields owned by the receive flow, never by the form.
     const carried: Record<string, unknown> = {};
-    for (const key of ["sourcingExpenses", "status", "receivedAt"]) {
+    for (const key of ["status", "receivedAt"]) {
       if (freshData[key] !== undefined) carried[key] = freshData[key];
     }
+    if (sourcingExpenses !== undefined) carried.sourcingExpenses = sourcingExpenses;
     const saved: Purchase = {
       ...purchase,
       ...carried,
