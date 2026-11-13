@@ -502,6 +502,16 @@ test("choose the exact color when adding a line to an existing order (#394)", as
   await page.getByRole("button", { name: "Guardar pedido", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
 
+  // #399: the saved color travels with the line — list preview, shared
+  // WhatsApp text and receipt keep the exact piece tellable apart from its
+  // homonymous ficha after saving.
+  const savedCard = page.getByRole("heading", { name: /#LOR394/ }).locator("../../..");
+  await expect(savedCard.getByText(/Reloj de prueba · Plateado/)).toBeVisible();
+  await savedCard.getByRole("button", { name: "Ver detalle para compartir" }).click();
+  await expect(page.getByLabel("Detalle del pedido")).toHaveValue(/Reloj de prueba · Plateado/);
+  await expect(page.getByTestId("receipt-preview").getByText(/Reloj de prueba · Plateado/)).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar", exact: true }).click();
+
   await gotoClean(page, `/pedidos/${orderId}`);
   await expect(page.getByRole("combobox", { name: /^Color\b/ })).toHaveValue("silver");
   await expect(page.getByLabel("Producto", { exact: true }).first()).toHaveValue(baseProduct.name);
