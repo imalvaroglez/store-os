@@ -109,6 +109,27 @@ describe("AnimatedNumber (#406: carrera de carga inicial)", () => {
     expect(view!.container.textContent).toBe("$0");
   });
 
+  it("un valor que llega a mitad de una animación hacia un total no cero tampoco se pisa (cobertura de revisión)", async () => {
+    // Mount with a real total (cached data), animation 0→500 in flight, then
+    // the total grows to 800 (another order lands): same cancel+settle path.
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<AnimatedNumber value={500} format="currency" />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      stepFrames(3);
+    });
+    await act(async () => {
+      view!.rerender(<AnimatedNumber value={800} format="currency" />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      stepFrames(10);
+    });
+    expect(view!.container.textContent).toBe("$800");
+  });
+
   it("si el observer nunca arma y el valor llega después del montaje, se muestra de inmediato", async () => {
     // IO present but its callback never delivers (throttled frames — the
     // embedded-webview case observed live in #406).
