@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.16.1",
+    "date": "2026.11.13",
+    "title": "El color de la pieza viaja contigo en todo el pedido",
+    "notes": [
+      "Cuando una pieza se vende por color, ahora el color elegido aparece en todas partes: en la lista de pedidos («Reloj Austin · Plateado»), en el detalle para compartir por WhatsApp y en el recibo imprimible. Con dos fichas del mismo nombre, ya no hay riesgo de entregar la pieza equivocada.",
+      "El «Detalle para compartir» quedó más ordenado: las acciones de Copiar e Imprimir/Guardar PDF comparten alineación, altura y estilo, y el aviso de impresión ya no ocupa espacio fijo. El recibo imprimible sale limpio, sin el pie de pedidos por WhatsApp.",
+      "Correcciones de confiabilidad internas (flaky tests endurecidos) — sin cambios en tus datos ni en tu forma de trabajar."
+    ]
+  },
+  {
     "version": "1.16.0",
     "date": "2026.11.12",
     "title": "Dinero que cuadra y fichas que no pierden piezas",
