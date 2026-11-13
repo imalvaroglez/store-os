@@ -23,7 +23,7 @@ import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange
 import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
-import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
+import { effectiveOrderStatus, migrateOrder, orderItems, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
@@ -37,7 +37,7 @@ import {
 import type { AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
-import { incidentState } from "../../features/orders/incidents";
+import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
@@ -550,6 +550,14 @@ export async function saveOrderWithStockTx(
     if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
       throw new StaleOrderError();
     }
+    // #368: the line an incident sits on is EVIDENCE of the agreed solution
+    // (piece, quantity, historical price sustain the sale adjustment — and
+    // through it, the clienta's real credit position). An editor edit that
+    // removes or reshapes it re-derives a smaller effective total and invents
+    // saldo a favor; fail closed BEFORE any money/stock math runs. Edits
+    // unrelated to the evidence (notes, other lines) pass untouched.
+    const evidenceError = incidentEvidenceError(previous, orderItems(order));
+    if (evidenceError) throw new IncidentEvidenceError(evidenceError);
     // #168: the money fields belong to the payment path — an order save carries
     // them through VERBATIM from the doc read here, so a full-document write
     // can never wipe a concurrent abono's accumulator (Firestore retries this
