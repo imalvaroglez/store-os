@@ -73,6 +73,17 @@ describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
     expect(screen.getByText(/solo lectura/i)).toBeTruthy();
   });
 
+  it("si falla la carga de cobros, lo explica y marca los cobros como no disponibles (nunca $0 engañoso)", async () => {
+    mocks.loadOrderPaymentsDocs.mockReset().mockRejectedValue(new Error("offline"));
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    expect(await screen.findByText(/No se pudieron cargar los cobros/i)).toBeTruthy();
+    // La FILA de cobros dice «no disponibles» (no un $0.00 engañoso).
+    const cobrosLabel = screen.getByText("Cobros del mes (fecha real)");
+    expect(cobrosLabel.parentElement?.textContent).toContain("no disponibles");
+    // Las ventas no dependen de los cobros: siguen mostrándose.
+    expect(screen.getByText("$500.00")).toBeTruthy();
+  });
+
   it("navega al mes anterior y muestra el anticipo cobrado allí", async () => {
     // Anticipo del mes anterior + entrega de este mes (el contrato).
     const prevIso = currentMonthIso(1);

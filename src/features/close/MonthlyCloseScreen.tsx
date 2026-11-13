@@ -27,6 +27,9 @@ export function MonthlyCloseScreen() {
   const [offset, setOffset] = useState(0);
   const [paymentsByOrder, setPaymentsByOrder] = useState<Record<string, OrderPayment[]>>({});
   const [loadingPayments, setLoadingPayments] = useState(true);
+  // #129: a failed cobros load must SAY so — silent $0 would read as "no hay
+  // cobros" and mislead the preview.
+  const [paymentsFailed, setPaymentsFailed] = useState(false);
 
   const month = useMemo(() => shiftMonth(cdmxCurrentMonth(), offset), [offset]);
   const storeOrders = useMemo(
@@ -45,10 +48,16 @@ export function MonthlyCloseScreen() {
     setLoadingPayments(true);
     loadOrderPaymentsDocs(paymentOrderIds)
       .then((loaded) => {
-        if (alive) setPaymentsByOrder(loaded);
+        if (alive) {
+          setPaymentsByOrder(loaded);
+          setPaymentsFailed(false);
+        }
       })
       .catch(() => {
-        if (alive) setPaymentsByOrder({});
+        if (alive) {
+          setPaymentsByOrder({});
+          setPaymentsFailed(true);
+        }
       })
       .finally(() => {
         if (alive) setLoadingPayments(false);
@@ -104,7 +113,7 @@ export function MonthlyCloseScreen() {
               <Money exact amount={close.operatingResultCents / 100} />
             </StatRow>
             <StatRow label="Cobros del mes (fecha real)">
-              <Money exact amount={close.collectionsCents / 100} />
+              {paymentsFailed ? <span>no disponibles</span> : <Money exact amount={close.collectionsCents / 100} />}
             </StatRow>
           </div>
           <p className="mt-3 text-xs text-on-surface-soft">
@@ -112,6 +121,16 @@ export function MonthlyCloseScreen() {
             No se cierra el periodo ni se autoriza reparto.
           </p>
         </Card>
+
+        {paymentsFailed && (
+          <Card className="!bg-terracotta-soft/60 ring-terracotta/20">
+            <p className="text-sm font-semibold text-terracotta">No se pudieron cargar los cobros.</p>
+            <p className="text-xs text-on-surface-soft">
+              Ventas y gastos no dependen de ellos; los cobros de este mes quedan como no disponibles.
+              Revisa tu conexión y vuelve a entrar.
+            </p>
+          </Card>
+        )}
 
         {(!close.coverage.complete || storeOrders.length > 0) && (
           <Card>

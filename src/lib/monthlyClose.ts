@@ -50,8 +50,14 @@ export type CloseInputs = {
 
 const MONTH_NAMES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
-/** Calendar month (YYYY-MM) of an instant, in America/Mexico_City. */
+/**
+ * Calendar month (YYYY-MM) in America/Mexico_City. A date-only string
+ * (YYYY-MM-DD — the effective LOCAL dates deliveries and cobros carry, per
+ * #333/#123) IS its own CDMX date: reading it as UTC midnight would shift day
+ * 1 to the previous month. Only full instants resolve through the zone.
+ */
 export function cdmxMonthKey(iso: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso.slice(0, 7);
   // en-CA yields YYYY-MM-DD; slicing keeps it stable across engines.
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit" }).format(new Date(iso));
   return date.slice(0, 7);
@@ -120,6 +126,20 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
       if (monthKeyOf({ year: Number(payment.date.slice(0, 4)), month: Number(payment.date.slice(5, 7)) }) === monthKey) {
         collectionsCents += signedCents(payment.amount);
       }
+    }
+
+    // An ANTICIPO captured on the order with NO receipt record (never
+    // materialized — the operator did not register its date/method) has no
+    // verifiable date either: it stays «Fecha por confirmar», out of every
+    // monthly total, instead of being invented into some month.
+    const materializedDeposit = (paymentsByOrder[order.id] ?? []).some((payment) => payment.id === "inherited_deposit");
+    if (order.deposit > 0 && !materializedDeposit) {
+      coverage.unconfirmedCollections.push({
+        orderId: order.id,
+        reference: orderReference(order),
+        paymentId: "anticipo_sin_recibo",
+        amountCents: orderAmountCents(order.deposit),
+      });
     }
   }
 
