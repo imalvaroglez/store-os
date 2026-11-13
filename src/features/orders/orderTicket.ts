@@ -1,4 +1,4 @@
-import type { Order } from "../../types";
+import type { Order, OrderItem } from "../../types";
 import { formatMoneyPlain } from "../../lib/money";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { effectiveOrderStatus, orderItems, orderReference, orderTotals } from "../../lib/orders";
@@ -17,9 +17,19 @@ import { ORDER_STATUS_LABELS } from "./orderStatus";
  * lines never appear. One click copies this from the order card's
  * "Detalle para compartir" sheet.
  */
+// Names must not carry literal '*' or they would break WhatsApp's bold pairing.
+const clean = (value: string) => value.replace(/\*/g, "").replace(/\s+/g, " ").trim();
+
+/** #399: a line's identity exactly as captured — name plus the color the sale
+ * recorded. Homonymous fichas (individual vs. color design) stay tellable
+ * apart in the orders list, the receipt and the shared text even if the
+ * catalog ficha is later edited or removed; lines without a color (legacy
+ * or free text) render exactly as before. */
+export function orderLineLabel(item: OrderItem): string {
+  return `${clean(item.productName)}${item.variantColor ? ` · ${clean(item.variantColor)}` : ""}`;
+}
+
 export function orderTicketText(order: Order, storeName: string, currentCustomerName?: string): string {
-  // Names must not carry literal '*' or they would break WhatsApp's bold pairing.
-  const clean = (value: string) => value.replace(/\*/g, "").replace(/\s+/g, " ").trim();
   const items = orderItems(order);
   const totalCents = items.reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
   // #168 F4 + #189 + #203: the ticket's Saldo is THE canonical balance from
@@ -57,7 +67,7 @@ export function orderTicketText(order: Order, storeName: string, currentCustomer
     ...group.lines.map((item) => {
       itemNumber += 1;
       const quantity = item.quantity > 1 ? `${item.quantity} × ` : "";
-      return `${itemNumber}. ${quantity}${clean(item.productName)} ${formatMoneyPlain(orderAmountCents(item.unitPrice, item.quantity) / 100)}`;
+      return `${itemNumber}. ${quantity}${orderLineLabel(item)} ${formatMoneyPlain(orderAmountCents(item.unitPrice, item.quantity) / 100)}`;
     }),
   ]);
 
@@ -119,7 +129,6 @@ export type OrderTicketData = {
 };
 
 export function orderTicketData(order: Order, storeName: string, currentCustomerName?: string): OrderTicketData {
-  const clean = (value: string) => value.replace(/\*/g, "").replace(/\s+/g, " ").trim();
   const items = orderItems(order);
   const totalCents = items.reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
   const receivedCents = docReceivedCents(order);
@@ -137,7 +146,7 @@ export function orderTicketData(order: Order, storeName: string, currentCustomer
     dateLabel: order.createdAt ? longDate(order.createdAt) : "",
     lines: items.map((item, index) => ({
       index: index + 1,
-      label: `${item.quantity > 1 ? `${item.quantity} × ` : ""}${clean(item.productName)}`,
+      label: `${item.quantity > 1 ? `${item.quantity} × ` : ""}${orderLineLabel(item)}`,
       amount: formatMoneyPlain(orderAmountCents(item.unitPrice, item.quantity) / 100),
     })),
     total: formatMoneyPlain(totalCents / 100),
