@@ -178,7 +178,9 @@ async function getDocRest(path: string): Promise<{ exists: boolean; data?: Recor
     const key = EMULATOR ? "" : `?key=${import.meta.env.VITE_FIREBASE_API_KEY as string}`;
     let res: Response;
     try {
-      res = await fetch(`${DOCS_BASE}/${path}${key}`, { headers: { accept: "application/json" } });
+      // #359: belt against any intermediary/browser layer deciding to cache
+      // these reads — catalog data must always hit the network.
+      res = await fetch(`${DOCS_BASE}/${path}${key}`, { headers: { accept: "application/json" }, cache: "no-store" });
     } catch {
       throw new RestReadError(0, path); // network-level failure: transient
     }

@@ -23,6 +23,10 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
+  // #359: the PUBLIC catalog must never depend on this worker — a bug here
+  // (scope /) must not be able to hold a clienta's storefront hostage. Pass
+  // straight through: no respondWith, the network/browser handle it.
+  if (new URL(req.url).pathname.startsWith("/catalogo/")) return;
   // Network-first for navigation so updates land; cache fallback offline.
   // On a successful online navigation we ALSO persist the fresh /index.html
   // into the SHELL cache — a second rotation path independent of a new SW
@@ -49,11 +53,15 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
+  // #359: network-first for every other GET — a stale cache hit (the install
+  // shell, any future write) must never win while online; the cache stays as
+  // the offline fallback only. Cache-first here could serve an old logo/icon
+  // forever on a normal reload.
   event.respondWith(
-    caches.match(req).then(
-      (cached) =>
-        cached ||
-        fetch(req).catch(() => new Response("", { status: 504, statusText: "Offline" }))
+    fetch(req).catch(() =>
+      caches.match(req).then(
+        (hit) => hit || new Response("", { status: 504, statusText: "Offline" })
+      )
     )
   );
 });
