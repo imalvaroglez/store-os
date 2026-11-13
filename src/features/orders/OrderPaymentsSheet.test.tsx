@@ -385,3 +385,27 @@ describe("#271 correcciones del anticipo visibles en Cobros", () => {
     expect(screen.getByText(/\$500\.00 → \$100\.00 — Anticipo capturado por error: era \$100 · 9\/11\/2026/)).toBeInTheDocument();
   });
 });
+
+describe("#369 pedido cancelado: Cobros en modo consulta", () => {
+  it("no ofrece registrar cobros; los ajustes firmados y la evidencia quedan", async () => {
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    const cancelled = {
+      ...order,
+      orderStatus: "cancelled" as const,
+      paymentsReceivedCents: 12000,
+    };
+    render(
+      <ToastProvider>
+        <OrderPaymentsSheet order={cancelled} open onClose={() => {}} />
+      </ToastProvider>
+    );
+    await screen.findByText("Cobros del pedido");
+    expect(screen.queryByRole("button", { name: "Registrar cobro" })).toBeNull();
+    expect(screen.queryByLabelText("Monto")).toBeNull();
+    expect(screen.getByText(/pedido cancelado/i)).toBeInTheDocument();
+    // La vía de salida con evidencia (ajuste firmado) no es un cobro: queda.
+    expect(screen.getByRole("button", { name: /Registrar ajuste o devolución/i })).toBeInTheDocument();
+  });
+});
