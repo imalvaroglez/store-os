@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { useStore, newSupplier, newProduct } from "../../app/StoreProvider";
 import {
   Button,
@@ -29,6 +29,7 @@ import {
   purchaseSaleExpenseTotalCents,
 } from "../../lib/purchases";
 import { openPurchasePdf } from "../../app/firebase/pdfImport";
+import { StalePurchaseError } from "../../app/firebase/firestoreData";
 import {
   effectivePurchaseStatus,
   isSaleExpense,
@@ -82,6 +83,9 @@ type Filter = "all" | PurchaseLineStatus;
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
   const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, adjustReceivedPurchase, cloud } = useStore();
   const toast = useToast();
+  // #373: the revision this form is editing against — advanced on every save
+  // so the in-place draft loop stays fresh, rejected when another tab moved on.
+  const revisionRef = useRef<number | null>(purchase.revision ?? null);
   const [draft, setDraft] = useState<Purchase>(() => {
     const editable = effectivePurchaseStatus(purchase) !== "received";
     const tickets = purchase.tickets?.length ? purchase.tickets : [legacyPurchaseTicket(purchase)];
@@ -441,9 +445,21 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     };
     setSaving(true);
     try {
-      await upsertPurchase(next);
-    } catch {
-      toast.error("No se pudo guardar la compra. Revisa tu conexión e intenta de nuevo.");
+      // #373: revision contract — the save is rejected if the purchase changed
+      // in another tab/device since THIS form loaded it (no silent last-wins).
+      // The saved revision is kept for the in-place "Borrador guardado" loop.
+      const saved = await upsertPurchase(next, revisionRef.current);
+      // The provider returns the SAVED purchase (with its fresh revision);
+      // stay defensive for a void return so the receive step below never
+      // depends on it.
+      if (saved) {
+        revisionRef.current = saved.revision ?? revisionRef.current;
+        Object.assign(next, saved);
+      }
+    } catch (e) {
+      toast.error(e instanceof StalePurchaseError
+        ? e.message
+        : "No se pudo guardar la compra. Revisa tu conexión e intenta de nuevo.");
       return;
     } finally {
       setSaving(false);

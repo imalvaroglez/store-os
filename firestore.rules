@@ -218,7 +218,12 @@ service cloud.firestore {
     }
 
     match /purchases/{id} {
-      allow read: if canOperateStore(resource.data.storeId);
+      // #373: same null-safe get as orders/products — the revision-aware save
+      // transaction reads the doc BEFORE deciding create-vs-update, so a
+      // missing purchase must read cleanly for signed-in operators (the
+      // storeId gate still applies to everything that exists).
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId);
       // A received purchase is inventory evidence: stock was already applied,
       // so it must never be mutated or deleted by anyone (the app blocks it
@@ -230,7 +235,9 @@ service cloud.firestore {
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
         && (
-          resource.data.status != 'received'
+          // .get(): a legacy purchase may predate the status field — an absent
+          // status must not blow up the whole evaluation (#373).
+          resource.data.get('status', '') != 'received'
           || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'updatedAt'])
         );
       allow delete: if canOperateStore(resource.data.storeId)
