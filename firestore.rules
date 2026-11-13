@@ -266,7 +266,7 @@ service cloud.firestore {
         // path (compensations exclude cancelled, incidents reject them).
         // Signed adjustments stay valid evidence for the PO's future exit.
         && (data.kind != 'payment'
-            || get(/databases/$(database)/documents/orders/$(orderId)).data.get('orderStatus', '') != 'cancelled')
+            || get(/databases/$(database)/documents/orders/$(orderId)).data.get('orderStatus', get(/databases/$(database)/documents/orders/$(orderId)).data.get('status', '')) != 'cancelled')
         && data.createdAt is string && data.createdAt.size() > 0
         && data.amount is number && data.amount != 0
         && math.abs(data.amount) <= 9000000000000

@@ -577,6 +577,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     expect(docs.size).toBe(1); // only the prior evidence
   });
 
+  it("#369 regla: cancelado LEGADO con campo plano status también rechaza el lote SDK", async () => {
+    // Review #1 hallazgo MENOR: docs previos a orderStatus solo portan `status`.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cancelled-legacy-status"), {
+        storeId: "tx-store",
+        items: [{ lineId: "cls_L0", productName: "Aro Sol", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, status: "cancelled", // legacy plane field — no orderStatus
+        createdAt: "", updatedAt: "",
+      });
+    });
+    const parent = doc(holder.db, "orders/cancelled-legacy-status");
+    const record = { ...payment("cls_sdk", 50), orderId: "cancelled-legacy-status", amountCents: 5000 };
+    const batch = writeBatch(holder.db);
+    batch.set(doc(holder.db, "orders/cancelled-legacy-status/payments/cls_sdk"), record);
+    batch.update(parent, { lastPaymentId: "cls_sdk", paymentsRevision: 1, paymentsReceivedCents: 5000 });
+    await expect(batch.commit()).rejects.toThrow();
+    const docs = await getDocs(collection(holder.db, "orders/cancelled-legacy-status/payments"));
+    expect(docs.size).toBe(0);
+  });
+
   it("#369 a signed adjustment on a cancelled order stays valid evidence (the exit is a separate PO decision)", async () => {
     const saved = await registerOrderPaymentTx({
       ...payment("canc_adj", -30), orderId: "cancelled-pay-order",
