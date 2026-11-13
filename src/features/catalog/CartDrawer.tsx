@@ -287,8 +287,7 @@ export function CartDrawer({
 
   const tiers: PublicPriceTier[] = store.priceTiers ?? [];
   const qtyLines: CartQtyLine[] = shown.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
-  // #305: the request summary — habitual (non-identity) headline + the
-  // conditional identity row. Drives BOTH the drawer rows and the message.
+  // The drawer and WhatsApp share the habitual subtotal and identity estimate.
   const request = cartRequestSummary(tiers, qtyLines);
   const pricing = calculateOrderPricing(tiers, qtyLines);
 
@@ -382,7 +381,7 @@ export function CartDrawer({
                       {formatMoneyExact(request.habitualSubtotal)} MXN
                     </dd>
                   </div>
-                  {request.showIdentityHint && request.identityTier && (
+                  {request.identityTier && (
                     <div className="flex items-baseline justify-between gap-3">
                       <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
                         ¿Eres {request.identityTier.label}? Subtotal estimado

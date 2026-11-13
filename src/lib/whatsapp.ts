@@ -109,7 +109,7 @@ export function buildCartOrderUrl(
   lines: CartOrderLine[],
   pricing?: OrderPricing | null,
   customerName?: string,
-  /** #305: request summary (habitual + conditional identity row). When
+  /** #305: request summary (habitual + identity estimate). When
    * present it REPLACES the old single-price summary, so the message can
    * never contradict the cart. */
   request?: CartRequestSummary | null
@@ -146,10 +146,9 @@ export function buildCartOrderUrl(
         // Exact cents + MXN, identical to the drawer rows (1.13.1): the
         // message can never round away a cent the client just saw on screen.
         `Subtotal estimado: ${formatMoneyExact(request.habitualSubtotal)} MXN`,
-        // The identity estimate travels ONLY when the cart shows it (< $1,000
-        // habitual AND fully calculated) — same rule, same numbers.
-        ...(request.showIdentityHint && request.identitySubtotal != null
-          ? [`¿Eres ${esc(request.identityTier?.label ?? "")}? Subtotal estimado: ${formatMoneyExact(request.identitySubtotal)} MXN`]
+        // Match the drawer, omitting an estimate when any price is missing.
+        ...(request.identityTier && request.identitySubtotal != null
+          ? [`¿Eres ${esc(request.identityTier.label)}? Subtotal estimado: ${formatMoneyExact(request.identitySubtotal)} MXN`]
           : []),
         "Precios, beneficio y disponibilidad sujetos a confirmación.",
         "Envío no incluido.",

@@ -244,9 +244,7 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
     expect(text).not.toContain("*ARETES*");
   });
 
-  it("dos cifras etiquetadas cuando el carrito muestra la fila Iconic (< $1,000)", () => {
-    // habitual = 2×250 + 1×280 = 780 < 1000 → ambas.
-    expect(request.showIdentityHint).toBe(true);
+  it("dos cifras etiquetadas como estimados sujetos a confirmación", () => {
     const url = buildCartOrderUrl(store, "olivia", [
       { name: "Arracada Mimosa", qty: 2, category: "Aretes" },
       { name: "Collar Aurora", qty: 1, category: "Collares" },
@@ -258,17 +256,16 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
     expect(text).toContain("Envío no incluido");
   });
 
-  it("desde $1,000 habitual el mensaje OMITE la cifra Iconic (coherencia con el carrito)", () => {
+  it("con $1,000 habitual el mensaje mantiene la cifra Iconic", () => {
     const bigRequest = cartRequestSummary(tiers, [
       { qty: 4, unitPrices: { t_retail: 250, t_reseller: 90 } },
     ])!; // habitual $1,000 exacto
-    expect(bigRequest.showIdentityHint).toBe(false);
     const url = buildCartOrderUrl(store, "olivia", [
       { name: "Arracada Mimosa", qty: 4, category: "Aretes" },
     ], undefined, undefined, bigRequest);
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Subtotal estimado: $1,000.00 MXN");
-    expect(text).not.toContain("Iconic");
+    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $360.00 MXN");
   });
 
   it("cuadre exacto con el carrito (1.13.1): caso 19 piezas $140/$105/$55", () => {
@@ -286,14 +283,13 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
     ], undefined, undefined, req);
     const text = decodeURIComponent(url.split("text=")[1]);
     expect(text).toContain("Subtotal estimado: $1,995.00 MXN");
-    expect(text).not.toContain("1,045"); // jamás el subtotal Iconic divergente
-    expect(text).not.toContain("Iconic"); // $1,995 ≥ $1,000 → sin fila ni cifra
+    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $1,045.00 MXN");
   });
 
   it("centavos reales en ambas cifras cuando el habitual los lleva (1.13.1)", () => {
     const centsRequest = cartRequestSummary(tiers, [
       { qty: 3, unitPrices: { t_retail: 260.17, t_reseller: 90.33 } },
-    ])!; // habitual $780.51 < 1,000 → ambas filas
+    ])!;
     const url = buildCartOrderUrl(store, "olivia", [
       { name: "Arracada Mimosa", qty: 3, category: "Aretes" },
     ], undefined, undefined, centsRequest);
