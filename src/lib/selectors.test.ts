@@ -114,4 +114,37 @@ describe("productsToRestock (stock alerts)", () => {
     // The on-demand store itself derives nothing.
     expect(productsToRestock(all, "store_santi")).toEqual([]);
   });
+
+  // #365: color designs disappeared from "Por surtir" because the alert read
+  // only the (erased) design-level quantityOnHand. Same aggregate as the card
+  // (totalStock) — and the urgency ORDER must use it too, or a design at −3
+  // sorts as if it had none.
+  it("#365 includes color designs by variant aggregate, worst first", () => {
+    const design = (id: string, quantities: Array<number | undefined>): Product =>
+      ({
+        id,
+        storeId: "s1",
+        name: id,
+        quantityOnHand: undefined,
+        variants: quantities.map((quantityOnHand, i) => ({
+          id: `v${i}`,
+          color: `Color ${i}`,
+          quantityOnHand,
+        })),
+      }) as Product;
+    const all = [
+      stock("plain_out", "s1", 0),
+      design("color_negative", [-4, 1]), // aggregate −3, worst of all
+      design("color_out", [0, 0]),
+      design("color_low", [2, 0]), // aggregate 2 ≤ default 3
+      design("color_healthy", [10, 5]),
+      design("color_untracked", [undefined, undefined]), // sin dato, never 0
+    ];
+    expect(productsToRestock(all, "s1").map((p) => p.id)).toEqual([
+      "color_negative",
+      "plain_out", // ties with color_out at 0; stable sort keeps DOM-agnostic insertion order
+      "color_out",
+      "color_low",
+    ]);
+  });
 });

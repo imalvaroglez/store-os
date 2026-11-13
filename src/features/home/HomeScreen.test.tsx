@@ -39,6 +39,11 @@ function product(overrides: Partial<Product> & { id: string; name: string }): Pr
   } as Product;
 }
 
+/** Minimal color variant for #365 fixtures (required timestamps included). */
+function variant(id: string, color: string, quantityOnHand?: number) {
+  return { id, color, quantityOnHand, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" };
+}
+
 /** Alert badge texts in DOM order (each restock badge joins name · label). */
 function restockBadges(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll("span"))
@@ -76,6 +81,62 @@ describe("HomeScreen alertas de existencias (FER-09)", () => {
     ]);
     // Healthy stock never alerts.
     expect(screen.queryByText(/Collar sano/)).toBeNull();
+  });
+
+  it("#365 muestra diseños por color agotados y con agregado negativo — mismo agregado que la ficha", () => {
+    const state = fixtureState();
+    state.products = [
+      // "Reloj Austin" after #124: shelf moved to colors, design field erased.
+      product({
+        id: "austin",
+        name: "Reloj Austin",
+        quantityOnHand: undefined,
+        variants: [
+          variant("v1", "Cafe", 0),
+          variant("v2", "Ivory", 0),
+          variant("v3", "Black", 0),
+        ],
+      }),
+      product({
+        id: "arracadas",
+        name: "Arracadas Viento",
+        quantityOnHand: undefined,
+        variants: [
+          variant("v1", "Dorado", -5),
+          variant("v2", "Plata", 3),
+        ],
+      }),
+      // Sin rastreo (ningún color con existencia) y diseño sano: fuera.
+      product({
+        id: "untracked",
+        name: "Collar Nube",
+        quantityOnHand: undefined,
+        variants: [
+          variant("v1", "Perla", undefined),
+        ],
+      }),
+      product({
+        id: "healthy",
+        name: "Aretes Sol",
+        quantityOnHand: undefined,
+        variants: [
+          variant("v1", "Dorado", 12),
+        ],
+      }),
+    ];
+    const Wrapper = withState(state);
+    const { container } = render(
+      <Wrapper>
+        <HomeScreen />
+      </Wrapper>
+    );
+
+    expect(screen.getByText("⚠️ Por surtir")).toBeTruthy();
+    // Worst first by aggregate: −2 (Arracadas) antes que 0 (Austin).
+    expect(restockBadges(container)).toEqual([
+      "Arracadas Viento · Faltan 2",
+      "Reloj Austin · Agotado",
+    ]);
   });
 
   it("no muestra alertas en tiendas bajo pedido (sin seguimiento de stock)", () => {
