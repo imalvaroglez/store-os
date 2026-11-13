@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
+import { Badge, Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
 import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
 import {
   loadPublicCatalog,
@@ -94,18 +94,27 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   }
 
   const { store, catalog } = data;
-  const visibleSlugs = new Set(catalog.products.map((product) => product.productSlug));
+  // #371: the SAME truth Olivia's storefront uses — a manual «Agotado» pause
+  // (availability) or a real empty shelf (stockSignal) applies to EVERY
+  // store's public catalog, and «Agotados: Ocultos» hides them from the grid.
+  const isSoldOut = (product: { availability?: string | null; stockSignal?: string | null }) =>
+    product.availability === "sold_out" || product.stockSignal === "agotado";
+  const showSoldOut = store.storefront?.showSoldOut ?? true;
+  const products = showSoldOut ? catalog.products : catalog.products.filter((product) => !isSoldOut(product));
+  const visibleSlugs = new Set(products.map((product) => product.productSlug));
   const visibleLines = pruneCartLines(cart.lines, visibleSlugs);
   // #305: primary category name per product, from the SAME projection the
   // grid uses (no extra reads). "Sin categoría" is the drawer's fallback.
-  const categoryNameBySlug = Object.fromEntries(catalog.products.map((product) => [
+  const categoryNameBySlug = Object.fromEntries(products.map((product) => [
     product.productSlug,
     catalog.categories.find((category) => product.categoryIds?.[0] === category.id)?.name ?? "",
   ]));
   const pieces = cartPieces(visibleLines);
   const quantityBySlug = new Map(visibleLines.map((line) => [line.productSlug, line.qty]));
-  const signalBySlug = catalog.products.reduce<Record<string, PublicStockSignal>>((signals, product) => {
-    if (product.stockSignal) signals[product.productSlug] = product.stockSignal;
+  // A paused piece reads as agotado EVERYWHERE — including a cart saved before
+  // the pause: the drawer turns that line into "sobre pedido", never a firm order.
+  const signalBySlug = products.reduce<Record<string, PublicStockSignal>>((signals, product) => {
+    signals[product.productSlug] = isSoldOut(product) ? "agotado" : (product.stockSignal ?? "disponible");
     return signals;
   }, {});
   return (
@@ -118,11 +127,12 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         </div>
       </header>
       <main className="p-4 md:p-8"><div className="mx-auto max-w-6xl">
-        {catalog.products.length === 0 ? <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." /> : (
+        {products.length === 0 ? <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." /> : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {catalog.products.map((product) => <Card key={product.productSlug} className="overflow-hidden p-0">
+            {products.map((product) => { const soldOut = isSoldOut(product); return <Card key={product.productSlug} className="overflow-hidden p-0">
               <ProductImage src={product.imageUrl ?? undefined} alt={product.name} size="full" />
               <div className="p-4"><h2 className="serif-display text-lg font-semibold text-ink">{product.name}</h2>
+                {soldOut && <div className="mt-1"><Badge tone="neutral">Agotado</Badge></div>}
                 {/* #124: one design, its colors listed — never N loose fichas. */}
                 {product.variants && product.variants.length > 0 && (
                   <p className="mt-1 flex flex-wrap gap-1 text-xs text-ink-soft">
@@ -138,18 +148,22 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                 )}
                 {product.publicDescription && <p className="text-sm text-ink-soft mt-1">{product.publicDescription}</p>}
                 <PublicTierPrices store={store} product={product} />
-                <CartProductControl
-                  key={`${product.productSlug}-${quantityBySlug.get(product.productSlug) ?? 0}`}
-                  productSlug={product.productSlug}
-                  productName={product.name}
-                  quantity={quantityBySlug.get(product.productSlug) ?? 0}
-                  onAdd={() => cart.add(cartItemFromPublicProduct(product))}
-                  onSetQty={cart.setQty}
-                  full
-                  className="mt-2"
-                />
+                {/* #371: una pieza agotada o en pausa no se solicita aquí; si ya
+                    estaba en un carrito guardado, el cajón la pasa a sobre pedido. */}
+                {!soldOut && (
+                  <CartProductControl
+                    key={`${product.productSlug}-${quantityBySlug.get(product.productSlug) ?? 0}`}
+                    productSlug={product.productSlug}
+                    productName={product.name}
+                    quantity={quantityBySlug.get(product.productSlug) ?? 0}
+                    onAdd={() => cart.add(cartItemFromPublicProduct(product))}
+                    onSetQty={cart.setQty}
+                    full
+                    className="mt-2"
+                  />
+                )}
               </div>
-            </Card>)}
+            </Card>;})}
           </div>
         )}
       </div></main>
