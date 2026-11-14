@@ -137,3 +137,56 @@ describe("public cart estimate and Iconic progress", () => {
     expect(cartRequestSummary(TIERS.map(t => ({ ...t, hidden: t.id === "iconic" })), [line(12)])!.identityTier).toBeNull();
   });
 });
+
+// #420 — casos exactos del collar del PO: Regular $150, Girly $100 (desde 5
+// piezas), Iconic $70, mínimo Iconic $1,000 a precios Iconic.
+describe("collar del PO (#420) — casos exactos del contrato", () => {
+  const COLLAR: PriceTierDef[] = TIERS; // same shape: Regular / Girly(5) / Iconic($1,000)
+  const collar = (qty: number): CartQtyLine[] => [{ qty, unitPrices: { regular: 150, girly: 100, iconic: 70 } }];
+  const summary = (qty: number) => cartRequestSummary(COLLAR, collar(qty))!;
+
+  it("4 piezas: $600 a precio Regular principal, $280 Iconic en la segunda fila", () => {
+    const r = summary(4);
+    expect(r.activeTier.id).toBe("regular");
+    expect(r.estimatedSubtotal).toBe(600);
+    expect(r.showIdentityHint).toBe(true);
+    expect(r.identitySubtotal).toBe(280);
+    expect(r.identityAmountRemaining).toBe(720);
+  });
+
+  it("5 piezas: $500 a precio Girly principal, $350 Iconic en la segunda fila", () => {
+    const r = summary(5);
+    expect(r.activeTier.id).toBe("girly");
+    expect(r.estimatedSubtotal).toBe(500);
+    expect(r.showIdentityHint).toBe(true);
+    expect(r.identitySubtotal).toBe(350);
+    expect(r.identityAmountRemaining).toBe(650);
+  });
+
+  it("15 piezas: $1,050 a precio Iconic como principal; segunda fila oculta", () => {
+    const r = summary(15);
+    expect(r.activeTier.id).toBe("iconic");
+    expect(r.estimatedSubtotal).toBe(1050);
+    expect(r.identityQualifies).toBe(true);
+    expect(r.showIdentityHint).toBe(false);
+    expect(r.lineBreakdown).toEqual([{ unitPrice: 70, subtotal: 1050 }]);
+  });
+
+  it("14 piezas (quitando una): $1,400 a precio Girly principal, $980 Iconic en la segunda fila", () => {
+    const r = summary(14);
+    expect(r.activeTier.id).toBe("girly");
+    expect(r.estimatedSubtotal).toBe(1400);
+    expect(r.showIdentityHint).toBe(true);
+    expect(r.identitySubtotal).toBe(980);
+    expect(r.identityAmountRemaining).toBe(20);
+  });
+
+  it("10 piezas a $100 Girly: el estimado Iconic $700 sigue visible", () => {
+    const r = summary(10);
+    expect(r.activeTier.id).toBe("girly");
+    expect(r.estimatedSubtotal).toBe(1000);
+    expect(r.showIdentityHint).toBe(true);
+    expect(r.identitySubtotal).toBe(700);
+    expect(r.identityAmountRemaining).toBe(300);
+  });
+});

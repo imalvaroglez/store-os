@@ -134,14 +134,14 @@ describe("PublicCatalogScreen carrito", () => {
     expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
     fireEvent.click(screen.getByRole("button", { name: "Abrir pedido" }));
     expect(await screen.findByText("$1,080.00 MXN")).toBeTruthy();
-    expect(screen.getByText("Subtotal estimado · Iconic")).toBeTruthy();
-    expect(screen.queryByText("Subtotal estimado · Girly")).toBeNull();
+    expect(screen.getByText("Subtotal estimado - precio Iconic")).toBeTruthy();
+    expect(screen.queryByText("Subtotal estimado - precio Girly")).toBeNull();
     expect(within(screen.getByRole("list")).getByText("Precio por pieza")).toBeTruthy();
 
     const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
     expect(text).toContain("*12 piezas en total*");
-    expect(text).toContain("Subtotal estimado · Iconic: $1,080.00 MXN");
+    expect(text).toContain("Subtotal estimado - precio Iconic: $1,080.00 MXN");
     expect(text).not.toContain("Girly");
   });
 });
