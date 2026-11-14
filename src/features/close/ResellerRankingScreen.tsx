@@ -58,7 +58,8 @@ export function ResellerRankingScreen() {
           </div>
           <p className="mt-1 text-xs text-on-surface-soft">
             Importe neto de piezas efectivamente entregadas en el mes (precios reales, devoluciones confirmadas
-            descontadas). Participan solo clientas marcadas como emprendedoras.
+            descontadas). Participan solo clientas marcadas como emprendedoras. Orden: mayor importe neto; si empata,
+            más piezas; si también empata, lo decides tú y queda señalado aquí.
           </p>
           {podium.length === 0 ? (
             <p className="mt-3 text-sm text-on-surface-soft">
@@ -83,26 +84,17 @@ export function ResellerRankingScreen() {
           )}
           {ranking.needsManualResolution && (
             <p className="mt-3 text-xs text-terracotta">
-              Hay un empate persistente (mismo importe y mismas piezas): Fer decide el orden definitivo y registra el
-              motivo antes de comunicar incentivos.
+              Hay un empate persistente (mismo importe y mismas piezas): el orden definitivo lo decides tú. Registrar
+              esa decisión en el sistema llegará en una etapa próxima — por ahora el empate queda señalado aquí.
             </p>
           )}
         </Card>
 
         {isCurrent && podium.length > 0 && (
-          <Card className="!bg-terracotta-soft/60 ring-terracotta/20">
-            <p className="text-sm font-semibold text-terracotta">Revisa el ranking al cierre del mes.</p>
-            <p className="text-xs text-on-surface-soft">
-              Este aviso no confirma el resultado ni entrega incentivos: al terminar el mes, confirma el top antes de
-              comunicarlo a tus emprendedoras. Los incentivos y su comunicación son tuyos.
-            </p>
-          </Card>
+          <p className="text-xs text-ink-soft px-1">
+            Al cierre del mes confirma el top antes de comunicarlo; los incentivos y su comunicación son tuyos.
+          </p>
         )}
-
-        <p className="text-xs text-ink-soft px-1">
-          Etapa FER-17 (#132): cálculo y vista privados. Si una devolución posterior cambia un resultado ya confirmado,
-          el histórico se conserva y el cambio se te señala para tu decisión.
-        </p>
         <p className="text-xs text-ink-soft px-1">
           <Button variant="ghost" className="!px-0" onClick={() => navigate("/clientes")}>Ver clientas →</Button>
         </p>

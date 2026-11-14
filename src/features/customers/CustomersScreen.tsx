@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { navigate } from "../../lib/router";
 import { useStore, newCustomer } from "../../app/StoreProvider";
 import {
   Badge,
@@ -66,9 +67,16 @@ export function CustomersScreen() {
         title="Clientes"
         subtitle={`${customers.length} ${customers.length === 1 ? "cliente" : "clientes"}`}
         action={
-          <Button onClick={() => sheet.openCreate(newCustomer(activeStore.id))}>
-            + Agregar
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* #132 r2: the resellers' ranking lives where Fer looks for her
+                entrepreneurs — not buried under Gastos (review UX block). */}
+            <Button variant="ghost" onClick={() => navigate("/productos/ranking")}>
+              Top emprendedoras
+            </Button>
+            <Button onClick={() => sheet.openCreate(newCustomer(activeStore.id))}>
+              + Agregar
+            </Button>
+          </div>
         }
       />
 
