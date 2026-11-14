@@ -30,6 +30,7 @@ import { ExpensesScreen } from "../features/expenses/ExpensesScreen";
 import { PackagingScreen } from "../features/packaging/PackagingScreen";
 import { PricingRulesScreen } from "../features/pricing/PricingRulesScreen";
 import { PricingStrategyScreen } from "../features/pricing/PricingStrategyScreen";
+import { ProfitDistributionScreen } from "../features/close/ProfitDistributionScreen";
 import { StoreSettingsScreen } from "../features/stores/StoreSettingsScreen";
 import { PlatformUsersScreen } from "../features/users/PlatformUsersScreen";
 
@@ -59,7 +60,7 @@ export function AppShell() {
   if (storeSettingsRoute) {
     tab = "tienda";
   } else if (seg === "productos") {
-    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : "productos";
+    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "reparto" ? "productos_reparto" : "productos";
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
@@ -153,6 +154,11 @@ export function AppShell() {
       break;
     case "productos_reglas":
       screen = <PricingRulesScreen key={activeStore?.id ?? "store"} />;
+      break;
+    case "productos_reparto":
+      // #128 stage: read-only distribution proposal; key per store so
+      // switching stores never carries another store's simulation inputs.
+      screen = <ProfitDistributionScreen key={activeStore?.id ?? "store"} />;
       break;
     case "productos_estrategia":
       // key: switching stores must never carry one store's draft into another.
