@@ -252,23 +252,23 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
       { name: "Collar Aurora", qty: 1, category: "Collares" },
     ], undefined, undefined, request);
     const text = decodeURIComponent(url.split("text=")[1]);
-    expect(text).toContain("Subtotal estimado: $780.00 MXN");
-    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $280.00 MXN");
+    expect(text).toContain("Subtotal estimado · Regular: $780.00 MXN");
+    expect(text).toContain("Subtotal estimado · Iconic: $280.00 MXN");
     expect(text).toContain("sujetos a confirmación");
     expect(text).toContain("Envío no incluido");
   });
 
-  it("desde $1,000 habitual el mensaje OMITE la cifra Iconic (coherencia con el carrito)", () => {
+  it("conserva ambas cifras al superar $1,000 habitual sin alcanzar Iconic", () => {
     const bigRequest = cartRequestSummary(tiers, [
       { qty: 4, unitPrices: { t_retail: 250, t_reseller: 90 } },
     ])!; // habitual $1,000 exacto
-    expect(bigRequest.showIdentityHint).toBe(false);
+    expect(bigRequest.showIdentityHint).toBe(true);
     const url = buildCartOrderUrl(store, "olivia", [
       { name: "Arracada Mimosa", qty: 4, category: "Aretes" },
     ], undefined, undefined, bigRequest);
     const text = decodeURIComponent(url.split("text=")[1]);
-    expect(text).toContain("Subtotal estimado: $1,000.00 MXN");
-    expect(text).not.toContain("Iconic");
+    expect(text).toContain("Subtotal estimado · Regular: $1,000.00 MXN");
+    expect(text).toContain("Subtotal estimado · Iconic: $360.00 MXN");
   });
 
   it("cuadre exacto con el carrito (1.13.1): caso 19 piezas $140/$105/$55", () => {
@@ -285,9 +285,9 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
       { name: "Arracada Mimosa", qty: 19, category: "Aretes" },
     ], undefined, undefined, req);
     const text = decodeURIComponent(url.split("text=")[1]);
-    expect(text).toContain("Subtotal estimado: $1,995.00 MXN");
-    expect(text).not.toContain("1,045"); // jamás el subtotal Iconic divergente
-    expect(text).not.toContain("Iconic"); // $1,995 ≥ $1,000 → sin fila ni cifra
+    expect(text).toContain("Subtotal estimado · Iconic: $1,045.00 MXN");
+    expect(text).not.toContain("1,995"); // only the qualified estimate travels
+    expect(text).not.toContain("Girly");
   });
 
   it("centavos reales en ambas cifras cuando el habitual los lleva (1.13.1)", () => {
@@ -298,8 +298,8 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
       { name: "Arracada Mimosa", qty: 3, category: "Aretes" },
     ], undefined, undefined, centsRequest);
     const text = decodeURIComponent(url.split("text=")[1]);
-    expect(text).toContain("Subtotal estimado: $780.51 MXN");
-    expect(text).toContain("¿Eres Iconic? Subtotal estimado: $270.99 MXN");
+    expect(text).toContain("Subtotal estimado · Regular: $780.51 MXN");
+    expect(text).toContain("Subtotal estimado · Iconic: $270.99 MXN");
   });
 
   it("escapa Markdown de WhatsApp en nombres de piezas y de clienta", () => {

@@ -1,5 +1,13 @@
 [
   {
+    "version": "1.16.2",
+    "date": "2026.11.13",
+    "title": "Tu avance hacia Iconic, claro desde el carrito",
+    "notes": [
+      "En el catálogo público, el carrito muestra cuánto llevas a precio Regular o Girly, el equivalente a precio Iconic y cuánto falta para su mínimo. Al alcanzar el mínimo a precio Iconic, el resumen, las piezas y el mensaje de WhatsApp muestran ese mismo precio estimado. Si quitas piezas y bajas del mínimo, vuelve la comparación."
+    ]
+  },
+  {
     "version": "1.16.1",
     "date": "2026.11.13",
     "title": "El color de la pieza viaja contigo en todo el pedido",

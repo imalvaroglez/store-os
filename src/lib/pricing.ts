@@ -193,39 +193,37 @@ export function calculateOrderPricing(
   };
 }
 
-// ── #305: public cart request summary (habitual + conditional Iconic) ──────
+// Public cart estimate: habitual comparison until the Iconic minimum is met.
 
 /**
- * PO decision 2026-11-10: the identity-gated tier (Olivia's Iconic) never
- * headlines the anonymous cart. Identified by CONFIGURATION, not by label
- * text: a pure money threshold (minAmount, no minPieces) is the signature of
- * a spend-window identity benefit (#130) — quantity thresholds (minPieces,
- * e.g. Girly's 5 pieces) are provable from the cart itself and stay habitual.
+ * Identify the store's money-based benefit by CONFIGURATION, not label text.
+ * The public estimate can reach its configured minimum without granting or
+ * renewing a customer's spend-window identity benefit (#130).
  */
 export function isIdentityGatedTier(tier: PriceTierDef): boolean {
   return tier.minAmount != null && tier.minPieces == null;
 }
 
-/** Visibility threshold (MXN) for the conditional identity-price row (#305). */
-export const IDENTITY_HINT_MAX_SUBTOTAL = 1000;
-
 export type CartRequestSummary = {
   totalQuantity: number;
-  /** Deepest NON-identity tier the cart qualifies for, own-priced on every
-   * line (the honest headline; falls to the shallowest own-priced one). */
+  /** Own-priced habitual reference; the active tier when legacy prices leave
+   * no habitual reference. The displayed estimate always uses activeTier. */
   habitualTier: PriceTierDef;
   habitualSubtotal: number;
+  /** The estimate switches only when the cart reaches the tier's own minimum. */
+  activeTier: PriceTierDef;
+  estimatedSubtotal: number;
   /** The identity-gated tier, when the store configures one (else null). */
   identityTier: PriceTierDef | null;
   /** Σ qty × the identity tier's OWN price per line — undefined when ANY line
    * lacks it ("Por confirmar", never a fallback price, never $0). */
   identitySubtotal: number | undefined;
-  /** True when the identity row is shown: habitual < threshold AND an
-   * identity tier exists. Recomputed live; never persisted. */
+  identityQualifies: boolean;
+  /** Missing prices cannot establish progress or qualification. */
+  identityAmountRemaining: number | undefined;
+  /** Keep the comparison until the identity-price subtotal reaches its minimum. */
   showIdentityHint: boolean;
-  /** Per-line prices at the HABITUAL tier (own price on every line). One
-   *  derivation with the headline (1.13.1): the anonymous cart lines can
-   *  never show an identity-tier price while the total uses the habitual. */
+  /** Per-line prices use the same active tier as the displayed estimate. */
   lineBreakdown: OrderLinePricing[];
 };
 
@@ -244,29 +242,41 @@ export function cartRequestSummary(tiers: PriceTierDef[], lines: CartQtyLine[]):
   const pool = habitualCandidates.length > 0 ? habitualCandidates : ordered.slice(0, Math.max(1, ordered.length - 1));
   const habitual =
     [...pool].reverse().find((t) => hasOwn(t) && tierQualifies(t, lines)) ?? pool.find(hasOwn);
-  if (!habitual) return null;
-
   const identityTier = [...ordered].reverse().find(isIdentityGatedTier) ?? null;
   const identitySubtotal = identityTier && hasOwn(identityTier)
     ? ownSubtotal(identityTier)
     : undefined;
-  const habitualSubtotal = ownSubtotal(habitual);
+  // Compare cents at the tier's OWN prices, not Regular/Girly. This remains
+  // an estimate: it does not grant a customer's benefit or persist eligibility.
+  const identityQualifies = identityTier != null && identitySubtotal != null
+    && Math.round(identitySubtotal * 100) >= Math.round(identityTier.minAmount! * 100);
+  const identityAmountRemaining = identityTier && identitySubtotal != null
+    ? Math.max(0, Math.round(identityTier.minAmount! * 100) - Math.round(identitySubtotal * 100)) / 100
+    : undefined;
+  const activeTier = identityQualifies && identityTier
+    && (!habitual || !tierQualifies(habitual, lines) || identityTier.order > habitual.order)
+    ? identityTier : habitual;
+  if (!activeTier) return null;
+  // A qualified own-priced estimate stays usable even with incomplete legacy
+  // reference prices. Never relabel fallback amounts as Regular/Girly.
+  const referenceTier = habitual ?? activeTier;
+  const habitualSubtotal = ownSubtotal(referenceTier);
   // Same reduction order as ownSubtotal, so Σ lines === headline to the cent.
   const lineBreakdown = lines.map((line) => {
-    const unitPrice = line.unitPrices[habitual.id] as number; // habitual is own-priced
+    const unitPrice = line.unitPrices[activeTier.id] as number;
     return { unitPrice, subtotal: unitPrice * line.qty };
   });
   return {
     totalQuantity,
-    habitualTier: habitual,
+    habitualTier: referenceTier,
     habitualSubtotal,
+    activeTier,
+    estimatedSubtotal: ownSubtotal(activeTier),
     identityTier,
     identitySubtotal,
+    identityQualifies,
+    identityAmountRemaining,
     lineBreakdown,
-    // Exact-cents comparison (#320 review H2): double sums can land at
-    // 999.9999999999999 and flip the row the wrong way at the boundary.
-    showIdentityHint:
-      identityTier != null
-      && Math.round(habitualSubtotal * 100) < Math.round(IDENTITY_HINT_MAX_SUBTOTAL * 100),
+    showIdentityHint: identityTier != null && !identityQualifies,
   };
 }
