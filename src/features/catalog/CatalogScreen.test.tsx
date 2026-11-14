@@ -216,10 +216,20 @@ describe("#294 descubrir Estrategia y comparar niveles", () => {
     expect(card?.textContent).toContain("Menudeo");
     expect(card?.textContent).toContain("$300");
     expect(card?.textContent).toMatch(/Mayoreo\s*—/);
-    expect(card?.textContent).not.toMatch(/Mayoreo\s*\$0/);
     // p3 con ambos niveles: los dos nombres alineados.
     const card3 = screen.getByText("Aretes Luna").closest("div[class*='p-4']");
     for (const label of ["Menudeo", "Mayoreo"]) expect(card3?.textContent).toContain(label);
+  });
+
+  it("#294 r2: un precio BORRADO (0) también es ausente — «Mayoreo —», nunca «Mayoreo $0»", async () => {
+    const state = sortFilterState();
+    // El formulario persiste el campo vacío como 0; 0 NO es precio (compuerta
+    // de publicación, PricingStrategy) — la fila no puede pintarlo legítimo.
+    state.products[0] = { ...state.products[0], prices: { t_retail: 300, t_mayoreo: 0 } } as Product;
+    await renderCatalog(state);
+    const card = screen.getByText("Anillo Blossom").closest("div[class*='p-4']");
+    expect(card?.textContent).toMatch(/Mayoreo\s*—/);
+    expect(card?.textContent).not.toMatch(/Mayoreo\s*\$0/);
   });
 
   it("conserva orden y filtros existentes con la nueva fila de precios", async () => {
