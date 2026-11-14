@@ -20,6 +20,9 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   const [data, setData] = useState<{ store: PublicStore; catalog: PublicCatalog } | null>(null);
   // #135: finish filter state — BEFORE the loading early-returns (rules of hooks).
   const [finishFilter, setFinishFilter] = useState("");
+  // #137: chosen color per design (productSlug → variant id), GANNI-style
+  // swatches on the card; defaults to the first color.
+  const [chosenVariants, setChosenVariants] = useState<Record<string, string>>({});
   const normalizeFinish = (value: string) =>
     value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-MX");
   // #276: a missing store and a network failure are DIFFERENT things — a
@@ -134,6 +137,11 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   // the pause: the drawer turns that line into "sobre pedido", never a firm order.
   const signalBySlug = products.reduce<Record<string, PublicStockSignal>>((signals, product) => {
     signals[product.productSlug] = isSoldOut(product) ? "agotado" : (product.stockSignal ?? "disponible");
+    // #137: per-color lines carry `slug~variantId` keys — give each color's
+    // line its OWN signal so the drawer explains exactly that color.
+    for (const variant of product.variants ?? []) {
+      signals[`${product.productSlug}~${variant.id}`] = isSoldOut(product) ? "agotado" : variant.stockSignal;
+    }
     return signals;
   }, {});
   return (
@@ -163,49 +171,69 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         )}
         {visibleProducts.length === 0 ? <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." /> : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {visibleProducts.map((product) => { const soldOut = isSoldOut(product); return <Card key={product.productSlug} className="overflow-hidden p-0">
-              <ProductImage src={product.imageUrl ?? undefined} alt={product.name} size="full" />
+            {visibleProducts.map((product) => {
+              const variants = product.variants ?? [];
+              const chosen = variants.find((v) => v.id === (chosenVariants[product.productSlug] ?? variants[0]?.id));
+              const variantSoldOut = chosen ? chosen.stockSignal === "agotado" : false;
+              const designPaused = isSoldOut(product);
+              const soldOut = variants.length > 0 ? (designPaused || variantSoldOut) : designPaused;
+              const cardImage = chosen?.imageUrl ?? product.imageUrl;
+              const lineName = chosen ? `${product.name} · ${chosen.color}` : product.name;
+              const lineSlug = chosen ? `${product.productSlug}~${chosen.id}` : product.productSlug;
+              const lineImage = cardImage ?? undefined;
+              return <Card key={product.productSlug} className="overflow-hidden p-0">
+              <ProductImage src={cardImage ?? undefined} alt={lineName} size="full" />
               <div className="p-4"><h2 className="serif-display text-lg font-semibold text-ink">{product.name}</h2>
                 {soldOut && <div className="mt-1"><Badge tone="neutral">Agotado</Badge></div>}
-                {/* #124: one design, its colors listed — never N loose fichas. */}
+                {/* #137/#124: one design, its colors as GANNI-style swatches —
+                    accessible name, pressed state, ≥40px target. Choosing a color
+                    swaps the card photo and availability without leaving the grid. */}
                 {product.variants && product.variants.length > 0 && (
-                  <p className="mt-1 flex flex-wrap gap-1 text-xs text-ink-soft">
-                    {product.variants.map((variant) => (
-                      <span
-                        key={variant.id}
-                        className={`rounded-full border border-ink/15 px-2 py-0.5 ${variant.stockSignal === "agotado" ? "opacity-50 line-through" : ""}`}
-                      >
-                        {variant.color}
-                      </span>
-                    ))}
-                  </p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {product.variants.map((variant) => {
+                      const pressed = (chosenVariants[product.productSlug] ?? product.variants![0].id) === variant.id;
+                      return (
+                        <Button
+                          key={variant.id}
+                          size="sm"
+                          variant={pressed ? "primary" : "secondary"}
+                          aria-pressed={pressed}
+                          title={variant.stockSignal === "agotado" ? `${variant.color} (agotado)` : variant.color}
+                          onClick={() => setChosenVariants((current) => ({ ...current, [product.productSlug]: variant.id }))}
+                          className={`!min-h-[40px] !min-w-[44px] ${variant.stockSignal === "agotado" ? "line-through opacity-60" : ""}`}
+                        >
+                          {variant.color}
+                        </Button>
+                      );
+                    })}
+                  </div>
                 )}
                 {product.publicDescription && <p className="text-sm text-ink-soft mt-1">{product.publicDescription}</p>}
                 <PublicTierPrices store={store} product={product} />
                 {!soldOut ? (
                   <CartProductControl
-                    key={`${product.productSlug}-${quantityBySlug.get(product.productSlug) ?? 0}`}
-                    productSlug={product.productSlug}
-                    productName={product.name}
-                    quantity={quantityBySlug.get(product.productSlug) ?? 0}
-                    onAdd={() => cart.add(cartItemFromPublicProduct(product))}
+                    key={`${lineSlug}-${quantityBySlug.get(lineSlug) ?? 0}`}
+                    productSlug={lineSlug}
+                    productName={lineName}
+                    quantity={quantityBySlug.get(lineSlug) ?? 0}
+                    onAdd={() => cart.add({ ...cartItemFromPublicProduct({ ...product, image: lineImage }), ...(chosen ? { productSlug: lineSlug, name: lineName } : {}) })}
                     onSetQty={cart.setQty}
                     full
                     className="mt-2"
                   />
                 ) : (
-                  // #135: agotado SIGUE solicitable por encargo — Fer consigue la
-                  // pieza y confirma la fecha; el cajón lo trata como sobre pedido.
+                  // #135/#137: agotado (el diseño o el color elegido) SIGUE
+                  // solicitable por encargo — línea con el color inequívoco.
                   <div className="mt-2">
                     <Button
                       variant="secondary"
                       full
-                      onClick={() => cart.add({ ...cartItemFromPublicProduct(product), inquire: true })}
+                      onClick={() => cart.add({ ...cartItemFromPublicProduct({ ...product, image: lineImage }), ...(chosen ? { productSlug: lineSlug, name: lineName } : {}), inquire: true })}
                     >
                       Pedir por encargo
                     </Button>
                     <p className="text-xs text-on-surface-soft mt-1">
-                      Agotado · puedes pedirlo por encargo. Fecha de entrega por confirmar.
+                      Agotado{chosen ? ` (${chosen.color})` : ""} · puedes pedirlo por encargo. Fecha de entrega por confirmar.
                     </p>
                   </div>
                 )}
