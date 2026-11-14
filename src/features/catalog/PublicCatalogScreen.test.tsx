@@ -167,6 +167,72 @@ describe("#135 encargo sobre agotados y filtro por acabado", () => {
   });
 });
 
+describe("#137 selector público de variantes en la tarjeta", () => {
+  const variantLine = (productSlug: string, name: string, extra: Record<string, unknown> = {}) => ({
+    storeId: "store_santi", storeSlug: "santi", productSlug, name, sku: "SAN-X", price: 1000,
+    imageUrl: null, ...extra,
+  });
+  const design = {
+    ...variantLine("aro-luna", "Aro Luna", { stockSignal: "disponible" }),
+    variants: [
+      { id: "v1", color: "Dorado", imageUrl: "https://img/dorado.jpg", stockSignal: "disponible" },
+      { id: "v2", color: "Plateado", imageUrl: "https://img/plateado.jpg", stockSignal: "agotado" },
+    ],
+  };
+
+  it("muestra muestras accesibles con estado seleccionado y cambia foto y disponibilidad", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { categories: [], products: [design] } });
+    render(<PublicCatalogScreen slug="santi" />);
+    const dorado = await screen.findByRole("button", { name: /Dorado/ });
+    expect(dorado.getAttribute("aria-pressed")).toBe("true");
+    const plateado = screen.getByRole("button", { name: /Plateado/ });
+    expect(plateado.getAttribute("aria-pressed")).toBe("false");
+    // Foto inicial: la del Dorado (primera variante).
+    expect(document.querySelector("img")?.getAttribute("src")).toBe("https://img/dorado.jpg");
+    fireEvent.click(plateado);
+    await waitFor(() => {
+      expect(document.querySelector("img")?.getAttribute("src")).toBe("https://img/plateado.jpg");
+      expect(screen.getAllByText(/Agotado/i).length).toBeGreaterThan(0);
+      expect(plateado.getAttribute("aria-pressed")).toBe("true");
+      expect(dorado.getAttribute("aria-pressed")).toBe("false");
+    });
+  });
+
+  it("el color agotado ofrece encargo (sobre pedido) y el disponible compra normal", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { categories: [], products: [design] } });
+    render(<PublicCatalogScreen slug="santi" />);
+    expect((await screen.findByRole("button", { name: "Agregar al carrito" }))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Plateado/ }));
+    expect(await screen.findByRole("button", { name: /Pedir por encargo/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Agregar al carrito" })).toBeNull();
+  });
+
+  it("la bolsa conserva el color elegido: dos colores del mismo diseño son dos líneas", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { categories: [], products: [design] } });
+    render(<PublicCatalogScreen slug="santi" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agregar al carrito" })); // Dorado
+    fireEvent.click(screen.getByRole("button", { name: /Plateado/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Pedir por encargo/i })); // Plateado agotado
+    fireEvent.click(screen.getByRole("button", { name: /Abrir pedido/ }));
+    expect(await screen.findByText(/Aro Luna · Dorado/)).toBeTruthy();
+    expect(screen.getByText(/Aro Luna · Plateado/)).toBeTruthy();
+    expect(screen.getByText(/Se puede hacer sobre pedido/)).toBeTruthy(); // solo la línea del color agotado
+  });
+
+  it("prune conserva las líneas por color cuando el diseño sigue visible", async () => {
+    // Carrito guardado con las dos líneas (slug~variantId); el catálogo sigue
+    // mostrando el diseño: nada se pierde.
+    localStorage.setItem("store-os:cart:santi", JSON.stringify({ v: 1, lines: [
+      { productSlug: "aro-luna~v1", name: "Aro Luna · Dorado", sku: "SAN-X", qty: 1 },
+      { productSlug: "aro-luna~v2", name: "Aro Luna · Plateado", sku: "SAN-X", qty: 2 },
+    ] }));
+    mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { categories: [], products: [design] } });
+    render(<PublicCatalogScreen slug="santi" />);
+    const open = await screen.findByRole("button", { name: /Abrir pedido/ });
+    expect(open.textContent).toContain("3 piezas");
+  });
+});
+
 describe("PublicCatalogScreen carrito", () => {
   it("agrega productos, muestra cantidades en las tarjetas y arma el pedido", async () => {
     render(<PublicCatalogScreen slug="santi" />);

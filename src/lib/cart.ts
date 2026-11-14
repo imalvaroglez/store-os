@@ -150,9 +150,11 @@ export function refreshCart(slug: string, items: Omit<CartLine, "qty">[]): CartL
   return next;
 }
 
-/** Drop lines whose piece no longer exists in the public projection. */
+/** Drop lines whose piece no longer exists in the public projection.
+ * #137: a variant line carries its design slug as `slug~variantId` — prune by
+ * the BASE slug so chosen colors survive while the design stays visible. */
 export function pruneCartLines(lines: CartLine[], knownProductSlugs: Set<string>): CartLine[] {
-  return lines.filter((l) => knownProductSlugs.has(l.productSlug));
+  return lines.filter((l) => knownProductSlugs.has(l.productSlug.split("~")[0]));
 }
 
 export function cartPieces(lines: { qty: number }[]): number {
