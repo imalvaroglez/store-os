@@ -25,7 +25,9 @@ import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
 import { committedForProduct, stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { isVariantProduct, totalStock } from "../../lib/variants";
-import { defaultTier } from "../../lib/pricing";
+import { defaultTier, tiersForStore } from "../../lib/pricing";
+import type { PriceTierDef } from "../../types";
+import { navigate } from "../../lib/router";
 import { publicPrice, profit, formatMoney } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
 import type { Product } from "../../types";
@@ -90,8 +92,7 @@ function compareBy(key: SortKey, a: Product, b: Product, defaultTierId: string):
 function ProductCard({
   product,
   isTiered,
-  defaultId,
-  defaultLabel,
+  tiers,
   committed,
   onEdit,
   onDelete,
@@ -99,8 +100,7 @@ function ProductCard({
 }: {
   product: Product;
   isTiered: boolean;
-  defaultId: string;
-  defaultLabel: string;
+  tiers: PriceTierDef[];
   committed: number;
   onEdit: () => void;
   onDelete: () => void;
@@ -161,10 +161,25 @@ function ProductCard({
 
           {isTiered ? (
             <>
-              <div className="flex gap-3 mt-2 text-xs">
-                <span className="text-ink">
-                  {defaultLabel} <b>{formatMoney(product.prices?.[defaultId])}</b>
-                </span>
+              {/* #294: all levels side by side, aligned across rows — compare a
+                  change without opening each piece. A missing price is shown as
+                  such ("—"), never as $0. */}
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-2 text-xs">
+                {tiers.map((tier) => {
+                  const price = product.prices?.[tier.id];
+                  return (
+                    <span key={tier.id} className={price == null ? "text-on-surface-soft" : "text-ink"}>
+                      {tier.label}{" "}
+                      {typeof price === "number" && Number.isFinite(price)
+                        ? <b>{formatMoney(price)}</b>
+                        : <span title="Sin precio para este nivel">—</span>}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="flex gap-3 mt-1 text-xs">
+                {/* #294: the default price already rides the tier row above —
+                    only the stock context remains here (nothing duplicated). */}
                 {isVariantProduct(product) ? (
                   variantStock != null ? (
                     <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
@@ -262,6 +277,7 @@ export function CatalogScreen() {
   const effectiveSortKey: SortKey = sortKey === "stock" && !isTiered ? "createdAt" : sortKey;
   const defaultId = defaultTier(activeStore)?.id ?? "t_retail";
   const defaultLabel = defaultTier(activeStore)?.label ?? "Menudeo";
+  void defaultLabel; // #294: superseded by the per-tier row (kept for the subtitle fallback below if unused)
   const products = productsForStore(state.products, activeStore.id);
   const categories = activeCategoriesForStore(state.categories, activeStore.id);
   // Filter matches REAL categories (categoryIds, primary or secondary) — not
@@ -301,6 +317,13 @@ export function CatalogScreen() {
         }
         action={
           <div className="flex items-center gap-2">
+            {/* #294: pricing strategy is reachable from the FIRST viewport —
+                no hidden chevron inside a collapsed Productos sub-list. */}
+            {isTiered && (
+              <Button variant="ghost" size="sm" onClick={() => navigate("/productos/estrategia")}>
+                Estrategia de precios
+              </Button>
+            )}
             {/* Preview what clients see — opens the public storefront in a new tab. */}
             <a
               href={`/catalogo/${activeStore.slug}`}
@@ -379,8 +402,7 @@ export function CatalogScreen() {
               key={p.id}
               product={p}
               isTiered={isTiered}
-              defaultId={defaultId}
-              defaultLabel={defaultLabel}
+              tiers={tiersForStore(activeStore)}
               committed={committedForProduct(state.orders, activeStore.id, p.id)}
               onEdit={() => setEditing(p)}
               onDelete={() => setDeleting(p)}
