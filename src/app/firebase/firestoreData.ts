@@ -23,7 +23,7 @@ import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange
 import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
-import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
+import { effectiveOrderStatus, migrateOrder, orderItems, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
@@ -34,6 +34,7 @@ import {
   orderMoneyAfterPayments,
   signedAmountCents,
 } from "../../features/orders/payments";
+import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 import type { AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
@@ -642,6 +643,29 @@ export async function saveOrderWithStockTx(
     // the pieces, so the mark lands with zero stock delta.
     if (next.installments && !previous?.installments && docMoney.receivedCents > 0 && !next.installmentsReservedAt) {
       next.installmentsReservedAt = new Date().toISOString();
+    }
+    // #380 prototype: an edit can never invalidate the balance that backs
+    // another sale — after this save, the order's fresh surplus (received
+    // minus effective total, refunds committed blocking it like the read
+    // model) must still cover the credit it mirrors as consumed. Without
+    // this, raising the total (or lowering received money) on the ORIGIN
+    // would retroactively unback a sister order's applied credit.
+    {
+      const consumedNow = typeof docData?.creditConsumedCents === "number" && Number.isSafeInteger(docData.creditConsumedCents)
+        ? Math.max(0, docData.creditConsumedCents)
+        : 0;
+      if (consumedNow > 0) {
+        const itemsCents = orderItems(next).reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+        const adjustmentsCents = incidentsSaleAdjustmentCents(next.incidents);
+        const receivedCents = Math.max(docReceivedCents(next), docReceivedCents(previous ?? {}));
+        const refundCommittedCents = incidentsRefundCommittedCents(next.incidents);
+        const surplusAfter = Math.max(0, receivedCents - Math.max(0, itemsCents + adjustmentsCents) - refundCommittedCents);
+        if (surplusAfter < consumedNow) {
+          throw new Error(
+            `Este pedido respalda ${consumedNow / 100} pesos de saldo a favor que otra venta ya usa; la edición dejaría ese saldo sin respaldo (${surplusAfter / 100} disponibles tras el cambio). Devuelve el saldo primero o corrige la edición.`
+          );
+        }
+      }
     }
     // #165/#168 F1 → PO 2026-11-03 (R9): the transition INTO delivered still
     // fires the gate for a plan order or any order with registered cobros

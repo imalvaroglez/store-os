@@ -395,6 +395,14 @@ service cloud.firestore {
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
+        // #380 prototype: saldo a favor moves ONLY through the trusted
+        // applyCredit/releaseCredit callables. The Admin SDK bypasses rules
+        // (IAM), so the FINAL protection is this total client-side lock:
+        // any CHANGE to the credit fields from a client SDK is denied.
+        // Verbatim carries (unchanged keys) are unaffected — ordinary
+        // saves keep working.
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger'])
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision'])
             || validMoneyUpdate(id, resource.data, request.resource.data))
         // #218: legacy deposit cannot rise after receipts, and is frozen once
