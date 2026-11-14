@@ -12,6 +12,8 @@ export type PriceChangeOrigin = "manual" | "rule_application" | "bulk_applicatio
 
 export type PriceChangeEvent = {
   id: string;
+  /** Store scope — rules isolation and per-store history depend on it. */
+  storeId: string;
   productId: string;
   tierId: string;
   previousCents: number;
@@ -27,7 +29,10 @@ export type PriceChangeEvent = {
 export type RuleChangeEvent = {
   id: string;
   kind: "rule_change";
-  categoryId: string;
+  /** Store scope — rules isolation and per-store history depend on it. */
+  storeId: string;
+  /** Category the table belongs to — null for store-wide tier tables. */
+  categoryId: string | null;
   changedBy: string;
   summary: string;
   recordedAt: string;
@@ -41,6 +46,7 @@ export function eventDocId(productId: string, intentId: string): string {
 
 export function priceChangeEvent(input: {
   intentId: string;
+  storeId: string;
   productId: string;
   tierId: string;
   previous: number;
@@ -51,6 +57,7 @@ export function priceChangeEvent(input: {
 }): PriceChangeEvent {
   return {
     id: eventDocId(input.productId, input.intentId),
+    storeId: input.storeId,
     productId: input.productId,
     tierId: input.tierId,
     previousCents: orderAmountCents(input.previous),
@@ -66,13 +73,15 @@ export function priceChangeEvent(input: {
  * must never be presented as if it had changed a product's price. */
 export function ruleChangeEvent(input: {
   intentId: string;
-  categoryId: string;
+  storeId: string;
+  categoryId: string | null;
   uid: string;
   summary: string;
 }): RuleChangeEvent {
   return {
     id: `rule_${input.intentId}`,
     kind: "rule_change",
+    storeId: input.storeId,
     categoryId: input.categoryId,
     changedBy: input.uid,
     summary: input.summary,
@@ -126,7 +135,13 @@ function mad(values: number[], med: number): number {
 /** Robust descriptive diagnosis for ONE (category, level) pair — categories
  * and levels are never mixed. Products' tier prices feed the sample; costs
  * and level-order coherence are reported as facts. */
-export function categoryDiagnosis(products: Product[], tierId: string): TierDiagnosis {
+export function categoryDiagnosis(
+  products: Product[],
+  tierId: string,
+  /** The STORE's canonical tier order (cheapest→priciest) for the coherence
+   * check — tier ids are store-defined, so callers pass their own list. */
+  orderTiers: string[] = ["t_retail", "t_girly", "t_iconic"]
+): TierDiagnosis {
   const values = products
     .map((p) => p.prices?.[tierId])
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
@@ -134,11 +149,12 @@ export function categoryDiagnosis(products: Product[], tierId: string): TierDiag
   const sample = values.length;
   const sorted = [...values];
   const med = sample > 0 ? median(sorted) : 0;
-  const iqr = sample >= 4 ? quartile(sorted, 0.75) - quartile(sorted, 0.25) : 0;
-  const madValue = sample >= 4 ? mad(values, med) : 0;
+  // Spec: evidence is sufficient from 3 samples — the interpolated quartiles
+  // carry real dispersion at n=3 ([100,200,300] → IQR 100, not a false 0).
+  const iqr = sample >= 3 ? quartile(sorted, 0.75) - quartile(sorted, 0.25) : 0;
+  const madValue = sample >= 3 ? mad(values, med) : 0;
   // Level-order coherence checks the STORE's canonical level order among the
   // products that carry those tiers (fact, not advice).
-  const orderTiers = ["t_retail", "t_girly", "t_iconic"];
   const tierOrderIssues = products
     .filter((p) => {
       const chain = orderTiers.map((t) => p.prices?.[t]).filter((v): v is number => typeof v === "number");
@@ -160,4 +176,41 @@ export function categoryDiagnosis(products: Product[], tierId: string): TierDiag
     periodAnalysis: "unavailable",
     periodNote: "Análisis por periodo de entrega disponible tras integrar #333 (fecha efectiva); no se infieren meses.",
   };
+}
+
+/**
+ * #335 r2: the price-change events for a MANUAL product save — one per tier
+ * whose price EFFECTIVELY changed (finite number → different finite number).
+ * Additions/removals of a tier price are not priced transitions and stay
+ * unrecorded in this stage (nothing is invented as "previous 0").
+ */
+export function buildManualPriceEvents(params: {
+  storeId: string;
+  productId: string;
+  updatedAt: string;
+  uid: string;
+  previous?: { prices?: Record<string, number> };
+  next: { prices?: Record<string, number> };
+}): PriceChangeEvent[] {
+  const events: PriceChangeEvent[] = [];
+  for (const [tierId, next] of Object.entries(params.next.prices ?? {})) {
+    const previous = params.previous?.prices?.[tierId];
+    if (typeof previous !== "number" || !Number.isFinite(previous)) continue;
+    if (typeof next !== "number" || !Number.isFinite(next)) continue;
+    if (previous === next) continue;
+    events.push(
+      priceChangeEvent({
+        intentId: `${tierId}:${previous}:${next}:${params.updatedAt}`,
+        storeId: params.storeId,
+        productId: params.productId,
+        tierId,
+        previous,
+        next,
+        uid: params.uid,
+        effectiveAt: params.updatedAt,
+        origin: "manual",
+      })
+    );
+  }
+  return events;
 }

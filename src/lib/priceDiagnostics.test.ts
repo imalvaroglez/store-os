@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildManualPriceEvents,
   categoryDiagnosis,
   eventDocId,
   priceChangeEvent,
@@ -33,7 +34,7 @@ const design = (
 describe("priceChangeEvent (#335)", () => {
   it("evento manual idempotente por intento: producto, nivel, anterior/nuevo, UID y fechas", () => {
     const event = priceChangeEvent({
-      intentId: "intent-1",
+      intentId: "intent-1", storeId: "s1",
       productId: "p1",
       tierId: "t_retail",
       previous: 300,
@@ -55,7 +56,7 @@ describe("priceChangeEvent (#335)", () => {
     });
     // Reintento con el MISMO intento → mismo doc id (idempotente por diseño).
     const retry = priceChangeEvent({
-      intentId: "intent-1", productId: "p1", tierId: "t_retail", previous: 300, next: 350,
+      intentId: "intent-1", storeId: "s1", productId: "p1", tierId: "t_retail", previous: 300, next: 350,
       uid: "fer", effectiveAt: "2026-11-14", origin: "manual",
     });
     expect(retry.id).toBe(event.id);
@@ -68,7 +69,7 @@ describe("priceChangeEvent (#335)", () => {
   });
 
   it("el cambio de REGLA es un evento distinto: sin producto ni precio efectivo", () => {
-    const rule = ruleChangeEvent({ intentId: "r1", categoryId: "cat1", uid: "fer", summary: "Banda 1: 20% → 25%" });
+    const rule = ruleChangeEvent({ intentId: "r1", storeId: "s1", categoryId: "cat1", uid: "fer", summary: "Banda 1: 20% → 25%" });
     expect(rule).toMatchObject({ id: "rule_r1", kind: "rule_change", categoryId: "cat1", changedBy: "fer", summary: "Banda 1: 20% → 25%" });
     // Un evento de regla JAMÁS se presenta como cambio de precio.
     expect((rule as { productId?: string }).productId).toBeUndefined();
@@ -76,7 +77,7 @@ describe("priceChangeEvent (#335)", () => {
 
   it("distintos orígenes quedan explícitos (manual / regla / masivo)", () => {
     for (const origin of ["manual", "rule_application", "bulk_application"] as PriceChangeOrigin[]) {
-      const event = priceChangeEvent({ intentId: `i-${origin}`, productId: "p1", tierId: "t", previous: 1, next: 2, uid: "fer", effectiveAt: "2026-11-14", origin });
+      const event = priceChangeEvent({ intentId: `i-${origin}`, storeId: "s1", productId: "p1", tierId: "t", previous: 1, next: 2, uid: "fer", effectiveAt: "2026-11-14", origin });
       expect(event.origin).toBe(origin);
     }
   });
@@ -134,5 +135,37 @@ describe("categoryDiagnosis (#335)", () => {
     const d = categoryDiagnosis(products, "t_retail");
     expect(d.periodAnalysis).toBe("unavailable");
     expect(d.periodNote).toMatch(/#333/);
+  });
+});
+
+describe("#335 r2 — evidencia desde n=3", () => {
+  it("tres precios distintos SÍ tienen dispersión estimable: IQR 100 para [100,200,300]", () => {
+    const products = [100, 200, 300].map((v, i) => design(`n3-${i}`, `Pieza ${i}`, 20, { t_retail: v }));
+    const d = categoryDiagnosis(products, "t_retail");
+    expect(d.sample).toBe(3);
+    expect(d.evidence).toBe("ok");
+    expect(d.iqr).toBe(100);
+    expect(d.dispersion).toBe("iqr");
+  });
+});
+
+describe("#335 r2 — buildManualPriceEvents", () => {
+  const base = {
+    storeId: "s1", productId: "p1", updatedAt: "2026-11-14T21:00:00.000Z", uid: "fer",
+  };
+  it("un nivel editado emite exactamente UN evento con anterior/nuevo", () => {
+    const events = buildManualPriceEvents({ ...base, previous: { prices: { t_retail: 300, t_girly: 200 } }, next: { prices: { t_retail: 350, t_girly: 200 } } });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ tierId: "t_retail", previousCents: 30000, nextCents: 35000, origin: "manual" });
+  });
+  it("nada cambia → cero eventos; alta de nivel o pieza nueva no inventa anterior", () => {
+    expect(buildManualPriceEvents({ ...base, previous: { prices: { t_retail: 300 } }, next: { prices: { t_retail: 300 } } })).toHaveLength(0);
+    expect(buildManualPriceEvents({ ...base, next: { prices: { t_retail: 300 } } })).toHaveLength(0); // pieza nueva
+    expect(buildManualPriceEvents({ ...base, previous: { prices: {} }, next: { prices: { t_retail: 300 } } })).toHaveLength(0); // alta de nivel
+  });
+  it("el id es determinista por intento: el mismo reintento reproduce el mismo doc", () => {
+    const a = buildManualPriceEvents({ ...base, previous: { prices: { t: 1 } }, next: { prices: { t: 2 } } })[0];
+    const b = buildManualPriceEvents({ ...base, previous: { prices: { t: 1 } }, next: { prices: { t: 2 } } })[0];
+    expect(a.id).toBe(b.id);
   });
 });
