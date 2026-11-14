@@ -306,13 +306,12 @@ export function CartDrawer({
           subtitle="Agrega piezas del catálogo y envíalas en un solo mensaje."
         />
       ) : (
-        <div className="olv-cart-layout grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
-          <ul className="divide-y divide-[var(--olv-rule,var(--rule))] md:pr-2">
+        <div className="olv-cart-layout grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
+          <ul className="min-w-0 divide-y divide-[var(--olv-rule,var(--rule))] md:pr-2">
             {shown.map((l, index) => {
               const signal = signalBySlug?.[l.productSlug];
               const legend = signal ? STOCK_LEGENDS[signal] : null;
-              // #305/1.13.1: lines share the summary's single derivation —
-              // the habitual tier, never a divergent active/identity tier.
+              // Lines and the summary share one active price derivation.
               const linePricing = request?.lineBreakdown[index];
               const unitPrice = linePricing?.unitPrice ?? l.unitPrice;
               const lineSubtotal = linePricing?.subtotal ?? (typeof unitPrice === "number" ? unitPrice * l.qty : undefined);
@@ -324,7 +323,7 @@ export function CartDrawer({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-semibold text-[var(--olv-ink,var(--ink))] truncate">{l.name}</p>
+                        <p className="font-semibold text-[var(--olv-ink,var(--ink))] break-words">{l.name}</p>
                       </div>
                     </div>
                     {legend && <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">{legend}</p>}

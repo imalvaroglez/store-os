@@ -14,7 +14,7 @@ const store = {
 };
 const product = {
   storeId: store.storeId, storeSlug: store.slug, productSlug: "anillo-prueba",
-  name: "Anillo de prueba", sku: "TEST-01", prices, stockSignal: "disponible",
+  name: "Anillo ajustable con corazón de cristal rosa", sku: "TEST-01", prices, stockSignal: "disponible",
 };
 function wire(value: unknown): unknown {
   if (value == null) return { nullValue: null };
@@ -47,7 +47,7 @@ for (const width of [390, 1280]) {
     await expect(cart.getByText("$1,200.00 MXN", { exact: true })).toBeVisible();
     await expect(cart.getByText("$900.00 MXN", { exact: true })).toBeVisible();
     await expect(cart.getByText(/Te faltan \$100.00 a precio Iconic/)).toBeVisible();
-    const add = cart.getByRole("button", { name: "Sumar una pieza de Anillo de prueba" });
+    const add = cart.getByRole("button", { name: `Sumar una pieza de ${product.name}` });
     await add.click();
     await expect(cart.getByText(/Te faltan \$10.00 a precio Iconic/)).toBeVisible();
     await add.click();
@@ -60,7 +60,7 @@ for (const width of [390, 1280]) {
     await expect(row.getByText("$1,080.00", { exact: true })).toBeVisible();
     const href = await cart.getByRole("link", { name: "Enviar solicitud por WhatsApp" }).getAttribute("href");
     expect(new URL(href!).searchParams.get("text")).toContain("Subtotal estimado · Iconic: $1,080.00 MXN");
-    await cart.getByRole("button", { name: "Restar una pieza de Anillo de prueba" }).click();
+    await cart.getByRole("button", { name: `Restar una pieza de ${product.name}` }).click();
     await expect(cart.getByText("Subtotal estimado · Girly", { exact: true })).toBeVisible();
     await expect(cart.getByText("$990.00 MXN", { exact: true })).toBeVisible();
     await expect(cart.getByText(/Te faltan \$10.00 a precio Iconic/)).toBeVisible();
