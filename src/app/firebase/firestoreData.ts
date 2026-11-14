@@ -370,17 +370,33 @@ export async function applyProductPrices(
   // issue: applies touch the pieces Fer explicitly selects).
   const previousById = new Map<string, Record<string, number> | undefined>();
   if (uid) {
-    for (let start = 0; start < updates.length; start += 30) {
-      const chunk = updates.slice(start, start + 30);
+    // #335 r3: Firestore evaluates ~2 rule gets per doc and caps a query at
+    // 20 ACCESSES — chunks of 30 docs died with permission-denied at ≥20
+    // pieces (review probe: 283 SKUs → whole apply rejected). 10 docs/chunk.
+    for (let start = 0; start < updates.length; start += 10) {
+      const chunk = updates.slice(start, start + 10);
       const snap = await getDocs(query(collection(db, "products"), where(documentId(), "in", chunk.map((u) => u.id))));
       for (const d of snap.docs) previousById.set(d.id, (d.data() as { prices?: Record<string, number> }).prices);
     }
   }
-  for (let start = 0; start < updates.length; start += 400) {
-    const batch = writeBatch(db);
-    for (const update of updates.slice(start, start + 400)) {
-      batch.set(doc(db, "products", update.id), { prices: stripUndefined(update.prices), updatedAt }, { merge: true });
-      if (!uid) continue;
+  // #335 r3: the production batch limit is 500 OPERATIONS (product set +
+  // each event doc count separately; 283 pieces × 2 = 566 > 500). Flush by
+  // operation count, not by update count.
+  const WRITE_OPS_LIMIT = 400;
+  let batch = writeBatch(db);
+  let ops = 0;
+  const flush = async () => {
+    if (ops === 0) return;
+    await batch.commit();
+    batch = writeBatch(db);
+    ops = 0;
+  };
+  for (const update of updates) {
+    const eventCount = countEffectiveEvents(previousById.get(update.id), update.prices);
+    if (ops + 1 + eventCount > WRITE_OPS_LIMIT) await flush();
+    batch.set(doc(db, "products", update.id), { prices: stripUndefined(update.prices), updatedAt }, { merge: true });
+    ops += 1;
+    if (!uid) continue;
       // Only tiers that EFFECTIVELY changed emit an event — a rule apply that
       // leaves a piece's price alone must not claim it changed.
       const previous = previousById.get(update.id);
@@ -400,10 +416,23 @@ export async function applyProductPrices(
           origin: "rule_application",
         });
         batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+        ops += 1;
       }
-    }
-    await batch.commit();
   }
+  await flush();
+}
+
+/** #335 r3: how many price events this update will append (for operation-
+ * aware batching). Mirrors the emission condition exactly. */
+function countEffectiveEvents(previous: Record<string, number> | undefined, prices: Record<string, number>): number {
+  let count = 0;
+  for (const [tierId, next] of Object.entries(prices)) {
+    const prev = previous?.[tierId];
+    if (typeof prev !== "number" || !Number.isFinite(prev)) continue;
+    if (typeof next !== "number" || !Number.isFinite(next) || prev === next) continue;
+    count += 1;
+  }
+  return count;
 }
 
 /**

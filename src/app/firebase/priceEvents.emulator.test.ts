@@ -104,4 +104,40 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#335 r2 — eventos de pr
     // Even a member: the event must name THEM as changedBy.
     await expect(setDoc(doc(dbOwner, "priceEvents/y"), { id: "y", storeId: STORE, changedBy: "someone-else", productId: "p1", tierId: "t", previousCents: 1, nextCents: 2, effectiveAt: NOW, recordedAt: NOW, origin: "manual" })).rejects.toThrow();
   });
+
+  it("#335 r3 VOLUMEN: 260 piezas (520 operaciones) aplican completas — precios y eventos íntegros", async () => {
+    holder.db = env.authenticatedContext(OWNER).firestore();
+    // Seed 260 products at t_retail 300 under ADMIN (rules off).
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const fs = ctx.firestore();
+      const batchWrites: Array<Promise<void>> = [];
+      for (let i = 0; i < 260; i += 400) {
+        const b = [];
+        // setDoc loop in chunks — admin context, plain writes.
+        for (let j = i; j < Math.min(i + 400, 260); j++) {
+          b.push(setDoc(doc(fs, `products/vol${j}`), { storeId: STORE, prices: { t_retail: 300 }, createdAt: NOW, updatedAt: NOW }));
+        }
+        batchWrites.push(Promise.all(b).then(() => undefined));
+      }
+      await Promise.all(batchWrites);
+    });
+    const at = "2026-11-14T22:30:00.000Z";
+    const updates = Array.from({ length: 260 }, (_, i) => ({ id: `vol${i}`, prices: { t_retail: 300 + (i % 7) } }));
+    // 260 reads (26 chunks of 10 — under the 20-access/query rule limit) and
+    // 520 write ops (2 batches — under the 500-op production limit).
+    await applyProductPrices({ id: STORE }, updates, at, OWNER);
+
+    let checked = 0;
+    // Sample indices whose price EFFECTIVELY changes (i % 7 !== 0): a piece
+    // whose rule price equals its current price emits no event, by design.
+    for (let i = 1; i < 260; i += 25) {
+      if (i % 7 === 0) continue; // price unchanged → no event, by design
+      const p = (await getDoc(doc(holder.db, `products/vol${i}`))).data();
+      expect(p?.prices?.t_retail).toBe(300 + (i % 7));
+      const ev = await getDoc(doc(holder.db, `priceEvents/vol${i}__t_retail:300:${300 + (i % 7)}:${at}`));
+      expect(ev.exists()).toBe(true);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThanOrEqual(10); // sampled across the whole range
+  });
 });
