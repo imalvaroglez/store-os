@@ -18,6 +18,10 @@ import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } 
 // the established Store OS look instead of inheriting Olivia's fixed brand.
 export function PublicCatalogScreen({ slug }: { slug: string }) {
   const [data, setData] = useState<{ store: PublicStore; catalog: PublicCatalog } | null>(null);
+  // #135: finish filter state — BEFORE the loading early-returns (rules of hooks).
+  const [finishFilter, setFinishFilter] = useState("");
+  const normalizeFinish = (value: string) =>
+    value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-MX");
   // #276: a missing store and a network failure are DIFFERENT things — a
   // clienta on flaky mobile data must never read "this catalog does not
   // exist" (and a wrong slug must not promise the store still exists).
@@ -100,7 +104,22 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   const isSoldOut = (product: { availability?: string | null; stockSignal?: string | null }) =>
     product.availability === "sold_out" || product.stockSignal === "agotado";
   const showSoldOut = store.storefront?.showSoldOut ?? true;
-  const products = showSoldOut ? catalog.products : catalog.products.filter((product) => !isSoldOut(product));
+  const soldOutAware = catalog.products; // sold-out keeps its card for encargo (#135)
+  const products = showSoldOut ? soldOutAware : soldOutAware.filter((product) => !isSoldOut(product));
+  // #135: Dorado/Plateado finish filter — finish list derived per render
+  // (cheap, no hook): unique finishes of the visible products.
+  const finishes = (() => {
+    const unique = new Map<string, string>();
+    for (const product of products) {
+      const finish = (product as { finish?: string | null }).finish?.trim();
+      if (finish) unique.set(normalizeFinish(finish), finish);
+    }
+    return [...unique.values()];
+  })();
+  const finishKey = finishFilter ? normalizeFinish(finishFilter) : "";
+  const visibleProducts = finishKey
+    ? products.filter((product) => normalizeFinish((product as { finish?: string | null }).finish ?? "") === finishKey)
+    : products;
   const visibleSlugs = new Set(products.map((product) => product.productSlug));
   const visibleLines = pruneCartLines(cart.lines, visibleSlugs);
   // #305: primary category name per product, from the SAME projection the
@@ -127,9 +146,24 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         </div>
       </header>
       <main className="p-4 md:p-8"><div className="mx-auto max-w-6xl">
-        {products.length === 0 ? <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." /> : (
+        {finishes.length > 1 && (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {finishes.map((finish) => (
+              <Button
+                key={finish}
+                size="sm"
+                variant={finishFilter === finish ? "primary" : "secondary"}
+                aria-pressed={finishFilter === finish}
+                onClick={() => setFinishFilter((current) => (current === finish ? "" : finish))}
+              >
+                {finish}
+              </Button>
+            ))}
+          </div>
+        )}
+        {visibleProducts.length === 0 ? <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." /> : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {products.map((product) => { const soldOut = isSoldOut(product); return <Card key={product.productSlug} className="overflow-hidden p-0">
+            {visibleProducts.map((product) => { const soldOut = isSoldOut(product); return <Card key={product.productSlug} className="overflow-hidden p-0">
               <ProductImage src={product.imageUrl ?? undefined} alt={product.name} size="full" />
               <div className="p-4"><h2 className="serif-display text-lg font-semibold text-ink">{product.name}</h2>
                 {soldOut && <div className="mt-1"><Badge tone="neutral">Agotado</Badge></div>}
@@ -148,9 +182,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                 )}
                 {product.publicDescription && <p className="text-sm text-ink-soft mt-1">{product.publicDescription}</p>}
                 <PublicTierPrices store={store} product={product} />
-                {/* #371: una pieza agotada o en pausa no se solicita aquí; si ya
-                    estaba en un carrito guardado, el cajón la pasa a sobre pedido. */}
-                {!soldOut && (
+                {!soldOut ? (
                   <CartProductControl
                     key={`${product.productSlug}-${quantityBySlug.get(product.productSlug) ?? 0}`}
                     productSlug={product.productSlug}
@@ -161,6 +193,21 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                     full
                     className="mt-2"
                   />
+                ) : (
+                  // #135: agotado SIGUE solicitable por encargo — Fer consigue la
+                  // pieza y confirma la fecha; el cajón lo trata como sobre pedido.
+                  <div className="mt-2">
+                    <Button
+                      variant="secondary"
+                      full
+                      onClick={() => cart.add({ ...cartItemFromPublicProduct(product), inquire: true })}
+                    >
+                      Pedir por encargo
+                    </Button>
+                    <p className="text-xs text-on-surface-soft mt-1">
+                      Agotado · puedes pedirlo por encargo. Fecha de entrega por confirmar.
+                    </p>
+                  </div>
                 )}
               </div>
             </Card>;})}
