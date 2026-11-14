@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 
 // #202: closes and their adjustments are append-only, store-scoped evidence.
@@ -15,6 +15,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#202 closes & ajustes (re
       projectId: "store-os-dev",
       firestore: { rules: readFileSync("firestore.rules", "utf-8") },
     });
+    // The emulator persists across runs: reset so creates stay CREATES.
+    await env.clearFirestore();
     await env.withSecurityRulesDisabled(async (ctx) => {
       const fs = ctx.firestore();
       await setDoc(doc(fs, "users/fer-uid"), { role: "member" });
@@ -60,5 +62,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#202 closes & ajustes (re
     })).rejects.toThrow(); // canOperateStore allows members... see note below
     const foreign = env.authenticatedContext("foreign-uid").firestore();
     await expect(getDoc(doc(foreign, "closes/olivia__2026-11__v1"))).rejects.toThrow();
+  });
+
+  it("#202 r2: un miembro autenticado de OTRA tienda no puede LISTAR los cierres financieros", async () => {
+    const foreign = env.authenticatedContext("foreign-uid").firestore();
+    // netCents/ferCents/oliviaCents/investorCents are money — an unfiltered
+    // LIST must not hand them to any signed-up user (class #176/#438).
+    await expect(getDocs(collection(foreign, "closes"))).rejects.toThrow();
+    await expect(getDocs(collection(foreign, "closeAdjustments"))).rejects.toThrow();
   });
 });

@@ -115,3 +115,23 @@ describe("pendingRegularizationByRecipient (#202)", () => {
     expect(pendingRegularizationByRecipient(null, cents(200))).toBeNull();
   });
 });
+
+describe("#202 r2 — historial inconsistente falla cerrado", () => {
+  it("shares que no suman el total NO proponen regularización (sin centavos perdidos)", () => {
+    // Probe del revisor: fer 100 de un total 1000 — el reparto ingenuo
+    // repartía sólo una fracción y el resto se perdía en silencio.
+    expect(pendingRegularizationByRecipient(
+      { ferCents: 100, oliviaCents: 0, investorCents: 0, totalDistributedCents: 1000 },
+      10
+    )).toBeNull();
+  });
+
+  it("historial consistente sigue produciendo el diferencial exacto", () => {
+    const pending = pendingRegularizationByRecipient(
+      { ferCents: 500, oliviaCents: 300, investorCents: 200, totalDistributedCents: 1000 },
+      10
+    );
+    expect(pending).not.toBeNull();
+    expect(pending!.ferCents + pending!.oliviaCents + pending!.investorCents).toBe(10);
+  });
+});
