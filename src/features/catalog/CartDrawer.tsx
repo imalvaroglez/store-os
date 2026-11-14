@@ -287,8 +287,7 @@ export function CartDrawer({
 
   const tiers: PublicPriceTier[] = store.priceTiers ?? [];
   const qtyLines: CartQtyLine[] = shown.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
-  // #305: the request summary — habitual (non-identity) headline + the
-  // conditional identity row. Drives BOTH the drawer rows and the message.
+  // One estimate drives the drawer lines, summary and WhatsApp message.
   const request = cartRequestSummary(tiers, qtyLines);
   const pricing = calculateOrderPricing(tiers, qtyLines);
 
@@ -307,13 +306,12 @@ export function CartDrawer({
           subtitle="Agrega piezas del catálogo y envíalas en un solo mensaje."
         />
       ) : (
-        <div className="olv-cart-layout grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
-          <ul className="divide-y divide-[var(--olv-rule,var(--rule))] md:pr-2">
+        <div className="olv-cart-layout grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
+          <ul className="min-w-0 divide-y divide-[var(--olv-rule,var(--rule))] md:pr-2">
             {shown.map((l, index) => {
               const signal = signalBySlug?.[l.productSlug];
               const legend = signal ? STOCK_LEGENDS[signal] : null;
-              // #305/1.13.1: lines share the summary's single derivation —
-              // the habitual tier, never a divergent active/identity tier.
+              // Lines and the summary share one active price derivation.
               const linePricing = request?.lineBreakdown[index];
               const unitPrice = linePricing?.unitPrice ?? l.unitPrice;
               const lineSubtotal = linePricing?.subtotal ?? (typeof unitPrice === "number" ? unitPrice * l.qty : undefined);
@@ -325,7 +323,7 @@ export function CartDrawer({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-semibold text-[var(--olv-ink,var(--ink))] truncate">{l.name}</p>
+                        <p className="font-semibold text-[var(--olv-ink,var(--ink))] break-words">{l.name}</p>
                       </div>
                     </div>
                     {legend && <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">{legend}</p>}
@@ -377,9 +375,9 @@ export function CartDrawer({
                 </p>
                 <dl className="mt-3 space-y-1.5">
                   <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado</dt>
+                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado - precio {request.activeTier.label}</dt>
                     <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
-                      {formatMoneyExact(request.habitualSubtotal)} MXN
+                      {formatMoneyExact(request.estimatedSubtotal)} MXN
                     </dd>
                   </div>
                   {request.showIdentityHint && request.identityTier && (
@@ -393,6 +391,11 @@ export function CartDrawer({
                     </div>
                   )}
                 </dl>
+                {request.showIdentityHint && request.identityTier && request.identityAmountRemaining != null && (
+                  <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2" aria-live="polite">
+                    Te faltan {formatMoneyExact(request.identityAmountRemaining)} a precio {request.identityTier.label} para llegar a {formatMoneyExact(request.identityTier.minAmount)}.
+                  </p>
+                )}
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">{ESTIMATE_NOTICE}</p>
               </div>
             ) : pricing ? (

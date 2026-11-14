@@ -9,7 +9,7 @@ export default defineConfig({
   testDir: "./e2e",
   // build-smoke boots the app; telemetry-egress watches runtime egress on the
   // Olivia storefront (no auth/Firestore needed). Both run against the prod build.
-  testMatch: /(^|\/)(build-smoke|telemetry-egress)\.spec\.ts$/,
+  testMatch: /(^|\/)(build-smoke|telemetry-egress|cart-iconic)\.spec\.ts$/,
   // The emulator-only specs are excluded; they run via playwright.firebase.config.ts.
   testIgnore: /(^|\/)(firebase|public-catalog|smoke|responsive|theme)\.spec\.ts$/,
   timeout: 30_000,

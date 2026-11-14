@@ -145,9 +145,8 @@ export function buildCartOrderUrl(
         `*${request.totalQuantity} ${request.totalQuantity === 1 ? "pieza" : "piezas"} en total*`,
         // Exact cents + MXN, identical to the drawer rows (1.13.1): the
         // message can never round away a cent the client just saw on screen.
-        `Subtotal estimado: ${formatMoneyExact(request.habitualSubtotal)} MXN`,
-        // The identity estimate travels ONLY when the cart shows it (< $1,000
-        // habitual AND fully calculated) — same rule, same numbers.
+        `Subtotal estimado - precio ${esc(request.activeTier.label)}: ${formatMoneyExact(request.estimatedSubtotal)} MXN`,
+        // Same comparison and qualification as the drawer, with no fallback prices.
         ...(request.showIdentityHint && request.identitySubtotal != null
           ? [`¿Eres ${esc(request.identityTier?.label ?? "")}? Subtotal estimado: ${formatMoneyExact(request.identitySubtotal)} MXN`]
           : []),
