@@ -151,7 +151,11 @@ export function PricingRulesScreen() {
     }
     setBusy(true);
     try {
-      await savePricingRules(draft.config);
+      // #335 r2: the config save leaves its own trail (it changed no price).
+      await savePricingRules(draft.config, {
+        categoryId: filterCategory?.id ?? null,
+        summary: filterCategory ? `Tabla de bandas de ${filterCategory.name} actualizada.` : "Tabla de niveles actualizada.",
+      });
       // Functional update: edits made while saving are preserved, not clobbered
       // by the click-time closure (adversarial H3).
       setDraft((current) => ({ config: cloneConfig(current.config), dirty: false }));

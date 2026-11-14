@@ -20,7 +20,9 @@ export function PriceDiagnosticsScreen() {
   const products = state.products.filter(
     (p) => p.storeId === activeStore.id && (!categoryId || (p.categoryIds ?? []).includes(categoryId))
   );
-  const diagnosis = tierId ? categoryDiagnosis(products, tierId) : null;
+  // Tier ids are store-defined: the coherence check runs over THIS store's
+  // canonical order (cheapest → priciest), never a hardcoded trio.
+  const diagnosis = tierId ? categoryDiagnosis(products, tierId, tiers.map((t) => t.id)) : null;
   const withPrices = diagnosis?.sample ?? 0;
 
   return (
@@ -65,7 +67,7 @@ export function PriceDiagnosticsScreen() {
                   {diagnosis.withoutCost > 0 && (
                     <p className="text-xs text-on-surface-soft">
                       {diagnosis.withoutCost} {diagnosis.withoutCost === 1 ? "pieza sin" : "piezas sin"} costo conocido —
-                      sus precios se muestran, su contribución no se calcula.
+                      no entran a la muestra del nivel mostrado y su contribución no se calcula.
                     </p>
                   )}
                   {diagnosis.tierOrderIssues.length > 0 && (

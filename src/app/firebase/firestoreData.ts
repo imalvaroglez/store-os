@@ -11,6 +11,7 @@ import {
   onSnapshot,
   query,
   where,
+  documentId,
   runTransaction,
   increment,
   arrayUnion,
@@ -27,6 +28,7 @@ import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../..
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
+import { buildManualPriceEvents, priceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -357,18 +359,85 @@ export class CategoryRulesConflictError extends Error {
  *  stale full-object write (that was the upsertProduct hazard). Rules path
  *  unchanged: members update their store's products with storeId untouched. */
 export async function applyProductPrices(
-  _store: Pick<Store, "id">,
+  store: Pick<Store, "id">,
   updates: Array<{ id: string; prices: Record<string, number> }>,
-  updatedAt: string
+  updatedAt: string,
+  uid?: string
 ): Promise<void> {
   const { db } = getFirebase();
+  // #335 r2: read the CANONICAL previous prices so events carry real
+  // anterior/nuevo pairs (+1 read per affected piece — dimensioned in the
+  // issue: applies touch the pieces Fer explicitly selects).
+  const previousById = new Map<string, Record<string, number> | undefined>();
+  if (uid) {
+    for (let start = 0; start < updates.length; start += 30) {
+      const chunk = updates.slice(start, start + 30);
+      const snap = await getDocs(query(collection(db, "products"), where(documentId(), "in", chunk.map((u) => u.id))));
+      for (const d of snap.docs) previousById.set(d.id, (d.data() as { prices?: Record<string, number> }).prices);
+    }
+  }
   for (let start = 0; start < updates.length; start += 400) {
     const batch = writeBatch(db);
     for (const update of updates.slice(start, start + 400)) {
       batch.set(doc(db, "products", update.id), { prices: stripUndefined(update.prices), updatedAt }, { merge: true });
+      if (!uid) continue;
+      // Only tiers that EFFECTIVELY changed emit an event — a rule apply that
+      // leaves a piece's price alone must not claim it changed.
+      const previous = previousById.get(update.id);
+      for (const [tierId, next] of Object.entries(update.prices)) {
+        const prev = previous?.[tierId];
+        if (typeof prev !== "number" || !Number.isFinite(prev)) continue;
+        if (typeof next !== "number" || !Number.isFinite(next) || prev === next) continue;
+        const event = priceChangeEvent({
+          intentId: `${tierId}:${prev}:${next}:${updatedAt}`,
+          storeId: store.id,
+          productId: update.id,
+          tierId,
+          previous: prev,
+          next,
+          uid,
+          effectiveAt: updatedAt,
+          origin: "rule_application",
+        });
+        batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+      }
     }
     await batch.commit();
   }
+}
+
+/**
+ * #335 r2: manual product save with its price-change events in ONE atomic
+ * writeBatch — the event never lands without the price, nor the reverse.
+ */
+export async function saveProductWithPriceEvents(
+  user: AppUser,
+  existing: Product | undefined,
+  product: Product
+): Promise<void> {
+  const { db } = getFirebase();
+  const { id, ...data } = product;
+  const clean = stripUndefined(data) as Record<string, unknown>;
+  const batch = writeBatch(db);
+  batch.set(doc(db, "products", id), clean, { merge: true });
+  for (const event of buildManualPriceEvents({
+    storeId: product.storeId,
+    productId: product.id,
+    updatedAt: product.updatedAt,
+    uid: user.uid,
+    previous: existing?.prices ? { prices: existing.prices } : undefined,
+    next: { prices: product.prices },
+  })) {
+    batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+  }
+  await batch.commit();
+}
+
+/** #335 r2: a rule CONFIG change — its own append-only trail, recorded right
+ * after the transactional config save (it changes no product price by itself). */
+export async function recordRuleChangeEvent(event: RuleChangeEvent): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
 }
 
 /** #280: save ONE category's band table transactionally. The whole
