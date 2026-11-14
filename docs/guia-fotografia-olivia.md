@@ -25,8 +25,9 @@ sombra con dirección consistente, colores apagados con acentos, y mezcla de pie
 
 1. **Preparar.** Pieza limpia; cerca de una ventana con luz indirecta (no sol directo). Fondo: papel/blanco para
    ficha; lino o tela clara para editorial. Un cartón mate como rebote del lado opuesto a la ventana.
-2. **Capturar (ficha).** Cámara a 30–45° de la pieza; pieza al centro con 10–15 % de margen alrededor (así el
-   recorte de móvil nunca la corta). Toca la pantalla para fijar exposición/enfoque; si el celular lo permite,
+2. **Capturar (ficha).** Cámara a 30–45° de la pieza; pieza al centro con **~15 % de margen** por lado — el recorte
+   cuadrado de la tarjeta consume hasta 12.5 % por lado en fotos 4:3, y 10 % puede cortar la pieza (encuadre
+   cuadrado directo también sirve). Toca la pantalla para fijar exposición/enfoque; si el celular lo permite,
    bloquea exposición y balance en la primera toma y no lo muevas en la sesión.
 3. **Reflejos.** Mueve la PIEZA o el ángulo, no la luz: el reflejo del celular en el metal se quita girando la
    pieza unos grados o subiendo un poco la cámara.
@@ -37,15 +38,18 @@ sombra con dirección consistente, colores apagados con acentos, y mezcla de pie
 
 ## Edición y exportación (originales siempre a salvo)
 
-- Edita **copias**: el original jamás se sobrescribe. Si tu editor guarda ajustes o "recetas", exporta la receta
-  junto a la foto para repetirla.
+- Edita **copias** (cualquier editor gratuito del teléfono sirve — p. ej. Snapseed o el editor de fotos incluido):
+  el original jamás se sobrescribe. Si tu editor guarda ajustes o "recetas", exporta la receta junto a la foto
+  para repetirla.
 - Prohibido para ficha: desaturar o teñir (una clienta debe poder distinguir dorado de plateado y el color real de
   cada piedra/variante). Editorial: la pieza sigue reconocible.
 - **Exporta JPEG.** El sistema de Olivia: acepta JPEG/PNG/WebP de hasta 10 MB, reescala automáticamente a borde
   mayor de **1600 px** y recomprime. Subir archivos más grandes no da nitidez extra: exporta a ~1600–2000 px con
   calidad alta y queda ligero para el catálogo.
-- **Nombres y texto alternativo.** Guarda tus originales como `clave-color-tipo.jpg` (p. ej. `AAN1385-DOR-completa`);
-  en la ficha, escribe el texto alternativo describiendo la pieza y su color.
+- **Nombres y texto alternativo.** Guarda tus originales como `clave-color-tipo.jpg` (p. ej. `AAN1385-DOR-completa`).
+  Hoy el catálogo toma el texto alternativo del **nombre de la pieza** (aún no hay campo propio): nómbrala con clave
+  y color — «Aretes AAN1385 dorado» — y quien usa lector de pantalla escucha pieza y color. Un campo propio de texto
+  alternativo queda como pendiente del sistema.
 - Cada color de un diseño lleva su propia foto (el alta por color la exige): misma receta para todas las variantes.
 
 ## Piloto propuesto (antes de tocar el catálogo)
@@ -54,8 +58,9 @@ sombra con dirección consistente, colores apagados con acentos, y mezcla de pie
 2. De cada una toma la línea ficha (fondo claro) y la editorial (textil), con grano nulo y —si quieres probarlo —
    sutil: 4–8 fotos en total, en una sola sesión de luz.
 3. Compáralas con las fotos actuales de esa misma pieza, lado a lado en el celular.
-4. Sube las elegidas **solo a prueba** (no reemplazan las del catálogo) y revisa en el catálogo público cómo se ven
-   en tarjeta y detalle, en tu teléfono.
+4. Sube las elegidas a una **pieza de prueba en el entorno de pruebas** (dev: se crea para el piloto y no toca el
+   catálogo real; pídele a Álvaro el enlace) y revisa en su catálogo público de pruebas cómo se ven en tarjeta y
+   detalle, en tu teléfono.
 5. Registra en la issue qué receta aceptas (fondo, grano sí/no, edición) — con eso queda la receta vigente.
 
 ## Qué se puede mejorar en fotos actuales (sin recapturar)
