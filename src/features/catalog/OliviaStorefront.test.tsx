@@ -526,8 +526,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("$350.00 MXN")).toBeTruthy();
   });
 
-  it("casos exactos del collar (#420): 15 piezas a precio Iconic; al quitar una, vuelve Girly", async () => {
-    const collarPrices = { t_retail: 150, t_girly: 100, t_iconic: 70 };
+  it("casos exactos del collar (#420): 15 piezas a precio Iconic; al quitar una, vuelve Girly", async () => {    const collarPrices = { t_retail: 150, t_girly: 100, t_iconic: 70 };
     mocks.loadPublicCatalog.mockResolvedValue({
       store,
       catalog: { ...catalog, products: [{ ...catalog.products[0], prices: collarPrices }] },
@@ -548,6 +547,26 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("¿Eres Iconic? Subtotal estimado")).toBeTruthy();
     expect(screen.getByText("$980.00 MXN")).toBeTruthy();
     expect(screen.getByText(/Te faltan \$20.00 a precio Iconic/)).toBeTruthy();
+  });
+
+  it("segunda fila en «Por confirmar» y sin aviso cuando falta un precio Iconic (#420)", async () => {
+    // Catálogo sin precio Iconic para la pieza: la fila existe (hay tarifa
+    // visible) pero el importe no se puede calcular ni viajar a WhatsApp.
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { ...catalog, products: [{ ...catalog.products[0], prices: { t_retail: 150, t_girly: 100 } }] },
+    });
+    await openWithQuantity(5);
+    expect(screen.getByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(screen.getByText("$500.00 MXN")).toBeTruthy();
+    expect(screen.getByText("¿Eres Iconic? Subtotal estimado")).toBeTruthy();
+    expect(screen.getByText("Por confirmar")).toBeTruthy();
+    expect(screen.queryByText(/Te faltan/)).toBeNull();
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado - precio Girly: $500.00 MXN");
+    expect(text).not.toContain("Iconic");
+    expect(text).not.toContain("¿Eres");
   });
 
   it("muestra el acumulado Regular y el equivalente Iconic antes de cinco piezas", async () => {

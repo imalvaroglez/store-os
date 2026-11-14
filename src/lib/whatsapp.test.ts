@@ -244,6 +244,21 @@ describe("#305 mensaje WhatsApp — categorías, dos cifras y escaping", () => {
     expect(text).not.toContain("*ARETES*");
   });
 
+  it("omite la línea Iconic cuando falta un precio Iconic (#420: «Por confirmar» en el carrito)", () => {
+    const partial = cartRequestSummary(tiers, [
+      { qty: 3, unitPrices: { t_retail: 250 } }, // sin precio t_reseller
+    ])!;
+    expect(partial.showIdentityHint).toBe(true);
+    expect(partial.identitySubtotal).toBeUndefined();
+    const url = buildCartOrderUrl(store, "olivia", [
+      { name: "Arracada Mimosa", qty: 3, category: "Aretes" },
+    ], undefined, undefined, partial);
+    const text = decodeURIComponent(url.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado - precio Regular: $750.00 MXN");
+    expect(text).not.toContain("Iconic");
+    expect(text).not.toContain("¿Eres");
+  });
+
   it("dos cifras etiquetadas cuando el carrito muestra la fila Iconic (< $1,000)", () => {
     // habitual = 2×250 + 1×280 = 780 < 1000 → ambas.
     expect(request.showIdentityHint).toBe(true);

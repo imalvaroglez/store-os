@@ -144,6 +144,48 @@ describe("PublicCatalogScreen carrito", () => {
     expect(text).toContain("Subtotal estimado - precio Iconic: $1,080.00 MXN");
     expect(text).not.toContain("Girly");
   });
+
+  it("sin tarifa Iconic visible no hay segunda fila ni línea en WhatsApp (#420)", async () => {
+    const girlyOnly: PublicStore = {
+      ...store,
+      type: "inventory_tiered",
+      priceTiers: [
+        { id: "t_retail", label: "Regular", order: 0 },
+        { id: "t_girly", label: "Girly", order: 1, minPieces: 5 },
+      ],
+      defaultTierId: "t_retail",
+    };
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: girlyOnly,
+      catalog: {
+        categories: [],
+        products: [{
+          storeId: "store_santi", storeSlug: "santi", productSlug: "anillo", name: "Anillo", sku: "SAN-003",
+          price: 150, prices: { t_retail: 150, t_girly: 100 },
+        }],
+      },
+    });
+    localStorage.setItem("store-os:cart:santi", JSON.stringify({
+      v: 1,
+      lines: [{
+        productSlug: "anillo", name: "Anillo", sku: "SAN-003", qty: 6,
+        unitPrices: { t_retail: 150, t_girly: 100 },
+      }],
+    }));
+
+    render(<PublicCatalogScreen slug="santi" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir pedido" }));
+    expect(await screen.findByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(screen.getByText("$600.00 MXN")).toBeTruthy();
+    expect(screen.queryByText(/¿Eres/)).toBeNull();
+    expect(screen.queryByText(/Te faltan/)).toBeNull();
+
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado - precio Girly: $600.00 MXN");
+    expect(text).not.toContain("Iconic");
+    expect(text).not.toContain("¿Eres");
+  });
 });
 
 describe("missing real vs fallo de red (#276)", () => {
