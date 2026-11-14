@@ -129,6 +129,18 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const locked = effectivePurchaseStatus(draft) === "received";
   const editDisabled = locked || saving || receiving || bulkCreating;
   const tickets = draft.tickets ?? [legacyPurchaseTicket(draft)];
+  // #211 r3 (UX review): the real weekly flow TYPES the supplier instead of
+  // picking it from the list. A typed name that matches an existing supplier
+  // resolves to its id — without this, the suggestion and «Recordar» were
+  // unreachable in that flow and no association could ever be confirmed.
+  const resolveSupplierId = (ticketId: string): string | undefined => {
+    const ticket = tickets.find((t) => t.id === ticketId);
+    if (!ticket) return undefined;
+    if (ticket.supplierId) return ticket.supplierId;
+    const typed = (ticket.supplierName ?? "").trim().toLocaleLowerCase("es-MX");
+    if (!typed) return undefined;
+    return suppliers.find((s) => s.name.trim().toLocaleLowerCase("es-MX") === typed)?.id;
+  };
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? tickets[0];
   const activeTotals = draft.tickets ? purchaseTicketTotals(draft, activeTicket.id) : purchaseTotals(draft);
 
@@ -435,6 +447,13 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     // Saving persists ONLY the purchase — never products (lifecycle contract).
     const next: Purchase = {
       ...draft,
+      // Materialize the resolved supplier ids so the purchase (and the next
+      // one opened from it) carries a real supplier, not just typed text.
+      tickets: tickets.map((ticket) =>
+        ticket.supplierId || !ticket.supplierName
+          ? ticket
+          : { ...ticket, supplierId: resolveSupplierId(ticket.id) ?? undefined }
+      ),
       subtotal: merchandise,
       totalConfirmed: purchaseConfirmedTotal(draft),
       status: receive ? "ready" : status,
@@ -596,7 +615,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   // suggests the product — an explicit, reviewable action, never
                   // an automatic selection.
                   if (line.productId || editDisabled) return null;
-                  const supplierId = tickets.find((t) => t.id === line.ticketId)?.supplierId;
+                  const supplierId = line.ticketId ? resolveSupplierId(line.ticketId) : undefined;
                   const suggestion = supplierId && line.name.trim()
                     ? suggestedProductFor(state.supplierLinks ?? [], activeStore.id, supplierId, line.name)
                     : null;
@@ -635,7 +654,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               // for future purchases of this supplier — explicit confirmation
               // only, never silent learning.
               if (editDisabled) return null;
-              const supplierId = tickets.find((t) => t.id === line.ticketId)?.supplierId;
+              const supplierId = line.ticketId ? resolveSupplierId(line.ticketId) : undefined;
               const captured = line.name.trim();
               if (!line.productId || !supplierId || !captured) return null;
               const existing = suggestedProductFor(state.supplierLinks ?? [], activeStore.id, supplierId, captured);

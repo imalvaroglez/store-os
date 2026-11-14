@@ -109,3 +109,46 @@ describe("#211 sugerencia por código confirmado", () => {
     );
   });
 });
+
+describe("#211 r2 UX — proveedor escrito a mano (repro de la revisión)", () => {
+  const freeTextPurchase = (): Purchase => ({
+    ...purchase(),
+    tickets: [{ id: "t1", supplierName: "prov uno", totalConfirmed: 0 }], // SIN supplierId: texto libre
+  });
+  const withSuppliers = () => {
+    mocks.state.suppliers = [{ id: "sup1", storeId: "olivia", name: "Prov Uno", createdAt: NOW, updatedAt: NOW }] as never;
+    mocks.state.supplierLinks = [link("ar0123", "p_aro")];
+  };
+
+  it("el proveedor escrito a mano que COINCIDE por nombre resuelve: la sugerencia aparece", async () => {
+    withSuppliers();
+    open(freeTextPurchase());
+    fireEvent.change(await screen.findByLabelText("Producto del ticket"), { target: { value: "AR-0123" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Usar Aro Luna/ })).toBeTruthy());
+  });
+
+  it("…y tras vincular a mano un código SIN asociación, «Recordar» queda disponible con el proveedor resuelto", async () => {
+    withSuppliers();
+    open(freeTextPurchase());
+    // Código nuevo (sin asociación previa): la sugerencia no adivina, pero el
+    // vínculo manual ofrece el «Recordar» explícito — con el proveedor resuelto.
+    fireEvent.change(await screen.findByLabelText("Producto del ticket"), { target: { value: "ZZ-999" } });
+    const search = screen.getByLabelText("Producto en Store OS");
+    fireEvent.focus(search);
+    fireEvent.change(search, { target: { value: "Aro" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Aro Luna/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Recordar «ZZ-999»/i }));
+    await waitFor(() => expect(mocks.confirmSupplierLink).toHaveBeenCalledWith(expect.objectContaining({ supplierId: "sup1", code: "ZZ-999" })));
+  });
+
+  it("al GUARDAR, el ticket persiste el supplierId resuelto (la próxima compra parte con el proveedor bien puesto)", async () => {
+    withSuppliers();
+    open(freeTextPurchase());
+    fireEvent.change(await screen.findByLabelText("Producto del ticket"), { target: { value: "AR-0123" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Usar Aro Luna/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Guardar borrador/i }));
+    await waitFor(() => expect(mocks.upsertPurchase).toHaveBeenCalled());
+    const saved = mocks.upsertPurchase.mock.calls[0][0] as Purchase;
+    expect(saved.tickets?.[0]?.supplierId).toBe("sup1");
+  });
+});
