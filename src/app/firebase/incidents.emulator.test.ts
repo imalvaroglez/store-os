@@ -39,6 +39,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
         storeId: "inc-store", name: "Aro QA", sku: "QA-INC-R", category: "jewelry",
         quantityOnHand: 2, price: 160, cost: 60, status: "draft", createdAt: "", updatedAt: "",
       });
+      // #364: a design sold per exact color — the shelf lives on the variants.
+      await setDoc(doc(ctx.firestore(), "products/inc-design"), {
+        storeId: "inc-store", name: "Diseño Luna", sku: "QA-LUNA", category: "jewelry",
+        price: 150, cost: 40, status: "draft", createdAt: "", updatedAt: "",
+        variants: [
+          { id: "v-red", color: "Rojo", skuSuffix: "R", quantityOnHand: 2, createdAt: "", updatedAt: "" },
+          { id: "v-blue", color: "Azul", skuSuffix: "A", quantityOnHand: 0, createdAt: "", updatedAt: "" },
+        ],
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-v"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "v_L0", productId: "inc-design", productName: "Diseño Luna", variantId: "v-blue", variantColor: "Azul", quantity: 1, unitPrice: 150, subtotal: 150 }],
+        deposit: 0, orderStatus: "confirmed", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        createdAt: "2026-11-05T10:00:00Z", updatedAt: "2026-11-05T10:00:00Z",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-va"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "va_L0", productId: "inc-product", productName: "Anillo QA", quantity: 1, unitPrice: 120, subtotal: 120 }],
+        deposit: 0, orderStatus: "confirmed", paymentsReceivedCents: 6000, inheritedDepositMaterialized: true,
+        createdAt: "2026-11-05T10:00:00Z", updatedAt: "2026-11-05T10:00:00Z",
+      });
       await setDoc(doc(ctx.firestore(), "orders/inc-order"), {
         storeId: "inc-store", customerId: "inc-clienta",
         items: [{ lineId: "inc-order_L0", productId: "inc-product", productName: "Anillo QA", quantity: 1, unitPrice: 120, subtotal: 120 }],
@@ -350,5 +371,109 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     await expect(
       applyIncidentEventTx({ orderId: "inc-order-3", storeId: "inc-store", incidentId: "inc-3", event: event("inc3-e3", "refund_executed", { refundExecutedCents: 12000 }) })
     ).rejects.toThrow(/reembolso|importe devuelto|confirm/i);
+  });
+
+  // ── #364: incidents on color designs move the COLOR shelf ────────────────
+
+  const designVariant = async (id: string) => {
+    const design = (await getDoc(doc(holder.db, "products/inc-design"))).data()!;
+    return design.variants.find((v: { id: string }) => v.id === id);
+  };
+
+  it("#364 confirmar un reemplazo por color mueve el estante del color, no el del diseño", async () => {
+    await openIncidentTx({ orderId: "inc-order-va", storeId: "inc-store", incident: incident("inc-c1") });
+    await applyIncidentEventTx({
+      orderId: "inc-order-va", storeId: "inc-store", incidentId: "inc-c1",
+      event: event("c1-e1", "resolution_agreed"),
+      resolution: { kind: "replacement_equivalent" },
+      replacement: { productId: "inc-design", productName: "Diseño Luna", variantId: "v-red", variantColor: "Rojo", unitPriceCents: 15000, unitCostCents: 4000, chargeDifference: false },
+    });
+    const confirmed = await applyIncidentEventTx({ orderId: "inc-order-va", storeId: "inc-store", incidentId: "inc-c1", event: event("c1-e2", "confirmed") });
+    const red = await designVariant("v-red");
+    const blue = await designVariant("v-blue");
+    const design = (await getDoc(doc(holder.db, "products/inc-design"))).data()!;
+    expect(red.quantityOnHand).toBe(1); // the handed-over color left its shelf
+    expect(blue.quantityOnHand).toBe(0); // the other color untouched
+    expect(design.quantityOnHand).toBeUndefined(); // design-level shelf NEVER moves
+    expect(confirmed.changedProductIds).toContain("inc-design");
+  });
+
+  it("#364 reemplazo por color sin color resuelto (legado): error accionable, sin mover nada", async () => {
+    await openIncidentTx({ orderId: "inc-order-va", storeId: "inc-store", incident: incident("inc-c2") });
+    await applyIncidentEventTx({
+      orderId: "inc-order-va", storeId: "inc-store", incidentId: "inc-c2",
+      event: event("c2-e1", "resolution_agreed"),
+      resolution: { kind: "replacement_equivalent" },
+      // Legacy shape: no variantId on a design sold per color.
+      replacement: { productId: "inc-design", productName: "Diseño Luna", unitPriceCents: 15000, unitCostCents: 4000, chargeDifference: false },
+    });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order-va", storeId: "inc-store", incidentId: "inc-c2", event: event("c2-e2", "confirmed") })
+    ).rejects.toThrow(/color/i);
+    const red = await designVariant("v-red");
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-va"))).data()!;
+    expect(red.quantityOnHand).toBe(1); // untouched by the aborted confirm
+    expect(order.incidents.find((i: { id: string }) => i.id === "inc-c2").events).toHaveLength(2);
+  });
+
+  it("#364 la existencia del reemplazo se mide por color, no por diseño", async () => {
+    await openIncidentTx({ orderId: "inc-order-va", storeId: "inc-store", incident: incident("inc-c3") });
+    await applyIncidentEventTx({
+      orderId: "inc-order-va", storeId: "inc-store", incidentId: "inc-c3",
+      event: event("c3-e1", "resolution_agreed"),
+      resolution: { kind: "replacement_equivalent" },
+      // v-blue has 0 — the design has 1 in another color, which must NOT count.
+      replacement: { productId: "inc-design", productName: "Diseño Luna", variantId: "v-blue", variantColor: "Azul", unitPriceCents: 15000, unitCostCents: 4000, chargeDifference: false },
+    });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order-va", storeId: "inc-store", incidentId: "inc-c3", event: event("c3-e2", "confirmed") })
+    ).rejects.toThrow(/disponible|Azul/i);
+    const blue = await designVariant("v-blue");
+    expect(blue.quantityOnHand).toBe(0);
+  });
+
+  it("#364 volver a venta devuelve la pieza a su color (no al estante del diseño)", async () => {
+    const variantIncident = incident("inc-v1", {
+      productId: "inc-design", productName: "Diseño Luna", variantId: "v-blue", variantColor: "Azul",
+    });
+    await openIncidentTx({ orderId: "inc-order-v", storeId: "inc-store", incident: variantIncident });
+    await applyIncidentEventTx({
+      orderId: "inc-order-v", storeId: "inc-store", incidentId: "inc-v1",
+      event: event("v1-e1", "resolution_agreed"),
+      resolution: { kind: "refund", destination: "refund_pending" },
+    });
+    await applyIncidentEventTx({ orderId: "inc-order-v", storeId: "inc-store", incidentId: "inc-v1", event: event("v1-e2", "confirmed") });
+    let design = (await getDoc(doc(holder.db, "products/inc-design"))).data()!;
+    expect(design.quantityQuarantined).toBe(1); // design-level informational aggregate
+    const released = await applyIncidentEventTx({ orderId: "inc-order-v", storeId: "inc-store", incidentId: "inc-v1", event: event("v1-e3", "returned_to_sale") });
+    const blue = await designVariant("v-blue");
+    design = (await getDoc(doc(holder.db, "products/inc-design"))).data()!;
+    expect(blue.quantityOnHand).toBe(1); // sellable again ON ITS COLOR
+    expect(design.quantityOnHand).toBeUndefined(); // the invisible shelf never moved
+    expect(design.quantityQuarantined).toBe(0);
+    expect(released.changedProductIds).toContain("inc-design");
+  });
+
+  it("#364 color desaparecido: error accionable, sin asignar otro color ni alterar existencias", async () => {
+    const staleIncident = incident("inc-v2", {
+      productId: "inc-design", productName: "Diseño Luna", variantId: "v-gone", variantColor: "Vapor",
+    });
+    await openIncidentTx({ orderId: "inc-order-v", storeId: "inc-store", incident: staleIncident });
+    await applyIncidentEventTx({
+      orderId: "inc-order-v", storeId: "inc-store", incidentId: "inc-v2",
+      event: event("v2-e1", "resolution_agreed"),
+      resolution: { kind: "refund", destination: "refund_pending" },
+    });
+    await applyIncidentEventTx({ orderId: "inc-order-v", storeId: "inc-store", incidentId: "inc-v2", event: event("v2-e2", "confirmed") });
+    await expect(
+      applyIncidentEventTx({ orderId: "inc-order-v", storeId: "inc-store", incidentId: "inc-v2", event: event("v2-e3", "returned_to_sale") })
+    ).rejects.toThrow(/color.*ya no existe|no se puede devolver/i);
+    const design = (await getDoc(doc(holder.db, "products/inc-design"))).data()!;
+    expect(design.quantityQuarantined).toBe(1); // still held — nothing altered
+    expect(design.quantityOnHand).toBeUndefined();
+    const red = await designVariant("v-red");
+    const blue = await designVariant("v-blue");
+    expect(red.quantityOnHand).toBe(1);
+    expect(blue.quantityOnHand).toBe(1);
   });
 });

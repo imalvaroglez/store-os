@@ -20,9 +20,10 @@ import {
 import { orderItems } from "../../lib/orders";
 import { uid } from "../../lib/ids";
 import { orderAmountCents } from "../../lib/orderMoney";
+import { totalStock, variantSku } from "../../lib/variants";
 import { incidentState, type IncidentPieceLocation } from "./incidents";
 import { reconcileIncidentMoney } from "./incidentMoney";
-import type { IncidentResolutionKind, Order, OrderIncident } from "../../types";
+import type { IncidentResolutionKind, Order, OrderIncident, ProductVariant } from "../../types";
 
 const PIECE_LABEL: Record<IncidentPieceLocation, string> = {
   with_customer: "Pieza con la clienta",
@@ -159,7 +160,7 @@ function IncidentCard({
 }: {
   order: Order;
   incident: OrderIncident;
-  products: { id: string; name: string; sku?: string; quantityOnHand?: number; cost?: number; price?: number; prices?: Record<string, number> }[];
+  products: { id: string; name: string; sku?: string; quantityOnHand?: number; cost?: number; price?: number; prices?: Record<string, number>; variants?: ProductVariant[] }[];
   agreeing: boolean;
   confirming: boolean;
   onAgreeing: (id: string | null) => void;
@@ -183,7 +184,10 @@ function IncidentCard({
   // agreeing (the transaction rejects a missing destination server-side too).
   const [destination, setDestination] = useState<"refund_pending" | "credit_accepted" | "">("");
   const [replacementQuery, setReplacementQuery] = useState("");
-  const [replacementPick, setReplacementPick] = useState<{ id: string; name: string; priceCents: number; costCents: number } | null>(null);
+  const [replacementPick, setReplacementPick] = useState<{ id: string; name: string; sku?: string; priceCents: number; cost: number; variants?: ProductVariant[] } | null>(null);
+  // #364: the exact color handed over — required when the replacement design
+  // sells per color (its shelf moves; the transaction fails closed without it).
+  const [replacementVariantId, setReplacementVariantId] = useState("");
   const [chargeDifference, setChargeDifference] = useState(true);
   const [waitUntil, setWaitUntil] = useState("");
   const [dialog, setDialog] = useState<"confirm" | "none">("none");
@@ -203,7 +207,7 @@ function IncidentCard({
         ...incident,
         resolution: { kind },
         ...(replacementPick && kind === "replacement_with_difference"
-          ? { replacement: { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: replacementPick.costCents, chargeDifference } }
+          ? { replacement: { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: orderAmountCents(replacementPick.variants?.find((v) => v.id === replacementVariantId)?.cost ?? replacementPick.cost), chargeDifference } }
           : {}),
       })
     : null;
@@ -212,12 +216,25 @@ function IncidentCard({
     onAgreeing(incident.id);
     // #212 F2: a replacement ALWAYS names the real piece leaving stock, with
     // its real stored cost — no invented figures, no stock-less defaults.
+    // #364: a design sold per color names its COLOR too — the confirm
+    // transaction moves that color's shelf and fails closed without it.
+    const pickedVariant = replacementPick?.variants?.find((v) => v.id === replacementVariantId);
     const replacement = kind === "replacement_equivalent" || kind === "replacement_with_difference"
       ? (replacementPick
-        ? { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: replacementPick.costCents, chargeDifference: kind === "replacement_with_difference" && chargeDifference }
+        ? {
+            productId: replacementPick.id,
+            productName: replacementPick.name,
+            unitPriceCents: replacementPick.priceCents,
+            unitCostCents: orderAmountCents(pickedVariant?.cost ?? replacementPick.cost),
+            chargeDifference: kind === "replacement_with_difference" && chargeDifference,
+            ...(pickedVariant
+              ? { variantId: pickedVariant.id, variantColor: pickedVariant.color, variantSku: variantSku(replacementPick.sku, pickedVariant) }
+              : {}),
+          }
         : undefined)
       : undefined;
-    if ((kind === "replacement_equivalent" || kind === "replacement_with_difference") && !replacement) {
+    if ((kind === "replacement_equivalent" || kind === "replacement_with_difference")
+      && (!replacement || (replacementPick?.variants?.length && !replacementVariantId))) {
       onAgreeing(null);
       return; // the button is disabled; this guards programmatic calls
     }
@@ -276,8 +293,8 @@ function IncidentCard({
       {info.resolution && (
         <p className="text-sm">
           {RESOLUTION_LABEL[info.resolution.kind]}
-          {info.resolution.kind === "replacement_with_difference" && incident.replacement && (
-            <>: {incident.replacement.productName} (<Money exact amount={incident.replacement.unitPriceCents / 100} />
+          {(info.resolution.kind === "replacement_with_difference" || info.resolution.kind === "replacement_equivalent") && incident.replacement && (
+            <>: {incident.replacement.productName}{incident.replacement.variantColor ? ` (${incident.replacement.variantColor})` : ""} (<Money exact amount={incident.replacement.unitPriceCents / 100} />
             {incident.replacement.chargeDifference ? " · diferencia por cobrar" : " · diferencia absorbida"})</>
           )}
           {info.resolution.waitUntil && <> · acordado para {info.resolution.waitUntil}</>}
@@ -297,25 +314,55 @@ function IncidentCard({
               <SearchSelect
                 label="Pieza alternativa"
                 value={replacementQuery}
-                onChange={(value) => { setReplacementQuery(value); setReplacementPick(null); }}
+                onChange={(value) => { setReplacementQuery(value); setReplacementPick(null); setReplacementVariantId(""); }}
                 onSelect={(option) => {
                   const product = products.find((candidate) => candidate.id === option.value);
                   setReplacementQuery(option.label);
                   setReplacementPick({
                     id: option.value,
                     name: option.label,
+                    sku: product?.sku,
                     priceCents: orderAmountCents(product?.price ?? Math.min(...Object.values(product?.prices ?? { base: 0 }).map(Number).filter((value) => Number.isFinite(value) && value >= 0))),
-                    costCents: orderAmountCents(product?.cost ?? 0),
+                    cost: product?.cost ?? 0,
+                    variants: product?.variants,
                   });
+                  setReplacementVariantId("");
                 }}
                 options={products.map((product) => ({
                   value: product.id,
                   label: product.name,
-                  detail: `Existencia: ${product.quantityOnHand ?? 0}`,
+                  // #364: honest existence — the colors' aggregate for designs
+                  // sold per color (the design-level field is dead there).
+                  detail: (() => {
+                    const total = totalStock(product);
+                    if (total == null) return "Existencia: sin rastreo";
+                    return product.variants?.length
+                      ? `Existencia: ${total} en ${product.variants.length} ${product.variants.length === 1 ? "color" : "colores"}`
+                      : `Existencia: ${total}`;
+                  })(),
                   keywords: product.sku,
                 }))}
                 placeholder="Buscar por nombre o clave…"
               />
+              {replacementPick?.variants?.length ? (
+                <div className="space-y-1">
+                  <SelectField
+                    label="Color del reemplazo"
+                    value={replacementVariantId}
+                    onChange={setReplacementVariantId}
+                    options={[
+                      { value: "", label: "Elige el color…" },
+                      ...replacementPick.variants.map((v) => ({
+                        value: v.id,
+                        label: typeof v.quantityOnHand === "number"
+                          ? `${v.color} — ${v.quantityOnHand <= 0 ? "agotado" : v.quantityOnHand === 1 ? "queda 1" : `quedan ${v.quantityOnHand}`}`
+                          : `${v.color} — sin rastreo`,
+                      })),
+                    ]}
+                  />
+                  <p className="text-xs text-on-surface-soft">Elige el color que entregas: sale del estante de ese color.</p>
+                </div>
+              ) : null}
               <p className="text-xs text-on-surface-soft">El precio de la alternativa se captura al confirmar la diferencia con la clienta.</p>
               <CheckboxField
                 label="Cobrar la diferencia a la clienta"
@@ -363,14 +410,15 @@ function IncidentCard({
           <Button
             full
             disabled={agreeing
-              || ((kind === "replacement_equivalent" || kind === "replacement_with_difference") && !replacementPick)
+              || ((kind === "replacement_equivalent" || kind === "replacement_with_difference")
+                && (!replacementPick || (!!replacementPick.variants?.length && replacementVariantId === "")))
               || (needsDestination && destination === "")}
             onClick={() => void agree()}
           >
             {agreeing ? "Guardando…" : "Acordar resolución"}
           </Button>
           {(kind === "replacement_equivalent" || kind === "replacement_with_difference") && !replacementPick && (
-            <p className="text-xs text-on-surface-soft">Elige la pieza que entregas: sale de tu inventario con su costo real.</p>
+            <p className="text-xs text-on-surface-soft">Elige la pieza que entregas (y su color, si se vende por color): sale de tu inventario con su costo real.</p>
           )}
         </div>
       )}

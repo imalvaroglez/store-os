@@ -1313,6 +1313,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         replacement: extra?.replacement,
       });
       dispatch({ type: "UPDATE_ORDER", order: result.order });
+      // #364: incident stock movements (replacement out, piece back to sale)
+      // update the public catalog signal too — same as receptions (#229); a
+      // failure never reverts the incident event.
+      if (result.changedProductIds.length > 0) {
+        const store = state.stores.find((st) => st.id === order.storeId);
+        if (store) {
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(store, state.products, state.categories, result.changedProductIds)
+          );
+        }
+      }
     },
     // #184 loose expenses: register/classify; assignment and consumption run
     // through their transactions and land via the entity listeners.
