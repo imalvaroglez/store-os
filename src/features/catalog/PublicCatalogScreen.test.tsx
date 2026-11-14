@@ -134,7 +134,7 @@ describe("PublicCatalogScreen carrito", () => {
     expect(screen.getByRole("button", { name: "Cómo se obtiene el precio Iconic" })).toHaveAttribute("title", "Obtén el mejor precio al comprar desde $1,000 en productos a precio Iconic");
     fireEvent.click(screen.getByRole("button", { name: "Abrir pedido" }));
     expect(await screen.findByText("$1,080.00 MXN")).toBeTruthy();
-    expect(screen.getByText("Subtotal estimado - precio Iconic")).toBeTruthy();
+    expect(screen.getByText("Subtotal Iconic")).toBeTruthy();
     expect(screen.queryByText("Subtotal estimado - precio Girly")).toBeNull();
     expect(within(screen.getByRole("list")).getByText("Precio por pieza")).toBeTruthy();
 
@@ -175,7 +175,7 @@ describe("PublicCatalogScreen carrito", () => {
 
     render(<PublicCatalogScreen slug="santi" />);
     fireEvent.click(await screen.findByRole("button", { name: "Abrir pedido" }));
-    expect(await screen.findByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(await screen.findByText("Subtotal Girly")).toBeTruthy();
     expect(screen.getByText("$600.00 MXN")).toBeTruthy();
     expect(screen.queryByText(/¿Eres/)).toBeNull();
     expect(screen.queryByText(/Te faltan/)).toBeNull();
