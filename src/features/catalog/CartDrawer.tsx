@@ -1,4 +1,4 @@
-import { useMemo, useId, useState } from "react";
+import { useEffect, useMemo, useId, useState } from "react";
 import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
 import { formatMoney, formatMoneyExact, formatMoneyPlain, publicPrice } from "../../lib/money";
@@ -269,6 +269,7 @@ export function CartDrawer({
   visibleSlugs,
   onSetQty,
   categoryNameBySlug,
+  summaryMode = "estimate",
 }: {
   open: boolean;
   onClose: () => void;
@@ -281,8 +282,11 @@ export function CartDrawer({
   visibleSlugs?: Set<string>;
   onSetQty: (productSlug: string, qty: number) => void;
   /** #305: primary public category name per product slug (from the already
-   * downloaded catalog projection) for the WhatsApp grouping. */
+   *  downloaded catalog projection) for the WhatsApp grouping. */
   categoryNameBySlug?: Record<string, string>;
+  /** #442: the three comparable tier rows are Olivia's cart only ("tiers");
+   *  every other catalog keeps the #420 estimate rows ("estimate"). */
+  summaryMode?: "tiers" | "estimate";
 }) {
   const shown = visibleSlugs ? pruneCartLines(lines, visibleSlugs) : lines;
   const [customerName, setCustomerName] = useState(() => loadCartName(store.slug));
@@ -370,19 +374,45 @@ export function CartDrawer({
             {request ? (
               <div className="rounded-xl bg-[var(--olv-accent-soft,var(--paper-2))] ring-1 ring-[var(--olv-rule,var(--rule))] p-4">
                 <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
-                  Piezas totales
+                  {summaryMode === "tiers" ? "Piezas totales" : `Tu solicitud a ${store.name}`}
                 </p>
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
                   {request.totalQuantity} {request.totalQuantity === 1 ? "pieza" : "piezas"}
                 </p>
-                {/* #442: one comparable row per visible tier — Regular, Girly,
-                    Iconic side by side; the ACTIVE tier highlights on wine, the
-                    shallower ones strike their amounts. A "?" per LATER tier
-                    explains what's missing (pieces or MXN at that tier's own
-                    prices); one help open at a time, live-updating with the
-                    quantities. Hidden tiers never appear; a tier without its
-                    own price on every line reads "Por confirmar". */}
-                <TierSubtotalRows tiers={tiers} lines={qtyLines} activeTierId={request.activeTier.id} />
+                {summaryMode === "tiers" ? (
+                  /* #442: one comparable row per visible tier — Regular, Girly,
+                     Iconic side by side; the ACTIVE tier highlights on wine, the
+                     shallower ones strike their amounts. A "?" per LATER tier
+                     explains what's missing (pieces or MXN at that tier's own
+                     prices); one help open at a time, live-updating with the
+                     quantities. Hidden tiers never appear; a tier without its
+                     own price on every line reads "Por confirmar". Olivia only. */
+                  <TierSubtotalRows tiers={tiers} lines={qtyLines} activeTierId={request.activeTier.id} />
+                ) : (
+                  <dl className="mt-3 space-y-1.5">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado - precio {request.activeTier.label}</dt>
+                      <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
+                        {formatMoneyExact(request.estimatedSubtotal)} MXN
+                      </dd>
+                    </div>
+                    {request.showIdentityHint && request.identityTier && (
+                      <div className="flex items-baseline justify-between gap-3">
+                        <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
+                          ¿Eres {request.identityTier.label}? Subtotal estimado
+                        </dt>
+                        <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
+                          {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+                {summaryMode === "estimate" && request.showIdentityHint && request.identityTier && request.identityAmountRemaining != null && (
+                  <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2" aria-live="polite">
+                    Te faltan {formatMoneyExact(request.identityAmountRemaining)} a precio {request.identityTier.label} para llegar a {formatMoneyExact(request.identityTier.minAmount)}.
+                  </p>
+                )}
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">{ESTIMATE_NOTICE}</p>
               </div>
             ) : pricing ? (
@@ -430,17 +460,28 @@ function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTi
   const [helpTierId, setHelpTierId] = useState<string | null>(null);
   const rows = useMemo(() => tierSubtotalRows(tiers as unknown as PriceTierDef[], lines), [tiers, lines]);
   const active = rows.find((row) => row.tier.id === activeTierId);
+  // #442: a "?" belongs to a LATER tier only — inviting to "unlock" a struck,
+  // SHALLOWER price would sell a worse deal than the one already active (review
+  // H-2). Pieces need no prices; money needs the tier's own subtotal.
+  const helpAvailable = (row: (typeof rows)[number]) => {
+    const isLaterTier = active == null || row.tier.order > active.tier.order;
+    if (!isLaterTier || row.qualifies) return false;
+    return (row.piecesRemaining ?? 0) > 0 || (row.amountRemaining ?? 0) > 0;
+  };
+  // Truly CLOSE the open help when its tier stops qualifying for one (reaching
+  // the minimum, or the active tier moving deeper) — otherwise it would pop
+  // back open on its own after removing pieces (review M-2).
+  useEffect(() => {
+    if (helpTierId != null && !rows.some((row) => row.tier.id === helpTierId && helpAvailable(row))) {
+      setHelpTierId(null);
+    }
+  }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps -- helpAvailable derives from rows+activeTierId
   return (
     <div className="mt-3">
       {rows.map((row) => {
         const isActive = row.tier.id === activeTierId;
         const isBeforeActive = active != null && row.tier.order < active.tier.order;
-        // #442: the help appears per LATER tier whose minimum isn't reached and
-        // whose faltante is computable — pieces need no prices, money needs the
-        // tier's own subtotal (cents-exact underneath).
-        const piecesHelp = !row.qualifies && (row.piecesRemaining ?? 0) > 0;
-        const amountHelp = !row.qualifies && (row.amountRemaining ?? 0) > 0;
-        const helpComputable = piecesHelp || amountHelp;
+        const helpComputable = helpAvailable(row);
         const helpOpen = helpTierId === row.tier.id;
         return (
           <div key={row.tier.id} className={isActive ? "olv-tier-active rounded-lg px-2 py-1.5" : "px-2 py-1.5"}>
@@ -466,12 +507,12 @@ function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTi
                 {row.subtotal != null ? `${formatMoneyExact(row.subtotal)} MXN` : "Por confirmar"}
               </span>
             </div>
-            {helpOpen && piecesHelp && (
+            {helpOpen && (row.piecesRemaining ?? 0) > 0 && (
               <p className="text-xs mt-1" aria-live="polite">
                 Agrega {row.piecesRemaining} {row.piecesRemaining === 1 ? "pieza más" : "piezas más"} para desbloquear este precio
               </p>
             )}
-            {helpOpen && amountHelp && (
+            {helpOpen && (row.amountRemaining ?? 0) > 0 && (
               <p className="text-xs mt-1" aria-live="polite">
                 Agrega {formatMoneyPlain(row.amountRemaining)} más en productos a precio {row.tier.label} para alcanzar los {formatMoneyPlain(row.tier.minAmount!)} y desbloquear este nivel de precios
               </p>
