@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cartRequestSummary, isIdentityGatedTier, type CartQtyLine } from "./pricing";
+import { cartRequestSummary, isIdentityGatedTier, tierSubtotalRows, type CartQtyLine } from "./pricing";
 import type { PriceTierDef } from "../types";
 
 const TIERS: PriceTierDef[] = [
@@ -188,5 +188,84 @@ describe("collar del PO (#420) — casos exactos del contrato", () => {
     expect(r.showIdentityHint).toBe(true);
     expect(r.identitySubtotal).toBe(700);
     expect(r.identityAmountRemaining).toBe(300);
+  });
+});
+
+// #442 — tierSubtotalRows: the comparable per-tier rows behind Olivia's cart.
+describe("tierSubtotalRows (#442) — Huggies Mezcal Gold", () => {
+  const HUGGIES: PriceTierDef[] = [
+    { id: "regular", label: "Regular", order: 0 },
+    { id: "girly", label: "Girly", order: 1, minPieces: 5 },
+    { id: "iconic", label: "Iconic", order: 2, minAmount: 1000 },
+  ];
+  const piece = (qty: number): CartQtyLine[] => [{ qty, unitPrices: { regular: 105, girly: 70, iconic: 45 } }];
+  const rows = (qty: number) => tierSubtotalRows(HUGGIES, piece(qty));
+  const byId = (list: ReturnType<typeof rows>, id: string) => list.find((r) => r.tier.id === id)!;
+
+  it("1 pieza: Regular califica; Girly faltan 4 piezas; Iconic faltan $955", () => {
+    const r = rows(1);
+    expect(r.map((row) => row.tier.id)).toEqual(["regular", "girly", "iconic"]);
+    expect(byId(r, "regular")).toMatchObject({ subtotal: 105, qualifies: true });
+    expect(byId(r, "girly")).toMatchObject({ subtotal: 70, qualifies: false, piecesRemaining: 4 });
+    expect(byId(r, "iconic")).toMatchObject({ subtotal: 45, qualifies: false, amountRemaining: 955 });
+  });
+
+  it("5 piezas: Girly califica; Iconic faltan $775", () => {
+    const r = rows(5);
+    expect(byId(r, "girly")).toMatchObject({ subtotal: 350, qualifies: true, piecesRemaining: 0 });
+    expect(byId(r, "iconic")).toMatchObject({ subtotal: 225, qualifies: false, amountRemaining: 775 });
+  });
+
+  it("23 piezas: Iconic califica ($1,035 ≥ $1,000); 22 faltan $10", () => {
+    const r23 = rows(23);
+    expect(byId(r23, "regular").subtotal).toBe(2415);
+    expect(byId(r23, "girly").subtotal).toBe(1610);
+    expect(byId(r23, "iconic")).toMatchObject({ subtotal: 1035, qualifies: true });
+    const r22 = rows(22);
+    expect(byId(r22, "girly")).toMatchObject({ subtotal: 1540, qualifies: true });
+    expect(byId(r22, "iconic")).toMatchObject({ subtotal: 990, qualifies: false, amountRemaining: 10 });
+  });
+
+  it("pieza sin precio de esa tarifa: subtotal «Por confirmar» sin faltante de monto; las demás filas calculan", () => {
+    const r = tierSubtotalRows(HUGGIES, [
+      { qty: 3, unitPrices: { regular: 105, girly: 70, iconic: 45 } },
+      { qty: 2, unitPrices: { regular: 120, girly: 80 } },
+    ]);
+    expect(byId(r, "regular").subtotal).toBe(3 * 105 + 2 * 120);
+    expect(byId(r, "girly").subtotal).toBe(3 * 70 + 2 * 80);
+    expect(byId(r, "iconic").subtotal).toBeUndefined();
+    expect(byId(r, "iconic").amountRemaining).toBeUndefined();
+    expect(byId(r, "iconic").qualifies).toBe(false);
+  });
+
+  it("el faltante de PIEZAS no requiere precios: ayuda disponible aunque el subtotal esté «Por confirmar»", () => {
+    const r = tierSubtotalRows(HUGGIES, [
+      { qty: 1, unitPrices: { regular: 105, iconic: 45 } }, // sin girly
+    ]);
+    const girly = byId(r, "girly");
+    expect(girly.subtotal).toBeUndefined();
+    expect(girly.piecesRemaining).toBe(4);
+    expect(girly.qualifies).toBe(false);
+  });
+
+  it("omite tarifas ocultas", () => {
+    const tiers = HUGGIES.map((t) => (t.id === "iconic" ? { ...t, hidden: true } : t));
+    expect(tierSubtotalRows(tiers, piece(23)).map((row) => row.tier.id)).toEqual(["regular", "girly"]);
+  });
+
+  it("varias líneas: faltante de piezas cuenta el total del carrito", () => {
+    const r = tierSubtotalRows(HUGGIES, [
+      { qty: 2, unitPrices: { regular: 105, girly: 70, iconic: 45 } },
+      { qty: 2, unitPrices: { regular: 120, girly: 80, iconic: 50 } },
+    ]);
+    expect(byId(r, "girly").piecesRemaining).toBe(1);
+    expect(byId(r, "iconic").subtotal).toBe(2 * 45 + 2 * 50);
+  });
+
+  it.each([999.99, 1000, 1000.01])("frontera de monto a %s con centavos exactos", (amount) => {
+    const r = tierSubtotalRows(HUGGIES, [{ qty: 1, unitPrices: { regular: 2000, girly: 1500, iconic: amount } }]);
+    const iconic = byId(r, "iconic");
+    expect(iconic.qualifies).toBe(amount >= 1000);
+    expect(iconic.amountRemaining).toBe(amount < 1000 ? 0.01 : 0);
   });
 });

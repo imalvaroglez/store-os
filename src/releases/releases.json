@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.16.3",
+    "date": "2026.11.14",
+    "title": "Los tres precios, uno junto al otro en tu carrito",
+    "notes": [
+      "En «Tu pedido» del catálogo, tu clienta ve ahora los tres subtotales juntos — Regular, Girly e Iconic — con el que aplica hoy resaltado en vino y los anteriores tachados, sin hacer cuentas ni cambiar de pantalla.",
+      "Cada precio con requisito trae un botón «?»: con un toque le dice exactamente cuánto le falta — piezas para Girly o pesos a precio Iconic para llegar al mínimo — y se actualiza al sumar o quitar piezas."
+    ]
+  },
+  {
     "version": "1.16.2",
     "date": "2026.11.13",
     "title": "Tu avance hacia Iconic, claro desde el carrito",

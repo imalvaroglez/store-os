@@ -1,14 +1,16 @@
-import { useId, useState } from "react";
+import { useEffect, useMemo, useId, useState } from "react";
 import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
-import { formatMoney, formatMoneyExact, publicPrice } from "../../lib/money";
+import { formatMoney, formatMoneyExact, formatMoneyPlain, publicPrice } from "../../lib/money";
 import { buildCartOrderUrl, type CartOrderLine } from "../../lib/whatsapp";
 import {
   calculateOrderPricing,
   cartRequestSummary,
   isIdentityGatedTier,
   type CartQtyLine,
+  tierSubtotalRows,
 } from "../../lib/pricing";
+import type { PriceTierDef } from "../../types";
 import { loadCartName, pruneCartLines, saveCartName, type CartLine } from "../../lib/cart";
 
 // Public cart drawer. Informative only: minimums are shown as invitations,
@@ -267,6 +269,7 @@ export function CartDrawer({
   visibleSlugs,
   onSetQty,
   categoryNameBySlug,
+  summaryMode = "estimate",
 }: {
   open: boolean;
   onClose: () => void;
@@ -279,8 +282,11 @@ export function CartDrawer({
   visibleSlugs?: Set<string>;
   onSetQty: (productSlug: string, qty: number) => void;
   /** #305: primary public category name per product slug (from the already
-   * downloaded catalog projection) for the WhatsApp grouping. */
+   *  downloaded catalog projection) for the WhatsApp grouping. */
   categoryNameBySlug?: Record<string, string>;
+  /** #442: the three comparable tier rows are Olivia's cart only ("tiers");
+   *  every other catalog keeps the #420 estimate rows ("estimate"). */
+  summaryMode?: "tiers" | "estimate";
 }) {
   const shown = visibleSlugs ? pruneCartLines(lines, visibleSlugs) : lines;
   const [customerName, setCustomerName] = useState(() => loadCartName(store.slug));
@@ -368,30 +374,41 @@ export function CartDrawer({
             {request ? (
               <div className="rounded-xl bg-[var(--olv-accent-soft,var(--paper-2))] ring-1 ring-[var(--olv-rule,var(--rule))] p-4">
                 <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
-                  Tu solicitud a {store.name}
+                  {summaryMode === "tiers" ? "Piezas totales" : `Tu solicitud a ${store.name}`}
                 </p>
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
                   {request.totalQuantity} {request.totalQuantity === 1 ? "pieza" : "piezas"}
                 </p>
-                <dl className="mt-3 space-y-1.5">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado - precio {request.activeTier.label}</dt>
-                    <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
-                      {formatMoneyExact(request.estimatedSubtotal)} MXN
-                    </dd>
-                  </div>
-                  {request.showIdentityHint && request.identityTier && (
+                {summaryMode === "tiers" ? (
+                  /* #442: one comparable row per visible tier — Regular, Girly,
+                     Iconic side by side; the ACTIVE tier highlights on wine, the
+                     shallower ones strike their amounts. A "?" per LATER tier
+                     explains what's missing (pieces or MXN at that tier's own
+                     prices); one help open at a time, live-updating with the
+                     quantities. Hidden tiers never appear; a tier without its
+                     own price on every line reads "Por confirmar". Olivia only. */
+                  <TierSubtotalRows tiers={tiers} lines={qtyLines} activeTierId={request.activeTier.id} />
+                ) : (
+                  <dl className="mt-3 space-y-1.5">
                     <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
-                        ¿Eres {request.identityTier.label}? Subtotal estimado
-                      </dt>
-                      <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
-                        {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
+                      <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado - precio {request.activeTier.label}</dt>
+                      <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
+                        {formatMoneyExact(request.estimatedSubtotal)} MXN
                       </dd>
                     </div>
-                  )}
-                </dl>
-                {request.showIdentityHint && request.identityTier && request.identityAmountRemaining != null && (
+                    {request.showIdentityHint && request.identityTier && (
+                      <div className="flex items-baseline justify-between gap-3">
+                        <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
+                          ¿Eres {request.identityTier.label}? Subtotal estimado
+                        </dt>
+                        <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
+                          {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+                {summaryMode === "estimate" && request.showIdentityHint && request.identityTier && request.identityAmountRemaining != null && (
                   <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2" aria-live="polite">
                     Te faltan {formatMoneyExact(request.identityAmountRemaining)} a precio {request.identityTier.label} para llegar a {formatMoneyExact(request.identityTier.minAmount)}.
                   </p>
@@ -435,5 +452,74 @@ export function CartDrawer({
         </div>
       )}
     </Sheet>
+  );
+}
+
+/** #442: the three-tier subtotal block for Olivia's cart summary. */
+function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTier[]; lines: CartQtyLine[]; activeTierId: string }) {
+  const [helpTierId, setHelpTierId] = useState<string | null>(null);
+  const rows = useMemo(() => tierSubtotalRows(tiers as unknown as PriceTierDef[], lines), [tiers, lines]);
+  const active = rows.find((row) => row.tier.id === activeTierId);
+  // #442: a "?" belongs to a LATER tier only — inviting to "unlock" a struck,
+  // SHALLOWER price would sell a worse deal than the one already active (review
+  // H-2). Pieces need no prices; money needs the tier's own subtotal.
+  const helpAvailable = (row: (typeof rows)[number]) => {
+    const isLaterTier = active == null || row.tier.order > active.tier.order;
+    if (!isLaterTier || row.qualifies) return false;
+    return (row.piecesRemaining ?? 0) > 0 || (row.amountRemaining ?? 0) > 0;
+  };
+  // Truly CLOSE the open help when its tier stops qualifying for one (reaching
+  // the minimum, or the active tier moving deeper) — otherwise it would pop
+  // back open on its own after removing pieces (review M-2).
+  useEffect(() => {
+    if (helpTierId != null && !rows.some((row) => row.tier.id === helpTierId && helpAvailable(row))) {
+      setHelpTierId(null);
+    }
+  }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps -- helpAvailable derives from rows+activeTierId
+  return (
+    <div className="mt-3">
+      {rows.map((row) => {
+        const isActive = row.tier.id === activeTierId;
+        const isBeforeActive = active != null && row.tier.order < active.tier.order;
+        const helpComputable = helpAvailable(row);
+        const helpOpen = helpTierId === row.tier.id;
+        return (
+          <div key={row.tier.id} className={isActive ? "olv-tier-active rounded-lg px-2 py-1.5" : "px-2 py-1.5"}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className={`text-sm ${isActive ? "font-semibold" : "text-[var(--olv-ink-soft,var(--ink-soft))]"}`}>
+                <span className="whitespace-nowrap">Subtotal {row.tier.label}</span>
+                {helpComputable && (
+                  <IconButton
+                    variant="ghost"
+                    aria-label={`Ayuda sobre ${row.tier.label}`}
+                    aria-expanded={helpOpen}
+                    onClick={() => setHelpTierId(helpOpen ? null : row.tier.id)}
+                    className="olv-tier-help"
+                  >
+                    <span aria-hidden="true" className="olv-tier-help-icon">?</span>
+                  </IconButton>
+                )}
+              </span>
+              <span
+                className={`text-sm tabular-nums text-right ${isActive ? "font-extrabold" : "text-[var(--olv-ink,var(--ink))]"}`}
+                style={isBeforeActive ? { textDecoration: "line-through" } : undefined}
+              >
+                {row.subtotal != null ? `${formatMoneyExact(row.subtotal)} MXN` : "Por confirmar"}
+              </span>
+            </div>
+            {helpOpen && (row.piecesRemaining ?? 0) > 0 && (
+              <p className="text-xs mt-1" aria-live="polite">
+                Agrega {row.piecesRemaining} {row.piecesRemaining === 1 ? "pieza más" : "piezas más"} para desbloquear este precio
+              </p>
+            )}
+            {helpOpen && (row.amountRemaining ?? 0) > 0 && (
+              <p className="text-xs mt-1" aria-live="polite">
+                Agrega {formatMoneyPlain(row.amountRemaining)} más en productos a precio {row.tier.label} para alcanzar los {formatMoneyPlain(row.tier.minAmount!)} y desbloquear este nivel de precios
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }

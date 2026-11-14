@@ -350,7 +350,7 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
     {store && <>
       {addedName && !open && <div className="olv-added-status" role="status" aria-live="polite"><span><strong>Agregado a tu pedido</strong><span className="olv-added-name">{addedName}</span></span><Button variant="primary" onClick={openCart}>Ver mi pedido</Button></div>}
       <CartFloatingButton pieces={pieces} onClick={openCart} className={`olv-floating ${open ? "hidden" : ""}`} />
-      {catalog && <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} categoryNameBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, catalog.categories.find((category) => p.categoryIds?.[0] === category.id)?.name ?? ""]))} />}
+      {catalog && <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} categoryNameBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, catalog.categories.find((category) => p.categoryIds?.[0] === category.id)?.name ?? ""]))} summaryMode="tiers" />}
     </>}
   </div>;
   return store ? <CartContext.Provider value={{ ...cart, lines, store, notifyAdded }}>{body}</CartContext.Provider> : body;
