@@ -287,8 +287,7 @@ export function CartDrawer({
 
   const tiers: PublicPriceTier[] = store.priceTiers ?? [];
   const qtyLines: CartQtyLine[] = shown.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
-  // #305: the request summary — habitual (non-identity) headline + the
-  // conditional identity row. Drives BOTH the drawer rows and the message.
+  // One estimate drives the drawer lines, summary and WhatsApp message.
   const request = cartRequestSummary(tiers, qtyLines);
   const pricing = calculateOrderPricing(tiers, qtyLines);
 
@@ -377,15 +376,15 @@ export function CartDrawer({
                 </p>
                 <dl className="mt-3 space-y-1.5">
                   <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado</dt>
+                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado · {request.activeTier.label}</dt>
                     <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
-                      {formatMoneyExact(request.habitualSubtotal)} MXN
+                      {formatMoneyExact(request.estimatedSubtotal)} MXN
                     </dd>
                   </div>
                   {request.showIdentityHint && request.identityTier && (
                     <div className="flex items-baseline justify-between gap-3">
                       <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
-                        ¿Eres {request.identityTier.label}? Subtotal estimado
+                        Subtotal estimado · {request.identityTier.label}
                       </dt>
                       <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
                         {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
@@ -393,6 +392,11 @@ export function CartDrawer({
                     </div>
                   )}
                 </dl>
+                {request.showIdentityHint && request.identityTier && request.identityAmountRemaining != null && (
+                  <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2" aria-live="polite">
+                    Te faltan {formatMoneyExact(request.identityAmountRemaining)} a precio {request.identityTier.label} para llegar a {formatMoneyExact(request.identityTier.minAmount)}.
+                  </p>
+                )}
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">{ESTIMATE_NOTICE}</p>
               </div>
             ) : pricing ? (
