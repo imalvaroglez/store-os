@@ -1,6 +1,6 @@
 # Ledger de integración financiera — estado vigente
 
-> #171 — Vista actual y comprobable de qué cambios financieros están listos para integrarse, qué depende de una decisión de negocio y cuál es el orden seguro de revisión. **Documento de coordinación**: no implementa nada; cada cambio conserva su issue/PR y compuertas. Basado en el tablero y los PR abiertos al 2026-11-14; el estado de verdad vive en las issues enlazadas.
+> #171 — Vista actual y comprobable de qué cambios financieros están listos para integrarse, qué depende de una decisión de negocio y cuál es el orden seguro de revisión. **Documento de coordinación**: no implementa nada; cada cambio conserva su issue/PR y compuertas. **Corte: 2026-11-14 20:35 UTC** (día y hora exactos: este tablero se mueve por horas — refrescar esta sección contra el tablero/PRs inmediatamente antes de cualquier merge que la use); el estado de verdad vive en las issues enlazadas.
 
 ## A. Decisiones confirmadas (fuente y efecto)
 
@@ -20,19 +20,19 @@
 | 1 | #410 | `5db6a22` | #365 | Alertas de reabasto leen el agregado de colores | CI ✓; revisión: APROBADO (2 revisores) — Por liberar |
 | 2 | #412 | `258ec54` | #364 | Incidencias mueven el estante del color exacto | CI ✓; revisión: APROBADO (2 revisores) — Por liberar |
 | 3 | #414 | `96f5526` | #369 | Cancelado no admite cobros (3 capas) | CI ✓; código APROBADO; UX BLOQUEADO por criterio 3 (decisión PO) |
-| 4 | #415 | `1912d1d` | #368 | La línea con incidencia es evidencia (guard + insignia) | CI ✓; sin primera revisión publicada |
-| 5 | #416 | `e48dc9f` | #373 | Parches vs clones vencidos (membresías/productos/compras) | CI ✓; ronda 1 BLOQUEADA (2 hallazgos) — **corregida en ronda 2**; espera nueva revisión |
-| 6 | #417 | `2b5be38` | #374 | Anti-squatting en proyecciones públicas | CI ✓; sin revisión |
+| 4 | #415 | `1912d1d` | #368 | La línea con incidencia es evidencia (guard + insignia) | CI ✓; revisión: APROBADO (2 revisores) — Por liberar |
+| 5 | #416 | `0703c8e` | #373 | Parches vs clones vencidos (membresías/productos/compras) | CI ✓; rondas 1-2 BLOQUEADAS → **ronda 3 APROBADO (código+UX)** — Por liberar |
+| 6 | #417 | `a008d57` | #374 | Anti-squatting en proyecciones públicas | CI ✓; ronda 1 BLOQUEADA → **ronda 2 APROBADO (código+UX)** — Por liberar |
 | 7 | #418 | `ac84ae2` | #371 | Pausa «Agotado» honrada en catálogo genérico | CI ✓; sin revisión (base de #434) |
 | 8 | #434 | `8834769`+`6917ec0` | #135+#137 | Encargo + filtro acabado + selector de variantes GANNI | CI ✓; **apilado sobre #418** (fusionar #418 primero) |
-| 9 | #419 | `db416f6` | #129 etapa | Vista previa de cierre mensual (solo lectura) | CI ✓; sin revisión |
+| 9 | #419 | `3482622` | #129 etapa | Vista previa de cierre mensual (solo lectura) | CI ✓; ronda 1 BLOQUEADA (CRÍTICO mes-frontera + MAYOR cobros) → ronda 2 BLOQUEADA → **ronda 3 APROBADO (código+UX, compuertas A-D del PO en verde)** — Por liberar |
 | 10 | #431 | `46ffb96` | #128 etapa | Reparto propuesto 50/30/20 (simulación) | CI ✓; sin revisión |
-| 11 | #436 | `f5ccee0` | #132 FER-17 | Top emprendedoras (neto entregado) | CI ✓; sin revisión |
-| 12 | #435 | `ac33da4` | #421 | Renglón sin ficha: aviso + vínculo con precio acordado | CI ✓; sin revisión |
-| 13 | #438 | `eb4db4a` | #211 fase 1 | Asociación proveedor-código → producto | CI ✓; sin revisión |
-| 14 | #428 | `df232da` | #359 | SW fuera de /catalogo + REST no-store + logo versionado | CI ✓; sin revisión |
-| 15 | #430 | `682e822` | #386 | Espera e2e tolera escritura en background | CI ✓; sin revisión |
-| 16 | #432 | `3e9418e` | #191 fase 1 | `npm run usage-report` (local, privado) | CI ✓; sin revisión |
+| 11 | #436 | `30ce435` | #132 FER-17 | Top emprendedoras (neto entregado) | CI ✓; código APROBADO; UX r1 BLOQUEADO → **corregido en r2**; espera re-revisión UX |
+| 12 | #435 | `ac33da4` | #421 | Renglón sin ficha: aviso + vínculo con precio acordado | CI ✓; revisión: APROBADO (2 revisores) — Por liberar |
+| 13 | #438 | `6600971` | #211 fase 1 | Asociación proveedor-código → producto | CI ✓; ronda 1 BLOQUEADA (LIST cross-tenant) → **corregido en r2**; espera re-revisión |
+| 14 | #428 | `7795704` | #359 | SW fuera de /catalogo + REST no-store + logo versionado | CI ✓; revisión: APROBADO — Por liberar |
+| 15 | #430 | `682e822` | #386 | Espera e2e tolera escritura en background | CI ✓; revisión: APROBADO — Por liberar |
+| 16 | #432 | `6a5ea96` | #191 fase 1 | `npm run usage-report` (local, privado) | CI ✓; ronda 1 BLOQUEADA (2 MAYOR) → **corregido en r2**; espera re-revisión |
 | 17 | #433 | `e844ad9` | #195 | Guía de fotografía (documento) | CI ✓; sin revisión; piloto requiere material de Fer |
 | 18 | #411 | `c865cb7` | #406 | Totales animados nunca en $0 | CI ✓; sesión 2 |
 | 19 | #403 | `12742e9` | #380 | Reglas: crédito solo con operaciones firmadas | CI ✓; **congelado a decisión PO** |
@@ -52,19 +52,17 @@ Documentario: #397/#401 (runbook Sev-1 §6) esperan revisión del PO — sin imp
 
 ## D. Orden de integración propuesto (dependencias y conflictos reproducibles)
 
-1. **#410 (#365)** y **#412 (#364)** — aprobados por doble revisión; sin dependencias entre sí. Integrables ya.
-2. **#415 (#368)**, **#417 (#374)**, **#428 (#359)**, **#430 (#386)**, **#432 (#191)**, **#433 (#195)** — sin solape entre sí ni con los anteriores; requieren su doble revisión.
-3. **#418 (#371)** primero y **#434 (#135+#137)** después — apilados por diseño (misma pantalla); #434 declara la dependencia.
-4. **#419 (#129 etapa)**, **#431 (#128 etapa)**, **#436 (#132)** — independientes entre sí; todos de solo lectura, pueden integrarse en cualquier orden tras su revisión. #436/#431 conviven con #419 sin tocar sus contratos.
-5. **#416 (#373)** — ronda 2 del PR original (`e48dc9f`) corrige los dos hallazgos bloqueantes; requiere **nueva doble revisión** (el veredicto BLOQUEADO fue sobre `53e62bc`).
-6. **#435 (#421)**, **#438 (#211)** — tocan `PurchaseForm`/`OrderForm` sin solaparse entre sí; integrar #416 antes de #438 reduce el riesgo de conflicto en `PurchaseForm` (ambos editan guardados de compra).
-7. **#414 (#369)** — el eje código ya está aprobado; la compuerta es la decisión del PO (criterio 3). Integrar el código no depende de esa decisión, pero el cierre de la issue sí.
-8. **#411 (#406)** — sesión 2; independiente del tren financiero.
-9. **#403/#413 (#380)** y su cola (#366/#367/#383) — bloqueados por la decisión del PO; ninguna otra historia debe tocar `credit*` mientras tanto.
+1. **#410 (#365)**, **#412 (#364)**, **#415 (#368)**, **#416 (#373 r3)**, **#417 (#374 r2)**, **#428 (#359)**, **#430 (#386)**, **#433 (#195)**, **#435 (#421)** — todos con doble veredicto APROBADO y CI verde; sin solape entre sí. Integrables ya (r1 de #415 ya estaba publicada al corte original — corregido).
+2. **#418 (#371)** primero y **#434 (#135+#137)** después — apilados por diseño (misma pantalla); #434 declara la dependencia. Ambos aprobados.
+3. **#419 (#129 etapa, r3)** y **#431 (#128 etapa)** — aprobados, solo lectura, independientes; #436 (#132) los alcanza cuando su re-revisión UX apruebe.
+4. **#432 (#191 r2)** y **#438 (#211 r2)** — correcciones publicadas con evidencia; esperan re-revisión. Integrar #416 antes de #438 sigue reduciendo el riesgo en `PurchaseForm` (ambos editan guardados de compra).
+5. **#414 (#369)** — el eje código ya está aprobado; la compuerta es la decisión del PO (criterio 3). Integrar el código no depende de esa decisión, pero el cierre de la issue sí.
+6. **#411 (#406)** — sesión 2; independiente del tren financiero (veredicto en su PR).
+7. **#403/#413 (#380)** y su cola (#366/#367/#383) — bloqueados por la decisión del PO; ninguna otra historia debe tocar `credit*` mientras tanto.
 
 ## E. Disponibilidad real (qué ve Fer hoy)
 
-- **En main/producción (1.16.1)**: pedidos/cobros/entregas/incidencias por color (#333/#353/#391/#394/#398/#399/#404/#405/#429), compras por ticket con recepción (#206/#207), precio por clienta (#151), estrategia de precios (#289/#315).
+- **En main/producción (1.16.2, liberada el 2026-11-14 vía hotfix #429 — horas antes del corte original de este ledger)**: pedidos/cobros/entregas/incidencias por color (#333/#353/#391/#394/#398/#399/#404/#405/#429), compras por ticket con recepción (#206/#207), precio por clienta (#151), estrategia de precios (#289/#315).
 - **Solo en PR (propuesta)**: todo lo de la sección B — cierre mensual y reparto son **simulaciones de solo lectura**; ninguna cifra se autoriza ni se mueve desde ellas.
 - **Sin implementar**: #202 (correcciones de cierre), #279 (caja/obligaciones), operación de crédito firmada (#380), etapas operativas de #128/#129/#132.
 
