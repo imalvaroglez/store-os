@@ -114,3 +114,55 @@ describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
     expect(screen.getByText(/Líneas sin costo conocido/i)).toBeTruthy();
   });
 });
+
+describe("#129 r2 — devoluciones de revisión", () => {
+  const NOW = "2026-11-14T10:00:00.000Z";
+  const baseOrder = (id: string, extra: Partial<Order> = {}): Order => ({
+    id, storeId: "s1", customerId: "c1",
+    items: [{ lineId: "L1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 300, subtotal: 300, cost: 100 }],
+    deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid",
+    createdAt: NOW, updatedAt: NOW, ...extra,
+  });
+  const paidBeforeDelivery = baseOrder("o_paid", { paymentsReceivedCents: 20000, paymentStatus: "partial" });
+  const pay = (id: string, amount: number) => ({ id, orderId: "o_paid", storeId: "s1", date: "2026-11-05", method: "cash", kind: "payment", amount, createdAt: NOW, createdBy: "u1" });
+
+  it("un abono registrado antes de la entrega (sin entregas ni anticipo) SÍ entra en Cobros del mes", async () => {
+    mocks.state.orders = [paidBeforeDelivery];
+    mocks.loadOrderPaymentsDocs.mockClear().mockResolvedValue({ o_paid: [pay("pay_before", 200)] });
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText("Cobros del mes (fecha real)")).toBeTruthy());
+    expect(mocks.loadOrderPaymentsDocs).toHaveBeenCalledWith(["o_paid"]);
+    await waitFor(() => expect(screen.getByText("$200.00")).toBeTruthy());
+  });
+
+  it("fecha de entrega corrupta degrada la fila sin tumbar la vista (monto NaN se coerce vía orderItems)", async () => {
+    const bad = baseOrder("o_bad", {
+      orderStatus: "delivered",
+      items: [{ lineId: "L1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: Number.NaN, subtotal: 0 }],
+      deliveries: [{ id: "d1", orderId: "o_bad", storeId: "s1", deliveredAt: "fecha-rota", recordedAt: NOW, by: "u1", lines: [{ productId: "p1", quantity: 1 }] }],
+      paymentsReceivedCents: 15000,
+    });
+    mocks.state.orders = [bad];
+    mocks.loadOrderPaymentsDocs.mockClear().mockResolvedValue({});
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText("Ventas (entregas verificadas)")).toBeTruthy());
+    // La vista sigue viva; el dato dañado queda identificado, no rompe todo.
+    expect(screen.getByText("Datos no interpretables")).toBeTruthy();
+    expect(screen.getByText(/#O_BAD/)).toBeTruthy();
+  });
+
+  it("pieza entregada cuya línea ya no existe queda VISIBLE en cobertura", async () => {
+    const staleLine = baseOrder("o_stale", {
+      orderStatus: "delivered",
+      items: [],
+      deliveries: [{ id: "d1", orderId: "o_stale", storeId: "s1", deliveredAt: "2026-11-05", recordedAt: NOW, by: "u1", lines: [{ productId: "p1", quantity: 1 }] }],
+    });
+    mocks.state.orders = [staleLine];
+    mocks.loadOrderPaymentsDocs.mockClear().mockResolvedValue({});
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText(/incompleta/i)).toBeTruthy());
+    // Encabezado de sección + fila del pedido: la pieza está a la vista.
+    expect(screen.getAllByText(/ya no existe|sin línea/i).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/#O_STAL/)).toBeTruthy();
+  });
+});
