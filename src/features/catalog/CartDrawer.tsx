@@ -1,7 +1,7 @@
 import { useMemo, useId, useState } from "react";
 import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
-import { formatMoney, formatMoneyExact, publicPrice } from "../../lib/money";
+import { formatMoney, formatMoneyExact, formatMoneyPlain, publicPrice } from "../../lib/money";
 import { buildCartOrderUrl, type CartOrderLine } from "../../lib/whatsapp";
 import {
   calculateOrderPricing,
@@ -370,7 +370,7 @@ export function CartDrawer({
             {request ? (
               <div className="rounded-xl bg-[var(--olv-accent-soft,var(--paper-2))] ring-1 ring-[var(--olv-rule,var(--rule))] p-4">
                 <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
-                  Tu solicitud a {store.name}
+                  Piezas totales
                 </p>
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
                   {request.totalQuantity} {request.totalQuantity === 1 ? "pieza" : "piezas"}
@@ -435,8 +435,12 @@ function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTi
       {rows.map((row) => {
         const isActive = row.tier.id === activeTierId;
         const isBeforeActive = active != null && row.tier.order < active.tier.order;
-        const helpComputable = !row.qualifies && row.subtotal != null
-          && ((row.piecesRemaining ?? 0) > 0 || (row.amountRemaining ?? 0) > 0);
+        // #442: the help appears per LATER tier whose minimum isn't reached and
+        // whose faltante is computable — pieces need no prices, money needs the
+        // tier's own subtotal (cents-exact underneath).
+        const piecesHelp = !row.qualifies && (row.piecesRemaining ?? 0) > 0;
+        const amountHelp = !row.qualifies && (row.amountRemaining ?? 0) > 0;
+        const helpComputable = piecesHelp || amountHelp;
         const helpOpen = helpTierId === row.tier.id;
         return (
           <div key={row.tier.id} className={isActive ? "olv-tier-active rounded-lg px-2 py-1.5" : "px-2 py-1.5"}>
@@ -462,14 +466,14 @@ function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTi
                 {row.subtotal != null ? `${formatMoneyExact(row.subtotal)} MXN` : "Por confirmar"}
               </span>
             </div>
-            {helpOpen && helpComputable && row.piecesRemaining != null && row.piecesRemaining > 0 && (
+            {helpOpen && piecesHelp && (
               <p className="text-xs mt-1" aria-live="polite">
-                Agrega {row.piecesRemaining} {row.piecesRemaining === 1 ? "pieza más" : "piezas más"} para desbloquear este precio.
+                Agrega {row.piecesRemaining} {row.piecesRemaining === 1 ? "pieza más" : "piezas más"} para desbloquear este precio
               </p>
             )}
-            {helpOpen && helpComputable && row.amountRemaining != null && row.amountRemaining > 0 && (
+            {helpOpen && amountHelp && (
               <p className="text-xs mt-1" aria-live="polite">
-                Agrega {formatMoneyExact(row.amountRemaining)} más en productos a precio {row.tier.label} para alcanzar {formatMoneyExact(row.tier.minAmount!)} y desbloquear este nivel de precios.
+                Agrega {formatMoneyPlain(row.amountRemaining)} más en productos a precio {row.tier.label} para alcanzar los {formatMoneyPlain(row.tier.minAmount!)} y desbloquear este nivel de precios
               </p>
             )}
           </div>
