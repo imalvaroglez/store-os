@@ -38,7 +38,17 @@ export type AdjustmentPlan =
       affectsResults: false;
     };
 
-/** The OLDEST open period (closest to the origin) — null when all are closed. */
+// Invariant (approved rules): for every applied plan,
+// breakdown.inventoryCents + breakdown.costCents === differenceCents — the
+// correction explains the WHOLE difference, in cents, and never more.
+// Sign convention: differenceCents > 0 = the origin over-stated results
+// (regularization returns); < 0 = under-stated (owed).
+
+/**
+ * The OLDEST open period — which may sit EARLIER than the origin period —
+ * null when all are closed. Rules approved in #202: the differential lands
+ * wherever accounting is still open, not necessarily after the origin.
+ */
 export function adjustmentTargetPeriod(openPeriods: CloseMonth[]): CloseMonth | null {
   if (openPeriods.length === 0) return null;
   return [...openPeriods].sort((a, b) => a.year * 12 + a.month - (b.year * 12 + b.month))[0];
@@ -126,6 +136,12 @@ export function pendingRegularizationByRecipient(
   differenceCents: number
 ): RecipientPending | null {
   if (!historical || historical.totalDistributedCents <= 0) return null;
+  // #202 r2: shares must account for the whole distributed total. An
+  // inconsistent history (sum ≠ total) produces NO proposal — fail closed,
+  // never a differential that silently loses cents (probe: fer 100 of 1000,
+  // diff 10 → the naive split summed 4 and vanished 6).
+  const sharesSum = historical.ferCents + historical.oliviaCents + historical.investorCents;
+  if (sharesSum !== historical.totalDistributedCents) return null;
   const shares: Array<{ key: keyof RecipientPending; paidCents: number }> = [
     { key: "ferCents", paidCents: historical.ferCents },
     { key: "oliviaCents", paidCents: historical.oliviaCents },
