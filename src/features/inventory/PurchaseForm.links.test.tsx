@@ -94,4 +94,18 @@ describe("#211 sugerencia por código confirmado", () => {
       expect.objectContaining({ storeId: "olivia", supplierId: "sup1", code: "AR-0123", productId: "p_aro" })
     ));
   });
+
+  it("#211 r2 M2: si falla el guardado de la asociación, el botón AVISA (nunca promesa rechazada en silencio)", async () => {
+    mocks.confirmSupplierLink.mockClear().mockRejectedValue(new Error("offline"));
+    open();
+    fireEvent.change(await screen.findByLabelText("Producto del ticket"), { target: { value: "AR-0123" } });
+    const search = screen.getByLabelText("Producto en Store OS");
+    fireEvent.focus(search);
+    fireEvent.change(search, { target: { value: "Aro" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Aro Luna/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Recordar «AR-0123»/i }));
+    await waitFor(() =>
+      expect(screen.getByText("No se pudo guardar la asociación. Inténtalo de nuevo.")).toBeTruthy()
+    );
+  });
 });
