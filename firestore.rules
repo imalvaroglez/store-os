@@ -217,6 +217,22 @@ service cloud.firestore {
         && !(('supply' in resource.data) && ('consumptions' in resource.data.supply) && resource.data.supply.consumptions.size() > 0);
     }
 
+    // #335: append-only price-change trail. Price events are created in the
+    // SAME atomic batch as the price they describe; a retry of the same intent
+    // re-writes a byte-identical doc (allowed), any modification is denied.
+    match /priceEvents/{id} {
+      // resource == null on get: probing a non-existent event reads as
+      // absent instead of erroring (existence checks must not throw).
+      allow get: if resource == null || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.changedBy == request.auth.uid;
+      allow update: if canOperateStore(resource.data.storeId)
+        && request.resource.data == resource.data;
+      allow delete: if false;
+    }
+
     match /purchases/{id} {
       allow read: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId);

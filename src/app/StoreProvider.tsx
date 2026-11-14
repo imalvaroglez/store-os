@@ -32,6 +32,7 @@ import { uid } from "../lib/ids";
 import { nowIso, todayIso } from "../lib/dates";
 import { reservationDeltasForOrderChange } from "../lib/inventory";
 import { receivedProductsFromStockUpdates } from "../lib/purchases";
+import { ruleChangeEvent } from "../lib/priceDiagnostics";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
@@ -57,6 +58,8 @@ import {
   savePricingRules,
   saveCategoryPricingRules,
   applyProductPrices as applyProductPricesBatch,
+  saveProductWithPriceEvents,
+  recordRuleChangeEvent,
   projectPublicForStore,
   deleteEntity,
   claimSlug,
@@ -301,7 +304,10 @@ type StoreContextValue = {
   /** #253: members may save the packaging profile (field-scoped rules path). */
   savePackaging: (packaging: StorePackaging) => Promise<void>;
   /** #254: members may save the pricing rules (same field-scoped path). */
-  savePricingRules: (pricingRules: PricingRulesConfig) => Promise<void>;
+  savePricingRules: (
+    pricingRules: PricingRulesConfig,
+    ruleEvent?: { categoryId: string | null; summary: string }
+  ) => Promise<void>;
   /** #289: apply ONLY prices — scoped batch write (never a full product
    * upsert), public catalog republished once from the merged local state. */
   applyProductPrices: (updates: Array<{ id: string; prices: Record<string, number> }>) => Promise<void>;
@@ -711,11 +717,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (cloud) await saveStorePackaging(existing, packaging, updatedAt);
       dispatch({ type: "UPDATE_STORE", store: { ...existing, packaging, updatedAt } });
     },
-    savePricingRules: async (pricingRules) => {
+    savePricingRules: async (pricingRules, ruleEvent) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
-      if (cloud) await savePricingRules(existing, pricingRules, updatedAt);
+      if (cloud) {
+        await savePricingRules(existing, pricingRules, updatedAt);
+        // #335 r2: a config change is its own event — it changed no price.
+        if (ruleEvent && user) {
+          await recordRuleChangeEvent(
+            ruleChangeEvent({
+              intentId: `${ruleEvent.categoryId ?? "tiers"}:${updatedAt}`,
+              storeId: existing.id,
+              categoryId: ruleEvent.categoryId,
+              uid: user.uid,
+              summary: ruleEvent.summary,
+            })
+          );
+        }
+      }
       // Local mirror with the same byTier-only overlay the transaction applies
       // server-side — never replace the whole config from this screen's clone.
       const merged: PricingRulesConfig = existing.pricingRules
@@ -729,7 +749,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
       if (cloud) {
-        await applyProductPricesBatch(existing, updates, updatedAt);
+        // #335 r2: uid enables the per-tier events for EFFECTIVE changes.
+        await applyProductPricesBatch(existing, updates, updatedAt, user?.uid);
         // Republish the PUBLIC catalog once from the freshest local products
         // merged with the new prices — projection prices mirror the private
         // doc; other public fields come from the live subscription state.
@@ -856,9 +877,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" });
     },
     upsertProduct: async (product) => {
-      requireAuthenticatedUser();
+      const currentUser = requireAuthenticatedUser();
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
-      await persistEntity("products", product);
+      // #335 r2: the product doc and its price-change events land in ONE
+      // atomic batch — the trail never diverges from the price.
+      await saveProductWithPriceEvents(
+        currentUser,
+        state.products.find((p) => p.id === product.id),
+        product
+      ).catch((error) => {
+        console.error(`[Firestore] Error al guardar products (${product.id}):`, error);
+        throw error;
+      });
       {
         const store = state.stores.find((s) => s.id === product.storeId);
         if (store) {
