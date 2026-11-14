@@ -8,6 +8,7 @@ import type { Order, OrderCreditLedgerEntry } from "../../types";
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
 import {
+  OrderEvidenceDeletionError,
   applyCustomerCreditTx,
   deleteOrderWithStockTx,
   getOrderFreshRevision,
@@ -103,17 +104,54 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deletion vs outstanding c
     expect(after.revision).toBe(dest.revision);   // nothing written
   });
 
-  it("flujo legítimo: restituir el crédito y borrar con la revisión fresca elimina el pedido y deja el espejo en cero", async () => {
+  it("flujo con evidencia: restituir deja el espejo en cero y el ledger VIVO bloquea el borrado (#380 r2)", async () => {
     const released = await releaseCustomerCreditTx({ orderId: "dc-dest", storeId: "dc-store", by: "tx-user", reason: "deletion" });
     expect(released).toBe(20000);
 
-    const fresh = await getOrderFreshRevision("dc-dest");
-    expect(typeof fresh).toBe("number");
-    await deleteOrderWithStockTx(user, "dc-dest", fresh as number);
-
-    expect((await getDoc(doc(holder.db, "orders/dc-dest"))).exists()).toBe(false);
     const origin = (await getDoc(doc(holder.db, "orders/dc-origin"))).data()!;
     expect(origin.creditConsumedCents).toBe(0); // the clienta's credit is whole again
+    // #380 r2 (review #403 MAYOR-2): accumulators at zero are not enough —
+    // a signed fake release can produce exactly that. The ledger is money
+    // evidence, so the document stays: the rules deny the delete.
+    const fresh = await getOrderFreshRevision("dc-dest");
+    expect(typeof fresh).toBe("number");
+    await expect(deleteOrderWithStockTx(user, "dc-dest", fresh as number)).rejects.toThrow();
+    expect((await getDoc(doc(holder.db, "orders/dc-dest"))).exists()).toBe(true);
+  });
+
+  it("#403 PO: un borrado RECHAZADO no mueve saldo (applied queda intacto)", async () => {
+    // Outstanding applied credit + ledger history: the delete is rejected by
+    // the fresh-doc guard BEFORE any release runs — the clienta's money
+    // position must be identical after the failed attempt.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/dc-nomove"), orderDoc("dc-nomove", {
+        creditAppliedCents: 15000,
+        creditLedger: [{ id: "nm1", kind: "application", fromOrderId: "dc-origin", amountCents: 15000, at: "2026-11-12T10:00:00.000Z", by: "tx-user" }],
+      }));
+    });
+    const fresh = await getOrderFreshRevision("dc-nomove");
+    await expect(deleteOrderWithStockTx(user, "dc-nomove", fresh as number)).rejects.toThrow(/saldo a favor|conserva cobros/i);
+    const doc0 = (await getDoc(doc(holder.db, "orders/dc-nomove"))).data()!;
+    expect(doc0.creditAppliedCents).toBe(15000);      // intact
+    expect((doc0.creditLedger as unknown[]).length).toBe(1); // intact
+    const origin = (await getDoc(doc(holder.db, "orders/dc-origin"))).data()!;
+    expect(origin.creditConsumedCents ?? 0).toBe(0);   // nothing released anywhere
+  });
+
+  it("#380 r2: borrar un pedido con historial de crédito falla con el error en español (no PERMISSION_DENIED crudo)", async () => {
+    // Seeded admin-side: the create rules forbid creditLedger on new docs.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/dc-history"), orderDoc("dc-history", {
+        creditAppliedCents: 0,
+        creditLedger: [
+          { id: "h1", kind: "application", fromOrderId: "dc-origin", amountCents: 5000, at: "2026-11-12T10:00:00.000Z", by: "tx-user" },
+          { id: "r1", kind: "release", fromOrderId: "dc-origin", amountCents: 5000, at: "2026-11-12T11:00:00.000Z", by: "tx-user" },
+        ],
+      }));
+    });
+    const fresh = await getOrderFreshRevision("dc-history");
+    await expect(deleteOrderWithStockTx(user, "dc-history", fresh as number)).rejects.toBeInstanceOf(OrderEvidenceDeletionError);
+    expect((await getDoc(doc(holder.db, "orders/dc-history"))).exists()).toBe(true);
   });
 
   it("un pedido sin crédito pendiente se borra normalmente (sin regresión)", async () => {

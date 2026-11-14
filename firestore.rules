@@ -387,11 +387,125 @@ service cloud.firestore {
         && int(entry.get('deliveredAt', '0000')[0:4]) >= 2020
         && int(entry.get('deliveredAt', '0000')[0:4]) <= 2035;
     }
+    // ── #380: the clienta's credit (saldo a favor) moves ONLY through
+    // signed, traceable ledger appends. Two evidence families, one per side:
+    // the DESTINATION ledger (application/release, #189) and the ORIGIN
+    // mirror ledger (consumption/restitution, #380). Accumulators are FROZEN
+    // unless their ledger grows by well-formed appends signed by the caller
+    // whose EXACT sum equals the accumulator delta, moving exactly one
+    // accumulator in the entries' direction; every appended entry's
+    // counterpart order must exist in the SAME store for the SAME clienta —
+    // cross-store and cross-clienta fabrication dies at the rules layer.
+    // (Transactions are validated against the FINAL state per document —
+    // verified empirically — so a batch append is one rules evaluation and
+    // its exact-sum check covers the whole movement.)
+    function creditAccumulatorsFrozen(before, after) {
+      return after.get('creditAppliedCents', 0) == before.get('creditAppliedCents', 0)
+        && after.get('creditConsumedCents', 0) == before.get('creditConsumedCents', 0);
+    }
+    function creditLedgerUntouched(before, after) {
+      return after.get('creditLedger', []) == before.get('creditLedger', []);
+    }
+    // Per-entry soundness. #403 (PO halt): beyond signature/exactness/
+    // isolation, every entry is BACKED —
+    // - application (DEST, applied ↑A): the ORIGIN already carries the exact
+    //   paired consumption mirror (id con_<entry.id>, same amount/date/signer,
+    //   pointing back at THIS order). get() reads committed pre-transaction
+    //   state (verified empirically), so the apply transactions commit the
+    //   origin reservation FIRST — a unilateral application has no pair.
+    // - release (DEST, applied ↓A): the origin's committed mirror covers at
+    //   least A (creditConsumedCents ≥ A) — never restitute thin air.
+    // - restitution (ORIGIN, consumed ↓A): the DEST already carries the exact
+    //   paired release entry (id = this mirror's id without the res_ prefix).
+    // - consumption (ORIGIN, consumed ↑A): the signed reservation itself —
+    //   its only unilateral effect is REDUCING available credit (conservative,
+    //   visible, repairable by a paired release); documented residual.
+    function creditEntrySound(entry, before, orderId, storeId, customerId) {
+      let counterpartPath = /databases/$(database)/documents/orders/$(entry.get('fromOrderId', ''));
+      let counterpart = get(counterpartPath).data;
+      let kind = entry.get('kind', '');
+      return counterpart.get('storeId', '') == storeId
+        && counterpart.get('customerId', '') == customerId
+        && entry.get('id', '') is string && entry.get('id', '').size() > 0
+        && kind in ['application', 'release', 'consumption', 'restitution']
+        && entry.get('fromOrderId', '') is string && entry.get('fromOrderId', '').size() > 0
+        // Exact cents, positive, inside the app's safe-precision bound.
+        && entry.get('amountCents', 0) is int
+        && entry.get('amountCents', 0) > 0
+        && entry.get('amountCents', 0) <= 9000000000000
+        && entry.get('at', '') is string && entry.get('at', '').size() > 0
+        && entry.get('by', '') == request.auth.uid
+        && (kind == 'application'
+              ? counterpart.get('creditLedger', []).hasAll([{
+                  'id': 'con_' + entry.get('id', ''),
+                  'kind': 'consumption',
+                  'fromOrderId': orderId,
+                  'amountCents': entry.get('amountCents', 0),
+                  'at': entry.get('at', ''),
+                  'by': request.auth.uid
+                }])
+            : kind == 'release'
+              ? counterpart.get('creditConsumedCents', 0) >= entry.get('amountCents', 0)
+                // #403 r5: also THIS order must have had at least that much
+                // applied — a fabricated release on a sibling that never
+                // used the origin's credit cannot mint available credit.
+                && before.get('creditAppliedCents', 0) >= entry.get('amountCents', 0)
+            : kind == 'restitution'
+              ? counterpart.get('creditLedger', []).hasAll([{
+                  'id': entry.get('id', '').replace('res_', ''),
+                  'kind': 'release',
+                  'fromOrderId': orderId,
+                  'amountCents': entry.get('amountCents', 0),
+                  'at': entry.get('at', ''),
+                  'by': request.auth.uid
+                }])
+              : true);
+    }
+    function validCreditAppend(orderId, before, after) {
+      let prev = before.get('creditLedger', []);
+      let next = after.get('creditLedger', []);
+      let n = prev.size();
+      // Bounded batch: the transactions chunk multi-origin releases into
+      // commits of at most 3 entries (the CEL expression budget caps what a
+      // single rules evaluation can verify — review #403 MAYOR-1).
+      let batched = next.size() > n && next.size() <= n + 3;
+      let sum = (next.size() > n ? next[n].get('amountCents', 0) : 0)
+        + (next.size() > n + 1 ? next[n + 1].get('amountCents', 0) : 0)
+        + (next.size() > n + 2 ? next[n + 2].get('amountCents', 0) : 0);
+      let dApplied = after.get('creditAppliedCents', 0) - before.get('creditAppliedCents', 0);
+      let dConsumed = after.get('creditConsumedCents', 0) - before.get('creditConsumedCents', 0);
+      let storeId = after.get('storeId', '');
+      let customerId = after.get('customerId', '');
+      return next is list && prev is list
+        // Append-only: history survives behind the batch. hasAll preserves
+        // every previous ENTRY but not their relative ORDER (CEL cannot
+        // compare order without slicing); reordering history has no monetary
+        // effect and the read models never depend on ledger order.
+        && batched
+        && next.hasAll(prev)
+        // EVERY appended entry is sound, signed, backed and isolated.
+        && (next.size() <= n
+            || creditEntrySound(next[n], before, orderId, storeId, customerId))
+        && (next.size() <= n + 1
+            || creditEntrySound(next[n + 1], before, orderId, storeId, customerId))
+        && (next.size() <= n + 2
+            || creditEntrySound(next[n + 2], before, orderId, storeId, customerId))
+        // One accumulator moves per write, in the entries' direction, by the
+        // EXACT sum of the appended amounts.
+        && (dApplied == 0 || dConsumed == 0)
+        && (dApplied > 0
+              ? next[n].get('kind', '') == 'application' && dApplied == sum
+            : dApplied < 0
+              ? next[n].get('kind', '') == 'release' && -dApplied == sum
+            : dConsumed > 0
+              ? next[n].get('kind', '') == 'consumption' && dConsumed == sum
+              : next[n].get('kind', '') == 'restitution' && -dConsumed == sum);
+    }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries', 'creditAppliedCents', 'creditConsumedCents', 'creditLedger']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
@@ -426,6 +540,13 @@ service cloud.firestore {
             || request.resource.data.get('deliveries', [])
                 == resource.data.get('deliveries', [])
             || validDeliveryAppend(id, resource.data, request.resource.data))
+        // #380: saldo a favor only moves through signed, traceable ledger
+        // appends — accumulators frozen otherwise (a bare
+        // {creditAppliedCents: 0} can no longer bypass the #363 delete guard,
+        // and invented/destroyed credit dies here).
+        && ((creditAccumulatorsFrozen(resource.data, request.resource.data)
+              && creditLedgerUntouched(resource.data, request.resource.data))
+            || validCreditAppend(id, resource.data, request.resource.data))
         && (!('installmentsReservedAt' in resource.data)
             || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
         && (resource.data.get('inheritedDepositMaterialized', false) != true
@@ -435,14 +556,20 @@ service cloud.firestore {
       // #333's delivery evidence (pieces handed to the clienta).
       // #363: OUTSTANDING clienta credit blocks deletion — applied (this order
       // consumed her credit) or consumed (this order BACKS credit a sister
-      // already applied). A fully released order (both zero) deletes normally.
+      // already applied).
+      // #380 r2 (review MAYOR-2): a NON-EMPTY creditLedger blocks deletion
+      // too. Accumulators alone are not enough: a signed fake release can
+      // zero them exactly, and deleting the doc would destroy the only trace.
+      // Orders that carried clienta credit are money evidence, like payments;
+      // a fully-restituted one is kept for its history.
       allow delete: if canOperateStore(resource.data.storeId)
         && !('paymentsReceivedCents' in resource.data)
         && !('installmentsReservedAt' in resource.data)
         && !('deliveries' in resource.data)
         && resource.data.get('inheritedDepositMaterialized', false) != true
         && resource.data.get('creditAppliedCents', 0) == 0
-        && resource.data.get('creditConsumedCents', 0) == 0;
+        && resource.data.get('creditConsumedCents', 0) == 0
+        && !(resource.data.get('creditLedger', []).size() > 0);
     }
 
     // orders/{orderId}/payments/{paymentId} — per-order money receptions (#123).

@@ -484,12 +484,16 @@ export type OrderDelivery = {
 };
 
 /** #189: one compensation event between orders of the same clienta/store.
- * Immutable evidence on the DESTINATION order: corrections are new entries,
- * never edits (the #123 payment-records discipline).
+ * Immutable evidence: corrections are new entries, never edits (the #123
+ * payment-records discipline).
  * - application: `amountCents` moved from `fromOrderId`'s surplus onto this
- *   order's pending balance.
- * - release: a cancellation restituted a previously applied amount back to
- *   `fromOrderId`. */
+ *   order's pending balance (DESTINATION ledger).
+ * - release: a cancellation or incident restitution returned a previously
+ *   applied amount to `fromOrderId` (DESTINATION ledger).
+ * - consumption / restitution (#380): the ORIGIN-side mirror entries — every
+ *   movement of `creditConsumedCents` now leaves the same signed evidence on
+ *   the order that backs the credit, so Firestore rules can require
+ *   accumulator ⇔ ledger consistency on BOTH documents. */
 /** #203: what Fer agreed with the clienta to solve an incident. */
 export type IncidentResolutionKind =
   /** Default: equivalent piece, no additional charge (#203 decision). */
@@ -590,8 +594,11 @@ export type OrderIncident = {
 export type OrderCreditLedgerEntry = {
   /** Stable per intent: a retry after an error reuses it (idempotent apply). */
   id: string;
-  kind: "application" | "release";
-  /** Origin of the credit (the overpaid sister order). */
+  kind: "application" | "release" | "consumption" | "restitution";
+  /** Counterpart order of the movement. On a DESTINATION ledger
+   * (application/release) it is the overpaid sister order that holds the
+   * credit; on an ORIGIN ledger (consumption/restitution, #380) it is the
+   * order that used — or just returned — that credit. */
   fromOrderId: string;
   amountCents: number;
   at: string;

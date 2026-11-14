@@ -74,7 +74,6 @@ import {
   registerOrderPaymentTx,
   applyCustomerCreditTx,
   releaseCustomerCreditTx,
-  getOrderFreshRevision,
   openIncidentTx,
   registerDeliveryTx,
   applyIncidentEventTx,
@@ -1189,19 +1188,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const existing = state.orders.find((o) => o.id === orderId);
       if (existing && (existing.revision ?? 0) !== expectedRevision) throw new StaleOrderError();
       if (!existing) throw new Error("No se encontró el pedido.");
-      // #189: an order that consumed saldo a favor restitutes it BEFORE the
-      // document goes away — awaited, fail-closed: without this the origin's
-      // creditConsumed mirror would overstate consumption forever.
-      // #363: the release bumps `revision` (stale editors must fail closed), so
-      // the deletion continues with the FRESH revision — our own bump must not
-      // look like a foreign edit. A truly foreign edit still fails below.
-      let revision = expectedRevision;
-      if ((existing.creditAppliedCents ?? 0) > 0) {
-        await releaseCustomerCreditTx({ orderId, storeId: existing.storeId, by: currentUser.uid, reason: "deletion" });
-        const fresh = await getOrderFreshRevision(orderId);
-        if (fresh != null) revision = fresh;
-      }
-      const updates = await deleteOrderWithStockTx(currentUser, orderId, revision);
+      // #403 (PO halt): NO credit is released before the deletion anymore.
+      // Orders with credit history (ledger non-empty) are money evidence and
+      // the RULES reject their deletion — a pre-release would move the
+      // clienta's money and then fail the delete (rejected deletion must
+      // leave money intact). deleteOrderWithStockTx checks the FRESH doc and
+      // rejects with the operator's Spanish error before touching anything.
+      const updates = await deleteOrderWithStockTx(currentUser, orderId, expectedRevision);
       const releasedProducts: Product[] = [];
       for (const update of updates) {
         const product = state.products.find((p) => p.id === update.productId);

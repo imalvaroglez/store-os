@@ -317,6 +317,214 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     expect(releases[0].amountCents).toBe(10000);
   });
 
+  it("#403 PO: $200 aplicados → devolución de $100 → REINTENTO deja intactos los $100 restantes", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      // Origin: $150 received of a $50 sale → $100 of credit; consumed $200? No:
+      // mirror $200 against a real $100 surplus would be drift. Use TWO
+      // origins? Keep the PO case exactly: $200 applied from ONE origin with
+      // a consistent mirror (surplus $200).
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-pohalt"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "ph_L0", productName: "Origen PO", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 30000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 20000,
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-pohalt"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "phd_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 20000,
+        creditLedger: [{ id: "app_pohalt", kind: "application", fromOrderId: "inc-origin-pohalt", amountCents: 20000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-pohalt", storeId: "inc-store", incident: incident("inc-pohalt", { originalUnitPriceCents: 10000, events: [event("ph-open", "opened")] }) });
+    // Refund of $100, accepted as credit: the confirm restitutes exactly $100.
+    await applyIncidentEventTx({ orderId: "inc-order-pohalt", storeId: "inc-store", incidentId: "inc-pohalt",
+      event: event("ph-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 } });
+    await applyIncidentEventTx({ orderId: "inc-order-pohalt", storeId: "inc-store", incidentId: "inc-pohalt", event: event("ph-e2", "confirmed") });
+    let order = (await getDoc(doc(holder.db, "orders/inc-order-pohalt"))).data()!;
+    expect(order.creditAppliedCents).toBe(10000); // $200 − $100 restituted
+    let origin = (await getDoc(doc(holder.db, "orders/inc-origin-pohalt"))).data()!;
+    expect(origin.creditConsumedCents).toBe(10000);
+    // RETRY the same confirmation: idempotent — the remaining $100 STAYS.
+    await applyIncidentEventTx({ orderId: "inc-order-pohalt", storeId: "inc-store", incidentId: "inc-pohalt", event: event("ph-e2", "confirmed") });
+    order = (await getDoc(doc(holder.db, "orders/inc-order-pohalt"))).data()!;
+    expect(order.creditAppliedCents).toBe(10000);
+    origin = (await getDoc(doc(holder.db, "orders/inc-origin-pohalt"))).data()!;
+    expect(origin.creditConsumedCents).toBe(10000);
+  });
+
+  it("#403 PO: devolución desde varios pedidos de origen (2 orígenes) queda completa y el reintento no mueve nada", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      for (const [suffix, amount] of [["a", 6000], ["b", 4000]] as const) {
+        await setDoc(doc(ctx.firestore(), "orders/inc-origin-multi-" + suffix), {
+          storeId: "inc-store", customerId: "inc-clienta",
+          items: [{ lineId: `m${suffix}_L0`, productName: "Origen " + suffix, quantity: 1, unitPrice: 50, subtotal: 50 }],
+          deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+          creditConsumedCents: amount,
+          createdAt: "", updatedAt: "",
+        });
+      }
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-multi"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "md_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [
+          { id: "app_m1", kind: "application", fromOrderId: "inc-origin-multi-a", amountCents: 6000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "app_m2", kind: "application", fromOrderId: "inc-origin-multi-b", amountCents: 4000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+        ],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-multi", storeId: "inc-store", incident: incident("inc-multi", { originalUnitPriceCents: 10000, events: [event("mu-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-multi", storeId: "inc-store", incidentId: "inc-multi",
+      event: event("mu-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 } });
+    await applyIncidentEventTx({ orderId: "inc-order-multi", storeId: "inc-store", incidentId: "inc-multi", event: event("mu-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-multi"))).data()!;
+    expect(order.creditAppliedCents).toBe(0);
+    const a = (await getDoc(doc(holder.db, "orders/inc-origin-multi-a"))).data()!;
+    const b = (await getDoc(doc(holder.db, "orders/inc-origin-multi-b"))).data()!;
+    expect(a.creditConsumedCents).toBe(0);
+    expect(b.creditConsumedCents).toBe(0);
+    // Retry: idempotent, nothing extra moves.
+    await applyIncidentEventTx({ orderId: "inc-order-multi", storeId: "inc-store", incidentId: "inc-multi", event: event("mu-e2", "confirmed") });
+    const order2 = (await getDoc(doc(holder.db, "orders/inc-order-multi"))).data()!;
+    const a2 = (await getDoc(doc(holder.db, "orders/inc-origin-multi-a"))).data()!;
+    const b2 = (await getDoc(doc(holder.db, "orders/inc-origin-multi-b"))).data()!;
+    expect(order2.creditAppliedCents).toBe(0);
+    expect(a2.creditConsumedCents).toBe(0);
+    expect(b2.creditConsumedCents).toBe(0);
+  });
+
+  it("#403 r5 P0: confirmar incidencia con 3 orígenes restituye completo (presupuesto CEL)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      for (const [i, amount] of [["1", 4000], ["2", 3000], ["3", 3000]] as const) {
+        await setDoc(doc(ctx.firestore(), "orders/inc-origin-cel-" + i), {
+          storeId: "inc-store", customerId: "inc-clienta",
+          items: [{ lineId: `cel${i}_L0`, productName: "Origen " + i, quantity: 1, unitPrice: 50, subtotal: 50 }],
+          deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+          creditConsumedCents: amount,
+          createdAt: "", updatedAt: "",
+        });
+      }
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-cel"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "cel_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [
+          { id: "app_cel1", kind: "application", fromOrderId: "inc-origin-cel-1", amountCents: 4000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "app_cel2", kind: "application", fromOrderId: "inc-origin-cel-2", amountCents: 3000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "app_cel3", kind: "application", fromOrderId: "inc-origin-cel-3", amountCents: 3000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+        ],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-cel", storeId: "inc-store", incident: incident("inc-cel", { originalUnitPriceCents: 10000, events: [event("cel-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-cel", storeId: "inc-store", incidentId: "inc-cel",
+      event: event("cel-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 } });
+    await applyIncidentEventTx({ orderId: "inc-order-cel", storeId: "inc-store", incidentId: "inc-cel", event: event("cel-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-cel"))).data()!;
+    expect(order.creditAppliedCents).toBe(0);
+    for (const i of ["1", "2", "3"]) {
+      const o = (await getDoc(doc(holder.db, "orders/inc-origin-cel-" + i))).data()!;
+      expect(o.creditConsumedCents).toBe(0);
+      expect((o.creditLedger ?? []).some((e: { kind: string }) => e.kind === "restitution")).toBe(true);
+    }
+  });
+
+  it("#403 r5 (4ª revisión): origen drifteado restituye lo REAL, no se atasca (deriva F4)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-drift2"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "dr_L0", productName: "Origen drift", quantity: 1, unitPrice: 50, subtotal: 50 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 2000, // drifted: net 6000 but mirror only 2000
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-clean2"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "cl_L0", productName: "Origen clean", quantity: 1, unitPrice: 50, subtotal: 50 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 4000,
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-drift2"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "d2_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 10000,
+        creditLedger: [
+          { id: "app_dr2", kind: "application", fromOrderId: "inc-origin-drift2", amountCents: 6000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "app_cl2", kind: "application", fromOrderId: "inc-origin-clean2", amountCents: 4000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+        ],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    await openIncidentTx({ orderId: "inc-order-drift2", storeId: "inc-store", incident: incident("inc-dr2", { originalUnitPriceCents: 10000, events: [event("dr2-open", "opened")] }) });
+    await applyIncidentEventTx({ orderId: "inc-order-drift2", storeId: "inc-store", incidentId: "inc-dr2",
+      event: event("dr2-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 } });
+    // The confirm COMMITS (no raw denial): the drain restitutes the real
+    // mirrors — 2000 from the drifted origin, 4000 from the clean one.
+    await applyIncidentEventTx({ orderId: "inc-order-drift2", storeId: "inc-store", incidentId: "inc-dr2", event: event("dr2-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-drift2"))).data()!;
+    expect(order.creditAppliedCents).toBe(4000); // 10000 − 2000 − 4000 (rest real)
+    const drift = (await getDoc(doc(holder.db, "orders/inc-origin-drift2"))).data()!;
+    const clean = (await getDoc(doc(holder.db, "orders/inc-origin-clean2"))).data()!;
+    expect(drift.creditConsumedCents).toBe(0);     // its real 2000 returned
+    expect(clean.creditConsumedCents).toBe(0);     // fully restituted
+  });
+
+  it("#403 PO: drenaje de incidencia interrumpido a mitad se RECUPERA exacto por reintento", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      // Crash state: confirm event committed; drain covered 4000 of a 10000
+      // obligation (tagged entries + mirrors present for the covered part).
+      await setDoc(doc(ctx.firestore(), "orders/inc-origin-resume"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "rs_L0", productName: "Origen", quantity: 1, unitPrice: 50, subtotal: 50 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
+        creditConsumedCents: 6000, // 10000 − 4000 already restituted
+        creditLedger: [{ id: "res_rel_e2_inc-order-resume_inc-origin-resume_1", kind: "restitution", fromOrderId: "inc-order-resume", amountCents: 4000, at: "2026-11-06T10:31:00.000Z", by: "inc-user" }],
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/inc-order-resume"), {
+        storeId: "inc-store", customerId: "inc-clienta",
+        items: [{ lineId: "rsd_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
+        creditAppliedCents: 6000, // 10000 − 4000 released
+        creditLedger: [
+          { id: "app_rs", kind: "application", fromOrderId: "inc-origin-resume", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" },
+          { id: "rel_e2_inc-order-resume_inc-origin-resume_1", kind: "release", fromOrderId: "inc-origin-resume", amountCents: 4000, at: "2026-11-06T10:31:00.000Z", by: "inc-user" },
+        ],
+        incidents: [{
+          id: "inc-resume", productId: "inc-product", productName: "Pieza", quantity: 1,
+          reason: "Piedra fallada", originalUnitPriceCents: 10000,
+          resolution: { kind: "refund", destination: "credit_accepted", refundOwedCents: 10000 },
+          events: [
+            { id: "rs-open", kind: "opened", at: "2026-11-06T10:20:00.000Z", by: "inc-user" },
+            { id: "rs-e1", kind: "resolution_agreed", at: "2026-11-06T10:25:00.000Z", by: "inc-user" },
+            { id: "rs-e2", kind: "confirmed", at: "2026-11-06T10:30:00.000Z", by: "inc-user" },
+          ],
+        }],
+        createdAt: "", updatedAt: "",
+      });
+    });
+    // Retrying the SAME confirm (idempotent) resumes the drain: the remaining
+    // 6000 land, no duplicates anywhere.
+    await applyIncidentEventTx({ orderId: "inc-order-resume", storeId: "inc-store", incidentId: "inc-resume", event: event("rs-e2", "confirmed") });
+    const order = (await getDoc(doc(holder.db, "orders/inc-order-resume"))).data()!;
+    const origin = (await getDoc(doc(holder.db, "orders/inc-origin-resume"))).data()!;
+    expect(order.creditAppliedCents).toBe(0); // exactly the full obligation
+    expect(origin.creditConsumedCents).toBe(0);
+    const releases = (order.creditLedger as any[]).filter((e) => e.kind === "release");
+    expect(releases.reduce((sum: number, e: any) => sum + e.amountCents, 0)).toBe(10000); // no duplicates
+    const mirrors = (origin.creditLedger as any[]).filter((e) => e.kind === "restitution");
+    expect(mirrors.reduce((sum: number, e: any) => sum + e.amountCents, 0)).toBe(10000);
+  });
+
   it("never crosses stores", async () => {
     await expect(
       openIncidentTx({ orderId: "inc-order", storeId: "inc-foreign", incident: incident("inc-x") })
