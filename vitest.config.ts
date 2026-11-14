@@ -21,6 +21,6 @@ export default defineConfig({
       ["src/features/stores/StorePickerScreen.test.tsx", "jsdom"],
     ],
     setupFiles: ["src/test-setup.ts"],
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/usage-report.test.mjs"],
   },
 });
