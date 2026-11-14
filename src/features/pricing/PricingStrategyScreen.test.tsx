@@ -359,6 +359,28 @@ describe("#402 limpieza de ruido en Estrategia de precios", () => {
     expect(screen.queryByText(/pendiente/i)).toBeNull();
     expect(screen.queryByText(/preliminar/i)).toBeNull();
   });
+  it("#402 r2 estado 4 — HUECOS (Iconic con Bolsa sin costo): Iconic es SUJETO del resumen y el hueco no se pinta dos veces ni en rojo", async () => {
+    const store = oliviaStore();
+    const pk = packaging(["t_retail", "t_girly"]);
+    // Bolsa SIN costo: Iconic queda configurado pero con hueco (gap != sin configurar).
+    (pk.materials[1] as { estimatedCost?: number }).estimatedCost = undefined;
+    pk.byTier.t_iconic = { perPiece: [{ materialId: "m2", units: 1 }], perOrder: [] };
+    (store as Store & { packaging?: StorePackaging }).packaging = pk;
+    state.stores[0] = store;
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    // El resumen no pierde el sujeto: «…Girly ✓ · Iconic pendiente.»
+    expect(screen.getByText(/Iconic pendiente/)).toBeTruthy();
+    // El hecho neutro del hueco se dice UNA vez (Falta costo de Bolsa en Iconic).
+    expect(screen.getByText(/Falta costo de Bolsa en Iconic/)).toBeTruthy();
+    // El warning del motor («Costo base de Iconic incompleto…») NO reaparece en rojo.
+    expect(screen.queryByText(/Costo base de Iconic incompleto/)).toBeNull();
+    // Ningún texto informativo usa el color de dinero.
+    const informative = screen.queryAllByText(/incompleto|Contribuciones preliminares/i);
+    for (const node of informative) expect(node.className).not.toContain("text-danger");
+  });
+
 
   it("estado 7 — sin tabla guardada: no aparece la tarjeta «Guarda la tabla…» antes de editar", async () => {
     mount();

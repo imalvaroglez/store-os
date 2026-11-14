@@ -438,8 +438,10 @@ export function PricingStrategyScreen() {
                       </span>
                     ) : (
                       <span className="text-on-surface-soft">
-                        {done.length > 0 && <>Empaques: {done.map((t) => t.label).join(" ✓ · ")}{done.length === 1 ? " ✓" : " ✓"} · </>}
-                        {unconfigured.map((t) => t.label).join(", ")} pendiente{unconfigured.length > 1 ? "s" : ""}.
+                        {/* #402 r2: tiers with GAPS are also pending subjects — the sentence
+                            must never lose them (probe: «…Girly ✓ ·  pendiente.»). */}
+                        {done.length > 0 && <>Empaques: {done.map((t) => t.label).join(" ✓ · ")} ✓ · </>}
+                        {[...unconfigured, ...withGaps.map((entry) => entry.tier)].map((t) => t.label).join(", ")} pendiente{unconfigured.length + withGaps.length > 1 ? "s" : ""}.
                       </span>
                     )}
                     <Button size="sm" variant="secondary" onClick={() => navigate("/productos/empaques")}>
@@ -514,7 +516,10 @@ export function PricingStrategyScreen() {
                   </div>
                 </Disclosure>
                 {proposal.warnings
-                  .filter((warning) => !warning.includes("Empaque individual de"))
+                  // #402 r2: packaging-status facts (unconfigured OR gaps) are already
+                  // said once, neutrally, by the summary above — only real
+                  // money/validation risks stay red.
+                  .filter((warning) => !warning.includes("Empaque individual de") && !warning.includes("Costo base de"))
                   .map((warning) => (
                     <p key={warning} className="text-sm text-danger">{warning}</p>
                   ))}
