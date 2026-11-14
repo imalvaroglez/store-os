@@ -57,6 +57,29 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order transactions with F
     expect((await getDoc(doc(holder.db, "products/p2"))).data()?.quantityOnHand).toBe(8);
   });
 
+  it("#421 vincular la ficha de un renglón capturado por nombre aparta exactamente una pieza, una sola vez", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/link-p1"), { storeId: "tx-store", quantityOnHand: 2, name: "Aro Luna" });
+    });
+    // 1) Pedido abierto con el renglón SIN ficha (capturado por nombre): nada se aparta.
+    const unlinked = makeOrder("link-order", "link-p1", 1);
+    delete (unlinked.items[0] as { productId?: string }).productId;
+    unlinked.items[0] = { ...unlinked.items[0], productName: "Aro Luna" } as typeof unlinked.items[0];
+    await saveOrderWithStockTx(user, unlinked, null, "link-1");
+    expect((await getDoc(doc(holder.db, "products/link-p1"))).data()?.quantityOnHand).toBe(2);
+
+    // 2) La operadora vincula la ficha (mismo renglón, cantidad y precio) y guarda: aparta exactamente una.
+    const saved = (await getDoc(doc(holder.db, "orders/link-order"))).data() as { revision?: number } & Record<string, unknown>;
+    const linked = makeOrder("link-order", "link-p1", 1);
+    (linked.items[0] as { productName: string }).productName = "Aro Luna";
+    const r1 = await saveOrderWithStockTx(user, linked, saved.revision ?? null, "link-2");
+    expect((await getDoc(doc(holder.db, "products/link-p1"))).data()?.quantityOnHand).toBe(1);
+
+    // 3) Volver a guardar SIN cambios no vuelve a descontar.
+    await saveOrderWithStockTx(user, { ...r1.order }, r1.order.revision ?? null, "link-3");
+    expect((await getDoc(doc(holder.db, "products/link-p1"))).data()?.quantityOnHand).toBe(1);
+  });
+
   it("saves a 50-product order under the actual rules", async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       await Promise.all(Array.from({ length: 50 }, (_, i) => setDoc(doc(ctx.firestore(), "products", `bulk-${i}`), { storeId: "tx-store", quantityOnHand: 10 })));
