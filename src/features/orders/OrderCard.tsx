@@ -218,7 +218,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           <Button variant="ghost" onClick={() => setIncidentOpen(true)}>Incidencia{(order.incidents?.length ?? 0) > 0 ? ` (${order.incidents!.length})` : ""}</Button>
         )}
       </div>
-      {(verb || owed) && (
+      {/* #369: a cancelled order admits no new cobros — hide the charge row;
+          the Cobros sheet stays reachable as read-only evidence. */}
+      {status !== "cancelled" && (verb || owed) && (
         <div className="mt-3 flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
           <div className="flex gap-2">
             {verb && (

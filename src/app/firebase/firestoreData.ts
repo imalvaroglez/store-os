@@ -842,6 +842,13 @@ export async function registerOrderPaymentTx(
       }
       return { payments: [receipt], order };
     }
+    // #369: a cancelled order admits NO new cobros — the money has no exit
+    // (compensations exclude cancelled orders, incidents reject them, and it
+    // cannot be deleted with evidence). Signed adjustments (a devolución's
+    // evidence) stay: the full exit path is a separate PO decision (#369).
+    if (payment.kind === "payment" && effectiveOrderStatus(order) === "cancelled") {
+      throw new Error("Este pedido está cancelado: no se pueden registrar cobros.");
+    }
     // Inherited deposit materialization (#123, PO 2026-11-03): only a real
     // payment carries it, and the operator-supplied date/method is required.
     const inheritedInput = payment.kind === "payment" ? inherited : undefined;

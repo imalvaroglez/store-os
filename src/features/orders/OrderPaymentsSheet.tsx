@@ -11,7 +11,7 @@ import {
   useToast,
 } from "../../design-system";
 import { todayIso } from "../../lib/dates";
-import { orderReference } from "../../lib/orders";
+import { effectiveOrderStatus, orderReference } from "../../lib/orders";
 import { uid } from "../../lib/ids";
 import { formatMoneyExact, parseAmount, sanitizeMoneyInput } from "../../lib/money";
 import type { Order, OrderPayment } from "../../types";
@@ -65,6 +65,10 @@ export function OrderPaymentsSheet({
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [reload, setReload] = useState(0);
+  // #369: a cancelled order admits NO new cobros (the money has no exit
+  // path); the sheet stays as evidence, and signed adjustments remain the
+  // record with which Fer documents anything handed back.
+  const cancelled = effectiveOrderStatus(order) === "cancelled";
   const view = useRef({ open, orderId: order.id, owner: draftOwnerId, generation: 0, mounted: true });
   if (view.current.open !== open || view.current.orderId !== order.id || view.current.owner !== draftOwnerId) {
     view.current = { ...view.current, open, orderId: order.id, owner: draftOwnerId, generation: view.current.generation + 1 };
@@ -349,39 +353,51 @@ export function OrderPaymentsSheet({
         ) : null}
 
         <div className="space-y-3 border-t border-edge pt-4">
-          <div className="grid grid-cols-2 gap-3">
-            <TextField
-              label="Monto"
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amountText}
-              onChange={(e) => setAmountText(sanitizeMoneyInput(e.target.value))}
-            />
-            <SelectField
-              label="Método"
-              value={method}
-              onChange={(m) => setMethod(m)}
-              options={[
-                { value: "cash", label: PAYMENT_METHOD_LABELS.cash },
-                { value: "transfer", label: PAYMENT_METHOD_LABELS.transfer },
-              ]}
-            />
-          </div>
-          <TextField
-            label="Fecha de recepción"
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
-          <TextField
-            label="Nota (opcional)"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="p. ej. abono en efectivo"
-          />
-          <Button full disabled={saving || loading || loadFailed} onClick={submitPayment}>
-            Registrar cobro
-          </Button>
+          {cancelled ? (
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-on-surface">Pedido cancelado: no se pueden registrar cobros.</p>
+              <p className="text-xs text-on-surface-soft">
+                Los cobros ya registrados quedan como evidencia. La devolución de dinero ya recibido se define aparte;
+                entre tanto, un ajuste firmado (con motivo) documenta lo entregado.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <TextField
+                  label="Monto"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={amountText}
+                  onChange={(e) => setAmountText(sanitizeMoneyInput(e.target.value))}
+                />
+                <SelectField
+                  label="Método"
+                  value={method}
+                  onChange={(m) => setMethod(m)}
+                  options={[
+                    { value: "cash", label: PAYMENT_METHOD_LABELS.cash },
+                    { value: "transfer", label: PAYMENT_METHOD_LABELS.transfer },
+                  ]}
+                />
+              </div>
+              <TextField
+                label="Fecha de recepción"
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+              <TextField
+                label="Nota (opcional)"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="p. ej. abono en efectivo"
+              />
+              <Button full disabled={saving || loading || loadFailed} onClick={submitPayment}>
+                Registrar cobro
+              </Button>
+            </>
+          )}
 
           {adjustOpen ? (
             <div className="space-y-3 rounded-xl bg-surface p-3 ring-1 ring-edge">
