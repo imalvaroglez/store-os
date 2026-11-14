@@ -512,3 +512,50 @@ describe("#373 revisión de compras en el formulario", () => {
   });
 });
 
+describe("#373 r2 — baseline avanza con cada guardado (no duplica gastos)", () => {
+  const e1 = { id: "e1", category: "sourcing_transport" as const, amount: 44 };
+
+  function purchaseWithExpenses(): Purchase {
+    return {
+      id: "baseline-order", storeId: "olivia", date: "2026-11-14", status: "draft",
+      lines: [{ lineId: "l0", ticketId: "t1", productId: "", name: "Pieza", quantity: 1, unitCost: 10 }],
+      tickets: [{ id: "t1", supplierId: "sup1", supplierName: "Prov", totalConfirmed: 0 }],
+      sourcingExpenses: [e1],
+      subtotal: 0, totalConfirmed: 0, createdAt: "", updatedAt: "",
+    };
+  }
+
+  it("editar un gasto y volver a guardar en la MISMA sesión no re-anexa el gasto como concurrente", async () => {
+    open(purchaseWithExpenses());
+    // Primer guardado: el doc ya tenía e1; el baseline de apertura también.
+    upsertPurchase.mockResolvedValueOnce({ ...purchaseWithExpenses(), revision: 2 });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    // El baseline del PRIMER guardado incluye e1 (la prop de apertura).
+    expect(upsertPurchase.mock.calls[0][2]).toMatchObject({ sourcingExpenses: [e1] });
+    // Segundo guardado SIN cambios: el baseline debe seguir incluyendo e1
+    // (avanzó con lo guardado), no tratarlo como asignación concurrente.
+    upsertPurchase.mockResolvedValueOnce({ ...purchaseWithExpenses(), revision: 3 });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(2));
+    const baseline2 = upsertPurchase.mock.calls[1][2];
+    expect(baseline2).toMatchObject({ sourcingExpenses: [e1] });
+  });
+
+  it("agregar un gasto, guardar y volver a guardar tampoco duplica", async () => {
+    open({ ...purchaseWithExpenses(), sourcingExpenses: [] });
+    fireEvent.click(screen.getByRole("tab", { name: "Revisión general" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto" }));
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "44" } });
+    const saved1 = { ...purchaseWithExpenses(), revision: 2 };
+    upsertPurchase.mockResolvedValueOnce(saved1);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    upsertPurchase.mockResolvedValueOnce({ ...saved1, revision: 3 });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(2));
+    const baseline2 = upsertPurchase.mock.calls[1][2];
+    // El baseline avanzó: el gasto guardado ya es «conocido», no concurrente.
+    expect(baseline2).toMatchObject({ sourcingExpenses: [e1] });
+  });
+});
