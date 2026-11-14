@@ -217,6 +217,27 @@ service cloud.firestore {
         && !(('supply' in resource.data) && ('consumptions' in resource.data.supply) && resource.data.supply.consumptions.size() > 0);
     }
 
+    // #211: confirmed supplier-code → product associations. Store-scoped
+    // like every business entity; id encodes store+supplier+code so a member
+    // can only ever read/write links inside their own store.
+    match /supplierLinks/{id} {
+      allow get: if canOperateStore(resource.data.storeId);
+      // #211 r2: an unfiltered LIST leaked every store's associations to any
+      // signed-up user (review MAYOR). Scoped like products: queries must
+      // constrain to stores the caller can operate.
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && request.resource.data.id == id;
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId
+        && request.resource.data.id == id;
+      // resource == null: deleting an already-deleted link is a no-op retry
+      // (#211 r2 M4) — without the guard the rule dereferences a missing doc
+      // and the retry dies with PERMISSION_DENIED.
+      allow delete: if resource == null || canOperateStore(resource.data.storeId);
+    }
+
     match /purchases/{id} {
       allow read: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId);
