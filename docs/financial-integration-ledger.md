@@ -1,6 +1,6 @@
 # Ledger de integración financiera — estado vigente
 
-> #171 — Vista actual y comprobable de qué cambios financieros están listos para integrarse, qué depende de una decisión de negocio y cuál es el orden seguro de revisión. **Documento de coordinación**: no implementa nada; cada cambio conserva su issue/PR y compuertas. **Corte: 2026-11-14 23:00 UTC** (día y hora exactos: este tablero se mueve por horas — refrescar esta sección contra el tablero/PRs inmediatamente antes de cualquier merge que la use); el estado de verdad vive en las issues enlazadas.
+> #171 — Vista actual y comprobable de qué cambios financieros están listos para integrarse, qué depende de una decisión de negocio y cuál es el orden seguro de revisión. **Documento de coordinación**: no implementa nada; cada cambio conserva su issue/PR y compuertas. **Corte: 2026-11-14 23:25 UTC** (día y hora exactos: este tablero se mueve por horas — refrescar esta sección contra el tablero/PRs inmediatamente antes de cualquier merge que la use); el estado de verdad vive en las issues enlazadas.
 
 ## A. Decisiones confirmadas (fuente y efecto)
 
@@ -29,7 +29,7 @@
 | 10 | #431 | `46ffb96` | #128 etapa | Reparto propuesto 50/30/20 (simulación) | CI ✓; revisión: APROBADO (2 revisores) — Por liberar |
 | 11 | #436 | `30ce435` | #132 FER-17 | Top emprendedoras (neto entregado) | CI ✓; código r2 + UX re-validada **APROBADO** — Por liberar |
 | 12 | #435 | `ac33da4` | #421 | Renglón sin ficha: aviso + vínculo con precio acordado | CI ✓; revisión: APROBADO (2 revisores) — Por liberar |
-| 13 | #438 | `d4a5c62` | #211 fase 1 | Asociación proveedor-código → producto | CI ✓; código r2 + UX r3 (semana de compras completa) **APROBADO** — Por liberar |
+| 13 | #438 | `d4a5c62` | #211 fase 1 | Asociación proveedor-código → producto | CI ✓; código r3 + UX r3 (semana de compras completa) **APROBADO** — Por liberar |
 | 14 | #428 | `7795704` | #359 | SW fuera de /catalogo + REST no-store + logo versionado | CI ✓; revisión: APROBADO — Por liberar |
 | 15 | #430 | `682e822` | #386 | Espera e2e tolera escritura en background | CI ✓; revisión: APROBADO — Por liberar |
 | 16 | #432 | `6a5ea96` | #191 fase 1 | `npm run usage-report` (local, privado) | CI ✓; ronda 2 **APROBADO** — Por liberar |
@@ -52,12 +52,12 @@ Documentario: #397/#401 (runbook Sev-1 §6) esperan revisión del PO — sin imp
 
 ## D. Orden de integración propuesto (dependencias y conflictos reproducibles)
 
-1. **#410 (#365)**, **#412 (#364)**, **#415 (#368)**, **#416 (#373 r3)**, **#417 (#374 r2)**, **#428 (#359)**, **#430 (#386)**, **#433 (#195)**, **#435 (#421)** — todos con doble veredicto APROBADO y CI verde; sin solape entre sí. Integrables ya (r1 de #415 ya estaba publicada al corte original — corregido).
+1. **#410 (#365)**, **#412 (#364)**, **#415 (#368)**, **#416 (#373 r3)**, **#417 (#374 r2)**, **#428 (#359)**, **#430 (#386)**, **#433 (#195)**, **#435 (#421)** — todos aprobados y con CI verde (#433 fue verificación editorial única, el resto doble revisión); sin solape entre sí. Integrables ya.
 2. **#418 (#371)** primero y **#434 (#135+#137)** después — apilados por diseño (misma pantalla); #434 declara la dependencia. Ambos aprobados.
-3. **#419 (#129 etapa, r3)** y **#431 (#128 etapa)** — aprobados, solo lectura, independientes; #436 (#132) los alcanza cuando su re-revisión UX apruebe.
-4. **#432 (#191 r2)** y **#438 (#211 r2)** — correcciones publicadas con evidencia; esperan re-revisión. Integrar #416 antes de #438 sigue reduciendo el riesgo en `PurchaseForm` (ambos editan guardados de compra).
+3. **#419 (#129 etapa, r3)**, **#431 (#128 etapa)** y **#436 (#132)** — aprobados los tres (el UX de #436 desde las 21:48), solo lectura, independientes.
+4. **#432 (#191 r2)** y **#438 (#211 r3)** — aprobados ambos (21:11 y 22:36); integrables. Integrar #416 antes de #438 sigue reduciendo el riesgo en `PurchaseForm` (ambos editan guardados de compra).
 5. **#414 (#369)** — el eje código ya está aprobado; la compuerta es la decisión del PO (criterio 3). Integrar el código no depende de esa decisión, pero el cierre de la issue sí.
-6. **#411 (#406)** — sesión 2; independiente del tren financiero (veredicto en su PR).
+6. **#411 (#406)** — devuelta por revisión (responsable sesión 3 según su veredicto vigente); independiente del tren financiero.
 7. **#403/#413 (#380)** y su cola (#366/#367/#383) — bloqueados por la decisión del PO; ninguna otra historia debe tocar `credit*` mientras tanto.
 
 ## E. Disponibilidad real (qué ve Fer hoy)
