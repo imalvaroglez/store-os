@@ -399,7 +399,7 @@ describe("edición pública in-place", () => {
 describe("carrito del storefront — acumular y pedir", () => {
   it("agrega desde detalles, muestra el contador y arma UN mensaje con todas las líneas", async () => {
     const view = await renderStore();
-    expect(screen.getByRole("img", { name: "Logo de Olivia" })).toHaveAttribute("src", "/images/olivia-logo.png");
+    expect(screen.getByRole("img", { name: "Logo de Olivia" })).toHaveAttribute("src", expect.stringMatching(/^\/images\/olivia-logo\.png\?v=/));
     expect(screen.getByText("Quedan pocas")).toBeTruthy();
     expect(screen.getByText("Agotado")).toBeTruthy();
     await addFromDetail(view, 0);
@@ -719,7 +719,7 @@ describe("editorial catalog", () => {
     const view = await renderStore();
     const footer = document.querySelector(".olv-footer") as HTMLElement;
     const fallback = within(footer).getByRole("img", { name: "Olivia" }) as HTMLImageElement;
-    expect(fallback).toHaveAttribute("src", "/images/olivia-logo.png");
+    expect(fallback).toHaveAttribute("src", expect.stringMatching(/^\/images\/olivia-logo\.png\?v=/));
     expect(fallback).toHaveClass("olv-footer-logo");
     // Enlaces vigentes del pie: WhatsApp, Explora y Entregas y atención.
     expect(within(footer).getByRole("link", { name: /Hablemos por WhatsApp/ })).toBeTruthy();
@@ -784,5 +784,27 @@ describe("editorial catalog", () => {
     expect(screen.getAllByRole("article")).toHaveLength(1);
     // Progressive load: one store read + one catalog read (the mock backs both).
     expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("#359 logo por omisión con URL versionada", () => {
+  it("sin logo configurado, el logo por omisión viaja versionado por build (cambia en cada despliegue)", async () => {
+    // Sin sf.logoUrl: el activo local por omisión con ?v=<build> — un navegador
+    // que tenga la imagen anterior en caché la revalida porque la URL cambia.
+    const view = await renderStore();
+    const img = await screen.findByAltText("Logo de Olivia");
+    expect(img.getAttribute("src")).toMatch(/^\/images\/olivia-logo\.png\?v=/);
+    view.unmount();
+  });
+
+  it("el logo PROPIO de la tienda se usa tal cual (cada tienda con su logo)", async () => {
+    mocks.loadPublicStore.mockResolvedValueOnce({
+      ...store,
+      storefront: { logoUrl: "https://firebasestorage.example/storefront/s1/brand-abc.jpg" },
+    } as never);
+    const view = await renderStore();
+    const img = await screen.findByAltText("Logo de Olivia");
+    expect(img.getAttribute("src")).toBe("https://firebasestorage.example/storefront/s1/brand-abc.jpg");
+    view.unmount();
   });
 });
