@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
+import { Badge, Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
 import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
 import {
   loadPublicCatalog,
@@ -18,6 +18,13 @@ import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } 
 // the established Store OS look instead of inheriting Olivia's fixed brand.
 export function PublicCatalogScreen({ slug }: { slug: string }) {
   const [data, setData] = useState<{ store: PublicStore; catalog: PublicCatalog } | null>(null);
+  // #135: finish filter state — BEFORE the loading early-returns (rules of hooks).
+  const [finishFilter, setFinishFilter] = useState("");
+  // #137: chosen color per design (productSlug → variant id), GANNI-style
+  // swatches on the card; defaults to the first color.
+  const [chosenVariants, setChosenVariants] = useState<Record<string, string>>({});
+  const normalizeFinish = (value: string) =>
+    value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-MX");
   // #276: a missing store and a network failure are DIFFERENT things — a
   // clienta on flaky mobile data must never read "this catalog does not
   // exist" (and a wrong slug must not promise the store still exists).
@@ -94,18 +101,47 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   }
 
   const { store, catalog } = data;
-  const visibleSlugs = new Set(catalog.products.map((product) => product.productSlug));
+  // #371: the SAME truth Olivia's storefront uses — a manual «Agotado» pause
+  // (availability) or a real empty shelf (stockSignal) applies to EVERY
+  // store's public catalog, and «Agotados: Ocultos» hides them from the grid.
+  const isSoldOut = (product: { availability?: string | null; stockSignal?: string | null }) =>
+    product.availability === "sold_out" || product.stockSignal === "agotado";
+  const showSoldOut = store.storefront?.showSoldOut ?? true;
+  const soldOutAware = catalog.products; // sold-out keeps its card for encargo (#135)
+  const products = showSoldOut ? soldOutAware : soldOutAware.filter((product) => !isSoldOut(product));
+  // #135: Dorado/Plateado finish filter — finish list derived per render
+  // (cheap, no hook): unique finishes of the visible products.
+  const finishes = (() => {
+    const unique = new Map<string, string>();
+    for (const product of products) {
+      const finish = (product as { finish?: string | null }).finish?.trim();
+      if (finish) unique.set(normalizeFinish(finish), finish);
+    }
+    return [...unique.values()];
+  })();
+  const finishKey = finishFilter ? normalizeFinish(finishFilter) : "";
+  const visibleProducts = finishKey
+    ? products.filter((product) => normalizeFinish((product as { finish?: string | null }).finish ?? "") === finishKey)
+    : products;
+  const visibleSlugs = new Set(products.map((product) => product.productSlug));
   const visibleLines = pruneCartLines(cart.lines, visibleSlugs);
   // #305: primary category name per product, from the SAME projection the
   // grid uses (no extra reads). "Sin categoría" is the drawer's fallback.
-  const categoryNameBySlug = Object.fromEntries(catalog.products.map((product) => [
+  const categoryNameBySlug = Object.fromEntries(products.map((product) => [
     product.productSlug,
     catalog.categories.find((category) => product.categoryIds?.[0] === category.id)?.name ?? "",
   ]));
   const pieces = cartPieces(visibleLines);
   const quantityBySlug = new Map(visibleLines.map((line) => [line.productSlug, line.qty]));
-  const signalBySlug = catalog.products.reduce<Record<string, PublicStockSignal>>((signals, product) => {
-    if (product.stockSignal) signals[product.productSlug] = product.stockSignal;
+  // A paused piece reads as agotado EVERYWHERE — including a cart saved before
+  // the pause: the drawer turns that line into "sobre pedido", never a firm order.
+  const signalBySlug = products.reduce<Record<string, PublicStockSignal>>((signals, product) => {
+    signals[product.productSlug] = isSoldOut(product) ? "agotado" : (product.stockSignal ?? "disponible");
+    // #137: per-color lines carry `slug~variantId` keys — give each color's
+    // line its OWN signal so the drawer explains exactly that color.
+    for (const variant of product.variants ?? []) {
+      signals[`${product.productSlug}~${variant.id}`] = isSoldOut(product) ? "agotado" : variant.stockSignal;
+    }
     return signals;
   }, {});
   return (
@@ -118,38 +154,91 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         </div>
       </header>
       <main className="p-4 md:p-8"><div className="mx-auto max-w-6xl">
-        {catalog.products.length === 0 ? <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." /> : (
+        {finishes.length > 1 && (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {finishes.map((finish) => (
+              <Button
+                key={finish}
+                size="sm"
+                variant={finishFilter === finish ? "primary" : "secondary"}
+                aria-pressed={finishFilter === finish}
+                onClick={() => setFinishFilter((current) => (current === finish ? "" : finish))}
+              >
+                {finish}
+              </Button>
+            ))}
+          </div>
+        )}
+        {visibleProducts.length === 0 ? <EmptyState title="Aún no hay productos" subtitle="Vuelve pronto." /> : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {catalog.products.map((product) => <Card key={product.productSlug} className="overflow-hidden p-0">
-              <ProductImage src={product.imageUrl ?? undefined} alt={product.name} size="full" />
+            {visibleProducts.map((product) => {
+              const variants = product.variants ?? [];
+              const chosen = variants.find((v) => v.id === (chosenVariants[product.productSlug] ?? variants[0]?.id));
+              const variantSoldOut = chosen ? chosen.stockSignal === "agotado" : false;
+              const designPaused = isSoldOut(product);
+              const soldOut = variants.length > 0 ? (designPaused || variantSoldOut) : designPaused;
+              const cardImage = chosen?.imageUrl ?? product.imageUrl;
+              const lineName = chosen ? `${product.name} · ${chosen.color}` : product.name;
+              const lineSlug = chosen ? `${product.productSlug}~${chosen.id}` : product.productSlug;
+              const lineImage = cardImage ?? undefined;
+              return <Card key={product.productSlug} className="overflow-hidden p-0">
+              <ProductImage src={cardImage ?? undefined} alt={lineName} size="full" />
               <div className="p-4"><h2 className="serif-display text-lg font-semibold text-ink">{product.name}</h2>
-                {/* #124: one design, its colors listed — never N loose fichas. */}
+                {soldOut && <div className="mt-1"><Badge tone="neutral">Agotado</Badge></div>}
+                {/* #137/#124: one design, its colors as GANNI-style swatches —
+                    accessible name, pressed state, ≥40px target. Choosing a color
+                    swaps the card photo and availability without leaving the grid. */}
                 {product.variants && product.variants.length > 0 && (
-                  <p className="mt-1 flex flex-wrap gap-1 text-xs text-ink-soft">
-                    {product.variants.map((variant) => (
-                      <span
-                        key={variant.id}
-                        className={`rounded-full border border-ink/15 px-2 py-0.5 ${variant.stockSignal === "agotado" ? "opacity-50 line-through" : ""}`}
-                      >
-                        {variant.color}
-                      </span>
-                    ))}
-                  </p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {product.variants.map((variant) => {
+                      const pressed = (chosenVariants[product.productSlug] ?? product.variants![0].id) === variant.id;
+                      return (
+                        <Button
+                          key={variant.id}
+                          size="sm"
+                          variant={pressed ? "primary" : "secondary"}
+                          aria-pressed={pressed}
+                          title={variant.stockSignal === "agotado" ? `${variant.color} (agotado)` : variant.color}
+                          onClick={() => setChosenVariants((current) => ({ ...current, [product.productSlug]: variant.id }))}
+                          className={`!min-h-[40px] !min-w-[44px] ${variant.stockSignal === "agotado" ? "line-through opacity-60" : ""}`}
+                        >
+                          {variant.color}
+                        </Button>
+                      );
+                    })}
+                  </div>
                 )}
                 {product.publicDescription && <p className="text-sm text-ink-soft mt-1">{product.publicDescription}</p>}
                 <PublicTierPrices store={store} product={product} />
-                <CartProductControl
-                  key={`${product.productSlug}-${quantityBySlug.get(product.productSlug) ?? 0}`}
-                  productSlug={product.productSlug}
-                  productName={product.name}
-                  quantity={quantityBySlug.get(product.productSlug) ?? 0}
-                  onAdd={() => cart.add(cartItemFromPublicProduct(product))}
-                  onSetQty={cart.setQty}
-                  full
-                  className="mt-2"
-                />
+                {!soldOut ? (
+                  <CartProductControl
+                    key={`${lineSlug}-${quantityBySlug.get(lineSlug) ?? 0}`}
+                    productSlug={lineSlug}
+                    productName={lineName}
+                    quantity={quantityBySlug.get(lineSlug) ?? 0}
+                    onAdd={() => cart.add({ ...cartItemFromPublicProduct({ ...product, image: lineImage }), ...(chosen ? { productSlug: lineSlug, name: lineName } : {}) })}
+                    onSetQty={cart.setQty}
+                    full
+                    className="mt-2"
+                  />
+                ) : (
+                  // #135/#137: agotado (el diseño o el color elegido) SIGUE
+                  // solicitable por encargo — línea con el color inequívoco.
+                  <div className="mt-2">
+                    <Button
+                      variant="secondary"
+                      full
+                      onClick={() => cart.add({ ...cartItemFromPublicProduct({ ...product, image: lineImage }), ...(chosen ? { productSlug: lineSlug, name: lineName } : {}), inquire: true })}
+                    >
+                      Pedir por encargo
+                    </Button>
+                    <p className="text-xs text-on-surface-soft mt-1">
+                      Agotado{chosen ? ` (${chosen.color})` : ""} · puedes pedirlo por encargo. Fecha de entrega por confirmar.
+                    </p>
+                  </div>
+                )}
               </div>
-            </Card>)}
+            </Card>;})}
           </div>
         )}
       </div></main>
