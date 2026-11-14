@@ -10,7 +10,7 @@ import { PricingStrategyScreen } from "./PricingStrategyScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
 import { CategoryRulesConflictError } from "../../app/StoreProvider";
-import type { Category, Product, Store } from "../../types";
+import type { Category, Product, Store, StorePackaging } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
@@ -313,3 +313,58 @@ describe("puente a Reglas con contexto (#289)", () => {
     expect(screen.getByRole("button", { name: /Revisar precios pendientes de esta categoría \(21\)/ })).toBeTruthy();
   });
 });
+
+describe("#402 limpieza de ruido en Estrategia de precios", () => {
+  const packaging = (configured: string[]) => ({
+    materials: [
+      { id: "m1", name: "Caja", unit: "pieza" as const, estimatedCost: 8, createdAt: "", updatedAt: "" },
+      { id: "m2", name: "Bolsa", unit: "pieza" as const, estimatedCost: 3, createdAt: "", updatedAt: "" },
+    ],
+    byTier: Object.fromEntries(configured.map((tierId) => [tierId, { perPiece: [{ materialId: "m1", quantity: 1 }] }])),
+  }) as unknown as StorePackaging;
+
+  it("estado 1 — todos sin configurar: EXACTAMENTE un aviso neutro, sin rojo informativo, con acción a Empaques", async () => {
+    const store = oliviaStore();
+    (store as Store & { packaging?: StorePackaging }).packaging = packaging([]);
+    state.stores[0] = store;
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    // Un solo aviso, neutro (sin clase de danger), con la acción.
+    const aviso = await screen.findAllByText(/Empaques por pieza pendientes/i);
+    expect(aviso).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /Configurar/i })).toBeTruthy();
+    // El aviso informativo NO usa el color reservado para dinero/errores.
+    expect(aviso[0].className).not.toContain("text-danger");
+  });
+
+  it("estado 2 — parcial (Regular/Girly ✓, Iconic pendiente): un aviso nombra SOLO lo faltante y no se repite en la propuesta", async () => {
+    const store = oliviaStore();
+    (store as Store & { packaging?: StorePackaging }).packaging = packaging(["t_retail", "t_girly"]);
+    state.stores[0] = store;
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    const avisos = await screen.findAllByText(/Iconic pendiente/i);
+    expect(avisos).toHaveLength(1); // una sola vez — ni en propuesta ni por contribución
+  });
+
+  it("estado 3 — todos configurados: cero avisos y ningún contenedor vacío", async () => {
+    const store = oliviaStore();
+    (store as Store & { packaging?: StorePackaging }).packaging = packaging(["t_retail", "t_girly", "t_iconic"]);
+    state.stores[0] = store;
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    expect(screen.queryByText(/pendiente/i)).toBeNull();
+    expect(screen.queryByText(/preliminar/i)).toBeNull();
+  });
+
+  it("estado 7 — sin tabla guardada: no aparece la tarjeta «Guarda la tabla…» antes de editar", async () => {
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    expect(screen.queryByText(/Guarda la tabla de esta categoría/i)).toBeNull();
+  });
+});
+
