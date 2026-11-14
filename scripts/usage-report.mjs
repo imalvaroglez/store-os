@@ -27,6 +27,7 @@ const REPO = "imalvaroglez/store-os";
 // Quotas de referencia (fuente oficial; confirmar edición/plan/vigencia):
 const FIRESTORE_DAILY_READ = 50_000;
 const FIRESTORE_DAILY_WRITE = 20_000;
+const FIRESTORE_DAILY_DELETE = 20_000;
 const FIRESTORE_STORAGE_GIB = 1; // por base con cuota sin costo
 const STORAGE_FREE_GB = 5; // por bucket (región us-east1)
 const PACIFIC_RESET = "reinicia en horario del Pacífico (PT)";
@@ -93,8 +94,9 @@ async function main() {
       continue;
     }
     // Dos capas, en orden de preferencia:
-    // 1) billable_read/write_units (la UNIDAD de la cuota) — puede venir VACÍA
-    //    según el proyecto; si trae series, es la cifra medida oficial.
+    // 1) billable_read/write_units (la UNIDAD de la cuota) — en proyectos que
+    //    no son Firestore Enterprise suele venir VACÍA (espera realista: esta
+    //    capa caerá a EST); si trae series, es la cifra medida oficial.
     // 2) api/request_count agrupada por método — API-requests medidos que
     //    funcionan como COTA INFERIOR de unidades facturables (cada request
     //    toca ≥1 documento) → se reportan como ESTIMADO, nunca como la cuota exacta.
@@ -133,21 +135,33 @@ async function main() {
       : requests.ok
         ? { ok: true, mode: "estimated", total: requestWrites, source: "Cloud Monitoring API · request_count por método (COTA INFERIOR de escrituras; no es la unidad exacta de la cuota)" }
         : { ok: false, status: requests.status };
-    const monthReads = { ok: false };
-
+    const DAY_PERIOD = "últimas 24 h (ventana móvil; la cuota reinicia a medianoche PT — justo tras el reinicio la ventana puede exagerar)";
+    const unitFor = (mode, what) =>
+      mode === "measured" ? `unidades de cuota (${what})` : `solicitudes (cota inferior de ${what})`;
     if (dayReads.ok) {
-      metrics.push({ id: `${project}.reads.day`, label: `Firestore ${project} · lecturas`, status: dayReads.mode, value: dayReads.total, unit: "solicitudes ≥ lecturas", period: "últimas 24 h", quota: FIRESTORE_DAILY_READ, resetNote: PACIFIC_RESET, source: dayReads.source, sourceUpdatedAt: new Date().toISOString() });
+      metrics.push({ id: `${project}.reads.day`, label: `Firestore ${project} · lecturas`, status: dayReads.mode, value: dayReads.total, unit: unitFor(dayReads.mode, "lecturas"), period: DAY_PERIOD, quota: FIRESTORE_DAILY_READ, resetNote: PACIFIC_RESET, source: dayReads.source, sourceUpdatedAt: new Date().toISOString() });
     } else {
       metrics.push({ id: `${project}.reads.day`, label: `Firestore ${project} · lecturas`, status: "denied", deniedPermission: `monitoring.googleapis.com (${dayReads.status})`, source: "Cloud Monitoring API" });
     }
     if (dayWrites.ok) {
-      metrics.push({ id: `${project}.writes.day`, label: `Firestore ${project} · escrituras`, status: dayWrites.mode, value: dayWrites.total, unit: "solicitudes ≥ escrituras", period: "últimas 24 h", quota: FIRESTORE_DAILY_WRITE, resetNote: PACIFIC_RESET, source: dayWrites.source, sourceUpdatedAt: new Date().toISOString() });
+      metrics.push({ id: `${project}.writes.day`, label: `Firestore ${project} · escrituras`, status: dayWrites.mode, value: dayWrites.total, unit: unitFor(dayWrites.mode, "escrituras"), period: DAY_PERIOD, quota: FIRESTORE_DAILY_WRITE, resetNote: PACIFIC_RESET, source: dayWrites.source, sourceUpdatedAt: new Date().toISOString() });
+    } else {
+      // MAYOR-1 (r2): a failed writes probe is REPORTED, never silently
+      // dropped — the 20K/day quota line must stay visible as SIN ACCESO.
+      metrics.push({ id: `${project}.writes.day`, label: `Firestore ${project} · escrituras`, status: "denied", deniedPermission: `monitoring.googleapis.com (${dayWrites.status})`, source: "Cloud Monitoring API" });
     }
     if (requestReads !== null) {
       metrics.push({ id: `${project}.reads.month`, label: `Firestore ${project} · lecturas (tendencia)`, status: "estimated", value: requestReads, unit: "solicitudes", period: "últimos 30 días", quotaPeriod: "sin cuota mensual (la cuota es diaria)", source: "Cloud Monitoring API · request_count (cota inferior)", sourceUpdatedAt: new Date().toISOString() });
     }
-    // Borrados: sin métrica pública por unidad facturable → ausente explícito.
-    metrics.push({ id: `${project}.deletes`, label: `Firestore ${project} · borrados`, status: "absent", absentReason: "sin métrica pública de delete units en Monitoring", source: "—" });
+    // Borrados (r2): document/delete_ops_count SÍ existe como métrica pública —
+    // se consulta en vez de declararla ausente con premisa falsa.
+    const deleteOps = await monitoringQuery(token, project, 'metric.type="firestore.googleapis.com/document/delete_ops_count"', 24 * 60);
+    if (deleteOps.ok) {
+      const deletesTotal = sumTimeSeries(deleteOps.data);
+      metrics.push({ id: `${project}.deletes`, label: `Firestore ${project} · borrados`, status: "measured", value: deletesTotal, unit: "unidades de cuota (borrados)", period: DAY_PERIOD, quota: FIRESTORE_DAILY_DELETE, resetNote: PACIFIC_RESET, source: "Cloud Monitoring API · document/delete_ops_count", sourceUpdatedAt: new Date().toISOString() });
+    } else {
+      metrics.push({ id: `${project}.deletes`, label: `Firestore ${project} · borrados`, status: "denied", deniedPermission: `monitoring.googleapis.com (${deleteOps.status})`, source: "Cloud Monitoring API" });
+    }
     metrics.push({ id: `${project}.storage-doc`, label: `Firestore ${project} · almacenado`, status: "absent", absentReason: "requiere exportación de facturación (no habilitada; cero costo)", source: "—" });
   }
 
@@ -163,22 +177,15 @@ async function main() {
     }
   }
 
-  // GitHub Actions: uso del repositorio (si el token lo permite).
-  const usage = sh("gh", ["api", `/repos/${REPO}/actions/usage`]);
-  if (typeof usage === "string" && !usage.__error) {
-    try {
-      const parsed = JSON.parse(usage);
-      metrics.push({ id: "gha", label: "GitHub Actions · minutos", status: "measured", value: Math.round((parsed.total_ms ?? 0) / 60000), unit: "min", period: "mes en curso", quotaPeriod: "límite según plan de GitHub (no aplicado aquí)", source: "gh api actions/usage", sourceUpdatedAt: new Date().toISOString() });
-    } catch {
-      metrics.push({ id: "gha", label: "GitHub Actions · minutos", status: "absent", absentReason: "respuesta no interpretable", source: "gh api actions/usage" });
-    }
-  } else {
-    metrics.push({ id: "gha", label: "GitHub Actions · minutos", status: "absent", absentReason: "sin acceso con el token actual (endpoint privado)", source: "gh api actions/usage" });
-  }
+  // GitHub Actions (r2): NO existe endpoint público de uso por repositorio —
+  // /repos/{repo}/actions/usage responde 404 real (verificado por la revisión).
+  // El endpoint de facturación (/users/{u}/settings/billing/actions) exige
+  // ampliar el token a scope «user»; conectarlo queda como decisión del PO.
+  metrics.push({ id: "gha", label: "GitHub Actions · minutos", status: "absent", absentReason: "sin endpoint público por repositorio (el de facturación requiere token con scope «user»; conectarlo es decisión del PO)", source: "API de GitHub (sin consulta)" });
 
   // Vercel: solo con token explícito en el entorno (nunca se guarda).
   if (process.env.VERCEL_TOKEN) {
-    metrics.push({ id: "vercel", label: "Vercel · uso", status: "estimated", value: 0, unit: "—", quotaPeriod: "conectable con VERCEL_TOKEN (fase futura)", source: "—" });
+    metrics.push({ id: "vercel", label: "Vercel · uso", status: "absent", absentReason: "VERCEL_TOKEN detectado pero sin conector en esta fase (nada consultado; cero no afirmado)", source: "—" });
   } else {
     metrics.push({ id: "vercel", label: "Vercel · uso", status: "absent", absentReason: "sin VERCEL_TOKEN local (no se guardan credenciales)", source: "—" });
   }

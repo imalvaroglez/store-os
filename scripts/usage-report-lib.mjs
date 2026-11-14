@@ -11,6 +11,8 @@ export function buildUsageReport(metrics, options = {}) {
     "Esto no es una factura ni una garantía de costo cero: cuotas de referencia confirmadas contra la fuente oficial.",
     "",
     ...metrics.map(metricLine),
+    "",
+    "Leyenda: MED = medido en la unidad de la cuota · EST = estimado (cota inferior) · AUS = ausente por diseño · SIN ACCESO = falta permiso.",
   ];
   return lines.join("\n");
 }
@@ -29,11 +31,16 @@ function metricLine(m) {
     return `${head}: requiere permiso — ${m.deniedPermission ?? "no documentado"} · fuente: ${m.source}`;
   }
 
-  const value = `${fmt(m.value ?? 0)} ${m.unit ?? ""}`.trim();
+  // #191 r2: a missing value is NEVER printed as a fake zero (nor feeds the
+  // quota math with 0) — the line says so and skips percentage/margin.
+  const hasValue = typeof m.value === "number" && Number.isFinite(m.value);
+  const value = hasValue ? `${fmt(m.value)} ${m.unit ?? ""}`.trim() : "valor no disponible";
   let quotaPart = "";
-  if (typeof m.quota === "number") {
-    const pct = m.quota > 0 ? ((m.value ?? 0) / m.quota) * 100 : 0;
-    const margin = m.quota - (m.value ?? 0);
+  if (!hasValue && typeof m.quota === "number") {
+    quotaPart = ` · cuota ${fmt(m.quota)} (sin dato para comparar)`;
+  } else if (hasValue && typeof m.quota === "number") {
+    const pct = m.quota > 0 ? (m.value / m.quota) * 100 : 0;
+    const margin = m.quota - m.value;
     quotaPart = ` / ${fmt(m.quota)} (${pct.toFixed(1)}%) · margen ${fmt(margin)}${margin < 0 ? " (EXCEDIDO)" : ""}`;
   } else if (m.quotaPeriod) {
     quotaPart = ` · ${m.quotaPeriod}`;

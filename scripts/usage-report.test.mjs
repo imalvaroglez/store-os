@@ -82,6 +82,20 @@ describe("buildUsageReport (#191 fase 1)", () => {
     expect(report).toContain("2026-11-14T07:00:00Z");
   });
 
+  it("#191 r2: MED/EST sin valor NO imprime cero falso ni porcentaje basura", () => {
+    const report = buildUsageReport([
+      base({ id: "writes.day", label: "Firestore dev · escrituras", status: "estimated", value: undefined, quota: 20000 }),
+    ]);
+    expect(report).toContain("valor no disponible");
+    expect(report).not.toMatch(/escrituras: 0\b/); // cero falso en el PUESTO del valor
+    expect(report).not.toMatch(/NaN|undefined/);
+  });
+
+  it("#191 r2: incluye leyenda de marcadores en el propio output", () => {
+    const report = buildUsageReport([]);
+    expect(report).toMatch(/Leyenda:.*MED.*EST.*AUS.*SIN ACCESO/s);
+  });
+
   it("cuota superada se muestra en negativo explícito, no oculta el exceso", () => {
     const report = buildUsageReport([
       base({ id: "over", label: "Escrituras", value: 22000, quota: 20000, unit: "escrituras" }),
