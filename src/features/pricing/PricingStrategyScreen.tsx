@@ -418,35 +418,39 @@ export function PricingStrategyScreen() {
                 </p>
               )}
               {(() => {
-                // UX operadora #2: three identical red lines are noise — one
-                // clear line when NO level is configured; keep per-tier detail
-                // only for the mixed cases (some configured, some missing costs).
+                // #402: ONE packaging summary for the whole screen — the common
+                // cause is said once, with its action. Incomplete configuration
+                // is informative (neutral), never red: red stays for money and
+                // validation errors. Detail per material only when it adds
+                // information the summary can't carry.
                 const unconfigured = tiers.filter((t) => !packagingConfigured(activeStore?.packaging, t.id));
                 const withGaps = tiers
                   .map((t) => ({ tier: t, gaps: packagingGaps(activeStore?.packaging, t.id) }))
                   .filter((entry) => entry.gaps.length > 0);
-                if (unconfigured.length === tiers.length && withGaps.length === 0) {
-                  return (
-                    <p className="text-danger">
-                      Empaques individuales sin configurar: el costo base es solo adquisición (contribuciones
-                      preliminares). Configúralo en Productos → Empaques.
-                    </p>
-                  );
-                }
+                const done = tiers.filter((t) => packagingConfigured(activeStore?.packaging, t.id) && !packagingGaps(activeStore?.packaging, t.id).length);
+                if (unconfigured.length === 0 && withGaps.length === 0) return null; // complete: no empty container
                 return (
-                  <>
-                    {unconfigured.length > 0 && unconfigured.length < tiers.length && (
-                      <p className="text-danger">
-                        Empaque individual sin configurar en: {unconfigured.map((t) => t.label).join(", ")} — costo
-                        base preliminar (solo adquisición).
-                      </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+                    {unconfigured.length === tiers.length ? (
+                      <span className="text-on-surface-soft">
+                        Empaques por pieza pendientes: {tiers.map((t) => t.label).join(", ")}. Por ahora el cálculo
+                        usa solo costo de compra.
+                      </span>
+                    ) : (
+                      <span className="text-on-surface-soft">
+                        {done.length > 0 && <>Empaques: {done.map((t) => t.label).join(" ✓ · ")}{done.length === 1 ? " ✓" : " ✓"} · </>}
+                        {unconfigured.map((t) => t.label).join(", ")} pendiente{unconfigured.length > 1 ? "s" : ""}.
+                      </span>
                     )}
-                    {withGaps.map(({ tier, gaps }) => (
-                      <p key={tier.id} className="text-danger">
-                        Costo base de {tier.label} incompleto: faltan costos de empaque ({gaps.join(", ")}).
-                      </p>
-                    ))}
-                  </>
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/productos/empaques")}>
+                      Configurar
+                    </Button>
+                    {withGaps.length > 0 && (
+                      <span className="text-xs text-on-surface-soft">
+                        {withGaps.map(({ tier, gaps }) => `Falta costo de ${gaps.join(", ")} en ${tier.label}`).join(" · ")}
+                      </span>
+                    )}
+                  </div>
                 );
               })()}
             </div>
@@ -481,22 +485,39 @@ export function PricingStrategyScreen() {
                     {SUPPORT_LABEL[proposal.support]}
                   </Badge>
                 </div>
-                <p className="text-sm text-on-surface-soft">{proposal.supportReason}</p>
-                <p className="text-sm text-on-surface-soft">{proposal.chosenReason}</p>
-                <Disclosure label={`Por qué ${proposal.bands.length} banda(s) y no otra cantidad`}>
-                  <ul className="list-disc space-y-1 pl-5 text-sm text-on-surface-soft">
-                    {proposal.kSummary.map((option) => (
-                      <li key={option.k}>
-                        {option.k} banda(s): {option.reason}
-                        {option.status === "chosen" ? " — elegida." : "."}
-                      </li>
-                    ))}
-                  </ul>
-                </Disclosure>
-                {proposal.warnings.map((warning) => (
-                  <p key={warning} className="text-sm text-danger">{warning}</p>
-                ))}
+                {/*
+                  #402: the proposal leads with its CTA; methodology (support,
+                  band count, comparison 1–6) lives INSIDE the disclosure —
+                  never between the summary and the action. Packaging-config
+                  warnings are already said once by the summary above, so they
+                  are deduped here; only real money/validation risks stay red.
+                */}
                 <Button size="sm" onClick={() => loadFromProposal(proposal.bands)}>Editar esta propuesta</Button>
+                <Disclosure label="Cómo se calculó">
+                  <div className="space-y-2 text-sm text-on-surface-soft">
+                    <p>{proposal.supportReason}</p>
+                    <p>{proposal.chosenReason}</p>
+                    <ul className="list-disc space-y-1 pl-5">
+                      {proposal.kSummary.map((option) => (
+                        <li key={option.k}>
+                          {option.k} banda(s): {option.reason}
+                          {option.status === "chosen" ? " — elegida." : "."}
+                        </li>
+                      ))}
+                    </ul>
+                    {(() => {
+                      const missing = tiers.filter((t) => !packagingConfigured(activeStore?.packaging, t.id));
+                      return missing.length
+                        ? <p>El cálculo de {missing.map((t) => t.label).join(", ")} usa solo costo de compra hasta configurar sus empaques.</p>
+                        : null;
+                    })()}
+                  </div>
+                </Disclosure>
+                {proposal.warnings
+                  .filter((warning) => !warning.includes("Empaque individual de"))
+                  .map((warning) => (
+                    <p key={warning} className="text-sm text-danger">{warning}</p>
+                  ))}
               </>
             ) : (
               <p className="text-sm text-on-surface-soft">{proposal.supportReason}</p>
@@ -653,32 +674,10 @@ export function PricingStrategyScreen() {
             </Button>
           </Card>
         )}
-        {categoryId && (
-          <Card className="space-y-2">
-            {activeStore?.pricingRules?.byCategory?.[categoryId] ? (
-              <>
-                <p className="text-sm text-on-surface">
-                  <span className="font-semibold">Tabla activa:</span> las sugerencias de esta categoría ya aparecen
-                  pieza por pieza en Reglas de venta (verás "categoría" como origen). Revisa los cambios, selecciona y
-                  aplica ahí — nunca automáticamente.
-                </p>
-                <Button size="sm" onClick={() => navigate("/productos/reglas")}>
-                  Ver y aplicar sugerencias en Reglas de venta
-                </Button>
-              </>
-            ) : (
-              <>
-                <p className="text-sm text-on-surface-soft">
-                  Guarda la tabla de esta categoría y sus sugerencias aparecerán pieza por pieza en Reglas de venta,
-                  listas para revisar y aplicar cuando tú decidas.
-                </p>
-                <Button size="sm" variant="secondary" onClick={() => navigate("/productos/reglas")}>
-                  Ir a Reglas de venta
-                </Button>
-              </>
-            )}
-          </Card>
-        )}
+        {/* #402: the saved-table explainer card is GONE — with pending changes
+            the single "Siguiente paso" card above already routes to review;
+            without them there is nothing to say (no redundant instructions
+            before or after saving). */}
       </div>
 
       <Dialog
