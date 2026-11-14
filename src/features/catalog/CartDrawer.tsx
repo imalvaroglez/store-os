@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useMemo, useId, useState } from "react";
 import { Button, EmptyState, IconButton, ProductImage, Sheet, TextField } from "../../design-system";
 import type { PublicPriceTier, PublicStockSignal, PublicStore } from "../../app/firebase/publicCatalog";
 import { formatMoney, formatMoneyExact, publicPrice } from "../../lib/money";
@@ -8,7 +8,9 @@ import {
   cartRequestSummary,
   isIdentityGatedTier,
   type CartQtyLine,
+  tierSubtotalRows,
 } from "../../lib/pricing";
+import type { PriceTierDef } from "../../types";
 import { loadCartName, pruneCartLines, saveCartName, type CartLine } from "../../lib/cart";
 
 // Public cart drawer. Informative only: minimums are shown as invitations,
@@ -373,29 +375,14 @@ export function CartDrawer({
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
                   {request.totalQuantity} {request.totalQuantity === 1 ? "pieza" : "piezas"}
                 </p>
-                <dl className="mt-3 space-y-1.5">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado - precio {request.activeTier.label}</dt>
-                    <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
-                      {formatMoneyExact(request.estimatedSubtotal)} MXN
-                    </dd>
-                  </div>
-                  {request.showIdentityHint && request.identityTier && (
-                    <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
-                        ¿Eres {request.identityTier.label}? Subtotal estimado
-                      </dt>
-                      <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
-                        {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-                {request.showIdentityHint && request.identityTier && request.identityAmountRemaining != null && (
-                  <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2" aria-live="polite">
-                    Te faltan {formatMoneyExact(request.identityAmountRemaining)} a precio {request.identityTier.label} para llegar a {formatMoneyExact(request.identityTier.minAmount)}.
-                  </p>
-                )}
+                {/* #442: one comparable row per visible tier — Regular, Girly,
+                    Iconic side by side; the ACTIVE tier highlights on wine, the
+                    shallower ones strike their amounts. A "?" per LATER tier
+                    explains what's missing (pieces or MXN at that tier's own
+                    prices); one help open at a time, live-updating with the
+                    quantities. Hidden tiers never appear; a tier without its
+                    own price on every line reads "Por confirmar". */}
+                <TierSubtotalRows tiers={tiers} lines={qtyLines} activeTierId={request.activeTier.id} />
                 <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">{ESTIMATE_NOTICE}</p>
               </div>
             ) : pricing ? (
@@ -435,5 +422,59 @@ export function CartDrawer({
         </div>
       )}
     </Sheet>
+  );
+}
+
+/** #442: the three-tier subtotal block for Olivia's cart summary. */
+function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTier[]; lines: CartQtyLine[]; activeTierId: string }) {
+  const [helpTierId, setHelpTierId] = useState<string | null>(null);
+  const rows = useMemo(() => tierSubtotalRows(tiers as unknown as PriceTierDef[], lines), [tiers, lines]);
+  const active = rows.find((row) => row.tier.id === activeTierId);
+  return (
+    <div className="mt-3">
+      {rows.map((row) => {
+        const isActive = row.tier.id === activeTierId;
+        const isBeforeActive = active != null && row.tier.order < active.tier.order;
+        const helpComputable = !row.qualifies && row.subtotal != null
+          && ((row.piecesRemaining ?? 0) > 0 || (row.amountRemaining ?? 0) > 0);
+        const helpOpen = helpTierId === row.tier.id;
+        return (
+          <div key={row.tier.id} className={isActive ? "olv-tier-active rounded-lg px-2 py-1.5" : "px-2 py-1.5"}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className={`text-sm ${isActive ? "font-semibold" : "text-[var(--olv-ink-soft,var(--ink-soft))]"}`}>
+                Subtotal {row.tier.label}
+                {helpComputable && (
+                  <IconButton
+                    variant="secondary"
+                    aria-label={`Ayuda sobre ${row.tier.label}`}
+                    aria-expanded={helpOpen}
+                    onClick={() => setHelpTierId(helpOpen ? null : row.tier.id)}
+                    className="ml-1 !h-5 !w-5 !text-[11px] align-middle"
+                  >
+                    ?
+                  </IconButton>
+                )}
+              </span>
+              <span
+                className={`text-sm tabular-nums text-right ${isActive ? "font-extrabold" : "text-[var(--olv-ink,var(--ink))]"}`}
+                style={isBeforeActive ? { textDecoration: "line-through" } : undefined}
+              >
+                {row.subtotal != null ? `${formatMoneyExact(row.subtotal)} MXN` : "Por confirmar"}
+              </span>
+            </div>
+            {helpOpen && helpComputable && row.piecesRemaining != null && row.piecesRemaining > 0 && (
+              <p className="text-xs mt-1" aria-live="polite">
+                Agrega {row.piecesRemaining} {row.piecesRemaining === 1 ? "pieza más" : "piezas más"} para desbloquear este precio.
+              </p>
+            )}
+            {helpOpen && helpComputable && row.amountRemaining != null && row.amountRemaining > 0 && (
+              <p className="text-xs mt-1" aria-live="polite">
+                Agrega {formatMoneyExact(row.amountRemaining)} más en productos a precio {row.tier.label} para alcanzar {formatMoneyExact(row.tier.minAmount!)} y desbloquear este nivel de precios.
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }

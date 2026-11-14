@@ -236,3 +236,12 @@
 @media (prefers-reduced-motion: reduce) {
   .olivia-root *, .olivia-root *::before, .olivia-root *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* #442: the ACTIVE tier row in Olivia's cart summary — wine background with
+ * the agreed #ffedf0 text (tokenized), so the current price level reads at a
+ * glance among the three aligned rows. */
+.olv-tier-active {
+  background: var(--olv-accent, #740003);
+  color: #ffedf0;
+}
+.olv-tier-active .text-sm { color: #ffedf0; }
