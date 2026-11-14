@@ -150,7 +150,10 @@ const PROJECT_ID = EMULATOR
   : (import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined);
 
 const DOCS_BASE = EMULATOR
-  ? `http://127.0.0.1:8080/v1/projects/${PROJECT_ID}/databases/(default)/documents`
+  // Same standard-variable override as config.ts's SDK connection (1deb117):
+  // parallel sessions can point REST reads at a private-port emulator instead
+  // of silently reading another session's default-port instance.
+  ? `http://${import.meta.env.VITE_FIREBASE_FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080"}/v1/projects/${PROJECT_ID}/databases/(default)/documents`
   : `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
 type RestValue = { [key: string]: unknown };

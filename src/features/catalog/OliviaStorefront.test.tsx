@@ -432,7 +432,7 @@ describe("carrito del storefront — acumular y pedir", () => {
     // #305: dos cifras etiquetadas como estimación; ambas piezas comparten la
     // única categoría del fixture → sin encabezado de grupo.
     expect(text).toContain("*2 piezas en total*");
-    expect(text).toContain("Subtotal estimado: $260.00 MXN");
+    expect(text).toContain("Subtotal estimado - precio Regular: $260.00 MXN");
     expect(text).toContain("¿Eres Iconic? Subtotal estimado: $170.00 MXN"); // 90 + 80
     expect(text).toContain("sujetos a confirmación");
 
@@ -496,126 +496,119 @@ describe("carrito — leyendas de stock (señal gruesa, nunca cifras)", () => {
 });
 
 describe("carrito — progreso hacia Iconic", () => {
-  it("#305 el titular es el habitual (Girly por piezas), sin tarjetas de meta", async () => {
+  async function openWithQuantity(qty: number) {
     localStorage.setItem(cartKey, JSON.stringify({
       v: 1,
-      lines: [{
-        productSlug: "anillo-blossom",
-        name: "Anillo Blossom",
-        sku: "AAN1385",
-        qty: 4,
-      }],
+      lines: [{ productSlug: "anillo-blossom", name: "Anillo Blossom", sku: "AAN1385", qty }],
     }));
     await renderStore();
     await openDrawer();
+  }
 
-    // Sin tarjetas de progreso: el resumen son filas compactas (#315/#305).
-    expect(screen.queryByText(/Meta final/i)).toBeNull();
-    expect(screen.queryByText(/desbloqueado/i)).toBeNull();
-    // 4 piezas < 5 → habitual Regular; fila Iconic visible (< $1,000).
-    expect(screen.getByText("Subtotal estimado")).toBeTruthy();
-    expect(screen.getByText("$560.00 MXN")).toBeTruthy(); // 4 × 140 Regular
-    expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
-    expect(screen.getByText("$360.00 MXN")).toBeTruthy(); // 4 × 90 Iconic
-
-    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
-    // 5 piezas → Girly habitual (demostrable por cantidad), nunca Iconic.
-    expect(await screen.findByText("$600.00 MXN")).toBeTruthy(); // 5 × 120
-    expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
-    expect(screen.getByText("$450.00 MXN")).toBeTruthy(); // 5 × 90
-  });
-
-  it("#305 muestra el habitual y la fila Iconic condicional; cruce del umbral", async () => {
-    localStorage.setItem(
-      cartKey,
-      JSON.stringify({
-        v: 1,
-        lines: [
-          {
-            productSlug: "anillo-blossom",
-            name: "Anillo Blossom",
-            sku: "AAN1385",
-            qty: 10,
-            unitPrices: { t_retail: 140, t_girly: 120, t_iconic: 90 },
-          },
-        ],
-      })
-    );
-    await renderStore();
-    await openDrawer();
-
-    // 10 piezas → Girly $1,200 habitual (≥ $1,000): SOLO la fila habitual.
-    expect(screen.getByText("$1,200.00 MXN")).toBeTruthy();
-    expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
-    expect(screen.queryByText(/Meta final/i)).toBeNull();
-
-    // Bajar a 8 piezas → Girly $960 (< $1,000): la fila Iconic reaparece.
-    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
-    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
-    expect(await screen.findByText("$960.00 MXN")).toBeTruthy();
-    expect(screen.getByText(/¿Eres Iconic\? Subtotal estimado/)).toBeTruthy();
-    expect(screen.getByText("$720.00 MXN")).toBeTruthy(); // 8 × 90
-  });
-
-  it("#305 a 12 piezas el titular sigue siendo Girly (nunca Iconic por identidad)", async () => {
-    localStorage.setItem(cartKey, JSON.stringify({
-      v: 1,
-      lines: [{
-        productSlug: "anillo-blossom",
-        name: "Anillo Blossom",
-        sku: "AAN1385",
-        qty: 12,
-        unitPrices: { t_retail: 140, t_girly: 120, t_iconic: 90 },
-      }],
-    }));
-    await renderStore();
-    await openDrawer();
-
-    // Habitual Girly $1,440 (≥ $1,000) → sin fila Iconic, sin "desbloqueado".
-    expect(screen.getByText("$1,440.00 MXN")).toBeTruthy();
-    expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
-    expect(screen.queryByText(/desbloqueado/i)).toBeNull();
-  });
-
-  it("1.13.1 líneas y titular cuadran: 19 piezas $140/$105/$55, jamás $55/$1,045", async () => {
-    // Catálogo con los números de las capturas: Girly $105 (desde 5) e Iconic
-    // $55 (identidad, ≥ $1,000 a precio propio). El carrito se hidrata de aquí.
+  it("reproduce los casos exactos del collar del PO (#420): 4 y 5 piezas", async () => {
+    // Collar del PO: Regular $150 / Girly $100 (desde 5) / Iconic $70.
+    const collarPrices = { t_retail: 150, t_girly: 100, t_iconic: 70 };
     mocks.loadPublicCatalog.mockResolvedValue({
       store,
-      catalog: {
-        ...catalog,
-        products: catalog.products.map((p) =>
-          p.productSlug === "anillo-blossom"
-            ? { ...p, prices: { t_retail: 140, t_girly: 105, t_iconic: 55 } }
-            : p
-        ),
-      },
+      catalog: { ...catalog, products: [{ ...catalog.products[0], prices: collarPrices }] },
     });
-    localStorage.setItem(cartKey, JSON.stringify({
-      v: 1,
-      lines: [{ productSlug: "anillo-blossom", name: "Anillo Blossom", sku: "AAN1385", qty: 19 }],
-    }));
-    await renderStore();
-    await openDrawer();
+    await openWithQuantity(4);
+    expect(screen.getByText("Subtotal estimado - precio Regular")).toBeTruthy();
+    expect(screen.getByText("$600.00 MXN")).toBeTruthy();
+    expect(screen.getByText("¿Eres Iconic? Subtotal estimado")).toBeTruthy();
+    expect(screen.getByText("$280.00 MXN")).toBeTruthy();
+    expect(screen.getByText(/Te faltan \$720.00 a precio Iconic/)).toBeTruthy();
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
+    expect(await screen.findByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(screen.getByText("$500.00 MXN")).toBeTruthy();
+    expect(screen.getByText("¿Eres Iconic? Subtotal estimado")).toBeTruthy();
+    expect(screen.getByText("$350.00 MXN")).toBeTruthy();
+  });
 
-    // Titular habitual: Girly 19 × $105 = $1,995.00 (≥ $1,000 → sin fila Iconic).
-    expect(screen.getByText("$1,995.00 MXN")).toBeTruthy();
+  it("casos exactos del collar (#420): 15 piezas a precio Iconic; al quitar una, vuelve Girly", async () => {    const collarPrices = { t_retail: 150, t_girly: 100, t_iconic: 70 };
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { ...catalog, products: [{ ...catalog.products[0], prices: collarPrices }] },
+    });
+    await openWithQuantity(15);
+    expect(screen.getByText("Subtotal estimado - precio Iconic")).toBeTruthy();
+    expect(screen.getByText("$1,050.00 MXN")).toBeTruthy();
     expect(screen.queryByText(/¿Eres Iconic\?/)).toBeNull();
-    // La línea usa el MISMO nivel del titular: $105.00 por pieza, $1,995.00 de
-    // subtotal — nunca el precio Iconic ($55/$1,045) que el total no aplica.
-    const list = screen.getByRole("list");
-    expect(within(list).getByText("$105.00")).toBeTruthy();
-    expect(within(list).getByText("$1,995.00")).toBeTruthy();
-    expect(within(list).queryByText("$55.00")).toBeNull();
-    expect(within(list).queryByText("$1,045.00")).toBeNull();
-
+    expect(screen.queryByText(/Te faltan/)).toBeNull();
     const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
     const text = decodeURIComponent(send.href.split("text=")[1]);
-    expect(text).toContain("Subtotal estimado: $1,995.00 MXN");
-    expect(text).not.toContain("1,045");
+    expect(text).toContain("Subtotal estimado - precio Iconic: $1,050.00 MXN");
+    expect(text).not.toContain("¿Eres");
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    expect(await screen.findByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(screen.getByText("$1,400.00 MXN")).toBeTruthy();
+    expect(screen.getByText("¿Eres Iconic? Subtotal estimado")).toBeTruthy();
+    expect(screen.getByText("$980.00 MXN")).toBeTruthy();
+    expect(screen.getByText(/Te faltan \$20.00 a precio Iconic/)).toBeTruthy();
+  });
+
+  it("segunda fila en «Por confirmar» y sin aviso cuando falta un precio Iconic (#420)", async () => {
+    // Catálogo sin precio Iconic para la pieza: la fila existe (hay tarifa
+    // visible) pero el importe no se puede calcular ni viajar a WhatsApp.
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { ...catalog, products: [{ ...catalog.products[0], prices: { t_retail: 150, t_girly: 100 } }] },
+    });
+    await openWithQuantity(5);
+    expect(screen.getByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(screen.getByText("$500.00 MXN")).toBeTruthy();
+    expect(screen.getByText("¿Eres Iconic? Subtotal estimado")).toBeTruthy();
+    expect(screen.getByText("Por confirmar")).toBeTruthy();
+    expect(screen.queryByText(/Te faltan/)).toBeNull();
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado - precio Girly: $500.00 MXN");
     expect(text).not.toContain("Iconic");
+    expect(text).not.toContain("¿Eres");
+  });
+
+  it("muestra el acumulado Regular y el equivalente Iconic antes de cinco piezas", async () => {
+    await openWithQuantity(4);
+    expect(screen.getByText("Subtotal estimado - precio Regular")).toBeTruthy();
+    expect(screen.getByText("$560.00 MXN")).toBeTruthy();
+    expect(screen.getByText("¿Eres Iconic? Subtotal estimado")).toBeTruthy();
+    expect(screen.getByText("$360.00 MXN")).toBeTruthy();
+    expect(screen.getByText(/Te faltan \$640.00 a precio Iconic/)).toBeTruthy();
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
+    expect(await screen.findByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(screen.getByText("$600.00 MXN")).toBeTruthy();
+    expect(screen.getByText("$450.00 MXN")).toBeTruthy();
+  });
+
+  it("no oculta Iconic cuando Girly supera $1,000 y muestra cuánto falta", async () => {
+    await openWithQuantity(10);
+    expect(screen.getByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(screen.getByText("$1,200.00 MXN")).toBeTruthy();
+    expect(screen.getByText("$900.00 MXN")).toBeTruthy();
+    expect(screen.getByText(/Te faltan \$100.00 a precio Iconic/)).toBeTruthy();
+  });
+
+  it("alcanza Iconic al agregar piezas y recupera Girly al quitarlas", async () => {
+    await openWithQuantity(11);
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
+    expect(await screen.findByText("$1,080.00 MXN")).toBeTruthy();
+    expect(screen.getByText("Subtotal estimado - precio Iconic")).toBeTruthy();
+    expect(screen.queryByText("Subtotal estimado - precio Girly")).toBeNull();
+    expect(screen.queryByText(/Te faltan/)).toBeNull();
+    expect(within(row).getByText("$90.00")).toBeTruthy();
+    expect(within(row).getByText("$1,080.00")).toBeTruthy();
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("Subtotal estimado - precio Iconic: $1,080.00 MXN");
+    expect(text).not.toContain("Girly");
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    expect(await screen.findByText("Subtotal estimado - precio Girly")).toBeTruthy();
+    expect(screen.getByText("$990.00 MXN")).toBeTruthy();
+    expect(screen.getByText(/Te faltan \$10.00 a precio Iconic/)).toBeTruthy();
   });
 });
 
