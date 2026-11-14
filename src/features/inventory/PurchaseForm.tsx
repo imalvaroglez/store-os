@@ -86,6 +86,11 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   // #373: the revision this form is editing against — advanced on every save
   // so the in-place draft loop stays fresh, rejected when another tab moved on.
   const revisionRef = useRef<number | null>(purchase.revision ?? null);
+  // #373 r2 (hallazgo CRÍTICO de revisión): the expense baseline must be «what
+  // the form LAST SAVED», not the frozen opening prop — otherwise every save
+  // re-appends the form's own prior expenses as «concurrent» assignments and
+  // duplicates them (review #416 ronda 2). Advanced together with the revision.
+  const baselineRef = useRef<Purchase>(purchase);
   const [draft, setDraft] = useState<Purchase>(() => {
     const editable = effectivePurchaseStatus(purchase) !== "received";
     const tickets = purchase.tickets?.length ? purchase.tickets : [legacyPurchaseTicket(purchase)];
@@ -448,12 +453,13 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       // #373: revision contract — the save is rejected if the purchase changed
       // in another tab/device since THIS form loaded it (no silent last-wins).
       // The saved revision is kept for the in-place "Borrador guardado" loop.
-      const saved = await upsertPurchase(next, revisionRef.current, purchase);
+      const saved = await upsertPurchase(next, revisionRef.current, baselineRef.current);
       // The provider returns the SAVED purchase (with its fresh revision);
       // stay defensive for a void return so the receive step below never
       // depends on it.
       if (saved) {
         revisionRef.current = saved.revision ?? revisionRef.current;
+        baselineRef.current = saved; // r2: expenses saved here are «known» next save
         Object.assign(next, saved);
       }
     } catch (e) {
