@@ -7,6 +7,7 @@ import type { Order } from "../../types";
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ FIREBASE_EMULATOR_ENABLED: false, getFirebase: () => ({ db: holder.db }) }));
 import { deleteOrderWithStockTx, saveOrderWithStockTx, StaleOrderError } from "./firestoreData";
+import { creditAvailableCents } from "../../features/orders/customerCredit";
 
 let env: RulesTestEnvironment;
 const user = { uid: "tx-user", role: "member" } as any;
@@ -65,6 +66,57 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order transactions with F
     order.items = Array.from({ length: 50 }, (_, i) => ({ lineId: `line-${i}`, productId: `bulk-${i}`, productName: `Pieza ${i}`, quantity: 1, unitPrice: 1, subtotal: 1 }));
     await saveOrderWithStockTx(user, order, null, "bulk-op");
     expect((await getDoc(doc(holder.db, "products/bulk-49"))).data()?.quantityOnHand).toBe(9);
+  });
+
+  // ── #368: la línea que sostiene una incidencia es evidencia, no editable ──
+  it("#368 blocks line edits that would invent credit; a note edit still saves", async () => {
+    const orderId = "incident-evidence-order";
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/" + orderId), {
+        storeId: "tx-store", customerId: "c1",
+        items: [{ lineId: "l1", productId: "p1", productName: "Aro Sol", quantity: 2, unitPrice: 1000, subtotal: 2000 }],
+        deposit: 0, orderStatus: "delivered", paymentStatus: "paid",
+        paymentsReceivedCents: 220000, inheritedDepositMaterialized: true, revision: 1,
+        incidents: [{
+          id: "inc_ev", lineId: "l1", productId: "p1", productName: "Aro Sol", quantity: 1,
+          reason: "Piedra fallada", originalUnitPriceCents: 100000,
+          resolution: { kind: "refund", destination: "refund_pending", saleAdjustmentUnitCents: 100000, refundOwedCents: 100000 },
+          events: [
+            { id: "e1", kind: "opened", at: "2026-11-10T10:00:00.000Z", by: "tx-user" },
+            { id: "e2", kind: "resolution_agreed", at: "2026-11-10T11:00:00.000Z", by: "tx-user" },
+            { id: "e3", kind: "confirmed", at: "2026-11-10T12:00:00.000Z", by: "tx-user" },
+          ],
+        }],
+        createdAt: "2026-11-09T10:00:00.000Z", updatedAt: "2026-11-10T12:00:00.000Z",
+      });
+    });
+    const saved = { ...((await getDoc(doc(holder.db, "orders/" + orderId))).data() as Order), id: orderId };
+    // The REAL position: $2,000 sale − $1,000 incident = $1,000 effective,
+    // $2,200 received, $1,000 committed to the refund → $200 available.
+    expect(creditAvailableCents(saved)).toBe(20000);
+    // The editor's natural "quita la pieza devuelta" (line 2→1) would
+    // re-derive the effective total to $0 and invent $1,000 of credit —
+    // the COUNTERFACTUAL, computed without writing anything:
+    const trap = { ...saved, items: [{ ...saved.items[0], quantity: 1, subtotal: 1000 }] };
+    expect(creditAvailableCents(trap)).toBe(120000);
+    const stockBefore = (await getDoc(doc(holder.db, "products/p1"))).data()?.quantityOnHand;
+
+    await expect(saveOrderWithStockTx(user, trap, 1, "op-368-trap")).rejects.toThrow(/incidencia/);
+    await expect(saveOrderWithStockTx(user, { ...saved, items: [] }, 1, "op-368-remove")).rejects.toThrow(/incidencia/);
+
+    // Nothing moved: evidence, credit math and stock stay at the real position.
+    const afterDoc = { ...((await getDoc(doc(holder.db, "orders/" + orderId))).data() as Order), id: orderId };
+    expect(afterDoc.items[0].quantity).toBe(2);
+    expect(afterDoc.incidents).toHaveLength(1);
+    expect(creditAvailableCents(afterDoc)).toBe(20000);
+    expect((await getDoc(doc(holder.db, "products/p1"))).data()?.quantityOnHand).toBe(stockBefore);
+
+    // An edit UNRELATED to the evidence (a note) still saves.
+    await saveOrderWithStockTx(user, { ...saved, notes: "La clienta lo recoge el viernes" } as Order, 1, "op-368-note");
+    const noted = (await getDoc(doc(holder.db, "orders/" + orderId))).data()!;
+    expect(noted.notes).toBe("La clienta lo recoge el viernes");
+    expect(noted.items[0].quantity).toBe(2);
+    expect(noted.incidents).toHaveLength(1);
   });
 
   it("rejects a product from another store without creating an order", async () => {

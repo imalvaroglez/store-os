@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  incidentEvidenceError,
   incidentState,
   incidentsRefundPendingCents,
   incidentsSaleAdjustmentCents,
@@ -117,5 +118,57 @@ describe("efectos de dinero derivados (#203 sin segundo saldo)", () => {
   it("incidencias sin resolución no mueven dinero", () => {
     expect(incidentsSaleAdjustmentCents([base()])).toBe(0);
     expect(incidentsRefundPendingCents([base()])).toBe(0);
+  });
+});
+
+// ── #368: la línea que sostiene una incidencia es evidencia, no editable ────
+describe("incidentEvidenceError (#368)", () => {
+  const prevItems = [{ lineId: "l1", productId: "p1", productName: "Aro Sol", quantity: 2, unitPrice: 1000, subtotal: 2000 }];
+  const withIncident = {
+    items: prevItems,
+    incidents: [base({ lineId: "l1", quantity: 1, originalUnitPriceCents: 100000 })],
+  } as any;
+
+  it("sin incidencias no restringe nada", () => {
+    expect(incidentEvidenceError({ items: prevItems } as any, [])).toBeNull();
+    expect(incidentEvidenceError(undefined, [])).toBeNull();
+  });
+
+  it("rechaza quitar la línea que sostiene la incidencia", () => {
+    expect(incidentEvidenceError(withIncident, [])).toMatch(/incidencia.*no se puede quitar|no se puede quitar.*incidencia/is);
+  });
+
+  it("rechaza reducir la cantidad de esa línea (la pieza devuelta ya salió por la incidencia)", () => {
+    const next = [{ ...prevItems[0], quantity: 1 }];
+    expect(incidentEvidenceError(withIncident, next)).toMatch(/cantidad/);
+  });
+
+  it("rechaza cambiar el precio de esa línea", () => {
+    const next = [{ ...prevItems[0], unitPrice: 900, subtotal: 1800 }];
+    expect(incidentEvidenceError(withIncident, next)).toMatch(/precio/);
+  });
+
+  it("rechaza cambiar la pieza de esa línea (misma línea, otra ficha/color)", () => {
+    const next = [{ ...prevItems[0], productId: "p2", productName: "Otra" }];
+    expect(incidentEvidenceError(withIncident, next)).toMatch(/pieza|ficha|color/);
+  });
+
+  it("permite la edición cuando la línea queda intacta (nota, otras líneas)", () => {
+    expect(incidentEvidenceError(withIncident, prevItems)).toBeNull();
+    const withNote = [...prevItems, { lineId: "l2", productId: "p9", productName: "Otra pieza", quantity: 1, unitPrice: 10, subtotal: 10 }];
+    expect(incidentEvidenceError(withIncident, withNote)).toBeNull();
+  });
+
+  it("legado sin lineId: empareja por ficha y color exactos", () => {
+    const legacy = {
+      items: [{ lineId: "old", productId: "p1", variantId: "v1", productName: "Aro Sol", quantity: 1, unitPrice: 1000, subtotal: 1000 }],
+      incidents: [base({ quantity: 1, originalUnitPriceCents: 100000, variantId: "v1", variantColor: "Dorado" })],
+    } as any;
+    expect(incidentEvidenceError(legacy, [])).toMatch(/no se puede quitar/);
+    const intact = [{ lineId: "old", productId: "p1", variantId: "v1", productName: "Aro Sol", quantity: 1, unitPrice: 1000, subtotal: 1000 }];
+    expect(incidentEvidenceError(legacy, intact)).toBeNull();
+    // otra variedad de la misma ficha NO sostiene la incidencia
+    const otherColor = [{ lineId: "old", productId: "p1", variantId: "v2", productName: "Aro Sol", quantity: 1, unitPrice: 1000, subtotal: 1000 }];
+    expect(incidentEvidenceError(legacy, otherColor)).toBeTruthy();
   });
 });
