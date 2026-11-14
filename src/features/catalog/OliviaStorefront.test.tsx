@@ -505,6 +505,31 @@ describe("carrito — progreso hacia Iconic", () => {
     await openDrawer();
   }
 
+  it("#437 collar SOLO con precio Iconic: el estimado Iconic y el faltante sobreviven por debajo del mínimo", async () => {
+    // Solo precio Iconic $70; Regular/Girly ausentes (el caso real del collar).
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { ...catalog, products: [{ ...catalog.products[0], prices: { t_iconic: 70 } }] },
+    });
+    await openWithQuantity(15);
+    expect(screen.getByText("Subtotal estimado - precio Iconic")).toBeTruthy();
+    expect(screen.getByText("$1,050.00 MXN")).toBeTruthy();
+    // 14 piezas: $980 — NO califica, pero el estimado Iconic Y el aviso de $20 permanecen.
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    await waitFor(() => {
+      expect(screen.getByText(/Te faltan \$20.00 a precio Iconic/)).toBeTruthy();
+    });
+    // La línea sigue costando lo que cuesta: $70 la pieza.
+    expect(within(row).getByText("$70.00")).toBeTruthy();
+    // Volver a 15: $1,050 de nuevo y el aviso desaparece (alcanzado).
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
+    await waitFor(() => {
+      expect(screen.getByText("$1,050.00 MXN")).toBeTruthy();
+      expect(screen.queryByText(/Te faltan/)).toBeNull();
+    });
+  });
+
   it("reproduce los casos exactos del collar del PO (#420): 4 y 5 piezas", async () => {
     // Collar del PO: Regular $150 / Girly $100 (desde 5) / Iconic $70.
     const collarPrices = { t_retail: 150, t_girly: 100, t_iconic: 70 };
