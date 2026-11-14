@@ -6,7 +6,7 @@ import type { Product, Store } from "../../types";
 import { FIREBASE_DEV_PROJECT_ID } from "./projectIds";
 
 type TestFirestore = ReturnType<RulesTestContext["firestore"]>;
-const config = vi.hoisted(() => ({ db: null as TestFirestore | null }));
+const config = vi.hoisted(() => ({ db: null as TestFirestore | null, auth: { currentUser: { uid: "stock-member" } } }));
 vi.mock("./config", () => ({ getFirebase: () => config }));
 import {
   PurchaseAlreadyReceived,
@@ -50,6 +50,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("stock projection with Fir
         ownerUid: "stock-member", memberUids: ["stock-member"],
       });
       await setDoc(doc(admin, "stores", store.id), store);
+      // #374 r2: projections demand the store's own slug reservation; addStore
+      // always claims before projecting, so the seed mirrors that flow.
+      await setDoc(doc(admin, "slugs", store.slug), { storeId: store.id, ownerUid: "stock-member", claimedAt: 0 });
       await setDoc(doc(admin, productPath), product);
     });
   });
