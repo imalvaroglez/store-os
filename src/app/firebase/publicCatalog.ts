@@ -276,6 +276,12 @@ export async function loadPublicCatalog(slug: string): Promise<{
 }> {
   const store = await loadPublicStore(slug);
   const doc = await loadPublicCatalogDoc(slug);
+  // #374 r2 defense in depth: the storefront and the catalog summary must name
+  // the SAME store. A planted/legacy doc pair that disagrees reads as absent —
+  // it must never serve another tenant's summaries under this route.
+  if (store.storeId && doc.storeId && store.storeId !== doc.storeId) {
+    throw new PublicCatalogNotFoundError(slug);
+  }
   if (!store.storeId && doc.storeId) {
     return { store: { ...store, storeId: doc.storeId }, catalog: doc.catalog };
   }
