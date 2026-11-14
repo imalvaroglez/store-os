@@ -16,7 +16,10 @@ export function ScreenHeader({
         <h1 className="serif-display text-[1.7rem] leading-none font-semibold text-ink tracking-tight">
           {title}
         </h1>
-        {action && <div className="shrink-0 pb-0.5">{action}</div>}
+        {/* #294 r3: min-w-0 (not shrink-0) lets a multi-action header WRAP to
+            a second row on narrow screens — shrink-0 froze the row at
+            max-content and pushed «+ Agregar» off-viewport at 390px. */}
+        {action && <div className="min-w-0 pb-0.5">{action}</div>}
       </div>
       {subtitle && <p className="text-sm text-ink-soft mt-1.5">{subtitle}</p>}
       <div className="rule mt-3" />
