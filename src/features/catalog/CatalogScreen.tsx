@@ -28,7 +28,7 @@ import { isVariantProduct, totalStock } from "../../lib/variants";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import type { PriceTierDef } from "../../types";
 import { navigate } from "../../lib/router";
-import { publicPrice, profit, formatMoney } from "../../lib/money";
+import { publicPrice, profit, formatMoney, formatMoneyPlain } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
 import type { Product } from "../../types";
 import type { StatusTone } from "../../design-system";
@@ -167,12 +167,16 @@ function ProductCard({
               <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-2 text-xs">
                 {tiers.map((tier) => {
                   const price = product.prices?.[tier.id];
+                  // #294 r2: 0 is NOT a price either — the form persists a
+                  // cleared field as 0, and the app's own gates treat !(p>0)
+                  // as absent. Never render «Mayoreo $0» as a legit price.
+                  const hasPrice = typeof price === "number" && price > 0;
                   return (
-                    <span key={tier.id} className={price == null ? "text-on-surface-soft" : "text-ink"}>
+                    <span key={tier.id} className={hasPrice ? "text-ink" : "text-on-surface-soft"}>
                       {tier.label}{" "}
-                      {typeof price === "number" && Number.isFinite(price)
-                        ? <b>{formatMoney(price)}</b>
-                        : <span title="Sin precio para este nivel">—</span>}
+                      {hasPrice
+                        ? <b>{formatMoneyPlain(price)}</b>
+                        : <span title="Sin precio para este nivel" aria-label="Sin precio para este nivel">—</span>}
                     </span>
                   );
                 })}
@@ -276,8 +280,6 @@ export function CatalogScreen() {
   // tipo); drop a stale stock sort so the select never points at a missing option.
   const effectiveSortKey: SortKey = sortKey === "stock" && !isTiered ? "createdAt" : sortKey;
   const defaultId = defaultTier(activeStore)?.id ?? "t_retail";
-  const defaultLabel = defaultTier(activeStore)?.label ?? "Menudeo";
-  void defaultLabel; // #294: superseded by the per-tier row (kept for the subtitle fallback below if unused)
   const products = productsForStore(state.products, activeStore.id);
   const categories = activeCategoriesForStore(state.categories, activeStore.id);
   // Filter matches REAL categories (categoryIds, primary or secondary) — not
@@ -315,8 +317,11 @@ export function CatalogScreen() {
             ? `${filtered.length} de ${products.length} piezas`
             : `${products.length} ${products.length === 1 ? "producto" : "productos"}`
         }
+        // #294 r2: at 390px the three actions overflowed the header (~115px
+        // of horizontal scroll, «+ Agregar» invisible). Wrap to a second
+        // row instead — tap targets unchanged.
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {/* #294: pricing strategy is reachable from the FIRST viewport —
                 no hidden chevron inside a collapsed Productos sub-list. */}
             {isTiered && (
