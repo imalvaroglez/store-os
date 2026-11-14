@@ -10,7 +10,7 @@ import type { AppUser } from "./firebase/auth";
 
 const hooks = vi.hoisted(() => ({
   user: null as AppUser | null,
-  load: vi.fn(), subscribe: vi.fn(), save: vi.fn(), invite: vi.fn(),
+  load: vi.fn(), subscribe: vi.fn(), save: vi.fn(), invite: vi.fn(), membership: vi.fn(),
   snapshot: null as ((state: AppState) => void) | null,
 }));
 vi.mock("./firebase/AuthProvider", () => ({ useAuth: () => ({ user: hooks.user }) }));
@@ -24,6 +24,10 @@ vi.mock("./firebase/firestoreData", async (importOriginal) => ({
   loadCloudState: hooks.load,
   subscribeCloudState: hooks.subscribe,
   saveEntity: hooks.save,
+  // #373: membership writes go through the patch transaction now — mock it
+  // with the real contract's return shape (the tx itself is emulator-tested).
+  applyMembershipChangeTx: hooks.membership,
+  normalizePendingInvitesTx: vi.fn().mockResolvedValue(null),
   projectPublicForStore: vi.fn().mockResolvedValue(undefined),
   unprojectPublicForStore: vi.fn().mockResolvedValue(undefined),
 }));
@@ -67,6 +71,11 @@ beforeEach(() => {
   hooks.subscribe.mockReset().mockImplementation((...args) => { hooks.snapshot = args[args.length - 1]; });
   hooks.save.mockReset().mockResolvedValue(undefined);
   hooks.invite.mockReset().mockResolvedValue(undefined);
+  hooks.membership.mockReset().mockImplementation(async (_storeId: string, change: { kind: string; email?: string; memberUid?: string }) => {
+    if (change.kind === "invite") return { pendingInvites: [change.email!] };
+    if (change.kind === "transfer") return { ownerUid: change.memberUid };
+    return {};
+  });
 });
 
 describe("inviteMember is email-only (#176)", () => {
@@ -78,13 +87,10 @@ describe("inviteMember is email-only (#176)", () => {
     });
     expect(result).toBe("pending");
     expect(hooks.invite).toHaveBeenCalledWith("fer.jewerly@googlemail.com", expect.anything());
-    // Background saves (profile/theme) also hit saveEntity: assert on the
-    // store-collection write, not on call order.
-    const storeSaves = hooks.save.mock.calls.filter((c) => c[1] === "stores");
-    expect(storeSaves.length).toBeGreaterThan(0);
-    const saved = storeSaves[storeSaves.length - 1][2] as Store;
-    expect(saved.pendingInvites).toEqual(["ferjewerly@gmail.com"]);
-    expect(saved.memberUids).toEqual(["owner-1", "member-9"]);
+    // #373: the invitation persists as a membership PATCH (never a full-store
+    // write from this tab's clone) — canonicalization happens inside the tx.
+    expect(hooks.membership).toHaveBeenCalledWith("s1", { kind: "invite", email: "fer.jewerly@googlemail.com" });
+    expect(context.state.stores[0].memberUids).toEqual(["owner-1", "member-9"]);
   });
 });
 
@@ -107,11 +113,10 @@ describe("transferStoreOwnership is uid-based (#176)", () => {
     await act(async () => {
       await context.transferStoreOwnership("s1", "member-9");
     });
-    const storeSaves = hooks.save.mock.calls.filter((c) => c[1] === "stores");
-    expect(storeSaves.length).toBeGreaterThan(0);
-    const saved = storeSaves[storeSaves.length - 1][2] as Store;
-    expect(saved.ownerUid).toBe("member-9");
-    const savesBefore = hooks.save.mock.calls.length;
+    // #373: ownership lands as the FRESH-doc patch the tx returns.
+    expect(hooks.membership).toHaveBeenCalledWith("s1", { kind: "transfer", memberUid: "member-9" });
+    expect(context.state.stores[0].ownerUid).toBe("member-9");
+    const savesBefore = hooks.membership.mock.calls.length;
     await act(async () => {
       await context.transferStoreOwnership("s1", "member-9");
     });

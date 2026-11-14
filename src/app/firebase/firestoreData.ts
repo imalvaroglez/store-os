@@ -14,6 +14,7 @@ import {
   runTransaction,
   increment,
   arrayUnion,
+  arrayRemove,
   writeBatch,
   type Transaction,
   type Unsubscribe,
@@ -21,6 +22,7 @@ import {
 import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
 import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
+import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
@@ -34,7 +36,7 @@ import {
   orderMoneyAfterPayments,
   signedAmountCents,
 } from "../../features/orders/payments";
-import type { AppUser } from "./auth";
+import { normalizeEmail, type AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { incidentState } from "../../features/orders/incidents";
@@ -2536,5 +2538,188 @@ export async function registerDeliveryTx(params: {
     }
     tx.update(orderRef, next);
     return migrateOrder({ ...data, id: orderId, ...next });
+  });
+}
+
+// ── #373: patch-based writes (never a stale full document) ──────────────────
+
+/** One membership change, applied as a FIELD PATCH on the live docs. */
+export type MembershipChange =
+  | { kind: "invite"; email: string }
+  | { kind: "remove"; memberUid: string }
+  | { kind: "transfer"; memberUid: string };
+
+/**
+ * #373 (corte Membresías): invite/remove/transfer used to persist the WHOLE
+ * store from the clone the tab opened with — a concurrent member add was
+ * silently expelled and storefront/pricing edits reverted (the 2026-08
+ * incident class). This transaction touches ONLY the membership fields, with
+ * arrayUnion/arrayRemove (atomic per field) on BOTH planes (stores +
+ * adminStores — the control plane the rules read), validating against the
+ * FRESH docs. Returns the post-change membership so the local dispatch does
+ * not replay a stale list.
+ */
+export async function applyMembershipChangeTx(
+  storeId: string,
+  change: MembershipChange
+): Promise<{ memberUids?: string[]; pendingInvites?: string[]; ownerUid?: string }> {
+  const { db } = getFirebase();
+  const storeRef = doc(db, "stores", storeId);
+  const adminRef = doc(db, "adminStores", storeId);
+  const at = new Date().toISOString();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(storeRef);
+    if (!snap.exists()) throw new Error("No se encontró la tienda.");
+    const fresh = snap.data() as { memberUids?: string[]; ownerUid?: string; pendingInvites?: string[] };
+    const members = fresh.memberUids ?? [];
+    if (change.kind === "invite") {
+      const canonical = normalizeEmail(change.email.trim().toLowerCase());
+      tx.update(storeRef, { pendingInvites: arrayUnion(canonical), updatedAt: at });
+      tx.update(adminRef, { pendingInvites: arrayUnion(canonical), updatedAt: at });
+      return { pendingInvites: Array.from(new Set([...(fresh.pendingInvites ?? []), canonical])) };
+    }
+    if (change.kind === "remove") {
+      if (fresh.ownerUid === change.memberUid) {
+        throw new Error("La dueña de la tienda no puede salir de ella; transfiere la propiedad primero.");
+      }
+      if (!members.includes(change.memberUid)) return {}; // already gone — idempotent
+      tx.update(storeRef, { memberUids: arrayRemove(change.memberUid), updatedAt: at });
+      tx.update(adminRef, { memberUids: arrayRemove(change.memberUid), updatedAt: at });
+      return { memberUids: members.filter((uid) => uid !== change.memberUid) };
+    }
+    if (!members.includes(change.memberUid)) {
+      throw new Error("Esa persona debe ser miembro de la tienda antes de recibirla.");
+    }
+    if (fresh.ownerUid === change.memberUid) return {}; // already the owner
+    tx.update(storeRef, { ownerUid: change.memberUid, updatedAt: at });
+    tx.update(adminRef, { ownerUid: change.memberUid, updatedAt: at });
+    return { ownerUid: change.memberUid };
+  });
+}
+
+/**
+ * #373 (backfill): normalize legacy pendingInvites against the FRESH list
+ * (never the cached clone), writing both planes only when something really
+ * changed. A concurrent invite added since the local snapshot survives.
+ */
+export async function normalizePendingInvitesTx(storeId: string): Promise<string[] | null> {
+  const { db } = getFirebase();
+  const storeRef = doc(db, "stores", storeId);
+  const adminRef = doc(db, "adminStores", storeId);
+  const at = new Date().toISOString();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(storeRef);
+    if (!snap.exists()) return null;
+    const invites = (snap.data().pendingInvites as string[] | undefined) ?? [];
+    const normalized = Array.from(new Set(invites.map(normalizeEmail)));
+    if (normalized.length === invites.length && invites.every((e, i) => e === normalized[i])) return null;
+    tx.update(storeRef, { pendingInvites: normalized, updatedAt: at });
+    tx.update(adminRef, { pendingInvites: normalized, updatedAt: at });
+    return normalized;
+  });
+}
+
+/**
+ * #373 (corte Productos): the editor's save lands as a MERGE against the
+ * FRESH doc — untouched operational fields (stock, cost, quarantine) carry
+ * the concurrent reception/order movements, intentional edits land as
+ * deltas (see lib/productMerge). Tombstone intents (#355 color transitions)
+ * map to deleteField. Returns the merged product for the local dispatch.
+ */
+export async function saveProductPreservingConcurrentTx(
+  baseline: Product | undefined,
+  next: Product
+): Promise<Product> {
+  const { db } = getFirebase();
+  const ref = doc(db, "products", next.id);
+  const at = new Date().toISOString();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists() && (snap.data().storeId ?? "") !== next.storeId) {
+      throw new Error("El producto pertenece a otra tienda.");
+    }
+    const fresh = snap.exists() ? ({ ...snap.data(), id: next.id } as Product) : undefined;
+    const merged = mergeProductOperational(baseline, next, fresh);
+    const clean = stripUndefined({ ...merged, updatedAt: at }) as Record<string, unknown>;
+    // Tombstones: an explicit undefined (own property) is a delete intent —
+    // merge alone would keep the stale side alive forever (#355 discipline).
+    for (const key of ["quantityOnHand", "variants"] as const) {
+      if (Object.prototype.hasOwnProperty.call(merged, key) && merged[key] === undefined) {
+        clean[key] = deleteField();
+      }
+    }
+    tx.set(ref, clean, { merge: true });
+    return { ...merged, updatedAt: at };
+  });
+}
+
+/** #373: the purchase changed elsewhere since this tab loaded it. */
+export class StalePurchaseError extends Error {
+  constructor() {
+    super("La compra cambió en otra pestaña o dispositivo. Vuelve a abrirla antes de guardar.");
+  }
+}
+
+/**
+ * #373 (corte Compras): purchases get the orders' revision contract — a save
+ * from a stale clone is REJECTED instead of silently winning, and append-only
+ * evidence assigned concurrently (sourcing expenses) plus the receive flow's
+ * own fields (status, receivedAt) carry verbatim from the fresh doc.
+ */
+export async function savePurchaseTx(
+  purchase: Purchase,
+  expectedRevision: number | null,
+  baseline?: Purchase
+): Promise<Purchase> {
+  const { db } = getFirebase();
+  const ref = doc(db, "purchases", purchase.id);
+  const at = new Date().toISOString();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists() && (snap.data().storeId ?? "") !== purchase.storeId) {
+      throw new Error("La compra pertenece a otra tienda.");
+    }
+    const freshRevision = typeof snap.data()?.revision === "number" ? (snap.data()!.revision as number) : undefined;
+    if (!snap.exists()) {
+      if (expectedRevision != null) throw new StalePurchaseError();
+      const saved: Purchase = { ...purchase, revision: 1, updatedAt: at };
+      tx.set(ref, stripUndefined(saved) as Record<string, unknown>);
+      return saved;
+    }
+    if (freshRevision !== undefined || expectedRevision != null) {
+      if (expectedRevision !== (freshRevision ?? null)) throw new StalePurchaseError();
+    }
+    const freshData = snap.data() as Record<string, unknown>;
+    // #373 r2: `sourcingExpenses` is OWNED by the purchase form (add/edit/
+    // remove via «+ Agregar gasto») — a verbatim carry silently reverted the
+    // operator's own second save (review bloqueante). With the form's
+    // BASELINE, the form's list is the intent and anything the baseline never
+    // saw (a concurrent assignExpenseTx append, another tab) rides along.
+    // Without a baseline (other callers), it stays verbatim — untouched.
+    const freshExpenses = freshData.sourcingExpenses as Purchase["sourcingExpenses"] | undefined;
+    let sourcingExpenses: Purchase["sourcingExpenses"];
+    if (baseline) {
+      const known = new Set((baseline.sourcingExpenses ?? []).map((expense) => expense.id));
+      const unseen = (freshExpenses ?? []).filter((expense) => !known.has(expense.id));
+      sourcingExpenses = unseen.length
+        ? [...(purchase.sourcingExpenses ?? []), ...unseen]
+        : purchase.sourcingExpenses;
+    } else {
+      sourcingExpenses = freshExpenses ?? purchase.sourcingExpenses;
+    }
+    // Verbatim carry: fields owned by the receive flow, never by the form.
+    const carried: Record<string, unknown> = {};
+    for (const key of ["status", "receivedAt"]) {
+      if (freshData[key] !== undefined) carried[key] = freshData[key];
+    }
+    if (sourcingExpenses !== undefined) carried.sourcingExpenses = sourcingExpenses;
+    const saved: Purchase = {
+      ...purchase,
+      ...carried,
+      revision: (freshRevision ?? 0) + 1,
+      updatedAt: at,
+    };
+    tx.set(ref, stripUndefined(saved) as Record<string, unknown>, { merge: true });
+    return saved;
   });
 }
