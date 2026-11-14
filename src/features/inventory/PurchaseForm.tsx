@@ -655,7 +655,11 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                     code: captured,
                     productId: line.productId,
                     productName: linkedName,
-                  }).then(() => toast.success("Asociación recordada para futuras compras."))}
+                  })
+                    .then(() => toast.success("Asociación recordada para futuras compras."))
+                    // #211 r2 M2: a failed save must SAY so — same catch+toast
+                    // contract as the rest of the form, never a silent rejection.
+                    .catch(() => toast.error("No se pudo guardar la asociación. Inténtalo de nuevo."))}
                 >
                   Recordar «{captured}» → {linkedName}
                 </Button>

@@ -22,7 +22,7 @@ import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
 import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
-import { linkDocId, type SupplierProductLink } from "../../lib/supplierLinks";
+import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
@@ -2557,12 +2557,19 @@ export async function confirmSupplierLinkTx(params: {
   confirmedBy: string;
 }): Promise<SupplierProductLink> {
   const { db } = getFirebase();
+  // #211 r2 M3: «/» cannot travel in a Firestore doc id — reject the code
+  // BEFORE the SDK throws an opaque invalid-reference error.
+  if (params.code.includes("/")) {
+    throw new Error("El código del ticket contiene un carácter no válido («/»). Quita la diagonal e inténtalo de nuevo.");
+  }
   const link: SupplierProductLink = {
     id: linkDocId(params.storeId, params.supplierId, params.code),
     storeId: params.storeId,
     supplierId: params.supplierId,
     code: params.code,
-    normalizedCode: linkDocId(params.storeId, params.supplierId, params.code).split("__")[2],
+    // #211 r2 M1: derive from the code itself — splitting the doc id broke
+    // codes that themselves contain «__» (the suggestion never fired).
+    normalizedCode: normalizeSupplierCode(params.code),
     productId: params.productId,
     productName: params.productName,
     confirmedAt: new Date().toISOString(),
