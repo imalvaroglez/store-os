@@ -99,6 +99,74 @@ describe("#371 pausa manual y agotados ocultos en el catálogo genérico", () =>
   });
 });
 
+describe("#135 encargo sobre agotados y filtro por acabado", () => {
+  const line = (productSlug: string, name: string, extra: Record<string, unknown> = {}) => ({
+    storeId: "store_santi", storeSlug: "santi", productSlug, name, sku: "SAN-X", price: 1000, ...extra,
+  });
+
+  it("una pieza agotada ofrece «Pedir por encargo» con fecha por confirmar (sin control de compra)", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { categories: [], products: [line("perfume", "Perfume", { stockSignal: "agotado" })] },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    expect(await screen.findByText("Agotado")).toBeTruthy();
+    expect(screen.getByText(/Fecha de entrega por confirmar/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Pedir por encargo/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Agregar al carrito" })).toBeNull();
+  });
+
+  it("el encargo entra al carrito como «sobre pedido» — el cajón lo explica", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { categories: [], products: [line("perfume", "Perfume", { availability: "sold_out", stockSignal: "disponible" })] }, // pausa manual
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Pedir por encargo/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Abrir pedido/ }));
+    expect(await screen.findByText(/Se puede hacer sobre pedido/)).toBeTruthy();
+  });
+
+  it("filtro por acabado dorado/plateado cuando las piezas lo declaran", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: {
+        categories: [],
+        products: [
+          line("aro-dorado", "Aro Dorado", { finish: "Dorado" }),
+          line("aro-plateado", "Aro Plateado", { finish: "Plateado" }),
+          line("collar-sin", "Collar sin acabado"),
+        ],
+      },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    expect(await screen.findByText("Aro Dorado")).toBeTruthy();
+    const dorado = screen.getByRole("button", { name: "Dorado" });
+    fireEvent.click(dorado);
+    await waitFor(() => {
+      expect(screen.queryByText("Aro Plateado")).toBeNull();
+      expect(screen.queryByText("Collar sin acabado")).toBeNull();
+      expect(screen.getByText("Aro Dorado")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Plateado" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Aro Dorado")).toBeNull();
+      expect(screen.getByText("Aro Plateado")).toBeTruthy();
+    });
+  });
+
+  it("sin acabados declarados no aparecen chips de acabado", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { categories: [], products: [line("collar", "Collar")] },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    expect(await screen.findByText("Collar")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Dorado" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Plateado" })).toBeNull();
+  });
+});
+
 describe("PublicCatalogScreen carrito", () => {
   it("agrega productos, muestra cantidades en las tarjetas y arma el pedido", async () => {
     render(<PublicCatalogScreen slug="santi" />);
