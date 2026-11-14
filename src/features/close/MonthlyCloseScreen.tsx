@@ -39,7 +39,12 @@ export function MonthlyCloseScreen() {
   // Cobros on demand: only orders with delivery evidence or a pending legacy
   // anticipo can contribute dated cobros — the preview's own reads (no listener).
   const paymentOrderIds = useMemo(
-    () => storeOrders.filter((order) => (order.deliveries?.length ?? 0) > 0 || order.deposit > 0).map((order) => order.id),
+    () => storeOrders
+      // #129 r2 (hallazgo MAYOR): a payment recorded BEFORE delivery (no
+      // deliveries, no ficha deposit) has paymentsReceivedCents on the doc
+      // (#168) — include it or its cobro vanishes from every month.
+      .filter((order) => (order.deliveries?.length ?? 0) > 0 || order.deposit > 0 || (order.paymentsReceivedCents ?? 0) > 0)
+      .map((order) => order.id),
     [storeOrders]
   );
 
@@ -163,7 +168,31 @@ export function MonthlyCloseScreen() {
                 </ul>
               </div>
             )}
-            {close.coverage.unconfirmedCollections.length > 0 && (
+            {close.coverage.deliveredWithoutLine.length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs font-semibold text-on-surface">Piezas entregadas cuya línea ya no existe</p>
+              <ul className="mt-1 space-y-0.5">
+                {close.coverage.deliveredWithoutLine.map((entry, index) => (
+                  <li key={`${entry.orderId}-${index}`} className="text-xs text-on-surface-soft">
+                    {entry.reference} — {entry.quantity} {entry.quantity === 1 ? "pieza declarada sin línea" : "piezas declaradas sin línea"}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {close.coverage.unreadableData.length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs font-semibold text-on-surface">Datos no interpretables</p>
+              <ul className="mt-1 space-y-0.5">
+                {close.coverage.unreadableData.map((entry) => (
+                  <li key={entry.orderId} className="text-xs text-on-surface-soft">
+                    {entry.reference} — {entry.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {close.coverage.unconfirmedCollections.length > 0 && (
               <div className="mt-2">
                 <p className="text-xs font-semibold text-on-surface">Cobros «Fecha por confirmar» (fuera del total)</p>
                 <ul className="mt-1 space-y-0.5">

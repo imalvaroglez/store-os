@@ -23,6 +23,10 @@ export type MonthlyCloseCoverage = {
   linesWithoutCost: Array<{ orderId: string; reference: string; productName: string; quantity: number }>;
   /** Cobros sin fecha verificable («Fecha por confirmar»), fuera del total. */
   unconfirmedCollections: Array<{ orderId: string; reference: string; paymentId: string; amountCents: number }>;
+  /** #129 r2: delivered pieces whose line left the order (evidence kept) and
+   *  data too corrupt to interpret — BOTH visible, never silent. */
+  deliveredWithoutLine: Array<{ orderId: string; reference: string; quantity: number }>;
+  unreadableData: Array<{ orderId: string; reference: string; reason: string }>;
   /** false = hay vacíos a la vista; NO habilita un cierre oficial. */
   complete: boolean;
 };
@@ -80,6 +84,8 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     deliveredWithoutDate: [],
     linesWithoutCost: [],
     unconfirmedCollections: [],
+    deliveredWithoutLine: [],
+    unreadableData: [],
     complete: true,
   };
 
@@ -92,15 +98,31 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     const items = orderItems(order);
 
     // ── Ventas: entregas verificables, cada evento UNA vez (id idempotente).
+    // #129 r2: corrupt amounts/dates degrade THIS order into coverage instead
+    // of throwing RangeError and killing the whole preview.
+    let unreadable = false;
     const seenDeliveryIds = new Set<string>();
     for (const delivery of order.deliveries ?? []) {
       if (seenDeliveryIds.has(delivery.id)) continue; // retry of the same intent
       seenDeliveryIds.add(delivery.id);
+      if (typeof delivery.deliveredAt !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(delivery.deliveredAt)) {
+        unreadable = true;
+        continue;
+      }
       if (cdmxMonthKey(delivery.deliveredAt) !== monthKey) continue;
       for (const line of delivery.lines) {
         if (!Number.isInteger(line.quantity) || line.quantity <= 0) continue;
         const item = items.find((candidate) => stockDimensionKey(candidate.productId ?? "", candidate.variantId) === stockDimensionKey(line.productId, line.variantId));
-        if (!item) continue; // the line left the order — nothing verifiable to recognize
+        if (!item) {
+          // The delivery declares pieces whose line left the order: the
+          // evidence stays VISIBLE (review r2: never silently dropped).
+          coverage.deliveredWithoutLine.push({ orderId: order.id, reference: orderReference(order), quantity: line.quantity });
+          continue;
+        }
+        if (typeof item.unitPrice !== "number" || !Number.isFinite(item.unitPrice)) {
+          unreadable = true;
+          continue;
+        }
         salesCents += orderAmountCents(item.unitPrice, line.quantity);
         if (typeof item.cost === "number" && Number.isFinite(item.cost)) {
           costCents += orderAmountCents(item.cost, line.quantity);
@@ -108,6 +130,9 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
           coverage.linesWithoutCost.push({ orderId: order.id, reference: orderReference(order), productName: item.productName, quantity: line.quantity });
         }
       }
+    }
+    if (unreadable) {
+      coverage.unreadableData.push({ orderId: order.id, reference: orderReference(order), reason: "monto o fecha no interpretable" });
     }
 
     // Legacy «Entregado» without delivery evidence: no verifiable date —
@@ -155,7 +180,9 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
   coverage.complete =
     coverage.deliveredWithoutDate.length === 0 &&
     coverage.linesWithoutCost.length === 0 &&
-    coverage.unconfirmedCollections.length === 0;
+    coverage.unconfirmedCollections.length === 0 &&
+    coverage.deliveredWithoutLine.length === 0 &&
+    coverage.unreadableData.length === 0;
 
   return {
     month,
