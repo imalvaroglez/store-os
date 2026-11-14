@@ -22,6 +22,7 @@ import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
 import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
+import { linkDocId, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
@@ -84,7 +85,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For a
   // super_admin this is the full collection (no `in`-query size limit); for
   // members it remains scoped to their store set.
-  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = user.role === "super_admin"
       ? collection(db, name)
@@ -93,7 +94,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, categories, suppliers, purchases, customers, orders, expenses] = await Promise.all([
+  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks] = await Promise.all([
     forStores<Product>("products"),
     forStores<Category>("categories"),
     forStores<Supplier>("suppliers"),
@@ -101,6 +102,8 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     forStores<Customer>("customers"),
     forStores<Order>("orders"),
     forStores<LooseExpense>("expenses"),
+    // #211: confirmed supplier-code associations, same store scoping.
+    forStores<SupplierProductLink>("supplierLinks" as never),
   ]);
 
   return {
@@ -113,6 +116,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     customers,
     orders,
     expenses,
+    supplierLinks,
   };
 }
 
@@ -2537,4 +2541,40 @@ export async function registerDeliveryTx(params: {
     tx.update(orderRef, next);
     return migrateOrder({ ...data, id: orderId, ...next });
   });
+}
+
+/**
+ * #211: persist ONE confirmed supplier-code → product association. The doc id
+ * encodes the full identity, so a retry (same intent) is a plain overwrite of
+ * the same doc — never a duplicate. Store-scoped; future captures only.
+ */
+export async function confirmSupplierLinkTx(params: {
+  storeId: string;
+  supplierId: string;
+  code: string;
+  productId: string;
+  productName: string;
+  confirmedBy: string;
+}): Promise<SupplierProductLink> {
+  const { db } = getFirebase();
+  const link: SupplierProductLink = {
+    id: linkDocId(params.storeId, params.supplierId, params.code),
+    storeId: params.storeId,
+    supplierId: params.supplierId,
+    code: params.code,
+    normalizedCode: linkDocId(params.storeId, params.supplierId, params.code).split("__")[2],
+    productId: params.productId,
+    productName: params.productName,
+    confirmedAt: new Date().toISOString(),
+    confirmedBy: params.confirmedBy,
+  };
+  await setDoc(doc(db, "supplierLinks", link.id), link);
+  return link;
+}
+
+/** #211: forget an association (the operator removed it) — future captures
+ * stop suggesting; purchases that already used it keep their product. */
+export async function revokeSupplierLinkTx(storeId: string, supplierId: string, code: string): Promise<void> {
+  const { db } = getFirebase();
+  await deleteDoc(doc(db, "supplierLinks", linkDocId(storeId, supplierId, code)));
 }

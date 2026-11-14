@@ -217,6 +217,21 @@ service cloud.firestore {
         && !(('supply' in resource.data) && ('consumptions' in resource.data.supply) && resource.data.supply.consumptions.size() > 0);
     }
 
+    // #211: confirmed supplier-code → product associations. Store-scoped
+    // like every business entity; id encodes store+supplier+code so a member
+    // can only ever read/write links inside their own store.
+    match /supplierLinks/{id} {
+      allow get: if canOperateStore(resource.data.storeId);
+      allow list: if isSignedIn(); // filtered by storeId client-side, same as products
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && request.resource.data.id == id;
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId
+        && request.resource.data.id == id;
+      allow delete: if canOperateStore(resource.data.storeId);
+    }
+
     match /purchases/{id} {
       allow read: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId);
