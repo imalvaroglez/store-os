@@ -184,6 +184,32 @@ describe("loadPublicProduct (REST)", () => {
     expect(product.productSlug).toBe("anillo-luna");
   });
 
+  // #374: a squatted detail doc (foreign storeId in the body) must read as
+  // NOT FOUND — the public reader only serves the store it was asked for.
+  it("#374 un detalle con storeId ajeno se trata como inexistente", async () => {
+    const squatted = restDoc({
+      storeId: "sec-store-atacante",
+      productSlug: "anillo-luna",
+      name: "Falso Anillo",
+      sku: "FAKE-1",
+      images: [],
+    });
+    vi.stubGlobal(
+      "fetch",
+      stubFetchByUrl({
+        "/publicProducts/store_olivia__anillo-luna": jsonResponse(200, squatted),
+      })
+    );
+    await expect(
+      loadPublicProduct("olivia", "anillo-luna", {
+        storeId: "store_olivia",
+        slug: "olivia",
+        name: "Olivia",
+        type: "on_demand",
+      })
+    ).rejects.toBeInstanceOf(PublicProductNotFoundError);
+  });
+
   it("throws PublicProductNotFoundError when the detail doc 404s", async () => {
     vi.stubGlobal(
       "fetch",
@@ -285,5 +311,32 @@ describe("#282 carrera de clasificación: tienda primero (secuencial)", () => {
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(urls.some((u) => u.includes("/publicStores/no-existe"))).toBe(true);
     expect(urls.some((u) => u.includes("/publicCatalogs/"))).toBe(false);
+  });
+});
+
+describe("loadPublicCatalog — cruce de storeId (#374 r2)", () => {
+  it("un catálogo que nombra a OTRA tienda bajo el slug de Olivia se lee como inexistente", async () => {
+    const fetchMock = stubFetchByUrl({
+      "/publicStores/olivia": jsonResponse(200, STORE_DOC),
+      "/publicCatalogs/olivia": jsonResponse(200, restDoc({
+        storeId: "store_intruso",
+        categories: [],
+        products: [],
+      })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(loadPublicCatalog("olivia")).rejects.toThrow(PublicCatalogNotFoundError);
+  });
+
+  it("catálogo legado sin storeId sigue sirviendo (compatibilidad 390e76a)", async () => {
+    const fetchMock = stubFetchByUrl({
+      "/publicStores/olivia": jsonResponse(200, STORE_DOC),
+      "/publicCatalogs/olivia": jsonResponse(200, restDoc({ categories: [], products: [] })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { catalog } = await loadPublicCatalog("olivia");
+    expect(catalog.products).toEqual([]);
   });
 });

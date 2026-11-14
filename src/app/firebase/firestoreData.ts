@@ -1877,6 +1877,12 @@ export async function projectPublicForStore(
 ): Promise<void> {
   const { db } = getFirebase();
 
+  // 0. #374 r2: the projection create rules demand the store's OWN slug
+  // reservation. Claiming is idempotent (one extra read when it exists) and
+  // repairs legacy stores that predate reservations; a slug taken by another
+  // store fails closed here instead of half-publishing.
+  await claimSlug(store.slug, store.id);
+
   // 1. Storefront (identity + content + contact). Write this first: contact
   // links depend on publicStores, and a later projection read must not leave
   // the phone stale if it fails or is denied.
