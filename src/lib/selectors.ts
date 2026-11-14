@@ -1,5 +1,6 @@
 import type { Product, Order, Customer, Category, Supplier, Purchase } from "../types";
 import { stockAlertLevel } from "./inventory";
+import { totalStock } from "./variants";
 
 // Store-isolation selectors. Everything read from state is filtered by storeId here.
 // Centralizing it guarantees no screen can leak another store's data.
@@ -55,10 +56,12 @@ export function customersForStore(customers: Customer[], storeId: string): Custo
  * Products needing restock in a store (agotado or low stock, per
  * stockAlertLevel — including the default threshold), worst first so the most
  * urgent piece leads. Derived from synced state; untracked stock never alerts.
+ * #365: urgency orders by the same aggregate the alert reads (totalStock) —
+ * sorting by the design-level field sank color designs to "no data".
  */
 export function productsToRestock(products: Product[], storeId: string): Product[] {
   return products
     .filter((p) => p.storeId === storeId && stockAlertLevel(p) !== null)
-    .sort((a, b) => (a.quantityOnHand ?? 0) - (b.quantityOnHand ?? 0));
+    .sort((a, b) => (totalStock(a) ?? 0) - (totalStock(b) ?? 0));
 }
 
