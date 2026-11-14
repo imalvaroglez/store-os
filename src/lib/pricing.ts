@@ -298,7 +298,9 @@ export type TierSubtotalRow = {
 
 /** One comparable row per visible tier, shallowest first. Own prices only —
  *  a tier without its own price on every line keeps its label and shows
- *  "Por confirmar"; its remaining is NOT computable (help stays hidden). */
+ *  "Por confirmar". A pieces minimum is computable without prices, so its
+ *  help survives a "Por confirmar" row; a money minimum needs the tier's own
+ *  subtotal, so its help hides when a price is missing. */
 export function tierSubtotalRows(tiers: PriceTierDef[], lines: CartQtyLine[]): TierSubtotalRow[] {
   const ordered = [...tiers].filter((t) => !t.hidden).sort((a, b) => a.order - b.order);
   const totalQuantity = lines.reduce((sum, l) => sum + l.qty, 0);
@@ -307,8 +309,15 @@ export function tierSubtotalRows(tiers: PriceTierDef[], lines: CartQtyLine[]): T
     const subtotal = hasOwn
       ? lines.reduce((sum, l) => sum + (l.unitPrices[tier.id] as number) * l.qty, 0)
       : undefined;
-    const qualifies = subtotal != null && tierQualifies(tier, lines);
-    const piecesRemaining = tier.minPieces != null && subtotal != null
+    // Exact cents for money minimums (#420 boundary precedent): raw float
+    // comparison flips at 999.9999999999999 artifacts. A pieces-only minimum
+    // never needs prices to prove qualification.
+    const qualifies = tier.minAmount != null
+      ? subtotal != null
+        && Math.round(subtotal * 100) >= Math.round(tier.minAmount * 100)
+        && (tier.minPieces == null || totalQuantity >= tier.minPieces)
+      : tierQualifies(tier, lines);
+    const piecesRemaining = tier.minPieces != null
       ? Math.max(0, tier.minPieces - totalQuantity)
       : undefined;
     const amountRemaining = tier.minAmount != null && subtotal != null

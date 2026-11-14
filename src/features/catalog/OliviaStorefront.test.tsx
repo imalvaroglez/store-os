@@ -513,6 +513,8 @@ describe("carrito — progreso hacia Iconic", () => {
       catalog: { ...catalog, products: [{ ...catalog.products[0], prices }] },
     });
     await openWithQuantity(1);
+    // Encabezado del resumen con el total de piezas.
+    expect(screen.getByText("Piezas totales")).toBeTruthy();
     // Las tres filas en orden.
     expect(screen.getByText("Subtotal Regular")).toBeTruthy();
     expect(screen.getByText("Subtotal Girly")).toBeTruthy();
@@ -536,9 +538,9 @@ describe("carrito — progreso hacia Iconic", () => {
     // Girly: faltan 4 piezas.
     fireEvent.click(screen.getByRole("button", { name: /Ayuda sobre Girly/i }));
     expect(screen.getByText(/Agrega 4 piezas más para desbloquear este precio/)).toBeTruthy();
-    // Iconic: faltan $955 a precio Iconic para $1,000.
+    // Iconic: faltan $955 a precio Iconic para $1,000 (texto literal del contrato).
     fireEvent.click(screen.getByRole("button", { name: /Ayuda sobre Iconic/i }));
-    expect(screen.getByText(/Agrega \$955\.00 más en productos a precio Iconic para alcanzar \$1,000\.00/)).toBeTruthy();
+    expect(screen.getByText(/Agrega \$955 más en productos a precio Iconic para alcanzar los \$1,000 y desbloquear este nivel de precios/)).toBeTruthy();
     // Una ayuda abierta a la vez.
     expect(screen.queryByText(/Agrega 4 piezas más/)).toBeNull();
     // Al sumar 4 piezas (5 total) Girly se alcanza: la ayuda de piezas desaparece.
@@ -546,7 +548,7 @@ describe("carrito — progreso hacia Iconic", () => {
       const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
       fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
     }
-    await screen.findByText(/Agrega \$775\.00 más en productos a precio Iconic/); // 5 × $45 = $225 → faltan $775
+    await screen.findByText(/Agrega \$775 más en productos a precio Iconic/); // 5 × $45 = $225 → faltan $775
   });
 
   it("#442 un precio ausente por tarifa muestra «Por confirmar» y conserva las demás cifras", async () => {
@@ -589,7 +591,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("Subtotal Iconic")).toBeTruthy();
     expect(screen.getByText("$280.00 MXN")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Ayuda sobre Iconic/i }));
-    expect(screen.getByText(/Agrega \$720.00 más en productos a precio Iconic/)).toBeTruthy();
+    expect(screen.getByText(/Agrega \$720 más en productos a precio Iconic/)).toBeTruthy();
     const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
     fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
     expect(await screen.findByText("Subtotal Girly")).toBeTruthy();
@@ -619,7 +621,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("Subtotal Iconic")).toBeTruthy();
     expect(screen.getByText("$980.00 MXN")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Ayuda sobre Iconic/i }));
-    expect(screen.getByText(/Agrega \$20.00 más en productos a precio Iconic/)).toBeTruthy();
+    expect(screen.getByText(/Agrega \$20 más en productos a precio Iconic/)).toBeTruthy();
   });
 
   it("segunda fila en «Por confirmar» y sin aviso cuando falta un precio Iconic (#420)", async () => {
@@ -649,7 +651,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("Subtotal Iconic")).toBeTruthy();
     expect(screen.getByText("$360.00 MXN")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Ayuda sobre Iconic/i }));
-    expect(screen.getByText(/Agrega \$640.00 más en productos a precio Iconic/)).toBeTruthy();
+    expect(screen.getByText(/Agrega \$640 más en productos a precio Iconic/)).toBeTruthy();
     const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
     fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
     expect(await screen.findByText("Subtotal Girly")).toBeTruthy();
@@ -663,7 +665,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(screen.getByText("$1,200.00 MXN")).toBeTruthy();
     expect(screen.getByText("$900.00 MXN")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Ayuda sobre Iconic/i }));
-    expect(screen.getByText(/Agrega \$100.00 más en productos a precio Iconic/)).toBeTruthy();
+    expect(screen.getByText(/Agrega \$100 más en productos a precio Iconic/)).toBeTruthy();
   });
 
   it("alcanza Iconic al agregar piezas y recupera Girly al quitarlas", async () => {
@@ -684,7 +686,7 @@ describe("carrito — progreso hacia Iconic", () => {
     expect(await screen.findByText("Subtotal Girly")).toBeTruthy();
     expect(screen.getByText("$990.00 MXN")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Ayuda sobre Iconic/i }));
-    expect(screen.getByText(/Agrega \$10.00 más en productos a precio Iconic/)).toBeTruthy();
+    expect(screen.getByText(/Agrega \$10 más en productos a precio Iconic/)).toBeTruthy();
   });
 });
 
