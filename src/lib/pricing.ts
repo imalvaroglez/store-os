@@ -253,9 +253,18 @@ export function cartRequestSummary(tiers: PriceTierDef[], lines: CartQtyLine[]):
   const identityAmountRemaining = identityTier && identitySubtotal != null
     ? Math.max(0, Math.round(identityTier.minAmount! * 100) - Math.round(identitySubtotal * 100)) / 100
     : undefined;
-  const activeTier = identityQualifies && identityTier
+  let activeTier = identityQualifies && identityTier
     && (!habitual || !tierQualifies(habitual, lines) || identityTier.order > habitual.order)
     ? identityTier : habitual;
+  // #437: a piece with ONLY the identity price (Regular/Girly absent) left
+  // habitual undefined — below the minimum the whole summary vanished and the
+  // clienta lost the Iconic estimate plus the "te faltan" notice. When NO
+  // habitual tier owns every line but the identity tier does, the estimate
+  // STAYS on the identity tier (its own prices), below the minimum too — the
+  // lines say what they cost and the notice keeps saying what's missing.
+  if (!activeTier && identityTier && identitySubtotal != null) {
+    activeTier = identityTier;
+  }
   if (!activeTier) return null;
   // A qualified own-priced estimate stays usable even with incomplete legacy
   // reference prices. Never relabel fallback amounts as Regular/Girly.
