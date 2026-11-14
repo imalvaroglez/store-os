@@ -25,9 +25,9 @@ Cuenta de disposición (19 hallazgos): **4 parcialmente resueltos** (4, 6, 12, 1
 14. **`where in` sin trocear >30 tiendas** (`firestoreData.ts:91,179`) — **ABIERTO** (latente: hoy pocas tiendas). Criterio: `in` troceado por 30. No explota hoy — prioridad baja.
 15. **Sondeo de IDs por get de inexistentes** — **ABIERTO (mínimo)**. Decisión de apertura consciente (no ampliar aquí detalles; ver #176).
 16. **Borrado con PERMISSION_DENIED crudo** (`deleteOrderWithStockTx`) — **ABIERTO**. Criterio: error en español; bloqueo explícito para pedidos con `refundOwedCents`.
-17. **Dispatch-antes-de-persistir** — **PARCIALMENTE RESUELTO**: #373 (Testing) corrigió `upsertPurchase`/`upsertProduct`/membresías. **ABIERTO** para `deleteStore`/`deleteProduct`/`deletePurchase`.
+17. **Dispatch-antes-de-persistir** — **PARCIALMENTE RESUELTO**: #373 (**Por liberar**) corrigió `upsertPurchase`/`upsertProduct`/membresías. **ABIERTO** para `deleteStore`/`deleteProduct`/`deletePurchase`.
 18. **`releaseCustomerCreditTx` sin cap** — **ABIERTO**, en territorio del contrato #380 (sesión 1); se ejecuta con esa decisión para no duplicar el trabajo.
-19. **Hipótesis vitrina/variantes y bandas/categorías secundarias** — **HIPÓTESIS**. Falta: recorrido sintético en Preview. Nota: #444 (ya integrado — subtotales por tarifa en el carrito) NO cubre variantes visibles en el carrito; la ficha pública, las variantes y las bandas siguen sin cubrir por ningún PR.
+19. **Hipótesis vitrina/variantes y bandas/categorías secundarias** — **HIPÓTESIS**. Falta: recorrido sintético en Preview. Nota: #444 (ya integrado — subtotales por tarifa en el carrito) NO cubre variantes visibles en el carrito; el selector público de variantes por color YA ESTÁ cubierto por #137/#434 (**Por liberar**, catálogo genérico) — lo que sigue sin cubrir es la **vitrina de Olivia** (OliviaStorefront), ficha pública y bandas.
 
 ## Prioridad sugerida (dinero > acceso > inventario > pulido)
 
