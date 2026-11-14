@@ -446,16 +446,16 @@ function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTi
           <div key={row.tier.id} className={isActive ? "olv-tier-active rounded-lg px-2 py-1.5" : "px-2 py-1.5"}>
             <div className="flex items-baseline justify-between gap-2">
               <span className={`text-sm ${isActive ? "font-semibold" : "text-[var(--olv-ink-soft,var(--ink-soft))]"}`}>
-                Subtotal {row.tier.label}
+                <span className="whitespace-nowrap">Subtotal {row.tier.label}</span>
                 {helpComputable && (
                   <IconButton
-                    variant="secondary"
+                    variant="ghost"
                     aria-label={`Ayuda sobre ${row.tier.label}`}
                     aria-expanded={helpOpen}
                     onClick={() => setHelpTierId(helpOpen ? null : row.tier.id)}
-                    className="ml-1 !h-5 !w-5 !text-[11px] align-middle"
+                    className="olv-tier-help"
                   >
-                    ?
+                    <span aria-hidden="true" className="olv-tier-help-icon">?</span>
                   </IconButton>
                 )}
               </span>
