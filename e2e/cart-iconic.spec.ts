@@ -25,6 +25,34 @@ function wire(value: unknown): unknown {
   return { mapValue: { fields: Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, wire(v)])) } };
 }
 
+test("small cart sends both labeled estimates with the selected pieces", async ({ page }) => {
+  const second = {
+    ...product, productSlug: "aretes-prueba", name: "Aretes de prueba", sku: "TEST-02",
+    prices: { regular: 120, girly: 100, iconic: 80 },
+  };
+  const products = [product, second];
+  await page.route("**/v1/projects/**/documents/**", async route => {
+    const data = route.request().url().includes("/publicStores/") ? store
+      : { storeId: store.storeId, categories: [], products };
+    const encoded = wire(data) as { mapValue: { fields: unknown } };
+    await route.fulfill({ json: { fields: encoded.mapValue.fields } });
+  });
+  await page.addInitScript(products => {
+    localStorage.setItem("store-os:cart:olivia", JSON.stringify({
+      v: 1, lines: products.map(product => ({ ...product, qty: 1, unitPrices: product.prices })),
+    }));
+  }, products);
+  await page.goto("/catalogo/olivia");
+  await page.getByRole("button", { name: "Abrir pedido" }).click();
+  const cart = page.getByRole("dialog", { name: "Tu pedido" });
+  await expect(cart.getByText("$260.00 MXN", { exact: true })).toBeVisible();
+  await expect(cart.getByText("$170.00 MXN", { exact: true })).toBeVisible();
+  const href = await cart.getByRole("link", { name: "Enviar solicitud por WhatsApp" }).getAttribute("href");
+  const text = new URL(href!).searchParams.get("text");
+  expect(text).toContain("Subtotal estimado · Regular: $260.00 MXN");
+  expect(text).toContain("Subtotal estimado · Iconic: $170.00 MXN");
+});
+
 for (const width of [390, 1280]) {
   test(`cart compares and reaches Iconic, then restores Girly (${width}px)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
