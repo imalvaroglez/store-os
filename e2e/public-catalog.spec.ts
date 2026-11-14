@@ -513,7 +513,9 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
   await catalog.reload();
   await expect(catalog.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" })).toBeVisible();
   const defaultLogo = catalog.getByRole("img", { name: "Logo de Olivia", exact: true });
-  await expect(defaultLogo).toHaveAttribute("src", /\/images\/olivia-logo\.png$/);
+  // #365/#359: the default logo is served versioned (?v=<build sha>) — the
+  // old `$`-anchored regex failed deterministically once the version landed.
+  await expect(defaultLogo).toHaveAttribute("src", /^\/images\/olivia-logo\.png\?v=/);
   await expect(catalog.getByRole("img", { name: "Colección de prueba" })).toBeVisible();
   expect((await catalog.request.get(oldLogo)).status()).toBe(404);
   await anon.close(); await context.close();
