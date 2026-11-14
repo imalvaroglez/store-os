@@ -110,6 +110,10 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
 
   await page.getByRole("button", { name: "Recibir mercancía", exact: true }).click();
   await expect(page.getByText("Compra recibida: el inventario se actualizó.")).toBeVisible({ timeout: 30_000 });
+  // #386: a failed background projection surfaces HERE (sync banner with
+  // retry) — if this ever fires, the doc will never arrive and the poll below
+  // would waste 30 s blaming a "late" write. Fail fast with the real cause.
+  await expect(page.getByText("No se pudo actualizar la disponibilidad pública")).toHaveCount(0);
   await openJourney(page);
   await expect(page.getByLabel("Costo unitario", { exact: true }).first()).toBeDisabled();
   await expect(page.getByRole("button", { name: "Recibir mercancía", exact: true })).toHaveCount(0);
@@ -119,6 +123,10 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   const persisted = await response.json();
   expect(Number(persisted.fields.quantityOnHand.integerValue)).toBe(39);
 
+  // #386: the projection lands in a BACKGROUND write after the receive toast —
+  // the old default 5 s poll lost the race under emulator load. 30 s matches
+  // the receive budget, keeps the full content assertion, and the poll's
+  // actual distinguishes late/absent (null) from wrong content on failure.
   await expect.poll(async () => {
     const response = await fetch(detailUrl);
     if (!response.ok) return null;
@@ -128,7 +136,8 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
       storeId: detail.fields.storeId.stringValue,
       stockSignal: detail.fields.stockSignal.stringValue,
     };
-  }).toEqual({ name: "Pieza QA por ticket", storeId: "store_joyeria", stockSignal: "disponible" });
+  }, { timeout: 30_000, message: "La proyección pública de la compra por ticket no llegó (null = escritura tardía o ausente)" })
+    .toEqual({ name: "Pieza QA por ticket", storeId: "store_joyeria", stockSignal: "disponible" });
 
   await gotoClean(page, "/pedidos/nuevo");
   await ensureStoreActive(page, "Joyería");
