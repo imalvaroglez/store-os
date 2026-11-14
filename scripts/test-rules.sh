@@ -19,6 +19,7 @@ FIRESTORE_FILES=(
   src/app/firebase/customerPricing.emulator.test.ts
   src/app/firebase/variantConversion.emulator.test.ts
   src/app/firebase/republishStockSignals.emulator.test.ts
+  src/app/firebase/supplierLinks.emulator.test.ts
 )
 # Storage suites (#176): the emulator loads each file's rules explicitly, so
 # they do NOT use firebase.emulator.json's storage.rules.emulator swap.
