@@ -27,6 +27,7 @@ import { OrderEditorScreen } from "../features/orders/OrderEditorScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
 import { PurchasesScreen } from "../features/inventory/PurchasesScreen";
 import { ExpensesScreen } from "../features/expenses/ExpensesScreen";
+import { MonthlyCloseScreen } from "../features/close/MonthlyCloseScreen";
 import { PackagingScreen } from "../features/packaging/PackagingScreen";
 import { PricingRulesScreen } from "../features/pricing/PricingRulesScreen";
 import { PricingStrategyScreen } from "../features/pricing/PricingStrategyScreen";
@@ -59,7 +60,7 @@ export function AppShell() {
   if (storeSettingsRoute) {
     tab = "tienda";
   } else if (seg === "productos") {
-    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : "productos";
+    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : "productos";
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
@@ -146,6 +147,11 @@ export function AppShell() {
       break;
     case "productos_gastos":
       screen = <ExpensesScreen />;
+      break;
+    case "productos_cierre":
+      // #129 stage: read-only preview; key per store so switching stores
+      // never carries another store's month state.
+      screen = <MonthlyCloseScreen key={activeStore?.id ?? "store"} />;
       break;
     case "productos_empaques":
       // key: switching stores must never carry one store's draft into another.
