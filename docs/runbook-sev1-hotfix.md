@@ -1,15 +1,12 @@
 # Runbook: vía urgente Sev-1 (contención, hotfix y verificación)
 
-Referencia operativa de la issue #227. La vía Sev-1 **no elimina compuertas**:
-reusa el CI ya probado del mismo commit y conserva el release guard de
-versión+notas, el despliegue de reglas con paridad y la verificación post-release.
-Sin servicios nuevos de pago: los mismos GitHub Actions + Vercel + Firebase.
+La vía directa existe para restablecer una operación crítica durante un Sev-1. El PO declara el incidente y autoriza explícitamente la publicación directa. La vía ordinaria y el reuso de CI de #227 siguen disponibles.
 
 ## 1. Declarar el incidente
 
 Solo el PO declara un Sev-1. Umbral: corrupción/pérdida activa de datos
 financieros o existencias, cobro o saldo indebido causando operaciones
-incorrectas, exposición de datos, o bloqueo total de una operación crítica sin
+incorrectas, exposición de datos, o bloqueo de una operación crítica de venta o atención sin
 alternativa segura. Un fallo visual es urgente pero no Sev-1 por sí mismo.
 
 Al declarar: una sola issue (la del incidente), un responsable de la
@@ -26,6 +23,19 @@ contención, y pausa de features nuevas mientras exista daño activo.
 - Respaldos: verificar el backup reciente ANTES de cualquier reparación.
 
 ## 3. El hotfix y su release
+
+### Vía directa autorizada (parche de aplicación)
+
+1. Identifica el despliegue activo y su commit. Crea un worktree sobre ese commit y registra la autorización, la operación bloqueada y el resultado esperado en la issue. Conserva el ID del despliegue previo para volver a él.
+2. Reproduce el fallo con datos sintéticos en local. Aplica el cambio mínimo y comprueba que la regresión falla antes y pasa después. Usa emulador si el flujo toca Auth, Firestore, cobros o existencias. Si el fallo no se reproduce, registra qué evidencia falta y elige una contención que puedas verificar.
+3. Comprueba que el parche es compatible con las reglas, índices y esquema que ya están en producción. Si necesita cambiar alguno, usa el flujo de CI correspondiente. No leas ni escribas datos de producción desde desarrollo.
+4. Incrementa la versión y añade notas. Haz el build de producción con la configuración verificada de Vercel/Firebase y ejecuta el guard de liberación contra la versión servida. Sube el build como producción sin asignar dominio (`vercel deploy --prebuilt --prod --skip-domain`). Verifica la versión y el despliegue candidato y promuévelo (`vercel promote <deployment> --yes`). Si usas una credencial temporal para verificar el candidato, retírala al acabar. No copies datos ni respaldos a Vercel.
+5. Comprueba la versión en el dominio público y pide a la operadora que reintente su tarea conservando el borrador. Si la comprobación falla, vuelve al despliegue previo identificado y registra el resultado.
+6. Registra commit, versión, despliegue y evidencia. Abre o actualiza el PR que incorpora el parche a `main`. Incorpóralo antes de cualquier otra publicación que pudiera retirar la corrección. La integración sigue las revisiones del repositorio.
+
+Ejemplo: #391, versión 1.15.3. Se reprodujo el rechazo al sustituir colores de una ficha borrada, se publicó sobre la 1.15.1 y la operadora pudo guardar el pedido existente.
+
+### Reuso de CI cuando el commit exacto ya está probado
 
 1. Un PR mínimo desde `main`: parche + regresión exacta del incidente +
    **versión incrementada y notas** (el release guard de `deploy-rules` sigue
@@ -62,7 +72,13 @@ contención, y pausa de features nuevas mientras exista daño activo.
 - Registrar en la issue: tiempos (declaración→contención, aprobación→disponibilidad),
   SHA liberado, versión y evidencia de verificación.
 
-## 5. Ensayo (a ejecutar tras integrar este cambio)
+## 5. Casos de prueba a partir de respaldos
+
+Usa el respaldo cifrado y verificado solo como referencia local autorizada. Antes de preparar un fixture, anota qué relaciones provocan el fallo (por ejemplo, un pedido que apunta a una ficha eliminada y dos fichas nuevas). Reconstruye esas relaciones con IDs, nombres, claves, fechas e importes sintéticos. Conserva las condiciones de negocio que afectan la reproducción, como cantidad, estado, variante y existencia; excluye nombres reales, contactos, cuentas, notas, imágenes, referencias privadas y credenciales.
+
+Revisa los campos del fixture con una lista de lo que se necesita para la prueba. Comprueba que reproduce el rechazo y que el parche lo resuelve en `store-os-dev` con servicios en localhost. Solo el fixture sintético y su prueba van a Git o CI. El respaldo y sus extractos permanecen fuera de Git, CI y servicios externos.
+
+## 6. Ensayo (a ejecutar tras integrar este cambio)
 
 Ensayar en dev con incidentes sintéticos, sin tocar producción:
 

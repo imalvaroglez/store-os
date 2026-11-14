@@ -54,9 +54,9 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Promoción de Preview a producción
 
-`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y solo recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. El mismo commit revisado en el PR y la rama `main` es el que se libera; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
+`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y normalmente recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. En la vía normal se libera el commit revisado e integrado en `main`. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
 
-**Excepción Sev-1 (declarada por el PO; ver `docs/runbook-sev1-hotfix.md`):** durante un incidente activo de dinero/datos, el despacho `release_production=true` puede ir acompañado de `sev1_reuse_ci=true`: las suites se reusan solo si `sev1-verify` prueba que el commit exacto despachado (punta de `main`) ya pasó `build-test` y `rules-and-e2e` en su push; falla cerrado en cualquier duda. El release guard de versión+notas, el despliegue de reglas con paridad y la verificación post-release NO se omiten. La vía normal queda intacta.
+**Excepción Sev-1 (declarada por el PO; ver [runbook](docs/runbook-sev1-hotfix.md)):** si el PO autoriza expresamente la vía directa, se puede publicar un parche acotado de la aplicación sobre el commit que sirve producción sin esperar CI global ni merge. Requiere reproducción y prueba enfocada, build, versión y notas, comprobación del despliegue y registro del commit para incorporar el arreglo a `main`. Si cambian reglas, índices o datos, la vía directa de aplicación no aplica. Si el commit exacto de `main` ya pasó ambas suites, también se puede usar `sev1_reuse_ci=true` para evitar repetirlas. La vía normal conserva sus compuertas.
 
 ## Regla de Firebase
 
@@ -64,7 +64,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Todo desarrollo conectado, prueba contra emuladores y Preview usa el ID `store-os-dev`.
 - Los emuladores usan ese mismo ID y el bucket de dev, pero todos sus servicios apuntan a `127.0.0.1`; no se crea otro proyecto ni namespace para el trabajo local.
 - `.firebaserc` deja `store-os-dev` como proyecto predeterminado. Todo comando Firebase que permita elegir proyecto debe indicar el destino explícitamente; los comandos de desarrollo apuntan a `store-os-dev`.
-- Producción (`store-os-f7cf8`) solo recibe releases vía CI (persona o agente bajo la autorización permanente del PO, 2026-11-08). El trabajo de desarrollo nunca ejecuta operaciones de datos contra producción.
+- Producción (`store-os-f7cf8`) recibe releases vía CI, salvo la excepción Sev-1 documentada. El trabajo de desarrollo nunca ejecuta operaciones de datos contra producción.
 
 ## Regla permanente de arquitectura administrativa
 
@@ -222,7 +222,7 @@ Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno
 
 ### Ambientes y backends (cableado)
 
-Desarrollo y Preview usan `store-os-dev`. Producción usa `store-os-f7cf8` y solo recibe releases vía CI (persona o agente con la autorización permanente del PO, 2026-11-08). El proyecto predeterminado de Firebase es dev. Los emuladores locales usan el mismo ID de dev y servicios en `127.0.0.1`.
+Desarrollo y Preview usan `store-os-dev`. Producción usa `store-os-f7cf8` y recibe releases vía CI, salvo la excepción Sev-1 documentada. El proyecto predeterminado de Firebase es dev. Los emuladores locales usan el mismo ID de dev y servicios en `127.0.0.1`.
 
 | Ambiente | Backend Firebase | Cómo se cablea |
 |---|---|---|
