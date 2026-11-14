@@ -380,7 +380,7 @@ export function CartDrawer({
                       {formatMoneyExact(request.estimatedSubtotal)} MXN
                     </dd>
                   </div>
-                  {request.showIdentityHint && request.identityTier && (
+                  {request.showIdentityHint && request.identityTier && request.identityTier.id !== request.activeTier.id && (
                     <div className="flex items-baseline justify-between gap-3">
                       <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
                         ¿Eres {request.identityTier.label}? Subtotal estimado
