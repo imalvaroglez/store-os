@@ -35,6 +35,70 @@ beforeEach(() => {
   mocks.loadPublicCatalog.mockReset().mockResolvedValue({ store, catalog });
 });
 
+describe("#371 pausa manual y agotados ocultos en el catálogo genérico", () => {
+  const line = (productSlug: string, name: string, extra: Record<string, unknown> = {}) => ({
+    storeId: "store_santi", storeSlug: "santi", productSlug, name, sku: "SAN-X", price: 1000, ...extra,
+  });
+
+  it("pausa manual (availability sold_out CON existencia) muestra Agotado y no ofrece agregar", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: {
+        categories: [],
+        products: [
+          line("perfume", "Perfume", { availability: "sold_out", stockSignal: "disponible" }), // pausa deliberada
+          line("tenis", "Tenis", { stockSignal: "disponible" }),
+        ],
+      },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    expect(await screen.findByText("Perfume")).toBeTruthy();
+    expect(screen.getByText("Agotado")).toBeTruthy();
+    // Solo el disponible ofrece control de carrito.
+    const adds = screen.getAllByRole("button", { name: "Agregar al carrito" });
+    expect(adds).toHaveLength(1);
+    expect(adds[0].closest("h2")?.textContent ?? "").toBe(""); // (guard) el botón pertenece a Tenis vía tarjeta
+  });
+
+  it("agotado por existencia se trata igual (insignia + sin control)", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { categories: [], products: [line("perfume", "Perfume", { stockSignal: "agotado" })] },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    expect(await screen.findByText("Agotado")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Agregar al carrito" })).toBeNull();
+  });
+
+  it("showSoldOut en false OCULTA los agotados (y el carrito guardado se poda)", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, storefront: { showSoldOut: false } },
+      catalog: {
+        categories: [],
+        products: [line("perfume", "Perfume", { availability: "sold_out" }), line("tenis", "Tenis", {})],
+      },
+    });
+    // Carrito guardado con la pieza pausada: debe desaparecer del pedido.
+    localStorage.setItem("store-os:cart:santi", JSON.stringify({ v: 1, lines: [{ productSlug: "perfume", name: "Perfume", qty: 2 }] }));
+    render(<PublicCatalogScreen slug="santi" />);
+    expect(await screen.findByText("Tenis")).toBeTruthy();
+    expect(screen.queryByText("Perfume")).toBeNull();
+    // El botón flotante no aparece: no quedan piezas en el carrito.
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Abrir pedido/ })).toBeNull());
+  });
+
+  it("una pieza pausada que ya estaba en el carrito pasa a sobre pedido (no se solicita)", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { categories: [], products: [line("perfume", "Perfume", { availability: "sold_out", stockSignal: "disponible" })] },
+    });
+    localStorage.setItem("store-os:cart:santi", JSON.stringify({ v: 1, lines: [{ productSlug: "perfume", name: "Perfume", qty: 1 }] }));
+    render(<PublicCatalogScreen slug="santi" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Abrir pedido/ }));
+    expect(await screen.findByText(/Se puede hacer sobre pedido/)).toBeTruthy();
+  });
+});
+
 describe("PublicCatalogScreen carrito", () => {
   it("agrega productos, muestra cantidades en las tarjetas y arma el pedido", async () => {
     render(<PublicCatalogScreen slug="santi" />);
