@@ -346,8 +346,8 @@ test("cart: anonymous visitor accumulates pieces and sends ONE WhatsApp order", 
   expect(text).not.toContain("AAN1385");
   expect(text).not.toContain("OLI-002");
   expect(text).toContain("*2 piezas en total*");
-  expect(text).toContain("Subtotal estimado · Regular: $260.00 MXN");
-  expect(text).toContain("Subtotal estimado · Iconic: $170.00 MXN");
+  expect(text).toContain("Subtotal estimado - precio Regular: $260.00 MXN");
+  expect(text).toContain("¿Eres Iconic? Subtotal estimado: $170.00 MXN");
   expect(text).not.toContain("Precio aplicable");
   expect(text).toContain("/catalogo/olivia");
 

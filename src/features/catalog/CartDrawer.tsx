@@ -375,7 +375,7 @@ export function CartDrawer({
                 </p>
                 <dl className="mt-3 space-y-1.5">
                   <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado · {request.activeTier.label}</dt>
+                    <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado - precio {request.activeTier.label}</dt>
                     <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
                       {formatMoneyExact(request.estimatedSubtotal)} MXN
                     </dd>
@@ -383,7 +383,7 @@ export function CartDrawer({
                   {request.showIdentityHint && request.identityTier && (
                     <div className="flex items-baseline justify-between gap-3">
                       <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
-                        Subtotal estimado · {request.identityTier.label}
+                        ¿Eres {request.identityTier.label}? Subtotal estimado
                       </dt>
                       <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
                         {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
