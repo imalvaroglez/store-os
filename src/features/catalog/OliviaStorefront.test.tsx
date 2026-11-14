@@ -864,3 +864,59 @@ describe("editorial catalog", () => {
     expect(mocks.loadPublicCatalog).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("carrito — filas por tarifa (#442, revisión)", () => {
+  it("la ayuda «?» solo en tarifas POSTERIORES a la activa: una tachada nunca invita a peor precio", async () => {
+    // H-2: 3 piezas R$500/G$400/I$350 → Iconic califica ($1,050 ≥ $1,000) y es
+    // la activa; Girly queda tachada — no debe ofrecer «?» («agrega 2 piezas»
+    // sugeriría desbloquear un precio PEOR que el vigente).
+    const prices = { t_retail: 500, t_girly: 400, t_iconic: 350 };
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { ...catalog, products: [{ ...catalog.products[0], prices }] },
+    });
+    localStorage.setItem(cartKey, JSON.stringify({
+      v: 1,
+      lines: [{ productSlug: "anillo-blossom", name: "Anillo Blossom", sku: "AAN1385", qty: 3 }],
+    }));
+    await renderStore();
+    await openDrawer();
+    const active = screen.getByText("Subtotal Iconic").closest("div")!.parentElement!;
+    expect(active.className).toContain("olv-tier-active");
+    expect(screen.getByText("$1,050.00 MXN")).toBeTruthy();
+    expect(screen.getByText("$1,200.00 MXN")).toBeTruthy(); // Girly 3 × $400, tachado
+    expect(screen.queryByRole("button", { name: /Ayuda sobre/ })).toBeNull();
+  });
+
+  it("aria-expanded alterna y la ayuda cerrada al alcanzar la tarifa no reaparece sola", async () => {
+    const prices = { t_retail: 105, t_girly: 70, t_iconic: 45 };
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { ...catalog, products: [{ ...catalog.products[0], prices }] },
+    });
+    localStorage.setItem(cartKey, JSON.stringify({
+      v: 1,
+      lines: [{ productSlug: "anillo-blossom", name: "Anillo Blossom", sku: "AAN1385", qty: 1 }],
+    }));
+    await renderStore();
+    await openDrawer();
+    const help = screen.getByRole("button", { name: "Ayuda sobre Girly" });
+    expect(help.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(help);
+    expect(help.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText(/Agrega 4 piezas más para desbloquear este precio/)).toBeTruthy();
+    // Alcanza Girly (5): el «?» desaparece y la ayuda queda CERRADA de verdad.
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    for (let i = 0; i < 4; i++) {
+      fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
+    }
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Ayuda sobre Girly" })).toBeNull());
+    expect(screen.queryByText(/Agrega \d piezas más/)).toBeNull();
+    // Baja del mínimo (5 → 3): el «?» vuelve, pero el texto NO se reabre solo.
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ayuda sobre Girly" })).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Ayuda sobre Girly" }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(/Agrega \d piezas más/)).toBeNull();
+  });
+});
