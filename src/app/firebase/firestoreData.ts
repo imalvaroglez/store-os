@@ -2538,3 +2538,18 @@ export async function registerDeliveryTx(params: {
     return migrateOrder({ ...data, id: orderId, ...next });
   });
 }
+
+/**
+ * #129 (etapa lista): read the payment records of SEVERAL orders on demand —
+ * the monthly close preview collects cobros by their real date. One getDocs
+ * per order (no listener); only the preview's own action pays for it.
+ */
+export async function loadOrderPaymentsDocs(orderIds: string[]): Promise<Record<string, OrderPayment[]>> {
+  const { db } = getFirebase();
+  const result: Record<string, OrderPayment[]> = {};
+  for (const orderId of orderIds) {
+    const snap = await getDocs(query(collection(db, "orders", orderId, "payments")));
+    result[orderId] = snap.docs.map((doc) => ({ ...(doc.data() as OrderPayment), id: doc.id }));
+  }
+  return result;
+}
