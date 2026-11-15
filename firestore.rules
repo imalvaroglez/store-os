@@ -265,6 +265,17 @@ service cloud.firestore {
       allow delete: if resource == null || canOperateStore(resource.data.storeId);
     }
 
+    // #132 (FER-17): confirmed monthly reseller rankings — append-only
+    // evidence. ONLY the store's OWNER (Fer) may confirm; results are frozen
+    // (no edits, no deletes — a late refund becomes a NEW revision doc).
+    match /rankingConfirmations/{id} {
+      allow get, list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.confirmedBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     // #335: append-only price-change trail. Price events are created in the
     // SAME atomic batch as the price they describe; a retry of the same intent
     // re-writes a byte-identical doc (allowed), any modification is denied.

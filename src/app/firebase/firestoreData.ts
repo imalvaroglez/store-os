@@ -46,7 +46,7 @@ import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Or
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
-import type { OrderIncident, OrderIncidentEvent } from "../../types";
+import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -91,7 +91,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For a
   // super_admin this is the full collection (no `in`-query size limit); for
   // members it remains scoped to their store set.
-  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks" | "rankingConfirmations"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = user.role === "super_admin"
       ? collection(db, name)
@@ -100,7 +100,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks] = await Promise.all([
+  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks, rankingConfirmations] = await Promise.all([
     forStores<Product>("products"),
     forStores<Category>("categories"),
     forStores<Supplier>("suppliers"),
@@ -110,6 +110,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     forStores<LooseExpense>("expenses"),
     // #211: confirmed supplier-code associations, same store scoping.
     forStores<SupplierProductLink>("supplierLinks" as never),
+    forStores<RankingConfirmation>("rankingConfirmations" as never),
   ]);
 
   return {
@@ -123,6 +124,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     orders,
     expenses,
     supplierLinks,
+    rankingConfirmations,
   };
 }
 
@@ -2996,4 +2998,39 @@ export async function loadOrderPaymentsDocs(orderIds: string[]): Promise<Record<
     result[orderId] = snap.docs.map((doc) => ({ ...(doc.data() as OrderPayment), id: doc.id }));
   }
   return result;
+}
+
+/**
+ * #132 (FER-17): persist Fer's CONFIRMED monthly ranking. Append-only by
+ * construction — the doc id encodes store+month+revision, so a late-refund
+ * re-confirmation is a NEW doc and confirmed history is never rewritten.
+ */
+export async function saveRankingConfirmationTx(confirmation: RankingConfirmation): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "rankingConfirmations", confirmation.id), confirmation as unknown as Record<string, unknown>);
+}
+
+/** #132: the latest confirmation stored for a store+month (highest revision). */
+export async function loadRankingConfirmation(
+  storeId: string,
+  year: number,
+  month: number
+): Promise<RankingConfirmation | null> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(
+      collection(db, "rankingConfirmations"),
+      where("storeId", "==", storeId),
+      where("year", "==", year),
+      where("month", "==", month)
+    )
+  );
+  const docs = snap.docs.map((d) => d.data() as RankingConfirmation);
+  if (docs.length === 0) return null;
+  return docs.sort((a, b) => b.revision - a.revision)[0];
+}
+
+/** Deterministic doc id: store + month + revision (append-only versions). */
+export function rankingConfirmationId(storeId: string, year: number, month: number, revision: number): string {
+  return `${storeId}__${year}-${String(month).padStart(2, "0")}${revision > 1 ? `__r${revision}` : ""}`;
 }
