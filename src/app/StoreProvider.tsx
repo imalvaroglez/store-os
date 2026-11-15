@@ -46,6 +46,7 @@ import { creditAvailableCents, ordersForCustomer, planCreditApplications } from 
 import { useAuth } from "./firebase/AuthProvider";
 export { CategoryRulesConflictError, PublicCatalogProjectionError } from "./firebase/firestoreData";
 import type { AppUser } from "./firebase/auth";
+import type { RankingConfirmation } from "../types";
 import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
 import { normalizeEmail, sendInviteLink } from "./firebase/auth";
 import { linkDocId } from "../lib/supplierLinks";
@@ -59,6 +60,8 @@ import {
   savePurchaseTx,
   confirmSupplierLinkTx,
   revokeSupplierLinkTx,
+  saveRankingConfirmationTx,
+  rankingConfirmationId,
   saveStorefrontBatch,
   saveStorePackaging,
   savePricingRules,
@@ -129,6 +132,7 @@ export type Action =
   | { type: "REPLACE_STATE"; state: AppState }
   | { type: "UPSERT_SUPPLIER_LINK"; link: import("../lib/supplierLinks").SupplierProductLink }
   | { type: "REMOVE_SUPPLIER_LINK"; id: string }
+  | { type: "ADD_RANKING_CONFIRMATION"; confirmation: import("../types").RankingConfirmation }
   // purchase-ux2 bulk create: products + their purchase land in ONE dispatch
   // so the UI never shows a half-created batch.
   | { type: "BULK_CREATE_FOR_PURCHASE"; products: Product[]; purchase: Purchase };
@@ -275,6 +279,10 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "REMOVE_SUPPLIER_LINK":
       return { ...state, supplierLinks: (state.supplierLinks ?? []).filter((l) => l.id !== action.id) };
+    case "ADD_RANKING_CONFIRMATION":
+      // #132: append the confirmation; a revision REPLACES the previous doc's
+      // place in state (highest revision wins on every read).
+      return { ...state, rankingConfirmations: [...(state.rankingConfirmations ?? []).filter((c) => c.id !== action.confirmation.id), action.confirmation] };
     case "BULK_CREATE_FOR_PURCHASE": {
       const products = [...state.products];
       for (const product of action.products) {
@@ -335,6 +343,15 @@ type StoreContextValue = {
   confirmSupplierLink: (input: { storeId: string; supplierId: string; code: string; productId: string; productName: string }) => Promise<void>;
   /** #211: forget an association — future captures stop suggesting it. */
   revokeSupplierLink: (storeId: string, supplierId: string, code: string) => Promise<void>;
+  /** #132 (FER-17): persist Fer's CONFIRMED monthly ranking (append-only). */
+  confirmRanking: (input: {
+    storeId: string;
+    year: number;
+    month: number;
+    entries: Array<{ customerId: string; name: string; netCents: number; pieces: number; rank: number }>;
+    tieResolutions: Array<{ customerIds: string[]; motive: string }>;
+    revisionMotive?: string;
+  }) => Promise<void>;
   /** Republish a store's public catalog projection (backfill / repair). */
   republishCatalog: (storeId: string) => Promise<void>;
   setActiveStore: (storeId: string | null) => void;
@@ -1339,6 +1356,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       dispatch({ type: "UPDATE_ORDER", order: updated });
       return updated;
+    },
+    confirmRanking: async (input) => {
+      const currentUser = requireAuthenticatedUser();
+      const previous = (state.rankingConfirmations ?? [])
+        .filter((c) => c.storeId === input.storeId && c.year === input.year && c.month === input.month)
+        .sort((a, b) => b.revision - a.revision)[0];
+      const revision = (previous?.revision ?? 0) + 1;
+      const confirmation: RankingConfirmation = {
+        id: rankingConfirmationId(input.storeId, input.year, input.month, revision),
+        storeId: input.storeId,
+        year: input.year,
+        month: input.month,
+        entries: input.entries,
+        tieResolutions: input.tieResolutions,
+        revision,
+        ...(revision > 1 && input.revisionMotive ? { revisionMotive: input.revisionMotive } : {}),
+        confirmedBy: currentUser.uid,
+        ...(currentUser.email ? { confirmedByEmail: currentUser.email } : {}),
+        confirmedAt: nowIso(),
+      };
+      // Persist first; the dispatch follows the SAVED truth (#373 discipline).
+      await saveRankingConfirmationTx(confirmation);
+      dispatch({ type: "ADD_RANKING_CONFIRMATION", confirmation });
     },
     confirmSupplierLink: async (input) => {
       const currentUser = requireAuthenticatedUser();

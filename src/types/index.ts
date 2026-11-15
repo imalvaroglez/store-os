@@ -1012,9 +1012,32 @@ export type AppState = {
    * Optional so legacy local fixtures keep compiling; cloud loading always
    * provides it. */
   supplierLinks?: SupplierProductLink[];
+  /** #132: confirmed monthly reseller rankings (append-only, owner-only). */
+  rankingConfirmations?: RankingConfirmation[];
 };
 
 export type { SupplierProductLink };
+
+/** #132 (FER-17): Fer's CONFIRMED result for a month — the frozen top with
+ * her tie resolutions. Append-only: a late-refund re-confirmation is a NEW
+ * doc (revision > 1); confirmed results are never rewritten. */
+export type RankingConfirmation = {
+  id: string;
+  storeId: string;
+  year: number;
+  month: number;
+  /** Frozen entries exactly as confirmed (name included — history readable). */
+  entries: Array<{ customerId: string; name: string; netCents: number; pieces: number; rank: number }>;
+  /** Fer's motive per persistent tie group she resolved by decision. */
+  tieResolutions: Array<{ customerIds: string[]; motive: string }>;
+  /** Why THIS confirmation replaced a previous one (late refund); 1 = original. */
+  revision: number;
+  /** Motive when revision > 1 (the exceptional decision the policy requires). */
+  revisionMotive?: string;
+  confirmedBy: string;
+  confirmedByEmail?: string;
+  confirmedAt: string;
+};
 
 // Catalog business rules (single source of truth).
 export const MAX_PRODUCT_IMAGES = 5;

@@ -147,3 +147,9 @@ export function monthRanking(inputs: RankingInputs): MonthRanking {
 
   return { month, entries: raw, needsManualResolution };
 }
+
+/** The CURRENT CDMX calendar month (the ranking's operative zone). */
+export function currentMonth(): RankingMonth {
+  const [year, month] = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit" }).format(new Date()).split("-").map(Number);
+  return { year, month };
+}

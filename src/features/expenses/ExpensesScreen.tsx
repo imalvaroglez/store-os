@@ -176,7 +176,9 @@ export function ExpensesScreen() {
         title="Gastos"
         subtitle={`${expenses.length} ${expenses.length === 1 ? "gasto suelto" : "gastos sueltos"}`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* #132 r3 (UX): at ~390px four inline actions overflow (553px) —
+                wrap onto lines instead of horizontal scroll; primary stays last. */}
             {/* #129 stage: read-only monthly close preview lives next to money. */}
             <Button variant="ghost" onClick={() => navigate("/productos/cierre")}>Cierre mensual</Button>
             {/* #128 stage: read-only distribution proposal lives next to money. */}
