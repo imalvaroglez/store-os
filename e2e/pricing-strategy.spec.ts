@@ -149,7 +149,10 @@ test("propone dos bandas, Fer edita y guarda; la tabla persiste tras recargar", 
   await page.getByRole("button", { name: /Editar esta propuesta/ }).click();
   await page.getByLabel("Iconic (pesos)").first().fill("165");
   await page.getByRole("button", { name: /Guardar tabla/ }).click();
-  await expect(page.getByRole("button", { name: "Sin cambios" })).toBeVisible({ timeout: 10000 });
+  // #335 r4: saving now also records the rule-change event (one extra
+  // emulator round-trip in the same action) — CI runners need headroom over
+  // the default actionTimeout (#386 budget precedent).
+  await expect(page.getByRole("button", { name: "Sin cambios" })).toBeVisible({ timeout: 20000 });
 
   // Reload: the saved table must come back exactly as saved.
   await openStrategy(page);
@@ -197,7 +200,10 @@ test("recorrido completo: tabla de Relojes → revisar por categoría → aplica
   await page.getByRole("button", { name: /Editar esta propuesta/ }).click();
   await page.getByLabel("Iconic (pesos)").first().fill("150");
   await page.getByRole("button", { name: /Guardar tabla/ }).click();
-  await expect(page.getByRole("button", { name: "Sin cambios" })).toBeVisible({ timeout: 10000 });
+  // #335 r4: saving now also records the rule-change event (one extra
+  // emulator round-trip in the same action) — CI runners need headroom over
+  // the default actionTimeout (#386 budget precedent).
+  await expect(page.getByRole("button", { name: "Sin cambios" })).toBeVisible({ timeout: 20000 });
 
   // 2) El puente ofrece la revisión contextual de UNA categoría (280 piezas de Relojes, no todo el catálogo).
   const bridge = page.getByRole("button", { name: /Revisar precios pendientes de esta categoría \(\d+\)/ });
