@@ -82,7 +82,9 @@ function compareBy(key: SortKey, a: Product, b: Product, defaultTierId: string):
         (publicPrice(b, defaultTierId) ?? Infinity)
       );
     case "stock":
-      return (a.quantityOnHand ?? Infinity) - (b.quantityOnHand ?? Infinity);
+      // #365: same aggregate as the alert/badges (totalStock) — the erased
+      // design-level field sank color designs below every tracked product.
+      return (totalStock(a) ?? Infinity) - (totalStock(b) ?? Infinity);
     case "createdAt":
       // ISO timestamps sort lexicographically.
       return a.createdAt.localeCompare(b.createdAt);
@@ -186,10 +188,20 @@ function ProductCard({
                     only the stock context remains here (nothing duplicated). */}
                 {isVariantProduct(product) ? (
                   variantStock != null ? (
-                    <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
-                      Existencia: {variantStock} en {product.variants!.length}{" "}
-                      {product.variants!.length === 1 ? "color" : "colores"}
-                    </span>
+                    <>
+                      <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
+                        Existencia: {variantStock} en {product.variants!.length}{" "}
+                        {product.variants!.length === 1 ? "color" : "colores"}
+                      </span>
+                      {/* #365: color designs have no ± block — this badge is
+                          their Agotado/Faltan N/Quedan N, same derivation as
+                          Inicio's "Por surtir". */}
+                      {alert && (
+                        <Badge tone={alert === "out" ? "danger" : "warning"}>
+                          {stockAlertText(product)}
+                        </Badge>
+                      )}
+                    </>
                   ) : null
                 ) : typeof product.quantityOnHand === "number" ? (
                   <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>

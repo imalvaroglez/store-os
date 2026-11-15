@@ -224,6 +224,56 @@ describe("stockAlertLevel", () => {
     expect(stockAlertText({ quantityOnHand: -2 })).toBe("Faltan 2");
     expect(stockAlertText({ quantityOnHand: 2 })).toBe("Quedan 2");
   });
+
+  // #365: #124 moved a color design's shelf to variants[].quantityOnHand and
+  // the editor erases the design-level field — the alert must read the SAME
+  // aggregate the card shows (totalStock), or the design goes blind: no
+  // "Agotado"/"Faltan N", absent from "Por surtir".
+  describe("color designs read the variant aggregate (#365)", () => {
+    const design = (
+      quantities: Array<number | undefined>,
+      lowStockAt?: number,
+      designQuantityOnHand?: number
+    ): Product =>
+      ({
+        quantityOnHand: designQuantityOnHand,
+        lowStockAt,
+        variants: quantities.map((quantityOnHand, i) => ({
+          id: `v${i}`,
+          color: `Color ${i}`,
+          quantityOnHand,
+        })),
+      }) as Product;
+
+    it("flags all-zero colors as Agotado and a negative aggregate as Faltan N", () => {
+      expect(stockAlertLevel(design([0, 0, 0]))).toBe("out");
+      expect(stockAlertText(design([0, 0, 0]))).toBe("Agotado");
+      // One oversold color (−5) plus a positive one (+3): aggregate −2.
+      expect(stockAlertLevel(design([-5, 3]))).toBe("out");
+      expect(stockAlertText(design([-5, 3]))).toBe("Faltan 2");
+    });
+
+    it("flags a low aggregate (Quedan N) and passes healthy aggregates", () => {
+      expect(stockAlertLevel(design([2, 1]))).toBe("low");
+      expect(stockAlertText(design([2, 1]))).toBe("Quedan 3");
+      expect(stockAlertLevel(design([10, 4]))).toBeNull();
+      // Explicit threshold keeps applying to the aggregate (boundary: equal).
+      expect(stockAlertLevel(design([4, 6], 10))).toBe("low");
+      expect(stockAlertLevel(design([6, 6], 10))).toBeNull();
+    });
+
+    it("treats a design with NO tracked color as sin dato (never as 0)", () => {
+      expect(stockAlertLevel(design([undefined, undefined]))).toBeNull();
+      expect(stockAlertLevel(design([]))).toBeNull();
+    });
+
+    it("ignores a stale design-level quantityOnHand when colors carry the shelf (#124)", () => {
+      // The editor erases the design field, but a legacy number must never
+      // mask an exhausted color design (nor fake health).
+      expect(stockAlertLevel(design([0], undefined, 99))).toBe("out");
+      expect(stockAlertLevel(design([10], undefined, 0))).toBeNull();
+    });
+  });
 });
 
 describe("installment-order stock holding (#165)", () => {
