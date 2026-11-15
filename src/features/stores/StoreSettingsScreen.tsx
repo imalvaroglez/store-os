@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { useAuth } from "../../app/firebase/AuthProvider";
 import { Button, TextField, SelectField, Dialog, Sheet, useToast } from "../../design-system";
@@ -38,6 +38,12 @@ export function StoreSettingsScreen({
   // (e.g. the store is deleted via cloud sync while this sheet is open).
   const [name, setName] = useState(store?.name ?? "");
   const [whatsapp, setWhatsapp] = useState(store?.whatsappPhone ?? "");
+  // #373 (UX r2 review): the edit test compares against what THIS form showed
+  // when it MOUNTED — not the live store (which a subscription refreshes under
+  // an open tab, making an untouched field look "edited" and reverting another
+  // session's save). Baselines are captured once, at first render.
+  const initialName = useRef(store?.name ?? "").current;
+  const initialWhatsapp = useRef(store?.whatsappPhone ?? "").current;
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteMsg, setInviteMsg] = useState<string | null>(null);
   const [transferUid, setTransferUid] = useState("");
@@ -114,14 +120,20 @@ export function StoreSettingsScreen({
   async function saveBasic() {
     setSaveError(null);
     const newName = name.trim() || store!.name;
+    // #373 (UX review): a field travels ONLY when the operator actually edited
+    // it in THIS tab — an untouched field from a stale tab must never revert
+    // what another session just saved (the silent-WhatsApp-revert class).
+    const whatsappValue = whatsapp.trim() || undefined;
+    const patch: Parameters<typeof updateStore>[0] = { id: store!.id };
+    if (newName !== initialName) patch.name = newName;
+    if (whatsappValue !== (initialWhatsapp || undefined)) patch.whatsappPhone = whatsappValue;
+    if (!patch.name && !patch.whatsappPhone) {
+      toast.info("Sin cambios que guardar.");
+      return;
+    }
     // If the name changed, the slug changes too — recompute it so updateStore
     // re-claims/re-publishes the catalog under the new slug.
-    const patch: Parameters<typeof updateStore>[0] = {
-      id: store!.id,
-      name: newName,
-      whatsappPhone: whatsapp.trim() || undefined,
-    };
-    if (slugify(newName) !== store!.slug) patch.slug = slugify(newName);
+    if (patch.name !== undefined && slugify(newName) !== store!.slug) patch.slug = slugify(newName);
     try {
       await updateStore(patch);
     } catch (err) {
