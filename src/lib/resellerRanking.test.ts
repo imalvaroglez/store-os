@@ -47,6 +47,50 @@ const inputs = (overrides: Partial<RankingInputs> = {}): RankingInputs => ({
 });
 
 describe("monthRanking (FER-17 #132)", () => {
+  it("r3: aislamiento — los pedidos de OTRA tienda jamás entran al ranking", () => {
+    const foreign = deliveredOrder("of", "emp9", "2026-11-10", [{ productId: "p1", quantity: 5, unitPrice: 999 }]);
+    foreign.storeId = "s2";
+    const own = deliveredOrder("oo", "emp1", "2026-11-11", [{ productId: "p1", quantity: 1, unitPrice: 100 }]);
+    const rank = monthRanking(inputs({
+      storeId: "s1",
+      orders: [foreign, own],
+      customers: [customer("emp1", "entrepreneur"), customer("emp9", "entrepreneur")],
+    }));
+    expect(rank.entries.map((e) => e.customerId)).toEqual(["emp1"]);
+    expect(rank.entries[0].netCents).toBe(10000);
+  });
+
+  it("r3: devolución confirmada en mes DISTINTO descuenta el mes de la ENTREGA — el mes siguiente no fabrica negativos", () => {
+    const order = deliveredOrder("o1", "emp1", "2026-11-28", [{ productId: "p1", quantity: 2, unitPrice: 250 }], {
+      incidents: [{
+        id: "i1", kind: "refund", quantity: 2, originalUnitPriceCents: 25000,
+        resolution: { kind: "refund", saleAdjustmentUnitCents: 25000 },
+        events: [{ kind: "confirmed", at: "2026-12-02T12:00:00.000Z", by: "u1" }],
+      } as never],
+    });
+    const customers = [customer("emp1", "entrepreneur")];
+    // Diciembre: nada entregado, nada descontado — sin fantasma negativo.
+    const dec = monthRanking(inputs({ month: { year: 2026, month: 12 }, orders: [order], customers }));
+    expect(dec.entries).toHaveLength(0);
+    // Noviembre (revisión antes de confirmar): el neto refleja la devolución.
+    const nov = monthRanking(inputs({ month: { year: 2026, month: 11 }, orders: [order], customers }));
+    expect(nov.entries[0].netCents).toBe(0);
+    expect(nov.entries[0].pieces).toBe(0);
+  });
+
+  it("r3: devolución confirmada en el MISMO mes descuenta ese mes", () => {
+    const order = deliveredOrder("o1", "emp1", "2026-11-10", [{ productId: "p1", quantity: 2, unitPrice: 250 }], {
+      incidents: [{
+        id: "i1", kind: "refund", quantity: 1, originalUnitPriceCents: 25000,
+        resolution: { kind: "refund", saleAdjustmentUnitCents: 25000 },
+        events: [{ kind: "confirmed", at: "2026-11-20T12:00:00.000Z", by: "u1" }],
+      } as never],
+    });
+    const rank = monthRanking(inputs({ orders: [order], customers: [customer("emp1", "entrepreneur")] }));
+    expect(rank.entries[0].netCents).toBe(25000);
+    expect(rank.entries[0].pieces).toBe(1);
+  });
+
   it("ordena por importe neto entregado en el mes; solo emprendedoras participan", () => {
     const orders = [
       deliveredOrder("o1", "emp1", "2026-11-10", [{ productId: "p1", quantity: 2, unitPrice: 500 }]), // $1,000

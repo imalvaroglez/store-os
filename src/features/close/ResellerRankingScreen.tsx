@@ -36,7 +36,23 @@ export function ResellerRankingScreen() {
     customers: state.customers,
   });
   const isCurrent = offset === 0;
-  const podium = ranking.entries.slice(0, 3);
+  // #132 (review r3): a tie AT the top-3 boundary must not be decided by the
+  // alphabetical presentation order — every entry TIED with the last podium
+  // slot is shown, so Fer sees the whole group she has to resolve. Ties fully
+  // OUTSIDE the podium change nothing for the top and stay out of the notice.
+  const base = ranking.entries.slice(0, 3);
+  const boundary = base[base.length - 1];
+  const podium = boundary
+    ? base.concat(
+        ranking.entries.slice(3).filter((entry) => entry.netCents === boundary.netCents && entry.pieces === boundary.pieces)
+      )
+    : base;
+  const tiedInPodium = podium.length > 0
+    ? podium.filter((entry) =>
+        podium.some((other) => other !== entry && other.netCents === entry.netCents && other.pieces === entry.pieces)
+      )
+    : [];
+  const tiedNames = tiedInPodium.map((entry) => entry.customerName);
 
   return (
     <Screen>
@@ -82,10 +98,11 @@ export function ResellerRankingScreen() {
               ))}
             </ol>
           )}
-          {ranking.needsManualResolution && (
+          {tiedInPodium.length >= 2 && (
             <p className="mt-3 text-xs text-terracotta">
-              Hay un empate persistente (mismo importe y mismas piezas): el orden definitivo lo decides tú. Registrar
-              esa decisión en el sistema llegará en una etapa próxima — por ahora el empate queda señalado aquí.
+              {tiedNames.join(" y ")} empatan con el mismo importe y las mismas piezas dentro del top: el orden
+              definitivo lo decides tú. Registrar esa decisión en el sistema llegará en una etapa próxima — por ahora
+              el empate queda señalado aquí con todas las empatadas a la vista.
             </p>
           )}
         </Card>
