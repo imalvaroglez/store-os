@@ -3,6 +3,7 @@ import { Badge, Button, Card, Money, Screen, ScreenHeader, TextField } from "../
 import { navigate } from "../../lib/router";
 import { monthRanking, currentMonth, type RankingMonth } from "../../lib/resellerRanking";
 import { useStore } from "../../app/StoreProvider";
+import { useAuth } from "../../app/firebase/AuthProvider";
 import { loadRankingConfirmation } from "../../app/firebase/firestoreData";
 import { useToast } from "../../design-system";
 import type { RankingConfirmation } from "../../types";
@@ -20,6 +21,10 @@ export function ResellerRankingScreen() {
   const { state, activeStore } = useStore();
   const { confirmRanking } = useStore();
   const toast = useToast();
+  const { user } = useAuth();
+  // #132 r4: only the store's OWNER can confirm (rules enforce it) — never
+  // promise a button that would fail for a member.
+  const isOwner = activeStore != null && user != null && activeStore.ownerUid === user.uid;
   const [offset, setOffset] = useState(0);
   const month = useMemo<RankingMonth>(() => {
     const base = currentMonth();
@@ -226,7 +231,12 @@ export function ResellerRankingScreen() {
                   definitivo lo decides tú y se registra con tu motivo al confirmar.
                 </p>
               )}
-              {monthEnded && (
+              {monthEnded && !isOwner && podium.length > 0 && (
+                <p className="mt-3 text-xs text-on-surface-soft">
+                  El resultado del mes lo confirma la dueña de la tienda.
+                </p>
+              )}
+              {monthEnded && isOwner && (
                 <div className="mt-3 space-y-2">
                   {tieGroups.map((group) => {
                     const key = `${group[0].netCents}:${group[0].pieces}`;
