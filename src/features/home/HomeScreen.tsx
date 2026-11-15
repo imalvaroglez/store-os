@@ -25,7 +25,7 @@ import { navigate } from "../../lib/router";
 import { useToast } from "../../design-system";
 
 export function HomeScreen() {
-  const { state, activeStore, upsertOrder } = useStore();
+  const { state, activeStore, upsertOrder, stateStatus } = useStore();
   const toast = useToast();
   // Cobros sheet for orders in the payments model (#123+): Inicio rows must
   // register real receipts, never bump the deposit silently. Only the ID is
@@ -112,12 +112,18 @@ export function HomeScreen() {
         <div className="grid grid-cols-2 gap-4 mb-5">
           <Card>
             <StatRow label="Falta cobrar" tone="danger">
-              <AnimatedNumber value={toPay} format="currency" className="text-[1.6rem] leading-tight" />
+              {/* #406 r2: while orders load, a dash — never a $0 that looks
+                  final. The first real value paints directly (no 0-count). */}
+              {stateStatus !== "ready"
+                ? <span aria-label="Cargando" className="serif-display tnum text-[1.6rem] leading-tight">—</span>
+                : <AnimatedNumber value={toPay} format="currency" className="text-[1.6rem] leading-tight" />}
             </StatRow>
           </Card>
           <Card>
             <StatRow label="Ganancia esperada" tone="success">
-              <AnimatedNumber value={expectedProfit} format="currency" className="text-[1.6rem] leading-tight" />
+              {stateStatus !== "ready"
+                ? <span aria-label="Cargando" className="serif-display tnum text-[1.6rem] leading-tight">—</span>
+                : <AnimatedNumber value={expectedProfit} format="currency" className="text-[1.6rem] leading-tight" />}
             </StatRow>
           </Card>
         </div>
