@@ -28,6 +28,7 @@ import {
   purchaseProductSaleCosts,
   purchaseSaleExpenseTotalCents,
 } from "../../lib/purchases";
+import { suggestedProductFor } from "../../lib/supplierLinks";
 import { openPurchasePdf } from "../../app/firebase/pdfImport";
 import { StalePurchaseError } from "../../app/firebase/firestoreData";
 import {
@@ -81,7 +82,7 @@ const EXPENSE_CATEGORY_OPTIONS = Object.entries(PURCHASE_EXPENSE_CATEGORY_LABEL)
 type Filter = "all" | PurchaseLineStatus;
 
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
-  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, adjustReceivedPurchase, cloud } = useStore();
+  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, adjustReceivedPurchase, confirmSupplierLink, revokeSupplierLink, cloud } = useStore();
   const toast = useToast();
   // #373: the revision this form is editing against — advanced on every save
   // so the in-place draft loop stays fresh, rejected when another tab moved on.
@@ -137,6 +138,18 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const locked = effectivePurchaseStatus(draft) === "received";
   const editDisabled = locked || saving || receiving || bulkCreating;
   const tickets = draft.tickets ?? [legacyPurchaseTicket(draft)];
+  // #211 r3 (UX review): the real weekly flow TYPES the supplier instead of
+  // picking it from the list. A typed name that matches an existing supplier
+  // resolves to its id — without this, the suggestion and «Recordar» were
+  // unreachable in that flow and no association could ever be confirmed.
+  const resolveSupplierId = (ticketId: string): string | undefined => {
+    const ticket = tickets.find((t) => t.id === ticketId);
+    if (!ticket) return undefined;
+    if (ticket.supplierId) return ticket.supplierId;
+    const typed = (ticket.supplierName ?? "").trim().toLocaleLowerCase("es-MX");
+    if (!typed) return undefined;
+    return suppliers.find((s) => s.name.trim().toLocaleLowerCase("es-MX") === typed)?.id;
+  };
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? tickets[0];
   const activeTotals = draft.tickets ? purchaseTicketTotals(draft, activeTicket.id) : purchaseTotals(draft);
 
@@ -443,6 +456,13 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     // Saving persists ONLY the purchase — never products (lifecycle contract).
     const next: Purchase = {
       ...draft,
+      // Materialize the resolved supplier ids so the purchase (and the next
+      // one opened from it) carries a real supplier, not just typed text.
+      tickets: tickets.map((ticket) =>
+        ticket.supplierId || !ticket.supplierName
+          ? ticket
+          : { ...ticket, supplierId: resolveSupplierId(ticket.id) ?? undefined }
+      ),
       subtotal: merchandise,
       totalConfirmed: purchaseConfirmedTotal(draft),
       status: receive ? "ready" : status,
@@ -612,6 +632,28 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               <TextField aria-label="Producto" label="Producto del ticket" value={line.name} disabled={editDisabled}
                 onChange={(e) => updateLine(idx, { name: e.target.value, matchStatus: e.target.value ? line.matchStatus : "unmatched" })} />
               <div id={`link:${line.lineId}`} className="min-w-0 scroll-mt-48">
+                {(() => {
+                  // #211: a CONFIRMED association for this exact supplier+code
+                  // suggests the product — an explicit, reviewable action, never
+                  // an automatic selection.
+                  if (line.productId || editDisabled) return null;
+                  const supplierId = line.ticketId ? resolveSupplierId(line.ticketId) : undefined;
+                  const suggestion = supplierId && line.name.trim()
+                    ? suggestedProductFor(state.supplierLinks ?? [], activeStore.id, supplierId, line.name)
+                    : null;
+                  const product = suggestion ? products.find((p) => p.id === suggestion.productId) : undefined;
+                  if (!product) return null;
+                  return (
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <span className="text-xs text-on-surface-soft">
+                        Compras previas con «{line.name.trim()}» de este proveedor: {product.name}
+                      </span>
+                      <Button size="sm" variant="secondary" onClick={() => pickProduct(idx, product.id)}>
+                        Usar {product.name}
+                      </Button>
+                    </div>
+                  );
+                })()}
                 <SearchSelect label="Producto en Store OS"
                   value={productQueries[line.lineId!] ?? products.find((product) => product.id === line.productId)?.name ?? ""}
                   disabled={editDisabled} onChange={(value) => {
@@ -629,6 +671,53 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   placeholder="Buscar por nombre o clave…" action={{ label: "+ Crear nuevo producto", onClick: () => openMiniForm(idx) }} />
               </div>
             </div>
+            {(() => {
+              // #211: linking a captured code offers to REMEMBER the association
+              // for future purchases of this supplier — explicit confirmation
+              // only, never silent learning.
+              if (editDisabled) return null;
+              const supplierId = line.ticketId ? resolveSupplierId(line.ticketId) : undefined;
+              const captured = line.name.trim();
+              if (!line.productId || !supplierId || !captured) return null;
+              const existing = suggestedProductFor(state.supplierLinks ?? [], activeStore.id, supplierId, captured);
+              if (existing?.productId === line.productId) {
+                return (
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <p className="text-xs text-on-surface-soft">Asociación recordada para «{captured}» de este proveedor.</p>
+                    {/* #211: a wrong or dead association can be FORGOTTEN here —
+                        future captures stop suggesting it; purchases that already
+                        used it keep their recorded product and cost. */}
+                    <Button size="sm" variant="ghost" className="!px-0"
+                      onClick={() => void revokeSupplierLink(activeStore.id, supplierId, captured)
+                        .then(() => toast.success("Asociación olvidada: ya no se sugerirá en compras futuras."))
+                        // Same catch+toast contract as «Recordar» — a failed
+                        // revoke must SAY so, never pass as forgotten.
+                        .catch(() => toast.error("No se pudo olvidar la asociación. Inténtalo de nuevo."))}
+                    >
+                      Olvidar «{captured}»
+                    </Button>
+                  </div>
+                );
+              }
+              const linkedName = products.find((p) => p.id === line.productId)?.name ?? "producto";
+              return (
+                <Button size="sm" variant="ghost" className="!px-0 mt-2"
+                  onClick={() => void confirmSupplierLink({
+                    storeId: activeStore.id,
+                    supplierId,
+                    code: captured,
+                    productId: line.productId,
+                    productName: linkedName,
+                  })
+                    .then(() => toast.success("Asociación recordada para futuras compras."))
+                    // #211 r2 M2: a failed save must SAY so — same catch+toast
+                    // contract as the rest of the form, never a silent rejection.
+                    .catch(() => toast.error("No se pudo guardar la asociación. Inténtalo de nuevo."))}
+                >
+                  Recordar «{captured}» → {linkedName}
+                </Button>
+              );
+            })()}
             {(() => {
               // #124 (decisión 2): buying a design sold by color targets the
               // exact color — reception adjusts that color's cost and shelf.

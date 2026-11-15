@@ -60,6 +60,11 @@ function tieredProduct(overrides: Partial<Product> & { id: string; name: string 
   } as Product;
 }
 
+/** Minimal color variant for #365 fixtures (required timestamps included). */
+function variant(id: string, color: string, quantityOnHand?: number) {
+  return { id, color, quantityOnHand, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" };
+}
+
 /** Olivia inventory_tiered with two categories and three products covering
  *  ties (price), mixed case names, zero/negative stock and distinct dates. */
 function sortFilterState(): AppState {
@@ -183,6 +188,56 @@ describe("CatalogScreen filtro por categoría real", () => {
     // Anillo Blossom (5 existencias, sin umbral) no cuenta en ninguna de las dos superficies.
   });
 
+  it("#365 incluye diseños por color agotados y negativos en Por surtir — con insignia del agregado", async () => {
+    const state = sortFilterState();
+    state.products = [
+      tieredProduct({ id: "healthy", name: "Anillo Blossom", categoryIds: [CAT_ANILLOS], quantityOnHand: 5 }),
+      tieredProduct({
+        id: "austin",
+        name: "Reloj Austin",
+        categoryIds: [CAT_ANILLOS],
+        quantityOnHand: undefined, // #124: the shelf lives on the colors
+        variants: [
+          variant("av1", "Cafe", 0),
+          variant("av2", "Ivory", 0),
+          variant("av3", "Black", 0),
+        ],
+      }),
+      tieredProduct({
+        id: "arracadas",
+        name: "Arracadas Viento",
+        categoryIds: [CAT_ARETES],
+        quantityOnHand: undefined,
+        variants: [
+          variant("rv1", "Dorado", -5),
+          variant("rv2", "Plata", 3),
+        ],
+      }),
+      tieredProduct({
+        id: "untracked",
+        name: "Collar Nube",
+        categoryIds: [CAT_BOLSAS],
+        quantityOnHand: undefined,
+        variants: [variant("uv1", "Perla", undefined)],
+      }),
+    ];
+    const view = await renderCatalog(state);
+
+    fireEvent.click(screen.getByRole("button", { name: "Por surtir" }));
+    const names = () => Array.from(view.container.querySelectorAll("h3")).map((h) => h.textContent ?? "");
+    await waitFor(() =>
+      expect(names()).toEqual(["Arracadas Viento", "Reloj Austin"]) // worst first: −2 antes que 0
+    );
+    expect(screen.getByText("2 de 4 piezas")).toBeTruthy();
+    // La ficha no se contradice: la insignia del agregado (Faltan 2 / Agotado)
+    // aparece en la propia tarjeta, igual que en Inicio.
+    expect(screen.getByText("Faltan 2")).toBeTruthy();
+    expect(screen.getByText("Agotado")).toBeTruthy();
+    // Collar Nube (sin rastreo) y Anillo Blossom (sano) quedan fuera.
+    expect(screen.queryByText(/Collar Nube/)).toBeNull();
+    expect(screen.queryByText(/Anillo Blossom/)).toBeNull();
+  });
+
   it("limpia Por surtir al cambiar de tienda", async () => {
     const state = sortFilterState();
     state.stores.find((store) => store.id === SANTI)!.type = "on_demand";
@@ -201,6 +256,45 @@ describe("CatalogScreen filtro por categoría real", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cambiar tienda" }));
     fireEvent.click(screen.getByRole("button", { name: "Cambiar tienda" }));
     expect(screen.getByRole("button", { name: "Por surtir" }).getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("#294 descubrir Estrategia y comparar niveles", () => {
+  it("la entrada a Estrategia de precios es visible desde Productos sin expandir nada", async () => {
+    await renderCatalog(sortFilterState());
+    expect(screen.getByRole("button", { name: /Estrategia de precios/i })).toBeTruthy();
+  });
+
+  it("muestra los niveles alineados por fila; un precio ausente se representa como tal (no 0)", async () => {
+    const state = sortFilterState();
+    // Solo Menudeo configurado: Mayoreo aparece como ausente («—»), nunca $0.
+    state.products[0] = { ...state.products[0], prices: { t_retail: 300 } } as Product;
+    await renderCatalog(state);
+    const card = screen.getByText("Anillo Blossom").closest("div[class*='p-4']");
+    expect(card?.textContent).toContain("Menudeo");
+    expect(card?.textContent).toContain("$300");
+    expect(card?.textContent).toMatch(/Mayoreo\s*—/);
+    // p3 con ambos niveles: los dos nombres alineados.
+    const card3 = screen.getByText("Aretes Luna").closest("div[class*='p-4']");
+    for (const label of ["Menudeo", "Mayoreo"]) expect(card3?.textContent).toContain(label);
+  });
+
+  it("#294 r2: un precio BORRADO (0) también es ausente — «Mayoreo —», nunca «Mayoreo $0»", async () => {
+    const state = sortFilterState();
+    // El formulario persiste el campo vacío como 0; 0 NO es precio (compuerta
+    // de publicación, PricingStrategy) — la fila no puede pintarlo legítimo.
+    state.products[0] = { ...state.products[0], prices: { t_retail: 300, t_mayoreo: 0 } } as Product;
+    await renderCatalog(state);
+    const card = screen.getByText("Anillo Blossom").closest("div[class*='p-4']");
+    expect(card?.textContent).toMatch(/Mayoreo\s*—/);
+    expect(card?.textContent).not.toMatch(/Mayoreo\s*\$0/);
+  });
+
+  it("conserva orden y filtros existentes con la nueva fila de precios", async () => {
+    await renderCatalog(sortFilterState());
+    expect(screen.getByLabelText("Categoría")).toBeTruthy();
+    expect(screen.getByLabelText("Ordenar por")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Por surtir" })).toBeTruthy();
   });
 });
 
