@@ -217,6 +217,32 @@ service cloud.firestore {
         && !(('supply' in resource.data) && ('consumptions' in resource.data.supply) && resource.data.supply.consumptions.size() > 0);
     }
 
+    // #202: monthly closes — append-only versioned evidence. ONLY the store's
+    // OWNER (Fer as CEO) may create versions/reopens: super-admins, members,
+    // automations and direct SDK calls with a non-owner session cannot (the
+    // authority rule is enforced HERE, not only in the UI). Saved versions are
+    // immutable for everyone — corrections are linked adjustments, not edits.
+    match /closes/{id} {
+      allow get: if canOperateStore(resource.data.storeId);
+      // #202 r2: closes carry the money split (netCents/ferCents/…) — an
+      // unfiltered LIST leaked them to any signed-up user (class #176).
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // #202: post-close adjustments — linked to their origin close, applied in
+    // an OPEN period or PENDING. Owner creates; saved entries are immutable.
+    match /closeAdjustments/{id} {
+      allow get, list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /purchases/{id} {
       allow read: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId);
