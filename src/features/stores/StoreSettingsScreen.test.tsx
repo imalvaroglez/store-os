@@ -66,6 +66,35 @@ describe("mínimos de nivel: captura de decimales (#188)", () => {
     }
   });
 
+  it("#373 revisión UX: guardar datos sin tocar el WhatsApp NO envía el campo (otra sesión no se revierte)", async () => {
+    // La pestaña abrió cuando el WhatsApp era el viejo; otra sesión ya lo cambió.
+    render(<ToastProvider><StoreSettingsScreen storeId="store_olivia" /></ToastProvider>);
+    const nameInput = screen.getByLabelText("Nombre");
+    fireEvent.change(nameInput, { target: { value: "Nuevo nombre" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(mocks.updateStore).toHaveBeenCalled());
+    const patch = mocks.updateStore.mock.calls[0][0];
+    expect(patch.name).toBe("Nuevo nombre");
+    expect("whatsappPhone" in patch).toBe(false); // sin edición local, el campo NO viaja
+  });
+
+  it("#373 revisión UX r2: guardar SIN ningún cambio no escribe nada (ni siquiera updatedAt)", async () => {
+    render(<ToastProvider><StoreSettingsScreen storeId="store_olivia" /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(screen.getByText(/Sin cambios que guardar/)).toBeTruthy());
+    expect(mocks.updateStore).not.toHaveBeenCalled();
+  });
+
+  it("#373 revisión UX: editar el WhatsApp SÍ lo envía", async () => {
+    render(<ToastProvider><StoreSettingsScreen storeId="store_olivia" /></ToastProvider>);
+    const whatsappInput = screen.getByPlaceholderText("52155...");
+    fireEvent.change(whatsappInput, { target: { value: "5215587654321" } }); // distinto al vigente
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(mocks.updateStore).toHaveBeenCalled());
+    const patch = mocks.updateStore.mock.calls[0][0];
+    expect(patch.whatsappPhone).toBe("5215587654321");
+  });
+
   it("un mínimo con punto al guardar se registra como entero y la casilla lo refleja", async () => {
     render(<ToastProvider><StoreSettingsScreen storeId="store_olivia" /></ToastProvider>);
     const min = screen.getByLabelText(/Mínimo de compra/) as HTMLInputElement;
