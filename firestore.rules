@@ -264,7 +264,6 @@ service cloud.firestore {
       // and the retry dies with PERMISSION_DENIED.
       allow delete: if resource == null || canOperateStore(resource.data.storeId);
     }
-    }
 
     match /purchases/{id} {
       allow read: if canOperateStore(resource.data.storeId);
