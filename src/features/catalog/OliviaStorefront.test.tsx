@@ -505,6 +505,36 @@ describe("carrito — progreso hacia Iconic", () => {
     await openDrawer();
   }
 
+  it("#437 collar SOLO con precio Iconic: el estimado Iconic y el faltante sobreviven por debajo del mínimo", async () => {
+    // Solo precio Iconic $70; Regular/Girly ausentes (el caso real del collar).
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store,
+      catalog: { ...catalog, products: [{ ...catalog.products[0], prices: { t_iconic: 70 } }] },
+    });
+    await openWithQuantity(15);
+    // 15 piezas: califica — fila Iconic activa con $1,050; las tarifas sin precio «Por confirmar».
+    expect(screen.getByText("Piezas totales")).toBeTruthy();
+    expect(screen.getByText("Subtotal Iconic")).toBeTruthy();
+    expect(screen.getByText("$1,050.00 MXN")).toBeTruthy();
+    expect(screen.getAllByText("Por confirmar").length).toBe(2);
+    // 14 piezas: $980 — NO califica, pero el estimado Iconic permanece y su «?» dice cuánto falta.
+    const row = within(screen.getByRole("list")).getByText("Anillo Blossom").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Restar una pieza de Anillo Blossom" }));
+    await waitFor(() => {
+      expect(screen.getByText("$980.00 MXN")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Ayuda sobre Iconic/i }));
+    expect(screen.getByText(/Agrega \$20 más en productos a precio Iconic para alcanzar los \$1,000/)).toBeTruthy();
+    // La línea sigue costando lo que cuesta: $70 la pieza.
+    expect(within(row).getByText("$70.00")).toBeTruthy();
+    // Volver a 15: $1,050 de nuevo y la ayuda desaparece (alcanzado).
+    fireEvent.click(within(row).getByRole("button", { name: "Sumar una pieza de Anillo Blossom" }));
+    await waitFor(() => {
+      expect(screen.getByText("$1,050.00 MXN")).toBeTruthy();
+      expect(screen.queryByText(/Agrega \$20 más/)).toBeNull();
+    });
+  });
+
   it("#442 muestra las tres filas de subtotal alineadas; la activa resaltada y las anteriores tachadas", async () => {
     // Huggies Mezcal Gold del ejemplo: 1 pieza Regular $105 / Girly $70 (desde 5) / Iconic $45 (desde $1,000).
     const prices = { t_retail: 105, t_girly: 70, t_iconic: 45 };

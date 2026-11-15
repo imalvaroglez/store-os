@@ -396,7 +396,7 @@ export function CartDrawer({
                         {formatMoneyExact(request.estimatedSubtotal)} MXN
                       </dd>
                     </div>
-                    {request.showIdentityHint && request.identityTier && (
+                    {request.showIdentityHint && request.identityTier && request.identityTier.id !== request.activeTier.id && (
                       <div className="flex items-baseline justify-between gap-3">
                         <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
                           ¿Eres {request.identityTier.label}? Subtotal estimado
@@ -463,9 +463,13 @@ function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTi
   // #442: a "?" belongs to a LATER tier only — inviting to "unlock" a struck,
   // SHALLOWER price would sell a worse deal than the one already active (review
   // H-2). Pieces need no prices; money needs the tier's own subtotal.
+  // #437: the ACTIVE row may itself be an identity-gated tier sitting below its
+  // minimum (a piece with only Iconic prices keeps the estimate on Iconic) — its
+  // "?" says how much is left to reach the minimum, same text as a later tier.
   const helpAvailable = (row: (typeof rows)[number]) => {
     const isLaterTier = active == null || row.tier.order > active.tier.order;
-    if (!isLaterTier || row.qualifies) return false;
+    const isActiveGated = row.tier.id === activeTierId && row.tier.minAmount != null;
+    if ((!isLaterTier && !isActiveGated) || row.qualifies) return false;
     return (row.piecesRemaining ?? 0) > 0 || (row.amountRemaining ?? 0) > 0;
   };
   // Truly CLOSE the open help when its tier stops qualifying for one (reaching
