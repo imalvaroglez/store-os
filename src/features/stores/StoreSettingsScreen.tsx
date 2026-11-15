@@ -114,14 +114,16 @@ export function StoreSettingsScreen({
   async function saveBasic() {
     setSaveError(null);
     const newName = name.trim() || store!.name;
+    // #373 (UX review): a field travels ONLY when the operator actually edited
+    // it in THIS tab — an untouched field from a stale tab must never revert
+    // what another session just saved (the silent-WhatsApp-revert class).
+    const whatsappValue = whatsapp.trim() || undefined;
+    const patch: Parameters<typeof updateStore>[0] = { id: store!.id };
+    if (newName !== store!.name) patch.name = newName;
+    if (whatsappValue !== store!.whatsappPhone) patch.whatsappPhone = whatsappValue;
     // If the name changed, the slug changes too — recompute it so updateStore
     // re-claims/re-publishes the catalog under the new slug.
-    const patch: Parameters<typeof updateStore>[0] = {
-      id: store!.id,
-      name: newName,
-      whatsappPhone: whatsapp.trim() || undefined,
-    };
-    if (slugify(newName) !== store!.slug) patch.slug = slugify(newName);
+    if (patch.name !== undefined && slugify(newName) !== store!.slug) patch.slug = slugify(newName);
     try {
       await updateStore(patch);
     } catch (err) {
