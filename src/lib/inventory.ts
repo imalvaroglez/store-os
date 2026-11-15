@@ -1,5 +1,5 @@
 import type { Product, PurchaseLine, Order, OrderItem } from "../types";
-import { variantReservationDeltas, type VariantStockDelta } from "./variants";
+import { totalStock, variantReservationDeltas, type VariantStockDelta } from "./variants";
 import { effectiveOrderStatus, orderItems, orderStatusIsOpen } from "./orders";
 
 // Inventory math — pure functions used by the StoreProvider (to apply purchases
@@ -54,21 +54,30 @@ export type StockAlertLevel = "out" | "low";
 
 /**
  * Restock alert level for a product, always derived (never stored):
- * - "out": quantityOnHand <= 0 — Agotado (0) or Faltan N (negative).
- * - "low": 0 < quantityOnHand <= effectiveLowStockAt — "Quedan N".
+ * - "out": stock <= 0 — Agotado (0) or Faltan N (negative).
+ * - "low": 0 < stock <= effectiveLowStockAt — "Quedan N".
  * - null: untracked stock (on-demand stores) or healthy stock — no alert.
+ *
+ * #365: stock is the SAME aggregate the card shows (totalStock) — for a color
+ * design that is the sum of its variants' shelves (null when no color tracks
+ * one: "sin dato", never 0). Reading the erased design-level quantityOnHand
+ * here left converted designs blind to "Por surtir" and the Agotado/Faltan N
+ * badge. The order line's shortage still measures ITS color (#309) — this
+ * aggregate never proves a specific color's availability.
  */
 export function stockAlertLevel(
-  p: Pick<Product, "quantityOnHand" | "lowStockAt">
+  p: Pick<Product, "quantityOnHand" | "lowStockAt" | "variants">
 ): StockAlertLevel | null {
-  if (typeof p.quantityOnHand !== "number" || !Number.isFinite(p.quantityOnHand)) return null;
-  if (p.quantityOnHand <= 0) return "out";
-  return p.quantityOnHand <= effectiveLowStockAt(p) ? "low" : null;
+  const stock = totalStock(p);
+  if (stock === null) return null;
+  if (stock <= 0) return "out";
+  return stock <= effectiveLowStockAt(p) ? "low" : null;
 }
 
-/** Clear Spanish (Mexico) text for a product flagged by stockAlertLevel. */
-export function stockAlertText(p: Pick<Product, "quantityOnHand">): string {
-  const qty = p.quantityOnHand ?? 0;
+/** Clear Spanish (Mexico) text for a product flagged by stockAlertLevel
+ * (variant aggregate included, #365). */
+export function stockAlertText(p: Pick<Product, "quantityOnHand" | "variants">): string {
+  const qty = totalStock(p) ?? 0;
   if (qty < 0) return `Faltan ${Math.abs(qty)}`;
   if (qty === 0) return "Agotado";
   return `Quedan ${qty}`;
