@@ -150,6 +150,16 @@ describe("loadPublicProduct (REST)", () => {
     canInquire: true,
   });
 
+  it("#359 las lecturas REST piden sin caché del navegador (no-store)", async () => {
+    const fetchMock = stubFetchByUrl({
+      "/publicStores/olivia": jsonResponse(200, restDoc({ name: "Olivia", type: "on_demand", storeId: "s1" })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await loadPublicStore("olivia");
+    const init = (fetchMock as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1] as RequestInit;
+    expect(init.cache).toBe("no-store");
+  });
+
   it("reads the detail doc with a known store (no extra reads)", async () => {
     const fetchMock = stubFetchByUrl({
       "/publicProducts/store_olivia__anillo-luna": jsonResponse(200, PRODUCT_DOC),
