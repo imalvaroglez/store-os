@@ -150,26 +150,41 @@ describe("AnimatedNumber (#406: carrera de carga inicial)", () => {
     expect(view!.container.textContent).toBe("$22,770");
   });
 
-  it("si el observer nunca arma y el valor estaba desde el montaje, el fallback lo muestra", async () => {
-    vi.stubGlobal("IntersectionObserver", class NeverFires {
-      observe = vi.fn();
-      disconnect = vi.fn();
-      unobserve = vi.fn();
+  it("si el observer nunca arma, el valor del montaje ya está en pantalla (sin esperar fallback)", async () => {
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<AnimatedNumber value={1200} format="currency" />);
+      await Promise.resolve();
     });
-    vi.useFakeTimers();
-    try {
-      let view: ReturnType<typeof render>;
-      await act(async () => {
-        view = render(<AnimatedNumber value={1200} format="currency" />);
-        await Promise.resolve();
-      });
-      expect(view!.container.textContent).toBe("$0"); // aún en espera del observer
-      await act(async () => {
-        vi.advanceTimersByTime(1600);
-      });
-      expect(view!.container.textContent).toBe("$1,200"); // fallback settle
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(view!.container.textContent).toBe("$1,200");
+  });
+});
+
+describe("#406 r2 — la cuenta jamás arranca desde 0", () => {
+  it("la PRIMERA cifra conocida se pinta de inmediato, antes de cualquier frame", async () => {
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<AnimatedNumber value={2150} format="currency" />);
+      await Promise.resolve(); // el observer arma
+    });
+    // Sin pasos de rAF todavía: el valor real ya está en pantalla.
+    expect(view!.container.textContent).toBe("$2,150");
+    await act(async () => { stepFrames(5); });
+    expect(view!.container.textContent).toBe("$2,150");
+  });
+
+  it("un cambio de valor se asienta sin pasar por $0", async () => {
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<AnimatedNumber value={800} format="currency" />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      view!.rerender(<AnimatedNumber value={900} format="currency" />);
+      await Promise.resolve();
+    });
+    await act(async () => { stepFrames(4); });
+    expect(view!.container.textContent).toBe("$900");
+    expect(view!.container.textContent).not.toBe("$0");
   });
 });
