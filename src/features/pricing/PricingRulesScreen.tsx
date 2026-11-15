@@ -241,6 +241,9 @@ export function PricingRulesScreen() {
   // stock, cost or photos edited while prices were being reviewed.
   async function runApply(updates: PriceUpdate[], skippedBelowCost: number) {
     setApplying(true);
+    // #335 (UX review): the SDK can retry silently for ~15-30 s when the
+    // connection drops — say "working on it" up front, not after the wait.
+    toast.info(`Aplicando ${updates.length} precio(s)… si tu conexión falla, te aviso al terminar.`);
     try {
       await applyProductPrices(updates);
       setSelected({});

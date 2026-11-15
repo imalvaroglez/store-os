@@ -24,7 +24,8 @@ const design = (id: string, cost: number | undefined, price: number): Product =>
 
 beforeEach(() => {
   mocks.state.categories = [{ id: "c1", storeId: "s1", name: "Anillos", slug: "anillos", active: true, sortOrder: 1, createdAt: NOW, updatedAt: NOW } as Category];
-  mocks.state.products = Array.from({ length: 9 }, (_, i) => design(`p${i}`, 20, 90 + i * 10));
+  // p8 at $400 is the NAMED outlier (boxplot fences) — the median stays $130.
+  mocks.state.products = Array.from({ length: 9 }, (_, i) => design(`p${i}`, 20, i === 8 ? 400 : 90 + i * 10));
 });
 
 describe("PriceDiagnosticsScreen (#335)", () => {
@@ -32,9 +33,12 @@ describe("PriceDiagnosticsScreen (#335)", () => {
     render(<ToastProvider><PriceDiagnosticsScreen /></ToastProvider>);
     expect(screen.getByText(/9 piezas con precio/)).toBeTruthy();
     expect(screen.getByText(/método mediana · IQR/)).toBeTruthy();
-    expect(screen.getByText(/Mediana/)).toBeTruthy();
+    // Lenguaje llano (revisión UX): la cifra de la mediana sigue visible.
+    expect(screen.getByText(/La mitad de las piezas cuesta menos de/)).toBeTruthy();
     expect(screen.getByText(/\$130\.00/)).toBeTruthy();
-    expect(screen.getAllByText(/IQR/).length).toBeGreaterThan(0);
+    // Atípicos nombrados y costos (contrato #335 / revisión UX).
+    expect(screen.getByText(/alejad/)).toBeTruthy();
+    expect(screen.getByText(/Costos \(/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/malo|subvaluado|oportunidad/);
   });
 

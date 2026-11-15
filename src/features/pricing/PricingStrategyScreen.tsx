@@ -68,6 +68,7 @@ export function PricingStrategyScreen() {
     () => state.categories.filter((c) => c.storeId === activeStore?.id && c.active).sort((a, b) => a.name.localeCompare(b.name)),
     [state.categories, activeStore?.id]
   );
+  const categoryName = categories.find((c) => c.id === categoryId)?.name;
   const products = useMemo(
     () => state.products.filter((p) => p.storeId === activeStore?.id),
     [state.products, activeStore?.id]
@@ -347,7 +348,9 @@ export function PricingStrategyScreen() {
     }
     setBusy(true);
     try {
-      await saveCategoryPricingRules(categoryId, serialized, draftBase);
+      await saveCategoryPricingRules(categoryId, serialized, draftBase, {
+        summary: `Tabla de bandas guardada (${categoryName ?? "categoría"}) — sin cambios de precio.`,
+      });
       setDraft((current) => (current ? { ...current, dirty: false } : current));
       setDraftBase(rulesSignature(serialized));
       setReplaceExisting(false);
@@ -369,7 +372,9 @@ export function PricingStrategyScreen() {
     if (!categoryId) return;
     setBusy(true);
     try {
-      await saveCategoryPricingRules(categoryId, null, draftBase);
+      await saveCategoryPricingRules(categoryId, null, draftBase, {
+        summary: `Tabla de bandas eliminada (${categoryName ?? "categoría"}) — sin cambios de precio.`,
+      });
       setDraft(null);
       setDraftBase("");
       toast.success("Tabla eliminada.");

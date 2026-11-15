@@ -11,6 +11,8 @@ import {
   onSnapshot,
   query,
   where,
+  orderBy,
+  limit,
   documentId,
   runTransaction,
   increment,
@@ -29,7 +31,7 @@ import { effectiveOrderStatus, migrateOrder, orderItems, paymentStatusForOrder }
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
-import { buildManualPriceEvents, priceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
+import { buildManualPriceEvents, priceChangeEvent, type PriceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -366,7 +368,8 @@ export async function applyProductPrices(
   store: Pick<Store, "id">,
   updates: Array<{ id: string; prices: Record<string, number> }>,
   updatedAt: string,
-  uid?: string
+  uid?: string,
+  email?: string | null
 ): Promise<void> {
   const { db } = getFirebase();
   // #335 r2: read the CANONICAL previous prices so events carry real
@@ -416,6 +419,7 @@ export async function applyProductPrices(
           previous: prev,
           next,
           uid,
+          email,
           effectiveAt: updatedAt,
           origin: "rule_application",
         });
@@ -451,6 +455,16 @@ export async function saveProductWithPriceEvents(
   const { db } = getFirebase();
   const { id, ...data } = product;
   const clean = stripUndefined(data) as Record<string, unknown>;
+  // #355 (review C1): the product save path MUST keep saveEntity's canonical
+  // shelf swap — enabling colors discards the design-level stock, disabling
+  // discards the color array. Without deleteField, merge:true keeps the stale
+  // side alive in Firestore (the design still sells by color on other devices).
+  if (Object.prototype.hasOwnProperty.call(data, "quantityOnHand") && data.quantityOnHand === undefined) {
+    clean.quantityOnHand = deleteField();
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "variants") && data.variants === undefined) {
+    clean.variants = deleteField();
+  }
   const batch = writeBatch(db);
   batch.set(doc(db, "products", id), clean, { merge: true });
   for (const event of buildManualPriceEvents({
@@ -458,6 +472,7 @@ export async function saveProductWithPriceEvents(
     productId: product.id,
     updatedAt: product.updatedAt,
     uid: user.uid,
+    email: user.email,
     previous: existing?.prices ? { prices: existing.prices } : undefined,
     next: { prices: product.prices },
   })) {
@@ -468,6 +483,25 @@ export async function saveProductWithPriceEvents(
 
 /** #335 r2: a rule CONFIG change — its own append-only trail, recorded right
  * after the transactional config save (it changes no product price by itself). */
+/** #335 (M2): the "Decisiones" history reads the store's OWN events on demand —
+ * one bounded query (composite index storeId+recordedAt, deployed with the
+ * release), no listener. The rules' list guard keeps foreign stores out. */
+export async function loadPriceEvents(
+  storeId: string,
+  limitCount = 50
+): Promise<Array<PriceChangeEvent | RuleChangeEvent>> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(
+      collection(db, "priceEvents"),
+      where("storeId", "==", storeId),
+      orderBy("recordedAt", "desc"),
+      limit(limitCount)
+    )
+  );
+  return snap.docs.map((d) => ({ ...(d.data() as PriceChangeEvent | RuleChangeEvent), id: d.id }));
+}
+
 export async function recordRuleChangeEvent(event: RuleChangeEvent): Promise<void> {
   const { db } = getFirebase();
   await setDoc(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
