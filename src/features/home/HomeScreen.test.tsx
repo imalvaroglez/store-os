@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
@@ -7,11 +7,12 @@ import type { AppState, Order, Product } from "../../types";
 
 // Direct useStore mock: synchronous mount, no hydration race (#111 removed
 // browser-storage state; the cloud mount is async and these are view tests).
-const mocks = vi.hoisted(() => ({ state: null as null | AppState, upsertOrder: vi.fn(), loadOrderPayments: vi.fn(async () => {}), registerOrderPayment: vi.fn() }));
+const mocks = vi.hoisted(() => ({ state: null as null | AppState, stateStatus: "ready", upsertOrder: vi.fn(), loadOrderPayments: vi.fn(async () => {}), registerOrderPayment: vi.fn() }));
 vi.mock("../../app/StoreProvider", () => ({
   useStore: () => ({
     state: mocks.state,
     activeStore: mocks.state?.stores.find((st) => st.id === mocks.state!.activeStoreId) ?? null,
+    stateStatus: mocks.stateStatus,
     upsertOrder: mocks.upsertOrder,
     payments: [],
     loadOrderPayments: mocks.loadOrderPayments,
@@ -359,4 +360,34 @@ it("opens Cobros with honest feedback when a stale home collection is pinned (#2
   expect(await screen.findByText("Este pedido ya tiene cobros registrados. Regístralos en Cobros.")).toBeInTheDocument();
   expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
   expect(screen.queryByText("Pedido cobrado")).toBeNull();
+});
+
+describe("#406 r2 — ventana de carga sin $0 falso", () => {
+  beforeEach(() => {
+    // This suite asserts absence across renders — start each from a clean DOM.
+    cleanup();
+    mocks.stateStatus = "ready";
+  });
+
+  it("mientras los pedidos cargan, las cifras de dinero muestran «—», nunca $0", () => {
+    mocks.stateStatus = "loading";
+    const state = fixtureState();
+    const Wrapper = withState(state);
+    render(<Wrapper><HomeScreen /></Wrapper>);
+    expect(screen.getByText("Falta cobrar")).toBeTruthy();
+    expect(screen.getByText("Ganancia esperada")).toBeTruthy();
+    // El valor en carga es «—»: jamás un $0 con apariencia de definitivo.
+    expect(screen.getAllByLabelText("Cargando").length).toBe(2);
+    expect(screen.queryByText("$0")).toBeNull();
+  });
+
+  it("con el estado listo, las cifras reales aparecen (los «—» desaparecen)", () => {
+    mocks.stateStatus = "ready";
+    const state = fixtureState();
+    const Wrapper = withState(state);
+    const { container } = render(<Wrapper><HomeScreen /></Wrapper>);
+    expect(screen.getByText("Falta cobrar")).toBeTruthy();
+    const cargando = container.querySelectorAll('[aria-label="Cargando"]');
+    expect(cargando.length).toBe(0);
+  });
 });
