@@ -35,6 +35,9 @@ vi.mock("../../app/StoreProvider", () => ({
     confirmRanking: mocks.confirmRanking,
   }),
 }));
+vi.mock("../../app/firebase/AuthProvider", () => ({
+  useAuth: () => ({ user: { uid: "u1", email: "fer@example.com" }, enabled: true }),
+}));
 vi.mock("../../app/firebase/firestoreData", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../app/firebase/firestoreData")>();
   return {
@@ -116,6 +119,35 @@ describe("#132 r2 — aviso de empate honesto y sin jerga", () => {
     await waitFor(() => expect(screen.getByText(/Confirmado por fer@example.com/)).toBeTruthy());
     // La recomputación coincide (sin devolución tardía): sin aviso.
     expect(screen.queryByText(/devolución posterior cambió/)).toBeNull();
+  });
+
+  it("r4 FLUJO: devolución tardía tras confirmar — aviso, histórico conservado y re-confirmación con motivo", async () => {
+    // Confirmado con $1,000/2p; hoy la recomputación da $750/2p (devolución).
+    mocks.state = baseState(
+      [delivered("o1", "c_a", 75000, 2, "2026-10-05")],
+      [customer("c_a", "Ana", true)]
+    );
+    mocks.confirmation = {
+      id: "store_olivia__2026-10", storeId: OLIVIA, year: 2026, month: 10, revision: 1,
+      entries: [{ customerId: "c_a", name: "Ana", netCents: 100000, pieces: 2, rank: 1 }],
+      tieResolutions: [], confirmedBy: "u1", confirmedByEmail: "fer@example.com", confirmedAt: "2026-11-02T10:00:00.000Z",
+    };
+    render(<ToastProvider><ResellerRankingScreen /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Mes anterior" }));
+    // El congelado se conserva y el aviso de devolución tardía aparece.
+    await waitFor(() => expect(screen.getByText(/devolución posterior cambió/)).toBeTruthy());
+    expect(screen.getByText(/resultado confirmado se conserva/)).toBeTruthy();
+    // Sin motivo de decisión excepcional: la re-confirmación se rechaza.
+    fireEvent.click(screen.getByRole("button", { name: /Volver a confirmar con el motivo/ }));
+    await waitFor(() => expect(screen.getByText(/registra el motivo de tu decisión excepcional/i)).toBeTruthy());
+    expect(mocks.confirmRanking).not.toHaveBeenCalled();
+    // Con motivo: re-confirma como revisión nueva.
+    fireEvent.change(screen.getByLabelText(/Motivo de la decisión excepcional/), { target: { value: "Devolución tardía: Fer decide mantener a la ganadora" } });
+    fireEvent.click(screen.getByRole("button", { name: /Volver a confirmar con el motivo/ }));
+    await waitFor(() => expect(mocks.confirmRanking).toHaveBeenCalledWith(expect.objectContaining({
+      revisionMotive: "Devolución tardía: Fer decide mantener a la ganadora",
+      entries: [expect.objectContaining({ netCents: 75000, pieces: 2, rank: 1 })],
+    })));
   });
 
   it("r3 (revisión MAYOR): empate en la FRONTERA del top 3 — la 4ª empatada es visible y el aviso nombra a las dos", () => {
