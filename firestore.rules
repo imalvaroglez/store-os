@@ -153,14 +153,15 @@ service cloud.firestore {
       // stays identical. (diff().affectedPaths() is unsupported by the
       // emulator, so this is expressed as unchanged-field equality; any field
       // added to Store later must join this list.)
-      allow update: if ((isSuperAdmin() || isOwner(id))
+      allow update: if slugChangeOk(id, resource.data.get('slug', ''), request.resource.data.get('slug', ''))
+        && (((isSuperAdmin() || isOwner(id))
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
         || inviteeJoinOk()
         // #274: allow-list, not deny-list — members may touch ONLY the
         // business-content fields; affectedKeys() IS emulator-supported
         // (unlike affectedPaths()) and is already proven in inviteeJoinOk.
         || (canOperateStore(id)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['packaging', 'pricingRules', 'updatedAt']))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['packaging', 'pricingRules', 'updatedAt'])))
 
       allow delete: if isSuperAdmin() || isOwner(id);
     }
@@ -215,6 +216,53 @@ service cloud.firestore {
         // (server-side guard; the UI blocks it too).
         && !(('assignments' in resource.data) && resource.data.assignments.size() > 0)
         && !(('supply' in resource.data) && ('consumptions' in resource.data.supply) && resource.data.supply.consumptions.size() > 0);
+    }
+
+    // #202: monthly closes — append-only versioned evidence. ONLY the store's
+    // OWNER (Fer as CEO) may create versions/reopens: super-admins, members,
+    // automations and direct SDK calls with a non-owner session cannot (the
+    // authority rule is enforced HERE, not only in the UI). Saved versions are
+    // immutable for everyone — corrections are linked adjustments, not edits.
+    match /closes/{id} {
+      allow get: if canOperateStore(resource.data.storeId);
+      // #202 r2: closes carry the money split (netCents/ferCents/…) — an
+      // unfiltered LIST leaked them to any signed-up user (class #176).
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // #202: post-close adjustments — linked to their origin close, applied in
+    // an OPEN period or PENDING. Owner creates; saved entries are immutable.
+    match /closeAdjustments/{id} {
+      allow get, list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // #211: confirmed supplier-code → product associations. Store-scoped
+    // like every business entity; id encodes store+supplier+code so a member
+    // can only ever read/write links inside their own store.
+    match /supplierLinks/{id} {
+      allow get: if canOperateStore(resource.data.storeId);
+      // #211 r2: an unfiltered LIST leaked every store's associations to any
+      // signed-up user (review MAYOR). Scoped like products: queries must
+      // constrain to stores the caller can operate.
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && request.resource.data.id == id;
+      allow update: if canOperateStore(resource.data.storeId)
+        && canOperateStore(request.resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId
+        && request.resource.data.id == id;
+      // resource == null: deleting an already-deleted link is a no-op retry
+      // (#211 r2 M4) — without the guard the rule dereferences a missing doc
+      // and the retry dies with PERMISSION_DENIED.
+      allow delete: if resource == null || canOperateStore(resource.data.storeId);
     }
 
     match /purchases/{id} {
@@ -483,10 +531,40 @@ service cloud.firestore {
       allow get: if isSignedIn();
       allow list: if false;
       allow create: if isSuperAdmin()
-        || (isSignedIn() && request.resource.data.ownerUid == request.auth.uid);
+        || (isSignedIn()
+            && request.resource.data.ownerUid == request.auth.uid
+            // #374 r2: claiming on behalf of an EXISTING store requires
+            // membership in it. Claims for not-yet-created stores stay open
+            // (addStore reserves before persisting the store doc).
+            && (!exists(/databases/$(database)/documents/stores/$(request.resource.data.storeId))
+                || canOperateStore(request.resource.data.storeId)));
       allow delete: if isOwner(resource.data.storeId)
         || isSuperAdmin()
         || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+    }
+
+    // #374: projection ids are BOUND to their content — a member of another
+    // store must not be able to occupy a rival's FUTURE public route by
+    // creating the doc first with a body naming their own store. The create
+    // rules tie the id to the store that owns it (its own slug in the stores
+    // doc, or the storeId prefix of the product id).
+    function ownsStoreSlug(storeId, slug) {
+      // #374 r2: the store doc alone is NOT proof — its slug field is owner-
+      // editable, and an UNRESERVED slug could be occupied to block the
+      // legitimate owner's future route. The projection create demands the
+      // store's OWN reservation (the client claims idempotently first).
+      return get(/databases/$(database)/documents/stores/$(storeId)).data.slug == slug
+        && exists(/databases/$(database)/documents/slugs/$(slug))
+        && get(/databases/$(database)/documents/slugs/$(slug)).data.storeId == storeId;
+    }
+
+    // #374 r2: a store may only move to a slug reserved by ITSELF. Without
+    // this, an owner could re-point stores/{id}.slug at a rival's future slug
+    // by SDK and then publish projections under it (review probe P9).
+    function slugChangeOk(storeId, oldSlug, newSlug) {
+      return oldSlug == newSlug
+        || (exists(/databases/$(database)/documents/slugs/$(newSlug))
+            && get(/databases/$(database)/documents/slugs/$(newSlug)).data.storeId == storeId);
     }
 
     match /publicStores/{slug} {
@@ -497,7 +575,9 @@ service cloud.firestore {
       // by CI e2e.) The deploy-time prerender lists via firebase-admin.
       allow get: if true;
       allow list: if isSignedIn();
-      allow create: if isSuperAdmin() || isOwner(request.resource.data.storeId);
+      allow create: if isSuperAdmin()
+        || (isOwner(request.resource.data.storeId)
+            && ownsStoreSlug(request.resource.data.storeId, slug));
       allow update: if (isSuperAdmin() || isOwner(resource.data.storeId))
         && resource.data.storeId == request.resource.data.storeId;
       allow delete: if isSuperAdmin() || isOwner(resource.data.storeId);
@@ -509,7 +589,8 @@ service cloud.firestore {
     match /publicCatalogs/{slug} {
       allow get: if true;
       allow list: if isSignedIn();
-      allow create: if canOperateStore(request.resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && ownsStoreSlug(request.resource.data.storeId, slug);
       allow update: if canOperateStore(resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
       allow delete: if canOperateStore(resource.data.storeId);
@@ -522,7 +603,10 @@ service cloud.firestore {
       // (where storeSlug ==) runs as the store owner.
       allow get: if true;
       allow list: if isSignedIn();
-      allow create: if canOperateStore(request.resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        // #374: the id IS the address ({storeId}__{slug}) — it must name the
+        // store in the body, or a member could squat another store's route.
+        && id.split('__')[0] == request.resource.data.storeId;
       allow update: if canOperateStore(resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId;
       allow delete: if canOperateStore(resource.data.storeId);
