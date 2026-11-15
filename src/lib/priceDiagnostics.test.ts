@@ -31,6 +31,20 @@ const design = (
     prices, quantityOnHand, createdAt: NOW, updatedAt: NOW,
   }) as unknown as Product;
 
+describe("r4 revisión N1: la mitad central son los cuartiles REALES, no mediana±IQR/2", () => {
+  it("distribución asimétrica [10,100,120,130,900]: q1=100, q3=130 (no 105–135, jamás negativo)", () => {
+    const products = [10, 100, 120, 130, 900].map((price, i) => ({
+      id: `a${i}`, storeId: "s", name: `a${i}`, category: "other", isPublic: true, status: "published",
+      prices: { t_retail: price }, createdAt: "", updatedAt: "",
+    })) as never[];
+    const d = categoryDiagnosis(products, "t_retail");
+    expect(d.median).toBe(120);
+    expect(d.q1).toBe(100);
+    expect(d.q3).toBe(130);
+    expect(d.iqr).toBe(30);
+  });
+});
+
 describe("priceChangeEvent (#335)", () => {
   it("evento manual idempotente por intento: producto, nivel, anterior/nuevo, UID y fechas", () => {
     const event = priceChangeEvent({
