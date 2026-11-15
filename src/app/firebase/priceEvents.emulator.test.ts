@@ -11,7 +11,7 @@ const holder = vi.hoisted(() => ({ db: null as any, uid: undefined as string | u
 vi.mock("./config", () => ({
   getFirebase: () => ({ db: holder.db, auth: { currentUser: holder.uid ? { uid: holder.uid } : null } }),
 }));
-import { applyProductPrices, saveProductWithPriceEvents } from "./firestoreData";
+import { applyProductPrices, loadPriceEvents, saveProductWithPriceEvents } from "./firestoreData";
 import { buildManualPriceEvents, eventDocId } from "../../lib/priceDiagnostics";
 import type { Product } from "../../types";
 
@@ -103,6 +103,40 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#335 r2 — eventos de pr
     await expect(setDoc(doc(foreign, "priceEvents/x"), { id: "x", storeId: STORE, changedBy: FOREIGN, productId: "p1", tierId: "t", previousCents: 1, nextCents: 2, effectiveAt: NOW, recordedAt: NOW, origin: "manual" })).rejects.toThrow();
     // Even a member: the event must name THEM as changedBy.
     await expect(setDoc(doc(dbOwner, "priceEvents/y"), { id: "y", storeId: STORE, changedBy: "someone-else", productId: "p1", tierId: "t", previousCents: 1, nextCents: 2, effectiveAt: NOW, recordedAt: NOW, origin: "manual" })).rejects.toThrow();
+  });
+
+  it("revisión C1: apagar «se vende por color» BORRA el campo variants en el doc (canje canónico de anaquel)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/pv1"), { storeId: STORE, name: "Pieza color", prices: { t_retail: 100 }, variants: [{ id: "v1", color: "Dorado" }], createdAt: NOW, updatedAt: NOW });
+    });
+    holder.db = env.authenticatedContext(OWNER).firestore();
+    holder.uid = OWNER;
+    const existing = product("pv1", { t_retail: 100 }) as never as { variants?: unknown[] };
+    await saveProductWithPriceEvents({ uid: OWNER, email: "fer@example.com" } as never, existing as never, {
+      ...(existing as object), name: "Pieza color", prices: { t_retail: 120 }, variants: undefined, updatedAt: NOW,
+    } as never);
+    const saved = (await getDoc(doc(holder.db, "products/pv1"))).data();
+    expect(saved?.variants).toBeUndefined(); // el campo YA NO EXISTE en el doc
+  });
+
+  it("M2: loadPriceEvents devuelve SOLO los eventos de la tienda, del más reciente al más viejo", async () => {
+    const dbOwner = env.authenticatedContext(OWNER).firestore();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const fs = ctx.firestore();
+      await setDoc(doc(fs, "adminStores/other-store"), { ownerUid: "o", memberUids: ["o"] });
+      await setDoc(doc(fs, "priceEvents/h1"), { id: "h1", storeId: STORE, productId: "p1", tierId: "t_retail", previousCents: 1, nextCents: 2, changedBy: OWNER, effectiveAt: NOW, recordedAt: "2026-11-14T10:00:00.000Z", origin: "manual" });
+      await setDoc(doc(fs, "priceEvents/h2"), { id: "h2", storeId: STORE, productId: "p1", tierId: "t_retail", previousCents: 2, nextCents: 3, changedBy: OWNER, effectiveAt: NOW, recordedAt: "2026-11-14T11:00:00.000Z", origin: "manual" });
+      await setDoc(doc(fs, "priceEvents/h3"), { id: "h3", storeId: "other-store", productId: "x", tierId: "t", previousCents: 9, nextCents: 9, changedBy: "o", effectiveAt: NOW, recordedAt: "2026-11-14T12:00:00.000Z", origin: "manual" });
+    });
+    holder.db = dbOwner;
+    holder.uid = OWNER;
+    const events = await loadPriceEvents(STORE);
+    const ids = events.map((e) => e.id);
+    // Solo SU tienda (h3 ajeno jamás aparece), orden descendente entre los sembrados.
+    expect(ids).not.toContain("h3");
+    expect(ids).toContain("h2");
+    expect(ids).toContain("h1");
+    expect(ids.indexOf("h2")).toBeLessThan(ids.indexOf("h1"));
   });
 
   it("#335 r3 VOLUMEN: 260 piezas (520 operaciones) aplican completas — precios y eventos íntegros", async () => {

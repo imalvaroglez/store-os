@@ -328,7 +328,7 @@ type StoreContextValue = {
    * stale client clone. `null` deletes the category's table. P0-2:
    * `expectedSignature` is the table the client loaded; if the saved table
    * changed meanwhile, the save is REJECTED (CategoryRulesConflictError). */
-  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null, expectedSignature: string) => Promise<void>;
+  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null, expectedSignature: string, ruleEvent?: { summary: string }) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
@@ -743,10 +743,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (ruleEvent && user) {
           await recordRuleChangeEvent(
             ruleChangeEvent({
-              intentId: `${ruleEvent.categoryId ?? "tiers"}:${updatedAt}`,
+              // m3: the doc id carries the store — two stores saving their
+              // tier table in the same millisecond must never collide.
+              intentId: `${existing.id}__${ruleEvent.categoryId ?? "tiers"}:${updatedAt}`,
               storeId: existing.id,
               categoryId: ruleEvent.categoryId,
               uid: user.uid,
+              email: user.email,
               summary: ruleEvent.summary,
             })
           );
@@ -766,7 +769,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updatedAt = nowIso();
       if (cloud) {
         // #335 r2: uid enables the per-tier events for EFFECTIVE changes.
-        await applyProductPricesBatch(existing, updates, updatedAt, user?.uid);
+        await applyProductPricesBatch(existing, updates, updatedAt, user?.uid, user?.email);
         // Republish the PUBLIC catalog once from the freshest local products
         // merged with the new prices — projection prices mirror the private
         // doc; other public fields come from the live subscription state.
@@ -787,11 +790,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    saveCategoryPricingRules: async (categoryId, rules, expectedSignature) => {
+    saveCategoryPricingRules: async (categoryId, rules, expectedSignature, ruleEvent) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
       if (cloud) await saveCategoryPricingRules(existing, categoryId, rules, updatedAt, expectedSignature);
+      // #335 M1: the strategy BAND TABLE is the rule config par excellence —
+      // saving or resetting it must leave its own trail (like tier tables do).
+      if (cloud && ruleEvent && user) {
+        await recordRuleChangeEvent(
+          ruleChangeEvent({
+            intentId: `${existing.id}__cat_${categoryId}:${updatedAt}`,
+            storeId: existing.id,
+            categoryId,
+            uid: user.uid,
+            email: user.email,
+            summary: ruleEvent.summary,
+          })
+        );
+      }
       // Mirror the same category-scoped overlay locally (never a stale clone).
       const pricingRules: PricingRulesConfig = existing.pricingRules
         ? JSON.parse(JSON.stringify(existing.pricingRules))

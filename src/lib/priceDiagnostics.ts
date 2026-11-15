@@ -19,6 +19,8 @@ export type PriceChangeEvent = {
   previousCents: number;
   nextCents: number;
   changedBy: string;
+  /** Who changed it — email captured from the authenticated session (audit display). */
+  changedByEmail?: string;
   /** ISO date the new price takes effect (user-confirmed, never invented). */
   effectiveAt: string;
   /** When the system recorded the event (append-only trail). */
@@ -34,6 +36,7 @@ export type RuleChangeEvent = {
   /** Category the table belongs to — null for store-wide tier tables. */
   categoryId: string | null;
   changedBy: string;
+  changedByEmail?: string;
   summary: string;
   recordedAt: string;
 };
@@ -52,6 +55,7 @@ export function priceChangeEvent(input: {
   previous: number;
   next: number;
   uid: string;
+  email?: string | null;
   effectiveAt: string;
   origin: PriceChangeOrigin;
 }): PriceChangeEvent {
@@ -63,6 +67,8 @@ export function priceChangeEvent(input: {
     previousCents: orderAmountCents(input.previous),
     nextCents: orderAmountCents(input.next),
     changedBy: input.uid,
+    // Firestore rejects undefined values — the key only exists when known.
+    ...(input.email ? { changedByEmail: input.email } : {}),
     effectiveAt: input.effectiveAt,
     recordedAt: new Date().toISOString(),
     origin: input.origin,
@@ -76,6 +82,7 @@ export function ruleChangeEvent(input: {
   storeId: string;
   categoryId: string | null;
   uid: string;
+  email?: string | null;
   summary: string;
 }): RuleChangeEvent {
   return {
@@ -84,6 +91,7 @@ export function ruleChangeEvent(input: {
     storeId: input.storeId,
     categoryId: input.categoryId,
     changedBy: input.uid,
+    ...(input.email ? { changedByEmail: input.email } : {}),
     summary: input.summary,
     recordedAt: new Date().toISOString(),
   };
@@ -104,6 +112,11 @@ export type TierDiagnosis = {
   evidence: "ok" | "insufficient";
   /** Products without a known cost (fact, not advice). */
   withoutCost: number;
+  /** #335 (UX review): NAMED robust outliers — boxplot fences (Q1−1.5·IQR,
+   * Q3+1.5·IQR), the classic convention, always labeled with its method. */
+  outliers: Array<{ id: string; name: string; price: number }>;
+  /** Cost picture over products WITH a known cost (median/range/distinct). */
+  costStats: { median: number; min: number; max: number; distinct: number; withCost: number } | null;
   /** Products whose level order breaks Regular > Girly > Iconic. */
   tierOrderIssues: string[];
   /** Delivery-period analysis waits for #333 — never inferred from nothing. */
@@ -172,6 +185,35 @@ export function categoryDiagnosis(
     madSignal: madValue > 0,
     evidence: sample >= 3 ? "ok" : "insufficient",
     withoutCost: products.filter((p) => typeof p.cost !== "number").length,
+    // Boxplot-fence outliers (Q1−1.5·IQR / Q3+1.5·IQR) among the SAMPLE —
+    // descriptive with its method; never a "fix this" judgement.
+    outliers: (() => {
+      if (sample < 4 || iqr <= 0) return [];
+      const q1 = quartile(sorted, 0.25);
+      const q3 = quartile(sorted, 0.75);
+      const low = q1 - 1.5 * iqr;
+      const high = q3 + 1.5 * iqr;
+      return products
+        .filter((p) => {
+          const v = p.prices?.[tierId];
+          return typeof v === "number" && Number.isFinite(v) && (v < low || v > high);
+        })
+        .map((p) => ({ id: p.id, name: p.name, price: p.prices?.[tierId] as number }));
+    })(),
+    costStats: (() => {
+      const costs = products
+        .map((p) => p.cost)
+        .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+        .sort((a, b) => a - b);
+      if (costs.length === 0) return null;
+      return {
+        median: median(costs),
+        min: costs[0],
+        max: costs[costs.length - 1],
+        distinct: new Set(costs).size,
+        withCost: costs.length,
+      };
+    })(),
     tierOrderIssues,
     periodAnalysis: "unavailable",
     periodNote: "Análisis por periodo de entrega disponible tras integrar #333 (fecha efectiva); no se infieren meses.",
@@ -189,6 +231,7 @@ export function buildManualPriceEvents(params: {
   productId: string;
   updatedAt: string;
   uid: string;
+  email?: string | null;
   previous?: { prices?: Record<string, number> };
   next: { prices?: Record<string, number> };
 }): PriceChangeEvent[] {
@@ -207,6 +250,7 @@ export function buildManualPriceEvents(params: {
         previous,
         next,
         uid: params.uid,
+        email: params.email,
         effectiveAt: params.updatedAt,
         origin: "manual",
       })
