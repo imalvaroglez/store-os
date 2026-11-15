@@ -582,7 +582,21 @@ export type OrderIncident = {
     destination?: "refund_pending" | "credit_accepted";
   };
   /** The replacement piece when the resolution is a replacement. */
-  replacement?: { productId?: string; productName: string; unitPriceCents: number; /** Real cost of the piece leaving stock, exact cents. */ unitCostCents: number; chargeDifference: boolean };
+  replacement?: {
+    productId?: string;
+    productName: string;
+    unitPriceCents: number;
+    /** Real cost of the piece leaving stock, exact cents. */
+    unitCostCents: number;
+    chargeDifference: boolean;
+    /** #364: the exact color handed over, REQUIRED when the replacement is a
+     * design sold per color — its shelf moves at confirm. Absent on legacy
+     * incidents (pre-colors); confirming those fails closed with an
+     * actionable error instead of guessing a color. */
+    variantId?: string;
+    variantColor?: string;
+    variantSku?: string;
+  };
   /** append-only history; every state is DERIVED from it, never stored twice. */
   events: OrderIncidentEvent[];
 };
@@ -978,6 +992,8 @@ export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
 }
 
 // Administrative state held in memory from the authenticated Firestore session.
+import type { SupplierProductLink } from "../lib/supplierLinks";
+
 export type AppState = {
   stores: Store[];
   activeStoreId: string | null;
@@ -989,7 +1005,13 @@ export type AppState = {
   orders: Order[];
   /** #184 loose expenses (registration, assignment, supplies). */
   expenses: LooseExpense[];
+  /** #211: confirmed supplier-code → product associations (store-scoped).
+   * Optional so legacy local fixtures keep compiling; cloud loading always
+   * provides it. */
+  supplierLinks?: SupplierProductLink[];
 };
+
+export type { SupplierProductLink };
 
 // Catalog business rules (single source of truth).
 export const MAX_PRODUCT_IMAGES = 5;

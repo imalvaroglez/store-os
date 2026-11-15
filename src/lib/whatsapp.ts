@@ -147,7 +147,11 @@ export function buildCartOrderUrl(
         // message can never round away a cent the client just saw on screen.
         `Subtotal estimado - precio ${esc(request.activeTier.label)}: ${formatMoneyExact(request.estimatedSubtotal)} MXN`,
         // Same comparison and qualification as the drawer, with no fallback prices.
+        // #437: when the ACTIVE tier already IS the identity tier (only-iconic
+        // prices), the comparison row would repeat the same figure — the main
+        // row above already carries the estimable Iconic subtotal.
         ...(request.showIdentityHint && request.identitySubtotal != null
+          && request.identityTier?.id !== request.activeTier.id
           ? [`¿Eres ${esc(request.identityTier?.label ?? "")}? Subtotal estimado: ${formatMoneyExact(request.identitySubtotal)} MXN`]
           : []),
         "Precios, beneficio y disponibilidad sujetos a confirmación.",
