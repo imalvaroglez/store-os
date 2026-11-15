@@ -11,7 +11,7 @@ const holder = vi.hoisted(() => ({ db: null as any, uid: undefined as string | u
 vi.mock("./config", () => ({
   getFirebase: () => ({ db: holder.db, auth: { currentUser: holder.uid ? { uid: holder.uid } : null } }),
 }));
-import { applyProductPrices, loadPriceEvents, saveProductWithPriceEvents } from "./firestoreData";
+import { applyProductPrices, loadPriceEvents, saveProductPreservingConcurrentTx, saveProductWithPriceEvents } from "./firestoreData";
 import { buildManualPriceEvents, eventDocId } from "../../lib/priceDiagnostics";
 import type { Product } from "../../types";
 
@@ -117,6 +117,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#335 r2 — eventos de pr
     } as never);
     const saved = (await getDoc(doc(holder.db, "products/pv1"))).data();
     expect(saved?.variants).toBeUndefined(); // el campo YA NO EXISTE en el doc
+  });
+
+  it("merge #335∩#373: la ruta REAL de guardado (tx concurrente) emite eventos atómicos y BORRA variants", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/pc1"), { storeId: STORE, name: "Pieza color", prices: { t_retail: 100 }, variants: [{ id: "v1", color: "Dorado" }], quantityOnHand: 4, createdAt: NOW, updatedAt: NOW });
+    });
+    holder.db = env.authenticatedContext(OWNER).firestore();
+    holder.uid = OWNER;
+    const baseline = { id: "pc1", storeId: STORE, name: "Pieza color", prices: { t_retail: 100 }, variants: [{ id: "v1", color: "Dorado" }], quantityOnHand: 4, createdAt: NOW, updatedAt: NOW } as never;
+    const next = { ...(baseline as object), name: "Pieza color", prices: { t_retail: 120 }, variants: undefined, updatedAt: NOW } as never;
+    const saved = await saveProductPreservingConcurrentTx(baseline, next, { uid: OWNER, email: "fer@example.com" }, NOW);
+    expect(saved.name).toBeTruthy();
+    const doc1 = (await getDoc(doc(holder.db, "products/pc1"))).data();
+    expect(doc1?.variants).toBeUndefined(); // canje canónico intacto
+    const event = (await getDoc(doc(holder.db, `priceEvents/pc1__t_retail:100:120:${NOW}`))).data();
+    expect(event).toMatchObject({ storeId: STORE, productId: "pc1", tierId: "t_retail", previousCents: 10000, nextCents: 12000, changedBy: OWNER, changedByEmail: "fer@example.com", origin: "manual" });
   });
 
   it("M2: loadPriceEvents devuelve SOLO los eventos de la tienda, del más reciente al más viejo", async () => {
