@@ -58,6 +58,38 @@ beforeEach(() => {
 });
 
 describe("HomeScreen alertas de existencias (FER-09)", () => {
+  it("#132: aviso privado cuando el mes pasado tiene ranking sin confirmar; desaparece al confirmar", () => {
+    const NOW2 = "2026-11-14T10:00:00.000Z";
+    const order = {
+      id: "o1", storeId: OLIVIA, customerId: "c_emp",
+      items: [{ lineId: "L0", productId: "p1", productName: "Pieza", quantity: 2, unitPrice: 500, subtotal: 1000 }],
+      deposit: 0, orderStatus: "delivered", paymentStatus: "paid",
+      deliveries: [{ id: "d1", orderId: "o1", storeId: OLIVIA, deliveredAt: "2026-10-05", recordedAt: NOW2, by: "u1", lines: [{ productId: "p1", quantity: 2 }] }],
+      paymentsReceivedCents: 100000, createdAt: NOW2, updatedAt: NOW2,
+    } as never as Order;
+    const entrepreneur = { id: "c_emp", storeId: OLIVIA, name: "Ana", segment: "entrepreneur", createdAt: NOW2, updatedAt: NOW2 } as never;
+
+    const unconfirmed = fixtureState();
+    unconfirmed.orders = [order];
+    unconfirmed.customers = [entrepreneur];
+    unconfirmed.rankingConfirmations = [];
+    const Wrapper1 = withState(unconfirmed);
+    const view = render(<Wrapper1><HomeScreen /></Wrapper1>);
+    expect(screen.getByText(/Top emprendedoras listo para tu revisión/)).toBeTruthy();
+    view.unmount();
+
+    const confirmed = fixtureState();
+    confirmed.orders = [order];
+    confirmed.customers = [entrepreneur];
+    confirmed.rankingConfirmations = [{
+      id: `${OLIVIA}__2026-10`, storeId: OLIVIA, year: 2026, month: 10, revision: 1,
+      entries: [], tieResolutions: [], confirmedBy: "u1", confirmedAt: NOW2,
+    } as never];
+    const Wrapper2 = withState(confirmed);
+    render(<Wrapper2><HomeScreen /></Wrapper2>);
+    expect(screen.queryByText(/Top emprendedoras listo para tu revisión/)).toBeNull();
+  });
+
   it("muestra Agotado, Faltan y Quedan N — peor primero — y omite existencias sanas", () => {
     const state = fixtureState();
     state.products = [

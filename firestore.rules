@@ -265,6 +265,17 @@ service cloud.firestore {
       allow delete: if resource == null || canOperateStore(resource.data.storeId);
     }
 
+    // #132 (FER-17): confirmed monthly reseller rankings — append-only
+    // evidence. ONLY the store's OWNER (Fer) may confirm; results are frozen
+    // (no edits, no deletes — a late refund becomes a NEW revision doc).
+    match /rankingConfirmations/{id} {
+      allow get, list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.confirmedBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /purchases/{id} {
       // #373: same null-safe get as orders/products — the revision-aware save
       // transaction reads the doc BEFORE deciding create-vs-update, so a
