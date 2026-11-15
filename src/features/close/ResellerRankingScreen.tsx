@@ -126,6 +126,13 @@ export function ResellerRankingScreen() {
         ...(confirmation != null && lateChangeConfirmed ? { revisionMotive: revisionMotive.trim() } : {}),
       });
       toast.success("Resultado confirmado. El histórico queda conservado tal como lo confirmaste.");
+      // Refresh to the FROZEN view right away — the operator must see the
+      // confirmed result, not a stale editable form (review r4 minor 1).
+      try {
+        setConfirmation(await loadRankingConfirmation(activeStore.id, month.year, month.month));
+      } catch {
+        // The confirmation persisted; the frozen view lands on next mount.
+      }
     } catch {
       toast.error("No se pudo confirmar el resultado. Inténtalo de nuevo.");
     } finally {
