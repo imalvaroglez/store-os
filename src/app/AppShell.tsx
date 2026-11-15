@@ -27,10 +27,11 @@ import { OrderEditorScreen } from "../features/orders/OrderEditorScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
 import { PurchasesScreen } from "../features/inventory/PurchasesScreen";
 import { ExpensesScreen } from "../features/expenses/ExpensesScreen";
+import { MonthlyCloseScreen } from "../features/close/MonthlyCloseScreen";
 import { PackagingScreen } from "../features/packaging/PackagingScreen";
 import { PricingRulesScreen } from "../features/pricing/PricingRulesScreen";
 import { PricingStrategyScreen } from "../features/pricing/PricingStrategyScreen";
-import { PriceDiagnosticsScreen } from "../features/pricing/PriceDiagnosticsScreen";
+    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : sub === "reparto" ? "productos_reparto" : sub === "diagnostico" ? "productos_diagnostico" : "productos";
 import { StoreSettingsScreen } from "../features/stores/StoreSettingsScreen";
 import { PlatformUsersScreen } from "../features/users/PlatformUsersScreen";
 
@@ -60,7 +61,11 @@ export function AppShell() {
   if (storeSettingsRoute) {
     tab = "tienda";
   } else if (seg === "productos") {
+<<<<<<< HEAD
     tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "diagnostico" ? "productos_diagnostico" : "productos";
+=======
+    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : sub === "reparto" ? "productos_reparto" : "productos";
+>>>>>>> origin/main
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
@@ -148,6 +153,11 @@ export function AppShell() {
     case "productos_gastos":
       screen = <ExpensesScreen />;
       break;
+    case "productos_cierre":
+      // #129 stage: read-only preview; key per store so switching stores
+      // never carries another store's month state.
+      screen = <MonthlyCloseScreen key={activeStore?.id ?? "store"} />;
+      break;
     case "productos_empaques":
       // key: switching stores must never carry one store's draft into another.
       screen = <PackagingScreen key={activeStore?.id ?? "store"} />;
@@ -157,6 +167,11 @@ export function AppShell() {
       break;
     case "productos_diagnostico":
       screen = <PriceDiagnosticsScreen key={activeStore?.id ?? "store"} />;
+      break;
+    case "productos_reparto":
+      // #128 stage: read-only distribution proposal; key per store so
+      // switching stores never carries another store's simulation inputs.
+      screen = <ProfitDistributionScreen key={activeStore?.id ?? "store"} />;
       break;
     case "productos_estrategia":
       // key: switching stores must never carry one store's draft into another.

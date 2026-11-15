@@ -181,7 +181,9 @@ async function getDocRest(path: string): Promise<{ exists: boolean; data?: Recor
     const key = EMULATOR ? "" : `?key=${import.meta.env.VITE_FIREBASE_API_KEY as string}`;
     let res: Response;
     try {
-      res = await fetch(`${DOCS_BASE}/${path}${key}`, { headers: { accept: "application/json" } });
+      // #359: belt against any intermediary/browser layer deciding to cache
+      // these reads — catalog data must always hit the network.
+      res = await fetch(`${DOCS_BASE}/${path}${key}`, { headers: { accept: "application/json" }, cache: "no-store" });
     } catch {
       throw new RestReadError(0, path); // network-level failure: transient
     }
@@ -279,6 +281,12 @@ export async function loadPublicCatalog(slug: string): Promise<{
 }> {
   const store = await loadPublicStore(slug);
   const doc = await loadPublicCatalogDoc(slug);
+  // #374 r2 defense in depth: the storefront and the catalog summary must name
+  // the SAME store. A planted/legacy doc pair that disagrees reads as absent —
+  // it must never serve another tenant's summaries under this route.
+  if (store.storeId && doc.storeId && store.storeId !== doc.storeId) {
+    throw new PublicCatalogNotFoundError(slug);
+  }
   if (!store.storeId && doc.storeId) {
     return { store: { ...store, storeId: doc.storeId }, catalog: doc.catalog };
   }
@@ -319,6 +327,9 @@ export async function loadPublicProduct(
 
   if (!productSnap.exists) throw new PublicProductNotFoundError(productSlug);
   const product = productSnap.data as PublicProductDetail;
+  // #374 defense in depth: only serve details that belong to the store being
+  // browsed. A doc planted under this route by another tenant reads as absent.
+  if (product.storeId !== store.storeId) throw new PublicProductNotFoundError(productSlug);
 
   return { product, store };
 }

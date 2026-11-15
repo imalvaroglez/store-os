@@ -23,8 +23,9 @@ import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
 import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
+import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
-import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../../lib/orders";
+import { effectiveOrderStatus, migrateOrder, orderItems, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
@@ -39,7 +40,7 @@ import {
 import type { AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
-import { incidentState } from "../../features/orders/incidents";
+import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
@@ -86,7 +87,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For a
   // super_admin this is the full collection (no `in`-query size limit); for
   // members it remains scoped to their store set.
-  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = user.role === "super_admin"
       ? collection(db, name)
@@ -95,7 +96,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, categories, suppliers, purchases, customers, orders, expenses] = await Promise.all([
+  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks] = await Promise.all([
     forStores<Product>("products"),
     forStores<Category>("categories"),
     forStores<Supplier>("suppliers"),
@@ -103,6 +104,8 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     forStores<Customer>("customers"),
     forStores<Order>("orders"),
     forStores<LooseExpense>("expenses"),
+    // #211: confirmed supplier-code associations, same store scoping.
+    forStores<SupplierProductLink>("supplierLinks" as never),
   ]);
 
   return {
@@ -115,6 +118,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     customers,
     orders,
     expenses,
+    supplierLinks,
   };
 }
 
@@ -648,6 +652,14 @@ export async function saveOrderWithStockTx(
     if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
       throw new StaleOrderError();
     }
+    // #368: the line an incident sits on is EVIDENCE of the agreed solution
+    // (piece, quantity, historical price sustain the sale adjustment — and
+    // through it, the clienta's real credit position). An editor edit that
+    // removes or reshapes it re-derives a smaller effective total and invents
+    // saldo a favor; fail closed BEFORE any money/stock math runs. Edits
+    // unrelated to the evidence (notes, other lines) pass untouched.
+    const evidenceError = incidentEvidenceError(previous, orderItems(order));
+    if (evidenceError) throw new IncidentEvidenceError(evidenceError);
     // #168: the money fields belong to the payment path — an order save carries
     // them through VERBATIM from the doc read here, so a full-document write
     // can never wipe a concurrent abono's accumulator (Firestore retries this
@@ -1975,6 +1987,12 @@ export async function projectPublicForStore(
 ): Promise<void> {
   const { db } = getFirebase();
 
+  // 0. #374 r2: the projection create rules demand the store's OWN slug
+  // reservation. Claiming is idempotent (one extra read when it exists) and
+  // repairs legacy stores that predate reservations; a slug taken by another
+  // store fails closed here instead of half-publishing.
+  await claimSlug(store.slug, store.id);
+
   // 1. Storefront (identity + content + contact). Write this first: contact
   // links depend on publicStores, and a later projection read must not leave
   // the phone stale if it fails or is denied.
@@ -2185,7 +2203,7 @@ export async function applyIncidentEventTx(params: {
   event: OrderIncidentEvent;
   resolution?: OrderIncident["resolution"];
   replacement?: OrderIncident["replacement"];
-}): Promise<{ order: Order }> {
+}): Promise<{ order: Order; changedProductIds: string[] }> {
   const { db } = getFirebase();
   const { orderId, storeId, incidentId, event, resolution, replacement } = params;
   const orderRef = doc(db, "orders", orderId);
@@ -2198,7 +2216,7 @@ export async function applyIncidentEventTx(params: {
     const index = incidents.findIndex((existing) => existing.id === incidentId);
     if (index < 0) throw new Error("No se encontró la incidencia.");
     if (incidents.some((existing) => existing.events?.some((saved) => saved.id === event.id))) {
-      return { order: migrateOrder({ ...data, id: orderId }) }; // idempotent retry
+      return { order: migrateOrder({ ...data, id: orderId }), changedProductIds: [] }; // idempotent retry
     }
     const incident = incidents[index];
     const state = incidentState(incident);
@@ -2333,6 +2351,11 @@ export async function applyIncidentEventTx(params: {
     // ── Inventory effects (same commit; shortages abort the whole event).
     // Firestore requires EVERY read before ANY write: both product reads
     // happen first, then both writes.
+    // #364: a piece of a design sold per color moves ITS COLOR's shelf
+    // (variants[].quantityOnHand). The design-level quantityOnHand is dead for
+    // those designs — writing it there makes pieces invisible (panel, alerts,
+    // public catalog). Fail closed when a color is missing: never guess one.
+    const changedProductIds: string[] = [];
     const quarantineProduct = incident.productId ? doc(db, "products", incident.productId) : null;
     if (kind === "confirmed") {
       // The PERSISTED resolution/replacement drive the confirm (parameters
@@ -2344,8 +2367,9 @@ export async function applyIncidentEventTx(params: {
         : undefined;
       // #212 F4: wait_restock hands the restocked piece over at confirm — the
       // SAME piece leaves stock at its real stored cost, shortage included.
+      // #364: the SAME COLOR when the incident is on a color line.
       const effectiveTarget = agreed?.kind === "wait_restock"
-        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false })
+        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false, ...(incident.variantId ? { variantId: incident.variantId } : {}) })
         : target;
       if (quarantineProduct) {
         const productSnap = await tx.get(quarantineProduct);
@@ -2354,25 +2378,66 @@ export async function applyIncidentEventTx(params: {
         }
       }
       let replacementRef: ReturnType<typeof doc> | null = null;
+      let replacementVariants: Product["variants"] | null = null;
       if (effectiveTarget?.productId) {
         replacementRef = doc(db, "products", effectiveTarget.productId);
         const replacementSnap = await tx.get(replacementRef);
         if (!replacementSnap.exists()) throw new Error("No se encontró el producto de reemplazo.");
         if ((replacementSnap.data().storeId ?? "") !== storeId) throw new Error("El reemplazo pertenece a otra tienda.");
-        const onHand = typeof replacementSnap.data().quantityOnHand === "number" ? replacementSnap.data().quantityOnHand : 0;
-        if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del reemplazo.`);
+        const replacementData = replacementSnap.data() as Record<string, unknown>;
+        const variants = replacementData.variants as Product["variants"];
+        if (isVariantProduct({ variants })) {
+          const variantId = effectiveTarget.variantId ?? (agreed?.kind === "wait_restock" ? incident.variantId : undefined);
+          const variant = variants?.find((v) => v.id === variantId);
+          if (!variantId || !variant) {
+            // Legacy incident (agreed before colors) or a vanished color —
+            // actionable error, no movement, never another color.
+            throw new Error("El reemplazo se vende por color y esta resolución no dice cuál. Ajusta la existencia del color desde el catálogo y registra esta entrega manualmente.");
+          }
+          const onHand = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
+          if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del color ${variant.color}.`);
+          const nextVariants = applyVariantDelta({ variants }, variant.id, -quantity, event.at);
+          if (!nextVariants) throw new Error("El color del reemplazo ya no existe en este diseño.");
+          replacementVariants = nextVariants;
+        } else {
+          if (effectiveTarget.variantId) throw new Error("Esa pieza ya no se vende por color; revisa el pedido.");
+          const onHand = typeof replacementData.quantityOnHand === "number" ? replacementData.quantityOnHand : 0;
+          if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del reemplazo.`);
+        }
       }
       if (quarantineProduct) {
         tx.update(quarantineProduct, { quantityQuarantined: increment(quantity), updatedAt: event.at });
       }
-      if (replacementRef) {
+      if (replacementRef && replacementVariants) {
+        tx.update(replacementRef, { variants: replacementVariants, updatedAt: event.at });
+        changedProductIds.push(effectiveTarget!.productId!);
+      } else if (replacementRef) {
         tx.update(replacementRef, { quantityOnHand: increment(-quantity), updatedAt: event.at });
+        changedProductIds.push(effectiveTarget!.productId!);
       }
     }
     // #203 r2: repairing does NOT release the piece — it stays in quarantine
     // until Fer explicitly authorizes the return to sale (or writes it off).
+    // #364: the sellable return lands on the COLOR's shelf when the design
+    // sells per color (or the incident names one) — the design-level shelf is
+    // invisible there. A vanished/unresolvable color aborts with an
+    // actionable error: never another color, never a silent design-level +1.
     if ((kind === "provider_replacement" || kind === "returned_to_sale") && quarantineProduct) {
-      tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), quantityOnHand: increment(quantity), updatedAt: event.at });
+      const productSnap = await tx.get(quarantineProduct);
+      const data = (productSnap.exists() ? productSnap.data() : {}) as Record<string, unknown>;
+      const variants = data.variants as Product["variants"];
+      const nextVariants = incident.variantId
+        ? applyVariantDelta({ variants }, incident.variantId, quantity, event.at)
+        : null;
+      if (incident.variantId || isVariantProduct({ variants })) {
+        if (!nextVariants) {
+          throw new Error(`El diseño se vende por color y ${incident.variantId ? `el color ${incident.variantColor ?? "registrado"} ya no existe` : "esta incidencia no tiene color"}. No se puede devolver la pieza a la venta automáticamente: ajusta la existencia del color desde el catálogo y da de baja la pieza aquí.`);
+        }
+        tx.update(quarantineProduct, { variants: nextVariants, quantityQuarantined: increment(-quantity), updatedAt: event.at });
+      } else {
+        tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), quantityOnHand: increment(quantity), updatedAt: event.at });
+      }
+      changedProductIds.push(incident.productId!);
     }
     if (kind === "written_off" && quarantineProduct) {
       tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), updatedAt: event.at });
@@ -2415,7 +2480,7 @@ export async function applyIncidentEventTx(params: {
     } else {
       tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
     }
-    return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }) };
+    return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }), changedProductIds };
   });
 }
 
@@ -2635,4 +2700,62 @@ export async function registerDeliveryTx(params: {
     tx.update(orderRef, next);
     return migrateOrder({ ...data, id: orderId, ...next });
   });
+}
+
+/**
+ * #211: persist ONE confirmed supplier-code → product association. The doc id
+ * encodes the full identity, so a retry (same intent) is a plain overwrite of
+ * the same doc — never a duplicate. Store-scoped; future captures only.
+ */
+export async function confirmSupplierLinkTx(params: {
+  storeId: string;
+  supplierId: string;
+  code: string;
+  productId: string;
+  productName: string;
+  confirmedBy: string;
+}): Promise<SupplierProductLink> {
+  const { db } = getFirebase();
+  // #211 r2 M3: «/» cannot travel in a Firestore doc id — reject the code
+  // BEFORE the SDK throws an opaque invalid-reference error.
+  if (params.code.includes("/")) {
+    throw new Error("El código del ticket contiene un carácter no válido («/»). Quita la diagonal e inténtalo de nuevo.");
+  }
+  const link: SupplierProductLink = {
+    id: linkDocId(params.storeId, params.supplierId, params.code),
+    storeId: params.storeId,
+    supplierId: params.supplierId,
+    code: params.code,
+    // #211 r2 M1: derive from the code itself — splitting the doc id broke
+    // codes that themselves contain «__» (the suggestion never fired).
+    normalizedCode: normalizeSupplierCode(params.code),
+    productId: params.productId,
+    productName: params.productName,
+    confirmedAt: new Date().toISOString(),
+    confirmedBy: params.confirmedBy,
+  };
+  await setDoc(doc(db, "supplierLinks", link.id), link);
+  return link;
+}
+
+/** #211: forget an association (the operator removed it) — future captures
+ * stop suggesting; purchases that already used it keep their product. */
+export async function revokeSupplierLinkTx(storeId: string, supplierId: string, code: string): Promise<void> {
+  const { db } = getFirebase();
+  await deleteDoc(doc(db, "supplierLinks", linkDocId(storeId, supplierId, code)));
+}
+
+/**
+ * #129 (etapa lista): read the payment records of SEVERAL orders on demand —
+ * the monthly close preview collects cobros by their real date. One getDocs
+ * per order (no listener); only the preview's own action pays for it.
+ */
+export async function loadOrderPaymentsDocs(orderIds: string[]): Promise<Record<string, OrderPayment[]>> {
+  const { db } = getFirebase();
+  const result: Record<string, OrderPayment[]> = {};
+  for (const orderId of orderIds) {
+    const snap = await getDocs(query(collection(db, "orders", orderId, "payments")));
+    result[orderId] = snap.docs.map((doc) => ({ ...(doc.data() as OrderPayment), id: doc.id }));
+  }
+  return result;
 }
