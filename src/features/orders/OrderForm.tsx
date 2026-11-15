@@ -26,6 +26,7 @@ import { formatOrderUnitPrice, orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
 import { DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
+import { IncidentEvidenceError } from "./incidents";
 import { pendingDeliveries } from "../../lib/deliveries";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
 import { groupOrderLines } from "./orderGrouping";
@@ -39,7 +40,7 @@ import {
 } from "./installments";
 import { CustomerForm } from "../customers/CustomerForm";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../../types";
-import type { Customer, Order, OrderItem, OrderStatus, Product } from "../../types";
+import type { Customer, Order, OrderItem, OrderStatus, Product , OrderIncident} from "../../types";
 
 type DraftLine = OrderItem & {
   key: string;
@@ -351,6 +352,16 @@ export function OrderForm({
     () => orderWillHoldPieces({ ...order, orderStatus }),
     [order, orderStatus]
   );
+  // #368: lines that sustain an incident carry its story — the save rejects
+  // changes to them, so the link must be VISIBLE on the line, not discovered
+  // at save time.
+  const incidentLines = useMemo(() => {
+    const byLine = new Map<string, OrderIncident>();
+    for (const incident of order.incidents ?? []) {
+      if (incident.lineId) byLine.set(incident.lineId, incident);
+    }
+    return byLine;
+  }, [order.incidents]);
   const lineShortage = useMemo(
     () =>
       attributeProjectedShortageToLines(
@@ -705,6 +716,12 @@ export function OrderForm({
         toast.error(error.message);
         return; // keep the editor open — the operator reconciles from the fresh copy
       }
+      // #368: the incident-evidence guard explains itself — show WHY the save
+      // was rejected instead of a generic failure (the capture stays here).
+      if (error instanceof IncidentEvidenceError) {
+        toast.error(error.message);
+        return;
+      }
       // R9: delivering with an uncovered saldo needs an explicit confirmation
       // that gets RECORDED on the order (retroactive / contraentrega flows).
       if (error instanceof DeliveryWithBalanceError) {
@@ -859,6 +876,11 @@ export function OrderForm({
                   {isTiered && !line.productId && (
                     <span className="cursor-help" title="Este artículo se capturó por nombre y no tiene ficha del catálogo: sus piezas NO se apartan del inventario hasta vincular la ficha (buscar y elegirla arriba, conservando cantidad y precio).">
                       <Badge tone="warning">No aparta existencias</Badge>
+                    </span>
+                  )}
+                  {line.lineId && incidentLines.has(line.lineId) && (
+                    <span className="cursor-help" title="Incidencia registrada: esta línea sustenta la solución acordada. No se puede quitar ni cambiar pieza, cantidad o precio aquí; los cambios de esa atención se registran desde la incidencia del pedido.">
+                      <Badge tone="info">Incidencia</Badge>
                     </span>
                   )}
                 </span>

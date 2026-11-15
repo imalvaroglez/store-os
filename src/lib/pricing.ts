@@ -280,3 +280,49 @@ export function cartRequestSummary(tiers: PriceTierDef[], lines: CartQtyLine[]):
     showIdentityHint: identityTier != null && !identityQualifies,
   };
 }
+
+// --- #442: Olivia cart — one row per visible tier, comparable side by side ---
+
+export type TierSubtotalRow = {
+  tier: PriceTierDef;
+  /** Σ qty × the tier's OWN price per line — undefined when ANY line lacks it
+   *  ("Por confirmar", never a fallback price, never $0). */
+  subtotal: number | undefined;
+  /** Reaches the tier's configured minimum (pieces or amount at OWN prices). */
+  qualifies: boolean;
+  /** Pieces left to a minPieces tier (own prices present). */
+  piecesRemaining: number | undefined;
+  /** MXN left to a minAmount tier, computed at the tier's OWN prices. */
+  amountRemaining: number | undefined;
+};
+
+/** One comparable row per visible tier, shallowest first. Own prices only —
+ *  a tier without its own price on every line keeps its label and shows
+ *  "Por confirmar". A pieces minimum is computable without prices, so its
+ *  help survives a "Por confirmar" row; a money minimum needs the tier's own
+ *  subtotal, so its help hides when a price is missing. */
+export function tierSubtotalRows(tiers: PriceTierDef[], lines: CartQtyLine[]): TierSubtotalRow[] {
+  const ordered = [...tiers].filter((t) => !t.hidden).sort((a, b) => a.order - b.order);
+  const totalQuantity = lines.reduce((sum, l) => sum + l.qty, 0);
+  return ordered.map((tier) => {
+    const hasOwn = lines.every((l) => Number.isFinite(l.unitPrices[tier.id]));
+    const subtotal = hasOwn
+      ? lines.reduce((sum, l) => sum + (l.unitPrices[tier.id] as number) * l.qty, 0)
+      : undefined;
+    // Exact cents for money minimums (#420 boundary precedent): raw float
+    // comparison flips at 999.9999999999999 artifacts. A pieces-only minimum
+    // never needs prices to prove qualification.
+    const qualifies = tier.minAmount != null
+      ? subtotal != null
+        && Math.round(subtotal * 100) >= Math.round(tier.minAmount * 100)
+        && (tier.minPieces == null || totalQuantity >= tier.minPieces)
+      : tierQualifies(tier, lines);
+    const piecesRemaining = tier.minPieces != null
+      ? Math.max(0, tier.minPieces - totalQuantity)
+      : undefined;
+    const amountRemaining = tier.minAmount != null && subtotal != null
+      ? Math.max(0, Math.round(tier.minAmount * 100) - Math.round(subtotal * 100)) / 100
+      : undefined;
+    return { tier, subtotal, qualifies, piecesRemaining, amountRemaining };
+  });
+}
