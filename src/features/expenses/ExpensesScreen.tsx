@@ -177,6 +177,8 @@ export function ExpensesScreen() {
         subtitle={`${expenses.length} ${expenses.length === 1 ? "gasto suelto" : "gastos sueltos"}`}
         action={
           <div className="flex items-center gap-2">
+            {/* #129 stage: read-only monthly close preview lives next to money. */}
+            <Button variant="ghost" onClick={() => navigate("/productos/cierre")}>Cierre mensual</Button>
             {/* #128 stage: read-only distribution proposal lives next to money. */}
             <Button variant="ghost" onClick={() => navigate("/productos/reparto")}>Reparto (simulación)</Button>
             <Button onClick={openCreate}>+ Agregar</Button>
