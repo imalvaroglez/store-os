@@ -40,6 +40,31 @@ function baseState(orders: Order[], customers: Customer[]): AppState {
 }
 
 describe("#132 r2 — aviso de empate honesto y sin jerga", () => {
+  it("r3 (revisión MAYOR): empate en la FRONTERA del top 3 — la 4ª empatada es visible y el aviso nombra a las dos", () => {
+    mocks.state = baseState(
+      [
+        delivered("o1", "c_a", 300000, 5),
+        delivered("o2", "c_b", 200000, 4),
+        delivered("o3", "c_c", 100000, 2),
+        delivered("o4", "c_d", 100000, 2), // empate exacto con Caro en la frontera 3-4
+        delivered("o5", "c_e", 50000, 1),  // fuera del top, sin empate
+      ],
+      [
+        customer("c_a", "Ana", true),
+        customer("c_b", "Bety", true),
+        customer("c_c", "Caro", true),
+        customer("c_d", "Diana", true),
+        customer("c_e", "Elena", true),
+      ]
+    );
+    render(<ToastProvider><ResellerRankingScreen /></ToastProvider>);
+    // El podio se EXTIENDE: las 4 visibles (3 + la empatada en frontera) y la 5ª fuera.
+    expect(screen.getAllByText(/Diana/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Elena/)).toBeNull();
+    // El aviso nombra a las empatadas del podio.
+    expect(screen.getByText(/Caro y Diana empatan/)).toBeTruthy();
+  });
+
   it("el empate dice que el registro llega en etapa próxima — sin prometer un flujo inexistente", () => {
     mocks.state = baseState(
       [
@@ -49,7 +74,7 @@ describe("#132 r2 — aviso de empate honesto y sin jerga", () => {
       [customer("c_a", "Ana", true), customer("c_b", "Bety", true)]
     );
     render(<ToastProvider><ResellerRankingScreen /></ToastProvider>);
-    const notice = screen.getByText(/empate persistente/i);
+    const notice = screen.getByText(/empatan con el mismo importe/i);
     expect(notice.textContent).toMatch(/decide|decides/);
     expect(notice.textContent).toMatch(/etapa|después|aún no/);
     // La promesa rota de la ronda 1 («registra el motivo») ya no está.

@@ -83,6 +83,9 @@ export function monthRanking(inputs: RankingInputs): MonthRanking {
       if (rankingMonthKey(delivery.deliveredAt) !== monthKey) continue;
       for (const line of delivery.lines) {
         if (!Number.isInteger(line.quantity) || line.quantity <= 0) continue;
+        // ponytail: deliveries carry no lineId, so a dimension with two
+        // order lines at different prices prices every delivered piece with
+        // the FIRST line — documented limitation of the #333 source model.
         const item = items.find(
           (candidate) => stockDimensionKey(candidate.productId ?? "", candidate.variantId) === stockDimensionKey(line.productId, line.variantId)
         );
@@ -91,14 +94,26 @@ export function monthRanking(inputs: RankingInputs): MonthRanking {
       }
     }
 
-    // ── Confirmed refunds of the SAME month discount the piece at its real
-    // (historical) price — the #203 incident math already froze it.
+    // ── Confirmed refunds discount the piece at its real (historical) price
+    // (#203 froze it). #132 (review r3): the discount lands in the month of
+    // the DELIVERY being refunded — the last delivered piece BEFORE the
+    // confirmation — never in the confirmation month. A November delivery
+    // refunded in December must not fabricate a negative December, and a
+    // refund without any countable delivery discounts nothing (symmetric with
+    // the delivery loop's "line left the order" skip).
+    const deliveryMonths = (order.deliveries ?? [])
+      .filter((delivery) => delivery.id !== undefined && seenDeliveryIds.has(delivery.id))
+      .map((delivery) => ({ at: delivery.deliveredAt }));
     for (const incident of order.incidents ?? []) {
       const confirmed = (incident.events ?? []).some((event) => event.kind === "confirmed");
       const refunded = incident.resolution?.kind === "refund";
       if (!confirmed || !refunded) continue;
       const confirmedAt = (incident.events ?? []).find((event) => event.kind === "confirmed")?.at;
-      if (!confirmedAt || rankingMonthKey(confirmedAt) !== monthKey) continue;
+      if (!confirmedAt) continue;
+      const before = deliveryMonths
+        .filter((delivery) => new Date(delivery.at).getTime() <= new Date(confirmedAt).getTime())
+        .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
+      if (!before || rankingMonthKey(before.at) !== monthKey) continue;
       const unit = incident.resolution?.saleAdjustmentUnitCents ?? incident.originalUnitPriceCents;
       const qty = Math.max(1, Math.round(incident.quantity || 1));
       add(order.customerId, -unit * qty, -qty);
