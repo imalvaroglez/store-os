@@ -105,6 +105,10 @@ export type TierDiagnosis = {
   values: number[];
   median: number;
   iqr: number;
+  /** Real central-half fences (Q1/Q3) — NOT median±IQR/2, which is only
+   * correct for symmetric distributions (r4 review N1). */
+  q1: number;
+  q3: number;
   /** "iqr" | "mad" when a second signal was usable, "none" when both are 0. */
   dispersion: "iqr" | "mad" | "none";
   madSignal: boolean;
@@ -181,6 +185,8 @@ export function categoryDiagnosis(
     values,
     median: med,
     iqr,
+    q1: sample >= 3 ? quartile(sorted, 0.25) : 0,
+    q3: sample >= 3 ? quartile(sorted, 0.75) : 0,
     dispersion: iqr > 0 ? "iqr" : madValue > 0 ? "mad" : "none",
     madSignal: madValue > 0,
     evidence: sample >= 3 ? "ok" : "insufficient",

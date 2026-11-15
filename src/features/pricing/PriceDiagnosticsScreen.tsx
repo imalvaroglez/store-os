@@ -20,6 +20,10 @@ export function PriceDiagnosticsScreen() {
   const [history, setHistory] = useState<Array<PriceChangeEvent | RuleChangeEvent> | null>(null);
   const [historyError, setHistoryError] = useState(false);
 
+  const productsById = useMemo(
+    () => new Map(state.products.filter((p) => p.storeId === activeStore?.id).map((p) => [p.id, p])),
+    [state.products, activeStore?.id]
+  );
   if (!activeStore) return null;
   const categories = state.categories.filter((c) => c.storeId === activeStore.id);
   const products = state.products.filter(
@@ -29,10 +33,6 @@ export function PriceDiagnosticsScreen() {
   // canonical order (cheapest → priciest), never a hardcoded trio.
   const diagnosis = tierId ? categoryDiagnosis(products, tierId, tiers.map((t) => t.id)) : null;
   const withPrices = diagnosis?.sample ?? 0;
-  const productsById = useMemo(
-    () => new Map(state.products.filter((p) => p.storeId === activeStore?.id).map((p) => [p.id, p])),
-    [state.products, activeStore?.id]
-  );
   async function loadHistory() {
     if (!activeStore) return;
     setHistoryError(false);
@@ -78,8 +78,8 @@ export function PriceDiagnosticsScreen() {
                 <>
                   <p className="text-sm">
                     La mitad de las piezas cuesta menos de <b><Money exact amount={diagnosis.median} /></b> · la mitad
-                    central va de <b><Money exact amount={diagnosis.median - diagnosis.iqr / 2} /></b> a{" "}
-                    <b><Money exact amount={diagnosis.median + diagnosis.iqr / 2} /></b>
+                    central va de <b><Money exact amount={diagnosis.q1} /></b> a{" "}
+                    <b><Money exact amount={diagnosis.q3} /></b>
                     {diagnosis.dispersion === "none" && <> · sin dispersión estimable</>}
                   </p>
                   {diagnosis.withoutCost > 0 && (
