@@ -81,7 +81,7 @@ const EXPENSE_CATEGORY_OPTIONS = Object.entries(PURCHASE_EXPENSE_CATEGORY_LABEL)
 type Filter = "all" | PurchaseLineStatus;
 
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
-  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, adjustReceivedPurchase, confirmSupplierLink, cloud } = useStore();
+  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, adjustReceivedPurchase, confirmSupplierLink, revokeSupplierLink, cloud } = useStore();
   const toast = useToast();
   const [draft, setDraft] = useState<Purchase>(() => {
     const editable = effectivePurchaseStatus(purchase) !== "received";
@@ -660,9 +660,21 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               const existing = suggestedProductFor(state.supplierLinks ?? [], activeStore.id, supplierId, captured);
               if (existing?.productId === line.productId) {
                 return (
-                  <p className="text-xs text-on-surface-soft mt-2">
-                    Asociación recordada para «{captured}» de este proveedor.
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <p className="text-xs text-on-surface-soft">Asociación recordada para «{captured}» de este proveedor.</p>
+                    {/* #211: a wrong or dead association can be FORGOTTEN here —
+                        future captures stop suggesting it; purchases that already
+                        used it keep their recorded product and cost. */}
+                    <Button size="sm" variant="ghost" className="!px-0"
+                      onClick={() => void revokeSupplierLink(activeStore.id, supplierId, captured)
+                        .then(() => toast.success("Asociación olvidada: ya no se sugerirá en compras futuras."))
+                        // Same catch+toast contract as «Recordar» — a failed
+                        // revoke must SAY so, never pass as forgotten.
+                        .catch(() => toast.error("No se pudo olvidar la asociación. Inténtalo de nuevo."))}
+                    >
+                      Olvidar «{captured}»
+                    </Button>
+                  </div>
                 );
               }
               const linkedName = products.find((p) => p.id === line.productId)?.name ?? "producto";

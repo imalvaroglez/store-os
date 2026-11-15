@@ -54,6 +54,7 @@ beforeEach(() => {
   mocks.state.products = [aro];
   mocks.state.supplierLinks = [];
   mocks.confirmSupplierLink.mockClear().mockResolvedValue(undefined);
+  mocks.revokeSupplierLink.mockClear().mockResolvedValue(undefined);
 });
 
 describe("#211 sugerencia por código confirmado", () => {
@@ -106,6 +107,27 @@ describe("#211 sugerencia por código confirmado", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Recordar «AR-0123»/i }));
     await waitFor(() =>
       expect(screen.getByText("No se pudo guardar la asociación. Inténtalo de nuevo.")).toBeTruthy()
+    );
+  });
+
+  it("la asociación vigente se puede OLVIDAR desde el renglón: llama a revoke y avisa; el fallo no pasa por olvidado", async () => {
+    mocks.state.supplierLinks = [link("ar0123", "p_aro")];
+    open();
+    // Captura el código ya asociado y aplica la sugerencia → nota «Asociación recordada…».
+    fireEvent.change(await screen.findByLabelText("Producto del ticket"), { target: { value: "AR-0123" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Usar Aro Luna/i }));
+    expect(await screen.findByText(/Asociación recordada para «AR-0123»/)).toBeTruthy();
+    // Olvidar revoca exactamente tienda+proveedor+código (solo compras futuras).
+    fireEvent.click(screen.getByRole("button", { name: /Olvidar «AR-0123»/i }));
+    await waitFor(() => expect(mocks.revokeSupplierLink).toHaveBeenCalledWith("olivia", "sup1", "AR-0123"));
+    await waitFor(() =>
+      expect(screen.getByText("Asociación olvidada: ya no se sugerirá en compras futuras.")).toBeTruthy()
+    );
+    // El fallo del revoke AVISA — jamás pasa como olvidada en silencio.
+    mocks.revokeSupplierLink.mockClear().mockRejectedValue(new Error("offline"));
+    fireEvent.click(screen.getByRole("button", { name: /Olvidar «AR-0123»/i }));
+    await waitFor(() =>
+      expect(screen.getByText("No se pudo olvidar la asociación. Inténtalo de nuevo.")).toBeTruthy()
     );
   });
 });
