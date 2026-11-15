@@ -25,8 +25,10 @@ import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
 import { committedForProduct, stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { isVariantProduct, totalStock } from "../../lib/variants";
-import { defaultTier } from "../../lib/pricing";
-import { publicPrice, profit, formatMoney } from "../../lib/money";
+import { defaultTier, tiersForStore } from "../../lib/pricing";
+import type { PriceTierDef } from "../../types";
+import { navigate } from "../../lib/router";
+import { publicPrice, profit, formatMoney, formatMoneyPlain } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
 import type { Product } from "../../types";
 import type { StatusTone } from "../../design-system";
@@ -90,8 +92,7 @@ function compareBy(key: SortKey, a: Product, b: Product, defaultTierId: string):
 function ProductCard({
   product,
   isTiered,
-  defaultId,
-  defaultLabel,
+  tiers,
   committed,
   onEdit,
   onDelete,
@@ -99,8 +100,7 @@ function ProductCard({
 }: {
   product: Product;
   isTiered: boolean;
-  defaultId: string;
-  defaultLabel: string;
+  tiers: PriceTierDef[];
   committed: number;
   onEdit: () => void;
   onDelete: () => void;
@@ -161,10 +161,29 @@ function ProductCard({
 
           {isTiered ? (
             <>
-              <div className="flex gap-3 mt-2 text-xs">
-                <span className="text-ink">
-                  {defaultLabel} <b>{formatMoney(product.prices?.[defaultId])}</b>
-                </span>
+              {/* #294: all levels side by side, aligned across rows — compare a
+                  change without opening each piece. A missing price is shown as
+                  such ("—"), never as $0. */}
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-2 text-xs">
+                {tiers.map((tier) => {
+                  const price = product.prices?.[tier.id];
+                  // #294 r2: 0 is NOT a price either — the form persists a
+                  // cleared field as 0, and the app's own gates treat !(p>0)
+                  // as absent. Never render «Mayoreo $0» as a legit price.
+                  const hasPrice = typeof price === "number" && price > 0;
+                  return (
+                    <span key={tier.id} className={hasPrice ? "text-ink" : "text-on-surface-soft"}>
+                      {tier.label}{" "}
+                      {hasPrice
+                        ? <b>{formatMoneyPlain(price)}</b>
+                        : <span title="Sin precio para este nivel" aria-label="Sin precio para este nivel">—</span>}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="flex gap-3 mt-1 text-xs">
+                {/* #294: the default price already rides the tier row above —
+                    only the stock context remains here (nothing duplicated). */}
                 {isVariantProduct(product) ? (
                   variantStock != null ? (
                     <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
@@ -261,7 +280,6 @@ export function CatalogScreen() {
   // tipo); drop a stale stock sort so the select never points at a missing option.
   const effectiveSortKey: SortKey = sortKey === "stock" && !isTiered ? "createdAt" : sortKey;
   const defaultId = defaultTier(activeStore)?.id ?? "t_retail";
-  const defaultLabel = defaultTier(activeStore)?.label ?? "Menudeo";
   const products = productsForStore(state.products, activeStore.id);
   const categories = activeCategoriesForStore(state.categories, activeStore.id);
   // Filter matches REAL categories (categoryIds, primary or secondary) — not
@@ -299,8 +317,18 @@ export function CatalogScreen() {
             ? `${filtered.length} de ${products.length} piezas`
             : `${products.length} ${products.length === 1 ? "producto" : "productos"}`
         }
+        // #294 r2: at 390px the three actions overflowed the header (~115px
+        // of horizontal scroll, «+ Agregar» invisible). Wrap to a second
+        // row instead — tap targets unchanged.
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* #294: pricing strategy is reachable from the FIRST viewport —
+                no hidden chevron inside a collapsed Productos sub-list. */}
+            {isTiered && (
+              <Button variant="ghost" size="sm" onClick={() => navigate("/productos/estrategia")}>
+                Estrategia de precios
+              </Button>
+            )}
             {/* Preview what clients see — opens the public storefront in a new tab. */}
             <a
               href={`/catalogo/${activeStore.slug}`}
@@ -379,8 +407,7 @@ export function CatalogScreen() {
               key={p.id}
               product={p}
               isTiered={isTiered}
-              defaultId={defaultId}
-              defaultLabel={defaultLabel}
+              tiers={tiersForStore(activeStore)}
               committed={committedForProduct(state.orders, activeStore.id, p.id)}
               onEdit={() => setEditing(p)}
               onDelete={() => setDeleting(p)}
