@@ -29,6 +29,11 @@ const aro: Product = {
   prices: { t_retail: 300 }, quantityOnHand: 2, createdAt: NOW, updatedAt: NOW,
 } as unknown as Product;
 
+const aroXL: Product = {
+  id: "p_aro_xl", storeId: "store_olivia", name: "Aro Luna XL", category: "other", isPublic: true, status: "published",
+  prices: { t_retail: 500 }, quantityOnHand: 2, createdAt: NOW, updatedAt: NOW,
+} as unknown as Product;
+
 const unlinkedOrder: Order = {
   id: "o421", storeId: "store_olivia", customerId: "c1",
   items: [{ lineId: "o421_L0", productName: "Aro Luna", quantity: 1, unitPrice: 250, subtotal: 250 }], // capturado POR NOMBRE, sin ficha
@@ -45,7 +50,7 @@ function renderForm(order?: Partial<Order> & { id?: string }) {
 
 beforeEach(() => {
   localStorage.clear();
-  mocks.state.products = [aro];
+  mocks.state.products = [aro, aroXL];
   mocks.upsertOrder.mockClear().mockImplementation(async (order: Order) => order);
 });
 
@@ -60,7 +65,7 @@ describe("#421 renglón sin ficha en el editor de pedidos", () => {
     const input = await screen.findByRole("combobox", { name: "Producto" });
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "Aro Luna" } });
-    fireEvent.click(await screen.findByRole("option", { name: /Aro Luna/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /^Aro Luna(?! XL)/ }));
     await waitFor(() => expect(screen.queryByText(/No aparta existencias/i)).toBeNull());
     // Precio acordado intacto (el catálogo diría $300; la clienta acordó $250).
     expect((screen.getByLabelText(/Precio unitario/i) as HTMLInputElement).value).toBe("250");
@@ -79,7 +84,7 @@ describe("#421 renglón sin ficha en el editor de pedidos", () => {
     const input = await screen.findByRole("combobox", { name: "Producto" });
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "Aro Luna" } });
-    fireEvent.click(await screen.findByRole("option", { name: /Aro Luna/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /^Aro Luna(?! XL)/ }));
     await waitFor(() => expect(screen.queryByText(/No aparta existencias/i)).toBeNull());
     const priceInput = screen.getByLabelText(/Precio unitario/i) as HTMLInputElement;
     expect(priceInput.value).toBe("250"); // campo visible con el precio acordado
@@ -88,5 +93,35 @@ describe("#421 renglón sin ficha en el editor de pedidos", () => {
     const saved = mocks.upsertOrder.mock.calls[mocks.upsertOrder.mock.calls.length - 1][0] as Order;
     expect(saved.items[0].productId).toBe("p_aro");
     expect(saved.items[0].unitPrice).toBe(250);
+  });
+
+  it("#421 r2 (revisión MAYOR): cambiar de ficha por dropdown directo adopta el precio de catálogo de la NUEVA ficha", async () => {
+    // Línea ya vinculada a Aro Luna ($300): enfocar el selector y elegir
+    // «Aro Luna XL» ($500) SIN teclear no debe arrastrar el precio viejo.
+    renderForm({
+      items: [{ lineId: "o421_L0", productId: "p_aro", productName: "Aro Luna", quantity: 1, unitPrice: 300, subtotal: 300 }],
+    });
+    const input = await screen.findByRole("combobox", { name: "Producto" });
+    expect((input as HTMLInputElement).value).toBe("Aro Luna");
+    fireEvent.focus(input); // abre el dropdown sin limpiar el texto
+    fireEvent.click(await screen.findByRole("option", { name: /Aro Luna XL/ }));
+    const priceInput = await waitFor(() => {
+      const el = screen.getByLabelText(/Precio unitario/i) as HTMLInputElement;
+      expect(el.value).toBe("500");
+      return el;
+    });
+    expect(priceInput.value).toBe("500"); // catálogo de la ficha nueva, no el $300 residual
+  });
+
+  it("#421 r2 (revisión M1): una línea nueva VACÍA no muestra el aviso «No aparta existencias»", async () => {
+    // Un pedido nuevo arranca con una línea sin capturar: el aviso es para
+    // renglones capturados POR NOMBRE, no para la línea en blanco.
+    renderForm({ items: [], customerId: undefined });
+    await screen.findByText(/Artículo 1/i);
+    expect(screen.queryByText(/No aparta existencias/i)).toBeNull();
+    // En cambio, al capturar un nombre sin ficha el aviso SÍ aparece.
+    const input = screen.getByRole("combobox", { name: "Producto" });
+    fireEvent.change(input, { target: { value: "Grabado especial" } });
+    await screen.findByText(/No aparta existencias/i);
   });
 });
