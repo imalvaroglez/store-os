@@ -992,6 +992,8 @@ export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
 }
 
 // Administrative state held in memory from the authenticated Firestore session.
+import type { SupplierProductLink } from "../lib/supplierLinks";
+
 export type AppState = {
   stores: Store[];
   activeStoreId: string | null;
@@ -1003,7 +1005,13 @@ export type AppState = {
   orders: Order[];
   /** #184 loose expenses (registration, assignment, supplies). */
   expenses: LooseExpense[];
+  /** #211: confirmed supplier-code → product associations (store-scoped).
+   * Optional so legacy local fixtures keep compiling; cloud loading always
+   * provides it. */
+  supplierLinks?: SupplierProductLink[];
 };
+
+export type { SupplierProductLink };
 
 // Catalog business rules (single source of truth).
 export const MAX_PRODUCT_IMAGES = 5;
