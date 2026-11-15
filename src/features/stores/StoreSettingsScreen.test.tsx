@@ -78,6 +78,13 @@ describe("mínimos de nivel: captura de decimales (#188)", () => {
     expect("whatsappPhone" in patch).toBe(false); // sin edición local, el campo NO viaja
   });
 
+  it("#373 revisión UX r2: guardar SIN ningún cambio no escribe nada (ni siquiera updatedAt)", async () => {
+    render(<ToastProvider><StoreSettingsScreen storeId="store_olivia" /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(screen.getByText(/Sin cambios que guardar/)).toBeTruthy());
+    expect(mocks.updateStore).not.toHaveBeenCalled();
+  });
+
   it("#373 revisión UX: editar el WhatsApp SÍ lo envía", async () => {
     render(<ToastProvider><StoreSettingsScreen storeId="store_olivia" /></ToastProvider>);
     const whatsappInput = screen.getByPlaceholderText("52155...");
