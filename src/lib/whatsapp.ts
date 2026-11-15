@@ -145,10 +145,13 @@ export function buildCartOrderUrl(
         `*${request.totalQuantity} ${request.totalQuantity === 1 ? "pieza" : "piezas"} en total*`,
         // Exact cents + MXN, identical to the drawer rows (1.13.1): the
         // message can never round away a cent the client just saw on screen.
-        `Subtotal estimado: ${formatMoneyExact(request.habitualSubtotal)} MXN`,
-        // The identity estimate travels ONLY when the cart shows it (< $1,000
-        // habitual AND fully calculated) — same rule, same numbers.
+        `Subtotal estimado - precio ${esc(request.activeTier.label)}: ${formatMoneyExact(request.estimatedSubtotal)} MXN`,
+        // Same comparison and qualification as the drawer, with no fallback prices.
+        // #437: when the ACTIVE tier already IS the identity tier (only-iconic
+        // prices), the comparison row would repeat the same figure — the main
+        // row above already carries the estimable Iconic subtotal.
         ...(request.showIdentityHint && request.identitySubtotal != null
+          && request.identityTier?.id !== request.activeTier.id
           ? [`¿Eres ${esc(request.identityTier?.label ?? "")}? Subtotal estimado: ${formatMoneyExact(request.identitySubtotal)} MXN`]
           : []),
         "Precios, beneficio y disponibilidad sujetos a confirmación.",
