@@ -19,7 +19,11 @@ import { InlineEditable, InlineFaqEditor } from "./InlineEditable";
 type CartContextValue = ReturnType<typeof useCart> & { store: PublicStore; notifyAdded: (name: string) => void };
 const CartContext = createContext<CartContextValue | null>(null);
 function useCartContext() { return useContext(CartContext)!; }
-const OLIVIA_LOGO_URL = "/images/olivia-logo.png";
+// #359: the file-backed fallback logo rides the BUILD sha — a new deploy
+// changes the URL, so no cache layer (browser, intermediary, future SW write)
+// can keep serving the previous logo on a normal reload. Per-store uploaded
+// logos (sf.logoUrl) already carry unique URLs per upload.
+const OLIVIA_LOGO_URL = `/images/olivia-logo.png?v=${typeof __BUILD_SHA__ !== "undefined" ? __BUILD_SHA__ : "dev"}`;
 
 function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSignal">) {
   return product.availability === "sold_out" || product.stockSignal === "agotado";
@@ -350,7 +354,7 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
     {store && <>
       {addedName && !open && <div className="olv-added-status" role="status" aria-live="polite"><span><strong>Agregado a tu pedido</strong><span className="olv-added-name">{addedName}</span></span><Button variant="primary" onClick={openCart}>Ver mi pedido</Button></div>}
       <CartFloatingButton pieces={pieces} onClick={openCart} className={`olv-floating ${open ? "hidden" : ""}`} />
-      {catalog && <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} categoryNameBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, catalog.categories.find((category) => p.categoryIds?.[0] === category.id)?.name ?? ""]))} />}
+      {catalog && <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} categoryNameBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, catalog.categories.find((category) => p.categoryIds?.[0] === category.id)?.name ?? ""]))} summaryMode="tiers" />}
     </>}
   </div>;
   return store ? <CartContext.Provider value={{ ...cart, lines, store, notifyAdded }}>{body}</CartContext.Provider> : body;

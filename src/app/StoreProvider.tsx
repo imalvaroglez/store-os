@@ -49,10 +49,13 @@ export { CategoryRulesConflictError, PublicCatalogProjectionError } from "./fire
 import type { AppUser } from "./firebase/auth";
 import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
 import { normalizeEmail, sendInviteLink } from "./firebase/auth";
+import { linkDocId } from "../lib/supplierLinks";
 import {
   loadCloudState,
   subscribeCloudState,
   saveEntity,
+  confirmSupplierLinkTx,
+  revokeSupplierLinkTx,
   saveStorefrontBatch,
   saveStorePackaging,
   savePricingRules,
@@ -123,6 +126,8 @@ export type Action =
   | { type: "DELETE_ORDER"; orderId: string }
   // cloud sync pushes a whole state
   | { type: "REPLACE_STATE"; state: AppState }
+  | { type: "UPSERT_SUPPLIER_LINK"; link: import("../lib/supplierLinks").SupplierProductLink }
+  | { type: "REMOVE_SUPPLIER_LINK"; id: string }
   // purchase-ux2 bulk create: products + their purchase land in ONE dispatch
   // so the UI never shows a half-created batch.
   | { type: "BULK_CREATE_FOR_PURCHASE"; products: Product[]; purchase: Purchase };
@@ -262,6 +267,13 @@ export function reducer(state: AppState, action: Action): AppState {
       return state.activeStoreId && incoming.stores.some((s) => s.id === state.activeStoreId)
         ? { ...incoming, activeStoreId: state.activeStoreId } : incoming;
     }
+    case "UPSERT_SUPPLIER_LINK": {
+      // #211: replace-by-id — an idempotent retry never duplicates.
+      const links = state.supplierLinks ?? [];
+      return { ...state, supplierLinks: links.some((l) => l.id === action.link.id) ? links.map((l) => (l.id === action.link.id ? action.link : l)) : [...links, action.link] };
+    }
+    case "REMOVE_SUPPLIER_LINK":
+      return { ...state, supplierLinks: (state.supplierLinks ?? []).filter((l) => l.id !== action.id) };
     case "BULK_CREATE_FOR_PURCHASE": {
       const products = [...state.products];
       for (const product of action.products) {
@@ -321,6 +333,10 @@ type StoreContextValue = {
   inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
   transferStoreOwnership: (storeId: string, memberUid: string) => Promise<void>;
+  /** #211: persist one confirmed supplier-code → product association. */
+  confirmSupplierLink: (input: { storeId: string; supplierId: string; code: string; productId: string; productName: string }) => Promise<void>;
+  /** #211: forget an association — future captures stop suggesting it. */
+  revokeSupplierLink: (storeId: string, supplierId: string, code: string) => Promise<void>;
   /** Republish a store's public catalog projection (backfill / repair). */
   republishCatalog: (storeId: string) => Promise<void>;
   setActiveStore: (storeId: string | null) => void;
@@ -1332,6 +1348,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "UPDATE_ORDER", order: updated });
       return updated;
     },
+    confirmSupplierLink: async (input) => {
+      const currentUser = requireAuthenticatedUser();
+      // Persist first; the dispatch follows the SAVED truth (#373 discipline).
+      const link = await confirmSupplierLinkTx({ ...input, confirmedBy: currentUser.uid });
+      dispatch({ type: "UPSERT_SUPPLIER_LINK", link });
+    },
+    revokeSupplierLink: async (storeId, supplierId, code) => {
+      requireAuthenticatedUser();
+      await revokeSupplierLinkTx(storeId, supplierId, code);
+      dispatch({ type: "REMOVE_SUPPLIER_LINK", id: linkDocId(storeId, supplierId, code) });
+    },
     applyIncidentEvent: async (order, incidentId, event, extra) => {
       const currentUser = requireAuthenticatedUser();
       const result = await applyIncidentEventTx({
@@ -1343,6 +1370,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         replacement: extra?.replacement,
       });
       dispatch({ type: "UPDATE_ORDER", order: result.order });
+      // #364: incident stock movements (replacement out, piece back to sale)
+      // update the public catalog signal too — same as receptions (#229); a
+      // failure never reverts the incident event.
+      if (result.changedProductIds.length > 0) {
+        const store = state.stores.find((st) => st.id === order.storeId);
+        if (store) {
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(store, state.products, state.categories, result.changedProductIds)
+          );
+        }
+      }
     },
     // #184 loose expenses: register/classify; assignment and consumption run
     // through their transactions and land via the entity listeners.
@@ -1399,7 +1437,7 @@ function storeWithMembership(store: Store, user: AppUser): Store & { ownerUid?: 
 }
 
 export function emptyAppState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [] };
+  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [], supplierLinks: [] };
 }
 
 export function useStore(): StoreContextValue {
