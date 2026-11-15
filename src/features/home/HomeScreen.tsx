@@ -12,6 +12,7 @@ import {
   StatRow,
 } from "../../design-system";
 import { ordersForStore, productsToRestock, customersForStore } from "../../lib/selectors";
+import { monthRanking, currentMonth } from "../../lib/resellerRanking";
 import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { effectiveOrderStatus, legacyCollectDeposit, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
@@ -56,6 +57,28 @@ export function HomeScreen() {
   // FER-09 restock alerts, derived from synced state (no extra Firestore reads).
   // On-demand stores track no stock, so only tiered stores can alert.
   const restock = isTiered ? productsToRestock(state.products, activeStore.id) : [];
+  // #132 (FER-17): the private in-app notice — the PREVIOUS month's ranking is
+  // ready for Fer's review while it has no confirmation yet. Pure state; no
+  // extra reads. Shown only when there is something to review.
+  const previousMonth = (() => {
+    const now = currentMonth();
+    const zero = now.year * 12 + (now.month - 1) - 1;
+    return { year: Math.floor(zero / 12), month: (zero % 12) + 1 };
+  })();
+  const previousRanking = monthRanking({
+    storeId: activeStore.id,
+    month: previousMonth,
+    orders: state.orders,
+    customers: state.customers,
+  });
+  const rankingPendingReview =
+    previousRanking.entries.length > 0 &&
+    !(state.rankingConfirmations ?? []).some(
+      (confirmation) =>
+        confirmation.storeId === activeStore.id &&
+        confirmation.year === previousMonth.year &&
+        confirmation.month === previousMonth.month
+    );
   // FER-05 aviso previo (visual only): iconic customers whose validity ends
   // within the notice window, most urgent first. Derives from synced state.
   const iconicRenewals = isTiered
@@ -142,6 +165,20 @@ export function HomeScreen() {
           <Button variant="ghost" className="mt-2 !px-0" onClick={() => navigate("/clientes")}>
             Ver clientas →
           </Button>
+        </Card>
+      )}
+
+      {rankingPendingReview && (
+        <Card className="mb-5">
+          <div className="flex items-baseline justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-ink text-sm">🏆 Top emprendedoras listo para tu revisión</h3>
+              <p className="text-xs text-on-surface-soft mt-0.5">
+                El ranking del mes pasado está listo: revísalo y confirma el resultado antes de comunicar incentivos.
+              </p>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => navigate("/productos/ranking")}>Ver top →</Button>
+          </div>
         </Card>
       )}
 
