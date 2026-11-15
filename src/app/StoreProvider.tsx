@@ -32,6 +32,7 @@ import { uid } from "../lib/ids";
 import { nowIso, todayIso } from "../lib/dates";
 import { reservationDeltasForOrderChange } from "../lib/inventory";
 import { receivedProductsFromStockUpdates } from "../lib/purchases";
+import { ruleChangeEvent } from "../lib/priceDiagnostics";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
@@ -67,6 +68,7 @@ import {
   savePricingRules,
   saveCategoryPricingRules,
   applyProductPrices as applyProductPricesBatch,
+  recordRuleChangeEvent,
   projectPublicForStore,
   deleteEntity,
   claimSlug,
@@ -325,7 +327,10 @@ type StoreContextValue = {
   /** #253: members may save the packaging profile (field-scoped rules path). */
   savePackaging: (packaging: StorePackaging) => Promise<void>;
   /** #254: members may save the pricing rules (same field-scoped path). */
-  savePricingRules: (pricingRules: PricingRulesConfig) => Promise<void>;
+  savePricingRules: (
+    pricingRules: PricingRulesConfig,
+    ruleEvent?: { categoryId: string | null; summary: string }
+  ) => Promise<void>;
   /** #289: apply ONLY prices — scoped batch write (never a full product
    * upsert), public catalog republished once from the merged local state. */
   applyProductPrices: (updates: Array<{ id: string; prices: Record<string, number> }>) => Promise<void>;
@@ -334,7 +339,7 @@ type StoreContextValue = {
    * stale client clone. `null` deletes the category's table. P0-2:
    * `expectedSignature` is the table the client loaded; if the saved table
    * changed meanwhile, the save is REJECTED (CategoryRulesConflictError). */
-  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null, expectedSignature: string) => Promise<void>;
+  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null, expectedSignature: string, ruleEvent?: { summary: string }) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
@@ -753,11 +758,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (cloud) await saveStorePackaging(existing, packaging, updatedAt);
       dispatch({ type: "UPDATE_STORE", store: { ...existing, packaging, updatedAt } });
     },
-    savePricingRules: async (pricingRules) => {
+    savePricingRules: async (pricingRules, ruleEvent) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
-      if (cloud) await savePricingRules(existing, pricingRules, updatedAt);
+      if (cloud) {
+        await savePricingRules(existing, pricingRules, updatedAt);
+        // #335 r2: a config change is its own event — it changed no price.
+        if (ruleEvent && user) {
+          await recordRuleChangeEvent(
+            ruleChangeEvent({
+              // m3: the doc id carries the store — two stores saving their
+              // tier table in the same millisecond must never collide.
+              intentId: `${existing.id}__${ruleEvent.categoryId ?? "tiers"}:${updatedAt}`,
+              storeId: existing.id,
+              categoryId: ruleEvent.categoryId,
+              uid: user.uid,
+              email: user.email,
+              summary: ruleEvent.summary,
+            })
+          );
+        }
+      }
       // Local mirror with the same byTier-only overlay the transaction applies
       // server-side — never replace the whole config from this screen's clone.
       const merged: PricingRulesConfig = existing.pricingRules
@@ -771,7 +793,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
       if (cloud) {
-        await applyProductPricesBatch(existing, updates, updatedAt);
+        // #335 r2: uid enables the per-tier events for EFFECTIVE changes.
+        await applyProductPricesBatch(existing, updates, updatedAt, user?.uid, user?.email);
         // Republish the PUBLIC catalog once from the freshest local products
         // merged with the new prices — projection prices mirror the private
         // doc; other public fields come from the live subscription state.
@@ -792,11 +815,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    saveCategoryPricingRules: async (categoryId, rules, expectedSignature) => {
+    saveCategoryPricingRules: async (categoryId, rules, expectedSignature, ruleEvent) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
       if (cloud) await saveCategoryPricingRules(existing, categoryId, rules, updatedAt, expectedSignature);
+      // #335 M1: the strategy BAND TABLE is the rule config par excellence —
+      // saving or resetting it must leave its own trail (like tier tables do).
+      if (cloud && ruleEvent && user) {
+        await recordRuleChangeEvent(
+          ruleChangeEvent({
+            intentId: `${existing.id}__cat_${categoryId}:${updatedAt}`,
+            storeId: existing.id,
+            categoryId,
+            uid: user.uid,
+            email: user.email,
+            summary: ruleEvent.summary,
+          })
+        );
+      }
       // Mirror the same category-scoped overlay locally (never a stale clone).
       const pricingRules: PricingRulesConfig = existing.pricingRules
         ? JSON.parse(JSON.stringify(existing.pricingRules))
@@ -906,9 +943,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // #373: persist FIRST against the fresh doc (untouched stock/cost carry
       // concurrent receptions; intentional edits land as deltas) — the local
       // dispatch follows the SAVED truth, never a phantom.
+      // #335 (merge): the price-change events ride the SAME transaction —
+      // the trail never diverges from the price.
       const saved = await saveProductPreservingConcurrentTx(
         baseline ?? state.products.find((p) => p.id === product.id),
-        product
+        product,
+        user ?? undefined,
+        product.updatedAt
       );
       dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product: saved });
       {

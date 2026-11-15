@@ -24,6 +24,7 @@ FIRESTORE_FILES=(
   src/app/firebase/rankingConfirmations.emulator.test.ts
   src/app/firebase/supplierLinks.emulator.test.ts
   src/app/firebase/storefrontSave.emulator.test.ts
+  src/app/firebase/priceEvents.emulator.test.ts
 )
 # Storage suites (#176): the emulator loads each file's rules explicitly, so
 # they do NOT use firebase.emulator.json's storage.rules.emulator swap.
