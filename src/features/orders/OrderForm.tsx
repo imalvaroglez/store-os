@@ -468,13 +468,25 @@ export function OrderForm({
     // configured price keeps the line's current price instead of dropping to
     // $0 (#93's fallback) — but never masks the missing-tier case.
     const currentPrice = numberFromText(line.unitPriceText);
-    const unitPrice = missingTier && !manualTier ? undefined : tierPrice ?? (currentPrice > 0 ? currentPrice : undefined);
+    // #421: linking an ALREADY-CAPTURED line (no product yet) keeps the AGREED
+    // price — the catalog price must never silently overwrite what Fer and the
+    // clienta closed (repricing is a manual act). First link only: CHANGING an
+    // existing link keeps main's behavior — the new product's catalog price
+    // wins, and a residual price from the PREVIOUS product never leaks into
+    // the new line (review MAYOR: a dropdown pick without typing kept the old
+    // price silently, marked "manual").
+    const firstLink = line.productId == null;
+    const unitPrice = missingTier && !manualTier
+      ? undefined
+      : firstLink
+        ? currentPrice > 0 ? currentPrice : tierPrice
+        : tierPrice ?? (currentPrice > 0 ? currentPrice : undefined);
     const category = state.categories.find((item) => item.storeId === order.storeId && item.id === product.categoryIds?.[0]);
     const categorySnapshot = line.productId === product.id ? line.categorySnapshot : category ? { id: category.id, name: category.name } : undefined;
     updateLine(line.key, {
       productId: product.id,
       needsProductChoice: false,
-      priceSource: manualTier ? "manual" : "automatic",
+      priceSource: manualTier || (firstLink && currentPrice > 0) ? "manual" : "automatic",
       // #124: the color choice belongs to the new product; a design sold by
       // color starts unchosen (mandatory) and per-color cost lands on pick.
       variantId: undefined,
@@ -865,6 +877,13 @@ export function OrderForm({
                 <span className="flex items-center gap-2">
                   <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Artículo {captureIndex + 1}</span>
                   {(lineShortage.get(line.key) ?? 0) > 0 && <Badge tone="warning">Falta {lineShortage.get(line.key)}</Badge>}
+                  {/* #421 r2: only a CAPTURED name (still unlinked) warns — an
+                      empty new line is not "captured by name" (review M1). */}
+                  {isTiered && !line.productId && !!line.productName.trim() && (
+                    <span className="cursor-help" title="Este artículo se capturó por nombre y no tiene ficha del catálogo: sus piezas NO se apartan del inventario hasta vincular la ficha (buscar y elegirla arriba, conservando cantidad y precio).">
+                      <Badge tone="warning">No aparta existencias</Badge>
+                    </span>
+                  )}
                   {line.lineId && incidentLines.has(line.lineId) && (
                     <span className="cursor-help" title="Incidencia registrada: esta línea sustenta la solución acordada. No se puede quitar ni cambiar pieza, cantidad o precio aquí; los cambios de esa atención se registran desde la incidencia del pedido.">
                       <Badge tone="info">Incidencia</Badge>
