@@ -11,6 +11,9 @@ import {
   onSnapshot,
   query,
   where,
+  orderBy,
+  limit,
+  documentId,
   runTransaction,
   increment,
   arrayUnion,
@@ -30,6 +33,7 @@ import { effectiveOrderStatus, migrateOrder, orderItems, paymentStatusForOrder }
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
+import { buildManualPriceEvents, priceChangeEvent, type PriceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -363,18 +367,146 @@ export class CategoryRulesConflictError extends Error {
  *  stale full-object write (that was the upsertProduct hazard). Rules path
  *  unchanged: members update their store's products with storeId untouched. */
 export async function applyProductPrices(
-  _store: Pick<Store, "id">,
+  store: Pick<Store, "id">,
   updates: Array<{ id: string; prices: Record<string, number> }>,
-  updatedAt: string
+  updatedAt: string,
+  uid?: string,
+  email?: string | null
 ): Promise<void> {
   const { db } = getFirebase();
-  for (let start = 0; start < updates.length; start += 400) {
-    const batch = writeBatch(db);
-    for (const update of updates.slice(start, start + 400)) {
-      batch.set(doc(db, "products", update.id), { prices: stripUndefined(update.prices), updatedAt }, { merge: true });
+  // #335 r2: read the CANONICAL previous prices so events carry real
+  // anterior/nuevo pairs (+1 read per affected piece — dimensioned in the
+  // issue: applies touch the pieces Fer explicitly selects).
+  const previousById = new Map<string, Record<string, number> | undefined>();
+  if (uid) {
+    // #335 r3: Firestore evaluates ~2 rule gets per doc and caps a query at
+    // 20 ACCESSES — chunks of 30 docs died with permission-denied at ≥20
+    // pieces (review probe: 283 SKUs → whole apply rejected). 10 docs/chunk.
+    for (let start = 0; start < updates.length; start += 10) {
+      const chunk = updates.slice(start, start + 10);
+      const snap = await getDocs(query(collection(db, "products"), where(documentId(), "in", chunk.map((u) => u.id))));
+      for (const d of snap.docs) previousById.set(d.id, (d.data() as { prices?: Record<string, number> }).prices);
     }
-    await batch.commit();
   }
+  // #335 r3: the production batch limit is 500 OPERATIONS (product set +
+  // each event doc count separately; 283 pieces × 2 = 566 > 500). Flush by
+  // operation count, not by update count.
+  const WRITE_OPS_LIMIT = 400;
+  let batch = writeBatch(db);
+  let ops = 0;
+  const flush = async () => {
+    if (ops === 0) return;
+    await batch.commit();
+    batch = writeBatch(db);
+    ops = 0;
+  };
+  for (const update of updates) {
+    const eventCount = countEffectiveEvents(previousById.get(update.id), update.prices);
+    if (ops + 1 + eventCount > WRITE_OPS_LIMIT) await flush();
+    batch.set(doc(db, "products", update.id), { prices: stripUndefined(update.prices), updatedAt }, { merge: true });
+    ops += 1;
+    if (!uid) continue;
+      // Only tiers that EFFECTIVELY changed emit an event — a rule apply that
+      // leaves a piece's price alone must not claim it changed.
+      const previous = previousById.get(update.id);
+      for (const [tierId, next] of Object.entries(update.prices)) {
+        const prev = previous?.[tierId];
+        if (typeof prev !== "number" || !Number.isFinite(prev)) continue;
+        if (typeof next !== "number" || !Number.isFinite(next) || prev === next) continue;
+        const event = priceChangeEvent({
+          intentId: `${tierId}:${prev}:${next}:${updatedAt}`,
+          storeId: store.id,
+          productId: update.id,
+          tierId,
+          previous: prev,
+          next,
+          uid,
+          email,
+          effectiveAt: updatedAt,
+          origin: "rule_application",
+        });
+        batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+        ops += 1;
+      }
+  }
+  await flush();
+}
+
+/** #335 r3: how many price events this update will append (for operation-
+ * aware batching). Mirrors the emission condition exactly. */
+function countEffectiveEvents(previous: Record<string, number> | undefined, prices: Record<string, number>): number {
+  let count = 0;
+  for (const [tierId, next] of Object.entries(prices)) {
+    const prev = previous?.[tierId];
+    if (typeof prev !== "number" || !Number.isFinite(prev)) continue;
+    if (typeof next !== "number" || !Number.isFinite(next) || prev === next) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * #335 r2: manual product save with its price-change events in ONE atomic
+ * writeBatch — the event never lands without the price, nor the reverse.
+ */
+export async function saveProductWithPriceEvents(
+  user: AppUser,
+  existing: Product | undefined,
+  product: Product
+): Promise<void> {
+  const { db } = getFirebase();
+  const { id, ...data } = product;
+  const clean = stripUndefined(data) as Record<string, unknown>;
+  // #355 (review C1): the product save path MUST keep saveEntity's canonical
+  // shelf swap — enabling colors discards the design-level stock, disabling
+  // discards the color array. Without deleteField, merge:true keeps the stale
+  // side alive in Firestore (the design still sells by color on other devices).
+  if (Object.prototype.hasOwnProperty.call(data, "quantityOnHand") && data.quantityOnHand === undefined) {
+    clean.quantityOnHand = deleteField();
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "variants") && data.variants === undefined) {
+    clean.variants = deleteField();
+  }
+  const batch = writeBatch(db);
+  batch.set(doc(db, "products", id), clean, { merge: true });
+  for (const event of buildManualPriceEvents({
+    storeId: product.storeId,
+    productId: product.id,
+    updatedAt: product.updatedAt,
+    uid: user.uid,
+    email: user.email,
+    previous: existing?.prices ? { prices: existing.prices } : undefined,
+    next: { prices: product.prices },
+  })) {
+    batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+  }
+  await batch.commit();
+}
+
+/** #335 r2: a rule CONFIG change — its own append-only trail, recorded right
+ * after the transactional config save (it changes no product price by itself). */
+/** #335 (M2): the "Decisiones" history reads the store's OWN events on demand —
+ * one bounded query (composite index storeId+recordedAt, deployed with the
+ * release), no listener. The rules' list guard keeps foreign stores out. */
+export async function loadPriceEvents(
+  storeId: string,
+  limitCount = 50
+): Promise<Array<PriceChangeEvent | RuleChangeEvent>> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(
+      collection(db, "priceEvents"),
+      where("storeId", "==", storeId),
+      orderBy("recordedAt", "desc"),
+      limit(limitCount)
+    )
+  );
+  return snap.docs.map((d) => ({ ...(d.data() as PriceChangeEvent | RuleChangeEvent), id: d.id }));
+}
+
+export async function recordRuleChangeEvent(event: RuleChangeEvent): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
 }
 
 /** #280: save ONE category's band table transactionally. The whole
@@ -2693,11 +2825,14 @@ export async function normalizePendingInvitesTx(storeId: string): Promise<string
  */
 export async function saveProductPreservingConcurrentTx(
   baseline: Product | undefined,
-  next: Product
+  next: Product,
+  /** #335: who saves — enables the atomic price-change trail. */
+  user?: { uid: string; email?: string | null },
+  updatedAt?: string
 ): Promise<Product> {
   const { db } = getFirebase();
   const ref = doc(db, "products", next.id);
-  const at = new Date().toISOString();
+  const at = updatedAt ?? new Date().toISOString();
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     if (snap.exists() && (snap.data().storeId ?? "") !== next.storeId) {
@@ -2714,6 +2849,22 @@ export async function saveProductPreservingConcurrentTx(
       }
     }
     tx.set(ref, clean, { merge: true });
+    // #335 ∩ #373 (merge): price events land in the SAME transaction — the
+    // trail can never diverge from the price, and the concurrent-safe merge
+    // decides the write. Baseline prices are the "previous" the operator saw.
+    if (user) {
+      for (const event of buildManualPriceEvents({
+        storeId: next.storeId,
+        productId: next.id,
+        updatedAt: at,
+        uid: user.uid,
+        email: user.email,
+        previous: { prices: fresh?.prices ?? baseline?.prices },
+        next: { prices: next.prices },
+      })) {
+        tx.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+      }
+    }
     return { ...merged, updatedAt: at };
   });
 }
