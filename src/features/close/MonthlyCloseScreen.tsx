@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, Screen, ScreenHeader } from "../../design-system";
+import { Badge, Button, Card, Screen, ScreenHeader, Sheet, TextField } from "../../design-system";
 import { navigate } from "../../lib/router";
 import { loadOrderPaymentsDocs } from "../../app/firebase/firestoreData";
 import { cdmxMonthKey, monthlyClose, type CloseMonth } from "../../lib/monthlyClose";
@@ -34,19 +34,111 @@ function signedMoney(cents: number): string {
 
 /** One aligned formula row: label left, tabular amount right. `cents`
  * null = still loading — a dash placeholder, never a $0 (stable skeleton). */
-function FormulaRow({ label, cents, strong = false, signed = false }: { label: string; cents: number | null; strong?: boolean; signed?: boolean }) {
+function FormulaRow({
+  label, cents, strong = false, signed = false, onOpen, openLabel,
+}: {
+  label: string;
+  cents: number | null;
+  strong?: boolean;
+  signed?: boolean;
+  /** #456: rows open their traceable detail — “¿De dónde salen estos $X?”. */
+  onOpen?: () => void;
+  openLabel?: string;
+}) {
   const text = cents === null ? "—" : signed ? signedMoney(cents) : formatMoneyExact(cents / 100);
-  return (
-    <div className={`flex items-baseline justify-between gap-3 py-1 ${strong ? "font-semibold border-t border-rule" : ""}`}>
+  const body = (
+    <>
       <span className={strong ? "text-ink" : "text-on-surface-soft"}>{label}</span>
       <span className={`tnum ${strong ? "text-ink" : "text-on-surface"}`}>{text}</span>
-    </div>
+    </>
+  );
+  if (!onOpen) {
+    return <div className={`flex items-baseline justify-between gap-3 py-1 ${strong ? "font-semibold border-t border-rule" : ""}`}>{body}</div>;
+  }
+  return (
+    <Button
+      variant="ghost"
+      onClick={onOpen}
+      aria-label={openLabel ?? `Ver de dónde salen estos ${text}`}
+      className={`!px-1 !py-1 !min-h-0 w-full flex !justify-between gap-3 !rounded text-left !tracking-normal ${strong ? "!font-semibold !border-t !border-rule" : "!font-normal"}`}
+    >
+      {body}
+    </Button>
+  );
+}
+
+/** #456: one figure's drilldown — “¿De dónde salen estos $X?” with the
+ * traceable rows, search, progressive load and exact reconciliation. */
+function FigureDetailSheet({
+  open, onClose, title, concept, rows, period, excluded,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  concept: string;
+  rows: Array<{ date: string; reference: string; concept: string; amountCents: number; orderId?: string }>;
+  period: string;
+  excluded?: Array<{ reference: string; amountCents: number; cause: string }>;
+}) {
+  const [query, setQuery] = useState("");
+  const [visible, setVisible] = useState(50);
+  useEffect(() => { setQuery(""); setVisible(50); }, [open]);
+  const filtered = rows.filter((row) =>
+    !query.trim() || `${row.reference} ${row.concept}`.toLowerCase().includes(query.trim().toLowerCase())
+  );
+  const sum = rows.reduce((total, row) => total + row.amountCents, 0);
+  return (
+    <Sheet open={open} onClose={onClose} title={title} contentClassName="max-w-2xl">
+      <p className="text-xs text-on-surface-soft">{concept} · {period} · hora Centro de México</p>
+      <div className="mt-3">
+        <TextField label="Buscar por folio o concepto" value={query} onChange={(event) => setQuery(event.target.value)} />
+      </div>
+      <div className="mt-3 space-y-1 max-h-[50vh] overflow-y-auto">
+        {filtered.slice(0, visible).map((row, index) => (
+          <div key={`${row.reference}-${row.date}-${index}`} className="flex items-baseline justify-between gap-3 text-sm border-b border-rule/60 pb-1">
+            <div className="min-w-0">
+              <span className="tnum text-xs text-on-surface-soft">{row.date}</span>{" "}
+              <span className="text-ink">{row.reference}</span>
+              <span className="text-on-surface-soft"> · {row.concept}</span>
+            </div>
+            <span className="tnum shrink-0">{signedMoney(row.amountCents)}</span>
+          </div>
+        ))}
+        {filtered.length > visible && (
+          <Button size="sm" variant="ghost" className="w-full" onClick={() => setVisible((v) => v + 100)}>
+            Mostrar más ({filtered.length - visible} restantes)
+          </Button>
+        )}
+      </div>
+      <div className="mt-4 pt-3 border-t border-rule">
+        <div className="flex items-baseline justify-between text-sm font-semibold">
+          <span>Suma del detalle</span>
+          <span className="tnum">{signedMoney(sum)}</span>
+        </div>
+        <p className="text-xs text-on-surface-soft mt-1">
+          {rows.length} {rows.length === 1 ? "movimiento incluido" : "movimientos incluidos"}
+          {excluded && excluded.length > 0 ? ` · ${excluded.length} por verificar` : ""} — cuadra con la cifra del panel.
+        </p>
+        {excluded && excluded.length > 0 && (
+          <div className="mt-2">
+            <p className="text-xs font-semibold text-on-surface">Fuera del total</p>
+            {excluded.map((entry, index) => (
+              <p key={index} className="text-xs text-on-surface-soft">
+                {entry.reference} · {signedMoney(entry.amountCents)} — {entry.cause}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+    </Sheet>
   );
 }
 
 export function MonthlyCloseScreen() {
   const { state, activeStore, stateStatus } = useStore();
   const [offset, setOffset] = useState(0);
+  // #456: which figure's drilldown sheet is open (null = none).
+  const [detail, setDetail] = useState<null | "sales" | "costs" | "expenses" | "margin" | "result" | "collections">(null);
   const [paymentsByOrder, setPaymentsByOrder] = useState<Record<string, OrderPayment[]>>({});
   const [loadingPayments, setLoadingPayments] = useState(true);
   // #129: a failed cobros load must SAY so — silent $0 would read as "no hay
@@ -174,7 +266,10 @@ export function MonthlyCloseScreen() {
         {/* Protagonist: the period's operative result — never presented as
             available cash, never authorized from this screen. */}
         <Card>
-          <p className="text-xs font-semibold tracking-wide text-on-surface-soft">{heroLabel}</p>
+          <p className="text-xs font-semibold tracking-wide text-on-surface-soft">
+            {heroLabel}{" "}
+            {close.costCoverage.partialByMissingCost && <Badge tone="warning">Estimación incompleta</Badge>}
+          </p>
           <p className={`serif-display tnum text-4xl leading-tight mt-1 ${resultTone === "success" ? "text-success" : resultTone === "danger" ? "text-danger" : "text-ink"}`}>
             {loading ? "—" : signedMoney(resultCents)}
           </p>
@@ -190,11 +285,11 @@ export function MonthlyCloseScreen() {
           <Card>
             <h3 className="text-sm font-semibold text-ink">¿Cómo llegamos a este resultado?</h3>
             <div className="mt-2">
-              <FormulaRow label="Ventas de productos entregados" cents={loading ? null : close.salesCents} />
-              <FormulaRow label="Costo de los productos vendidos" cents={loading ? null : -close.costCents} signed />
-              <FormulaRow label="Ganancia antes de gastos" cents={loading ? null : close.grossMarginCents} strong />
-              <FormulaRow label="Gastos operativos del mes" cents={loading ? null : -close.expensesCents} signed />
-              <FormulaRow label="Resultado operativo" cents={loading ? null : close.operatingResultCents} strong />
+              <FormulaRow label="Ventas de productos entregados" cents={loading ? null : close.salesCents} onOpen={() => setDetail("sales")} />
+              <FormulaRow label="Costo de los productos vendidos" cents={loading ? null : -close.costCents} signed onOpen={() => setDetail("costs")} />
+              <FormulaRow label="Ganancia antes de gastos" cents={loading ? null : close.grossMarginCents} strong onOpen={() => setDetail("margin")} />
+              <FormulaRow label="Gastos operativos del mes" cents={loading ? null : -close.expensesCents} signed onOpen={() => setDetail("expenses")} />
+              <FormulaRow label="Resultado operativo" cents={loading ? null : close.operatingResultCents} strong onOpen={() => setDetail("result")} />
             </div>
           </Card>
         )}
@@ -203,7 +298,9 @@ export function MonthlyCloseScreen() {
             an extra profit line inside the formula. */}
         <Card>
           <div className="flex items-baseline justify-between gap-3">
-            <h3 className="text-sm font-semibold text-ink">Dinero recibido durante {MONTH_NAMES[month.month - 1]}</h3>
+            <Button variant="ghost" onClick={() => setDetail("collections")} className="!px-0 !py-0 !min-h-0 text-left !text-sm !font-semibold text-ink hover:!underline">
+              Dinero recibido durante {MONTH_NAMES[month.month - 1]}
+            </Button>
             <span className="text-xs rounded-full border border-edge px-2 py-0.5 text-on-surface-soft">Por fecha de cobro</span>
           </div>
           <p className={`serif-display tnum text-2xl mt-1 ${paymentsFailed ? "text-on-surface-soft" : "text-ink"}`}>
@@ -213,6 +310,24 @@ export function MonthlyCloseScreen() {
             Incluye pagos registrados en {MONTH_NAMES[month.month - 1]}, aunque correspondan a ventas de otros meses o anticipos.
             No representa una ganancia adicional.
           </p>
+          {/* #456: groups reconcile the origin of the money; the sales≠collections
+              gap is a DATES difference, never an invented profit or loss. */}
+          {close.collectionGroups.length > 0 && (
+            <div className="mt-3">
+              {close.collectionGroups.map((group) => (
+                <div key={group.group} className="flex items-baseline justify-between gap-3 text-sm border-b border-rule/60 py-1">
+                  <span className="text-on-surface-soft">
+                    {group.label} <span className="text-xs">({group.count})</span>
+                  </span>
+                  <span className="tnum">{formatMoneyExact(group.totalCents / 100)}</span>
+                </div>
+              ))}
+              <p className="text-xs text-on-surface-soft mt-2">
+                Ventas y cobros se agrupan por fechas distintas: la venta cuenta al entregarse; el cobro, al entrar el dinero.
+                La diferencia entre ambas cifras no es una ganancia ni un faltante.
+              </p>
+            </div>
+          )}
         </Card>
 
         {paymentsFailed && (
@@ -258,6 +373,45 @@ export function MonthlyCloseScreen() {
           El cierre oficial y los repartos quedan para su etapa operativa.
         </p>
       </div>
+
+      {/* #456 drilldowns — the same-task detail for every figure. */}
+      <FigureDetailSheet
+        open={detail === "sales"} onClose={() => setDetail(null)}
+        title={`¿De dónde salen estas ${formatMoneyExact(close.salesCents / 100)}?`}
+        concept="Ventas de productos entregados" period={monthName}
+        rows={close.details.sales}
+      />
+      <FigureDetailSheet
+        open={detail === "costs"} onClose={() => setDetail(null)}
+        title={`¿De dónde salen estos ${formatMoneyExact(close.costCents / 100)}?`}
+        concept="Costo de los productos vendidos" period={monthName}
+        rows={close.details.costs}
+      />
+      <FigureDetailSheet
+        open={detail === "margin"} onClose={() => setDetail(null)}
+        title={`¿De dónde salen estas ${formatMoneyExact(close.grossMarginCents / 100)}?`}
+        concept="Ganancia antes de gastos (ventas − costo)" period={monthName}
+        rows={[...close.details.sales, ...close.details.costs]}
+      />
+      <FigureDetailSheet
+        open={detail === "expenses"} onClose={() => setDetail(null)}
+        title={`¿De dónde salen estos ${formatMoneyExact(close.expensesCents / 100)}?`}
+        concept="Gastos operativos del mes" period={monthName}
+        rows={close.details.expenses}
+      />
+      <FigureDetailSheet
+        open={detail === "result"} onClose={() => setDetail(null)}
+        title={`¿De dónde salen estas ${formatMoneyExact(close.operatingResultCents / 100)}?`}
+        concept="Resultado operativo (ventas − costo − gastos)" period={monthName}
+        rows={[...close.details.sales, ...close.details.costs, ...close.details.expenses]}
+      />
+      <FigureDetailSheet
+        open={detail === "collections"} onClose={() => setDetail(null)}
+        title={`¿De dónde salen estos ${formatMoneyExact(close.collectionsCents / 100)}?`}
+        concept="Dinero recibido durante el mes" period={monthName}
+        rows={close.details.collections}
+        excluded={close.details.excludedCollections}
+      />
     </Screen>
   );
 }

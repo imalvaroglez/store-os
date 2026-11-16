@@ -1,6 +1,7 @@
 import type { LooseExpense, Order, OrderPayment } from "../types";
 import { orderAmountCents } from "./orderMoney";
 import { effectiveOrderStatus, orderItems } from "./orders";
+import { LOOSE_EXPENSE_CATEGORY_LABEL } from "../types";
 import { stockDimensionKey } from "./inventory";
 
 // #129 — etapa lista: vista previa de cierre mensual (SOLO LECTURA).
@@ -31,6 +32,43 @@ export type MonthlyCloseCoverage = {
   complete: boolean;
 };
 
+/** #456: one traceable money row — the drilldown's unit. Signed semantics:
+ * sales/collections positive, costs/expenses negative, so `sum(details) ==
+ * ±figure` reconciles to the exact cent. */
+export type CloseContribution = {
+  /** Effective date (YYYY-MM-DD): entrega para venta/costo, fecha real para
+   * cobro, fecha del gasto — never updatedAt nor capture. */
+  date: string;
+  kind: "sale" | "cost" | "expense" | "collection";
+  reference: string;
+  orderId?: string;
+  /** Product/concept legible (venta/costo/gasto) o método del cobro. */
+  concept: string;
+  productName?: string;
+  amountCents: number;
+  evidence: "verified" | "pending";
+};
+
+export type CollectionGroupKey = "anticipos_del_mes" | "liquidaciones_del_mes" | "pagos_de_ventas_previas" | "sin_clasificar";
+
+export const COLLECTION_GROUP_LABELS: Record<CollectionGroupKey, string> = {
+  anticipos_del_mes: "Anticipos del mes",
+  liquidaciones_del_mes: "Liquidaciones del mes",
+  pagos_de_ventas_previas: "Pagos de ventas previas",
+  sin_clasificar: "Origen pendiente de clasificar",
+};
+
+export type CollectionGroup = { group: CollectionGroupKey; label: string; totalCents: number; count: number };
+
+export type CloseDetails = {
+  sales: CloseContribution[];
+  costs: CloseContribution[];
+  expenses: CloseContribution[];
+  collections: CloseContribution[];
+  /** Money that STAYS OUT of every monthly total, with its explicit cause. */
+  excludedCollections: Array<{ reference: string; orderId: string; amountCents: number; cause: string }>;
+};
+
 export type MonthlyClose = {
   month: CloseMonth;
   monthLabel: string;
@@ -41,6 +79,14 @@ export type MonthlyClose = {
   operatingResultCents: number;
   collectionsCents: number;
   coverage: MonthlyCloseCoverage;
+  /** #456: traceable rows per figure (same loops as the totals — no second
+   * source of truth; sums reconcile exactly). */
+  details: CloseDetails;
+  /** Collections grouped by origin — groups reconcile to collectionsCents. */
+  collectionGroups: CollectionGroup[];
+  /** True when pieces were sold with UNKNOWN cost: the operating result is a
+   * partial estimate, never presented as final. */
+  costCoverage: { partialByMissingCost: boolean };
 };
 
 export type CloseInputs = {
@@ -92,6 +138,8 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
   let salesCents = 0;
   let costCents = 0;
   let collectionsCents = 0;
+  const details: CloseDetails = { sales: [], costs: [], expenses: [], collections: [], excludedCollections: [] };
+  const groupTotals = new Map<CollectionGroupKey, { totalCents: number; count: number }>();
 
   for (const order of orders) {
     if (order.storeId !== storeId) continue;
@@ -124,8 +172,29 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
           continue;
         }
         salesCents += orderAmountCents(item.unitPrice, line.quantity);
+        details.sales.push({
+          date: delivery.deliveredAt.slice(0, 10),
+          kind: "sale",
+          reference: orderReference(order),
+          orderId: order.id,
+          concept: `Venta entregada · ${item.productName}`,
+          productName: item.productName,
+          amountCents: orderAmountCents(item.unitPrice, line.quantity),
+          evidence: "verified",
+        });
         if (typeof item.cost === "number" && Number.isFinite(item.cost)) {
-          costCents += orderAmountCents(item.cost, line.quantity);
+          const costAmount = orderAmountCents(item.cost, line.quantity);
+          costCents += costAmount;
+          details.costs.push({
+            date: delivery.deliveredAt.slice(0, 10),
+            kind: "cost",
+            reference: orderReference(order),
+            orderId: order.id,
+            concept: `Costo de ${item.productName}`,
+            productName: item.productName,
+            amountCents: -costAmount,
+            evidence: "verified",
+          });
         } else {
           coverage.linesWithoutCost.push({ orderId: order.id, reference: orderReference(order), productName: item.productName, quantity: line.quantity });
         }
@@ -142,14 +211,47 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     }
 
     // ── Cobros: su fecha real. Sin fecha = «Fecha por confirmar» (fuera del total).
+    // Delivery evidence (valid dates only) classifies the origin of each in-month
+    // payment: money before ANY delivery = anticipo; after a delivery in an
+    // EARLIER month = pago de venta previa; after a same-month delivery =
+    // liquidación. No evidence = origen pendiente de clasificar (never guessed).
+    const deliveryDates = (order.deliveries ?? [])
+      .filter((d) => typeof d.deliveredAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(d.deliveredAt))
+      .map((d) => d.deliveredAt.slice(0, 10))
+      .sort();
     for (const payment of paymentsByOrder[order.id] ?? []) {
       if (payment.kind !== "payment") continue;
       if (!payment.date) {
         coverage.unconfirmedCollections.push({ orderId: order.id, reference: orderReference(order), paymentId: payment.id, amountCents: signedCents(payment.amount) });
+        details.excludedCollections.push({ reference: orderReference(order), orderId: order.id, amountCents: signedCents(payment.amount), cause: "sin fecha verificable" });
         continue;
       }
       if (monthKeyOf({ year: Number(payment.date.slice(0, 4)), month: Number(payment.date.slice(5, 7)) }) === monthKey) {
-        collectionsCents += signedCents(payment.amount);
+        const amount = signedCents(payment.amount);
+        collectionsCents += amount;
+        let group: CollectionGroupKey;
+        if (deliveryDates.length === 0) {
+          group = "sin_clasificar";
+        } else if (payment.date < deliveryDates[0]) {
+          group = "anticipos_del_mes";
+        } else if (deliveryDates.every((d) => cdmxMonthKey(d) < monthKey)) {
+          group = "pagos_de_ventas_previas";
+        } else {
+          group = "liquidaciones_del_mes";
+        }
+        const bucket = groupTotals.get(group) ?? { totalCents: 0, count: 0 };
+        bucket.totalCents += amount;
+        bucket.count += 1;
+        groupTotals.set(group, bucket);
+        details.collections.push({
+          date: payment.date,
+          kind: "collection",
+          reference: orderReference(order),
+          orderId: order.id,
+          concept: COLLECTION_GROUP_LABELS[group],
+          amountCents: amount,
+          evidence: "verified",
+        });
       }
     }
 
@@ -165,6 +267,7 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
         paymentId: "anticipo_sin_recibo",
         amountCents: orderAmountCents(order.deposit),
       });
+      details.excludedCollections.push({ reference: orderReference(order), orderId: order.id, amountCents: orderAmountCents(order.deposit), cause: "anticipo sin recibo (sin fecha verificable)" });
     }
   }
 
@@ -173,7 +276,16 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
   for (const expense of expenses) {
     if (expense.storeId !== storeId) continue;
     if (monthKeyOf({ year: Number(expense.date.slice(0, 4)), month: Number(expense.date.slice(5, 7)) }) === monthKey) {
-      expensesCents += orderAmountCents(expense.amount);
+      const amount = orderAmountCents(expense.amount);
+      expensesCents += amount;
+      details.expenses.push({
+        date: expense.date.slice(0, 10),
+        kind: "expense",
+        reference: `#${expense.id.slice(0, 6).toUpperCase()}`,
+        concept: LOOSE_EXPENSE_CATEGORY_LABEL[expense.category] ?? "Gasto",
+        amountCents: -amount,
+        evidence: "verified",
+      });
     }
   }
 
@@ -194,6 +306,14 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     operatingResultCents: salesCents - costCents - expensesCents,
     collectionsCents,
     coverage,
+    details,
+    collectionGroups: [...groupTotals.entries()].map(([group, bucket]) => ({
+      group,
+      label: COLLECTION_GROUP_LABELS[group],
+      totalCents: bucket.totalCents,
+      count: bucket.count,
+    })),
+    costCoverage: { partialByMissingCost: coverage.linesWithoutCost.length > 0 },
   };
 }
 
