@@ -91,7 +91,12 @@ test("adminStores repair is idempotent and the migrated store appears in the pic
   await expect(changeStore).toBeVisible();
   await changeStore.click();
   await expect(page.getByText("¿Quién opera hoy?")).toBeVisible();
-  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  // Scope to the picker's store tile: the ACTIVE store's name also lives in
+  // the sidebar/header switcher, and when this migrated store becomes the
+  // active one both match → strict-mode violation (intermittent ordering).
+  await expect(
+    page.locator("div.font-bold.truncate", { hasText: name }).first()
+  ).toBeVisible();
 });
 
 test("sign out returns to the authentication screen", async ({ sharedPage: page }) => {
