@@ -3,6 +3,7 @@ import { Badge, Button, Card, Screen, ScreenHeader, SelectField, TextField } fro
 import { parseAmount } from "../../lib/money";
 import {
   accumulatedLossBefore,
+  latestClosePerPeriod,
   buildProfitDistributionDoc,
   proposeDistribution,
   type ProfitDistributionDoc,
@@ -51,10 +52,13 @@ export function ProfitDistributionScreen() {
     let alive = true;
     if (!activeStore) return;
     loadClosesForStore(activeStore.id)
-      .then((all) => {
+      .then((allLoaded) => {
         if (!alive) return;
-        setCloses(all);
-        setPeriod((current) => current || all[all.length - 1]?.period || "");
+        // v2 supersedes v1 (#202): the picker and the loss history see ONE
+        // version per period — never double-counted.
+        const latest = latestClosePerPeriod(allLoaded);
+        setCloses(latest);
+        setPeriod((current) => current || latest[latest.length - 1]?.period || "");
         setLoaded(true);
       })
       .catch(() => { if (alive) setLoaded(true); });
