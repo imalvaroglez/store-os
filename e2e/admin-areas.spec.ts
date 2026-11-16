@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { loginAsFirstAdmin, gotoClean } from "./helpers";
+import { loginAsFirstAdmin, gotoClean, ensureStoreActive } from "./helpers";
 
 // #454 — the admin navigation is organized into four AREAS. The walk Fer needs:
 // Inicio → Ventas/Pedidos → Top emprendedoras → Compras → Gastos → Cierre
@@ -59,6 +59,9 @@ test("deep-link a Cierre mensual abre Administración sin pasar por Gastos", asy
 test("recorrido Fer: Ventas→Top emprendedoras → Compras → Gastos → Cierre", async ({ sharedPage: page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "sidebar es chrome de escritorio");
   await gotoClean(page, "/");
+  // The walk includes the Compras leaf — it only exists for inventory-tiered
+  // stores, so make sure a tiered store (Olivia) is the active one.
+  await ensureStoreActive(page, "Olivia");
   const sidebar = page.locator("aside");
   // Ventas → Top emprendedoras (2 interacciones).
   await sidebar.getByRole("button", { name: "Ventas" }).click();
