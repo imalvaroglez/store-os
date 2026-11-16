@@ -316,6 +316,14 @@ export function MonthlyCloseScreen() {
             )}
             <div className="mt-2">
               <FormulaRow label="Ventas de productos entregados" cents={loading ? null : close.salesCents} onOpen={() => setDetail("sales")} />
+              {/* #455 r3 (UX): net sales vs the operadora's notebook — the
+                  returns line is VISIBLE, not hidden inside the drilldown. */}
+              {!loading && close.posventaAdjustmentCents !== 0 && (
+                <p className="text-xs text-on-surface-soft -mt-0.5">
+                  Incluye {signedMoney(close.posventaAdjustmentCents)} de devoluciones y ajustes de posventa confirmados
+                  este mes.
+                </p>
+              )}
               <FormulaRow label="Costo de los productos vendidos" cents={loading ? null : -close.costCents} signed onOpen={() => setDetail("costs")} />
               <FormulaRow label="Ganancia antes de gastos" cents={loading ? null : close.grossMarginCents} strong onOpen={() => setDetail("margin")} />
               <FormulaRow label="Gastos operativos del mes" cents={loading ? null : -close.expensesCents} signed onOpen={() => setDetail("expenses")} />
