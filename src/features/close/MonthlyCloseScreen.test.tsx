@@ -324,6 +324,7 @@ describe("#457 — colas de revisión", () => {
     expect(screen.getByText("Productos sin costo")).toBeTruthy();
     expect(screen.getByText(/Aro ×1/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Ver producto" })).toBeTruthy();
+  });
 });
 
 describe("#455 r3 — correcciones UX de la operadora", () => {
