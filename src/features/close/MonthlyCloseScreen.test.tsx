@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   activeStore: { id: "s1", name: "Tienda", type: "inventory_tiered" },
   loadOrderPaymentsDocs: vi.fn(),
 }));
-vi.mock("../../app/StoreProvider", () => ({ useStore: () => ({ state: mocks.state, activeStore: mocks.activeStore }) }));
+vi.mock("../../app/StoreProvider", () => ({ useStore: () => ({ state: mocks.state, activeStore: mocks.activeStore, stateStatus: "ready" }) }));
 vi.mock("../../app/firebase/firestoreData", () => ({ loadOrderPaymentsDocs: mocks.loadOrderPaymentsDocs }));
 
 // The CURRENT CDMX month is dynamic; fixtures are built relative to it so the
@@ -61,25 +61,29 @@ describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
   it("muestra el cierre del mes vigente con el caso del contrato", async () => {
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
     await waitFor(() => expect(mocks.loadOrderPaymentsDocs).toHaveBeenCalled());
-    await waitFor(() => expect(screen.getByText("Ventas (entregas verificadas)")).toBeTruthy());
-    // Venta $500 / costo $200 / margen $300 / cobros $350.
+    await waitFor(() => expect(screen.getByText("Ventas de productos entregados")).toBeTruthy());
+    // Venta $500 / costo −$200 (con signo, contrato #455) / margen $300 / cobros $350.
     expect(screen.getByText("$500.00")).toBeTruthy();
-    expect(screen.getByText("$200.00")).toBeTruthy();
-    // Margen bruto y resultado operativo comparten $300 (gastos 0): ambos.
-    expect(screen.getAllByText("$300.00").length).toBe(2);
+    expect(screen.getByText("−$200.00")).toBeTruthy();
+    // Margen y resultado comparten $300 (gastos 0): héroe + 2 filas de fórmula.
+    expect(screen.getAllByText("$300.00").length).toBe(3);
     expect(screen.getByText("$350.00")).toBeTruthy();
-    expect(screen.getByText("Cobertura del periodo")).toBeTruthy();
-    expect(screen.getByText(/completa/i)).toBeTruthy();
-    expect(screen.getByText(/solo lectura/i)).toBeTruthy();
+    // Cobros como sección independiente con su chip y su párrafo siempre visible.
+    expect(screen.getByText("Por fecha de cobro")).toBeTruthy();
+    expect(screen.getByText(/No representa una ganancia adicional/)).toBeTruthy();
+    // El héroe del resultado lleva su aviso de no autorización.
+    expect(screen.getByText("GANANCIA OPERATIVA ESTIMADA")).toBeTruthy();
+    expect(screen.getByText(/todavía no está autorizado para reparto/)).toBeTruthy();
+    expect(screen.getAllByText(/Vista preliminar/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("si falla la carga de cobros, lo explica y marca los cobros como no disponibles (nunca $0 engañoso)", async () => {
     mocks.loadOrderPaymentsDocs.mockReset().mockRejectedValue(new Error("offline"));
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
     expect(await screen.findByText(/No se pudieron cargar los cobros/i)).toBeTruthy();
-    // La FILA de cobros dice «no disponibles» (no un $0.00 engañoso).
-    const cobrosLabel = screen.getByText("Cobros del mes (fecha real)");
-    expect(cobrosLabel.parentElement?.textContent).toContain("no disponibles");
+    // La sección de cobros dice «no disponibles» (no un $0.00 engañoso).
+    const cobrosCard = screen.getByText(/Dinero recibido durante/).closest("div[class*='rounded']") ?? screen.getByText(/Dinero recibido durante/).parentElement;
+    expect(cobrosCard?.textContent).toContain("no disponibles");
     // Las ventas no dependen de los cobros: siguen mostrándose.
     expect(screen.getByText("$500.00")).toBeTruthy();
   });
@@ -95,7 +99,7 @@ describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
       ],
     });
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
-    await waitFor(() => expect(screen.getByText("Ventas (entregas verificadas)")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Ventas de productos entregados")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Mes anterior" }));
     await waitFor(() => expect(screen.getByText("$150.00")).toBeTruthy()); // cobros del mes anterior
     expect(screen.queryByText("$500.00")).toBeNull(); // sin ventas allá
@@ -109,9 +113,16 @@ describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
       { ...contractOrder, id: "o_nocost", items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 500, subtotal: 500 }] },
     ];
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
-    await waitFor(() => expect(screen.getByText(/incompleta — no habilita cierre/i)).toBeTruthy());
-    expect(screen.getByText(/Entregados sin fecha verificable/i)).toBeTruthy();
-    expect(screen.getByText(/Líneas sin costo conocido/i)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/Hay información pendiente de revisar/i)).toBeTruthy());
+    // Agrupados por causa con conteo — no feeds de identificadores.
+    expect(screen.getByText(/1 pedido entregado sin fecha verificable/)).toBeTruthy();
+    expect(screen.getByText(/No podemos determinar a qué mes pertenecen/)).toBeTruthy();
+    expect(screen.getByText(/producto vendido sin costo conocido/)).toBeTruthy();
+    expect(screen.getByText(/Puede afectar la utilidad/)).toBeTruthy();
+    expect(screen.getByText("En revisión")).toBeTruthy();
+    // Los enlaces funcionales de las causas con superficie vigente.
+    expect(screen.getByRole("button", { name: "Revisar pedidos" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Revisar costo" })).toBeTruthy();
   });
 });
 
@@ -130,7 +141,7 @@ describe("#129 r2 — devoluciones de revisión", () => {
     mocks.state.orders = [paidBeforeDelivery];
     mocks.loadOrderPaymentsDocs.mockClear().mockResolvedValue({ o_paid: [pay("pay_before", 200)] });
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
-    await waitFor(() => expect(screen.getByText("Cobros del mes (fecha real)")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Dinero recibido durante/)).toBeTruthy());
     expect(mocks.loadOrderPaymentsDocs).toHaveBeenCalledWith(["o_paid"]);
     await waitFor(() => expect(screen.getByText("$200.00")).toBeTruthy());
   });
@@ -145,10 +156,10 @@ describe("#129 r2 — devoluciones de revisión", () => {
     mocks.state.orders = [bad];
     mocks.loadOrderPaymentsDocs.mockClear().mockResolvedValue({});
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
-    await waitFor(() => expect(screen.getByText("Ventas (entregas verificadas)")).toBeTruthy());
-    // La vista sigue viva; el dato dañado queda identificado, no rompe todo.
-    expect(screen.getByText("Datos no interpretables")).toBeTruthy();
-    expect(screen.getByText(/#O_BAD/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("Ventas de productos entregados")).toBeTruthy());
+    // La vista sigue viva; la causa dañada queda agrupada y contada.
+    expect(screen.getByText(/1 pedido con datos no interpretables/)).toBeTruthy();
+    expect(screen.getByText(/impide leer este pedido/)).toBeTruthy();
   });
 
   it("pieza entregada cuya línea ya no existe queda VISIBLE en cobertura", async () => {
@@ -160,9 +171,31 @@ describe("#129 r2 — devoluciones de revisión", () => {
     mocks.state.orders = [staleLine];
     mocks.loadOrderPaymentsDocs.mockClear().mockResolvedValue({});
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
-    await waitFor(() => expect(screen.getByText(/incompleta/i)).toBeTruthy());
-    // Encabezado de sección + fila del pedido: la pieza está a la vista.
-    expect(screen.getAllByText(/ya no existe|sin línea/i).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText(/#O_STAL/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/Hay información pendiente de revisar/i)).toBeTruthy());
+    // La pieza queda a la vista como fila agrupada con su conteo.
+    expect(screen.getByText(/1 pieza entregada que ya no está en el pedido/)).toBeTruthy();
+    expect(screen.getByText(/La evidencia de entrega se conserva/)).toBeTruthy();
+  });
+});
+
+describe("#455 estados del contrato", () => {
+  it("resultado negativo: el héroe dice PÉRDIDA OPERATIVA ESTIMADA, sin verde", async () => {
+    // Venta $300 con costo $500 → resultado −$200.
+    const losing: Order = {
+      ...contractOrder,
+      items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 300, subtotal: 300, cost: 500 }],
+    };
+    mocks.state.orders = [losing];
+    mocks.loadOrderPaymentsDocs.mockClear().mockResolvedValue({});
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText("PÉRDIDA OPERATIVA ESTIMADA")).toBeTruthy());
+    expect(screen.getByText("−$200.00")).toBeTruthy();
+  });
+
+  it("sin pendientes: estado sobrio, sin contenedor de advertencia vacío", async () => {
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText("Ventas de productos entregados")).toBeTruthy());
+    expect(screen.getByText(/Sin pendientes detectados para este periodo/)).toBeTruthy();
+    expect(screen.queryByText(/Hay información pendiente/)).toBeNull();
   });
 });
