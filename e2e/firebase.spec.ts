@@ -63,7 +63,7 @@ test("super_admin consulta la lista de usuarios de la plataforma", async ({ shar
   await expect(page.getByRole("heading", { name: "Usuarios de la plataforma" })).toBeVisible();
   await expect(page.getByTestId("user-card")).toHaveCount(1);
   await expect(page.getByText(ADMIN_EMAIL)).toBeVisible();
-  await expect(page.getByText("Administración", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("user-card").getByText("Administración", { exact: true })).toBeVisible(); // #454: el área Administración del sidebar compite por ese texto
   await page.getByRole("button", { name: "Inicio" }).first().click();
   await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
 });
