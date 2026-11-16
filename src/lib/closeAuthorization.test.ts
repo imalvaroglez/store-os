@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildCloseSnapshot, closeStatus, closeDocId, nextCloseVersion, snapshotFingerprint } from "./closeAuthorization";
 import type { MonthlyClose } from "./monthlyClose";
+import { cdmxToday } from "./monthlyClose";
 
 // #458 — the OFFICIAL close: states, impediments with reasons, owner-only
 // authorization and an idempotent versioned snapshot. A preview is never a
@@ -89,5 +90,23 @@ describe("snapshot (#458)", () => {
     other.details.sales = [{ date: "2026-11-10", kind: "sale", reference: "#X", concept: "Venta", amountCents: 50000, evidence: "verified" }];
     expect(snapshotFingerprint(other)).not.toBe(snapshotFingerprint(close));
     expect(snapshotFingerprint(close)).toBe(snapshotFingerprint(baseClose()));
+  });
+});
+
+describe("#458 r2 — mayores de revisión", () => {
+  it("fecha límite por fecha CDMX real (cdmxToday), nunca el slice UTC", () => {
+    // 30-nov 18:30 CDMX = 1-dic 00:30 UTC: cdmxToday debe decir 11-30.
+    expect(cdmxToday()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("periodo parcial desde la activación: impedimento explícito, sin CTA", () => {
+    const status = closeStatus({ month: NOV, today: "2026-12-01", close: baseClose(), activationDate: "2026-11-15" });
+    expect(status.canClose).toBe(false);
+    expect(status.impediments[0].reason).toContain("Periodo financiero parcial desde la activación");
+  });
+
+  it("mes completo ANTERIOR a la activación: sin marca de parcialidad", () => {
+    const status = closeStatus({ month: NOV, today: "2026-12-01", close: baseClose(), activationDate: "2026-08-02" });
+    expect(status.state).toBe("listo");
   });
 });

@@ -412,3 +412,19 @@ describe("#458 — cierre oficial", () => {
     expect(screen.queryByRole("button", { name: /^Cerrar / })).toBeNull();
   });
 });
+
+describe("#458 r2 — sellados y divergencia", () => {
+  it("estado cerrado muestra los IMPORTES SELLADOS y avisa si el recálculo difiere", async () => {
+    mocks.draftOwnerId = "u_owner";
+    mocks.loadLatestClose.mockReset().mockResolvedValue({
+      id: "s1__prev__v1", storeId: "s1", period: "prev", version: 1,
+      authorizedByUid: "u_owner", authorizedAt: "2026-12-02T10:00:00.000Z",
+      totals: { salesCents: 100000, costCents: 40000, expensesCents: 10000, operatingResultCents: 50000, collectionsCents: 0 },
+    });
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Mes anterior" }));
+    await waitFor(() => expect(screen.getByText(/Resultado sellado/)).toBeTruthy());
+    expect(screen.getByText("$500.00")).toBeTruthy(); // sellado, no el recálculo vivo
+    expect(screen.getByText(/difiere del periodo sellado/)).toBeTruthy();
+  });
+});

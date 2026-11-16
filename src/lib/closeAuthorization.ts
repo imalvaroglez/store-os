@@ -39,12 +39,17 @@ function lastDayOfMonth(month: { year: number; month: number }): string {
   return `${month.year}-${String(month.month).padStart(2, "0")}-${String(last.getUTCDate()).padStart(2, "0")}`;
 }
 
-/** The period's state from month end, coverage and any authorized snapshot. */
+/** The period's state from month end, coverage and any authorized snapshot.
+ * `activationDate` (the store's createdAt, date part): when the store was
+ * activated MID-month, that month is a PARTIAL financial period — it can
+ * never be declared «íntegro» without an explicit PO policy (#458 r2
+ * review MAYOR-3: fail closed with a human reason). */
 export function closeStatus(input: {
   month: { year: number; month: number };
   today: string;
   close: MonthlyClose;
   existing?: ExistingClose;
+  activationDate?: string;
 }): CloseStatus {
   const { month, today, close, existing } = input;
   const monthName = `${MONTH_NAMES[month.month - 1]}`;
@@ -65,6 +70,20 @@ export function closeStatus(input: {
       state: "en_curso",
       canClose: false,
       impediments: [{ reason: "El mes aún no termina" }],
+    };
+  }
+
+  const firstDay = `${month.year}-${String(month.month).padStart(2, "0")}-01`;
+  const partialFromActivation = !!input.activationDate && input.activationDate > firstDay;
+  if (partialFromActivation) {
+    return {
+      state: "en_revision",
+      canClose: false,
+      impediments: [
+        {
+          reason: `Periodo financiero parcial desde la activación (${input.activationDate}) — declararlo íntegro requiere una política explícita`,
+        },
+      ],
     };
   }
 
