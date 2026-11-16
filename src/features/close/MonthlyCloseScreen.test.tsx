@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { MonthlyCloseScreen } from "./MonthlyCloseScreen";
@@ -15,9 +15,16 @@ const mocks = vi.hoisted(() => ({
   },
   activeStore: { id: "s1", name: "Tienda", type: "inventory_tiered" },
   loadOrderPaymentsDocs: vi.fn(),
+  draftOwnerId: undefined as string | undefined,
+  loadLatestClose: vi.fn(async () => null as unknown),
+  authorizeMonthlyClose: vi.fn(),
 }));
-vi.mock("../../app/StoreProvider", () => ({ useStore: () => ({ state: mocks.state, activeStore: mocks.activeStore, stateStatus: "ready" }) }));
-vi.mock("../../app/firebase/firestoreData", () => ({ loadOrderPaymentsDocs: mocks.loadOrderPaymentsDocs }));
+vi.mock("../../app/StoreProvider", () => ({ useStore: () => ({ state: mocks.state, activeStore: mocks.activeStore, stateStatus: "ready", draftOwnerId: mocks.draftOwnerId ?? "u_owner" }) }));
+vi.mock("../../app/firebase/firestoreData", () => ({
+  loadOrderPaymentsDocs: mocks.loadOrderPaymentsDocs,
+  loadLatestClose: mocks.loadLatestClose,
+  authorizeMonthlyClose: mocks.authorizeMonthlyClose,
+}));
 
 // The CURRENT CDMX month is dynamic; fixtures are built relative to it so the
 // suite never breaks at a month boundary. Contract case: delivery THIS month
@@ -55,6 +62,8 @@ beforeEach(() => {
   mocks.state.orders = [contractOrder];
   mocks.state.expenses = [];
   mocks.loadOrderPaymentsDocs.mockReset().mockResolvedValue(payments);
+  mocks.loadLatestClose.mockReset().mockResolvedValue(null);
+  mocks.authorizeMonthlyClose.mockReset().mockResolvedValue({ id: "x", version: 1 });
 });
 
 describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
@@ -311,5 +320,82 @@ describe("#457 — colas de revisión", () => {
     expect(screen.getByText("Productos sin costo")).toBeTruthy();
     expect(screen.getByText(/Aro ×1/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Ver producto" })).toBeTruthy();
+  });
+});
+
+describe("#458 — cierre oficial", () => {
+  it("mes en curso: «El mes aún no termina» y SIN botón de cerrar aunque todo cuadre", async () => {
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText("Revisión antes de cerrar")).toBeTruthy());
+    expect(screen.getByText(/El mes aún no termina/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Cerrar / })).toBeNull();
+  });
+
+  it("mes pasado con pendientes: razones humanas con su «Revisar …», sin CTA", async () => {
+    const gaps = { ...contractOrder, id: "og", deliveries: undefined, orderStatus: "delivered" } as unknown as Order;
+    mocks.state.orders = [gaps];
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Mes anterior" }));
+    await waitFor(() => expect(screen.getByText(/Faltan fechas de entrega verificables/)).toBeTruthy());
+    expect(screen.getByRole("button", { name: /Revisar pedidos/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Cerrar /i })).toBeNull();
+  });
+
+  it("mes pasado íntegro y dueña: CTA → diálogo con resumen en centavos → confirmación idempotente y sello", async () => {
+    mocks.draftOwnerId = "u_owner";
+    (mocks.activeStore as { ownerUid?: string }).ownerUid = "u_owner";
+    // Dueña y mes anterior limpio: montar directo en el mes anterior.
+    window.history.replaceState({}, "", "/");
+    cleanup();
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await screen.findByText("Revisión antes de cerrar");
+    // El mes actual está en curso: usar el botón Cerrar del mes anterior no
+    // aplica aquí; validamos el flujo en el mes anterior navegando.
+    fireEvent.click(screen.getByRole("button", { name: "Mes anterior" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Cerrar / })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Cerrar / }));
+    expect(screen.getByText(/Confirmar cierre de/)).toBeTruthy();
+    expect(screen.getByText(/fija una versión inmutable del periodo a tu nombre/)).toBeTruthy();
+    // Tras autorizar, la recarga del periodo devuelve el snapshot sellado.
+    const sealedSnapshot = {
+      id: "s1__oct__v1", storeId: "s1", period: "2026-10", version: 1,
+      authorizedByUid: "u_owner", authorizedAt: "2026-12-01T10:00:00.000Z",
+      totals: { operatingResultCents: 0 },
+    };
+    mocks.loadLatestClose.mockResolvedValue(sealedSnapshot);
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar cierre" }));
+    await waitFor(() => expect(mocks.authorizeMonthlyClose).toHaveBeenCalledTimes(1));
+    const snapshot = mocks.authorizeMonthlyClose.mock.calls[0][0];
+    expect(snapshot.version).toBe(1);
+    expect(snapshot.authorizedByUid).toBe("u_owner");
+    expect(typeof snapshot.totals.operatingResultCents).toBe("number"); // totales del periodo (0 es válido sin ventas)
+    // Sello de versión autorizada.
+    await waitFor(() => expect(screen.getByText(/versión 1/)).toBeTruthy());
+  });
+
+  it("no es la dueña: puede consultar, sin CTA y con el texto que lo explica", async () => {
+    mocks.draftOwnerId = "u_someone_else";
+    cleanup();
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await screen.findByText("Revisión antes de cerrar");
+    fireEvent.click(screen.getByRole("button", { name: "Mes anterior" }));
+    await waitFor(() => expect(screen.getByText(/Solo la dueña de la tienda puede confirmar/)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /Cerrar / })).toBeNull();
+  });
+
+  it("mes YA cerrado: sello con versión y enlace a reparto; sin CTA doble", async () => {
+    mocks.draftOwnerId = "u_owner";
+    mocks.loadLatestClose.mockReset().mockResolvedValue({
+      id: "s1__prev__v1", storeId: "s1", period: "2026-10", version: 1,
+      authorizedByUid: "u_owner", authorizedAt: "2026-11-02T10:00:00.000Z",
+      totals: { operatingResultCents: 25000 },
+    });
+    cleanup();
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Mes anterior" }));
+    await waitFor(() => expect(screen.getByText(/Cerrado/)).toBeTruthy());
+    expect(screen.getByText(/versión 1/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Ir a reparto de utilidades/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Cerrar / })).toBeNull();
   });
 });

@@ -34,6 +34,7 @@ import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
 import { buildManualPriceEvents, priceChangeEvent, type PriceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
+import { buildCloseSnapshot, type CloseSnapshotDoc } from "../../lib/closeAuthorization";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -483,6 +484,38 @@ export async function saveProductWithPriceEvents(
     batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
   }
   await batch.commit();
+}
+
+/** #458: read the latest AUTHORIZED close snapshot for a period (if any). */
+export async function loadLatestClose(
+  storeId: string,
+  period: string
+): Promise<(CloseSnapshotDoc & { id: string }) | null> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(collection(db, "closes"), where("storeId", "==", storeId), where("period", "==", period))
+  );
+  const docs = snap.docs.map((d) => ({ ...(d.data() as CloseSnapshotDoc), id: d.id }));
+  if (docs.length === 0) return null;
+  return docs.sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0];
+}
+
+/** #458: authorize the official close — IDEMPOTENT by deterministic doc id:
+ * a retry (double click, reconnect) lands on the same doc and returns the
+ * authorized snapshot without a second write. Firestore rules enforce
+ * OWNER-ONLY creation (#202 closes contract); a rejected write propagates. */
+export async function authorizeMonthlyClose(
+  snapshot: ReturnType<typeof buildCloseSnapshot>
+): Promise<{ id: string; version: number }> {
+  const { db } = getFirebase();
+  const ref = doc(db, "closes", snapshot.id);
+  const existing = await getDoc(ref);
+  if (existing.exists()) {
+    const data = existing.data() as { id?: string; version?: number };
+    return { id: existing.id, version: data.version ?? snapshot.version };
+  }
+  await setDoc(ref, snapshot as unknown as Record<string, unknown>);
+  return { id: snapshot.id, version: snapshot.version };
 }
 
 /** #335 r2: a rule CONFIG change — its own append-only trail, recorded right

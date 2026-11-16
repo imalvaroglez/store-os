@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Screen, ScreenHeader, Sheet, TextField } from "../../design-system";
 import { navigate } from "../../lib/router";
-import { loadOrderPaymentsDocs } from "../../app/firebase/firestoreData";
+import { authorizeMonthlyClose, loadLatestClose, loadOrderPaymentsDocs } from "../../app/firebase/firestoreData";
 import { cdmxMonthKey, monthlyClose, type CloseMonth } from "../../lib/monthlyClose";
 import { pendingQueues, type Queue } from "../../lib/closeQueues";
+import { buildCloseSnapshot, closeStatus, nextCloseVersion, type CloseSnapshotDoc } from "../../lib/closeAuthorization";
+import { Dialog } from "../../design-system/Dialog";
 import { useStore } from "../../app/StoreProvider";
 import { formatMoneyExact } from "../../lib/money";
 import type { OrderPayment } from "../../types";
@@ -202,12 +204,17 @@ function QueueSheet({
 }
 
 export function MonthlyCloseScreen() {
-  const { state, activeStore, stateStatus } = useStore();
+  const { state, activeStore, stateStatus, draftOwnerId } = useStore();
   const [offset, setOffset] = useState(0);
   // #456: which figure's drilldown sheet is open (null = none).
   const [detail, setDetail] = useState<null | "sales" | "costs" | "expenses" | "margin" | "result" | "collections">(null);
   // #457: which review QUEUE is open (null = none).
   const [queue, setQueue] = useState<null | "pedidos" | "cobros" | "costo">(null);
+  // #458: the period's AUTHORIZED snapshot (null = not closed) + confirm dialog.
+  const [existingClose, setExistingClose] = useState<(CloseSnapshotDoc & { id: string }) | null>(null);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [authorizing, setAuthorizing] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
   const [paymentsByOrder, setPaymentsByOrder] = useState<Record<string, OrderPayment[]>>({});
   const [loadingPayments, setLoadingPayments] = useState(true);
   // #129: a failed cobros load must SAY so — silent $0 would read as "no hay
@@ -251,6 +258,17 @@ export function MonthlyCloseScreen() {
       alive = false;
     };
   }, [paymentOrderIds.join(",")]);
+
+  const periodKey = `${month.year}-${String(month.month).padStart(2, "0")}`;
+  const activeStoreId = activeStore?.id ?? "";
+  useEffect(() => {
+    let alive = true;
+    if (!activeStoreId) return;
+    loadLatestClose(activeStoreId, periodKey)
+      .then((snapshot) => { if (alive) setExistingClose(snapshot); })
+      .catch(() => { if (alive) setExistingClose(null); });
+    return () => { alive = false; };
+  }, [activeStoreId, periodKey]);
 
   if (!activeStore) return null;
   const close = monthlyClose({
@@ -318,6 +336,11 @@ export function MonthlyCloseScreen() {
       explanation: "Un dato dañado impide leer este pedido; no se rompe el periodo.",
     });
   }
+
+  // #458: the OFFICIAL close state — never a preview presented as closed.
+  const todayCdmx = cdmxMonthKey(new Date().toISOString()) && new Date().toISOString().slice(0, 10);
+  const official = closeStatus({ month, today: todayCdmx, close, existing: existingClose ?? undefined });
+  const isOwner = !!activeStore.ownerUid && activeStore.ownerUid === draftOwnerId;
 
   const resultCents = close.operatingResultCents;
   const resultTone = resultCents < 0 ? "danger" : resultCents > 0 ? "success" : "default";
@@ -442,6 +465,101 @@ export function MonthlyCloseScreen() {
             <p className="text-sm text-on-surface-soft px-1">Sin pendientes detectados para este periodo.</p>
           )
         )}
+
+        {/* #458: Revisión antes de cerrar — the formal act, owner-only. */}
+        {official.state === "cerrado" ? (
+          <Card>
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="text-sm font-semibold text-ink">
+                Cerrado <Badge tone="success">versión {official.closedVersion}</Badge>
+              </h3>
+              <Button size="sm" variant="secondary" onClick={() => navigate("/productos/reparto")}>
+                Ir a reparto de utilidades
+              </Button>
+            </div>
+            <p className="text-xs text-on-surface-soft mt-1">
+              Autorizado por {official.closedBy} el {official.closedAt?.slice(0, 10)}. Los importes de esta versión son
+              inmutables; correcciones posteriores generan una nueva versión (#202), nunca editan ésta.
+            </p>
+          </Card>
+        ) : official.state !== "en_curso" || existingClose === null ? (
+          <Card>
+            <h3 className="text-sm font-semibold text-ink">Revisión antes de cerrar</h3>
+            {official.state === "en_curso" ? (
+              <p className="text-xs text-on-surface-soft mt-1">El mes aún no termina — un cierre sólo puede autorizarse al finalizar el periodo.</p>
+            ) : official.impediments.length > 0 ? (
+              <div className="mt-2 space-y-1">
+                {official.impediments.map((impediment) => (
+                  <div key={impediment.reason} className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="text-sm text-on-surface">· {impediment.reason}</p>
+                    {impediment.queue && (
+                      <Button size="sm" variant="ghost" className="!px-0" onClick={() => setQueue(impediment.queue!)}>
+                        Revisar {impediment.queue === "pedidos" ? "pedidos" : impediment.queue === "cobros" ? "cobros" : "costo"}
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : isOwner ? (
+              <div className="mt-2">
+                <p className="text-xs text-on-surface-soft">
+                  Periodo íntegro y verificado. Cerrar fija una versión del periodo; no autoriza ni realiza un reparto.
+                </p>
+                <Button className="mt-2" onClick={() => setConfirmClose(true)}>Cerrar {close.monthLabel}</Button>
+              </div>
+            ) : (
+              <p className="text-xs text-on-surface-soft mt-1">
+                Periodo verificado. Solo la dueña de la tienda puede confirmar este cierre.
+              </p>
+            )}
+            {closeError && <p className="text-xs text-danger mt-2">{closeError}</p>}
+          </Card>
+        ) : null}
+
+        <Dialog
+          open={confirmClose}
+          title={`Confirmar cierre de ${close.monthLabel}`}
+          onClose={() => setConfirmClose(false)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setConfirmClose(false)}>Cancelar</Button>
+              <Button
+                disabled={authorizing}
+                onClick={() => {
+                  setAuthorizing(true);
+                  setCloseError(null);
+                  const snapshot = buildCloseSnapshot({
+                    storeId: activeStore.id,
+                    close,
+                    uid: draftOwnerId,
+                    now: new Date().toISOString(),
+                    version: nextCloseVersion(existingClose?.version),
+                  });
+                  authorizeMonthlyClose(snapshot)
+                    .then(() => {
+                      setConfirmClose(false);
+                      return loadLatestClose(activeStore.id, periodKey);
+                    })
+                    .then((latest) => setExistingClose(latest))
+                    .catch(() => setCloseError("No se pudo autorizar el cierre. Revisa tu conexión; si persiste, verifica que eres la dueña de la tienda."))
+                    .finally(() => setAuthorizing(false));
+                }}
+              >
+                {authorizing ? "Autorizando…" : "Confirmar cierre"}
+              </Button>
+            </div>
+          }
+        >
+          <p className="text-sm text-on-surface">
+            Ventas {formatMoneyExact(close.salesCents / 100)} · Costo {formatMoneyExact(close.costCents / 100)} · Gastos{" "}
+            {formatMoneyExact(close.expensesCents / 100)} · Resultado {formatMoneyExact(close.operatingResultCents / 100)} · Cobros{" "}
+            {formatMoneyExact(close.collectionsCents / 100)}.
+          </p>
+          <p className="text-xs text-on-surface-soft mt-2">
+            Cerrar fija una versión inmutable del periodo a tu nombre. No autoriza ni realiza un reparto; las correcciones
+            posteriores generan versiones nuevas, nunca editan ésta.
+          </p>
+        </Dialog>
 
         <p className="text-xs text-ink-soft px-1">
           Vista preliminar: ventas al confirmar entrega de cada pieza, cobros en su fecha real, gastos contados una sola vez.

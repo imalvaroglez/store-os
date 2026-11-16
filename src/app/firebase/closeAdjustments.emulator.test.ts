@@ -71,4 +71,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#202 closes & ajustes (re
     await expect(getDocs(collection(foreign, "closes"))).rejects.toThrow();
     await expect(getDocs(collection(foreign, "closeAdjustments"))).rejects.toThrow();
   });
+
+  it("#458: el snapshot de cierre oficial pasa las reglas closes — dueña sí, miembro no, suplantación de actor no", async () => {
+    const owner = env.authenticatedContext("fer-uid").firestore();
+    const member = env.authenticatedContext("member-uid").firestore();
+    const snapshot = {
+      id: "olivia__2026-09__v1", storeId: "olivia", period: "2026-09", version: 1,
+      monthLabel: "septiembre 2026",
+      totals: { salesCents: 1, costCents: 1, expensesCents: 1, operatingResultCents: 1, collectionsCents: 1 },
+      coverageComplete: true, fingerprint: "fp_x", state: "closed",
+      authorizedByUid: "fer-uid", authorizedAt: "2026-10-01T00:00:00.000Z",
+      createdBy: "fer-uid", createdAt: "2026-10-01T00:00:00.000Z",
+    };
+    await expect(setDoc(doc(owner, "closes/olivia__2026-09__v1"), snapshot)).resolves.toBeUndefined();
+    await expect(setDoc(doc(member, "closes/olivia__2026-09__v2"), { ...snapshot, id: "olivia__2026-09__v2", version: 2, createdBy: "member-uid", authorizedByUid: "member-uid" })).rejects.toThrow();
+    await expect(setDoc(doc(owner, "closes/olivia__2026-09__v3"), { ...snapshot, id: "olivia__2026-09__v3", version: 3, createdBy: "someone-else" })).rejects.toThrow();
+    // Miembro de la tienda SÍ lee el snapshot sellado (consulta), ajeno no (ya cubierto).
+    await expect((await getDoc(doc(member, "closes/olivia__2026-09__v1"))).exists()).toBe(true);
+  });
 });
