@@ -392,7 +392,10 @@ export function PricingStrategyScreen() {
         title="Estrategia de precios"
         subtitle="Tablas por categoría: rangos de costo con precios Iconic, Girly y Regular"
         action={
-          <Button variant="ghost" size="sm" onClick={() => navigate("/productos/diagnostico")}>Diagnóstico</Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/productos/simulador")}>Simulador</Button>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/productos/diagnostico")}>Diagnóstico</Button>
+          </div>
         }
       />
       <div className="space-y-4">
