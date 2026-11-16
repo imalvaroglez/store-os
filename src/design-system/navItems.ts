@@ -2,9 +2,8 @@ import { navigate } from "../lib/router";
 import type { StoreType } from "../types";
 
 // Nav tabs. "productos" is a parent whose default route IS the product list
-// (no /productos/productos); it expands into Categorías / Compras children.
-// "Compras" only exists for inventory-tiered stores (inherits the filter the
-// old Inventario tab had).
+// (no /productos/productos). Sub-routes keep their paths — bookmarks, shared
+// links and deep-links never break.
 export type Tab =
   | "inicio"
   | "productos"
@@ -25,52 +24,79 @@ export type Tab =
 
 export type PlatformRole = "super_admin" | "member";
 
-export type NavItem = { id: Tab; label: string; path: string; children?: NavItem[] };
+export type NavLeaf = { id: Tab; label: string; path: string };
 
-// Single source of truth for admin navigation. Shared by BottomNav (mobile)
-// and Sidebar (desktop) so the two never drift.
-export const NAV_ITEMS: NavItem[] = [
-  { id: "inicio", label: "Inicio", path: "/" },
+/** A navigation AREA: a pure container — it expands, never navigates. */
+export type NavArea = { id: string; label: string; children: NavLeaf[] };
+
+// #454 — single source of truth for admin navigation (contract PO 15-nov-2026).
+// Exactly four areas, in this order, with these children and this copy.
+// Group labels are NOT screens ("un contenedor no abre pantalla cajón de sastre").
+// "Simulador de reparto" joins Administración when #459 delivers its screen —
+// no dead links, no decorative "Próximamente".
+const NAV_AREAS: NavArea[] = [
   {
-    id: "productos",
-    label: "Productos",
-    path: "/productos",
+    id: "ventas",
+    label: "Ventas",
     children: [
+      { id: "pedidos", label: "Pedidos", path: "/pedidos" },
+      { id: "clientes", label: "Clientes", path: "/clientes" },
+      { id: "productos_ranking", label: "Top emprendedoras", path: "/productos/ranking" },
+    ],
+  },
+  {
+    id: "catalogo",
+    label: "Inventario y catálogo",
+    children: [
+      { id: "productos", label: "Productos", path: "/productos" },
       { id: "productos_categorias", label: "Categorías", path: "/productos/categorias" },
-      { id: "productos_compras", label: "Compras", path: "/productos/compras" },
-      { id: "productos_gastos", label: "Gastos", path: "/productos/gastos" },
-      { id: "productos_empaques", label: "Empaques", path: "/productos/empaques" },
       { id: "productos_reglas", label: "Reglas de venta", path: "/productos/reglas" },
       { id: "productos_estrategia", label: "Estrategia de precios", path: "/productos/estrategia" },
     ],
   },
-  { id: "pedidos", label: "Pedidos", path: "/pedidos" },
-  { id: "clientes", label: "Clientes", path: "/clientes" },
-  { id: "usuarios", label: "Usuarios", path: "/usuarios" },
+  {
+    id: "abastecimiento",
+    label: "Compras y abastecimiento",
+    children: [
+      { id: "productos_compras", label: "Compras", path: "/productos/compras" },
+      { id: "productos_empaques", label: "Empaques", path: "/productos/empaques" },
+    ],
+  },
+  {
+    id: "administracion",
+    label: "Administración",
+    children: [
+      { id: "productos_gastos", label: "Gastos", path: "/productos/gastos" },
+      { id: "productos_cierre", label: "Cierre mensual", path: "/productos/cierre" },
+      { id: "productos_reparto", label: "Reparto de utilidades", path: "/productos/reparto" },
+    ],
+  },
 ];
 
-// The productos parent is highlighted when itself or any of its children is active.
-export function parentActive(active: Tab): boolean {
-  return active === "productos" || active.startsWith("productos_");
+const FLAT_BASE: NavLeaf[] = [{ id: "inicio", label: "Inicio", path: "/" }];
+
+export type VisibleNav = { flat: NavLeaf[]; areas: NavArea[] };
+
+/** The navigation for one store/role: flat leaves (Inicio, Usuarios for
+ * super_admin) plus the four areas, capability-filtered. Empty areas are
+ * dropped — no hollow containers. */
+export function visibleNav(storeType: StoreType, userRole?: PlatformRole): VisibleNav {
+  const tieredOnly = (leaf: NavLeaf) =>
+    storeType === "inventory_tiered" ||
+    (leaf.id !== "productos_compras" && leaf.id !== "productos_reglas" && leaf.id !== "productos_estrategia");
+  const areas = NAV_AREAS.map((area) => ({ ...area, children: area.children.filter(tieredOnly) })).filter(
+    (area) => area.children.length > 0
+  );
+  const flat = [...FLAT_BASE, ...(userRole === "super_admin" ? ([{ id: "usuarios", label: "Usuarios", path: "/usuarios" }] as NavLeaf[]) : [])];
+  return { flat, areas };
 }
 
-// Compras child only exists for inventory-tiered stores; so do the level
-// pricing rules and the per-category strategy (levels only exist for tiered
-// stores).
-export function visibleNavItems(storeType: StoreType, userRole?: PlatformRole) {
-  return NAV_ITEMS.filter((item) => item.id !== "usuarios" || userRole === "super_admin").map((t) =>
-    t.children
-      ? {
-          ...t,
-          children: t.children.filter(
-            (c) =>
-              (c.id !== "productos_compras" || storeType === "inventory_tiered") &&
-              (c.id !== "productos_reglas" || storeType === "inventory_tiered") &&
-              (c.id !== "productos_estrategia" || storeType === "inventory_tiered")
-          ),
-        }
-      : t
-  );
+/** Which AREA holds this tab (null for flat/chrome tabs). Deep-links open it. */
+export function areaIdForTab(tab: Tab): string | null {
+  for (const area of NAV_AREAS) {
+    if (area.children.some((leaf) => leaf.id === tab)) return area.id;
+  }
+  return null;
 }
 
 export { navigate };
