@@ -2,6 +2,7 @@ import type { LooseExpense, Order, OrderPayment } from "../types";
 import { orderAmountCents } from "./orderMoney";
 import { effectiveOrderStatus, orderItems } from "./orders";
 import { LOOSE_EXPENSE_CATEGORY_LABEL } from "../types";
+import { incidentSaleAdjustmentCents } from "./orderMoney";
 import { stockDimensionKey } from "./inventory";
 
 // #129 — etapa lista: vista previa de cierre mensual (SOLO LECTURA).
@@ -42,6 +43,8 @@ export type CloseContribution = {
   kind: "sale" | "cost" | "expense" | "collection";
   reference: string;
   orderId?: string;
+  /** #456 r2: the human behind the row (orders carry a clienta; gastos no). */
+  customerName?: string;
   /** Product/concept legible (venta/costo/gasto) o método del cobro. */
   concept: string;
   productName?: string;
@@ -96,6 +99,8 @@ export type CloseInputs = {
   /** Payment records per order id (subcollections, loaded on demand). */
   paymentsByOrder: Record<string, OrderPayment[] | undefined>;
   expenses: LooseExpense[];
+  /** #456 r2: clienta names for the traceable rows (optional — Sin clienta). */
+  customers?: Array<{ id: string; name: string }>;
 };
 
 const MONTH_NAMES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -125,6 +130,8 @@ function orderReference(order: Order): string {
 /** Read-only monthly close preview. Pure — never writes, never closes. */
 export function monthlyClose(inputs: CloseInputs): MonthlyClose {
   const { storeId, month, orders, paymentsByOrder, expenses } = inputs;
+  const customerNameOf = (customerId: string | undefined) =>
+    inputs.customers?.find((c) => c.id === customerId)?.name ?? "Sin clienta";
   const monthKey = monthKeyOf(month);
   const coverage: MonthlyCloseCoverage = {
     deliveredWithoutDate: [],
@@ -177,6 +184,7 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
           kind: "sale",
           reference: orderReference(order),
           orderId: order.id,
+          customerName: customerNameOf(order.customerId),
           concept: `Venta entregada · ${item.productName}`,
           productName: item.productName,
           amountCents: orderAmountCents(item.unitPrice, line.quantity),
@@ -190,6 +198,7 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
             kind: "cost",
             reference: orderReference(order),
             orderId: order.id,
+            customerName: customerNameOf(order.customerId),
             concept: `Costo de ${item.productName}`,
             productName: item.productName,
             amountCents: -costAmount,
@@ -248,10 +257,53 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
           kind: "collection",
           reference: orderReference(order),
           orderId: order.id,
+          customerName: customerNameOf(order.customerId),
           concept: COLLECTION_GROUP_LABELS[group],
           amountCents: amount,
           evidence: "verified",
         });
+      }
+    }
+
+    // ── #456 r2: posventa CONFIRMADA ajusta el mes de su confirmación
+    // (#203/#212): a refund reverses the sale AND the reversible cost (the
+    // piece returns to the shelf); a charged replacement books its delta.
+    // An agreed-but-unconfirmed refund stays OUT (compromised ≠ confirmed).
+    for (const incident of order.incidents ?? []) {
+      const confirmedAt = (incident.events ?? []).find((event) => event.kind === "confirmed")?.at;
+      if (!confirmedAt || cdmxMonthKey(confirmedAt) !== monthKey) continue;
+      const adjustment = incidentSaleAdjustmentCents(incident);
+      if (!adjustment) continue;
+      salesCents += adjustment;
+      details.sales.push({
+        date: confirmedAt.slice(0, 10),
+        kind: "sale",
+        reference: orderReference(order),
+        orderId: order.id,
+        customerName: customerNameOf(order.customerId),
+        concept: "Ajuste de posventa confirmado (devolución o reemplazo)",
+        amountCents: adjustment,
+        evidence: "verified",
+      });
+      // Reversible cost: the refunded piece's line, when its cost is KNOWN.
+      if (adjustment < 0 && typeof incident.quantity === "number") {
+        const item = items.find(
+          (candidate) => stockDimensionKey(candidate.productId ?? "", candidate.variantId) === stockDimensionKey(incident.productId ?? "", incident.variantId)
+        );
+        if (item && typeof item.cost === "number" && Number.isFinite(item.cost)) {
+          const costReversal = orderAmountCents(item.cost, incident.quantity);
+          costCents -= costReversal;
+          details.costs.push({
+            date: confirmedAt.slice(0, 10),
+            kind: "cost",
+            reference: orderReference(order),
+            orderId: order.id,
+            concept: `Costo reversible de ${item.productName} (pieza devuelta)`,
+            productName: item.productName,
+            amountCents: costReversal,
+            evidence: "verified",
+          });
+        }
       }
     }
 

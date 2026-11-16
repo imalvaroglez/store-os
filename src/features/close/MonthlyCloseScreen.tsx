@@ -73,28 +73,43 @@ function FormulaRow({
 /** #456: one figure's drilldown — “¿De dónde salen estos $X?” with the
  * traceable rows, search, progressive load and exact reconciliation. */
 function FigureDetailSheet({
-  open, onClose, title, concept, rows, period, excluded,
+  open, onClose, title, concept, rows, period, excluded, kindFilter = false,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   concept: string;
-  rows: Array<{ date: string; reference: string; concept: string; amountCents: number; orderId?: string }>;
+  rows: Array<{ date: string; reference: string; concept: string; amountCents: number; orderId?: string; customerName?: string; kind?: string }>;
   period: string;
   excluded?: Array<{ reference: string; amountCents: number; cause: string }>;
+  /** #456 r2: composite sheets (ganancia/resultado) offer a kind filter. */
+  kindFilter?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [visible, setVisible] = useState(50);
-  useEffect(() => { setQuery(""); setVisible(50); }, [open]);
-  const filtered = rows.filter((row) =>
-    !query.trim() || `${row.reference} ${row.concept}`.toLowerCase().includes(query.trim().toLowerCase())
-  );
+  const [kind, setKind] = useState<string>("todos");
+  useEffect(() => { setQuery(""); setVisible(50); setKind("todos"); }, [open]);
+  const filtered = rows.filter((row) => {
+    if (kindFilter && kind !== "todos" && row.kind !== kind) return false;
+    if (!query.trim()) return true;
+    const needle = query.trim().toLowerCase();
+    return `${row.reference} ${row.concept} ${row.customerName ?? ""}`.toLowerCase().includes(needle);
+  });
   const sum = rows.reduce((total, row) => total + row.amountCents, 0);
   return (
     <Sheet open={open} onClose={onClose} title={title} contentClassName="max-w-2xl">
       <p className="text-xs text-on-surface-soft">{concept} · {period} · hora Centro de México</p>
-      <div className="mt-3">
-        <TextField label="Buscar por folio o concepto" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+        <TextField label="Buscar por folio, clienta o concepto" value={query} onChange={(event) => setQuery(event.target.value)} />
+        {kindFilter && (
+          <div className="flex items-end gap-1">
+            {["todos", "sale", "cost", "expense"].map((option) => (
+              <Button key={option} size="sm" variant={kind === option ? "secondary" : "ghost"} onClick={() => setKind(option)}>
+                {option === "todos" ? "Todo" : option === "sale" ? "Ventas" : option === "cost" ? "Costos" : "Gastos"}
+              </Button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="mt-3 space-y-1 max-h-[50vh] overflow-y-auto">
         {filtered.slice(0, visible).map((row, index) => (
@@ -102,9 +117,17 @@ function FigureDetailSheet({
             <div className="min-w-0">
               <span className="tnum text-xs text-on-surface-soft">{row.date}</span>{" "}
               <span className="text-ink">{row.reference}</span>
+              {row.customerName && <span className="text-on-surface-soft"> · {row.customerName}</span>}
               <span className="text-on-surface-soft"> · {row.concept}</span>
             </div>
-            <span className="tnum shrink-0">{signedMoney(row.amountCents)}</span>
+            <div className="flex items-baseline gap-2 shrink-0">
+              <span className="tnum">{signedMoney(row.amountCents)}</span>
+              {row.orderId && (
+                <Button size="sm" variant="ghost" className="!px-2 !py-0 !min-h-0 !text-xs" onClick={() => navigate("/pedidos")}>
+                  Ver
+                </Button>
+              )}
+            </div>
           </div>
         ))}
         {filtered.length > visible && (
@@ -277,6 +300,7 @@ export function MonthlyCloseScreen() {
     orders: storeOrders,
     paymentsByOrder,
     expenses: state.expenses,
+    customers: state.customers ?? [],
   });
 
   // #455: skeleton of stable structure while anything is still loading — a
@@ -343,7 +367,10 @@ export function MonthlyCloseScreen() {
   const isOwner = !!activeStore.ownerUid && activeStore.ownerUid === draftOwnerId;
 
   const resultCents = close.operatingResultCents;
-  const resultTone = resultCents < 0 ? "danger" : resultCents > 0 ? "success" : "default";
+  // #455 r2 (revisión): a partial estimate is indeterminate — even a positive
+  // result gets the NEUTRAL tone while a cost is missing.
+  const resultTone =
+    resultCents < 0 ? "danger" : resultCents > 0 && !close.costCoverage.partialByMissingCost ? "success" : "default";
   const heroLabel = resultCents < 0 ? "PÉRDIDA OPERATIVA ESTIMADA" : "GANANCIA OPERATIVA ESTIMADA";
 
   return (
@@ -375,13 +402,16 @@ export function MonthlyCloseScreen() {
         </Card>
 
         {/* The 5-row formula — aligned, tabular, subtotals as separators. */}
-        {!loading && close.salesCents === 0 ? (
+        {!loading && close.salesCents === 0 && close.expensesCents === 0 && close.collectionsCents === 0 ? (
           <Card>
             <p className="text-sm text-on-surface-soft">Todavía no hay entregas verificadas en este periodo.</p>
           </Card>
         ) : (
           <Card>
             <h3 className="text-sm font-semibold text-ink">¿Cómo llegamos a este resultado?</h3>
+            {!loading && close.salesCents === 0 && (
+              <p className="text-xs text-on-surface-soft mt-1">Todavía no hay entregas verificadas en este periodo.</p>
+            )}
             <div className="mt-2">
               <FormulaRow label="Ventas de productos entregados" cents={loading ? null : close.salesCents} onOpen={() => setDetail("sales")} />
               <FormulaRow label="Costo de los productos vendidos" cents={loading ? null : -close.costCents} signed onOpen={() => setDetail("costs")} />
@@ -584,7 +614,7 @@ export function MonthlyCloseScreen() {
         open={detail === "margin"} onClose={() => setDetail(null)}
         title={`¿De dónde salen estas ${formatMoneyExact(close.grossMarginCents / 100)}?`}
         concept="Ganancia antes de gastos (ventas − costo)" period={monthName}
-        rows={[...close.details.sales, ...close.details.costs]}
+        rows={[...close.details.sales, ...close.details.costs]} kindFilter
       />
       <FigureDetailSheet
         open={detail === "expenses"} onClose={() => setDetail(null)}
@@ -596,7 +626,7 @@ export function MonthlyCloseScreen() {
         open={detail === "result"} onClose={() => setDetail(null)}
         title={`¿De dónde salen estas ${formatMoneyExact(close.operatingResultCents / 100)}?`}
         concept="Resultado operativo (ventas − costo − gastos)" period={monthName}
-        rows={[...close.details.sales, ...close.details.costs, ...close.details.expenses]}
+        rows={[...close.details.sales, ...close.details.costs, ...close.details.expenses]} kindFilter
       />
       {/* #457 review queues — same task, filtered and searchable. */}
       <QueueSheet open={queue === "pedidos"} onClose={() => setQueue(null)} title="Pedidos entregados sin fecha" queue={queues.pedidosSinFecha} />
@@ -605,7 +635,7 @@ export function MonthlyCloseScreen() {
 
       <FigureDetailSheet
         open={detail === "collections"} onClose={() => setDetail(null)}
-        title={`¿De dónde salen estos ${formatMoneyExact(close.collectionsCents / 100)}?`}
+        title={paymentsFailed ? "Cobros no disponibles" : `¿De dónde salen estos ${formatMoneyExact(close.collectionsCents / 100)}?`}
         concept="Dinero recibido durante el mes" period={monthName}
         rows={close.details.collections}
         excluded={close.details.excludedCollections}
