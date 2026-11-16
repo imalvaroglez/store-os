@@ -10,7 +10,7 @@ import { cdmxToday } from "./monthlyClose";
 const NOV = { year: 2026, month: 11 };
 const baseClose = (over: Partial<MonthlyClose> = {}): MonthlyClose => ({
   month: NOV, monthLabel: "noviembre 2026",
-  salesCents: 50000, costCents: 20000, grossMarginCents: 30000,
+  salesCents: 50000, posventaAdjustmentCents: 0, costCents: 20000, grossMarginCents: 30000,
   expensesCents: 5000, operatingResultCents: 25000, collectionsCents: 35000,
   coverage: {
     deliveredWithoutDate: [], linesWithoutCost: [], unconfirmedCollections: [],
