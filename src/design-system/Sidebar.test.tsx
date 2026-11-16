@@ -62,3 +62,12 @@ describe("Sidebar áreas (#454)", () => {
     expect(screen.queryByRole("button", { name: "Usuarios" })).toBeNull();
   });
 });
+
+describe("#454 r2 — devoluciones", () => {
+  it("navegación in-session (cambio de ruta) abre el área destino como un refresh", () => {
+    const { rerender } = render(<Sidebar active="inicio" storeType="inventory_tiered" onOpenSettings={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Pedidos" })).toBeNull();
+    rerender(<Sidebar active="pedidos" storeType="inventory_tiered" onOpenSettings={() => {}} />);
+    expect(screen.getByRole("button", { name: "Pedidos" })).toBeTruthy();
+  });
+});
