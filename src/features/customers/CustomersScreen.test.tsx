@@ -97,3 +97,11 @@ describe("Clientes · vigencia Iconic", () => {
     expect(within(customerBlock("Mar")).queryByText(/Iconic/, { selector: "span" })).toBeNull();
   });
 });
+
+describe("#132 r2 — el ranking de emprendedoras se descubre desde Clientes", () => {
+  it("la cabecera de Clientes ofrece «Top emprendedoras»", () => {
+    mocks.state = fixtureState();
+    render(<ToastProvider><CustomersScreen /></ToastProvider>);
+    expect(screen.getByRole("button", { name: /Top emprendedoras/i })).toBeTruthy();
+  });
+});

@@ -582,7 +582,21 @@ export type OrderIncident = {
     destination?: "refund_pending" | "credit_accepted";
   };
   /** The replacement piece when the resolution is a replacement. */
-  replacement?: { productId?: string; productName: string; unitPriceCents: number; /** Real cost of the piece leaving stock, exact cents. */ unitCostCents: number; chargeDifference: boolean };
+  replacement?: {
+    productId?: string;
+    productName: string;
+    unitPriceCents: number;
+    /** Real cost of the piece leaving stock, exact cents. */
+    unitCostCents: number;
+    chargeDifference: boolean;
+    /** #364: the exact color handed over, REQUIRED when the replacement is a
+     * design sold per color — its shelf moves at confirm. Absent on legacy
+     * incidents (pre-colors); confirming those fails closed with an
+     * actionable error instead of guessing a color. */
+    variantId?: string;
+    variantColor?: string;
+    variantSku?: string;
+  };
   /** append-only history; every state is DERIVED from it, never stored twice. */
   events: OrderIncidentEvent[];
 };
@@ -824,6 +838,9 @@ export const PURCHASE_EXPENSE_CATEGORY_LABEL: Record<PurchaseExpenseCategory, st
 export type Purchase = {
   id: string;
   storeId: string;
+  /** #373: optimistic-concurrency counter (like orders) — a save from a
+   * stale clone is rejected instead of silently winning. */
+  revision?: number;
   name?: string;
   tickets?: PurchaseTicket[];
   costingMethod?: "latest_purchase";
@@ -978,6 +995,8 @@ export function recalcPurchaseStatus(p: Purchase): PurchaseStatus {
 }
 
 // Administrative state held in memory from the authenticated Firestore session.
+import type { SupplierProductLink } from "../lib/supplierLinks";
+
 export type AppState = {
   stores: Store[];
   activeStoreId: string | null;
@@ -989,6 +1008,35 @@ export type AppState = {
   orders: Order[];
   /** #184 loose expenses (registration, assignment, supplies). */
   expenses: LooseExpense[];
+  /** #211: confirmed supplier-code → product associations (store-scoped).
+   * Optional so legacy local fixtures keep compiling; cloud loading always
+   * provides it. */
+  supplierLinks?: SupplierProductLink[];
+  /** #132: confirmed monthly reseller rankings (append-only, owner-only). */
+  rankingConfirmations?: RankingConfirmation[];
+};
+
+export type { SupplierProductLink };
+
+/** #132 (FER-17): Fer's CONFIRMED result for a month — the frozen top with
+ * her tie resolutions. Append-only: a late-refund re-confirmation is a NEW
+ * doc (revision > 1); confirmed results are never rewritten. */
+export type RankingConfirmation = {
+  id: string;
+  storeId: string;
+  year: number;
+  month: number;
+  /** Frozen entries exactly as confirmed (name included — history readable). */
+  entries: Array<{ customerId: string; name: string; netCents: number; pieces: number; rank: number }>;
+  /** Fer's motive per persistent tie group she resolved by decision. */
+  tieResolutions: Array<{ customerIds: string[]; motive: string }>;
+  /** Why THIS confirmation replaced a previous one (late refund); 1 = original. */
+  revision: number;
+  /** Motive when revision > 1 (the exceptional decision the policy requires). */
+  revisionMotive?: string;
+  confirmedBy: string;
+  confirmedByEmail?: string;
+  confirmedAt: string;
 };
 
 // Catalog business rules (single source of truth).

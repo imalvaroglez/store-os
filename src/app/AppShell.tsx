@@ -17,7 +17,7 @@ import {
   type CommandGroup,
   type Tab,
 } from "../design-system";
-import { visibleNavItems, navigate } from "../design-system/navItems";
+import { visibleNav, navigate } from "../design-system/navItems";
 import { VersionFooter } from "./VersionFooter";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { CatalogScreen } from "../features/catalog/CatalogScreen";
@@ -27,9 +27,13 @@ import { OrderEditorScreen } from "../features/orders/OrderEditorScreen";
 import { CustomersScreen } from "../features/customers/CustomersScreen";
 import { PurchasesScreen } from "../features/inventory/PurchasesScreen";
 import { ExpensesScreen } from "../features/expenses/ExpensesScreen";
+import { MonthlyCloseScreen } from "../features/close/MonthlyCloseScreen";
 import { PackagingScreen } from "../features/packaging/PackagingScreen";
 import { PricingRulesScreen } from "../features/pricing/PricingRulesScreen";
 import { PricingStrategyScreen } from "../features/pricing/PricingStrategyScreen";
+import { ResellerRankingScreen } from "../features/close/ResellerRankingScreen";
+import { PriceDiagnosticsScreen } from "../features/pricing/PriceDiagnosticsScreen";
+import { ProfitDistributionScreen } from "../features/close/ProfitDistributionScreen";
 import { StoreSettingsScreen } from "../features/stores/StoreSettingsScreen";
 import { PlatformUsersScreen } from "../features/users/PlatformUsersScreen";
 
@@ -59,7 +63,7 @@ export function AppShell() {
   if (storeSettingsRoute) {
     tab = "tienda";
   } else if (seg === "productos") {
-    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : "productos";
+    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : sub === "reparto" ? "productos_reparto" : sub === "diagnostico" ? "productos_diagnostico" : sub === "ranking" ? "productos_ranking" : "productos";
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
@@ -122,13 +126,17 @@ export function AppShell() {
     );
   }
 
+  const nav = visibleNav(activeStore.type, user?.role);
   const commands: CommandGroup[] = [
     {
       group: "Ir a",
-      items: visibleNavItems(activeStore.type, user?.role).map((t) => ({
-        id: t.id,
-        label: t.label,
-        onSelect: () => navigate(t.path),
+      items: [
+        ...nav.flat,
+        ...nav.areas.flatMap((area) => area.children),
+      ].map((leaf) => ({
+        id: leaf.id,
+        label: leaf.label,
+        onSelect: () => navigate(leaf.path),
       })),
     },
   ];
@@ -147,12 +155,30 @@ export function AppShell() {
     case "productos_gastos":
       screen = <ExpensesScreen />;
       break;
+    case "productos_cierre":
+      // #129 stage: read-only preview; key per store so switching stores
+      // never carries another store's month state.
+      screen = <MonthlyCloseScreen key={activeStore?.id ?? "store"} />;
+      break;
     case "productos_empaques":
       // key: switching stores must never carry one store's draft into another.
       screen = <PackagingScreen key={activeStore?.id ?? "store"} />;
       break;
     case "productos_reglas":
       screen = <PricingRulesScreen key={activeStore?.id ?? "store"} />;
+      break;
+    case "productos_ranking":
+      // FER-17 (#132): private monthly top; key per store so switching stores
+      // never carries another store's month state.
+      screen = <ResellerRankingScreen key={activeStore?.id ?? "store"} />;
+      break;
+    case "productos_reparto":
+      // #128 stage: read-only distribution proposal; key per store so
+      // switching stores never carries another store's simulation inputs.
+      screen = <ProfitDistributionScreen key={activeStore?.id ?? "store"} />;
+      break;
+    case "productos_diagnostico":
+      screen = <PriceDiagnosticsScreen key={activeStore?.id ?? "store"} />;
       break;
     case "productos_estrategia":
       // key: switching stores must never carry one store's draft into another.

@@ -1,5 +1,37 @@
 [
   {
+    "version": "1.18.0",
+    "date": "2026.11.16",
+    "title": "Cada tarea en su lugar",
+    "notes": [
+      "El menú de tu tienda se organiza por áreas: Ventas, Inventario y catálogo, Compras y abastecimiento, y Administración. En el celular, abre un área para ver sus opciones; en computadora, usa el menú lateral.",
+      "Encuentra «Top emprendedoras» en «Ventas». «Cierre mensual» y «Reparto de utilidades» están en «Administración», junto a «Gastos»."
+    ]
+  },
+  {
+    "version": "1.17.0",
+    "date": "2026.11.15",
+    "title": "Tu tienda con memoria y sin repetir trabajo",
+    "notes": [
+      "Las compras recuerdan: al capturar un código de ticket que ya vinculaste, la ficha se sugiere sola para ese proveedor — la confirmas, la corriges o la olvidas con un toque; nada se aprende sin tu confirmación y las compras viejas quedan intactas.",
+      "El diagnóstico de precios te muestra, por categoría y nivel, la mediana, la mitad central, los costos y las piezas alejadas del resto — con el método a la vista y sin decirte qué precio es «bueno». «Decisiones» lista quién cambió cada precio, cuándo y desde y hasta cuánto; guardar tablas de bandas también queda registrado.",
+      "En Gastos conviven «Cierre mensual», «Reparto (simulación)» y «Top emprendedoras»: el reparto 50/30/20 simula con centavos exactos sobre la utilidad que autorices, sin mover dinero; el top 3 mensual de emprendedoras se ordena por lo efectivamente entregado, se confirma congelando el resultado y registrando el motivo de cada empate — solo lo ve tu tienda.",
+      "En el carrito público, una pieza con solo precio Iconic ya no pierde su estimado al bajar del mínimo: sigue viéndose el subtotal y exactamente cuánto falta con el botón «?».",
+      "El catálogo público nunca queda rehén de cachés: el navegador de tu clienta ve los precios vigentes con una recarga normal tras republicar, y el logo por omisión se renueva con cada despliegue.",
+      "Los diseños por color vuelven a las alertas de reabasto: agotados y bajo umbral aparecen en «Por surtir» y en el filtro del catálogo con su insignia, sin contradecir la ficha.",
+      "Guardar ya no pisa el trabajo ajeno: membresías, fichas y compras escriben solo lo editado contra lo vigente; si otra sesión cambió el WhatsApp mientras tenías la pantalla abierta, tu guardado no lo revierte — y un renglón de pedido sin ficha avisa que no aparta existencias hasta vincularlo, conservando el precio acordado."
+    ]
+  },
+  {
+    "version": "1.16.3",
+    "date": "2026.11.14",
+    "title": "Los tres precios, uno junto al otro en tu carrito",
+    "notes": [
+      "En «Tu pedido» del catálogo, tu clienta ve ahora los tres subtotales juntos — Regular, Girly e Iconic — con el que aplica hoy resaltado en vino y los anteriores tachados, sin hacer cuentas ni cambiar de pantalla.",
+      "Cada precio con requisito trae un botón «?»: con un toque le dice exactamente cuánto le falta — piezas para Girly o pesos a precio Iconic para llegar al mínimo — y se actualiza al sumar o quitar piezas."
+    ]
+  },
+  {
     "version": "1.16.2",
     "date": "2026.11.13",
     "title": "Tu avance hacia Iconic, claro desde el carrito",

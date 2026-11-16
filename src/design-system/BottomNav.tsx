@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { navigate, visibleNavItems, parentActive, type PlatformRole, type Tab } from "./navItems";
+import { areaIdForTab, navigate, visibleNav, type PlatformRole, type Tab } from "./navItems";
 
 // Re-export so existing imports (`import { BottomNav, type Tab }`) keep working.
 export type { Tab };
 
+// #454: mobile bottom bar — Inicio plus the four AREAS. Each area opens an
+// upward menu with its leaves (the area itself never navigates). A leaf is
+// reachable in ≤2 interactions: tap the area, tap the destination.
 export function BottomNav({
   active,
   storeType,
@@ -13,29 +16,34 @@ export function BottomNav({
   storeType: import("../types").StoreType;
   userRole?: PlatformRole;
 }) {
-  const tabs = visibleNavItems(storeType, userRole);
-  const [productosOpen, setProductosOpen] = useState(false);
+  const { flat, areas } = visibleNav(storeType, userRole);
+  const [openArea, setOpenArea] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
 
   // Close the upward panel on outside-click or Esc.
   useEffect(() => {
-    if (!productosOpen) return;
+    if (!openArea) return;
     const onDoc = (e: MouseEvent) => {
-      if (!navRef.current?.contains(e.target as Node)) setProductosOpen(false);
+      if (!navRef.current?.contains(e.target as Node)) setOpenArea(null);
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setProductosOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpenArea(null);
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDoc);
       window.removeEventListener("keydown", onKey);
     };
-  }, [productosOpen]);
+  }, [openArea]);
 
-  // Close when navigating away from the productos group.
+  // Close ONLY on an actual route change out of the open area — not when the
+  // menu itself opens while a flat tab (e.g. Inicio) is active.
+  const prevActive = useRef(active);
   useEffect(() => {
-    if (!parentActive(active)) setProductosOpen(false);
-  }, [active]);
+    if (prevActive.current === active) return;
+    prevActive.current = active;
+    if (openArea && areaIdForTab(active) !== openArea) setOpenArea(null);
+  }, [active, openArea]);
+
 
   return (
     <nav
@@ -43,85 +51,79 @@ export function BottomNav({
       className="fixed bottom-0 inset-x-0 bg-paper/95 backdrop-blur border-t border-rule/80 flex z-30 md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      {tabs.map((t) => {
-        // Productos parent: the label navigates to the parent route; the
-        // chevron is a separate control toggling the upward children panel.
-        if (t.children) {
-          const parentOn = parentActive(active) || productosOpen;
-          return (
-            <div
-              key={t.id}
-              className={`relative flex-1 py-3 text-[13px] font-semibold transition-colors flex items-stretch justify-center ${
-                parentOn ? "text-ink" : "text-ink-soft/50"
-              }`}
-            >
-              <button onClick={() => navigate(t.path)} className="px-1">
-                {t.label}
-              </button>
-              <button
-                aria-expanded={productosOpen}
-                aria-haspopup="menu"
-                aria-label="Expandir"
-                onClick={() => setProductosOpen((v) => !v)}
-                // #325: the glyph is ~14×20px — a thumb needs ≥40px. The hit
-                // area grows via an invisible pseudo-element ANCHORED TO THIS
-                // TAB'S RIGHT EDGE (a centered 44px box overlapped the
-                // neighboring tab at 390px): 40px wide keeps the full box
-                // inside this tab's label+chevron (≥74px) without touching
-                // "Pedidos" — visual density never changes.
-                className="relative px-1 after:absolute after:right-0 after:top-1/2 after:h-11 after:w-10 after:-translate-y-1/2 after:content-['']"
-              >
-                <span className={`inline-block transition-transform ${productosOpen ? "rotate-180" : ""}`}>▾</span>
-              </button>
-              {parentActive(active) && (
-                <span className="absolute top-0 left-1/2 -translate-x-1/2 h-[3px] w-8 rounded-full bg-terracotta" />
-              )}
-              {productosOpen && (
-                <div
-                  role="menu"
-                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-44 rounded-lg bg-paper border border-rule shadow-lift py-1"
-                  style={{ animation: "dropdownIn var(--motion-fast) var(--ease-smooth)" }}
-                >
-                  {t.children.map((c) => {
-                    const childOn = c.id === active;
-                    return (
-                      <button
-                        key={c.id}
-                        role="menuitem"
-                        onClick={() => {
-                          navigate(c.path);
-                          setProductosOpen(false);
-                        }}
-                        className={`block w-full text-center px-4 py-2 text-sm ${
-                          childOn ? "text-terracotta font-semibold" : "text-ink"
-                        }`}
-                      >
-                        {c.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        }
-        const isActive = t.id === active;
+      {flat.map((f) => {
+        const isActive = f.id === active;
         return (
           <button
-            key={t.id}
-            aria-label={t.id === "usuarios" ? "Usuarios" : undefined}
-            onClick={() => navigate(t.path)}
+            key={f.id}
+            onClick={() => navigate(f.path)}
+            aria-current={isActive ? "page" : undefined}
             className={`relative flex-1 py-3 text-[13px] font-semibold transition-colors ${
               isActive ? "text-ink" : "text-ink-soft/50"
             }`}
           >
-            <span className="block">{t.label}</span>
+            <span className="block">{f.label}</span>
             {isActive && (
               <span className="absolute top-0 left-1/2 -translate-x-1/2 h-[3px] w-8 rounded-full bg-terracotta" />
             )}
           </button>
         );
       })}
+      {areas.map((area) => {
+        const areaOn = area.id === areaIdForTab(active);
+        const menuOpen = openArea === area.id;
+        return (
+          <div
+            key={area.id}
+            className={`relative flex-1 text-[13px] font-semibold transition-colors flex items-center justify-center ${
+              areaOn || menuOpen ? "text-ink" : "text-ink-soft/50"
+            }`}
+          >
+            <button
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+              aria-label={area.label}
+              onClick={() => setOpenArea((v) => (v === area.id ? null : area.id))}
+              className="w-full py-3"
+            >
+              {area.label}
+            </button>
+            {areaOn && (
+              <span className="absolute top-0 left-1/2 -translate-x-1/2 h-[3px] w-8 rounded-full bg-terracotta" />
+            )}
+          </div>
+        );
+      })}
+      {/* #454 r2: the open area's menu anchors to the NAV itself (a bottom
+          sheet above the bar), never to its tab — an edge tab's centered
+          w-44 flyout clipped 41px off-viewport at 390px. Full-width keeps
+          every leaf tappable at any viewport. */}
+      {openArea && (
+        <div
+          role="menu"
+          className="absolute bottom-full inset-x-2 mb-2 rounded-lg bg-paper border border-rule shadow-lift py-1"
+          style={{ animation: "dropdownIn var(--motion-fast) var(--ease-smooth)" }}
+        >
+          {(areas.find((area) => area.id === openArea)?.children ?? []).map((leaf) => {
+            const childOn = leaf.id === active;
+            return (
+              <button
+                key={leaf.id}
+                role="menuitem"
+                onClick={() => {
+                  navigate(leaf.path);
+                  setOpenArea(null);
+                }}
+                className={`block w-full text-center px-4 py-2 text-sm ${
+                  childOn ? "text-terracotta font-semibold" : "text-ink"
+                }`}
+              >
+                {leaf.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </nav>
   );
 }
