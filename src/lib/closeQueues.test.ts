@@ -51,7 +51,7 @@ describe("pendingQueues (#457)", () => {
     const queues = pendingQueues(inputs());
     expect(queues.pedidosSinFecha.total).toBe(2);
     expect(queues.cobrosSinFecha.total).toBe(1);
-    expect(queues.sinCosto.total).toBe(1);
+    expect(queues.sinCosto.total).toBe(2); // PIEZAS (quantity 2), no líneas — mismo número que el dashboard
     // «X atribuibles aún al mes» = DESCONOCIDO mientras no haya evidencia:
     // jamás un «0 afectan noviembre» sin prueba.
     expect(queues.pedidosSinFecha.mesDesconocido).toBe(2);
@@ -61,12 +61,12 @@ describe("pendingQueues (#457)", () => {
   it("cada fila habla humano: folio + clienta cuando existe + concepto, y lleva enlace al origen", () => {
     const queues = pendingQueues(inputs());
     const row = queues.pedidosSinFecha.rows[0];
-    expect(row).toMatchObject({ reference: "#DEMO01", customerName: "Lucía", linkPath: "/pedidos" });
+    expect(row).toMatchObject({ reference: "#DEMO01", customerName: "Lucía", linkPath: "/pedidos/order_demo01" });
     expect(row.concept).toMatch(/Entregado legacio|entregado legado|Fecha efectiva desconocida/i);
     // Clienta desconocida no deja el campo vacío-engadoso.
     expect(queues.pedidosSinFecha.rows[1].customerName).toBe("Sin clienta");
     const cobro = queues.cobrosSinFecha.rows[0];
-    expect(cobro).toMatchObject({ reference: "#NOV5", amountCents: 17000, concept: /sin fecha/i, linkPath: "/pedidos" });
+    expect(cobro).toMatchObject({ reference: "#NOV5", amountCents: 17000, concept: /sin fecha/i, linkPath: "/pedidos/order_nov5" });
     const costo = queues.sinCosto.rows[0];
     expect(costo).toMatchObject({ reference: "#NOV5", productName: "Accesorio demo", quantity: 2, linkPath: "/productos" });
   });
@@ -84,5 +84,29 @@ describe("pendingQueues (#457)", () => {
       orders: [foreign],
     }));
     expect(queues.pedidosSinFecha.total).toBe(0);
+  });
+});
+
+describe("#457 r2 — deep links y conteo por piezas", () => {
+  it("pedidos y cobros enlazan al PEDIDO exacto (la cola nunca re-busca el folio)", () => {
+    const queues = pendingQueues(inputs());
+    for (const row of [...queues.pedidosSinFecha.rows, ...queues.cobrosSinFecha.rows]) {
+      expect(row.linkPath).toMatch(new RegExp(`^/pedidos/${row.orderId}$`));
+    }
+  });
+
+  it("dos cobros sin fecha del MISMO pedido: paymentId distingue filas y keys", () => {
+    const two = pendingQueues({
+      ...inputs(),
+      coverage: {
+        ...inputs().coverage,
+        unconfirmedCollections: [
+          { orderId: "order_nov5", reference: "#NOV5", paymentId: "pay_1", amountCents: 17000 },
+          { orderId: "order_nov5", reference: "#NOV5", paymentId: "pay_2", amountCents: 5000 },
+        ],
+      },
+    });
+    expect(two.cobrosSinFecha.rows.map((r) => r.paymentId)).toEqual(["pay_1", "pay_2"]);
+    expect(two.cobrosSinFecha.total).toBe(2);
   });
 });

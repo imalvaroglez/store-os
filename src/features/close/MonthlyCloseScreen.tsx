@@ -196,7 +196,7 @@ function QueueSheet({
       </div>
       <div className="mt-3 space-y-2 max-h-[50vh] overflow-y-auto">
         {filtered.slice(0, visible).map((row) => (
-          <div key={`${row.orderId}-${row.reference}`} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule/60 pb-2">
+          <div key={`${row.orderId}-${row.paymentId ?? row.reference}`} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule/60 pb-2">
             <div className="min-w-0">
               <p className="text-sm text-ink">
                 {row.reference} · {row.customerName}
@@ -208,7 +208,7 @@ function QueueSheet({
               </p>
             </div>
             <Button size="sm" variant="secondary" onClick={() => navigate(row.linkPath)}>
-              {row.linkPath === "/productos" ? "Ver producto" : "Ver pedido"}
+              {row.linkPath === "/productos" ? "Ver producto" : row.linkPath.startsWith("/pedidos/") ? "Ver este pedido" : "Ver pedido"}
             </Button>
           </div>
         ))}

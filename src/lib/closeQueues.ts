@@ -9,6 +9,8 @@ export type QueueStatus = "pendiente" | "revisado" | "clasificado_fuera_de_alcan
 
 export type QueueRow = {
   orderId: string;
+  /** Payment id when the row is a specific cobro (stable React keys). */
+  paymentId?: string;
   reference: string;
   customerName: string;
   concept: string;
@@ -66,19 +68,21 @@ export function pendingQueues(inputs: QueueInputs): {
       concept: "Entregado legado · fecha efectiva desconocida",
       status: "pendiente" as const,
       affectsMonth: "desconocido" as const,
-      linkPath: "/pedidos",
+      linkPath: `/pedidos/${entry.orderId}`,
     };
   });
 
   const cobros: QueueRow[] = coverage.unconfirmedCollections.filter((entry) => inStore(entry.orderId)).map((entry) => ({
     orderId: entry.orderId,
+    paymentId: entry.paymentId,
     reference: entry.reference,
     customerName: nameOf(customers, byId.get(entry.orderId)?.customerId),
     concept: "Cobro sin fecha verificable («Fecha por confirmar»)",
     amountCents: entry.amountCents,
     status: "pendiente" as const,
     affectsMonth: "desconocido" as const,
-    linkPath: "/pedidos",
+    // #457 r2: DEEP link — never force re-searching a folio the row shows.
+    linkPath: `/pedidos/${entry.orderId}`,
   }));
 
   const costos: QueueRow[] = coverage.linesWithoutCost.filter((entry) => inStore(entry.orderId)).map((entry) => ({
@@ -93,12 +97,15 @@ export function pendingQueues(inputs: QueueInputs): {
     linkPath: "/productos",
   }));
 
-  const queue = (rows: QueueRow[]): Queue => ({
-    total: rows.length,
+  // #457 r2: "sin costo" counts PIECES (what the dashboard row shows), not
+  // lines — one number, one meaning across surfaces.
+  const sinCostoTotal = costos.reduce((sum, row) => sum + (row.quantity ?? 1), 0);
+  const queue = (rows: QueueRow[], total = rows.length): Queue => ({
+    total,
     mesDesconocido: rows.filter((r) => r.affectsMonth === "desconocido").length,
     atribuidosAlMes: rows.filter((r) => r.affectsMonth === "si").length,
     rows,
   });
 
-  return { pedidosSinFecha: queue(pedidos), cobrosSinFecha: queue(cobros), sinCosto: queue(costos) };
+  return { pedidosSinFecha: queue(pedidos), cobrosSinFecha: queue(cobros), sinCosto: queue(costos, sinCostoTotal) };
 }
