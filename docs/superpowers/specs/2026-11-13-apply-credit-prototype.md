@@ -74,13 +74,54 @@ públicas no cambian (`applyCustomerCreditTx` / `releaseCustomerCreditTx`):
   dinero nunca se mueve a ciegas: la restitución corta es visible y el reintento
   es idempotente por evento.
 
-**Orden de liberación (obligatorio):** el trabajo de functions se despliega
-a `store-os-dev` y a producción ANTES de integrar esta rama a main — el job
-`deploy-rules` publica las reglas cerradas en cada push a main y la PWA que
-ya usa los callables los necesita disponibles. Desplegar functions
-(`npm --prefix functions run deploy`, producción con `--project
-store-os-f7cf8`) es paso humano/CI previo al merge; el rollback sigue siendo
-revertir reglas.
+**Plan de liberación por entorno (compuerta operativa).** El endurecimiento
+de reglas no llega a los dos entornos al mismo tiempo: el **push a main
+publica reglas en dev** (job `deploy-rules`, tras build-test + rules-and-e2e
+verdes), y **producción solo recibe reglas vía CI con release guard**
+(`workflow_dispatch release_production=true`: versión incrementada + notas →
+`deploy-rules` a `store-os-f7cf8` → deploy de la app). Las callables no
+tienen job de CI: su despliegue es un paso humano (`firebase deploy --only
+functions`, jamás ejecutado por el agente). Orden por entorno:
+
+1. **Dev — funciones antes de reglas.** Antes de integrar este PR:
+   `npm --prefix functions run deploy` (proyecto `store-os-dev`, ya el
+   predeterminado del script). Luego el merge → push a main → reglas
+   cerradas en dev. La PWA de dev liberada en ese mismo push ya llama a los
+   callables disponibles; una PWA vieja cacheada que aún escriba directo
+   recibe denegación fail-closed → banner de sincronización → al recargar
+   actualiza y usa la vía nueva (sin pérdida de datos). Verificación
+   post-merge: registrar una compensación en dev y comprobar en el ledger
+   entradas `app_*`/`con_*` con `by` = uid de la operadora.
+2. **Producción — funciones antes del dispatch.** El merge a main NO toca
+   producción. Antes de despachar el release:
+   `npm --prefix functions run deploy -- --project store-os-f7cf8`. Con los
+   callables ya publicados, el `workflow_dispatch` de la ventana ejecuta
+   release guard → reglas a producción → app nueva: el cliente que ya usa
+   callables los encuentra disponibles y ninguna PWA queda sin vía de
+   escritura de crédito.
+3. **Rollback:** revertir las reglas re-habilita la escritura directa (los
+   callables siguen siendo la vía de los builds nuevos); sin migración de
+   datos — el ledger es idéntico.
+
+**Validación de disponibilidad:** en emulador, las suites callable de
+`test:rules` ya corren exactamente esta combinación (reglas cerradas del
+repo + callables sirviendo las tres rutas de crédito). La disponibilidad
+real por entorno queda a cargo del paso 1/2 humano con la verificación
+post-deploy descrita; si un callable faltara, el efecto es fail-closed
+visible (banner con reintento), nunca dinero en estado intermedio.
+
+## Guion de verificación para la revisora (fallos parciales, reintentos, recuperación de saldo)
+
+Todo reproduce desde la raíz del repo con emuladores; el SHA de esta entrega
+viaja en el PR.
+
+1. **Suite callable completa** (reglas cerradas + callables + auth real):
+   `firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore,functions "npx vitest run --no-file-parallelism src/app/firebase/customerCredit.emulator.test.ts"` — cubre: par atómico, idempotencia por intento, **fallo de plan vencido** (rechaza y estado intacto), **concurrencia** (dos apply simultáneos comprometen exactamente el disponible), no-miembro rechazado, restitución por cancelación, **incidencia con restitución**, **autocuración** (evento confirmado cuya restitución no aterrizó se completa al re-registrar) y **faltante audible** (origen ausente / espejo inconsistido → error «solo se restituyeron…», incidente confirmado y crédito intacto).
+2. **Borrado con crédito** (misma vía): sustituir el archivo por
+   `src/app/firebase/deleteCredit.emulator.test.ts`.
+3. **Demo end-to-end de los PO-proofs**:
+   `firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore,functions "node scripts/proto-applycredit.emulator.mjs"` — $300 sobre $100 rechazado, devolución parcial exacta y su reintento sin duplicar, escritura directa denegada.
+4. **Guard de respaldo en la edición**: `src/app/firebase/protoCreditRules.emulator.test.ts` (en `npm run test:rules`) — la edición que dejaría el saldo sin respaldo se rechaza en español; la inofensiva pasa.
 
 ## Plan de transición para PWA viejas
 
