@@ -234,6 +234,17 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // #459: authorized profit distributions — money authorizations. Owner
+    // (Fer) creates them against a CLOSED period; append-only like closes:
+    // an authorized history is never edited, corrections come as new docs.
+    match /profitDistributions/{id} {
+      allow get, list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     // #202: post-close adjustments — linked to their origin close, applied in
     // an OPEN period or PENDING. Owner creates; saved entries are immutable.
     match /closeAdjustments/{id} {

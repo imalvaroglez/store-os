@@ -35,6 +35,7 @@ import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../feature
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
 import { buildManualPriceEvents, priceChangeEvent, type PriceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
 import { buildCloseSnapshot, type CloseSnapshotDoc } from "../../lib/closeAuthorization";
+import { buildProfitDistributionDoc, type ProfitDistributionDoc } from "../../lib/profitDistribution";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -484,6 +485,42 @@ export async function saveProductWithPriceEvents(
     batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
   }
   await batch.commit();
+}
+
+/** #459: every AUTHORIZED close snapshot of the store (prior-loss history). */
+export async function loadClosesForStore(storeId: string): Promise<Array<CloseSnapshotDoc & { id: string }>> {
+  const { db } = getFirebase();
+  const snap = await getDocs(query(collection(db, "closes"), where("storeId", "==", storeId)));
+  return snap.docs
+    .map((d) => ({ ...(d.data() as CloseSnapshotDoc), id: d.id }))
+    .sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : (a.version ?? 0) - (b.version ?? 0)));
+}
+
+/** #459: the period's authorized profit distributions (history + cap). */
+export async function loadProfitDistributions(
+  storeId: string,
+  period: string
+): Promise<Array<ProfitDistributionDoc & { id: string }>> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(collection(db, "profitDistributions"), where("storeId", "==", storeId), where("period", "==", period))
+  );
+  return snap.docs
+    .map((d) => ({ ...(d.data() as ProfitDistributionDoc), id: d.id }))
+    .sort((a, b) => (a.authorizedAt < b.authorizedAt ? -1 : 1));
+}
+
+/** #459: authorize a distribution — IDEMPOTENT by deterministic id; rules
+ * enforce OWNER-ONLY (same contract as closes). */
+export async function authorizeProfitDistribution(
+  doc_: ReturnType<typeof buildProfitDistributionDoc>
+): Promise<{ id: string }> {
+  const { db } = getFirebase();
+  const ref = doc(db, "profitDistributions", doc_.id);
+  const existing = await getDoc(ref);
+  if (existing.exists()) return { id: existing.id };
+  await setDoc(ref, doc_ as unknown as Record<string, unknown>);
+  return { id: doc_.id };
 }
 
 /** #458: read the latest AUTHORIZED close snapshot for a period (if any). */
