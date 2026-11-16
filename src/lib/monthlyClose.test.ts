@@ -260,3 +260,169 @@ describe("monthlyClose (#129 etapa lista)", () => {
     expect(res.operatingResultCents).toBe(25000);
   });
 });
+
+describe("#456 — detalles trazables y conciliación", () => {
+  const M = (y: number, m: number) => ({ year: y, month: m });
+
+  // Fixture 1 (contrato): $500 entregado en diciembre con costo $200;
+  // anticipo $150 en noviembre; liquidación $350 en enero.
+  const fixtureOrder = (deliverMonth: string): Order => ({
+    id: "order_nov", storeId: "s1", customerId: "c1",
+    items: [{ lineId: "l1", productId: "p1", productName: "Collar", quantity: 1, unitPrice: 500, subtotal: 500, cost: 200 }],
+    deposit: 0, orderStatus: "delivered", paymentStatus: "paid",
+    createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-12-05T00:00:00.000Z",
+    deliveries: [{ id: "d1", orderId: "order_nov", storeId: "s1", deliveredAt: `2026-${deliverMonth}-15`, recordedAt: "", by: "u1", lines: [{ productId: "p1", quantity: 1 }] }],
+  } as unknown as Order);
+  const pay = (id: string, date: string, amount: number): OrderPayment =>
+    ({ id, orderId: "order_nov", storeId: "s1", date, method: "cash", kind: "payment", amount, createdAt: "", createdBy: "u1" });
+
+  it("fixture 1: los detalles reparten las mismas cifras por mes — venta/costo en diciembre, cobro anticipado en noviembre", () => {
+    const inputs = {
+      storeId: "s1", month: M(2026, 12),
+      orders: [fixtureOrder("12")],
+      paymentsByOrder: { order_nov: [pay("a", "2026-11-20", 150), pay("b", "2027-01-10", 350)] },
+      expenses: [],
+    } as unknown as Parameters<typeof monthlyClose>[0];
+    const dec = monthlyClose(inputs);
+    expect(dec.salesCents).toBe(50000);
+    expect(dec.costCents).toBe(20000);
+    // Detalle de ventas: UNA fila con fecha efectiva, folio y producto.
+    expect(dec.details.sales).toHaveLength(1);
+    expect(dec.details.sales[0]).toMatchObject({ amountCents: 50000, date: "2026-12-15", productName: "Collar", reference: "#NOV" });
+    expect(dec.details.costs[0]).toMatchObject({ amountCents: -20000, date: "2026-12-15" });
+    // Noviembre: sin ventas NI costos; el anticipo SÍ es cobro del mes.
+    const nov = monthlyClose({ ...inputs, month: M(2026, 11) });
+    expect(nov.salesCents).toBe(0);
+    expect(nov.costCents).toBe(0);
+    expect(nov.collectionsCents).toBe(15000);
+    expect(nov.details.sales).toHaveLength(0);
+  });
+
+  it("la suma del detalle == la cifra mostrada, por concepto (conciliación exacta en centavos)", () => {
+    const inputs = {
+      storeId: "s1", month: M(2026, 12),
+      orders: [fixtureOrder("12")],
+      paymentsByOrder: { order_nov: [pay("b", "2026-12-20", 350)] },
+      expenses: [
+        { id: "e1", storeId: "s1", amount: 100.5, date: "2026-12-02", category: "operation" },
+        { id: "e2", storeId: "s1", amount: 50, date: "2026-12-03", category: "supplies" },
+      ] as unknown as LooseExpense[],
+    };
+    const close = monthlyClose(inputs);
+    expect(close.details.sales.reduce((s, d) => s + d.amountCents, 0)).toBe(close.salesCents);
+    expect(close.details.costs.reduce((s, d) => s + d.amountCents, 0)).toBe(-close.costCents);
+    expect(close.details.expenses.reduce((s, d) => s + d.amountCents, 0)).toBe(-close.expensesCents);
+    expect(close.details.collections.reduce((s, d) => s + d.amountCents, 0)).toBe(close.collectionsCents);
+    // Gastos: cada gasto UNA fila con concepto legible de su categoría.
+    expect(close.details.expenses.map((e) => e.concept)).toEqual(["Operación", "Suministros"]);
+  });
+
+  it("cobros agrupados: anticipos / liquidaciones / pagos de ventas previas — los grupos reconcilian contra el total", () => {
+    const inputs = {
+      storeId: "s1", month: M(2026, 12),
+      orders: [fixtureOrder("12")], // entrega 15-dic
+      paymentsByOrder: {
+        order_nov: [
+          pay("ant", "2026-12-01", 150),  // antes de la entrega → anticipo
+          pay("liq", "2026-12-20", 350),  // tras entrega del MISMO mes → liquidación
+          pay("prev", "2027-01-10", 0),   // (fuera de este mes, no cuenta aquí)
+        ],
+      },
+      expenses: [],
+    } as unknown as Parameters<typeof monthlyClose>[0];
+    const close = monthlyClose(inputs);
+    const groups = Object.fromEntries(close.collectionGroups.map((g) => [g.group, g]));
+    expect(groups.anticipos_del_mes.totalCents).toBe(15000);
+    expect(groups.liquidaciones_del_mes.totalCents).toBe(35000);
+    // Pago de venta previa: entrega en noviembre, cobro en diciembre.
+    const prev = monthlyClose({
+      ...inputs,
+      orders: [fixtureOrder("11")],
+      paymentsByOrder: { order_nov: [pay("prev", "2026-12-05", 300)] },
+    });
+    expect(prev.collectionGroups.find((g) => g.group === "pagos_de_ventas_previas")?.totalCents).toBe(30000);
+    // Sin evidencia de entrega → origen pendiente de clasificar.
+    const unlinked = monthlyClose({
+      ...inputs, orders: [{
+        id: "order_x", storeId: "s1", customerId: "c2", items: [], deposit: 0,
+        orderStatus: "confirmed", paymentStatus: "partial", createdAt: "", updatedAt: "",
+      } as unknown as Order],
+      paymentsByOrder: { order_x: [pay("u", "2026-12-05", 100)] },
+    });
+    expect(unlinked.collectionGroups.find((g) => g.group === "sin_clasificar")?.totalCents).toBe(10000);
+    // Conciliación de grupos en TODOS los casos.
+    for (const c of [close, prev, unlinked]) {
+      expect(c.collectionGroups.reduce((s, g) => s + g.totalCents, 0)).toBe(c.collectionsCents);
+    }
+  });
+
+  it("cobro sin fecha queda FUERA del total y listado como excluido con causa explícita", () => {
+    const close = monthlyClose({
+      storeId: "s1", month: M(2026, 12),
+      orders: [fixtureOrder("12")],
+      paymentsByOrder: { order_nov: [pay("sfecha", "", 200)] },
+      expenses: [],
+    });
+    expect(close.collectionsCents).toBe(0);
+    expect(close.details.excludedCollections).toHaveLength(1);
+    expect(close.details.excludedCollections[0]).toMatchObject({ amountCents: 20000, cause: "sin fecha verificable" });
+  });
+
+  it("fixture 4: una compra de inventario pagada con tarjeta no aparece como gasto NI resta dos veces", () => {
+    // purchases NO son LooseExpense: jamás entran a gastos por construcción.
+    // El pago con tarjeta del proveedor no es un cobro de clienta; el abono
+    // posterior de la clienta SÍ es cobro — una sola vez.
+    const close = monthlyClose({
+      storeId: "s1", month: M(2026, 12),
+      orders: [fixtureOrder("12")],
+      paymentsByOrder: { order_nov: [pay("card", "2026-12-10", 300), pay("again", "2026-12-11", 0)] },
+      expenses: [],
+    });
+    expect(close.expensesCents).toBe(0);
+    expect(close.collectionsCents).toBe(30000); // solo el dinero real de clienta
+  });
+
+  it("fixture 5: suministro reconocido UNA vez (compra); el consumo no genera segunda fila", () => {
+    const close = monthlyClose({
+      storeId: "s1", month: M(2026, 12),
+      orders: [fixtureOrder("12")],
+      paymentsByOrder: {},
+      expenses: [{
+        id: "sup", storeId: "s1", amount: 15, date: "2026-12-01", category: "supplies",
+        supply: { quantityInitial: 100, consumptions: [{ id: "c1", at: "2026-12-20", by: "u1", quantity: 3, orderId: "order_nov" }] },
+      }] as unknown as LooseExpense[],
+    });
+    expect(close.expensesCents).toBe(1500); // $15 UNA vez
+    expect(close.details.expenses).toHaveLength(1);
+  });
+
+  it("fixture 6: línea sin costo → la fila de costo NO existe (nunca $0 que infle margen) y el periodo queda marcado parcial", () => {
+    const close = monthlyClose({
+      storeId: "s1", month: M(2026, 12),
+      orders: [{
+        ...fixtureOrder("12"),
+        items: [{ lineId: "l1", productId: "p1", productName: "Collar", quantity: 1, unitPrice: 500, subtotal: 500 }],
+      }],
+      paymentsByOrder: {}, expenses: [],
+    });
+    expect(close.salesCents).toBe(50000);
+    expect(close.costCents).toBe(0);
+    expect(close.details.costs).toHaveLength(0);
+    expect(close.costCoverage.partialByMissingCost).toBe(true);
+  });
+
+  it("reintento del mismo evento de entrega aparece UNA sola vez en el detalle", () => {
+    const order = fixtureOrder("12");
+    order.deliveries = [...order.deliveries!, { ...order.deliveries![0] }]; // mismo id
+    const close = monthlyClose({ storeId: "s1", month: M(2026, 12), orders: [order], paymentsByOrder: {}, expenses: [] });
+    expect(close.details.sales).toHaveLength(1);
+    expect(close.salesCents).toBe(50000);
+  });
+
+  it("aislamiento por tienda: los detalles de otra tienda no aparecen", () => {
+    const foreign = { ...fixtureOrder("12"), storeId: "otra" };
+    const close = monthlyClose({ storeId: "s1", month: M(2026, 12), orders: [foreign], paymentsByOrder: {}, expenses: [] });
+    expect(close.details.sales).toHaveLength(0);
+    expect(close.details.collections).toHaveLength(0);
+  });
+});

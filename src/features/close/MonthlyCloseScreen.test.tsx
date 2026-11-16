@@ -67,7 +67,7 @@ describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
     expect(screen.getByText("−$200.00")).toBeTruthy();
     // Margen y resultado comparten $300 (gastos 0): héroe + 2 filas de fórmula.
     expect(screen.getAllByText("$300.00").length).toBe(3);
-    expect(screen.getByText("$350.00")).toBeTruthy();
+    expect(screen.getAllByText("$350.00").length).toBeGreaterThanOrEqual(1); // cifra + grupo de origen
     // Cobros como sección independiente con su chip y su párrafo siempre visible.
     expect(screen.getByText("Por fecha de cobro")).toBeTruthy();
     expect(screen.getByText(/No representa una ganancia adicional/)).toBeTruthy();
@@ -101,7 +101,7 @@ describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
     await waitFor(() => expect(screen.getByText("Ventas de productos entregados")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Mes anterior" }));
-    await waitFor(() => expect(screen.getByText("$150.00")).toBeTruthy()); // cobros del mes anterior
+    await waitFor(() => expect(screen.getAllByText("$150.00").length).toBeGreaterThanOrEqual(1)); // cobros del mes anterior (cifra + grupo)
     expect(screen.queryByText("$500.00")).toBeNull(); // sin ventas allá
   });
 
@@ -143,7 +143,7 @@ describe("#129 r2 — devoluciones de revisión", () => {
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
     await waitFor(() => expect(screen.getByText(/Dinero recibido durante/)).toBeTruthy());
     expect(mocks.loadOrderPaymentsDocs).toHaveBeenCalledWith(["o_paid"]);
-    await waitFor(() => expect(screen.getByText("$200.00")).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText("$200.00").length).toBeGreaterThanOrEqual(1));
   });
 
   it("fecha de entrega corrupta degrada la fila sin tumbar la vista (monto NaN se coerce vía orderItems)", async () => {
@@ -197,5 +197,67 @@ describe("#455 estados del contrato", () => {
     await waitFor(() => expect(screen.getByText("Ventas de productos entregados")).toBeTruthy());
     expect(screen.getByText(/Sin pendientes detectados para este periodo/)).toBeTruthy();
     expect(screen.queryByText(/Hay información pendiente/)).toBeNull();
+  });
+});
+
+describe("#456 — drilldowns trazables", () => {
+  it("clic en Ventas abre «¿De dónde salen estas $X?» con la fila trazable y la suma que cuadra", async () => {
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText("Ventas de productos entregados")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Ver de dónde salen estos $500.00" }));
+    expect(screen.getByText(/¿De dónde salen estas \$500\.00\?/)).toBeTruthy();
+    expect(screen.getByText("#O1")).toBeTruthy();
+    expect(screen.getByText(/Venta entregada · Aro/)).toBeTruthy();
+    expect(screen.getByText(/1 movimiento incluido/)).toBeTruthy();
+    expect(screen.getByText(/cuadra con la cifra del panel/)).toBeTruthy();
+    // Búsqueda por folio encuentra la fila; por texto ajeno la vacía.
+    fireEvent.change(screen.getByLabelText(/Buscar por folio o concepto/), { target: { value: "#O1" } });
+    expect(screen.getByText("#O1")).toBeTruthy();
+    expect(screen.getByText(/Venta entregada · Aro/)).toBeTruthy();
+  });
+
+  it("clic en Cobros abre el detalle con grupos de origen y los excluidos por verificar", async () => {
+    // Un cobro sin fecha: queda fuera del total y listado con causa.
+    mocks.loadOrderPaymentsDocs.mockReset().mockResolvedValue({
+      ...payments,
+      o1: [...payments.o1, { id: "no_date", orderId: "o1", storeId: "s1", method: "cash", kind: "payment", amount: 90, date: "", createdAt: "", createdBy: "u1" }],
+    });
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Dinero recibido durante/ })).toBeTruthy());
+    // La tarjeta ya muestra los grupos de origen que reconcilian.
+    expect(screen.getByText(/Liquidaciones del mes/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Dinero recibido durante/ }));
+    expect(screen.getByText(/¿De dónde salen estos \$350\.00\?/)).toBeTruthy();
+    expect(screen.getByText(/1 por verificar/)).toBeTruthy();
+    expect(screen.getByText(/Fuera del total/)).toBeTruthy();
+    expect(screen.getByText(/sin fecha verificable/)).toBeTruthy();
+  });
+
+  it("costo faltante: el héroe se etiqueta «Estimación incompleta»", async () => {
+    mocks.state.orders = [{
+      ...contractOrder,
+      items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 500, subtotal: 500 }],
+    }];
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText("Estimación incompleta")).toBeTruthy());
+  });
+
+  it("cientos de movimientos: carga progresiva y totales siempre visibles", async () => {
+    const many = Array.from({ length: 120 }, (_, i) => ({
+      id: `o${i}`, storeId: "s1", customerId: "c1",
+      items: [{ lineId: `l${i}`, productId: "p1", productName: `Pieza ${i}`, quantity: 1, unitPrice: 100, subtotal: 100, cost: 40 }],
+      deposit: 0, orderStatus: "delivered", paymentStatus: "paid", createdAt: "", updatedAt: "",
+      deliveries: [{ id: `d${i}`, orderId: `o${i}`, storeId: "s1", deliveredAt: currentMonthIso(10 + (i % 10)), recordedAt: "", by: "u1", lines: [{ productId: "p1", quantity: 1 }] }],
+    } as unknown as Order));
+    mocks.state.orders = many;
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    const ventasRow = await screen.findByRole("button", { name: "Ver de dónde salen estos $12,000.00" });
+    fireEvent.click(ventasRow);
+    expect(screen.getByText(/Mostrar más/)).toBeTruthy();
+    // El total reconciliado está visible sin abrir el resto.
+    expect(screen.getByText(/120 movimientos incluidos/)).toBeTruthy();
+    expect(screen.getByText("Suma del detalle")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Mostrar más/ }));
+    expect(screen.queryByText(/Mostrar más/)).toBeNull(); // todo cargado
   });
 });
