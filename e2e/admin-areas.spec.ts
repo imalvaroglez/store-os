@@ -24,7 +24,10 @@ test.afterAll(async () => {
   sharedPage = null;
 });
 
-test("las cuatro áreas existen en orden y Gastos ya no es cajón de sastre", async ({ sharedPage: page }) => {
+test("las cuatro áreas existen en orden y Gastos ya no es cajón de sastre", async ({ sharedPage: page }, testInfo) => {
+  // The sidebar rail is desktop chrome; mobile uses the bottom-bar areas
+  // (covered by unit tests + the responsive spec).
+  test.skip(testInfo.project.name !== "desktop", "sidebar es chrome de escritorio");
   await gotoClean(page, "/");
   await expect(page.getByRole("heading", { name: "Inicio" })).toBeVisible({ timeout: 20000 });
   // Desktop sidebar (mobile bottom bar is covered by unit tests + responsive).
@@ -41,7 +44,8 @@ test("las cuatro áreas existen en orden y Gastos ya no es cajón de sastre", as
   expect([...order].sort((a, b) => a - b)).toEqual(order);
 });
 
-test("deep-link a Cierre mensual abre Administración sin pasar por Gastos", async ({ sharedPage: page }) => {
+test("deep-link a Cierre mensual abre Administración sin pasar por Gastos", async ({ sharedPage: page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "sidebar es chrome de escritorio");
   await gotoClean(page, "/productos/cierre");
   await expect(page.getByRole("heading", { name: "Cierre mensual" })).toBeVisible({ timeout: 20000 });
   const sidebar = page.locator("aside");
@@ -52,7 +56,8 @@ test("deep-link a Cierre mensual abre Administración sin pasar por Gastos", asy
   await expect(sidebar.getByRole("button", { name: "Pedidos" })).toBeHidden();
 });
 
-test("recorrido Fer: Ventas→Top emprendedoras → Compras → Gastos → Cierre", async ({ sharedPage: page }) => {
+test("recorrido Fer: Ventas→Top emprendedoras → Compras → Gastos → Cierre", async ({ sharedPage: page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "sidebar es chrome de escritorio");
   await gotoClean(page, "/");
   const sidebar = page.locator("aside");
   // Ventas → Top emprendedoras (2 interacciones).
