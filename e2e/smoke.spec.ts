@@ -79,7 +79,7 @@ test("store isolation: an order from another store cannot open by deep link", as
 test("create a customer via the sheet form", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
   const name = `Cliente E2E ${Date.now()}`;
-  await page.getByRole("button", { name: "Clientes" }).click();
+  await gotoClean(page, "/clientes"); // #454: la hoja vive dentro del área Ventas — los flujos navegan por ruta
   await expect(page.getByRole("heading", { name: "Clientes", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "+ Agregar" }).click();
   await expect(page.getByRole("heading", { name: "Agregar cliente" })).toBeVisible();
@@ -107,7 +107,7 @@ test("create a product and it appears in the catalog", async ({ sharedPage: page
 
 test("create an order and advance its status", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Pedidos" }).click();
+  await gotoClean(page, "/pedidos"); // #454: la hoja vive dentro del área Ventas — los flujos navegan por ruta
   await page.getByRole("button", { name: "+ Nuevo" }).click();
   await expect(page.getByRole("heading", { name: "Nuevo pedido" })).toBeVisible();
   await page.getByLabel("Cliente").fill("María López");
@@ -124,7 +124,7 @@ test("create an order and advance its status", async ({ sharedPage: page }) => {
 
   // Persistence: gotoSantiHome reloads + normalizes; return to Pedidos.
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Pedidos" }).click();
+  await gotoClean(page, "/pedidos"); // #454: la hoja vive dentro del área Ventas — los flujos navegan por ruta
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
   await expect(page.locator("h3").first()).toBeVisible();
 });
@@ -204,7 +204,7 @@ test("create a multi-line order with live totals", async ({ sharedPage: page }) 
 
 test("orders can be searched and filtered by KPI", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Pedidos" }).click();
+  await gotoClean(page, "/pedidos"); // #454: la hoja vive dentro del área Ventas — los flujos navegan por ruta
   await expect(page.getByRole("button", { name: /Activos/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Pendientes/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Completados/ })).toBeVisible();
@@ -261,7 +261,7 @@ test("reload restores the selected store and its order draft", async ({ sharedPa
   await gotoSantiHome(page);
   await page.locator("header button, aside button").filter({ hasText: "▾" }).filter({ visible: true }).first().click();
   await page.getByText("Joyería", { exact: true }).first().click();
-  await page.getByRole("button", { name: "Pedidos" }).click();
+  await gotoClean(page, "/pedidos"); // #454: la hoja vive dentro del área Ventas — los flujos navegan por ruta
   await page.getByRole("button", { name: "+ Nuevo" }).click();
   await page.getByLabel("Cliente").fill("Ana Torres");
   await page.getByLabel("Producto").first().fill("Cadena de plata 925");
@@ -282,7 +282,7 @@ test("customer price level applies to new order lines", async ({ sharedPage: pag
   await gotoSantiHome(page);
   await page.locator("header button, aside button").filter({ hasText: "▾" }).filter({ visible: true }).first().click();
   await page.getByText("Joyería", { exact: true }).first().click();
-  await page.getByRole("button", { name: "Clientes" }).click();
+  await gotoClean(page, "/clientes"); // #454: la hoja vive dentro del área Ventas — los flujos navegan por ruta
   const name = `Precio cliente ${Date.now()}`;
   await page.getByRole("button", { name: "+ Agregar" }).click();
   await page.getByLabel("Nombre", { exact: true }).fill(name);
@@ -290,7 +290,7 @@ test("customer price level applies to new order lines", async ({ sharedPage: pag
   await page.getByRole("combobox", { name: "Nivel de precio", exact: true }).selectOption("t_wholesale");
   await page.getByRole("button", { name: "Guardar cliente" }).click();
   await expect(page.getByText(name)).toBeVisible();
-  await page.getByRole("button", { name: "Pedidos" }).click();
+  await gotoClean(page, "/pedidos"); // #454: la hoja vive dentro del área Ventas — los flujos navegan por ruta
   await page.getByRole("button", { name: "+ Nuevo" }).click();
   // Select the freshly created customer EXPLICITLY from the dropdown instead of
   // relying on the exact-name auto-bind: the customer list arrives via cloud
@@ -346,7 +346,7 @@ test("review order lines by category and edit a selected line", async ({ sharedP
 });
 test("copy the saved order detail", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Pedidos" }).click();
+  await gotoClean(page, "/pedidos"); // #454: la hoja vive dentro del área Ventas — los flujos navegan por ruta
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { (window as any).__copiedOrder = text; } } });
   });
