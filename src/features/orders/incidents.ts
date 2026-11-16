@@ -12,7 +12,9 @@
 //   provider replaces it. Every step is an append-only event; all state here
 //   is DERIVED, never stored twice.
 // Money flows through customerCredit (#189) — there is no second balance.
-import type { OrderIncident } from "../../types";
+import type { Order, OrderIncident, OrderItem } from "../../types";
+import { orderItems } from "../../lib/orders";
+import { orderAmountCents } from "../../lib/orderMoney";
 
 function eventsOf(incident: OrderIncident): OrderIncident["events"] {
   return Array.isArray(incident.events) ? incident.events : [];
@@ -75,5 +77,51 @@ export function incidentState(incident: OrderIncident): IncidentState {
 }
 
 // The money derivations live with the order-doc money truth (lib/orderMoney);
+/**
+ * #368: the line an incident sits on is EVIDENCE of the agreed solution —
+ * quantity, unit price and piece identity sustain the incident's sale
+ * adjustment (and through it, the clienta's real credit position). A line
+ * edit that removes or reshapes that line re-derives a smaller effective
+ * total and INVENTS saldo a favor out of an already-refunded piece. This
+ * guard derives the constraint from the SAVED doc (the truth), so only the
+ * incident flow itself may move that evidence. Returns the operator-facing
+ * error, or null when the edit keeps every incident's line intact.
+ */
+/** #368: the save was rejected because a line that sustains an incident
+ * would be rewritten — the editor shows THIS message (the capture stays). */
+export class IncidentEvidenceError extends Error {}
+
+export function incidentEvidenceError(
+  previous: Pick<Order, "items" | "incidents"> | undefined,
+  nextItems: OrderItem[]
+): string | null {
+  const incidents = previous?.incidents;
+  if (!incidents?.length) return null;
+  for (const incident of incidents) {
+    const prevItems = orderItems(previous!);
+    const prevLine = incident.lineId
+      ? prevItems.find((item) => item.lineId === incident.lineId)
+      : prevItems.find((item) => item.productId === incident.productId && item.variantId === incident.variantId);
+    if (!prevLine) continue; // legacy drift: no resolvable evidence line to protect
+    const nextLine = incident.lineId
+      ? nextItems.find((item) => item.lineId === incident.lineId)
+      : nextItems.find((item) => item.productId === incident.productId && item.variantId === incident.variantId);
+    const where = `${incident.productName}${incident.variantColor ? ` · ${incident.variantColor}` : ""}`;
+    if (!nextLine) {
+      return `«${where}» tiene una incidencia registrada: esa línea es la evidencia de la solución y no se puede quitar del pedido. Los cambios de esa atención se registran desde la incidencia.`;
+    }
+    if (nextLine.productId !== prevLine.productId || nextLine.variantId !== prevLine.variantId) {
+      return `«${where}» tiene una incidencia registrada: la pieza de esa línea sostiene la solución y no se puede cambiar por otra.`;
+    }
+    if ((nextLine.quantity ?? 0) !== (prevLine.quantity ?? 0)) {
+      return `«${where}» tiene una incidencia registrada: la cantidad (${prevLine.quantity ?? 0}) sostiene la solución registrada y no se puede cambiar en el editor.`;
+    }
+    if (orderAmountCents(nextLine.unitPrice) !== orderAmountCents(prevLine.unitPrice)) {
+      return `«${where}» tiene una incidencia registrada: el precio de esa línea sostiene la solución registrada y no se puede cambiar en el editor.`;
+    }
+  }
+  return null;
+}
+
 // re-exported here so the incident domain stays one import away.
 export { incidentsSaleAdjustmentCents, incidentsRefundPendingCents } from "../../lib/orderMoney";

@@ -11,9 +11,13 @@ import {
   onSnapshot,
   query,
   where,
+  orderBy,
+  limit,
+  documentId,
   runTransaction,
   increment,
   arrayUnion,
+  arrayRemove,
   writeBatch,
   type Transaction,
   type Unsubscribe,
@@ -21,12 +25,15 @@ import {
 import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
 import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
+import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
+import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { effectiveOrderStatus, migrateOrder, orderItems, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
+import { buildManualPriceEvents, priceChangeEvent, type PriceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -35,12 +42,12 @@ import {
   signedAmountCents,
 } from "../../features/orders/payments";
 import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
-import type { AppUser } from "./auth";
+import { normalizeEmail, type AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
 import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
-import { incidentState } from "../../features/orders/incidents";
+import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
-import type { OrderIncident, OrderIncidentEvent } from "../../types";
+import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -85,7 +92,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For a
   // super_admin this is the full collection (no `in`-query size limit); for
   // members it remains scoped to their store set.
-  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks" | "rankingConfirmations"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = user.role === "super_admin"
       ? collection(db, name)
@@ -94,7 +101,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, categories, suppliers, purchases, customers, orders, expenses] = await Promise.all([
+  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks, rankingConfirmations] = await Promise.all([
     forStores<Product>("products"),
     forStores<Category>("categories"),
     forStores<Supplier>("suppliers"),
@@ -102,6 +109,9 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     forStores<Customer>("customers"),
     forStores<Order>("orders"),
     forStores<LooseExpense>("expenses"),
+    // #211: confirmed supplier-code associations, same store scoping.
+    forStores<SupplierProductLink>("supplierLinks" as never),
+    forStores<RankingConfirmation>("rankingConfirmations" as never),
   ]);
 
   return {
@@ -114,6 +124,8 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     customers,
     orders,
     expenses,
+    supplierLinks,
+    rankingConfirmations,
   };
 }
 
@@ -358,18 +370,146 @@ export class CategoryRulesConflictError extends Error {
  *  stale full-object write (that was the upsertProduct hazard). Rules path
  *  unchanged: members update their store's products with storeId untouched. */
 export async function applyProductPrices(
-  _store: Pick<Store, "id">,
+  store: Pick<Store, "id">,
   updates: Array<{ id: string; prices: Record<string, number> }>,
-  updatedAt: string
+  updatedAt: string,
+  uid?: string,
+  email?: string | null
 ): Promise<void> {
   const { db } = getFirebase();
-  for (let start = 0; start < updates.length; start += 400) {
-    const batch = writeBatch(db);
-    for (const update of updates.slice(start, start + 400)) {
-      batch.set(doc(db, "products", update.id), { prices: stripUndefined(update.prices), updatedAt }, { merge: true });
+  // #335 r2: read the CANONICAL previous prices so events carry real
+  // anterior/nuevo pairs (+1 read per affected piece — dimensioned in the
+  // issue: applies touch the pieces Fer explicitly selects).
+  const previousById = new Map<string, Record<string, number> | undefined>();
+  if (uid) {
+    // #335 r3: Firestore evaluates ~2 rule gets per doc and caps a query at
+    // 20 ACCESSES — chunks of 30 docs died with permission-denied at ≥20
+    // pieces (review probe: 283 SKUs → whole apply rejected). 10 docs/chunk.
+    for (let start = 0; start < updates.length; start += 10) {
+      const chunk = updates.slice(start, start + 10);
+      const snap = await getDocs(query(collection(db, "products"), where(documentId(), "in", chunk.map((u) => u.id))));
+      for (const d of snap.docs) previousById.set(d.id, (d.data() as { prices?: Record<string, number> }).prices);
     }
-    await batch.commit();
   }
+  // #335 r3: the production batch limit is 500 OPERATIONS (product set +
+  // each event doc count separately; 283 pieces × 2 = 566 > 500). Flush by
+  // operation count, not by update count.
+  const WRITE_OPS_LIMIT = 400;
+  let batch = writeBatch(db);
+  let ops = 0;
+  const flush = async () => {
+    if (ops === 0) return;
+    await batch.commit();
+    batch = writeBatch(db);
+    ops = 0;
+  };
+  for (const update of updates) {
+    const eventCount = countEffectiveEvents(previousById.get(update.id), update.prices);
+    if (ops + 1 + eventCount > WRITE_OPS_LIMIT) await flush();
+    batch.set(doc(db, "products", update.id), { prices: stripUndefined(update.prices), updatedAt }, { merge: true });
+    ops += 1;
+    if (!uid) continue;
+      // Only tiers that EFFECTIVELY changed emit an event — a rule apply that
+      // leaves a piece's price alone must not claim it changed.
+      const previous = previousById.get(update.id);
+      for (const [tierId, next] of Object.entries(update.prices)) {
+        const prev = previous?.[tierId];
+        if (typeof prev !== "number" || !Number.isFinite(prev)) continue;
+        if (typeof next !== "number" || !Number.isFinite(next) || prev === next) continue;
+        const event = priceChangeEvent({
+          intentId: `${tierId}:${prev}:${next}:${updatedAt}`,
+          storeId: store.id,
+          productId: update.id,
+          tierId,
+          previous: prev,
+          next,
+          uid,
+          email,
+          effectiveAt: updatedAt,
+          origin: "rule_application",
+        });
+        batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+        ops += 1;
+      }
+  }
+  await flush();
+}
+
+/** #335 r3: how many price events this update will append (for operation-
+ * aware batching). Mirrors the emission condition exactly. */
+function countEffectiveEvents(previous: Record<string, number> | undefined, prices: Record<string, number>): number {
+  let count = 0;
+  for (const [tierId, next] of Object.entries(prices)) {
+    const prev = previous?.[tierId];
+    if (typeof prev !== "number" || !Number.isFinite(prev)) continue;
+    if (typeof next !== "number" || !Number.isFinite(next) || prev === next) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * #335 r2: manual product save with its price-change events in ONE atomic
+ * writeBatch — the event never lands without the price, nor the reverse.
+ */
+export async function saveProductWithPriceEvents(
+  user: AppUser,
+  existing: Product | undefined,
+  product: Product
+): Promise<void> {
+  const { db } = getFirebase();
+  const { id, ...data } = product;
+  const clean = stripUndefined(data) as Record<string, unknown>;
+  // #355 (review C1): the product save path MUST keep saveEntity's canonical
+  // shelf swap — enabling colors discards the design-level stock, disabling
+  // discards the color array. Without deleteField, merge:true keeps the stale
+  // side alive in Firestore (the design still sells by color on other devices).
+  if (Object.prototype.hasOwnProperty.call(data, "quantityOnHand") && data.quantityOnHand === undefined) {
+    clean.quantityOnHand = deleteField();
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "variants") && data.variants === undefined) {
+    clean.variants = deleteField();
+  }
+  const batch = writeBatch(db);
+  batch.set(doc(db, "products", id), clean, { merge: true });
+  for (const event of buildManualPriceEvents({
+    storeId: product.storeId,
+    productId: product.id,
+    updatedAt: product.updatedAt,
+    uid: user.uid,
+    email: user.email,
+    previous: existing?.prices ? { prices: existing.prices } : undefined,
+    next: { prices: product.prices },
+  })) {
+    batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+  }
+  await batch.commit();
+}
+
+/** #335 r2: a rule CONFIG change — its own append-only trail, recorded right
+ * after the transactional config save (it changes no product price by itself). */
+/** #335 (M2): the "Decisiones" history reads the store's OWN events on demand —
+ * one bounded query (composite index storeId+recordedAt, deployed with the
+ * release), no listener. The rules' list guard keeps foreign stores out. */
+export async function loadPriceEvents(
+  storeId: string,
+  limitCount = 50
+): Promise<Array<PriceChangeEvent | RuleChangeEvent>> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(
+      collection(db, "priceEvents"),
+      where("storeId", "==", storeId),
+      orderBy("recordedAt", "desc"),
+      limit(limitCount)
+    )
+  );
+  return snap.docs.map((d) => ({ ...(d.data() as PriceChangeEvent | RuleChangeEvent), id: d.id }));
+}
+
+export async function recordRuleChangeEvent(event: RuleChangeEvent): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
 }
 
 /** #280: save ONE category's band table transactionally. The whole
@@ -551,6 +691,14 @@ export async function saveOrderWithStockTx(
     if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
       throw new StaleOrderError();
     }
+    // #368: the line an incident sits on is EVIDENCE of the agreed solution
+    // (piece, quantity, historical price sustain the sale adjustment — and
+    // through it, the clienta's real credit position). An editor edit that
+    // removes or reshapes it re-derives a smaller effective total and invents
+    // saldo a favor; fail closed BEFORE any money/stock math runs. Edits
+    // unrelated to the evidence (notes, other lines) pass untouched.
+    const evidenceError = incidentEvidenceError(previous, orderItems(order));
+    if (evidenceError) throw new IncidentEvidenceError(evidenceError);
     // #168: the money fields belong to the payment path — an order save carries
     // them through VERBATIM from the doc read here, so a full-document write
     // can never wipe a concurrent abono's accumulator (Firestore retries this
@@ -1901,6 +2049,12 @@ export async function projectPublicForStore(
 ): Promise<void> {
   const { db } = getFirebase();
 
+  // 0. #374 r2: the projection create rules demand the store's OWN slug
+  // reservation. Claiming is idempotent (one extra read when it exists) and
+  // repairs legacy stores that predate reservations; a slug taken by another
+  // store fails closed here instead of half-publishing.
+  await claimSlug(store.slug, store.id);
+
   // 1. Storefront (identity + content + contact). Write this first: contact
   // links depend on publicStores, and a later projection read must not leave
   // the phone stale if it fails or is denied.
@@ -2111,7 +2265,7 @@ export async function applyIncidentEventTx(params: {
   event: OrderIncidentEvent;
   resolution?: OrderIncident["resolution"];
   replacement?: OrderIncident["replacement"];
-}): Promise<{ order: Order }> {
+}): Promise<{ order: Order; changedProductIds: string[] }> {
   const { db } = getFirebase();
   const { orderId, storeId, incidentId, event, resolution, replacement } = params;
   const orderRef = doc(db, "orders", orderId);
@@ -2124,7 +2278,7 @@ export async function applyIncidentEventTx(params: {
     const index = incidents.findIndex((existing) => existing.id === incidentId);
     if (index < 0) throw new Error("No se encontró la incidencia.");
     if (incidents.some((existing) => existing.events?.some((saved) => saved.id === event.id))) {
-      return { order: migrateOrder({ ...data, id: orderId }) }; // idempotent retry
+      return { order: migrateOrder({ ...data, id: orderId }), changedProductIds: [] }; // idempotent retry
     }
     const incident = incidents[index];
     const state = incidentState(incident);
@@ -2259,6 +2413,11 @@ export async function applyIncidentEventTx(params: {
     // ── Inventory effects (same commit; shortages abort the whole event).
     // Firestore requires EVERY read before ANY write: both product reads
     // happen first, then both writes.
+    // #364: a piece of a design sold per color moves ITS COLOR's shelf
+    // (variants[].quantityOnHand). The design-level quantityOnHand is dead for
+    // those designs — writing it there makes pieces invisible (panel, alerts,
+    // public catalog). Fail closed when a color is missing: never guess one.
+    const changedProductIds: string[] = [];
     const quarantineProduct = incident.productId ? doc(db, "products", incident.productId) : null;
     if (kind === "confirmed") {
       // The PERSISTED resolution/replacement drive the confirm (parameters
@@ -2270,8 +2429,9 @@ export async function applyIncidentEventTx(params: {
         : undefined;
       // #212 F4: wait_restock hands the restocked piece over at confirm — the
       // SAME piece leaves stock at its real stored cost, shortage included.
+      // #364: the SAME COLOR when the incident is on a color line.
       const effectiveTarget = agreed?.kind === "wait_restock"
-        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false })
+        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false, ...(incident.variantId ? { variantId: incident.variantId } : {}) })
         : target;
       if (quarantineProduct) {
         const productSnap = await tx.get(quarantineProduct);
@@ -2280,25 +2440,66 @@ export async function applyIncidentEventTx(params: {
         }
       }
       let replacementRef: ReturnType<typeof doc> | null = null;
+      let replacementVariants: Product["variants"] | null = null;
       if (effectiveTarget?.productId) {
         replacementRef = doc(db, "products", effectiveTarget.productId);
         const replacementSnap = await tx.get(replacementRef);
         if (!replacementSnap.exists()) throw new Error("No se encontró el producto de reemplazo.");
         if ((replacementSnap.data().storeId ?? "") !== storeId) throw new Error("El reemplazo pertenece a otra tienda.");
-        const onHand = typeof replacementSnap.data().quantityOnHand === "number" ? replacementSnap.data().quantityOnHand : 0;
-        if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del reemplazo.`);
+        const replacementData = replacementSnap.data() as Record<string, unknown>;
+        const variants = replacementData.variants as Product["variants"];
+        if (isVariantProduct({ variants })) {
+          const variantId = effectiveTarget.variantId ?? (agreed?.kind === "wait_restock" ? incident.variantId : undefined);
+          const variant = variants?.find((v) => v.id === variantId);
+          if (!variantId || !variant) {
+            // Legacy incident (agreed before colors) or a vanished color —
+            // actionable error, no movement, never another color.
+            throw new Error("El reemplazo se vende por color y esta resolución no dice cuál. Ajusta la existencia del color desde el catálogo y registra esta entrega manualmente.");
+          }
+          const onHand = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
+          if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del color ${variant.color}.`);
+          const nextVariants = applyVariantDelta({ variants }, variant.id, -quantity, event.at);
+          if (!nextVariants) throw new Error("El color del reemplazo ya no existe en este diseño.");
+          replacementVariants = nextVariants;
+        } else {
+          if (effectiveTarget.variantId) throw new Error("Esa pieza ya no se vende por color; revisa el pedido.");
+          const onHand = typeof replacementData.quantityOnHand === "number" ? replacementData.quantityOnHand : 0;
+          if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del reemplazo.`);
+        }
       }
       if (quarantineProduct) {
         tx.update(quarantineProduct, { quantityQuarantined: increment(quantity), updatedAt: event.at });
       }
-      if (replacementRef) {
+      if (replacementRef && replacementVariants) {
+        tx.update(replacementRef, { variants: replacementVariants, updatedAt: event.at });
+        changedProductIds.push(effectiveTarget!.productId!);
+      } else if (replacementRef) {
         tx.update(replacementRef, { quantityOnHand: increment(-quantity), updatedAt: event.at });
+        changedProductIds.push(effectiveTarget!.productId!);
       }
     }
     // #203 r2: repairing does NOT release the piece — it stays in quarantine
     // until Fer explicitly authorizes the return to sale (or writes it off).
+    // #364: the sellable return lands on the COLOR's shelf when the design
+    // sells per color (or the incident names one) — the design-level shelf is
+    // invisible there. A vanished/unresolvable color aborts with an
+    // actionable error: never another color, never a silent design-level +1.
     if ((kind === "provider_replacement" || kind === "returned_to_sale") && quarantineProduct) {
-      tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), quantityOnHand: increment(quantity), updatedAt: event.at });
+      const productSnap = await tx.get(quarantineProduct);
+      const data = (productSnap.exists() ? productSnap.data() : {}) as Record<string, unknown>;
+      const variants = data.variants as Product["variants"];
+      const nextVariants = incident.variantId
+        ? applyVariantDelta({ variants }, incident.variantId, quantity, event.at)
+        : null;
+      if (incident.variantId || isVariantProduct({ variants })) {
+        if (!nextVariants) {
+          throw new Error(`El diseño se vende por color y ${incident.variantId ? `el color ${incident.variantColor ?? "registrado"} ya no existe` : "esta incidencia no tiene color"}. No se puede devolver la pieza a la venta automáticamente: ajusta la existencia del color desde el catálogo y da de baja la pieza aquí.`);
+        }
+        tx.update(quarantineProduct, { variants: nextVariants, quantityQuarantined: increment(-quantity), updatedAt: event.at });
+      } else {
+        tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), quantityOnHand: increment(quantity), updatedAt: event.at });
+      }
+      changedProductIds.push(incident.productId!);
     }
     if (kind === "written_off" && quarantineProduct) {
       tx.update(quarantineProduct, { quantityQuarantined: increment(-quantity), updatedAt: event.at });
@@ -2341,7 +2542,7 @@ export async function applyIncidentEventTx(params: {
     } else {
       tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
     }
-    return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }) };
+    return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }), changedProductIds };
   });
 }
 
@@ -2561,4 +2762,299 @@ export async function registerDeliveryTx(params: {
     tx.update(orderRef, next);
     return migrateOrder({ ...data, id: orderId, ...next });
   });
+}
+
+// ── #373: patch-based writes (never a stale full document) ──────────────────
+
+/** One membership change, applied as a FIELD PATCH on the live docs. */
+export type MembershipChange =
+  | { kind: "invite"; email: string }
+  | { kind: "remove"; memberUid: string }
+  | { kind: "transfer"; memberUid: string };
+
+/**
+ * #373 (corte Membresías): invite/remove/transfer used to persist the WHOLE
+ * store from the clone the tab opened with — a concurrent member add was
+ * silently expelled and storefront/pricing edits reverted (the 2026-08
+ * incident class). This transaction touches ONLY the membership fields, with
+ * arrayUnion/arrayRemove (atomic per field) on BOTH planes (stores +
+ * adminStores — the control plane the rules read), validating against the
+ * FRESH docs. Returns the post-change membership so the local dispatch does
+ * not replay a stale list.
+ */
+export async function applyMembershipChangeTx(
+  storeId: string,
+  change: MembershipChange
+): Promise<{ memberUids?: string[]; pendingInvites?: string[]; ownerUid?: string }> {
+  const { db } = getFirebase();
+  const storeRef = doc(db, "stores", storeId);
+  const adminRef = doc(db, "adminStores", storeId);
+  const at = new Date().toISOString();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(storeRef);
+    if (!snap.exists()) throw new Error("No se encontró la tienda.");
+    const fresh = snap.data() as { memberUids?: string[]; ownerUid?: string; pendingInvites?: string[] };
+    const members = fresh.memberUids ?? [];
+    if (change.kind === "invite") {
+      const canonical = normalizeEmail(change.email.trim().toLowerCase());
+      tx.update(storeRef, { pendingInvites: arrayUnion(canonical), updatedAt: at });
+      tx.update(adminRef, { pendingInvites: arrayUnion(canonical), updatedAt: at });
+      return { pendingInvites: Array.from(new Set([...(fresh.pendingInvites ?? []), canonical])) };
+    }
+    if (change.kind === "remove") {
+      if (fresh.ownerUid === change.memberUid) {
+        throw new Error("La dueña de la tienda no puede salir de ella; transfiere la propiedad primero.");
+      }
+      if (!members.includes(change.memberUid)) return {}; // already gone — idempotent
+      tx.update(storeRef, { memberUids: arrayRemove(change.memberUid), updatedAt: at });
+      tx.update(adminRef, { memberUids: arrayRemove(change.memberUid), updatedAt: at });
+      return { memberUids: members.filter((uid) => uid !== change.memberUid) };
+    }
+    if (!members.includes(change.memberUid)) {
+      throw new Error("Esa persona debe ser miembro de la tienda antes de recibirla.");
+    }
+    if (fresh.ownerUid === change.memberUid) return {}; // already the owner
+    tx.update(storeRef, { ownerUid: change.memberUid, updatedAt: at });
+    tx.update(adminRef, { ownerUid: change.memberUid, updatedAt: at });
+    return { ownerUid: change.memberUid };
+  });
+}
+
+/**
+ * #373 (backfill): normalize legacy pendingInvites against the FRESH list
+ * (never the cached clone), writing both planes only when something really
+ * changed. A concurrent invite added since the local snapshot survives.
+ */
+export async function normalizePendingInvitesTx(storeId: string): Promise<string[] | null> {
+  const { db } = getFirebase();
+  const storeRef = doc(db, "stores", storeId);
+  const adminRef = doc(db, "adminStores", storeId);
+  const at = new Date().toISOString();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(storeRef);
+    if (!snap.exists()) return null;
+    const invites = (snap.data().pendingInvites as string[] | undefined) ?? [];
+    const normalized = Array.from(new Set(invites.map(normalizeEmail)));
+    if (normalized.length === invites.length && invites.every((e, i) => e === normalized[i])) return null;
+    tx.update(storeRef, { pendingInvites: normalized, updatedAt: at });
+    tx.update(adminRef, { pendingInvites: normalized, updatedAt: at });
+    return normalized;
+  });
+}
+
+/**
+ * #373 (corte Productos): the editor's save lands as a MERGE against the
+ * FRESH doc — untouched operational fields (stock, cost, quarantine) carry
+ * the concurrent reception/order movements, intentional edits land as
+ * deltas (see lib/productMerge). Tombstone intents (#355 color transitions)
+ * map to deleteField. Returns the merged product for the local dispatch.
+ */
+export async function saveProductPreservingConcurrentTx(
+  baseline: Product | undefined,
+  next: Product,
+  /** #335: who saves — enables the atomic price-change trail. */
+  user?: { uid: string; email?: string | null },
+  updatedAt?: string
+): Promise<Product> {
+  const { db } = getFirebase();
+  const ref = doc(db, "products", next.id);
+  const at = updatedAt ?? new Date().toISOString();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists() && (snap.data().storeId ?? "") !== next.storeId) {
+      throw new Error("El producto pertenece a otra tienda.");
+    }
+    const fresh = snap.exists() ? ({ ...snap.data(), id: next.id } as Product) : undefined;
+    const merged = mergeProductOperational(baseline, next, fresh);
+    const clean = stripUndefined({ ...merged, updatedAt: at }) as Record<string, unknown>;
+    // Tombstones: an explicit undefined (own property) is a delete intent —
+    // merge alone would keep the stale side alive forever (#355 discipline).
+    for (const key of ["quantityOnHand", "variants"] as const) {
+      if (Object.prototype.hasOwnProperty.call(merged, key) && merged[key] === undefined) {
+        clean[key] = deleteField();
+      }
+    }
+    tx.set(ref, clean, { merge: true });
+    // #335 ∩ #373 (merge): price events land in the SAME transaction — the
+    // trail can never diverge from the price, and the concurrent-safe merge
+    // decides the write. Baseline prices are the "previous" the operator saw.
+    if (user) {
+      for (const event of buildManualPriceEvents({
+        storeId: next.storeId,
+        productId: next.id,
+        updatedAt: at,
+        uid: user.uid,
+        email: user.email,
+        previous: { prices: fresh?.prices ?? baseline?.prices },
+        next: { prices: next.prices },
+      })) {
+        tx.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
+      }
+    }
+    return { ...merged, updatedAt: at };
+  });
+}
+
+/** #373: the purchase changed elsewhere since this tab loaded it. */
+export class StalePurchaseError extends Error {
+  constructor() {
+    super("La compra cambió en otra pestaña o dispositivo. Vuelve a abrirla antes de guardar.");
+  }
+}
+
+/**
+ * #373 (corte Compras): purchases get the orders' revision contract — a save
+ * from a stale clone is REJECTED instead of silently winning, and append-only
+ * evidence assigned concurrently (sourcing expenses) plus the receive flow's
+ * own fields (status, receivedAt) carry verbatim from the fresh doc.
+ */
+export async function savePurchaseTx(
+  purchase: Purchase,
+  expectedRevision: number | null,
+  baseline?: Purchase
+): Promise<Purchase> {
+  const { db } = getFirebase();
+  const ref = doc(db, "purchases", purchase.id);
+  const at = new Date().toISOString();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists() && (snap.data().storeId ?? "") !== purchase.storeId) {
+      throw new Error("La compra pertenece a otra tienda.");
+    }
+    const freshRevision = typeof snap.data()?.revision === "number" ? (snap.data()!.revision as number) : undefined;
+    if (!snap.exists()) {
+      if (expectedRevision != null) throw new StalePurchaseError();
+      const saved: Purchase = { ...purchase, revision: 1, updatedAt: at };
+      tx.set(ref, stripUndefined(saved) as Record<string, unknown>);
+      return saved;
+    }
+    if (freshRevision !== undefined || expectedRevision != null) {
+      if (expectedRevision !== (freshRevision ?? null)) throw new StalePurchaseError();
+    }
+    const freshData = snap.data() as Record<string, unknown>;
+    // #373 r2: `sourcingExpenses` is OWNED by the purchase form (add/edit/
+    // remove via «+ Agregar gasto») — a verbatim carry silently reverted the
+    // operator's own second save (review bloqueante). With the form's
+    // BASELINE, the form's list is the intent and anything the baseline never
+    // saw (a concurrent assignExpenseTx append, another tab) rides along.
+    // Without a baseline (other callers), it stays verbatim — untouched.
+    const freshExpenses = freshData.sourcingExpenses as Purchase["sourcingExpenses"] | undefined;
+    let sourcingExpenses: Purchase["sourcingExpenses"];
+    if (baseline) {
+      const known = new Set((baseline.sourcingExpenses ?? []).map((expense) => expense.id));
+      const unseen = (freshExpenses ?? []).filter((expense) => !known.has(expense.id));
+      sourcingExpenses = unseen.length
+        ? [...(purchase.sourcingExpenses ?? []), ...unseen]
+        : purchase.sourcingExpenses;
+    } else {
+      sourcingExpenses = freshExpenses ?? purchase.sourcingExpenses;
+    }
+    // Verbatim carry: fields owned by the receive flow, never by the form.
+    const carried: Record<string, unknown> = {};
+    for (const key of ["status", "receivedAt"]) {
+      if (freshData[key] !== undefined) carried[key] = freshData[key];
+    }
+    if (sourcingExpenses !== undefined) carried.sourcingExpenses = sourcingExpenses;
+    const saved: Purchase = {
+      ...purchase,
+      ...carried,
+      revision: (freshRevision ?? 0) + 1,
+      updatedAt: at,
+    };
+    tx.set(ref, stripUndefined(saved) as Record<string, unknown>, { merge: true });
+    return saved;
+  });
+}
+
+/**
+ * #211: persist ONE confirmed supplier-code → product association. The doc id
+ * encodes the full identity, so a retry (same intent) is a plain overwrite of
+ * the same doc — never a duplicate. Store-scoped; future captures only.
+ */
+export async function confirmSupplierLinkTx(params: {
+  storeId: string;
+  supplierId: string;
+  code: string;
+  productId: string;
+  productName: string;
+  confirmedBy: string;
+}): Promise<SupplierProductLink> {
+  const { db } = getFirebase();
+  // #211 r2 M3: «/» cannot travel in a Firestore doc id — reject the code
+  // BEFORE the SDK throws an opaque invalid-reference error.
+  if (params.code.includes("/")) {
+    throw new Error("El código del ticket contiene un carácter no válido («/»). Quita la diagonal e inténtalo de nuevo.");
+  }
+  const link: SupplierProductLink = {
+    id: linkDocId(params.storeId, params.supplierId, params.code),
+    storeId: params.storeId,
+    supplierId: params.supplierId,
+    code: params.code,
+    // #211 r2 M1: derive from the code itself — splitting the doc id broke
+    // codes that themselves contain «__» (the suggestion never fired).
+    normalizedCode: normalizeSupplierCode(params.code),
+    productId: params.productId,
+    productName: params.productName,
+    confirmedAt: new Date().toISOString(),
+    confirmedBy: params.confirmedBy,
+  };
+  await setDoc(doc(db, "supplierLinks", link.id), link);
+  return link;
+}
+
+/** #211: forget an association (the operator removed it) — future captures
+ * stop suggesting; purchases that already used it keep their product. */
+export async function revokeSupplierLinkTx(storeId: string, supplierId: string, code: string): Promise<void> {
+  const { db } = getFirebase();
+  await deleteDoc(doc(db, "supplierLinks", linkDocId(storeId, supplierId, code)));
+}
+
+/**
+ * #129 (etapa lista): read the payment records of SEVERAL orders on demand —
+ * the monthly close preview collects cobros by their real date. One getDocs
+ * per order (no listener); only the preview's own action pays for it.
+ */
+export async function loadOrderPaymentsDocs(orderIds: string[]): Promise<Record<string, OrderPayment[]>> {
+  const { db } = getFirebase();
+  const result: Record<string, OrderPayment[]> = {};
+  for (const orderId of orderIds) {
+    const snap = await getDocs(query(collection(db, "orders", orderId, "payments")));
+    result[orderId] = snap.docs.map((doc) => ({ ...(doc.data() as OrderPayment), id: doc.id }));
+  }
+  return result;
+}
+
+/**
+ * #132 (FER-17): persist Fer's CONFIRMED monthly ranking. Append-only by
+ * construction — the doc id encodes store+month+revision, so a late-refund
+ * re-confirmation is a NEW doc and confirmed history is never rewritten.
+ */
+export async function saveRankingConfirmationTx(confirmation: RankingConfirmation): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "rankingConfirmations", confirmation.id), confirmation as unknown as Record<string, unknown>);
+}
+
+/** #132: the latest confirmation stored for a store+month (highest revision). */
+export async function loadRankingConfirmation(
+  storeId: string,
+  year: number,
+  month: number
+): Promise<RankingConfirmation | null> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(
+      collection(db, "rankingConfirmations"),
+      where("storeId", "==", storeId),
+      where("year", "==", year),
+      where("month", "==", month)
+    )
+  );
+  const docs = snap.docs.map((d) => d.data() as RankingConfirmation);
+  if (docs.length === 0) return null;
+  return docs.sort((a, b) => b.revision - a.revision)[0];
+}
+
+/** Deterministic doc id: store + month + revision (append-only versions). */
+export function rankingConfirmationId(storeId: string, year: number, month: number, revision: number): string {
+  return `${storeId}__${year}-${String(month).padStart(2, "0")}${revision > 1 ? `__r${revision}` : ""}`;
 }

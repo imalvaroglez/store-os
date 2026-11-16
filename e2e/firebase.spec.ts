@@ -63,7 +63,7 @@ test("super_admin consulta la lista de usuarios de la plataforma", async ({ shar
   await expect(page.getByRole("heading", { name: "Usuarios de la plataforma" })).toBeVisible();
   await expect(page.getByTestId("user-card")).toHaveCount(1);
   await expect(page.getByText(ADMIN_EMAIL)).toBeVisible();
-  await expect(page.getByText("Administración", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("user-card").getByText("Administración", { exact: true })).toBeVisible(); // #454: el área Administración del sidebar compite por ese texto
   await page.getByRole("button", { name: "Inicio" }).first().click();
   await expect(page.getByRole("heading", { name: "Inicio", exact: true })).toBeVisible();
 });
@@ -87,11 +87,14 @@ test("adminStores repair is idempotent and the migrated store appears in the pic
   const secondRun = execFileSync(process.execPath, [script, "--emulator"], { env, encoding: "utf8" });
   expect(secondRun).toContain("Documentos faltantes que se crearían: 0");
 
+  // Rehydrate after the emulator-side writes before opening the picker.
+  await gotoClean(page);
   const changeStore = page.getByRole("button", { name: /Cambiar tienda/ });
   await expect(changeStore).toBeVisible();
   await changeStore.click();
-  await expect(page.getByText("¿Quién opera hoy?")).toBeVisible();
-  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "¿Quién opera hoy?" })).toBeVisible();
+  // The picker has a store-specific manage button; the shell repeats the name.
+  await expect(page.getByRole("button", { name: `Administrar ${name}`, exact: true })).toBeVisible();
 });
 
 test("sign out returns to the authentication screen", async ({ sharedPage: page }) => {

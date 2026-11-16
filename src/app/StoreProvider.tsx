@@ -32,6 +32,7 @@ import { uid } from "../lib/ids";
 import { nowIso, todayIso } from "../lib/dates";
 import { reservationDeltasForOrderChange } from "../lib/inventory";
 import { receivedProductsFromStockUpdates } from "../lib/purchases";
+import { ruleChangeEvent } from "../lib/priceDiagnostics";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
@@ -46,17 +47,28 @@ import { creditAvailableCents, ordersForCustomer, planCreditApplications } from 
 import { useAuth } from "./firebase/AuthProvider";
 export { CategoryRulesConflictError, PublicCatalogProjectionError } from "./firebase/firestoreData";
 import type { AppUser } from "./firebase/auth";
+import type { RankingConfirmation } from "../types";
 import type { OrderIncident, OrderIncidentEvent, LooseExpense, ExpenseAssignment, SupplyConsumption } from "../types";
 import { normalizeEmail, sendInviteLink } from "./firebase/auth";
+import { linkDocId } from "../lib/supplierLinks";
 import {
   loadCloudState,
   subscribeCloudState,
   saveEntity,
+  applyMembershipChangeTx,
+  normalizePendingInvitesTx,
+  saveProductPreservingConcurrentTx,
+  savePurchaseTx,
+  confirmSupplierLinkTx,
+  revokeSupplierLinkTx,
+  saveRankingConfirmationTx,
+  rankingConfirmationId,
   saveStorefrontBatch,
   saveStorePackaging,
   savePricingRules,
   saveCategoryPricingRules,
   applyProductPrices as applyProductPricesBatch,
+  recordRuleChangeEvent,
   projectPublicForStore,
   deleteEntity,
   claimSlug,
@@ -120,6 +132,9 @@ export type Action =
   | { type: "DELETE_ORDER"; orderId: string }
   // cloud sync pushes a whole state
   | { type: "REPLACE_STATE"; state: AppState }
+  | { type: "UPSERT_SUPPLIER_LINK"; link: import("../lib/supplierLinks").SupplierProductLink }
+  | { type: "REMOVE_SUPPLIER_LINK"; id: string }
+  | { type: "ADD_RANKING_CONFIRMATION"; confirmation: import("../types").RankingConfirmation }
   // purchase-ux2 bulk create: products + their purchase land in ONE dispatch
   // so the UI never shows a half-created batch.
   | { type: "BULK_CREATE_FOR_PURCHASE"; products: Product[]; purchase: Purchase };
@@ -259,6 +274,17 @@ export function reducer(state: AppState, action: Action): AppState {
       return state.activeStoreId && incoming.stores.some((s) => s.id === state.activeStoreId)
         ? { ...incoming, activeStoreId: state.activeStoreId } : incoming;
     }
+    case "UPSERT_SUPPLIER_LINK": {
+      // #211: replace-by-id — an idempotent retry never duplicates.
+      const links = state.supplierLinks ?? [];
+      return { ...state, supplierLinks: links.some((l) => l.id === action.link.id) ? links.map((l) => (l.id === action.link.id ? action.link : l)) : [...links, action.link] };
+    }
+    case "REMOVE_SUPPLIER_LINK":
+      return { ...state, supplierLinks: (state.supplierLinks ?? []).filter((l) => l.id !== action.id) };
+    case "ADD_RANKING_CONFIRMATION":
+      // #132: append the confirmation; a revision REPLACES the previous doc's
+      // place in state (highest revision wins on every read).
+      return { ...state, rankingConfirmations: [...(state.rankingConfirmations ?? []).filter((c) => c.id !== action.confirmation.id), action.confirmation] };
     case "BULK_CREATE_FOR_PURCHASE": {
       const products = [...state.products];
       for (const product of action.products) {
@@ -301,7 +327,10 @@ type StoreContextValue = {
   /** #253: members may save the packaging profile (field-scoped rules path). */
   savePackaging: (packaging: StorePackaging) => Promise<void>;
   /** #254: members may save the pricing rules (same field-scoped path). */
-  savePricingRules: (pricingRules: PricingRulesConfig) => Promise<void>;
+  savePricingRules: (
+    pricingRules: PricingRulesConfig,
+    ruleEvent?: { categoryId: string | null; summary: string }
+  ) => Promise<void>;
   /** #289: apply ONLY prices — scoped batch write (never a full product
    * upsert), public catalog republished once from the merged local state. */
   applyProductPrices: (updates: Array<{ id: string; prices: Record<string, number> }>) => Promise<void>;
@@ -310,21 +339,34 @@ type StoreContextValue = {
    * stale client clone. `null` deletes the category's table. P0-2:
    * `expectedSignature` is the table the client loaded; if the saved table
    * changed meanwhile, the save is REJECTED (CategoryRulesConflictError). */
-  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null, expectedSignature: string) => Promise<void>;
+  saveCategoryPricingRules: (categoryId: string, rules: Record<string, PricingRule> | null, expectedSignature: string, ruleEvent?: { summary: string }) => Promise<void>;
   deleteStore: (storeId: string) => void;
   inviteMember: (storeId: string, email: string) => Promise<"pending">;
   removeMember: (storeId: string, uid: string) => Promise<void>;
   transferStoreOwnership: (storeId: string, memberUid: string) => Promise<void>;
+  /** #211: persist one confirmed supplier-code → product association. */
+  confirmSupplierLink: (input: { storeId: string; supplierId: string; code: string; productId: string; productName: string }) => Promise<void>;
+  /** #211: forget an association — future captures stop suggesting it. */
+  revokeSupplierLink: (storeId: string, supplierId: string, code: string) => Promise<void>;
+  /** #132 (FER-17): persist Fer's CONFIRMED monthly ranking (append-only). */
+  confirmRanking: (input: {
+    storeId: string;
+    year: number;
+    month: number;
+    entries: Array<{ customerId: string; name: string; netCents: number; pieces: number; rank: number }>;
+    tieResolutions: Array<{ customerIds: string[]; motive: string }>;
+    revisionMotive?: string;
+  }) => Promise<void>;
   /** Republish a store's public catalog projection (backfill / repair). */
   republishCatalog: (storeId: string) => Promise<void>;
   setActiveStore: (storeId: string | null) => void;
-  upsertProduct: (product: Product) => Promise<void>;
+  upsertProduct: (product: Product, baseline?: Product) => Promise<Product>;
   deleteProduct: (productId: string) => Promise<void>;
   upsertCategory: (category: Category) => Promise<void>;
   deleteCategory: (categoryId: string) => Promise<void>;
   upsertSupplier: (supplier: Supplier) => Promise<void>;
   deleteSupplier: (supplierId: string) => Promise<void>;
-  upsertPurchase: (purchase: Purchase) => Promise<void>;
+  upsertPurchase: (purchase: Purchase, expectedRevision?: number | null, baseline?: Purchase) => Promise<Purchase>;
   /**
    * Bulk-create private draft products and save the purchase that links them
    * in one atomic commit (cloud-only: the PDF import flow requires cloud).
@@ -562,9 +604,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const invites = store.pendingInvites ?? [];
       const normalized = Array.from(new Set(invites.map(normalizeEmail)));
       if (normalized.length === invites.length && invites.every((e, i) => e === normalized[i])) continue;
-      const updated = { ...store, pendingInvites: normalized, updatedAt: nowIso() };
-      dispatch({ type: "UPDATE_STORE", store: updated });
-      persistInBackground("actualizar la sincronización de la tienda", () => saveEntity(user, "stores", updated));
+      // #373: normalize against the FRESH list (never this tab's clone) and
+      // write only the pendingInvites patch on both planes.
+      persistInBackground("actualizar la sincronización de la tienda", async () => {
+        const normalizedFresh = await normalizePendingInvitesTx(store.id);
+        if (normalizedFresh) {
+          dispatch({ type: "UPDATE_STORE", store: { ...store, pendingInvites: normalizedFresh, updatedAt: nowIso() } });
+        }
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid, state.stores]);
@@ -711,11 +758,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (cloud) await saveStorePackaging(existing, packaging, updatedAt);
       dispatch({ type: "UPDATE_STORE", store: { ...existing, packaging, updatedAt } });
     },
-    savePricingRules: async (pricingRules) => {
+    savePricingRules: async (pricingRules, ruleEvent) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
-      if (cloud) await savePricingRules(existing, pricingRules, updatedAt);
+      if (cloud) {
+        await savePricingRules(existing, pricingRules, updatedAt);
+        // #335 r2: a config change is its own event — it changed no price.
+        if (ruleEvent && user) {
+          await recordRuleChangeEvent(
+            ruleChangeEvent({
+              // m3: the doc id carries the store — two stores saving their
+              // tier table in the same millisecond must never collide.
+              intentId: `${existing.id}__${ruleEvent.categoryId ?? "tiers"}:${updatedAt}`,
+              storeId: existing.id,
+              categoryId: ruleEvent.categoryId,
+              uid: user.uid,
+              email: user.email,
+              summary: ruleEvent.summary,
+            })
+          );
+        }
+      }
       // Local mirror with the same byTier-only overlay the transaction applies
       // server-side — never replace the whole config from this screen's clone.
       const merged: PricingRulesConfig = existing.pricingRules
@@ -729,7 +793,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
       if (cloud) {
-        await applyProductPricesBatch(existing, updates, updatedAt);
+        // #335 r2: uid enables the per-tier events for EFFECTIVE changes.
+        await applyProductPricesBatch(existing, updates, updatedAt, user?.uid, user?.email);
         // Republish the PUBLIC catalog once from the freshest local products
         // merged with the new prices — projection prices mirror the private
         // doc; other public fields come from the live subscription state.
@@ -750,11 +815,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    saveCategoryPricingRules: async (categoryId, rules, expectedSignature) => {
+    saveCategoryPricingRules: async (categoryId, rules, expectedSignature, ruleEvent) => {
       const existing = state.stores.find((store) => store.id === state.activeStoreId);
       if (!existing) throw new Error("No se encontró la tienda.");
       const updatedAt = nowIso();
       if (cloud) await saveCategoryPricingRules(existing, categoryId, rules, updatedAt, expectedSignature);
+      // #335 M1: the strategy BAND TABLE is the rule config par excellence —
+      // saving or resetting it must leave its own trail (like tier tables do).
+      if (cloud && ruleEvent && user) {
+        await recordRuleChangeEvent(
+          ruleChangeEvent({
+            intentId: `${existing.id}__cat_${categoryId}:${updatedAt}`,
+            storeId: existing.id,
+            categoryId,
+            uid: user.uid,
+            email: user.email,
+            summary: ruleEvent.summary,
+          })
+        );
+      }
       // Mirror the same category-scoped overlay locally (never a stale clone).
       const pricingRules: PricingRulesConfig = existing.pricingRules
         ? JSON.parse(JSON.stringify(existing.pricingRules))
@@ -802,10 +881,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // so there is no email→uid directory lookup. The invitee reconciles
       // into memberUids on their own verified login (reconcilePendingInvites
       // + the inviteeJoinOk rule); both planes are saved by persistEntity.
-      const pendingInvites = Array.from(new Set([...(store.pendingInvites ?? []), normalizeEmail(normalized)]));
-      const updated = { ...store, pendingInvites, updatedAt: nowIso() };
+      // #373: persist ONLY the membership patch (arrayUnion on both planes)
+      // from the LIVE docs — a full-store write from this tab's clone would
+      // expel concurrent members and revert storefront/pricing edits.
+      const patch = await applyMembershipChangeTx(storeId, { kind: "invite", email: normalized });
+      const updated = { ...store, ...patch, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      await persistEntity("stores", updated);
       await sendInviteLink(normalized, store);
       return "pending";
     },
@@ -813,10 +894,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       requireAuthenticatedUser();
       const store = state.stores.find((s) => s.id === storeId);
       if (!store) return;
-      const memberUids = (store.memberUids ?? []).filter((u) => u !== memberUid);
-      const updated = { ...store, memberUids, updatedAt: nowIso() };
+      // #373: arrayRemove on the live docs — members added concurrently survive.
+      const patch = await applyMembershipChangeTx(storeId, { kind: "remove", memberUid });
+      const updated = { ...store, ...patch, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      await persistEntity("stores", updated);
     },
     transferStoreOwnership: async (storeId, memberUid) => {
       requireAuthenticatedUser();
@@ -828,9 +909,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         throw new Error("Esa persona debe ser miembro de la tienda antes de recibirla.");
       }
       if (memberUid === store.ownerUid) return;
-      const updated = { ...store, ownerUid: memberUid, updatedAt: nowIso() };
+      // #373: the FRESH doc decides who may receive the store (the clone can
+      // be hours old); only the ownership field is written.
+      const patch = await applyMembershipChangeTx(storeId, { kind: "transfer", memberUid });
+      const updated = { ...store, ...patch, updatedAt: nowIso() };
       dispatch({ type: "UPDATE_STORE", store: updated });
-      await persistEntity("stores", updated);
     },
     republishCatalog: async (storeId) => {
       requireAuthenticatedUser();
@@ -855,10 +938,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       savePreferredStoreId(storeId);
       dispatch({ type: "SET_ACTIVE_STORE", storeId: storeId ?? "" });
     },
-    upsertProduct: async (product) => {
+    upsertProduct: async (product, baseline) => {
       requireAuthenticatedUser();
-      dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product });
-      await persistEntity("products", product);
+      // #373: persist FIRST against the fresh doc (untouched stock/cost carry
+      // concurrent receptions; intentional edits land as deltas) — the local
+      // dispatch follows the SAVED truth, never a phantom.
+      // #335 (merge): the price-change events ride the SAME transaction —
+      // the trail never diverges from the price.
+      const saved = await saveProductPreservingConcurrentTx(
+        baseline ?? state.products.find((p) => p.id === product.id),
+        product,
+        user ?? undefined,
+        product.updatedAt
+      );
+      dispatch({ type: state.products.some((p) => p.id === product.id) ? "UPDATE_PRODUCT" : "ADD_PRODUCT", product: saved });
       {
         const store = state.stores.find((s) => s.id === product.storeId);
         if (store) {
@@ -866,11 +959,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reflects this save. state.products is pre-dispatch, so splice the
           // saved product in for the projection.
           const next = state.products.some((p) => p.id === product.id)
-            ? state.products.map((p) => (p.id === product.id ? product : p))
-            : [...state.products, product];
-          await upsertPublicProduct(product, store.slug, next, state.categories, store);
+            ? state.products.map((p) => (p.id === product.id ? saved : p))
+            : [...state.products, saved];
+          await upsertPublicProduct(saved, store.slug, next, state.categories, store);
         }
       }
+      return saved;
     },
     deleteProduct: async (productId) => {
       const currentUser = requireAuthenticatedUser();
@@ -944,12 +1038,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "DELETE_SUPPLIER", supplierId });
       await deleteEntity(currentUser, "suppliers", supplierId);
     },
-    upsertPurchase: async (purchase) => {
+    upsertPurchase: async (purchase, expectedRevision, baseline) => {
       requireAuthenticatedUser();
-      dispatch({ type: state.purchases.some((p) => p.id === purchase.id) ? "UPDATE_PURCHASE" : "ADD_PURCHASE", purchase });
-      // Await so callers (PurchaseForm) can catch a Firestore rejection instead
-      // of showing a false success toast. persistEntity re-throws on rejection.
-      await persistEntity("purchases", purchase);
+      // #373: persist-first with the revision contract — a save from a stale
+      // clone is REJECTED (the caller surfaces it) instead of silently winning,
+      // and the local dispatch follows the SAVED truth.
+      const saved = await savePurchaseTx(purchase, expectedRevision ?? purchase.revision ?? null, baseline);
+      dispatch({ type: state.purchases.some((p) => p.id === purchase.id) ? "UPDATE_PURCHASE" : "ADD_PURCHASE", purchase: saved });
+      return saved;
     },
     createDraftProductsForPurchase: async (products, purchase) => {
       requireAuthenticatedUser();
@@ -1302,6 +1398,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "UPDATE_ORDER", order: updated });
       return updated;
     },
+    confirmRanking: async (input) => {
+      const currentUser = requireAuthenticatedUser();
+      const previous = (state.rankingConfirmations ?? [])
+        .filter((c) => c.storeId === input.storeId && c.year === input.year && c.month === input.month)
+        .sort((a, b) => b.revision - a.revision)[0];
+      const revision = (previous?.revision ?? 0) + 1;
+      const confirmation: RankingConfirmation = {
+        id: rankingConfirmationId(input.storeId, input.year, input.month, revision),
+        storeId: input.storeId,
+        year: input.year,
+        month: input.month,
+        entries: input.entries,
+        tieResolutions: input.tieResolutions,
+        revision,
+        ...(revision > 1 && input.revisionMotive ? { revisionMotive: input.revisionMotive } : {}),
+        confirmedBy: currentUser.uid,
+        ...(currentUser.email ? { confirmedByEmail: currentUser.email } : {}),
+        confirmedAt: nowIso(),
+      };
+      // Persist first; the dispatch follows the SAVED truth (#373 discipline).
+      await saveRankingConfirmationTx(confirmation);
+      dispatch({ type: "ADD_RANKING_CONFIRMATION", confirmation });
+    },
+    confirmSupplierLink: async (input) => {
+      const currentUser = requireAuthenticatedUser();
+      // Persist first; the dispatch follows the SAVED truth (#373 discipline).
+      const link = await confirmSupplierLinkTx({ ...input, confirmedBy: currentUser.uid });
+      dispatch({ type: "UPSERT_SUPPLIER_LINK", link });
+    },
+    revokeSupplierLink: async (storeId, supplierId, code) => {
+      requireAuthenticatedUser();
+      await revokeSupplierLinkTx(storeId, supplierId, code);
+      dispatch({ type: "REMOVE_SUPPLIER_LINK", id: linkDocId(storeId, supplierId, code) });
+    },
     applyIncidentEvent: async (order, incidentId, event, extra) => {
       const currentUser = requireAuthenticatedUser();
       const result = await applyIncidentEventTx({
@@ -1313,6 +1443,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         replacement: extra?.replacement,
       });
       dispatch({ type: "UPDATE_ORDER", order: result.order });
+      // #364: incident stock movements (replacement out, piece back to sale)
+      // update the public catalog signal too — same as receptions (#229); a
+      // failure never reverts the incident event.
+      if (result.changedProductIds.length > 0) {
+        const store = state.stores.find((st) => st.id === order.storeId);
+        if (store) {
+          persistInBackground("actualizar la disponibilidad pública", () =>
+            republishStockSignals(store, state.products, state.categories, result.changedProductIds)
+          );
+        }
+      }
     },
     // #184 loose expenses: register/classify; assignment and consumption run
     // through their transactions and land via the entity listeners.
@@ -1369,7 +1510,7 @@ function storeWithMembership(store: Store, user: AppUser): Store & { ownerUid?: 
 }
 
 export function emptyAppState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [] };
+  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [], supplierLinks: [] };
 }
 
 export function useStore(): StoreContextValue {
