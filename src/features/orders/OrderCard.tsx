@@ -12,7 +12,7 @@ import {
   TextArea,
   useToast,
 } from "../../design-system";
-import { legacyCollectDeposit, orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
 import { incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
 import { shortageByDimension } from "../../lib/inventory";
 import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
@@ -28,7 +28,7 @@ import { PackagingSheet } from "./PackagingSheet";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
-  const { upsertOrder, state, activeStore } = useStore();
+  const { upsertOrder, registerOrderPayment, state, activeStore } = useStore();
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
@@ -102,25 +102,49 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     }
   }
 
-  /** One-tap payment collection: the deposit rises by the NET pending amount
-   * — saldo a favor applied from a sister order is the clienta's money already
-   * received there (#189) and must never be counted as cash here. */
+  /** One-tap payment collection. #455/#458 r4 (UX review): a REAL payment
+   * record with its date and method captured at the moment — never a deposit
+   * bump that later forces re-registering the same money twice. The amount is
+   * the NET pending (saldo a favor from a sister order is the clienta's money
+   * already received there, #189 — not cash here). A legacy order that still
+   * carries an unmaterialized deposit keeps its existing Cobros flow. */
   async function collect() {
-    try {
-      const saved = await upsertOrder({
-        ...order,
-        deposit: legacyCollectDeposit(order),
-        updatedAt: new Date().toISOString(),
-      });
-      if (orderTotals(saved).balance > 0) {
-        toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
-        setPaymentsOpen(true);
-        return;
+    // orderTotals().balance is PESOS (decimal); payments take amountText.
+    const pendingPesos = orderTotals(order).balance;
+    if (pendingPesos > 0) {
+      try {
+        await registerOrderPayment(order, {
+          kind: "payment",
+          id: `collect-${order.id}-${pendingPesos}`,
+          method: "cash",
+          date: new Date().toISOString().slice(0, 10),
+          amountText: pendingPesos.toFixed(2),
+          note: "Cobro completo de un toque",
+        });
+        toast.success("Pedido cobrado");
+      } catch (error) {
+        // A pending legacy deposit demands its date/method — the Cobros sheet
+        // carries that guided flow; never invent it here.
+        if (error instanceof Error && error.message.includes("anticipo")) {
+          toast.info("Este pedido tiene un anticipo previo sin fecha. Regístralo en Cobros.");
+          setPaymentsOpen(true);
+          return;
+        }
+        toast.error("No se pudo registrar el cobro.");
       }
-      toast.success("Pedido cobrado");
-    } catch {
-      toast.error("No se pudo registrar el cobro.");
+      return;
     }
+    const saved = await upsertOrder({ ...order, updatedAt: new Date().toISOString() }).catch(() => null);
+    if (!saved) {
+      toast.error("No se pudo actualizar el pedido.");
+      return;
+    }
+    if (orderTotals(saved).balance > 0) {
+      toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
+      setPaymentsOpen(true);
+      return;
+    }
+    toast.success("Pedido cobrado");
   }
 
   const ticket = ticketOpen ? orderTicketText(order, activeStore?.name ?? "Tienda", customer?.name) : "";
