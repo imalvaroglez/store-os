@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cdmxMonthKey, monthKeyOf, monthlyClose, type CloseInputs } from "./monthlyClose";
-import type { LooseExpense, Order, OrderPayment } from "../types";
+import type { LooseExpense, Order, OrderIncident, OrderPayment } from "../types";
 
 // #129 (etapa lista): vista previa de cierre mensual — solo lectura.
 // Ventas/costos reconocidos por ENTREGAS verificables (#333), cobros por su
@@ -424,5 +424,70 @@ describe("#456 — detalles trazables y conciliación", () => {
     const close = monthlyClose({ storeId: "s1", month: M(2026, 12), orders: [foreign], paymentsByOrder: {}, expenses: [] });
     expect(close.details.sales).toHaveLength(0);
     expect(close.details.collections).toHaveLength(0);
+  });
+});
+
+describe("#456 r2 — posventa confirmada ajusta el periodo", () => {
+  const M = (y: number, m: number) => ({ year: y, month: m });
+  const NOW2 = "2026-11-14T10:00:00.000Z";
+  const baseOrder = (extra: Partial<Order> = {}): Order => ({
+    id: "order_r", storeId: "s1", customerId: "c1",
+    items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 300, subtotal: 300, cost: 100 }],
+    deposit: 0, orderStatus: "delivered", paymentStatus: "paid",
+    createdAt: NOW2, updatedAt: NOW2,
+    deliveries: [{ id: "d1", orderId: "order_r", storeId: "s1", deliveredAt: "2026-11-10", recordedAt: NOW2, by: "u1", lines: [{ productId: "p1", quantity: 1 }] }],
+    ...extra,
+  } as unknown as Order);
+  const refundIncident = (confirmedAt: string, unitCents = 30000): OrderIncident => ({
+    id: "inc1", orderId: "order_r", storeId: "s1",
+    productId: "p1", productName: "Aro", quantity: 1, reason: "defecto", originalUnitPriceCents: 30000,
+    status: "resolved", createdAt: NOW2, createdBy: "u1",
+    events: [{ id: "e1", kind: "confirmed", at: confirmedAt, by: "u1" }],
+    resolution: { kind: "refund", saleAdjustmentUnitCents: unitCents, refundOwedCents: unitCents },
+  } as unknown as OrderIncident);
+
+  it("devolución confirmada en el mes: la venta revierte CON fila trazable y el costo se revierte si es conocido", () => {
+    const close = monthlyClose({
+      storeId: "s1", month: M(2026, 11),
+      orders: [baseOrder({ incidents: [refundIncident("2026-11-20T12:00:00.000Z")] })],
+      paymentsByOrder: {}, expenses: [],
+    });
+    expect(close.salesCents).toBe(0);   // 300 − 300 de devolución confirmada
+    expect(close.costCents).toBe(0);    // la pieza vuelve al estante: costo reversible
+    const refundRow = close.details.sales.find((row) => row.amountCents < 0);
+    expect(refundRow).toMatchObject({ date: "2026-11-20", concept: /posventa|devoluci/i });
+    const costRow = close.details.costs.find((row) => row.amountCents > 0);
+    expect(costRow).toBeTruthy(); // reversión de costo trazable
+  });
+
+  it("devolución confirmada en OTRO mes: no toca este periodo", () => {
+    const close = monthlyClose({
+      storeId: "s1", month: M(2026, 11),
+      orders: [baseOrder({ incidents: [refundIncident("2026-12-05T12:00:00.000Z")] })],
+      paymentsByOrder: {}, expenses: [],
+    });
+    expect(close.salesCents).toBe(30000);
+  });
+
+  it("reembolso sin confirmar NO ajusta nada (comprometido ≠ confirmado)", () => {
+    const pending = refundIncident("2026-11-20T12:00:00.000Z");
+    delete (pending as { events?: unknown }).events;
+    const close = monthlyClose({
+      storeId: "s1", month: M(2026, 11),
+      orders: [baseOrder({ incidents: [pending] })],
+      paymentsByOrder: {}, expenses: [],
+    });
+    expect(close.salesCents).toBe(30000);
+  });
+
+  it("costo de la pieza devuelta desconocido: la venta revierte, el costo queda (conservador) y queda trazable", () => {
+    const noCost = baseOrder({ incidents: [refundIncident("2026-11-20T12:00:00.000Z")] });
+    noCost.items = [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 300, subtotal: 300 }];
+    const close = monthlyClose({
+      storeId: "s1", month: M(2026, 11), orders: [noCost], paymentsByOrder: {}, expenses: [],
+    });
+    expect(close.salesCents).toBe(0);
+    expect(close.costCents).toBe(0); // sin costo conocido originalmente, nada que revertir
+    expect(close.details.sales.some((row) => row.amountCents < 0)).toBe(true);
   });
 });
