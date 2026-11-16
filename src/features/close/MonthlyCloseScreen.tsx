@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Screen, ScreenHeader, Sheet, TextField } from "../../design-system";
 import { navigate } from "../../lib/router";
 import { authorizeMonthlyClose, loadLatestClose, loadOrderPaymentsDocs } from "../../app/firebase/firestoreData";
-import { cdmxMonthKey, monthlyClose, type CloseMonth } from "../../lib/monthlyClose";
+import { cdmxMonthKey, cdmxToday, monthlyClose, type CloseMonth } from "../../lib/monthlyClose";
 import { pendingQueues, type Queue } from "../../lib/closeQueues";
 import { buildCloseSnapshot, closeStatus, nextCloseVersion, type CloseSnapshotDoc } from "../../lib/closeAuthorization";
 import { Dialog } from "../../design-system/Dialog";
@@ -361,10 +361,20 @@ export function MonthlyCloseScreen() {
     });
   }
 
-  // #458: the OFFICIAL close state — never a preview presented as closed.
-  const todayCdmx = cdmxMonthKey(new Date().toISOString()) && new Date().toISOString().slice(0, 10);
-  const official = closeStatus({ month, today: todayCdmx, close, existing: existingClose ?? undefined });
+  // #458 r2: CDMX date (never the UTC slice — the UTC day rolls 6h early)
+  // and the store's activation date: a mid-month activation makes the period
+  // PARTIAL — never declared «íntegro» without an explicit PO policy.
+  const official = closeStatus({
+    month,
+    today: cdmxToday(),
+    close,
+    existing: existingClose ?? undefined,
+    activationDate: activeStore.createdAt?.slice(0, 10),
+  });
   const isOwner = !!activeStore.ownerUid && activeStore.ownerUid === draftOwnerId;
+  // Actor display: the owner reads as «la dueña» (platform users are not in
+  // the store's state); any other actor keeps its UID (auditable).
+  const ownerName = existingClose?.authorizedByUid === activeStore.ownerUid ? "la dueña" : existingClose?.authorizedByUid ?? "";
 
   const resultCents = close.operatingResultCents;
   // #455 r2 (revisión): a partial estimate is indeterminate — even a positive
@@ -497,18 +507,46 @@ export function MonthlyCloseScreen() {
         )}
 
         {/* #458: Revisión antes de cerrar — the formal act, owner-only. */}
-        {official.state === "cerrado" ? (
+        {official.state === "cerrado" && existingClose ? (
           <Card>
             <div className="flex items-baseline justify-between gap-3">
               <h3 className="text-sm font-semibold text-ink">
-                Cerrado <Badge tone="success">versión {official.closedVersion}</Badge>
+                Cerrado <Badge tone="success">versión {existingClose.version}</Badge>
               </h3>
               <Button size="sm" variant="secondary" onClick={() => navigate("/productos/reparto")}>
                 Ir a reparto de utilidades
               </Button>
             </div>
+            {/* The SEALED amounts govern — the live preview never overwrites them. */}
+            <div className="mt-2 space-y-1">
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="text-on-surface-soft">Ventas selladas</span>
+                <span className="tnum">{formatMoneyExact((existingClose.totals.salesCents ?? 0) / 100)}</span>
+              </div>
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="text-on-surface-soft">Costo sellado</span>
+                <span className="tnum">{formatMoneyExact((existingClose.totals.costCents ?? 0) / 100)}</span>
+              </div>
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="text-on-surface-soft">Gastos sellados</span>
+                <span className="tnum">{formatMoneyExact((existingClose.totals.expensesCents ?? 0) / 100)}</span>
+              </div>
+              <div className="flex items-baseline justify-between text-sm font-semibold border-t border-rule pt-1">
+                <span className="text-ink">Resultado sellado</span>
+                <span className="tnum">{formatMoneyExact((existingClose.totals.operatingResultCents ?? 0) / 100)}</span>
+              </div>
+            </div>
+            {/* Divergence: later edits recalculate a DIFFERENT live figure —
+                visible, never silently overriding the sealed version. */}
+            {typeof existingClose.totals.operatingResultCents === "number" &&
+              existingClose.totals.operatingResultCents !== close.operatingResultCents && (
+                <p className="text-xs text-warning mt-2">
+                  El recálculo actual ({formatMoneyExact(close.operatingResultCents / 100)}) difiere del periodo sellado:
+                  los datos cambiaron tras el cierre. Las correcciones van por una nueva versión (#202), nunca editan ésta.
+                </p>
+              )}
             <p className="text-xs text-on-surface-soft mt-1">
-              Autorizado por {official.closedBy} el {official.closedAt?.slice(0, 10)}. Los importes de esta versión son
+              Autorizado por {ownerName || "la dueña"} el {official.closedAt?.slice(0, 10)}. Los importes de esta versión son
               inmutables; correcciones posteriores generan una nueva versión (#202), nunca editan ésta.
             </p>
           </Card>
@@ -586,8 +624,9 @@ export function MonthlyCloseScreen() {
             {formatMoneyExact(close.collectionsCents / 100)}.
           </p>
           <p className="text-xs text-on-surface-soft mt-2">
-            Cerrar fija una versión inmutable del periodo a tu nombre. No autoriza ni realiza un reparto; las correcciones
-            posteriores generan versiones nuevas, nunca editan ésta.
+            Cobertura del periodo: {close.coverage.complete ? "completa" : "incompleta"}. Cerrar fija una versión
+            inmutable del periodo a tu nombre. No autoriza ni realiza un reparto; las correcciones posteriores generan
+            versiones nuevas, nunca editan ésta.
           </p>
         </Dialog>
 

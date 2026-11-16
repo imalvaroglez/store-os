@@ -118,6 +118,12 @@ export function cdmxMonthKey(iso: string): string {
   return date.slice(0, 7);
 }
 
+/** Today's DATE (YYYY-MM-DD) in America/Mexico_City — never the UTC slice
+ * (the UTC day rolls 6h before CDMX midnight; #458 r2 review MAYOR-1). */
+export function cdmxToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
 /** Key of the queried month (YYYY-MM). */
 export function monthKeyOf(month: CloseMonth): string {
   return `${month.year}-${String(month.month).padStart(2, "0")}`;
