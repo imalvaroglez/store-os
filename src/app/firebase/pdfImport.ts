@@ -1,17 +1,11 @@
-import {
-  getFunctions,
-  connectFunctionsEmulator,
-  httpsCallable,
-  type Functions,
-} from "firebase/functions";
+import { httpsCallable } from "firebase/functions";
 import { ref, uploadBytes, getBlob } from "firebase/storage";
-import { FIREBASE_EMULATOR_ENABLED, getFirebase } from "./config";
+import { functionsInstance } from "./functions";
 import { getStorageInstance } from "./storage";
 
 // PDF import transport (purchase-pdf-import): upload the supplier PDF to
 // Storage, then call importPurchasePdf (OCR) and get the parsed lines back.
 // This transport is available only after Firebase configuration and Auth pass.
-const EMULATOR = FIREBASE_EMULATOR_ENABLED;
 
 export type ParsedPdfLine = {
   name: string;
@@ -34,20 +28,6 @@ export type ParsedPdfOrder = {
   sourceAmountType: "unit" | "line" | "unknown";
   needsReview: boolean;
 };
-
-let fns: Functions | null = null;
-let fnsConnected = false;
-function functionsInstance(): Functions {
-  const { app } = getFirebase();
-  if (!fns) fns = getFunctions(app, "us-east1"); // region, never a project id
-  if (EMULATOR && !fnsConnected) {
-    const host = import.meta.env.VITE_FIREBASE_FUNCTIONS_EMULATOR_HOST || "127.0.0.1:5001";
-    const [hostname, port] = host.split(":");
-    connectFunctionsEmulator(fns, hostname, Number(port));
-    fnsConnected = true;
-  }
-  return fns;
-}
 
 /**
  * Upload the PDF privately. Returns ONLY the storage path — we never persist a
