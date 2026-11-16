@@ -128,7 +128,14 @@ export function HomeScreen() {
       <ScreenHeader
         title="Inicio"
         subtitle={`¿Qué necesitas hacer hoy en ${activeStore.name}?`}
-        action={<Button onClick={() => navigate("/pedidos/nuevo")}>+ Nuevo pedido</Button>}
+        action={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* #455 r3 (UX): the month's close is reachable from Inicio —
+                living only under Productos▸Gastos was "knowing the hideout". */}
+            <Button variant="ghost" onClick={() => navigate("/productos/cierre")}>Cierre mensual</Button>
+            <Button onClick={() => navigate("/pedidos/nuevo")}>+ Nuevo pedido</Button>
+          </div>
+        }
       />
 
       <Reveal>

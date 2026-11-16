@@ -13,6 +13,7 @@ import {
   useToast,
 } from "../../design-system";
 import { legacyCollectDeposit, orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
 import { shortageByDimension } from "../../lib/inventory";
 import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
@@ -164,7 +165,21 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       </div>
 
       <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
-        <StatRow label="Total"><Money exact amount={totals.estimatedTotal} /></StatRow>
+        <div>
+          <StatRow label="Total"><Money exact amount={totals.estimatedTotal} /></StatRow>
+          {/* #455 r3 (UX): a confirmed posventa adjustment reconciles the card
+              with the close — without it, three surfaces showed two totals. */}
+          {(() => {
+            const confirmed = (order.incidents ?? []).some((incident) => (incident.events ?? []).some((event) => event.kind === "confirmed"));
+            const adjustment = incidentsSaleAdjustmentCents(order.incidents);
+            if (!confirmed || !adjustment) return null;
+            return (
+              <p className="text-xs text-on-surface-soft">
+                Incluye {adjustment < 0 ? "−" : "+"}${(Math.abs(adjustment) / 100).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} de posventa confirmada
+              </p>
+            );
+          })()}
+        </div>
         {planView ? (
           <>
             <StatRow label="Recibido"><Money exact amount={planView.receivedCents / 100} /></StatRow>
