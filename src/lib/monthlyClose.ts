@@ -317,7 +317,9 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     // materialized — the operator did not register its date/method) has no
     // verifiable date either: it stays «Fecha por confirmar», out of every
     // monthly total, instead of being invented into some month.
-    const materializedDeposit = (paymentsByOrder[order.id] ?? []).some((payment) => payment.id === "inherited_deposit");
+    const materializedDeposit =
+      (paymentsByOrder[order.id] ?? []).some((payment) => payment.id === "inherited_deposit") ||
+      order.inheritedDepositMaterialized === true;
     if (order.deposit > 0 && !materializedDeposit) {
       coverage.unconfirmedCollections.push({
         orderId: order.id,
