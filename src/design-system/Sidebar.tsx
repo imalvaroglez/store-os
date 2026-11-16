@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { navigate, visibleNavItems, parentActive, type PlatformRole, type Tab } from "./navItems";
+import { areaIdForTab, navigate, visibleNav, type PlatformRole, type Tab } from "./navItems";
 import type { StoreType } from "../types";
 
 // Desktop navigation: a fixed left rail. Mobile uses BottomNav instead.
@@ -7,6 +7,11 @@ import type { StoreType } from "../types";
 // The store switcher arrives as a slot (switcher prop): the design system must
 // not import app state — that chain would drag the Firebase SDK into every
 // barrel consumer, including the public storefront entry.
+//
+// #454: four AREAS in a fixed contract order. An area is a pure container —
+// its label expands/collapses, never navigates. On mount ONLY the area holding
+// the active route is open (deep-links, refresh, back/forward all land with
+// the right group open); the rest stay closed so the rail never turns endless.
 export function Sidebar({
   active,
   storeType,
@@ -24,11 +29,13 @@ export function Sidebar({
   onOpenStoreSettings?: () => void;
   onChangeStore?: () => void;
 }) {
-  const tabs = visibleNavItems(storeType, userRole);
-  // Productos parent expands inline. Open by default when a child is active so
-  // deep-linking to /productos/categorias shows the open group. The label
-  // navigates; the chevron is a separate expand control (unified-products).
-  const [productosOpen, setProductosOpen] = useState<boolean>(() => parentActive(active));
+  const { flat, areas } = visibleNav(storeType, userRole);
+  const activeArea = areaIdForTab(active);
+  const [openAreas, setOpenAreas] = useState<Record<string, boolean>>(() =>
+    activeArea ? { [activeArea]: true } : {}
+  );
+  const toggleArea = (id: string) => setOpenAreas((prev) => ({ ...prev, [id]: !prev[id] }));
+
   return (
     <aside className="hidden md:flex flex-col w-60 shrink-0 border-r border-rule/70 bg-paper/60 backdrop-blur h-dvh overflow-y-auto sticky top-0">
       <div className="px-5 pt-6 pb-4">
@@ -53,73 +60,66 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 px-3 space-y-1">
-        {tabs.map((t) => {
-          // Productos parent: the label navigates to the parent route; the
-          // chevron is a separate control that expands the children.
-          if (t.children) {
-            return (
-              <div key={t.id} className="space-y-1">
-                <div
-                  className={`rounded-md text-sm font-semibold transition-colors flex items-center justify-between ${
-                    parentActive(active)
-                      ? "bg-terracotta text-on-accent"
-                      : "text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
-                  }`}
-                >
-                  <button onClick={() => navigate(t.path)} className="flex-1 text-left px-3 py-2.5 rounded-md">
-                    {t.label}
-                  </button>
-                  <button
-                    aria-expanded={productosOpen}
-                    aria-label="Expandir"
-                    onClick={() => setProductosOpen((v) => !v)}
-                    className="px-3 py-2.5 rounded-md"
-                  >
-                    <span className={`inline-block transition-transform ${productosOpen ? "rotate-180" : ""}`}>▾</span>
-                  </button>
-                </div>
-                {productosOpen && (
-                  <div className="space-y-1 pl-3">
-                    {t.children.map((c) => {
-                      const childOn = c.id === active;
-                      return (
-                        <button
-                          key={c.id}
-                          onClick={() => navigate(c.path)}
-                          className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors border-l-2 ${
-                            childOn
-                              ? "border-terracotta text-ink font-semibold bg-surface-2"
-                              : "border-rule text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
-                          }`}
-                        >
-                          {c.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          }
-          const isActive = t.id === active;
-          return (
+        {flat
+          .filter((f) => f.id !== "usuarios")
+          .map((f) => (
             <button
-              key={t.id}
-              aria-label={t.id === "usuarios" ? "Usuarios" : undefined}
-              onClick={() => navigate(t.path)}
+              key={f.id}
+              onClick={() => navigate(f.path)}
+              aria-current={f.id === active ? "page" : undefined}
               className={`w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold transition-colors ${
-                isActive
+                f.id === active
                   ? "bg-terracotta text-on-accent"
                   : "text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
               }`}
             >
-              {t.label}
+              {f.label}
             </button>
+          ))}
+        {areas.map((area) => {
+          const open = !!openAreas[area.id];
+          const areaOn = area.id === activeArea;
+          return (
+            <div key={area.id} className="space-y-1">
+              <button
+                aria-expanded={open}
+                onClick={() => toggleArea(area.id)}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md text-sm font-semibold transition-colors ${
+                  areaOn
+                    ? "bg-terracotta text-on-accent"
+                    : "text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
+                }`}
+              >
+                {area.label}
+                <span className={`inline-block transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+              </button>
+              {open && (
+                <div className="space-y-1 pl-3">
+                  {area.children.map((leaf) => {
+                    const leafOn = leaf.id === active;
+                    return (
+                      <button
+                        key={leaf.id}
+                        onClick={() => navigate(leaf.path)}
+                        aria-current={leafOn ? "page" : undefined}
+                        className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors border-l-2 ${
+                          leafOn
+                            ? "border-terracotta text-ink font-semibold bg-surface-2"
+                            : "border-rule text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
+                        }`}
+                      >
+                        {leaf.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>
 
-      <div className="p-3 border-t border-edge/60">
+      <div className="p-3 border-t border-edge/60 space-y-1">
         {onOpenStoreSettings && (
           <button
             onClick={onOpenStoreSettings}
@@ -132,6 +132,22 @@ export function Sidebar({
             Tienda
           </button>
         )}
+        {flat
+          .filter((f) => f.id === "usuarios")
+          .map((f) => (
+            <button
+              key={f.id}
+              onClick={() => navigate(f.path)}
+              aria-current={f.id === active ? "page" : undefined}
+              className={`w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold transition-colors ${
+                f.id === active
+                  ? "bg-terracotta text-on-accent"
+                  : "text-on-surface-soft hover:bg-surface-2 hover:text-on-surface"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
         <button
           onClick={onOpenSettings}
           className="w-full text-left px-3 py-2.5 rounded-md text-sm font-semibold text-on-surface-soft hover:bg-surface-2 hover:text-on-surface transition-colors"

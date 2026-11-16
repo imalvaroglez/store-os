@@ -300,9 +300,10 @@ export async function gotoSantiHome(page: Page) {
 }
 
 export async function openCatalog(page: Page) {
-  // The "Productos" parent navigates directly to the product list (the former
-  // "Catálogo" tab; unified-products). Its chevron only expands children.
-  await page.getByRole("button", { name: /^Productos/ }).first().click();
+  // #454: the product list lives under the "Inventario y catálogo" AREA now —
+  // nav chrome changes with the areas contract, so seeding goes by ROUTE (the
+  // stable contract), not by clicking whichever button holds the label today.
+  await gotoClean(page, "/productos");
   await expect(page.getByRole("heading", { name: "Catálogo", exact: true })).toBeVisible();
 }
 
