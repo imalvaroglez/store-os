@@ -1,18 +1,50 @@
+// #189/#380: saldo a favor end-to-end against the REAL rules + auth +
+// functions emulators. The rules deny every client write to the credit
+// fields, so this suite drives the TRUSTED callables through the app's own
+// wrappers (applyCustomerCreditTx / releaseCustomerCreditTx /
+// applyIncidentEventTx) exactly as production does: a real Auth-emulator
+// user (member of the seeded store) signs in on the client app, the callable
+// authenticates that identity, and rules-checked reads/writes go through the
+// rules-unit-testing context of the same project.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import {
+  connectFirestoreEmulator,
+  doc,
+  getDoc,
+  initializeFirestore,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
+import { initializeApp, type FirebaseApp } from "firebase/app";
+import {
+  connectAuthEmulator,
+  createUserWithEmailAndPassword,
+  getAuth,
+} from "firebase/auth";
+import { connectFunctionsEmulator, getFunctions, httpsCallable } from "firebase/functions";
 import { readFileSync } from "node:fs";
-import type { OrderCreditLedgerEntry } from "../../types";
-
-const holder = vi.hoisted(() => ({ db: null as any }));
-vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
-import { applyCustomerCreditTx, releaseCustomerCreditTx, saveOrderWithStockTx } from "./firestoreData";
 import type { AppUser } from "./auth";
+import type { Order, OrderCreditLedgerEntry, OrderIncident, OrderIncidentEvent } from "../../types";
+
+const holder = vi.hoisted(() => ({ db: null as any, app: null as any }));
+vi.mock("./config", () => ({
+  getFirebase: () => ({ app: holder.app, db: holder.db }),
+  isFirebaseConfigured: () => true,
+  FIREBASE_EMULATOR_ENABLED: true,
+}));
+import { applyCustomerCreditTx, applyIncidentEventTx, releaseCustomerCreditTx, saveOrderWithStockTx } from "./firestoreData";
 
 let env: RulesTestEnvironment;
 
+const user = { uid: "tx-user" } as AppUser;
+
 const entry = (id: string, amountCents: number, fromOrderId = "credit-origin"): OrderCreditLedgerEntry => ({
   id, kind: "application", fromOrderId, amountCents, at: "2026-11-05T10:00:00.000Z", by: "tx-user",
+});
+
+const event = (id: string, kind: OrderIncidentEvent["kind"]): OrderIncidentEvent => ({
+  id, kind, at: "2026-11-05T12:00:00.000Z", by: "tx-user",
 });
 
 const orderDoc = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -28,17 +60,53 @@ const orderDoc = (id: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-// Runs in CI's rules job (emulator); skipped locally without FIRESTORE_EMULATOR_HOST.
-describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transactions with Firestore rules (#189)", () => {
+const incidentDoc = (id: string, extra: Partial<OrderIncident> = {}): OrderIncident => ({
+  id, productId: "ic-product", productName: "Anillo QA", quantity: 1,
+  reason: "Piedra fallada", originalUnitPriceCents: 20000,
+  events: [event(`${id}-open`, "opened")], ...extra,
+});
+
+const agreedRefund = (id: string): OrderIncident => incidentDoc(id, {
+  events: [event(`${id}-open`, "opened"), event(`${id}-agree`, "resolution_agreed")],
+  resolution: { kind: "refund", destination: "credit_accepted", saleAdjustmentUnitCents: 20000, refundOwedCents: 0 },
+});
+
+/** A client app connected to the auth/firestore/functions emulators, with a
+ * freshly created (and signed-in) user. The auth emulator hands the callables
+ * a real token for that identity. */
+async function emulatedClientApp(name: string): Promise<{ app: FirebaseApp; uid: string }> {
+  const app = initializeApp(
+    { projectId: "store-os-dev", apiKey: "demo-api-key", authDomain: "store-os-dev.firebaseapp.com" },
+    name
+  );
+  const auth = getAuth(app);
+  connectAuthEmulator(auth, `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST ?? "127.0.0.1:9099"}`, { disableWarnings: true });
+  const created = await createUserWithEmailAndPassword(auth, `${name}-${Date.now()}@example.test`, "password123");
+  const db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+  const [fsHost, fsPort] = (process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080").split(":");
+  connectFirestoreEmulator(db, fsHost, Number(fsPort));
+  return { app, uid: created.user.uid };
+}
+
+// Runs in CI's rules job (emulator, auth+firestore+functions); skipped
+// locally without FIRESTORE_EMULATOR_HOST.
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit through the trusted callables (#189/#380)", () => {
+  let operator: { app: FirebaseApp; uid: string };
+
   beforeAll(async () => {
     env = await initializeTestEnvironment({
       projectId: "store-os-dev",
       firestore: { rules: readFileSync("firestore.rules", "utf8") },
     });
+    operator = await emulatedClientApp(`credit-op-${Date.now()}`);
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "users/tx-user"), { role: "member" });
-      await setDoc(doc(ctx.firestore(), "adminStores/credit-store"), { ownerUid: "tx-user", memberUids: ["tx-user"] });
+      await setDoc(doc(ctx.firestore(), "adminStores/credit-store"), { ownerUid: "tx-user", memberUids: ["tx-user", operator.uid] });
       await setDoc(doc(ctx.firestore(), "adminStores/foreign-store"), { ownerUid: "someone-else", memberUids: ["someone-else"] });
+      await setDoc(doc(ctx.firestore(), "products/ic-product"), {
+        storeId: "credit-store", name: "Anillo QA", sku: "QA-CR", category: "jewelry",
+        quantityOnHand: 5, price: 200, cost: 80, status: "draft", createdAt: "", updatedAt: "",
+      });
       await setDoc(doc(ctx.firestore(), "orders/credit-origin"), orderDoc("credit-origin", {
         items: [{ productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "credit-origin_L0" }],
         paymentsReceivedCents: 11500, // overpaid: $100 total, $115 received → $15 credit
@@ -47,6 +115,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
       await setDoc(doc(ctx.firestore(), "orders/foreign-origin"), { ...orderDoc("foreign-origin"), storeId: "foreign-store", paymentsReceivedCents: 11500 });
       await setDoc(doc(ctx.firestore(), "orders/other-clienta"), { ...orderDoc("other-clienta", { paymentsReceivedCents: 21500 }), customerId: "otra-clienta" });
     });
+    holder.app = operator.app;
     holder.db = env.authenticatedContext("tx-user").firestore();
   });
   afterAll(async () => {
@@ -54,44 +123,85 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
   });
 
   it("applies the planned compensation atomically across both order documents", async () => {
-    await applyCustomerCreditTx({ entry: entry("app_1", 1500), orderId: "credit-dest", storeId: "credit-store" });
+    await applyCustomerCreditTx({ entry: entry("t1", 1500), orderId: "credit-dest", storeId: "credit-store" });
     const dest = (await getDoc(doc(holder.db, "orders/credit-dest"))).data()!;
     const origin = (await getDoc(doc(holder.db, "orders/credit-origin"))).data()!;
     expect(dest.creditAppliedCents).toBe(1500);
     expect(Array.isArray(dest.creditLedger)).toBe(true);
-    expect((dest.creditLedger as Array<{ id: string }>)[0].id).toBe("app_1");
+    const destLedger = dest.creditLedger as Array<{ id: string; kind: string }>;
+    expect(destLedger[0].id).toBe("app_t1");
+    expect(destLedger[0].kind).toBe("application");
     expect(origin.creditConsumedCents).toBe(1500);
+    const originLedger = origin.creditLedger as Array<{ id: string; kind: string }>;
+    expect(originLedger.some((saved) => saved.id === "con_app_t1" && saved.kind === "consumption")).toBe(true);
   });
 
   it("is idempotent: retrying the same entry id writes nothing new", async () => {
-    await applyCustomerCreditTx({ entry: entry("app_1", 1500), orderId: "credit-dest", storeId: "credit-store" });
+    await applyCustomerCreditTx({ entry: entry("t1", 1500), orderId: "credit-dest", storeId: "credit-store" });
     const dest = (await getDoc(doc(holder.db, "orders/credit-dest"))).data()!;
     expect(dest.creditAppliedCents).toBe(1500); // NOT 3000
     expect((dest.creditLedger as unknown[]).length).toBe(1);
   });
 
-  it("aborts a stale plan: more than the fresh available credit or pending balance", async () => {
+  it("aborts a stale plan with the replan wording (StoreProvider contract), state untouched", async () => {
+    // The callable rejects with the REAL figures; the wrapper maps it to the
+    // historical "cambió mientras se aplicaba" family that callers treat as
+    // expected concurrency.
     await expect(
-      applyCustomerCreditTx({ entry: entry("app_stale", 500), orderId: "credit-dest", storeId: "credit-store" })
-    ).rejects.toThrow(/saldo (a favor|del pedido) cambió/i);
+      applyCustomerCreditTx({ entry: entry("t2", 500), orderId: "credit-dest", storeId: "credit-store" })
+    ).rejects.toThrow(/cambió mientras se aplicaba/i);
     const dest = (await getDoc(doc(holder.db, "orders/credit-dest"))).data()!;
     expect(dest.creditAppliedCents).toBe(1500); // untouched
   });
 
+  it("two concurrent applications commit exactly the available credit", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "orders/cc-origin-2"), orderDoc("cc-origin-2", {
+        items: [{ productName: "Collar", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "cc-origin-2_L0" }],
+        paymentsReceivedCents: 20000, // $100 of credit
+      }));
+      for (const id of ["cc-dest-a", "cc-dest-b"]) {
+        await setDoc(doc(db, "orders", id), orderDoc(id, {
+          items: [{ productName: "Pulsera", quantity: 1, unitPrice: 300, subtotal: 300, lineId: `${id}_L0` }],
+        }));
+      }
+    });
+    const settled = await Promise.allSettled([
+      applyCustomerCreditTx({ entry: entry("cc_a", 10000, "cc-origin-2"), orderId: "cc-dest-a", storeId: "credit-store" }),
+      applyCustomerCreditTx({ entry: entry("cc_b", 10000, "cc-origin-2"), orderId: "cc-dest-b", storeId: "credit-store" }),
+    ]);
+    expect(settled.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = settled.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(String(rejected.reason)).toMatch(/cambió mientras se aplicaba/i);
+    const origin = (await getDoc(doc(holder.db, "orders/cc-origin-2"))).data()!;
+    expect(origin.creditConsumedCents).toBe(10000); // exactly the available
+  });
+
   it("never crosses stores or customers, and skips cancelled orders", async () => {
-    // Cross-store: the RULES deny the foreign doc read before the store check
-    // even runs — rejection either way, defense in depth.
     await expect(
-      applyCustomerCreditTx({ entry: entry("app_xstore", 1000, "foreign-origin"), orderId: "credit-dest", storeId: "credit-store" })
-    ).rejects.toThrow();
+      applyCustomerCreditTx({ entry: entry("t_xstore", 1000, "foreign-origin"), orderId: "credit-dest", storeId: "credit-store" })
+    ).rejects.toThrow(/otra tienda/i);
     await expect(
-      applyCustomerCreditTx({ entry: entry("app_xclienta", 1000, "other-clienta"), orderId: "credit-dest", storeId: "credit-store" })
+      applyCustomerCreditTx({ entry: entry("t_xclienta", 1000, "other-clienta"), orderId: "credit-dest", storeId: "credit-store" })
     ).rejects.toThrow(/misma clienta/i);
     await updateDoc(doc(holder.db, "orders/credit-dest"), { orderStatus: "cancelled" });
     await expect(
-      applyCustomerCreditTx({ entry: entry("app_cancelled", 100), orderId: "credit-dest", storeId: "credit-store" })
+      applyCustomerCreditTx({ entry: entry("t_cancelled", 100), orderId: "credit-dest", storeId: "credit-store" })
     ).rejects.toThrow(/cancelado/i);
     await updateDoc(doc(holder.db, "orders/credit-dest"), { orderStatus: "confirmed" });
+  });
+
+  it("an authenticated NON-member cannot move credit through the callable", async () => {
+    const outsider = await emulatedClientApp(`credit-out-${Date.now()}`);
+    const fns = getFunctions(outsider.app, "us-east1");
+    const [fnHost, fnPort] = (process.env.FUNCTIONS_EMULATOR_HOST ?? "127.0.0.1:5001").split(":");
+    connectFunctionsEmulator(fns, fnHost, Number(fnPort));
+    await expect(
+      httpsCallable(fns, "applyCredit")({
+        storeId: "credit-store", fromOrderId: "credit-origin", toOrderId: "credit-dest", amountCents: 100, intentId: "hack",
+      })
+    ).rejects.toThrow(/No tienes acceso a esta tienda/i);
   });
 
   it("restitutes on valid cancellation and re-running writes nothing", async () => {
@@ -102,12 +212,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
     const origin = (await getDoc(doc(holder.db, "orders/credit-origin"))).data()!;
     expect(dest.creditAppliedCents).toBe(0);
     expect(origin.creditConsumedCents).toBe(0);
-    const ledger = dest.creditLedger as Array<{ kind: string }>;
-    expect(ledger.filter((e) => e.kind === "release")).toHaveLength(1);
+    const ledger = dest.creditLedger as Array<{ kind: string; id: string }>;
+    expect(ledger.filter((saved) => saved.kind === "release")).toHaveLength(1);
+    expect(ledger.find((saved) => saved.kind === "release")!.id).toContain("release_cancellation_credit-dest");
     // Idempotent: net is zero now.
     const again = await releaseCustomerCreditTx({ orderId: "credit-dest", storeId: "credit-store", by: "tx-user" });
     expect(again).toBe(0);
-    expect((dest.creditLedger as unknown[]).length).toBe(2);
+    const after = (await getDoc(doc(holder.db, "orders/credit-dest"))).data()!;
+    expect((after.creditLedger as unknown[]).length).toBe(2);
   });
 
   it("a member of another store cannot touch these orders (rules)", async () => {
@@ -118,10 +230,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
   });
 
   it("editing an order through the normal save path keeps the credit fields intact (review F1)", async () => {
-    const user = { uid: "tx-user" } as AppUser;
     // Re-apply a compensation on a live destination.
     await updateDoc(doc(holder.db, "orders/credit-dest"), { orderStatus: "confirmed" });
-    await applyCustomerCreditTx({ entry: entry("app_edit", 1500), orderId: "credit-dest", storeId: "credit-store" });
+    await applyCustomerCreditTx({ entry: entry("t_edit", 1500), orderId: "credit-dest", storeId: "credit-store" });
 
     // Edit and save the DESTINATION: the credit applied to it must survive.
     // The caller shape is OrderForm's: it builds `next` WITHOUT the credit
@@ -148,7 +259,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
   });
 
   it("the delivery gate counts applied credit as covered and records the NET saldo (review F2)", async () => {
-    const user = { uid: "tx-user" } as AppUser;
     // $200 order with $100 received on it + $100 credit applied from a sister
     // order. Money fields only enter through the disabled-rules seeder — the
     // rules themselves forbid creating docs that carry them.
@@ -159,7 +269,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
       }));
       await setDoc(doc(ctx.firestore(), "orders/credit-deliver"), orderDoc("credit-deliver", { paymentsReceivedCents: 10000 }));
     });
-    await applyCustomerCreditTx({ entry: entry("app_deliver", 10000, "credit-origin-2"), orderId: "credit-deliver", storeId: "credit-store" });
+    await applyCustomerCreditTx({ entry: entry("t_deliver", 10000, "credit-origin-2"), orderId: "credit-deliver", storeId: "credit-store" });
 
     // Delivering without explicit confirmation must NOT fire the gate: the
     // credit is the clienta's money, received on her other order.
@@ -179,12 +289,141 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit transacti
         paymentsReceivedCents: 15000,
       }));
     });
-    await applyCustomerCreditTx({ entry: entry("app_deliver_2", 5000, "credit-origin-3"), orderId: "credit-deliver-2", storeId: "credit-store" });
+    await applyCustomerCreditTx({ entry: entry("t_deliver_2", 5000, "credit-origin-3"), orderId: "credit-deliver-2", storeId: "credit-store" });
     const snap2 = (await getDoc(doc(holder.db, "orders/credit-deliver-2"))).data()!;
     const { creditAppliedCents: _applied, creditConsumedCents: _consumed, creditLedger: _ledger, ...caller2 } = snap2;
     const delivered2 = { ...caller2, id: "credit-deliver-2", orderStatus: "delivered" } as never;
     await saveOrderWithStockTx(user, delivered2 as never, snap2.revision ?? 0, "mut_deliver_2", { confirmDeliveredWithBalance: true });
     const stamped = (await getDoc(doc(holder.db, "orders/credit-deliver-2"))).data()!;
     expect(stamped.deliveredWithBalanceCents).toBe(5000); // net, not the gross 10000
+  });
+
+  it("a confirmed incident restitutes the applied credit through the callable, and retries add nothing", async () => {
+    // ic-origin overpays $100; ic-dest sells an anillo ($200) + a cadena
+    // ($100) with $100 received. The $100 credit is applied while the sale is
+    // live (pending covers it); the $200-piece refund is agreed afterwards —
+    // confirming it hands the applied credit back to its origin.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/ic-origin"), orderDoc("ic-origin", {
+        items: [{ productName: "Collar", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "ic-origin_L0" }],
+        paymentsReceivedCents: 20000,
+        orderStatus: "delivered",
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/ic-dest"), orderDoc("ic-dest", {
+        items: [
+          { lineId: "ic_L0", productId: "ic-product", productName: "Anillo QA", quantity: 1, unitPrice: 200, subtotal: 200 },
+          { lineId: "ic_L1", productName: "Cadena QA", quantity: 1, unitPrice: 100, subtotal: 100 },
+        ],
+        paymentsReceivedCents: 10000,
+      }));
+    });
+    await applyCustomerCreditTx({ entry: entry("ic1", 10000, "ic-origin"), orderId: "ic-dest", storeId: "credit-store" });
+    // The refund is agreed AFTER the compensation landed (a plain incidents
+    // update — the rules keep every credit key locked).
+    await updateDoc(doc(holder.db, "orders/ic-dest"), { incidents: [agreedRefund("inc-1")] });
+
+    const result = await applyIncidentEventTx({
+      orderId: "ic-dest", storeId: "credit-store", incidentId: "inc-1", event: event("ic-conf-1", "confirmed"),
+    });
+    expect(result.order.incidents?.[0].events?.some((saved) => saved.kind === "confirmed")).toBe(true);
+    const dest = (await getDoc(doc(holder.db, "orders/ic-dest"))).data()!;
+    const origin = (await getDoc(doc(holder.db, "orders/ic-origin"))).data()!;
+    expect(dest.creditAppliedCents).toBe(0);
+    expect(origin.creditConsumedCents).toBe(0);
+    const ledger = dest.creditLedger as Array<{ kind: string; id: string }>;
+    const release = ledger.find((saved) => saved.kind === "release");
+    expect(release!.id).toContain("rel_ic-conf-1");
+    const ledgerLength = ledger.length;
+
+    // Idempotent retry: the event is already saved; no further movement.
+    await applyIncidentEventTx({
+      orderId: "ic-dest", storeId: "credit-store", incidentId: "inc-1", event: event("ic-conf-1", "confirmed"),
+    });
+    const after = (await getDoc(doc(holder.db, "orders/ic-dest"))).data()!;
+    const originAfter = (await getDoc(doc(holder.db, "orders/ic-origin"))).data()!;
+    expect((after.creditLedger as unknown[]).length).toBe(ledgerLength);
+    expect(originAfter.creditConsumedCents).toBe(0);
+  });
+
+  it("self-heals a confirmed event whose restitution never landed", async () => {
+    // The event committed but the release didn't (e.g. a crash between the
+    // two): re-registering the same confirmation must finish the job.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/ic-origin-2"), orderDoc("ic-origin-2", {
+        items: [{ productName: "Broche", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "ic-origin-2_L0" }],
+        paymentsReceivedCents: 20000,
+        creditConsumedCents: 10000,
+        creditLedger: [{ id: "con_ic2", kind: "consumption", fromOrderId: "ic-dest-2", amountCents: 10000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" }],
+        revision: 1,
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/ic-dest-2"), orderDoc("ic-dest-2", {
+        items: [{ lineId: "ic2_L0", productId: "ic-product", productName: "Anillo QA", quantity: 1, unitPrice: 200, subtotal: 200 }],
+        paymentsReceivedCents: 10000,
+        creditAppliedCents: 10000,
+        creditLedger: [{ id: "ic2", kind: "application", fromOrderId: "ic-origin-2", amountCents: 10000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" }],
+        revision: 1,
+        incidents: [incidentDoc("inc-2", {
+          events: [event("inc-2-open", "opened"), event("inc-2-agree", "resolution_agreed"), event("ic-conf-2", "confirmed")],
+          resolution: { kind: "refund", destination: "credit_accepted", saleAdjustmentUnitCents: 20000, refundOwedCents: 0 },
+        })],
+      }));
+    });
+    await applyIncidentEventTx({
+      orderId: "ic-dest-2", storeId: "credit-store", incidentId: "inc-2", event: event("ic-conf-2", "confirmed"),
+    });
+    const dest = (await getDoc(doc(holder.db, "orders/ic-dest-2"))).data()!;
+    const origin = (await getDoc(doc(holder.db, "orders/ic-origin-2"))).data()!;
+    expect(dest.creditAppliedCents).toBe(0);
+    expect(origin.creditConsumedCents).toBe(0);
+    expect((dest.creditLedger as Array<{ kind: string }>).some((saved) => saved.kind === "release")).toBe(true);
+  });
+
+  it("a shortfall in the incident restitution is loud, never silent", async () => {
+    // The origin's mirror does not back the credit the ledger claims
+    // (drift): the callable conservatively releases nothing, and the
+    // confirmation surfaces the shortfall instead of swallowing it.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/ic-origin-3"), orderDoc("ic-origin-3", {
+        items: [{ productName: "Alicate", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "ic-origin-3_L0" }],
+        paymentsReceivedCents: 20000,
+        // drift: no creditConsumedCents / consumption ledger on the origin
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/ic-dest-3"), orderDoc("ic-dest-3", {
+        items: [{ lineId: "ic3_L0", productId: "ic-product", productName: "Anillo QA", quantity: 1, unitPrice: 200, subtotal: 200 }],
+        paymentsReceivedCents: 10000,
+        creditAppliedCents: 10000,
+        creditLedger: [{ id: "ic3", kind: "application", fromOrderId: "ic-origin-3", amountCents: 10000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" }],
+        revision: 1,
+        incidents: [agreedRefund("inc-3")],
+      }));
+    });
+    await expect(
+      applyIncidentEventTx({ orderId: "ic-dest-3", storeId: "credit-store", incidentId: "inc-3", event: event("ic-conf-3", "confirmed") })
+    ).rejects.toThrow(/solo se restituyeron/i);
+    // The incident itself stayed confirmed; the credit stayed untouched.
+    const dest = (await getDoc(doc(holder.db, "orders/ic-dest-3"))).data()!;
+    expect((dest.incidents as Order["incidents"])![0].events!.some((saved) => saved.kind === "confirmed")).toBe(true);
+    expect(dest.creditAppliedCents).toBe(10000);
+  });
+
+  it("an absent credit origin surfaces the same loud shortfall (r4 successor)", async () => {
+    // The backing order document no longer exists: the callable skips it
+    // (conservative), the confirmation lands, and the shortfall is loud —
+    // repairing the origin and re-registering the confirmation self-heals.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/ic-dest-4"), orderDoc("ic-dest-4", {
+        items: [{ lineId: "ic4_L0", productId: "ic-product", productName: "Anillo QA", quantity: 1, unitPrice: 200, subtotal: 200 }],
+        paymentsReceivedCents: 10000,
+        creditAppliedCents: 10000,
+        creditLedger: [{ id: "ic4", kind: "application", fromOrderId: "ic-origin-gone", amountCents: 10000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" }],
+        revision: 1,
+        incidents: [agreedRefund("inc-4")],
+      }));
+    });
+    await expect(
+      applyIncidentEventTx({ orderId: "ic-dest-4", storeId: "credit-store", incidentId: "inc-4", event: event("ic-conf-4", "confirmed") })
+    ).rejects.toThrow(/solo se restituyeron/i);
+    const dest = (await getDoc(doc(holder.db, "orders/ic-dest-4"))).data()!;
+    expect(dest.creditAppliedCents).toBe(10000); // nothing moved
   });
 });
