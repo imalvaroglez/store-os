@@ -17,7 +17,7 @@ import {
   type CommandGroup,
   type Tab,
 } from "../design-system";
-import { visibleNavItems, navigate } from "../design-system/navItems";
+import { visibleNav, navigate } from "../design-system/navItems";
 import { VersionFooter } from "./VersionFooter";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { CatalogScreen } from "../features/catalog/CatalogScreen";
@@ -126,13 +126,17 @@ export function AppShell() {
     );
   }
 
+  const nav = visibleNav(activeStore.type, user?.role);
   const commands: CommandGroup[] = [
     {
       group: "Ir a",
-      items: visibleNavItems(activeStore.type, user?.role).map((t) => ({
-        id: t.id,
-        label: t.label,
-        onSelect: () => navigate(t.path),
+      items: [
+        ...nav.flat,
+        ...nav.areas.flatMap((area) => area.children),
+      ].map((leaf) => ({
+        id: leaf.id,
+        label: leaf.label,
+        onSelect: () => navigate(leaf.path),
       })),
     },
   ];

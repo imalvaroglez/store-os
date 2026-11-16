@@ -83,6 +83,8 @@ test("form Sheet is centered modal on desktop, bottom-anchored on mobile", async
 test("desktop sidebar navigates between tabs", async ({ sharedPage: page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "sidebar nav is desktop-only");
   await gotoSantiHome(page);
+  // #454: Pedidos/Clientes viven dentro del área Ventas — se abre el grupo.
+  await page.getByRole("button", { name: "Ventas" }).click();
   await page.getByRole("button", { name: "Pedidos" }).click();
   await expect(page.getByRole("heading", { name: "Pedidos", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Clientes" }).click();
