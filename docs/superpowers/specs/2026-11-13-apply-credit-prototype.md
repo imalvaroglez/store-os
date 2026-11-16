@@ -1,6 +1,6 @@
 # Prototipo: applyCredit/releaseCredit — operación de confianza para el saldo a favor (#380)
 
-Fecha: 2026-11-13 · Estado: **prototipo verificado en emulador** — el despliegue de la función y el cambio de reglas quedan pendientes de la revisión del PO.
+Fecha: 2026-11-13 · Actualizada 2026-11-16 · Estado: **diseño aprobado por el PO (15-nov) e implementado en rama** — el cliente usa los callables, las reglas cierran la escritura directa y las suites cubren la vía nueva. Pendiente: revisión independiente, CI y el orden de liberación de abajo.
 
 ## Problema
 
@@ -43,7 +43,44 @@ Una edición posterior del origen no puede invalidar el saldo que respalda otra 
   - P5: escritura directa del cliente a crédito → PERMISSION_DENIED.
   - P6: el consumo sigue respaldado (invariante).
 - **Suite de reglas+guard** `protoCreditRules.emulator.test.ts` (en `test:rules`): **4/4** — bloqueo total por reglas (los tres campos), guardado ordinario con crédito verbatim pasa, edición-invalidante rechazada en español con estado intacto, edición inofensiva pasa.
-- **Equivalencia del puerto**: 13/13. Unitarias completas 2,113 ✓, typecheck ✓, build ✓.
+- **Suite callable** `customerCredit.emulator.test.ts` reescrita a la vía nueva (auth+firestore+functions, en `test:rules`): **14/14** — par atómico, idempotencia, mensaje de replan (contrato de StoreProvider), concurrencia exacta, guards de tienda/clienta/cancelado, callable inaccesible para quien no es miembro, restitución por cancelación, F1/F2 de revisiones previas, confirmación de incidencia con restitución, autocuración y faltantes audibles (origen ausente y espejo inconsistente — sucesores r4).
+- **Suite de borrado** `deleteCredit.emulator.test.ts` (misma vía): **6/6**.
+- **Escenarios r4 de incidencias** migrados a la suite callable (la sesión firestore-only no arranca functions); contrato nuevo documentado arriba.
+- **Equivalencia del puerto**: 13/13. Unitarias completas 2,342 ✓, typecheck ✓, build ✓, `test:rules` completo (22 suites) ✓, `e2e:firebase` (96 + 5) ✓ — la sesión sin functions confirma que ningún flujo de app toca crédito por el callable.
+
+## Adopción del cliente (implementada, 16-nov)
+
+Los TRES flujos que movían saldo escriben ahora por los callables; las firmas
+públicas no cambian (`applyCustomerCreditTx` / `releaseCustomerCreditTx`):
+
+- **Compensación automática** (`StoreProvider` → `applyCustomerCreditTx`):
+  el `entry.id` viaja como `intentId`; el callable estampa `at`/`by` con la
+  identidad autenticada. Los rechazos de tope del callable («El saldo a favor
+  disponible es de X pesos…») se traducen al histórico «cambió mientras se
+  aplicaba» — el contrato que `StoreProvider` traga como concurrencia
+  esperada; el resto de mensajes conserva su texto y superficia.
+- **Cancelación / borrado** (`releaseCustomerCreditTx`): el motivo
+  (`cancellation` exige doc cancelado, leído fresco antes de llamar;
+  `deletion` no) fija `intentId` estable (`<reason>_<orderId>`); la
+  idempotencia real es el neto del ledger, como antes.
+- **Incidencias** (`applyIncidentEventTx`, evento `confirmed`): el evento se
+  confirma en su transacción (incidencias + inventario) y la restitución
+  corre inmediatamente después con `releaseCredit({ intentId: event.id,
+  capCents: obligación reconciliada, idPrefix: "rel_" })`. **Contrato r4
+  evolucionado:** el aborto pre-commit de un origen ausente/inconsistente
+  pasa a ser (a) confirmación cometida + (b) error explícito «solo se
+  restituyeron X de Y pesos…» + (c) autocuración: re-registrar la misma
+  confirmación detecta el `rel_` faltante y completa la restitución. El
+  dinero nunca se mueve a ciegas: la restitución corta es visible y el reintento
+  es idempotente por evento.
+
+**Orden de liberación (obligatorio):** el trabajo de functions se despliega
+a `store-os-dev` y a producción ANTES de integrar esta rama a main — el job
+`deploy-rules` publica las reglas cerradas en cada push a main y la PWA que
+ya usa los callables los necesita disponibles. Desplegar functions
+(`npm --prefix functions run deploy`, producción con `--project
+store-os-f7cf8`) es paso humano/CI previo al merge; el rollback sigue siendo
+revertir reglas.
 
 ## Plan de transición para PWA viejas
 
