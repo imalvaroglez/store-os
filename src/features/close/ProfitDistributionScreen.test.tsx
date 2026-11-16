@@ -102,4 +102,16 @@ describe("ProfitDistributionScreen (#459 reparto real)", () => {
     expect(screen.queryByRole("button", { name: /Revisar y autorizar/i })).toBeNull();
     mocks.draftOwnerId = "u_owner";
   });
+
+  it("versiones coexisten (v1/v2): la pérdida del periodo cuenta UNA vez y manda v2 (#202)", async () => {
+    mocks.loadClosesForStore.mockReset().mockResolvedValue([
+      closeDoc("2026-10", -100000, 1),
+      closeDoc("2026-10", -100000, 2), // reapertura: misma pérdida, versión nueva
+      closeDoc("2026-11", 300000),
+    ]);
+    render(<ToastProvider><ProfitDistributionScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText(/Pérdidas previas compensadas/i)).toBeTruthy());
+    expect(screen.getAllByText(/−\$1,000\.00/).length).toBeGreaterThanOrEqual(1); // UNA vez, no dos
+    expect(screen.getByText(/Cerrado · v1/i)).toBeTruthy(); // noviembre v1 (único)
+  });
 });
