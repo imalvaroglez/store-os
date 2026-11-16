@@ -7,9 +7,10 @@ name: release-window
 # (check-release.cjs contra lo que producción SIRVE) y el deploy de Vercel
 # production exactamente como el despacho manual.
 #
-#   schedule  11:25 UTC = 05:25 America/Mexico_City (UTC-6 fijo, sin DST).
+#   schedule  13:30 UTC = 07:30 America/Mexico_City (UTC-6 fijo, sin DST;
+#             calendario del guardián diario de liberación, PO 2026-11-16).
 #             La cola de GitHub Actions puede retrasar el arranque (típico
-#             0-15 min); el margen hasta las 07:00 lo absorbe (run completo
+#             0-15 min); el timeout de 75 min lo absorbe (run completo
 #             medido: 18-25 min). El scheduler SOLO INICIA a esa hora —
 #             no garantiza el minuto exacto de conclusión.
 #   workflow_dispatch  respaldo manual de la ventana (dry_run para validar
@@ -28,7 +29,7 @@ name: release-window
 # despacho manual. Concurrency única: jamás dos ventanas solapadas.
 on:
   schedule:
-    - cron: "25 11 * * *"
+    - cron: "30 13 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

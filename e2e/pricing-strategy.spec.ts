@@ -126,6 +126,12 @@ test.afterAll(async () => {
   sharedPage = null;
 });
 
+// #402: the explanation prose (supportReason/chosenReason) lives INSIDE a
+// closed native <details> — open it before asserting on its text.
+async function openHowComputed(page: Page) {
+  await page.getByText("Cómo se calculó").click();
+}
+
 async function openStrategy(page: Page) {
   await gotoClean(page, "/productos/estrategia");
   await expect(page.getByRole("heading", { name: "Estrategia de precios" })).toBeVisible();
@@ -138,11 +144,15 @@ async function openStrategy(page: Page) {
 
 test("propone dos bandas, Fer edita y guarda; la tabla persiste tras recargar", async ({ sharedPage: page }) => {
   await openStrategy(page);
+  await openHowComputed(page);
   await expect(page.getByText(/Elegidas 2 bandas/)).toBeVisible();
   await page.getByRole("button", { name: /Editar esta propuesta/ }).click();
   await page.getByLabel("Iconic (pesos)").first().fill("165");
   await page.getByRole("button", { name: /Guardar tabla/ }).click();
-  await expect(page.getByRole("button", { name: "Sin cambios" })).toBeVisible({ timeout: 10000 });
+  // #335 r4: saving now also records the rule-change event (one extra
+  // emulator round-trip in the same action) — CI runners need headroom over
+  // the default actionTimeout (#386 budget precedent).
+  await expect(page.getByRole("button", { name: "Sin cambios" })).toBeVisible({ timeout: 20000 });
 
   // Reload: the saved table must come back exactly as saved.
   await openStrategy(page);
@@ -185,11 +195,15 @@ test("recorrido completo: tabla de Relojes → revisar por categoría → aplica
   test.setTimeout(120_000);
   // 1) Estrategia: proponer, ajustar un precio (Iconic banda baja 160→150) y guardar.
   await openStrategy(page);
+  await openHowComputed(page);
   await expect(page.getByText(/Elegidas 2 bandas/)).toBeVisible();
   await page.getByRole("button", { name: /Editar esta propuesta/ }).click();
   await page.getByLabel("Iconic (pesos)").first().fill("150");
   await page.getByRole("button", { name: /Guardar tabla/ }).click();
-  await expect(page.getByRole("button", { name: "Sin cambios" })).toBeVisible({ timeout: 10000 });
+  // #335 r4: saving now also records the rule-change event (one extra
+  // emulator round-trip in the same action) — CI runners need headroom over
+  // the default actionTimeout (#386 budget precedent).
+  await expect(page.getByRole("button", { name: "Sin cambios" })).toBeVisible({ timeout: 20000 });
 
   // 2) El puente ofrece la revisión contextual de UNA categoría (280 piezas de Relojes, no todo el catálogo).
   const bridge = page.getByRole("button", { name: /Revisar precios pendientes de esta categoría \(\d+\)/ });

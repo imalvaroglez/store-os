@@ -6,11 +6,11 @@ sobre un SHA congelado de `main`). No abre gates nuevos; no relaja ninguno.
 
 ## Horario
 
-- **Cron `25 11 * * *` UTC = 05:25 `America/Mexico_City`** (UTC-6 fijo; México
-  no tiene DST). GitHub Actions puede encolar el arranque (típico 0–15 min).
+- **Cron `30 13 * * *` UTC = 07:30 `America/Mexico_City`** (UTC-6 fijo; México
+  no tiene DST; calendario del guardián diario de liberación, PO 2026-11-16).
+  GitHub Actions puede encolar el arranque (típico 0–15 min).
 - Duración medida del release dispatch: **18–25 min** (suites + deploy-rules +
-  deploy + verificación). Objetivo: verificado ≤ 07:00, antes de que Fer
-  arranque (~08:00).
+  deploy + verificación). Objetivo: verificado ~08:00, al arranque de Fer.
 - El scheduler SOLO INICIA a esa hora; si la cola retrasa, la ventana corre
   tarde pero completa — nunca se salta pruebas por el reloj.
 
@@ -27,9 +27,11 @@ sobre un SHA congelado de `main`). No abre gates nuevos; no relaja ninguno.
 3. **Guard de versión/notas (el existente)**: `scripts/check-release.cjs` con
    probe a producción. "Ya sirve esa versión" → NO-OP. Versión/notas
    inválidas → **fail-closed**.
-4. **Despacho congelado**: `gh workflow run ci.yml --ref <SHA> -f
-   release_production=true` — el run construye EXACTO ese commit (suites
-   completas, deploy-rules con paridad, release guard, deploy Vercel prod).
+4. **Despacho congelado**: `gh workflow run ci.yml --ref main -f
+   release_production=true` (por la RAMA: los jobs deploy exigen
+   `ref_name == 'main'`; el run se verifica contra el SHA congelado) — el run
+   construye EXACTO ese commit (suites completas, deploy-rules con paridad,
+   release guard, deploy Vercel prod).
 5. **Espera el run** (`gh run watch --exit-status`, timeout 75 min). Gate en
    rojo → la ventana FALLA; **sin auto-reintento**.
 6. **Verificación posdeploy**: sondea el `<meta name="store-os-version">` de
@@ -66,7 +68,7 @@ del runbook Sev-1).
 
 - **Dentro de la app:** la nota de cada versión viaja en
   `src/releases/releases.json` (se escribe en el PR de cada historia) y Fer la
-  ve en el pie de la app al desplegar — disponible desde las ~07:00 aunque la
+  ve en el pie de la app al desplegar — disponible desde las ~08:00 aunque la
   sesión ejecutora esté caída.
 - **Mensaje WhatsApp copiable (`docs/releases/notas-para-fer.md`):** lo
   redacta la sesión ejecutora al reconciliar el tablero tras la ventana (usa

@@ -238,6 +238,51 @@ test("generic public catalog accumulates pieces and sends one WhatsApp order", a
   await ctx.close();
 });
 
+// #359 criterio 4: tras republicar una pieza, una recarga NORMAL (sin limpiar
+// caché ni almacenamiento) muestra el cambio y el carrito del visitante se
+// conserva. Las lecturas REST van con cache: "no-store" y el SW no controla
+// /catalogo/*, así que nada puede retener la proyección anterior.
+test("#359 republished piece shows after a normal reload and the cart survives", async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const anon = await ctx.newPage();
+  await openCatalogAnonymous(anon, "santi");
+  await expect(anon.getByRole("heading", { name: "Santi" }).first()).toBeVisible({ timeout: 15000 });
+  await anon.getByRole("button", { name: "Agregar al carrito" }).first().click();
+  await expect(anon.getByRole("button", { name: "Abrir pedido" })).toContainText("1 pieza");
+
+  const seed = await mintUserToken();
+  const auth = { "Content-Type": "application/json", Authorization: `Bearer ${seed.token}` };
+  const summary = (productSlug: string, name: string, price: number) => ({
+    productSlug, name, storeSlug: "santi", imageUrl: null, availability: "available",
+    storeId: "store_santi", isFeatured: false, isNew: false, canInquire: false, categoryIds: [], sortOrder: 0, price,
+  });
+  const writeCatalog = async (products: ReturnType<typeof summary>[]) => {
+    const res = await fetch(`${FS}/publicCatalogs/santi`, {
+      method: "PATCH", headers: auth,
+      body: JSON.stringify({ fields: toFields({ slug: "santi", storeId: "store_santi", storeSlug: "santi", categories: [], products }) }),
+    });
+    if (!res.ok) throw new Error(`republish failed: ${res.status} ${await res.text()}`);
+  };
+  try {
+    // La operadora republica: la pieza cambia de nombre y precio.
+    await writeCatalog([
+      summary("perfume-baccarat-rouge-540", "Perfume Baccarat Rouge 540 Edición 2026", 1650),
+      summary("tenis-jordan-1-retro", "Tenis Jordan 1 Retro", 3200),
+    ]);
+    await anon.reload(); // recarga normal
+    await expect(anon.getByRole("heading", { name: "Perfume Baccarat Rouge 540 Edición 2026" })).toBeVisible({ timeout: 15000 });
+    // El carrito sobrevive: la pieza agregada antes de republicar sigue ahí.
+    await expect(anon.getByRole("button", { name: "Abrir pedido" })).toContainText("1 pieza");
+  } finally {
+    // Restaurar la proyección sembrada para el resto de la suite.
+    await writeCatalog([
+      summary("perfume-baccarat-rouge-540", "Perfume Baccarat Rouge 540", 1500),
+      summary("tenis-jordan-1-retro", "Tenis Jordan 1 Retro", 3200),
+    ]);
+    await ctx.close();
+  }
+});
+
 test("anonymous visitor never sees private fields", async ({ browser }) => {
   const ctx = await browser.newContext();
   const anon = await ctx.newPage();
@@ -469,7 +514,9 @@ test("owner uploads brand images, publishes, and removes only the replaced logo"
   await catalog.reload();
   await expect(catalog.getByRole("heading", { name: "Tu nueva pieza favorita está aquí" })).toBeVisible();
   const defaultLogo = catalog.getByRole("img", { name: "Logo de Olivia", exact: true });
-  await expect(defaultLogo).toHaveAttribute("src", /\/images\/olivia-logo\.png$/);
+  // #365/#359: the default logo is served versioned (?v=<build sha>) — the
+  // old `$`-anchored regex failed deterministically once the version landed.
+  await expect(defaultLogo).toHaveAttribute("src", /^\/images\/olivia-logo\.png\?v=/);
   await expect(catalog.getByRole("img", { name: "Colección de prueba" })).toBeVisible();
   expect((await catalog.request.get(oldLogo)).status()).toBe(404);
   await anon.close(); await context.close();

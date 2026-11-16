@@ -143,7 +143,17 @@ describe("OrderPaymentsSheet installment calendar (#165)", () => {
   const planOrder: Order = {
     ...order,
     items: [{ lineId: "l1", productName: "Caja adviento", quantity: 1, unitPrice: 1800, subtotal: 1800 }],
-    installments: { count: 6, frequency: "monthly", firstDueDate: "2026-11-15", agreedAt: "2026-11-01", agreedBy: "u1" },
+    // Relative due date (+14d): a FIXED date made this suite a time bomb —
+    // the day after it, cuota 1 turned «Atrasada» and «Parcial» vanished
+    // (broke on 2026-11-15/16 depending on TZ). Future-relative keeps the
+    // calendar deterministic: the first cuota is always upcoming.
+    installments: {
+      count: 6,
+      frequency: "monthly",
+      firstDueDate: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
+      agreedAt: "2026-11-01",
+      agreedBy: "u1",
+    },
   };
 
   beforeEach(() => {

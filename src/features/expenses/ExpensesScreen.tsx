@@ -174,7 +174,16 @@ export function ExpensesScreen() {
       <ScreenHeader
         title="Gastos"
         subtitle={`${expenses.length} ${expenses.length === 1 ? "gasto suelto" : "gastos sueltos"}`}
-        action={<Button onClick={openCreate}>+ Agregar</Button>}
+        action={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* #132 r3 (UX): at ~390px four inline actions overflow (553px) —
+                wrap onto lines instead of horizontal scroll; primary stays last. */}
+            {/* #454 r2 (revisión): Cierre, Reparto y Top emprendedoras viven en
+                sus ÁREAS (Administración / Ventas) — «Gastos NUNCA aloja
+                cierre, reparto ni ranking» es contrato literal de la issue. */}
+            <Button onClick={openCreate}>+ Agregar</Button>
+          </div>
+        }
       />
       {expenses.length === 0 ? (
         <EmptyState

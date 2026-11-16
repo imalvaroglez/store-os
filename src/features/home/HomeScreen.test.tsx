@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
@@ -7,11 +7,12 @@ import type { AppState, Order, Product } from "../../types";
 
 // Direct useStore mock: synchronous mount, no hydration race (#111 removed
 // browser-storage state; the cloud mount is async and these are view tests).
-const mocks = vi.hoisted(() => ({ state: null as null | AppState, upsertOrder: vi.fn(), loadOrderPayments: vi.fn(async () => {}), registerOrderPayment: vi.fn() }));
+const mocks = vi.hoisted(() => ({ state: null as null | AppState, stateStatus: "ready", upsertOrder: vi.fn(), loadOrderPayments: vi.fn(async () => {}), registerOrderPayment: vi.fn() }));
 vi.mock("../../app/StoreProvider", () => ({
   useStore: () => ({
     state: mocks.state,
     activeStore: mocks.state?.stores.find((st) => st.id === mocks.state!.activeStoreId) ?? null,
+    stateStatus: mocks.stateStatus,
     upsertOrder: mocks.upsertOrder,
     payments: [],
     loadOrderPayments: mocks.loadOrderPayments,
@@ -39,6 +40,11 @@ function product(overrides: Partial<Product> & { id: string; name: string }): Pr
   } as Product;
 }
 
+/** Minimal color variant for #365 fixtures (required timestamps included). */
+function variant(id: string, color: string, quantityOnHand?: number) {
+  return { id, color, quantityOnHand, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" };
+}
+
 /** Alert badge texts in DOM order (each restock badge joins name · label). */
 function restockBadges(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll("span"))
@@ -52,6 +58,38 @@ beforeEach(() => {
 });
 
 describe("HomeScreen alertas de existencias (FER-09)", () => {
+  it("#132: aviso privado cuando el mes pasado tiene ranking sin confirmar; desaparece al confirmar", () => {
+    const NOW2 = "2026-11-14T10:00:00.000Z";
+    const order = {
+      id: "o1", storeId: OLIVIA, customerId: "c_emp",
+      items: [{ lineId: "L0", productId: "p1", productName: "Pieza", quantity: 2, unitPrice: 500, subtotal: 1000 }],
+      deposit: 0, orderStatus: "delivered", paymentStatus: "paid",
+      deliveries: [{ id: "d1", orderId: "o1", storeId: OLIVIA, deliveredAt: "2026-10-05", recordedAt: NOW2, by: "u1", lines: [{ productId: "p1", quantity: 2 }] }],
+      paymentsReceivedCents: 100000, createdAt: NOW2, updatedAt: NOW2,
+    } as never as Order;
+    const entrepreneur = { id: "c_emp", storeId: OLIVIA, name: "Ana", segment: "entrepreneur", createdAt: NOW2, updatedAt: NOW2 } as never;
+
+    const unconfirmed = fixtureState();
+    unconfirmed.orders = [order];
+    unconfirmed.customers = [entrepreneur];
+    unconfirmed.rankingConfirmations = [];
+    const Wrapper1 = withState(unconfirmed);
+    const view = render(<Wrapper1><HomeScreen /></Wrapper1>);
+    expect(screen.getByText(/Top emprendedoras listo para tu revisión/)).toBeTruthy();
+    view.unmount();
+
+    const confirmed = fixtureState();
+    confirmed.orders = [order];
+    confirmed.customers = [entrepreneur];
+    confirmed.rankingConfirmations = [{
+      id: `${OLIVIA}__2026-10`, storeId: OLIVIA, year: 2026, month: 10, revision: 1,
+      entries: [], tieResolutions: [], confirmedBy: "u1", confirmedAt: NOW2,
+    } as never];
+    const Wrapper2 = withState(confirmed);
+    render(<Wrapper2><HomeScreen /></Wrapper2>);
+    expect(screen.queryByText(/Top emprendedoras listo para tu revisión/)).toBeNull();
+  });
+
   it("muestra Agotado, Faltan y Quedan N — peor primero — y omite existencias sanas", () => {
     const state = fixtureState();
     state.products = [
@@ -76,6 +114,62 @@ describe("HomeScreen alertas de existencias (FER-09)", () => {
     ]);
     // Healthy stock never alerts.
     expect(screen.queryByText(/Collar sano/)).toBeNull();
+  });
+
+  it("#365 muestra diseños por color agotados y con agregado negativo — mismo agregado que la ficha", () => {
+    const state = fixtureState();
+    state.products = [
+      // "Reloj Austin" after #124: shelf moved to colors, design field erased.
+      product({
+        id: "austin",
+        name: "Reloj Austin",
+        quantityOnHand: undefined,
+        variants: [
+          variant("v1", "Cafe", 0),
+          variant("v2", "Ivory", 0),
+          variant("v3", "Black", 0),
+        ],
+      }),
+      product({
+        id: "arracadas",
+        name: "Arracadas Viento",
+        quantityOnHand: undefined,
+        variants: [
+          variant("v1", "Dorado", -5),
+          variant("v2", "Plata", 3),
+        ],
+      }),
+      // Sin rastreo (ningún color con existencia) y diseño sano: fuera.
+      product({
+        id: "untracked",
+        name: "Collar Nube",
+        quantityOnHand: undefined,
+        variants: [
+          variant("v1", "Perla", undefined),
+        ],
+      }),
+      product({
+        id: "healthy",
+        name: "Aretes Sol",
+        quantityOnHand: undefined,
+        variants: [
+          variant("v1", "Dorado", 12),
+        ],
+      }),
+    ];
+    const Wrapper = withState(state);
+    const { container } = render(
+      <Wrapper>
+        <HomeScreen />
+      </Wrapper>
+    );
+
+    expect(screen.getByText("⚠️ Por surtir")).toBeTruthy();
+    // Worst first by aggregate: −2 (Arracadas) antes que 0 (Austin).
+    expect(restockBadges(container)).toEqual([
+      "Arracadas Viento · Faltan 2",
+      "Reloj Austin · Agotado",
+    ]);
   });
 
   it("no muestra alertas en tiendas bajo pedido (sin seguimiento de stock)", () => {
@@ -298,4 +392,34 @@ it("opens Cobros with honest feedback when a stale home collection is pinned (#2
   expect(await screen.findByText("Este pedido ya tiene cobros registrados. Regístralos en Cobros.")).toBeInTheDocument();
   expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
   expect(screen.queryByText("Pedido cobrado")).toBeNull();
+});
+
+describe("#406 r2 — ventana de carga sin $0 falso", () => {
+  beforeEach(() => {
+    // This suite asserts absence across renders — start each from a clean DOM.
+    cleanup();
+    mocks.stateStatus = "ready";
+  });
+
+  it("mientras los pedidos cargan, las cifras de dinero muestran «—», nunca $0", () => {
+    mocks.stateStatus = "loading";
+    const state = fixtureState();
+    const Wrapper = withState(state);
+    render(<Wrapper><HomeScreen /></Wrapper>);
+    expect(screen.getByText("Falta cobrar")).toBeTruthy();
+    expect(screen.getByText("Ganancia esperada")).toBeTruthy();
+    // El valor en carga es «—»: jamás un $0 con apariencia de definitivo.
+    expect(screen.getAllByLabelText("Cargando").length).toBe(2);
+    expect(screen.queryByText("$0")).toBeNull();
+  });
+
+  it("con el estado listo, las cifras reales aparecen (los «—» desaparecen)", () => {
+    mocks.stateStatus = "ready";
+    const state = fixtureState();
+    const Wrapper = withState(state);
+    const { container } = render(<Wrapper><HomeScreen /></Wrapper>);
+    expect(screen.getByText("Falta cobrar")).toBeTruthy();
+    const cargando = container.querySelectorAll('[aria-label="Cargando"]');
+    expect(cargando.length).toBe(0);
+  });
 });
