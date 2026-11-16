@@ -1030,23 +1030,34 @@ export async function registerOrderPaymentTx(
     }
     // Inherited deposit materialization (#123, PO 2026-11-03): only a real
     // payment carries it, and the operator-supplied date/method is required.
+    // #455/#458 r4 (UX): when the incoming payment does not EXCEED the pending
+    // deposit, it IS the deposit's own materialization (the operadora is
+    // dating the anticipo, not adding money) — the caller's record becomes
+    // the SINGLE entry (marked, so the order stops double-counting the
+    // deposit) and no separate inherited record is created.
     const inheritedInput = payment.kind === "payment" ? inherited : undefined;
     const inheritedRef = doc(paymentsRef, INHERITED_DEPOSIT_PAYMENT_ID);
     const inheritedSnap = await tx.get(inheritedRef);
     let inheritedRecord: OrderPayment | null = null;
+    let paymentIsMaterialization = false;
     if (payment.kind === "payment" && !inheritedSnap.exists()) {
       const deposit = orderSnap.data().deposit;
       const pending = typeof deposit === "number" ? deposit : 0;
       if (pending > 0 && !inheritedInput) {
         throw new Error("Captura la fecha y el método del anticipo previo.");
       }
-      inheritedRecord = inheritedDepositRecord(
-        payment.orderId,
-        payment.storeId,
-        pending,
-        payment.createdBy,
-        inheritedInput as { method: "cash" | "transfer"; date: string }
-      );
+      const paymentCents = Math.round(payment.amount * 100);
+      if (pending > 0 && paymentCents > 0 && paymentCents <= Math.round(pending * 100)) {
+        paymentIsMaterialization = true;
+      } else {
+        inheritedRecord = inheritedDepositRecord(
+          payment.orderId,
+          payment.storeId,
+          pending,
+          payment.createdBy,
+          inheritedInput as { method: "cash" | "transfer"; date: string }
+        );
+      }
     }
 
     // PO 2026-11-03 (R8): plan orders reserve stock AT CREATION like ordinary
@@ -1065,7 +1076,9 @@ export async function registerOrderPaymentTx(
     // Unsafe precision aborts the whole registration (fail-closed on writes).
     let savedCents: number;
     try {
-      savedCents = signedAmountCents(payment.amount) + (inheritedRecord ? signedAmountCents(inheritedRecord.amount) : 0);
+      savedCents =
+        signedAmountCents(payment.amount) +
+        (paymentIsMaterialization ? 0 : inheritedRecord ? signedAmountCents(inheritedRecord.amount) : 0);
     } catch (error) {
       if (error instanceof RangeError) {
         throw new Error("El monto del cobro excede la precisión admitida.");
@@ -1088,7 +1101,7 @@ export async function registerOrderPaymentTx(
         );
       }
     }
-    const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
+    const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord || paymentIsMaterialization);
     const previousPaymentsRevision = orderSnap.data().paymentsRevision ?? 0;
     const paymentsRevision = previousPaymentsRevision + 1;
     if (!Number.isSafeInteger(previousPaymentsRevision) || previousPaymentsRevision < 0 || !Number.isSafeInteger(paymentsRevision)) {
@@ -1109,7 +1122,7 @@ export async function registerOrderPaymentTx(
       paymentsReceivedCents: increment(savedCents),
       lastPaymentId: payment.id,
       paymentsRevision: increment(1),
-      ...(money.inheritedDepositMaterialized ? { inheritedDepositMaterialized: true } : {}),
+      ...((money.inheritedDepositMaterialized || paymentIsMaterialization) ? { inheritedDepositMaterialized: true } : {}),
       ...(witnessAt ? { installmentsReservedAt: witnessAt } : {}),
     });
     tx.set(paymentRef, stripUndefined(receipt) as Record<string, unknown>);
