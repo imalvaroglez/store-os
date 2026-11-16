@@ -4,7 +4,6 @@
 // in one tap. Mobile-first; every step explains itself in Spanish.
 import { useMemo, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { navigate } from "../../lib/router";
 import {
   Badge,
   Button,
@@ -179,12 +178,9 @@ export function ExpensesScreen() {
           <div className="flex flex-wrap items-center justify-end gap-2">
             {/* #132 r3 (UX): at ~390px four inline actions overflow (553px) —
                 wrap onto lines instead of horizontal scroll; primary stays last. */}
-            {/* #129 stage: read-only monthly close preview lives next to money. */}
-            <Button variant="ghost" onClick={() => navigate("/productos/cierre")}>Cierre mensual</Button>
-            {/* #128 stage: read-only distribution proposal lives next to money. */}
-            <Button variant="ghost" onClick={() => navigate("/productos/reparto")}>Reparto (simulación)</Button>
-            {/* FER-17 (#132): private monthly top lives next to money. */}
-            <Button variant="ghost" onClick={() => navigate("/productos/ranking")}>Top emprendedoras</Button>
+            {/* #454 r2 (revisión): Cierre, Reparto y Top emprendedoras viven en
+                sus ÁREAS (Administración / Ventas) — «Gastos NUNCA aloja
+                cierre, reparto ni ranking» es contrato literal de la issue. */}
             <Button onClick={openCreate}>+ Agregar</Button>
           </div>
         }

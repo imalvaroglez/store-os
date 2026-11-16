@@ -44,6 +44,7 @@ export function BottomNav({
     if (openArea && areaIdForTab(active) !== openArea) setOpenArea(null);
   }, [active, openArea]);
 
+
   return (
     <nav
       ref={navRef}
@@ -90,35 +91,39 @@ export function BottomNav({
             {areaOn && (
               <span className="absolute top-0 left-1/2 -translate-x-1/2 h-[3px] w-8 rounded-full bg-terracotta" />
             )}
-            {menuOpen && (
-              <div
-                role="menu"
-                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-44 rounded-lg bg-paper border border-rule shadow-lift py-1"
-                style={{ animation: "dropdownIn var(--motion-fast) var(--ease-smooth)" }}
-              >
-                {area.children.map((leaf) => {
-                  const childOn = leaf.id === active;
-                  return (
-                    <button
-                      key={leaf.id}
-                      role="menuitem"
-                      onClick={() => {
-                        navigate(leaf.path);
-                        setOpenArea(null);
-                      }}
-                      className={`block w-full text-center px-4 py-2 text-sm ${
-                        childOn ? "text-terracotta font-semibold" : "text-ink"
-                      }`}
-                    >
-                      {leaf.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
           </div>
         );
       })}
+      {/* #454 r2: the open area's menu anchors to the NAV itself (a bottom
+          sheet above the bar), never to its tab — an edge tab's centered
+          w-44 flyout clipped 41px off-viewport at 390px. Full-width keeps
+          every leaf tappable at any viewport. */}
+      {openArea && (
+        <div
+          role="menu"
+          className="absolute bottom-full inset-x-2 mb-2 rounded-lg bg-paper border border-rule shadow-lift py-1"
+          style={{ animation: "dropdownIn var(--motion-fast) var(--ease-smooth)" }}
+        >
+          {(areas.find((area) => area.id === openArea)?.children ?? []).map((leaf) => {
+            const childOn = leaf.id === active;
+            return (
+              <button
+                key={leaf.id}
+                role="menuitem"
+                onClick={() => {
+                  navigate(leaf.path);
+                  setOpenArea(null);
+                }}
+                className={`block w-full text-center px-4 py-2 text-sm ${
+                  childOn ? "text-terracotta font-semibold" : "text-ink"
+                }`}
+              >
+                {leaf.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </nav>
   );
 }
