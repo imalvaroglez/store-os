@@ -508,13 +508,18 @@ export async function authorizeMonthlyClose(
   snapshot: ReturnType<typeof buildCloseSnapshot>
 ): Promise<{ id: string; version: number }> {
   const { db } = getFirebase();
-  const ref = doc(db, "closes", snapshot.id);
-  const existing = await getDoc(ref);
-  if (existing.exists()) {
-    const data = existing.data() as { id?: string; version?: number };
-    return { id: existing.id, version: data.version ?? snapshot.version };
+  // #458 r3 (UX review): a DIRECT get of a doc that may not exist makes the
+  // rules dereference resource.data on null → permission-denied (the FIRST
+  // close of every store was impossible). Existence is checked with the
+  // store-scoped query, which the list rule covers cleanly.
+  const sameIntent = await getDocs(
+    query(collection(db, "closes"), where("storeId", "==", snapshot.storeId), where("id", "==", snapshot.id))
+  );
+  if (!sameIntent.empty) {
+    const data = sameIntent.docs[0].data() as { id?: string; version?: number };
+    return { id: sameIntent.docs[0].id, version: data.version ?? snapshot.version };
   }
-  await setDoc(ref, snapshot as unknown as Record<string, unknown>);
+  await setDoc(doc(db, "closes", snapshot.id), snapshot as unknown as Record<string, unknown>);
   return { id: snapshot.id, version: snapshot.version };
 }
 

@@ -491,3 +491,47 @@ describe("#456 r2 — posventa confirmada ajusta el periodo", () => {
     expect(close.details.sales.some((row) => row.amountCents < 0)).toBe(true);
   });
 });
+
+describe("#458 r3 — cobros con ajustes correctivos", () => {
+  const M = (y: number, m: number) => ({ year: y, month: m });
+  const NOV = M(2026, 11);
+  const baseOrder = (): Order => ({
+    id: "order_adj", storeId: "s1", customerId: "c1",
+    items: [], deposit: 0, orderStatus: "confirmed", paymentStatus: "partial",
+    createdAt: "", updatedAt: "",
+  } as unknown as Order);
+
+  it("materialización + cobro + ajuste correctivo: el panel muestra el dinero REAL (caso de la operadora)", () => {
+    // El caso reproducido por la revisión: cobro $1,500 + anticipo
+    // materializado $1,500 (duplicado aparente) y su ajuste correctivo −$1,500.
+    const close = monthlyClose({
+      storeId: "s1", month: NOV,
+      orders: [baseOrder()],
+      paymentsByOrder: {
+        order_adj: [
+          { id: "p1", orderId: "order_adj", storeId: "s1", date: "2026-11-05", method: "cash", kind: "payment", amount: 1500, createdAt: "", createdBy: "u1" },
+          { id: "inherited_deposit", orderId: "order_adj", storeId: "s1", date: "2026-11-05", method: "cash", kind: "payment", amount: 1500, createdAt: "", createdBy: "u1" },
+          { id: "a1", orderId: "order_adj", storeId: "s1", date: "2026-11-06", method: "cash", kind: "adjustment", amount: -1500, createdAt: "", createdBy: "u1" },
+        ],
+      },
+      expenses: [],
+    });
+    expect(close.collectionsCents).toBe(150000); // $1,500 reales, no $3,000
+    const adjustmentRow = close.details.collections.find((row) => row.amountCents < 0);
+    expect(adjustmentRow).toMatchObject({ concept: /Ajuste correctivo/ });
+  });
+
+  it("un ajuste de OTRO mes no toca este periodo", () => {
+    const close = monthlyClose({
+      storeId: "s1", month: NOV,
+      orders: [baseOrder()],
+      paymentsByOrder: {
+        order_adj: [
+          { id: "a2", orderId: "order_adj", storeId: "s1", date: "2026-12-02", method: "cash", kind: "adjustment", amount: -1500, createdAt: "", createdBy: "u1" },
+        ],
+      },
+      expenses: [],
+    });
+    expect(close.collectionsCents).toBe(0);
+  });
+});
