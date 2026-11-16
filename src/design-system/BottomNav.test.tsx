@@ -42,3 +42,14 @@ describe("BottomNav áreas (#454 / #325)", () => {
     expect(admin.className).toContain("py-3");
   });
 });
+
+describe("#454 r2 — menú anclado a la barra (no a la pestaña)", () => {
+  it("el menú abierto usa inset-x (ancho completo de la barra), jamás w-44 centrado en la pestaña", () => {
+    render(<BottomNav active="inicio" storeType="inventory_tiered" />);
+    fireEvent.click(screen.getByRole("button", { name: "Administración" }));
+    const menu = screen.getByRole("menu");
+    expect(menu.className).toContain("inset-x-2");
+    expect(menu.className).not.toContain("w-44");
+    expect(menu.className).not.toContain("left-1/2");
+  });
+});
