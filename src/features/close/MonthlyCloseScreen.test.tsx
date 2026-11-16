@@ -120,9 +120,12 @@ describe("MonthlyCloseScreen (vista previa, solo lectura)", () => {
     expect(screen.getByText(/producto vendido sin costo conocido/)).toBeTruthy();
     expect(screen.getByText(/Puede afectar la utilidad/)).toBeTruthy();
     expect(screen.getByText("En revisión")).toBeTruthy();
-    // Los enlaces funcionales de las causas con superficie vigente.
-    expect(screen.getByRole("button", { name: "Revisar pedidos" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Revisar costo" })).toBeTruthy();
+    // #457: cada causa abre su COLA en la misma tarea (botón «Revisar»).
+    const revisarPedidos = screen.getAllByRole("button", { name: "Revisar" })[0];
+    fireEvent.click(revisarPedidos);
+    expect(screen.getByText("Pedidos entregados sin fecha")).toBeTruthy();
+    expect(screen.getByText(/por revisar/)).toBeTruthy();
+    expect(screen.getByText(/1 pedido entregado sin fecha verificable/)).toBeTruthy();
   });
 });
 
@@ -259,5 +262,54 @@ describe("#456 — drilldowns trazables", () => {
     expect(screen.getByText("Suma del detalle")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Mostrar más/ }));
     expect(screen.queryByText(/Mostrar más/)).toBeNull(); // todo cargado
+  });
+});
+
+describe("#457 — colas de revisión", () => {
+  const withGaps = () => {
+    mocks.state.orders = [
+      { ...contractOrder, id: "order_d1", deliveries: undefined, orderStatus: "delivered" },
+      { ...contractOrder, id: "order_d2", deliveries: undefined, orderStatus: "delivered" },
+      { ...contractOrder, id: "order_nc", items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 500, subtotal: 500 }] },
+    ];
+    mocks.loadOrderPaymentsDocs.mockReset().mockResolvedValue({
+      order_nc: [{ id: "nd", orderId: "order_nc", storeId: "s1", date: "", method: "cash", kind: "payment", amount: 170, createdAt: "", createdBy: "u1" }],
+    });
+  };
+
+  it("la cola de pedidos sin fecha: conteo honesto («por determinar», no un 0 falso), búsqueda y acción por fila", async () => {
+    withGaps();
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await screen.findByText(/Hay información pendiente de revisar/i);
+    fireEvent.click(screen.getAllByRole("button", { name: "Revisar" })[0]);
+    expect(screen.getByText("Pedidos entregados sin fecha")).toBeTruthy();
+    expect(screen.getByText(/2 por revisar/)).toBeTruthy();
+    expect(screen.getByText(/2 con periodo por determinar/)).toBeTruthy();
+    expect(screen.getByText(/desconocido, no «fuera del mes»/)).toBeTruthy();
+    // Cada fila habla humano y lleva su acción al origen.
+    expect(screen.getAllByText(/Ver pedido/).length).toBeGreaterThanOrEqual(2);
+    fireEvent.change(screen.getByLabelText(/Buscar por folio, clienta o producto/), { target: { value: "zzz-ajeno" } });
+    expect(screen.getByText(/Sin registros con esos criterios/)).toBeTruthy();
+  });
+
+  it("la cola de cobros sin fecha ahora SÍ se abre (antes quedaba informativa)", async () => {
+    withGaps();
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await screen.findByText(/Hay información pendiente de revisar/i);
+    // La fila de cobros es la segunda causa con botón Revisar.
+    fireEvent.click(screen.getAllByRole("button", { name: "Revisar" })[1]);
+    expect(screen.getByText("Cobros sin fecha")).toBeTruthy();
+    expect(screen.getByText(/Cobro sin fecha verificable/)).toBeTruthy();
+    expect(screen.getAllByText(/\$170\.00/).length).toBeGreaterThanOrEqual(1); // fila de la cola
+  });
+
+  it("la cola de costo muestra producto y piezas, con acción «Ver producto»", async () => {
+    withGaps();
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await screen.findByText(/Hay información pendiente de revisar/i);
+    fireEvent.click(screen.getAllByRole("button", { name: "Revisar" })[2]);
+    expect(screen.getByText("Productos sin costo")).toBeTruthy();
+    expect(screen.getByText(/Aro ×1/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ver producto" })).toBeTruthy();
   });
 });

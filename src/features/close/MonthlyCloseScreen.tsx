@@ -3,6 +3,7 @@ import { Badge, Button, Card, Screen, ScreenHeader, Sheet, TextField } from "../
 import { navigate } from "../../lib/router";
 import { loadOrderPaymentsDocs } from "../../app/firebase/firestoreData";
 import { cdmxMonthKey, monthlyClose, type CloseMonth } from "../../lib/monthlyClose";
+import { pendingQueues, type Queue } from "../../lib/closeQueues";
 import { useStore } from "../../app/StoreProvider";
 import { formatMoneyExact } from "../../lib/money";
 import type { OrderPayment } from "../../types";
@@ -134,11 +135,79 @@ function FigureDetailSheet({
   );
 }
 
+/** #457: the filtered review QUEUE for one pending cause — same task, no
+ * hash feeds. Search + state/affectation filters + progressive load; the
+ * counts never claim a false zero («desconocido» ≠ «no afecta»). */
+function QueueSheet({
+  open, onClose, title, queue,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  queue: Queue;
+}) {
+  const [query, setQuery] = useState("");
+  const [affectation, setAffectation] = useState<"todas" | "desconocido">("todas");
+  const [visible, setVisible] = useState(20);
+  useEffect(() => { setQuery(""); setAffectation("todas"); setVisible(20); }, [open]);
+  const filtered = queue.rows.filter((row) => {
+    if (affectation !== "todas" && row.affectsMonth !== affectation) return false;
+    if (!query.trim()) return true;
+    const needle = query.trim().toLowerCase();
+    return `${row.reference} ${row.customerName} ${row.productName ?? ""}`.toLowerCase().includes(needle);
+  });
+  return (
+    <Sheet open={open} onClose={onClose} title={title} contentClassName="max-w-2xl">
+      <p className="text-xs text-on-surface-soft">
+        {queue.total} por revisar · {queue.mesDesconocido} con periodo por determinar (desconocido, no «fuera del mes»)
+      </p>
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+        <TextField label="Buscar por folio, clienta o producto" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <div className="flex items-end">
+          <Button size="sm" variant={affectation === "desconocido" ? "secondary" : "ghost"} onClick={() => setAffectation((v) => (v === "desconocido" ? "todas" : "desconocido"))}>
+            Solo por determinar
+          </Button>
+        </div>
+      </div>
+      <div className="mt-3 space-y-2 max-h-[50vh] overflow-y-auto">
+        {filtered.slice(0, visible).map((row) => (
+          <div key={`${row.orderId}-${row.reference}`} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule/60 pb-2">
+            <div className="min-w-0">
+              <p className="text-sm text-ink">
+                {row.reference} · {row.customerName}
+              </p>
+              <p className="text-xs text-on-surface-soft">
+                {row.concept}
+                {row.productName ? ` · ${row.productName}${row.quantity ? ` ×${row.quantity}` : ""}` : ""}
+                {typeof row.amountCents === "number" ? ` · ${formatMoneyExact(row.amountCents / 100)}` : ""}
+              </p>
+            </div>
+            <Button size="sm" variant="secondary" onClick={() => navigate(row.linkPath)}>
+              {row.linkPath === "/productos" ? "Ver producto" : "Ver pedido"}
+            </Button>
+          </div>
+        ))}
+        {filtered.length > visible && (
+          <Button size="sm" variant="ghost" className="w-full" onClick={() => setVisible((v) => v + 40)}>
+            Cargar más ({filtered.length - visible} restantes)
+          </Button>
+        )}
+        {filtered.length === 0 && <p className="text-sm text-on-surface-soft">Sin registros con esos criterios.</p>}
+      </div>
+      <p className="mt-3 text-xs text-ink-soft">
+        Las correcciones se registran en la entidad de origen con evidencia; nada se inventa para «poner en verde».
+      </p>
+    </Sheet>
+  );
+}
+
 export function MonthlyCloseScreen() {
   const { state, activeStore, stateStatus } = useStore();
   const [offset, setOffset] = useState(0);
   // #456: which figure's drilldown sheet is open (null = none).
   const [detail, setDetail] = useState<null | "sales" | "costs" | "expenses" | "margin" | "result" | "collections">(null);
+  // #457: which review QUEUE is open (null = none).
+  const [queue, setQueue] = useState<null | "pedidos" | "cobros" | "costo">(null);
   const [paymentsByOrder, setPaymentsByOrder] = useState<Record<string, OrderPayment[]>>({});
   const [loadingPayments, setLoadingPayments] = useState(true);
   // #129: a failed cobros load must SAY so — silent $0 would read as "no hay
@@ -199,15 +268,22 @@ export function MonthlyCloseScreen() {
   const isCurrentMonth = offset === 0;
 
   const c = close.coverage;
+  const queues = pendingQueues({
+    storeId: activeStore.id,
+    month,
+    coverage: c,
+    orders: storeOrders,
+    customers: state.customers ?? [],
+  });
   // Grouped pendings: one row per CAUSE with a count and a human explanation —
   // never a feed of individual hashes.
-  const pendings: Array<{ count: number; label: string; explanation: string; action?: { label: string; path: string } }> = [];
+  const pendings: Array<{ count: number; label: string; explanation: string; onOpen?: () => void }> = [];
   if (c.deliveredWithoutDate.length > 0) {
     pendings.push({
       count: c.deliveredWithoutDate.length,
       label: c.deliveredWithoutDate.length === 1 ? "pedido entregado sin fecha verificable" : "pedidos entregados sin fecha verificable",
       explanation: "No podemos determinar a qué mes pertenecen sus ventas.",
-      action: { label: "Revisar pedidos", path: "/pedidos" },
+      onOpen: () => setQueue("pedidos"),
     });
   }
   if (c.unconfirmedCollections.length > 0) {
@@ -215,8 +291,7 @@ export function MonthlyCloseScreen() {
       count: c.unconfirmedCollections.length,
       label: c.unconfirmedCollections.length === 1 ? "cobro sin fecha" : "cobros sin fecha",
       explanation: "No sabemos en qué periodo debe reconocerse cada entrada de dinero.",
-      // La cola de cobros llega con #457 — sin superficie no se publica un
-      // enlace falso; la fila informativa ya guía la revisión.
+      onOpen: () => setQueue("cobros"),
     });
   }
   if (c.linesWithoutCost.length > 0) {
@@ -225,7 +300,7 @@ export function MonthlyCloseScreen() {
       count: pieces,
       label: pieces === 1 ? "producto vendido sin costo conocido" : "productos vendidos sin costo conocido",
       explanation: "Puede afectar la utilidad.",
-      action: { label: "Revisar costo", path: "/productos" },
+      onOpen: () => setQueue("costo"),
     });
   }
   if (c.deliveredWithoutLine.length > 0) {
@@ -353,9 +428,9 @@ export function MonthlyCloseScreen() {
                     </p>
                     <p className="text-xs text-on-surface-soft">{pending.explanation}</p>
                   </div>
-                  {pending.action && (
-                    <Button size="sm" variant="secondary" onClick={() => navigate(pending.action!.path)}>
-                      {pending.action.label}
+                  {pending.onOpen && (
+                    <Button size="sm" variant="secondary" onClick={pending.onOpen}>
+                      Revisar
                     </Button>
                   )}
                 </div>
@@ -405,6 +480,11 @@ export function MonthlyCloseScreen() {
         concept="Resultado operativo (ventas − costo − gastos)" period={monthName}
         rows={[...close.details.sales, ...close.details.costs, ...close.details.expenses]}
       />
+      {/* #457 review queues — same task, filtered and searchable. */}
+      <QueueSheet open={queue === "pedidos"} onClose={() => setQueue(null)} title="Pedidos entregados sin fecha" queue={queues.pedidosSinFecha} />
+      <QueueSheet open={queue === "cobros"} onClose={() => setQueue(null)} title="Cobros sin fecha" queue={queues.cobrosSinFecha} />
+      <QueueSheet open={queue === "costo"} onClose={() => setQueue(null)} title="Productos sin costo" queue={queues.sinCosto} />
+
       <FigureDetailSheet
         open={detail === "collections"} onClose={() => setDetail(null)}
         title={`¿De dónde salen estos ${formatMoneyExact(close.collectionsCents / 100)}?`}
