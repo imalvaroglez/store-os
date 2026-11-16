@@ -440,7 +440,9 @@ export function ProductForm({
       delete next.variants;
     }
     try {
-      await upsertProduct(next);
+      // #373: the loaded entity is the BASELINE — the save merges untouched
+      // stock/cost with the fresh doc instead of replaying this clone.
+      await upsertProduct(next, product);
       onDone();
     } catch {
       fail("No se pudo guardar. Intenta de nuevo.");
