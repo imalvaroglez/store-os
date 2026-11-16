@@ -366,7 +366,7 @@ test("copy the saved order detail", async ({ sharedPage: page }) => {
 
 test("recorded payments survive reload and an adjustment updates card and history", async ({ sharedPage: page }) => {
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+  await gotoClean(page, "/pedidos"); // #454: hoja dentro del área Ventas — ruta estable
   const card = page.getByRole("heading", { name: /^#SANTI1 ·/ }).locator("../../..");
   await card.getByRole("button", { name: "Cobros", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Cobros del pedido" });
@@ -382,7 +382,7 @@ test("recorded payments survive reload and an adjustment updates card and histor
   await sheet.getByRole("button", { name: "Cerrar", exact: true }).click();
   await expect(card.getByText("$1,400.00", { exact: true })).toBeVisible();
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+  await gotoClean(page, "/pedidos"); // #454: hoja dentro del área Ventas — ruta estable
   await expect(card.getByText("$1,400.00", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: "Cobros", exact: true }).click();
   await expect(sheet.getByRole("button", { name: "Registrar ajuste o devolución", exact: true })).toBeEnabled();
@@ -408,7 +408,7 @@ test("canonical money in the order editor survives a notes save and reload (#225
     createdAt: now, updatedAt: now,
   });
   await gotoSantiHome(page);
-  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+  await gotoClean(page, "/pedidos"); // #454: hoja dentro del área Ventas — ruta estable
   const card = page.getByRole("heading", { name: /^#TOR225 ·/ }).locator("../../..");
   await card.getByRole("button", { name: "Cobros", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Cobros del pedido" });
