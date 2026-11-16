@@ -76,6 +76,10 @@ export type MonthlyClose = {
   month: CloseMonth;
   monthLabel: string;
   salesCents: number;
+  /** #455 r3 (UX): the NET effect of confirmed posventa adjustments this
+   * month (refunds/replacements deltas) — the number the dashboard surfaces
+   * so net sales never look unexplained against the operadora's notebook. */
+  posventaAdjustmentCents: number;
   costCents: number;
   grossMarginCents: number;
   expensesCents: number;
@@ -151,6 +155,7 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
   let salesCents = 0;
   let costCents = 0;
   let collectionsCents = 0;
+  let posventaAdjustmentCents = 0;
   const details: CloseDetails = { sales: [], costs: [], expenses: [], collections: [], excludedCollections: [] };
   const groupTotals = new Map<CollectionGroupKey, { totalCents: number; count: number }>();
 
@@ -305,6 +310,7 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
       const adjustment = incidentSaleAdjustmentCents(incident);
       if (!adjustment) continue;
       salesCents += adjustment;
+      posventaAdjustmentCents += adjustment;
       details.sales.push({
         date: confirmedAt.slice(0, 10),
         kind: "sale",
@@ -341,7 +347,9 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     // materialized — the operator did not register its date/method) has no
     // verifiable date either: it stays «Fecha por confirmar», out of every
     // monthly total, instead of being invented into some month.
-    const materializedDeposit = (paymentsByOrder[order.id] ?? []).some((payment) => payment.id === "inherited_deposit");
+    const materializedDeposit =
+      (paymentsByOrder[order.id] ?? []).some((payment) => payment.id === "inherited_deposit") ||
+      order.inheritedDepositMaterialized === true;
     if (order.deposit > 0 && !materializedDeposit) {
       coverage.unconfirmedCollections.push({
         orderId: order.id,
@@ -382,6 +390,7 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     month,
     monthLabel: `${MONTH_NAMES[month.month - 1]} ${month.year}`,
     salesCents,
+    posventaAdjustmentCents,
     costCents,
     grossMarginCents: salesCents - costCents,
     expensesCents,

@@ -406,7 +406,7 @@ describe("#458 — cierre oficial", () => {
     cleanup();
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
     fireEvent.click(await screen.findByRole("button", { name: "Mes anterior" }));
-    await waitFor(() => expect(screen.getByText(/Cerrado/)).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText(/Cerrado/).length).toBeGreaterThanOrEqual(1)); // sello + subtítulo
     expect(screen.getByText(/versión 1/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Ir a reparto de utilidades/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Cerrar / })).toBeNull();
@@ -424,7 +424,8 @@ describe("#458 r2 — sellados y divergencia", () => {
     render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
     fireEvent.click(await screen.findByRole("button", { name: "Mes anterior" }));
     await waitFor(() => expect(screen.getByText(/Resultado sellado/)).toBeTruthy());
-    expect(screen.getByText("$500.00")).toBeTruthy(); // sellado, no el recálculo vivo
+    expect(screen.getAllByText("$500.00").length).toBeGreaterThanOrEqual(1); // sellado (héroe y fila)
     expect(screen.getByText(/difiere del periodo sellado/)).toBeTruthy();
+
   });
 });

@@ -387,7 +387,7 @@ export function MonthlyCloseScreen() {
     <Screen>
       <ScreenHeader
         title="Cierre mensual"
-        subtitle={`${monthName} · ${isCurrentMonth ? "Periodo en curso · " : ""}Vista preliminar`}
+        subtitle={`${monthName} · ${isCurrentMonth ? "Periodo en curso · " : existingClose ? "Cerrado · importes de la versión sellada" : "Vista preliminar"}`}
         action={
           <div className="flex items-center gap-1" aria-label="Cambio de mes">
             <Button variant="ghost" aria-label="Mes anterior" onClick={() => setOffset((v) => v - 1)}>‹</Button>
@@ -406,9 +406,13 @@ export function MonthlyCloseScreen() {
             {close.costCoverage.partialByMissingCost && <Badge tone="warning">Estimación incompleta</Badge>}
           </p>
           <p className={`serif-display tnum text-4xl leading-tight mt-1 ${resultTone === "success" ? "text-success" : resultTone === "danger" ? "text-danger" : "text-ink"}`}>
-            {loading ? "—" : signedMoney(resultCents)}
+            {loading ? "—" : existingClose ? signedMoney(existingClose.totals.operatingResultCents ?? resultCents) : signedMoney(resultCents)}
           </p>
-          <p className="text-sm text-on-surface-soft mt-2">Este monto todavía no está autorizado para reparto.</p>
+          <p className="text-sm text-on-surface-soft mt-2">
+            {existingClose
+              ? "Importe de la versión sellada; los cambios posteriores generan una versión nueva."
+              : "Este monto todavía no está autorizado para reparto."}
+          </p>
         </Card>
 
         {/* The 5-row formula — aligned, tabular, subtotals as separators. */}
@@ -424,6 +428,14 @@ export function MonthlyCloseScreen() {
             )}
             <div className="mt-2">
               <FormulaRow label="Ventas de productos entregados" cents={loading ? null : close.salesCents} onOpen={() => setDetail("sales")} />
+              {/* #455 r3 (UX): net sales vs the operadora's notebook — the
+                  returns line is VISIBLE, not hidden inside the drilldown. */}
+              {!loading && close.posventaAdjustmentCents !== 0 && (
+                <p className="text-xs text-on-surface-soft -mt-0.5">
+                  Incluye {signedMoney(close.posventaAdjustmentCents)} de devoluciones y ajustes de posventa confirmados
+                  este mes.
+                </p>
+              )}
               <FormulaRow label="Costo de los productos vendidos" cents={loading ? null : -close.costCents} signed onOpen={() => setDetail("costs")} />
               <FormulaRow label="Ganancia antes de gastos" cents={loading ? null : close.grossMarginCents} strong onOpen={() => setDetail("margin")} />
               <FormulaRow label="Gastos operativos del mes" cents={loading ? null : -close.expensesCents} signed onOpen={() => setDetail("expenses")} />
