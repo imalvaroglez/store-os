@@ -300,7 +300,7 @@ describe("#457 — colas de revisión", () => {
     expect(screen.getByText(/2 con periodo por determinar/)).toBeTruthy();
     expect(screen.getByText(/desconocido, no «fuera del mes»/)).toBeTruthy();
     // Cada fila habla humano y lleva su acción al origen.
-    expect(screen.getAllByText(/Ver pedido/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/Ver este pedido/).length).toBeGreaterThanOrEqual(2); // deep link
     fireEvent.change(screen.getByLabelText(/Buscar por folio, clienta o producto/), { target: { value: "zzz-ajeno" } });
     expect(screen.getByText(/Sin registros con esos criterios/)).toBeTruthy();
   });
