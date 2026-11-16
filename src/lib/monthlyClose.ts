@@ -235,7 +235,31 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
       .map((d) => d.deliveredAt.slice(0, 10))
       .sort();
     for (const payment of paymentsByOrder[order.id] ?? []) {
-      if (payment.kind !== "payment") continue;
+      // #458 r3 (UX review): a dated ADJUSTMENT participates SIGNED in its
+      // date month — the operadora's own corrective path discounts. Skipping
+      // them left duplicated collections standing after a repair.
+      if (payment.kind !== "payment" && payment.kind !== "adjustment") continue;
+      if (payment.kind === "adjustment" && payment.date) {
+        if (monthKeyOf({ year: Number(payment.date.slice(0, 4)), month: Number(payment.date.slice(5, 7)) }) === monthKey) {
+          const amount = signedCents(payment.amount);
+          collectionsCents += amount;
+          details.collections.push({
+            date: payment.date,
+            kind: "collection",
+            reference: orderReference(order),
+            orderId: order.id,
+            customerName: customerNameOf(order.customerId),
+            concept: "Ajuste correctivo de cobros",
+            amountCents: amount,
+            evidence: "verified",
+          });
+          const adjBucket = groupTotals.get("sin_clasificar") ?? { totalCents: 0, count: 0 };
+          adjBucket.totalCents += amount;
+          adjBucket.count += 1;
+          groupTotals.set("sin_clasificar", adjBucket);
+        }
+        continue;
+      }
       if (!payment.date) {
         coverage.unconfirmedCollections.push({ orderId: order.id, reference: orderReference(order), paymentId: payment.id, amountCents: signedCents(payment.amount) });
         details.excludedCollections.push({ reference: orderReference(order), orderId: order.id, amountCents: signedCents(payment.amount), cause: "sin fecha verificable" });
@@ -376,5 +400,8 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
 }
 
 function signedCents(pesos: number): number {
-  return orderAmountCents(pesos);
+  // Adjustments carry NEGATIVE pesos; orderAmountCents rejects them. Exact
+  // cents with the sign preserved — a −$15.00 adjustment is −1500 cents.
+  if (!Number.isFinite(pesos)) throw new Error("Invalid order amount");
+  return Math.round(pesos * 100);
 }
