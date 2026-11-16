@@ -64,8 +64,9 @@ test("recorrido Fer: Ventas→Top emprendedoras → Compras → Gastos → Cierr
   await sidebar.getByRole("button", { name: "Ventas" }).click();
   await sidebar.getByRole("button", { name: "Top emprendedoras" }).click();
   await expect(page.getByRole("heading", { name: "Top emprendedoras" })).toBeVisible({ timeout: 20000 });
-  // Compras y abastecimiento → Compras.
+  // Compras y abastecimiento → Compras (the group opens; Empaques appears).
   await sidebar.getByRole("button", { name: "Compras y abastecimiento" }).click();
+  await expect(sidebar.getByRole("button", { name: "Empaques" })).toBeVisible();
   await sidebar.getByRole("button", { name: "Compras", exact: true }).click();
   await expect(page.getByRole("heading", { name: /Compras/ })).toBeVisible({ timeout: 20000 });
   // Administración → Gastos.
