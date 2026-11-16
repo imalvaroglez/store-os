@@ -223,7 +223,7 @@ describe("#456 — drilldowns trazables", () => {
     expect(screen.getByText(/1 movimiento incluido/)).toBeTruthy();
     expect(screen.getByText(/cuadra con la cifra del panel/)).toBeTruthy();
     // Búsqueda por folio encuentra la fila; por texto ajeno la vacía.
-    fireEvent.change(screen.getByLabelText(/Buscar por folio o concepto/), { target: { value: "#O1" } });
+    fireEvent.change(screen.getByLabelText(/Buscar por folio/), { target: { value: "#O1" } });
     expect(screen.getByText("#O1")).toBeTruthy();
     expect(screen.getByText(/Venta entregada · Aro/)).toBeTruthy();
   });
@@ -243,6 +243,19 @@ describe("#456 — drilldowns trazables", () => {
     expect(screen.getByText(/1 por verificar/)).toBeTruthy();
     expect(screen.getByText(/Fuera del total/)).toBeTruthy();
     expect(screen.getByText(/sin fecha verificable/)).toBeTruthy();
+  });
+
+  it("costo faltante y resultado positivo: tono NEUTRO (nunca verde con estimación indeterminada)", async () => {
+    mocks.state.orders = [{
+      ...contractOrder,
+      items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 500, subtotal: 500 }],
+    }];
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    const hero = await screen.findByText("GANANCIA OPERATIVA ESTIMADA");
+    const heroCard = hero.closest("div")!;
+    const amount = heroCard.querySelector(".serif-display")!;
+    expect(amount.className).not.toContain("text-success");
+    expect(amount.className).toContain("text-ink");
   });
 
   it("costo faltante: el héroe se etiqueta «Estimación incompleta»", async () => {
@@ -397,5 +410,21 @@ describe("#458 — cierre oficial", () => {
     expect(screen.getByText(/versión 1/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Ir a reparto de utilidades/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Cerrar / })).toBeNull();
+  });
+});
+
+describe("#458 r2 — sellados y divergencia", () => {
+  it("estado cerrado muestra los IMPORTES SELLADOS y avisa si el recálculo difiere", async () => {
+    mocks.draftOwnerId = "u_owner";
+    mocks.loadLatestClose.mockReset().mockResolvedValue({
+      id: "s1__prev__v1", storeId: "s1", period: "prev", version: 1,
+      authorizedByUid: "u_owner", authorizedAt: "2026-12-02T10:00:00.000Z",
+      totals: { salesCents: 100000, costCents: 40000, expensesCents: 10000, operatingResultCents: 50000, collectionsCents: 0 },
+    });
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Mes anterior" }));
+    await waitFor(() => expect(screen.getByText(/Resultado sellado/)).toBeTruthy());
+    expect(screen.getByText("$500.00")).toBeTruthy(); // sellado, no el recálculo vivo
+    expect(screen.getByText(/difiere del periodo sellado/)).toBeTruthy();
   });
 });
