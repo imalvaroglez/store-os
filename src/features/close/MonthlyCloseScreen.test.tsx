@@ -327,5 +327,26 @@ describe("#457 — colas de revisión", () => {
 });
 
 describe("#455 r3 — correcciones UX de la operadora", () => {
+  it("con devolución confirmada, el resumen muestra la nota «Incluye −$X de devoluciones…»", async () => {
+    const refunded: Order = {
+      ...contractOrder,
+      items: [{ lineId: "l1", productId: "p1", productName: "Aro", quantity: 1, unitPrice: 500, subtotal: 500, cost: 200 }],
+      incidents: [{
+        id: "i1", orderId: "o1", storeId: "s1",
+        productId: "p1", productName: "Aro", quantity: 1, reason: "defecto", originalUnitPriceCents: 50000,
+        status: "resolved", createdAt: "", createdBy: "u1",
+        events: [{ id: "e1", kind: "confirmed", at: currentMonthIso(20), by: "u1" }],
+        resolution: { kind: "refund", saleAdjustmentUnitCents: 50000, refundOwedCents: 50000 },
+      } as never],
+    };
+    mocks.state.orders = [refunded];
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText(/Incluye −\$500\.00 de devoluciones/)).toBeTruthy());
+  });
+
+  it("sin posventa, la nota no aparece (sin ruido)", async () => {
+    render(<ToastProvider><MonthlyCloseScreen /></ToastProvider>);
+    await screen.findByText("Ventas de productos entregados");
+    expect(screen.queryByText(/de devoluciones/)).toBeNull();
   });
 });
