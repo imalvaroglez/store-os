@@ -23,14 +23,14 @@ import { ProductForm } from "./ProductForm";
 import { productCreationDefaults } from "./productDefaults";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
-import { committedForProduct, stockAlertLevel, stockAlertText } from "../../lib/inventory";
+import { committedBreakdownForProduct, committedForProduct, stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { isVariantProduct, totalStock } from "../../lib/variants";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import type { PriceTierDef } from "../../types";
 import { navigate } from "../../lib/router";
 import { publicPrice, profit, formatMoney, formatMoneyPlain } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
-import type { Product } from "../../types";
+import type { Customer, Order, Product } from "../../types";
 import type { StatusTone } from "../../design-system";
 
 // Primary gallery image for the thumb (first isPrimary, else first image, else
@@ -96,6 +96,7 @@ function ProductCard({
   isTiered,
   tiers,
   committed,
+  onCommitted,
   onEdit,
   onDelete,
   onAdjust,
@@ -104,6 +105,8 @@ function ProductCard({
   isTiered: boolean;
   tiers: PriceTierDef[];
   committed: number;
+  /** #463: open the per-order breakdown of the committed pieces. */
+  onCommitted: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onAdjust: (delta: number) => void;
@@ -201,6 +204,23 @@ function ProductCard({
                           {stockAlertText(product)}
                         </Badge>
                       )}
+                      {/* #463: color designs get the same drill-down from
+                          their existence line — the rows carry each color's
+                          pieces. */}
+                      {committed > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="!px-1.5 !py-0 -my-0.5 text-on-surface-soft underline decoration-dotted underline-offset-2"
+                          aria-label={`Ver pedidos con piezas comprometidas (${committed})`}
+                          onClick={(e) => {
+                            e.stopPropagation(); // same as the ± controls
+                            onCommitted();
+                          }}
+                        >
+                          Comprometidas: {committed}
+                        </Button>
+                      )}
                     </>
                   ) : null
                 ) : typeof product.quantityOnHand === "number" ? (
@@ -254,7 +274,25 @@ function ProductCard({
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,.8fr)] gap-x-4 mt-4 min-w-0">
           <StatRow label="Disponible">{product.quantityOnHand}</StatRow>
           <StatRow label="Comprometido" tone={committed > 0 ? "danger" : "default"}>
-            {committed}
+            {committed > 0 ? (
+              // #463: tap the figure to see WHICH orders hold the pieces;
+              // zero stays a plain number (no dead control).
+              <Button
+                variant="ghost"
+                className="!px-1 !py-0 -ml-1 serif-display tnum font-bold text-danger underline decoration-dotted underline-offset-2"
+                aria-label={`Ver pedidos con piezas comprometidas (${committed})`}
+                onClick={(e) => {
+                  // The card itself opens the editor on click — the
+                  // drill-down must not bubble into it.
+                  e.stopPropagation();
+                  onCommitted();
+                }}
+              >
+                {committed}
+              </Button>
+            ) : (
+              committed
+            )}
           </StatRow>
           <StatRow label="Físico">{product.quantityOnHand + committed}</StatRow>
         </div>
@@ -269,6 +307,8 @@ export function CatalogScreen() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
+  // #463: the product whose committed pieces are being reconciled.
+  const [committedFor, setCommittedFor] = useState<Product | null>(null);
   // #233: keep sort/filter/scroll when returning from a product's editor.
   const { filters, setFilters, restoreScroll } = useListRestore(`products:${activeStore?.id ?? ""}:${activeStore?.type ?? ""}`, {
     sortKey: "createdAt" as SortKey, sortDesc: true as boolean, categoryFilter: "", restockOnly: false as boolean,
@@ -421,6 +461,7 @@ export function CatalogScreen() {
               isTiered={isTiered}
               tiers={tiersForStore(activeStore)}
               committed={committedForProduct(state.orders, activeStore.id, p.id)}
+              onCommitted={() => setCommittedFor(p)}
               onEdit={() => setEditing(p)}
               onDelete={() => setDeleting(p)}
               onAdjust={(delta) => {
@@ -438,6 +479,15 @@ export function CatalogScreen() {
         </div>
       )}
 
+      {committedFor && activeStore && (
+        <CommittedSheet
+          product={committedFor}
+          orders={state.orders}
+          customers={state.customers}
+          storeId={activeStore.id}
+          onClose={() => setCommittedFor(null)}
+        />
+      )}
       <Sheet
         open={creating}
         onClose={() => setCreating(false)}
@@ -481,5 +531,86 @@ export function CatalogScreen() {
         ¿Eliminar <span className="font-semibold text-ink">{deleting?.name}</span>? Esta acción no se puede deshacer.
       </Dialog>
     </Screen>
+  );
+}
+
+/** #463: the per-order breakdown of a product's committed pieces — Fer
+ * reconciles the pieces she is counting with the orders that hold them, taps
+ * the exact order, and comes back to the same list position (#233 keeps the
+ * filters/scroll). One derivation (committedBreakdownForProduct) feeds both
+ * the figure on the card and these rows, so they can never disagree. */
+function CommittedSheet({
+  product,
+  orders,
+  customers,
+  storeId,
+  onClose,
+}: {
+  product: Product;
+  orders: Order[];
+  customers: Customer[];
+  storeId: string;
+  onClose: () => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const { total, rows } = committedBreakdownForProduct(orders, storeId, product.id);
+  const INITIAL = 8;
+  const visible = showAll ? rows : rows.slice(0, INITIAL);
+  const nameOf = (customerId?: string) =>
+    customers.find((customer) => customer.id === customerId)?.name ?? "Sin clienta";
+  return (
+    <Sheet open onClose={onClose} title={`Piezas comprometidas · ${product.name}`}>
+      {rows.length === 0 ? (
+        <p className="text-sm text-on-surface-soft">
+          Ninguna pieza de este producto está apartada para un pedido.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs text-on-surface-soft">
+            {total} {total === 1 ? "pieza apartada" : "piezas apartadas"} en {rows.length}{" "}
+            {rows.length === 1 ? "pedido" : "pedidos"}. Toca un pedido para abrirlo.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {visible.map((row) => (
+              <li key={row.orderId}>
+                <Button
+                  variant="secondary"
+                  full
+                  className="!justify-between gap-3 text-left"
+                  aria-label={`Abrir pedido ${row.reference}, ${row.total} ${row.total === 1 ? "pieza" : "piezas"}`}
+                  onClick={() => {
+                    onClose();
+                    navigate(`/pedidos/${row.orderId}`);
+                  }}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="font-semibold">#{row.reference}</span>
+                    <span className="text-on-surface-soft"> · {nameOf(row.customerId)}</span>
+                    {row.lines.some((line) => line.variantId) && (
+                      <span className="block text-xs text-on-surface-soft truncate">
+                        {row.lines
+                          .map((line) => `${line.variantColor ?? "Color"} ×${line.quantity}`)
+                          .join(" · ")}
+                      </span>
+                    )}
+                    {row.cancelled && (
+                      <span className="block text-xs">
+                        <Badge tone="warning">Pedido cancelado</Badge>
+                      </span>
+                    )}
+                  </span>
+                  <span className="serif-display tnum font-bold text-danger shrink-0">{row.total}</span>
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {rows.length > INITIAL && !showAll && (
+            <Button variant="ghost" onClick={() => setShowAll(true)}>
+              Mostrar los {rows.length - INITIAL} pedidos restantes
+            </Button>
+          )}
+        </div>
+      )}
+    </Sheet>
   );
 }

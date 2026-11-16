@@ -153,6 +153,58 @@ describe("CatalogScreen filtro por categoría real", () => {
     expect(screen.queryByText("Limpiar")).toBeNull();
   });
 
+  it("#463: el desglose de comprometidas abre desde la ficha, muestra los pedidos y navega al exacto", async () => {
+    const state = sortFilterState();
+    // Order A: 3 pieces, 1 delivered → 2 pending; order B: 1 pending.
+    state.customers = [
+      { id: "cust_lucia", storeId: OLIVIA, name: "Lucía", createdAt: "", updatedAt: "" },
+      { id: "cust_maria", storeId: OLIVIA, name: "María", createdAt: "", updatedAt: "" },
+    ] as never;
+    const now = "2026-11-10T10:00:00.000Z";
+    const orderDoc = (id: string, customerId: string, quantity: number, deliveries?: unknown[]) => ({
+      id, storeId: OLIVIA, customerId,
+      items: [{ lineId: `${id}_L0`, productId: "p1", productName: "Anillo Blossom", quantity, unitPrice: 300, subtotal: 300 * quantity }],
+      deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid", schemaVersion: 2,
+      createdAt: now, updatedAt: now, ...(deliveries ? { deliveries } : {}),
+    });
+    state.orders = [
+      orderDoc("order_aaa111", "cust_lucia", 3, [{ id: "d1", at: now, by: "uid_test", lines: [{ productId: "p1", quantity: 1 }] }]),
+      orderDoc("order_bbb222", "cust_maria", 1),
+    ] as never;
+    const view = await renderCatalog(state);
+
+    // The committed figure on p1's card is the drill-down control (2 + 1 = 3).
+    const trigger = view.container.querySelector('button[aria-label="Ver pedidos con piezas comprometidas (3)"]')!;
+    expect(trigger).toBeTruthy();
+    fireEvent.click(trigger);
+
+    const sheet = await screen.findByRole("dialog", { name: /Piezas comprometidas/ });
+    // The card itself opens the editor on click — the drill-down trigger must
+    // not bubble into it (found in the live Preview pass).
+    expect(screen.queryByRole("dialog", { name: "Editar producto" })).toBeNull();
+    const summary = within(sheet).getAllByText((_, element) =>
+      element?.tagName === "P" && element.textContent === "3 piezas apartadas en 2 pedidos. Toca un pedido para abrirlo."
+    );
+    expect(summary).toHaveLength(1);
+    expect(within(sheet).getByText(/#AAA111/)).toBeTruthy();
+    expect(within(sheet).getByText(/Lucía/)).toBeTruthy();
+    expect(within(sheet).getByText(/María/)).toBeTruthy();
+
+    // Tapping the exact order closes the sheet and routes to its admin page.
+    const paths: string[] = [];
+    const onPop = () => paths.push(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    fireEvent.click(within(sheet).getByRole("button", { name: /Abrir pedido BBB222/ }));
+    window.removeEventListener("popstate", onPop);
+    expect(paths).toContain("/pedidos/order_bbb222");
+    expect(screen.queryByRole("dialog", { name: /Piezas comprometidas/ })).toBeNull();
+  });
+
+  it("#463: con cero comprometidas la cifra queda como número plano, sin control", async () => {
+    const view = await renderCatalog(sortFilterState());
+    expect(view.container.querySelector('button[aria-label^="Ver pedidos con piezas comprometidas"]')).toBeNull();
+  });
+
   it("muestra solo productos por surtir según el umbral o si están agotados", async () => {
     const state = sortFilterState();
     state.products[0].lowStockAt = 3;
