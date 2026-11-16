@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { areaIdForTab, navigate, visibleNav, type PlatformRole, type Tab } from "./navItems";
 import type { StoreType } from "../types";
 
@@ -35,6 +35,12 @@ export function Sidebar({
     activeArea ? { [activeArea]: true } : {}
   );
   const toggleArea = (id: string) => setOpenAreas((prev) => ({ ...prev, [id]: !prev[id] }));
+  // #454 r2 (revisión): in-session navigation (palette, contextual links)
+  // opens the destination area too — identical to a refresh/deep-link; the
+  // groups the operator opened by hand stay open.
+  useEffect(() => {
+    if (activeArea) setOpenAreas((prev) => (prev[activeArea] ? prev : { ...prev, [activeArea]: true }));
+  }, [activeArea]);
 
   return (
     <aside className="hidden md:flex flex-col w-60 shrink-0 border-r border-rule/70 bg-paper/60 backdrop-blur h-dvh overflow-y-auto sticky top-0">
