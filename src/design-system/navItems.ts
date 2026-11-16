@@ -15,6 +15,7 @@ export type Tab =
   | "productos_estrategia"
   | "productos_cierre"
   | "productos_reparto"
+  | "productos_simulador"
   | "productos_diagnostico"
   | "productos_ranking"
   | "pedidos"

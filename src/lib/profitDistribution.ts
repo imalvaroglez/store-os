@@ -100,3 +100,62 @@ export function proposeDistribution(input: DistributionInput): DistributionPropo
     liquidityStatus,
   };
 }
+
+// ─── #459: the OPERATIONAL authorization over a CLOSED period ───────────────
+
+export type ProfitDistributionDoc = {
+  id: string;
+  storeId: string;
+  period: string;
+  closeId: string;
+  authorizedAmountCents: number;
+  split: DistributionSplit;
+  status: "authorized";
+  authorizedByUid: string;
+  authorizedAt: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+/** Deterministic id: the same authorization intent lands on the same doc. */
+export function profitDistributionDocId(storeId: string, period: string, authorizedAt: string): string {
+  return `${storeId}__${period}__${authorizedAt}`;
+}
+
+/** The doc for an OWNER-authorized distribution (rules demand id==body.id,
+ * createdBy==uid — the #459 profitDistributions contract). */
+export function buildProfitDistributionDoc(input: {
+  storeId: string;
+  period: string;
+  closeId: string;
+  authorizedAmountCents: number;
+  split: DistributionSplit;
+  uid: string;
+  now: string;
+}): ProfitDistributionDoc {
+  return {
+    id: profitDistributionDocId(input.storeId, input.period, input.now),
+    storeId: input.storeId,
+    period: input.period,
+    closeId: input.closeId,
+    authorizedAmountCents: input.authorizedAmountCents,
+    split: input.split,
+    status: "authorized",
+    authorizedByUid: input.uid,
+    authorizedAt: input.now,
+    createdBy: input.uid,
+    createdAt: input.now,
+  };
+}
+
+/** Accumulated operating losses BEFORE a period, from prior CLOSED snapshots
+ * (only closed periods count — a preview is not a loss). POSITIVE magnitude
+ * in exact cents — the shape proposeDistribution compensates. */
+export function accumulatedLossBefore(
+  closes: Array<{ period: string; totals: { operatingResultCents?: number } }>,
+  period: string
+): number {
+  return closes
+    .filter((close) => close.period < period)
+    .reduce((sum, close) => sum + Math.max(0, -(close.totals.operatingResultCents ?? 0)), 0);
+}

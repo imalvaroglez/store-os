@@ -89,4 +89,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#202 closes & ajustes (re
     // Miembro de la tienda SÍ lee el snapshot sellado (consulta), ajeno no (ya cubierto).
     await expect((await getDoc(doc(member, "closes/olivia__2026-09__v1"))).exists()).toBe(true);
   });
+
+  it("#459: autorización de reparto — dueña crea, miembro no, suplantación no; todos consultan", async () => {
+    const owner = env.authenticatedContext("fer-uid").firestore();
+    const member = env.authenticatedContext("member-uid").firestore();
+    const base = {
+      id: "olivia__2026-11__d1", storeId: "olivia", period: "2026-11", closeId: "olivia__2026-11__v9",
+      authorizedAmountCents: 40000, split: { ferCents: 20000, oliviaCents: 12000, investorCents: 8000 },
+      status: "authorized", authorizedByUid: "fer-uid", authorizedAt: "2026-12-02T00:00:00.000Z",
+      createdBy: "fer-uid", createdAt: "2026-12-02T00:00:00.000Z",
+    };
+    await expect(setDoc(doc(owner, "profitDistributions/olivia__2026-11__d1"), base)).resolves.toBeUndefined();
+    await expect(setDoc(doc(member, "profitDistributions/olivia__2026-11__d2"), { ...base, id: "olivia__2026-11__d2", createdBy: "member-uid", authorizedByUid: "member-uid" })).rejects.toThrow();
+    await expect(setDoc(doc(owner, "profitDistributions/olivia__2026-11__d3"), { ...base, id: "olivia__2026-11__d3", createdBy: "someone-else" })).rejects.toThrow();
+    // Append-only: ni la dueña edita el histórico.
+    await expect(updateDoc(doc(owner, "profitDistributions/olivia__2026-11__d1"), { authorizedAmountCents: 1 })).rejects.toThrow();
+    await expect((await getDoc(doc(member, "profitDistributions/olivia__2026-11__d1"))).exists()).toBe(true);
+  });
 });
