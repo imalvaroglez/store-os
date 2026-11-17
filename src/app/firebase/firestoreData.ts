@@ -46,7 +46,7 @@ import { normalizeEmail, type AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
-import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
+import { reconcileIncidentMoney, restitutionExpectedCents, restitutionReleasedCents } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
@@ -2449,28 +2449,17 @@ async function restituteIncidentCredit(params: {
   const stored = incidents.find((existing) => existing.id === incidentId);
   if (!stored) return;
   const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
-  if (ledger.some((saved) => saved.kind === "release" && saved.id.startsWith(`rel_${event.id}`))) return; // already restituted
   // The obligation is reconciled against the incident WITHOUT this confirm
   // event — the stored one already carries it.
   const pre = { ...stored, events: (stored.events ?? []).filter((saved) => saved.id !== event.id) };
   const capCents = Math.max(0, reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), pre).restitutionCents);
-  const netByOrigin = new Map<string, number>();
-  for (const saved of ledger) {
-    if (saved.kind === "application" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
-    if (saved.kind === "release" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
-  }
-  // Expected release: the greedy net-walk bound (min(cap, Σ positive nets)).
-  // The callable additionally caps each origin by its REAL mirror; landing
-  // below this bound means drift on an origin — fail loud, never silent.
-  let expected = 0;
-  let budget = capCents;
-  for (const netCents of netByOrigin.values()) {
-    if (netCents <= 0 || budget <= 0) continue;
-    const take = Math.min(netCents, budget);
-    expected += take;
-    budget -= take;
-  }
-  if (expected <= 0) return;
+  // Shared engine (incidentMoney.ts): the greedy net-walk bound and the
+  // already-released tally the UI's pending notice uses — one arithmetic, no
+  // drift between the callable's plan and what the screen reports. The
+  // callable additionally caps each origin by its REAL mirror; landing below
+  // the bound means drift on an origin — fail loud, never silent.
+  const expected = restitutionExpectedCents(ledger, capCents);
+  if (restitutionReleasedCents(ledger, event.id) >= expected) return; // already whole
   const result = await releaseCreditTrusted({ storeId, orderId, intentId: event.id, capCents, idPrefix: "rel_" });
   if (result.released < expected) {
     throw new Error(

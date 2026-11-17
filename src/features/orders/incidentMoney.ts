@@ -57,6 +57,59 @@ export type IncidentMoney = {
   refundOwedCents: (destination: "refund_pending" | "credit_accepted") => number;
 };
 
+/** Σ release entries already tagged for a confirm event (`rel_<eventId>_`). */
+export function restitutionReleasedCents(
+  ledger: { id: string; kind: string; amountCents: number }[] | undefined,
+  confirmEventId: string
+): number {
+  return (ledger ?? [])
+    .filter((entry) => entry.kind === "release" && entry.id.startsWith(`rel_${confirmEventId}`))
+    .reduce((sum: number, entry) => sum + (Number.isSafeInteger(entry.amountCents) ? entry.amountCents : 0), 0);
+}
+
+/**
+ * The greedy net-walk bound shared by the data layer and the UI: how much a
+ * release can return given the ledger's per-origin nets (applications minus
+ * releases), capped by the incident's own obligation. ONE implementation so
+ * the pending notice on screen can never drift from what the callable does.
+ */
+export function restitutionExpectedCents(
+  ledger: { kind: string; fromOrderId: string; amountCents: number }[] | undefined,
+  capCents: number
+): number {
+  const netByOrigin = new Map<string, number>();
+  for (const entry of ledger ?? []) {
+    if (!Number.isSafeInteger(entry.amountCents)) continue;
+    if (entry.kind === "application") netByOrigin.set(entry.fromOrderId, (netByOrigin.get(entry.fromOrderId) ?? 0) + entry.amountCents);
+    if (entry.kind === "release") netByOrigin.set(entry.fromOrderId, (netByOrigin.get(entry.fromOrderId) ?? 0) - entry.amountCents);
+  }
+  let expected = 0;
+  let budget = capCents;
+  for (const netCents of netByOrigin.values()) {
+    if (netCents <= 0 || budget <= 0) continue;
+    const take = Math.min(netCents, budget);
+    expected += take;
+    budget -= take;
+  }
+  return expected;
+}
+
+/**
+ * #380 QA r2: how much of a CONFIRMED incident's credit restitution is still
+ * pending — the audible, retryable figure the incident card shows. The greedy
+ * net-walk bound already nets out landed releases (per-origin nets shrink as
+ * releases land), so this is exactly what the next successful retry moves.
+ * Zero when there is no confirmed event, no credit obligation, or nothing
+ * left to release.
+ */
+export function pendingRestitutionCents(order: Order, incident: OrderIncident): number {
+  const confirmEvent = (incident.events ?? []).find((event) => event.kind === "confirmed");
+  if (!confirmEvent) return 0;
+  const capCents = reconcileIncidentMoney(order, incident).restitutionCents;
+  if (capCents <= 0) return 0;
+  return restitutionExpectedCents(order.creditLedger, capCents);
+}
+
 /**
  * The reconciliation. Adjustment by operation (r2-criterio 2): a return takes
  * the whole piece out of the sale; a cheaper replacement takes only the price
