@@ -49,8 +49,13 @@ describe("OrderEditorScreen back target (#463)", () => {
     setReturnOrigin("o1", "/productos");
     render(<ToastProvider><OrderEditorScreen /></ToastProvider>);
     expect(screen.getByRole("button", { name: "← Productos" })).toBeTruthy();
+    // #463 r2: the return goes through history.back() — the browser restores
+    // the catalog's scroll position natively (verified 10/10 by UX with the
+    // gesture; the button now takes the same path).
+    const backSpy = vi.spyOn(window.history, "back").mockImplementation(() => {});
     screen.getByRole("button", { name: "← Productos" }).click();
-    expect(navigate).toHaveBeenCalledWith("/productos");
+    expect(backSpy).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("keeps the orders list as the default when no origin was recorded", () => {

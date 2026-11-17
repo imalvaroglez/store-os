@@ -36,7 +36,18 @@ export function OrderEditorScreen() {
       <ScreenHeader
         title={sub === "nuevo" ? "Nuevo pedido" : "Editar pedido"}
         action={(
-          <Button variant="ghost" onClick={() => navigate(returnTo ?? "/pedidos")}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              // #463 r2: the sheet's navigation PUSHED this editor onto the
+              // history stack — going BACK lets the browser restore the
+              // catalog's exact scroll position natively (the in-app restore
+              // could not survive the route-change scroll reset poisoning the
+              // saved value at unmount; native restoration does, 10/10).
+              if (returnTo) window.history.back();
+              else navigate("/pedidos");
+            }}
+          >
             {returnTo === "/productos" ? "← Productos" : "← Pedidos"}
           </Button>
         )}
@@ -46,8 +57,8 @@ export function OrderEditorScreen() {
           key={`${draftOwnerId}::${activeStore.id}::${sub}`}
           order={order}
           isNew={sub === "nuevo"}
-          onDone={() => navigate(returnTo ?? "/pedidos")}
-          onCancel={() => navigate(returnTo ?? "/pedidos")}
+          onDone={() => { if (returnTo) window.history.back(); else navigate("/pedidos"); }}
+          onCancel={() => { if (returnTo) window.history.back(); else navigate("/pedidos"); }}
         />
       </div>
     </Screen>
