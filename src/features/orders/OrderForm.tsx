@@ -19,6 +19,7 @@ import {
 import { customersForStore } from "../../lib/selectors";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { isVariantProduct } from "../../lib/variants";
+import { variantEffectivePrice } from "../../lib/variantPrice";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { attributeProjectedShortageToLines, orderWillHoldPieces } from "../../lib/inventory";
@@ -513,11 +514,23 @@ export function OrderForm({
       updateLine(line.key, { variantId: undefined, variantColor: undefined, variantSku: undefined });
       return;
     }
+    // #467: selecting a color re-prices the AUTOMATIC line with the color's
+    // EFFECTIVE price (own map or shared design price) — orders and catalog
+    // read the same source. A sin-precio level empties the automatic price
+    // (manual capture stays free); manual prices are never touched.
+    let reprice: Partial<DraftLine> = {};
+    if (isTiered && line.priceSource === "automatic") {
+      const effective = variantEffectivePrice(variant, line.priceTier ?? currentTier ?? "", product);
+      reprice = effective === undefined
+        ? { unitPriceText: "", unitPrice: 0 }
+        : { unitPriceText: String(effective), unitPrice: effective };
+    }
     updateLine(line.key, {
       variantId: variant.id,
       variantColor: variant.color,
       variantSku: variant.sku ?? (variant.skuSuffix ? `${product.sku ?? ""}-${variant.skuSuffix}` : undefined),
       ...(variant.cost != null ? { cost: variant.cost, costText: String(variant.cost) } : {}),
+      ...reprice,
     });
   }
 
