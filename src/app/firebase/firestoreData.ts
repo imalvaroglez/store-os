@@ -2406,9 +2406,10 @@ export async function applyIncidentEventTx(params: {
     // capped with and what completeness is judged against — forever.
     if (kind === "confirmed") {
       const restitutionCents = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), incident).restitutionCents;
-      if (restitutionCents > 0) {
-        event.detail = { ...(event.detail ?? {}), restitutionCents };
-      }
+      // Stamped UNCONDITIONALLY (zero included): a hand-crafted figure can
+      // never become a fabricated cap, and zero-obligation confirms are
+      // frozen too (review r3 residuals 2–3).
+      event.detail = { ...(event.detail ?? {}), restitutionCents: Math.max(0, restitutionCents) };
     }
 
     // ── Order doc: append the event (and the agreed resolution, once). ──
@@ -2468,7 +2469,9 @@ async function restituteIncidentCredit(params: {
   const storedConfirm = (stored.events ?? []).find((saved) => saved.id === event.id);
   const frozen = storedConfirm?.detail?.restitutionCents;
   const pre = { ...stored, events: (stored.events ?? []).filter((saved) => saved.id !== event.id) };
-  const capCents = typeof frozen === "number" && Number.isSafeInteger(frozen) && frozen > 0
+  // A frozen 0 is a FROZEN zero (no obligation ever) — only the absence of
+  // the stamp (hand-seeded legacy docs) falls back to a fresh reconcile.
+  const capCents = typeof frozen === "number" && Number.isSafeInteger(frozen) && frozen >= 0
     ? frozen
     : Math.max(0, reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), pre).restitutionCents);
   if (capCents <= 0) return;

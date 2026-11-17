@@ -80,7 +80,8 @@ export function pendingRestitutionCents(order: Order, incident: OrderIncident): 
   const confirmEvent = (incident.events ?? []).find((event) => event.kind === "confirmed");
   if (!confirmEvent) return 0;
   const frozen = confirmEvent.detail?.restitutionCents;
-  const capCents = typeof frozen === "number" && Number.isSafeInteger(frozen) && frozen > 0
+  // A frozen 0 is a FROZEN zero — only docs without the stamp fall back.
+  const capCents = typeof frozen === "number" && Number.isSafeInteger(frozen) && frozen >= 0
     ? frozen
     : reconcileIncidentMoney(order, incident).restitutionCents;
   if (capCents <= 0) return 0;
