@@ -5,6 +5,7 @@ import {
 } from "./config";
 import {
   subscribeToAuth,
+  consumeGoogleRedirectResult,
   signOutFirebase as doSignOut,
   type AppUser,
 } from "./auth";
@@ -18,6 +19,9 @@ type AuthContextValue = {
   authReady: boolean;
   enabled: boolean;
   error: string | null;
+  /** Spanish failure/cancellation message from the Google redirect return trip (#481). */
+  googleError: string | null;
+  clearGoogleError: () => void;
   signOut: () => Promise<void>;
 };
 
@@ -28,16 +32,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [authReady, setAuthReady] = useState(!enabled);
   const [error, setError] = useState<string | null>(getFirebaseConfigurationError());
+  const [googleError, setGoogleError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!enabled) return; // No Firebase session is available.
     let active = true;
+    // iOS Safari returns from Google sign-in as a top-level redirect; consume
+    // that result once so a failed/cancelled trip surfaces on the AuthScreen
+    // instead of silently landing back on the entry screen (#481).
+    void consumeGoogleRedirectResult().catch((err: unknown) => {
+      if (active) setGoogleError(err instanceof Error ? err.message : String(err));
+    });
     try {
       const unsub = subscribeToAuth(
         (u) => {
           if (!active) return;
           setUser(u);
           setError(null);
+          // Only a REAL session clears the redirect error: if the SDK's
+          // initial null emission ever landed after a failed redirect's
+          // rejection, clearing unconditionally would swallow the message
+          // (#481 again). Retry and sign-out clear it explicitly.
+          if (u) setGoogleError(null);
           setAuthReady(true);
         },
         () => {
@@ -63,9 +79,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authReady,
     enabled,
     error,
+    googleError,
+    clearGoogleError: () => setGoogleError(null),
     signOut: async () => {
       await doSignOut();
       setUser(null);
+      setGoogleError(null);
     },
   };
 
