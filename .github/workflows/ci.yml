@@ -390,13 +390,16 @@ jobs:
             P=store-os-f7cf8
           fi
           echo "── deploying functions → $P"
+          # --force: auto-accepts the artifact cleanup policy setup (first
+          # deploy of functions in a project cannot set it non-interactively
+          # and fails otherwise — seen on store-os-f7cf8's first deploy).
           # NON-DESTRUCTIVE explicit targets: dev also carries experimental
           # functions from other in-flight fronts (e.g. submitPublicOrderRequest);
           # a bare --only functions tries to DELETE anything absent from this
           # branch's source and aborts non-interactively — blocking rules deploys
           # on unrelated work. Listing the exact callables never deletes others.
           firebase deploy --only functions:applyCredit,functions:releaseCredit,functions:importPurchasePdf --project "$P" \
-            --token "$FIREBASE_TOKEN" --non-interactive
+            --token "$FIREBASE_TOKEN" --non-interactive --force
       - name: Verify the trusted callables answer before rules harden
         # An onCall endpoint that EXISTS rejects a session-less probe with a
         # client error (401 UNAUTHENTICATED in production; 400 INVALID_ARGUMENT
