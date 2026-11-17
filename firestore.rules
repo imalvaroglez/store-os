@@ -529,6 +529,20 @@ service cloud.firestore {
                   // the marker legitimately. (#218 already freezes the
                   // deposit against silent rises once receipts exist.)
                   || resource.data.get('deposit', 0) > 0
+                  // #478 C1: the legitimate single-save conversion installs
+                  // the plan AND captures the first anticipo in ONE write —
+                  // the marker is born from THIS write's deposit rise. Same
+                  // trust as the previous line: the deposit field is money
+                  // evidence either way, a forged rise is a visible lie in
+                  // the doc (auditable), and #218 freezes rises once
+                  // receipts exist. A plan must be present (this write or
+                  // the doc) — the marker without a plan is not a shape the
+                  // legitimate client ever writes.
+                  || (request.resource.data.get('deposit', 0) > 0
+                      && resource.data.get('deposit', 0) == 0
+                      && !('paymentsReceivedCents' in resource.data)
+                      && ('installments' in request.resource.data
+                          || 'installments' in resource.data))
                   // ...or THIS write itself is a money write: the money
                   // branch above has already forced it through
                   // validMoneyUpdate, so re-evaluating here would only
