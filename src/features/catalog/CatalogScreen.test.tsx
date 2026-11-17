@@ -223,7 +223,7 @@ describe("CatalogScreen filtro por categoría real", () => {
     const cell = view.container.querySelector('button[title^="Ver pedidos con piezas comprometidas"]')!;
     expect(cell).toBeTruthy();
     cell.focus();
-    // A native <button> activates on Enter in real browsers; jsdom does not
+    // A native button element activates on Enter in real browsers; jsdom does not
     // synthesize that click, so the test drives the same activation.
     fireEvent.keyDown(cell, { key: "Enter" });
     fireEvent.click(cell);
