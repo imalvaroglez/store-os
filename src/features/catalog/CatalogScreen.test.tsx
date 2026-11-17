@@ -173,8 +173,9 @@ describe("CatalogScreen filtro por categoría real", () => {
     ] as never;
     const view = await renderCatalog(state);
 
-    // The committed figure on p1's card is the drill-down control (2 + 1 = 3).
-    const trigger = view.container.querySelector('button[aria-label="Ver pedidos con piezas comprometidas (3)"]')!;
+    // The committed CELL on p1's card is the drill-down control (2 + 1 = 3)
+    // — the whole StatRow is one tap target (#463 r2).
+    const trigger = view.container.querySelector('button[title="Ver pedidos con piezas comprometidas (3)"]')!;
     expect(trigger).toBeTruthy();
     fireEvent.click(trigger);
 
@@ -202,7 +203,34 @@ describe("CatalogScreen filtro por categoría real", () => {
 
   it("#463: con cero comprometidas la cifra queda como número plano, sin control", async () => {
     const view = await renderCatalog(sortFilterState());
-    expect(view.container.querySelector('button[aria-label^="Ver pedidos con piezas comprometidas"]')).toBeNull();
+    expect(view.container.querySelector('button[title^="Ver pedidos con piezas comprometidas"]')).toBeNull();
+  });
+
+  it("#463 r2: la celda completa abre el desglose por teclado y no abre el editor", async () => {
+    const state = sortFilterState();
+    const now = "2026-11-10T10:00:00.000Z";
+    state.customers = [
+      { id: "cust_lucia", storeId: OLIVIA, name: "Lucía", createdAt: "", updatedAt: "" },
+    ] as never;
+    state.orders = [
+      {
+        id: "order_kkk333", storeId: OLIVIA, customerId: "cust_lucia",
+        items: [{ lineId: "k_L0", productId: "p1", productName: "Anillo Blossom", quantity: 2, unitPrice: 300, subtotal: 600 }],
+        deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid", schemaVersion: 2, createdAt: now, updatedAt: now,
+      },
+    ] as never;
+    const view = await renderCatalog(state);
+    const cell = view.container.querySelector('button[title^="Ver pedidos con piezas comprometidas"]')!;
+    expect(cell).toBeTruthy();
+    cell.focus();
+    // A native <button> activates on Enter in real browsers; jsdom does not
+    // synthesize that click, so the test drives the same activation.
+    fireEvent.keyDown(cell, { key: "Enter" });
+    fireEvent.click(cell);
+    const sheet = await screen.findByRole("dialog", { name: /Piezas comprometidas/ });
+    expect(sheet).toBeTruthy();
+    // El foco en la celda no abrió el editor del producto (burbuja controlada).
+    expect(screen.queryByRole("dialog", { name: "Editar producto" })).toBeNull();
   });
 
   it("muestra solo productos por surtir según el umbral o si están agotados", async () => {
