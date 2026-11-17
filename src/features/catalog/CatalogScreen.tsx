@@ -28,6 +28,7 @@ import { isVariantProduct, totalStock } from "../../lib/variants";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import type { PriceTierDef } from "../../types";
 import { navigate } from "../../lib/router";
+import { setReturnOrigin } from "../../lib/returnOrigin";
 import { publicPrice, profit, formatMoney, formatMoneyPlain } from "../../lib/money";
 import { nowIso } from "../../lib/dates";
 import type { Customer, Order, Product } from "../../types";
@@ -580,6 +581,9 @@ function CommittedSheet({
                   aria-label={`Abrir pedido ${row.reference}, ${row.total} ${row.total === 1 ? "pieza" : "piezas"}`}
                   onClick={() => {
                     onClose();
+                    // #463: the pedido's back affordance must return to THIS
+                    // catalog (task context), not to the orders list.
+                    setReturnOrigin(row.orderId, "/productos");
                     navigate(`/pedidos/${row.orderId}`);
                   }}
                 >
