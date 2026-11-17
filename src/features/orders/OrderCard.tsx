@@ -13,6 +13,7 @@ import {
   useToast,
 } from "../../design-system";
 import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { cdmxToday } from "../../lib/monthlyClose";
 import { incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
 import { shortageByDimension } from "../../lib/inventory";
 import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
@@ -117,7 +118,10 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           kind: "payment",
           id: `collect-${order.id}-${pendingPesos}`,
           method: "cash",
-          date: new Date().toISOString().slice(0, 10),
+          // #458 r4: the REAL CDMX calendar day — the UTC slice rolls at
+          // 18:00 local and a late-night collection lands on the next day,
+          // leaking a November payment into December's sealed close.
+          date: cdmxToday(),
           amountText: pendingPesos.toFixed(2),
           note: "Cobro completo de un toque",
         });

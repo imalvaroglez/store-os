@@ -510,16 +510,27 @@ export async function loadProfitDistributions(
     .sort((a, b) => (a.authorizedAt < b.authorizedAt ? -1 : 1));
 }
 
-/** #459: authorize a distribution — IDEMPOTENT by deterministic id; rules
- * enforce OWNER-ONLY (same contract as closes). */
+/** #459: authorize a distribution — IDEMPOTENT per period; rules enforce
+ * OWNER-ONLY (same contract as closes).
+ * #459 r4 (CRÍTICO): existence is checked with the store-scoped QUERY — a
+ * direct get of a not-yet-existing doc makes the rules dereference
+ * resource.data on null and EVERY first authorization died with
+ * permission-denied (verified by the review's emulator probes). The query
+ * also makes a RETRY idempotent in business terms: the period's existing
+ * authorization is returned untouched instead of minting a second doc with
+ * a fresh timestamp id. */
 export async function authorizeProfitDistribution(
   doc_: ReturnType<typeof buildProfitDistributionDoc>
 ): Promise<{ id: string }> {
   const { db } = getFirebase();
-  const ref = doc(db, "profitDistributions", doc_.id);
-  const existing = await getDoc(ref);
-  if (existing.exists()) return { id: existing.id };
-  await setDoc(ref, doc_ as unknown as Record<string, unknown>);
+  const samePeriod = await getDocs(
+    query(collection(db, "profitDistributions"), where("storeId", "==", doc_.storeId), where("period", "==", doc_.period))
+  );
+  if (!samePeriod.empty) {
+    const first = [...samePeriod.docs].sort((a, b) => ((a.data().authorizedAt as string) < (b.data().authorizedAt as string) ? -1 : 1))[0];
+    return { id: first.id };
+  }
+  await setDoc(doc(db, "profitDistributions", doc_.id), doc_ as unknown as Record<string, unknown>);
   return { id: doc_.id };
 }
 
