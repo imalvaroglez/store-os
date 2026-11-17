@@ -6,15 +6,15 @@
 
 | Elemento | Quién lo controla hoy | Acceso/modificar/exportar | Dónde se guarda | Evidencia | No concluye desde el código |
 |---|---|---|---|---|---|
-| **Marca y contenido de Olivia** (nombre, logo, textos, fotos) | Fer los captura en la app | Dueña/miembros de la tienda vía editor autenticado | Firestore (`stores.storefront`, `products`) + Storage (`storefront/{storeId}`) | [verificada] reglas por membresía; carga solo por sesión | Titularidad de la marca y licencia de uso del **código** que la muestra |
+| **Marca y contenido de Olivia** (nombre, logo, textos, fotos) | Fer los captura en la app | Dueña/miembros de la tienda vía editor autenticado; los archivos de Storage (logo/fotos) los escribe la dueña con su sesión | Firestore (`stores.storefront`, `products`) + Storage (`storefront/{storeId}`) | [verificada] reglas por membresía; carga solo por sesión | Titularidad de la marca y licencia de uso del **código** que la muestra |
 | **Catálogo público** (proyecciones `publicStores/publicProducts`) | Fer publica/republica | Lectura anónima; escritura solo miembros | Firestore (colecciones públicas) | [verificada] reglas #374 — id ligado al contenido, fusionado en PR #417 (2026-11-15) | Responsabilidad por contenido publicado ante terceros |
 | **Datos de clientas** (nombre, WhatsApp, pedidos, saldos) | Fer | Solo dueña/miembros de la tienda; aislamiento entre tiendas | Firestore (`customers`, `orders`) | [verificada] auditoría #176; sin lecturas de directorio | Encargo de tratamiento Fer↔Mari; base jurídica LFPDPPP (ver #311) |
 | **Pedidos e inventario** | Fer | Miembros con sesión | Firestore (`orders`, `products`) | [verificada] reglas; reservas por `revision` | Propiedad de la información operativa ante un convenio comercial |
-| **Cobros y finanzas** (cobros, crédito, cierres en propuesta) | Fer | Miembros; campos de crédito solo por operación firmada | Firestore | [verificada] acumuladores por documento; #380: las **reglas** deniegan toda escritura cliente de crédito — solo callables firmados (diseño aprobado PO 15-nov, PR #413 a liberar) | Reparto de ganancia e inversión = relación financiera **separada** (#128) |
+| **Cobros y finanzas** (cobros, crédito, cierres en propuesta) | Fer | Miembros; borrado de pedidos con crédito bloqueado y acumuladores por documento (vigente) | Firestore | [verificada] #363: el borrado de un pedido con crédito pendiente lo niegan las reglas; acumuladores por documento. **En PR abierto, no vigente:** #380/#403/#413 moverían el crédito a callables firmados con reglas cerradas (diseño aprobado PO 15-nov) — al fusionar, esta fila se actualiza | Reparto de ganancia e inversión = relación financiera **separada** (#128) |
 | **Código reutilizable** (features genéricas del panel) | Álvaro (Store OS) | Repositorio GitHub **público** (sin LICENSE; derechos reservados por defecto) | Git | [verificada] `gh api` al repo: público, sin archivo de licencia | Licencia de uso de Fer sobre el código y los términos de la exposición pública: **[pendiente de validar]** |
 | **Personalizaciones para Olivia** (vitrina editorial, precios por nivel) | Fer las usa; Álvaro las construyó | Edición autenticada | Firestore + código | [verificada] `OliviaStorefront`, tiers | Si la personalización "pertenece" al servicio o a la tienda |
 | **Configuración e infraestructura** (Firebase, Vercel, CI) | Álvaro | Cuentas de plataforma del PO | Google/Vercel/GitHub | [verificada] regla de proyecto dev/prod | Acuerdo de servicio, SLA, disponibilidad |
-| **Credenciales y llaves** | Álvaro | Solo el PO; ninguna en el repo | Secretos de CI/Consola | [verificada] reglas del repo; browser key de Firebase **sin** restricción HTTP referrers (#158, riesgo abierto) | Custodia y rotación ante salida |
+| **Credenciales y llaves** | Álvaro | Solo el PO; ninguna en el repo | Secretos de CI/Consola | [verificada] reglas del repo; browser key de **dev** con restricción HTTP referrers aplicada y verificada (#158, cerrado 15-nov) — la key de **producción** queda fuera de ese alcance y pendiente de verificación | Custodia y rotación ante salida |
 | **Datos de consumo** (uso de cuotas) | Álvaro | Reporte manual local #191 | Cloud Monitoring | [verificada] #204: por proyecto, **no atribuible por tienda** | Sin cargos vigentes; no nace deuda por inferencia |
 
 ## B. Separación de decisiones
@@ -26,7 +26,7 @@
 
 ## C. Qué existe y qué no existe
 
-**Existe [verificada]**: aislamiento por tienda con sesión; exportación de respaldo cifrada (procedimiento del PO); catálogo público anónimo sin datos privados; auditoría de seguridad #176; **eliminación de la tienda por su dueña** (panel de Configuración, con confirmación).
+**Existe [verificada]**: aislamiento por tienda con sesión; exportación de respaldo cifrada (procedimiento del PO); catálogo público anónimo sin datos privados; auditoría de seguridad #176; **eliminación de la tienda por su dueña** (panel de Configuración, con confirmación); cierres mensuales en main (solo el dashboard ampliado de #455 sigue en propuesta/PR).
 **No existe [verificada]**: exportación self-service por tienda; una salida que combine borrado + exportación (“llevármelo todo”); estados de cuenta por tienda; checkout/pagos. Nada de esto se promete aquí.
 
 ## D. Preguntas para Fer y el asesor (con efecto producto)
