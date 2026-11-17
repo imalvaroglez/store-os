@@ -46,7 +46,7 @@ export function OrderPaymentsSheet({
   open: boolean;
   onClose: () => void;
 }) {
-  const { payments, loadOrderPayments, registerOrderPayment, draftOwnerId } = useStore();
+  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId } = useStore();
   const toast = useToast();
   const [amountText, setAmountText] = useState("");
   const [method, setMethod] = useState<"cash" | "transfer">("cash");
@@ -61,6 +61,9 @@ export function OrderPaymentsSheet({
   const [adjustAmountText, setAdjustAmountText] = useState("");
   const [adjustDirection, setAdjustDirection] = useState<"subtract" | "add">("subtract");
   const [adjustNote, setAdjustNote] = useState("");
+  // #455 r5: dating the TOTAL anticipo captured at creation (no cobro will
+  // ever ride it) is its own save.
+  const [dating, setDating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -375,9 +378,24 @@ export function OrderPaymentsSheet({
               El anticipo previo ya cubre el total — no hay nada nuevo que cobrar en este pedido.
             </p>
             <p className="text-xs text-on-surface-soft">
-              Para dejar su fecha y método registrados, usa «Registrar ajuste o devolución» o registra
-              el movimiento real cuando ocurra; duplicar el cobro crearía saldo a favor por error.
+              Registra arriba su fecha y método para que el cierre mensual cuadre con tu caja;
+              estímalos si no los recuerdas. Duplicar el cobro crearía saldo a favor por error.
             </p>
+            <Button
+              variant="secondary"
+              disabled={dating || !/^\d{4}-\d{2}-\d{2}$/.test(inheritedDate)}
+              onClick={() => {
+                setDating(true);
+                materializeInheritedDeposit(order, { method: inheritedMethod, date: inheritedDate })
+                  .then(() => toast.success("Anticipo registrado."))
+                  .catch((error: unknown) => {
+                    toast.error(error instanceof Error && error.message ? error.message : "No se pudo registrar el anticipo.");
+                  })
+                  .finally(() => setDating(false));
+              }}
+            >
+              {dating ? "Registrando…" : "Registrar fecha y método del anticipo"}
+            </Button>
           </div>
         ) : (
         <div className="space-y-3 border-t border-edge pt-4">
