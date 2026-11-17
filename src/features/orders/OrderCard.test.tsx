@@ -209,6 +209,16 @@ describe("estimated profit on the order card", () => {
     render(<ToastProvider><OrderCard order={{ ...withCost, orderStatus: "cancelled" }} onEdit={() => {}} /></ToastProvider>);
     expect(screen.queryByText(/Ganancia estimada/)).toBeNull();
   });
+
+  // #369: a cancelled order admits NO new cobros — the money has no way out.
+  // The Cobros sheet stays reachable (evidence), the charge buttons do not.
+  it("#369 no muestra Cobrar/Abonar en un pedido cancelado con saldo; Cobros queda como consulta", () => {
+    holder.payments = [];
+    render(<ToastProvider><OrderCard order={{ ...order, orderStatus: "cancelled" }} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.queryByRole("button", { name: "Cobrar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Abonar" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Cobros$/ })).toBeInTheDocument();
+  });
 });
 
 
