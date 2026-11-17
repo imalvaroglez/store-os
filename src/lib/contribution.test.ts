@@ -171,7 +171,7 @@ describe("nota de límite precisa con contribuciones no positivas (#336 QA menor
     const result = simulateContribution({
       priceCurrentCents: 1000, priceProposedCents: 1000,
       basePieces: 5, volumeSource: "ingresado",
-      variableCostCents: 1000, // c0 = c1 = 0
+      variableCostCents: 1000, perOrderPackagingCents: 0, // c0 = c1 = 0
       minContributionPerPieceCents: null, ladder: null, simulatedTierIndex: undefined, sensitivityPct: [],
     });
     expect(result.status).toBe("limit");
@@ -183,7 +183,7 @@ describe("nota de límite precisa con contribuciones no positivas (#336 QA menor
     const result = simulateContribution({
       priceCurrentCents: 1500, priceProposedCents: 1000,
       basePieces: 5, volumeSource: "ingresado",
-      variableCostCents: 1000, // c0 = 500, c1 = 0
+      variableCostCents: 1000, perOrderPackagingCents: 0, // c0 = 500, c1 = 0
       minContributionPerPieceCents: null, ladder: null, simulatedTierIndex: undefined, sensitivityPct: [],
     });
     expect(result.status).toBe("limit");
