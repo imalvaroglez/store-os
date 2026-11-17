@@ -255,88 +255,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     expect(owed).toBe(20000); // exacto: cada pieza $100, excedente total $200
   });
 
-  it("r4 (PO): origen AUSENTE aborta la confirmación completa — sin efectos parciales ni omisión silenciosa", async () => {
-    await env.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), "orders/inc-order-noreturn"), {
-        storeId: "inc-store", customerId: "inc-clienta",
-        items: [{ lineId: "nr_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
-        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
-        creditAppliedCents: 10000,
-        creditLedger: [{ id: "app_gone", kind: "application", fromOrderId: "origin-deleted", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
-        createdAt: "", updatedAt: "",
-      });
-    });
-    await openIncidentTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incident: incident("inc-nr", { events: [event("nr-open", "opened")] }) });
-    await applyIncidentEventTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incidentId: "inc-nr",
-      event: event("nr-e1", "resolution_agreed"),
-      resolution: { kind: "refund", destination: "credit_accepted" } });
-    await expect(
-      applyIncidentEventTx({ orderId: "inc-order-noreturn", storeId: "inc-store", incidentId: "inc-nr", event: event("nr-e2", "confirmed") })
-    ).rejects.toThrow(/pedido origen del saldo a favor/i);
-    const order = (await getDoc(doc(holder.db, "orders/inc-order-noreturn"))).data()!;
-    // NADA aterrizó: ni el evento confirmado, ni cuarentena, ni cambio de crédito.
-    expect((order.incidents[0].events ?? []).some((saved: { kind: string }) => saved.kind === "confirmed")).toBe(false);
-    expect(order.creditAppliedCents).toBe(10000);
-    const product = (await getDoc(doc(holder.db, "products/inc-product"))).data()!;
-    expect(product.quantityQuarantined).toBeLessThan(999); // sin efecto de esta tx
-  });
-
-  it("r4: espejo inconsistente del origen (creditConsumed 0 con ledger neto) también aborta con explicación", async () => {
-    await env.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), "orders/inc-origin-drift"), {
-        storeId: "inc-store", customerId: "inc-clienta",
-        items: [{ lineId: "od_L0", productName: "Origen", quantity: 1, unitPrice: 50, subtotal: 50 }],
-        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
-        createdAt: "", updatedAt: "",
-        // Ledger dice que consumió $100… pero el espejo fue dañado a 0.
-      });
-      await setDoc(doc(ctx.firestore(), "orders/inc-order-drift"), {
-        storeId: "inc-store", customerId: "inc-clienta",
-        items: [{ lineId: "df_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
-        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
-        creditAppliedCents: 10000,
-        creditLedger: [{ id: "app_drift", kind: "application", fromOrderId: "inc-origin-drift", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
-        createdAt: "", updatedAt: "",
-      });
-    });
-    await openIncidentTx({ orderId: "inc-order-drift", storeId: "inc-store", incident: incident("inc-df", { events: [event("df-open", "opened")] }) });
-    await applyIncidentEventTx({ orderId: "inc-order-drift", storeId: "inc-store", incidentId: "inc-df",
-      event: event("df-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted" } });
-    await expect(
-      applyIncidentEventTx({ orderId: "inc-order-drift", storeId: "inc-store", incidentId: "inc-df", event: event("df-e2", "confirmed") })
-    ).rejects.toThrow(/no refleja el crédito consumido/i);
-  });
-
-  it("r4: restitución del CAMINO FELIZ — el origen recupera su disponible y todo aterriza junto", async () => {
-    await env.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), "orders/inc-origin-ok"), {
-        storeId: "inc-store", customerId: "inc-clienta",
-        items: [{ lineId: "oo_L0", productName: "Origen", quantity: 1, unitPrice: 50, subtotal: 50 }],
-        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 15000, inheritedDepositMaterialized: true,
-        creditConsumedCents: 10000,
-        createdAt: "", updatedAt: "",
-      });
-      await setDoc(doc(ctx.firestore(), "orders/inc-order-ok"), {
-        storeId: "inc-store", customerId: "inc-clienta",
-        items: [{ lineId: "ok_L0", productId: "inc-product", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100 }],
-        deposit: 0, orderStatus: "delivered", paymentsReceivedCents: 0, inheritedDepositMaterialized: true,
-        creditAppliedCents: 10000,
-        creditLedger: [{ id: "app_ok", kind: "application", fromOrderId: "inc-origin-ok", amountCents: 10000, at: "2026-11-06T10:00:00Z", by: "inc-user" }],
-        createdAt: "", updatedAt: "",
-      });
-    });
-    await openIncidentTx({ orderId: "inc-order-ok", storeId: "inc-store", incident: incident("inc-ok", { events: [event("ok-open", "opened")] }) });
-    await applyIncidentEventTx({ orderId: "inc-order-ok", storeId: "inc-store", incidentId: "inc-ok",
-      event: event("ok-e1", "resolution_agreed"), resolution: { kind: "refund", destination: "credit_accepted" } });
-    await applyIncidentEventTx({ orderId: "inc-order-ok", storeId: "inc-store", incidentId: "inc-ok", event: event("ok-e2", "confirmed") });
-    const origin = (await getDoc(doc(holder.db, "orders/inc-origin-ok"))).data()!;
-    const order = (await getDoc(doc(holder.db, "orders/inc-order-ok"))).data()!;
-    expect(origin.creditConsumedCents).toBe(0);            // el crédito vuelve a estar disponible (#189)
-    expect(order.creditAppliedCents).toBe(0);
-    const releases = (order.creditLedger ?? []).filter((entry: { kind: string }) => entry.kind === "release");
-    expect(releases).toHaveLength(1);
-    expect(releases[0].amountCents).toBe(10000);
-  });
+  // #380: the r4 credit-restitution scenarios (origin absent, drifted mirror,
+  // happy-path release) moved to customerCredit.emulator.test.ts — the
+  // incident confirm now restitutes through the trusted releaseCredit
+  // callable, which needs the FUNCTIONS emulator this firestore-only session
+  // does not start. Their contracts evolved with the architecture: the
+  // confirmation commits, the restitution lands atomically right after, and
+  // any shortfall (missing/drifted origin) is loud and self-heals on retry
+  // instead of aborting the whole confirmation.
 
   it("never crosses stores", async () => {
     await expect(

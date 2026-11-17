@@ -480,10 +480,22 @@ service cloud.firestore {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries'])
+        // #380 (revisión r2, CRÍTICO): a fabricated create must not arrive
+        // with credit either — cancellation would launder it into real,
+        // spendable saldo a favor. Same deny-list discipline as money.
+        && !request.resource.data.keys().hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
+        // #380 prototype: saldo a favor moves ONLY through the trusted
+        // applyCredit/releaseCredit callables. The Admin SDK bypasses rules
+        // (IAM), so the FINAL protection is this total client-side lock:
+        // any CHANGE to the credit fields from a client SDK is denied.
+        // Verbatim carries (unchanged keys) are unaffected — ordinary
+        // saves keep working.
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger'])
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision'])
             || validMoneyUpdate(id, resource.data, request.resource.data))
         // #218: legacy deposit cannot rise after receipts, and is frozen once

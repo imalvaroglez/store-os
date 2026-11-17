@@ -57,6 +57,37 @@ export type IncidentMoney = {
   refundOwedCents: (destination: "refund_pending" | "credit_accepted") => number;
 };
 
+/** Σ release entries already tagged for a confirm event (`rel_<eventId>_`). */
+export function restitutionReleasedCents(
+  ledger: { id: string; kind: string; amountCents: number }[] | undefined,
+  confirmEventId: string
+): number {
+  return (ledger ?? [])
+    .filter((entry) => entry.kind === "release" && entry.id.startsWith(`rel_${confirmEventId}`))
+    .reduce((sum: number, entry) => sum + (Number.isSafeInteger(entry.amountCents) ? entry.amountCents : 0), 0);
+}
+
+/**
+ * #380 QA r2/r3: how much of a CONFIRMED incident's credit restitution is
+ * still pending — the audible, retryable figure the incident card shows.
+ * The obligation is the FROZEN figure the confirm transaction stamped into
+ * the event (QA r3 MAYOR-1: recomputing from mutated credit fields made a
+ * retry after a partial release report success with the clienta short);
+ * only hand-seeded legacy docs fall back to a fresh reconcile. Pending is
+ * the frozen obligation minus what already landed tagged for this event.
+ */
+export function pendingRestitutionCents(order: Order, incident: OrderIncident): number {
+  const confirmEvent = (incident.events ?? []).find((event) => event.kind === "confirmed");
+  if (!confirmEvent) return 0;
+  const frozen = confirmEvent.detail?.restitutionCents;
+  // A frozen 0 is a FROZEN zero — only docs without the stamp fall back.
+  const capCents = typeof frozen === "number" && Number.isSafeInteger(frozen) && frozen >= 0
+    ? frozen
+    : reconcileIncidentMoney(order, incident).restitutionCents;
+  if (capCents <= 0) return 0;
+  return Math.max(0, capCents - restitutionReleasedCents(order.creditLedger, confirmEvent.id));
+}
+
 /**
  * The reconciliation. Adjustment by operation (r2-criterio 2): a return takes
  * the whole piece out of the sale; a cheaper replacement takes only the price
