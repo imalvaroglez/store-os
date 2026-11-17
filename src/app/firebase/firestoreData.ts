@@ -46,7 +46,7 @@ import { normalizeEmail, type AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
-import { reconcileIncidentMoney, restitutionExpectedCents, restitutionReleasedCents } from "../../features/orders/incidentMoney";
+import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
@@ -2398,6 +2398,19 @@ export async function applyIncidentEventTx(params: {
       }
     }
 
+    // #380 QA r3 (MAYOR-1): FREEZE the restitution obligation into the confirm
+    // event itself. Recomputing it later reads a creditAppliedCents the
+    // callable already decremented, so a retry after a partial release
+    // under-counted (releasing obligation−2·partial and then "succeeding"
+    // with the clienta short). The frozen figure is what the callable is
+    // capped with and what completeness is judged against — forever.
+    if (kind === "confirmed") {
+      const restitutionCents = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), incident).restitutionCents;
+      if (restitutionCents > 0) {
+        event.detail = { ...(event.detail ?? {}), restitutionCents };
+      }
+    }
+
     // ── Order doc: append the event (and the agreed resolution, once). ──
     const updated: OrderIncident = {
       ...incident,
@@ -2449,21 +2462,35 @@ async function restituteIncidentCredit(params: {
   const stored = incidents.find((existing) => existing.id === incidentId);
   if (!stored) return;
   const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
-  // The obligation is reconciled against the incident WITHOUT this confirm
-  // event — the stored one already carries it.
+  // The FROZEN obligation stamped into the confirm event at confirmation
+  // time (QA r3 MAYOR-1). Hand-seeded legacy docs without it fall back to a
+  // fresh reconcile — the best available figure, exact for the first run.
+  const storedConfirm = (stored.events ?? []).find((saved) => saved.id === event.id);
+  const frozen = storedConfirm?.detail?.restitutionCents;
   const pre = { ...stored, events: (stored.events ?? []).filter((saved) => saved.id !== event.id) };
-  const capCents = Math.max(0, reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), pre).restitutionCents);
-  // Shared engine (incidentMoney.ts): the greedy net-walk bound and the
-  // already-released tally the UI's pending notice uses — one arithmetic, no
-  // drift between the callable's plan and what the screen reports. The
-  // callable additionally caps each origin by its REAL mirror; landing below
-  // the bound means drift on an origin — fail loud, never silent.
-  const expected = restitutionExpectedCents(ledger, capCents);
-  if (restitutionReleasedCents(ledger, event.id) >= expected) return; // already whole
-  const result = await releaseCreditTrusted({ storeId, orderId, intentId: event.id, capCents, idPrefix: "rel_" });
-  if (result.released < expected) {
+  const capCents = typeof frozen === "number" && Number.isSafeInteger(frozen) && frozen > 0
+    ? frozen
+    : Math.max(0, reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), pre).restitutionCents);
+  if (capCents <= 0) return;
+  // The callable's budget is capCents − its own already-released tally, so
+  // passing the FROZEN total makes each attempt release exactly the missing
+  // remainder. Completeness is tagged (already landed) vs the frozen figure.
+  const tagged = restitutionReleasedCents(ledger, event.id);
+  if (tagged >= capCents) return; // whole — idempotent
+  try {
+    const result = await releaseCreditTrusted({ storeId, orderId, intentId: event.id, capCents, idPrefix: "rel_" });
+    if (tagged + result.released < capCents) {
+      throw new Error(
+        `La incidencia quedó confirmada, pero solo se restituyeron ${(tagged + result.released) / 100} de los ${capCents / 100} pesos de saldo a favor que debían volver a la clienta. Revisa los pedidos origen del saldo (pueden faltar o no reflejar el crédito consumido) y reintenta la restitución desde la ficha de la incidencia.`
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error && /solo se restituyeron/.test(error.message)) throw error;
+    // Transport failure (callable down / network): the incident IS confirmed
+    // and the release did not land — say so in Spanish with the pending
+    // figure instead of leaking a raw `internal` at the operator (#413 UX).
     throw new Error(
-      `La incidencia quedó confirmada, pero solo se restituyeron ${result.released / 100} de los ${expected / 100} pesos de saldo a favor que debían volver a la clienta. Revisa los pedidos origen del saldo (pueden faltar o no reflejar el crédito consumido) y vuelve a registrar la confirmación para reintentar la restitución.`
+      `La incidencia quedó confirmada, pero el movimiento del saldo a favor no se completó (quedan ${(capCents - tagged) / 100} pesos por devolver). Inténtalo de nuevo con el botón «Reintentar restitución» de la ficha.`
     );
   }
 }

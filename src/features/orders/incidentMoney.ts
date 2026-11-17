@@ -68,46 +68,23 @@ export function restitutionReleasedCents(
 }
 
 /**
- * The greedy net-walk bound shared by the data layer and the UI: how much a
- * release can return given the ledger's per-origin nets (applications minus
- * releases), capped by the incident's own obligation. ONE implementation so
- * the pending notice on screen can never drift from what the callable does.
- */
-export function restitutionExpectedCents(
-  ledger: { kind: string; fromOrderId: string; amountCents: number }[] | undefined,
-  capCents: number
-): number {
-  const netByOrigin = new Map<string, number>();
-  for (const entry of ledger ?? []) {
-    if (!Number.isSafeInteger(entry.amountCents)) continue;
-    if (entry.kind === "application") netByOrigin.set(entry.fromOrderId, (netByOrigin.get(entry.fromOrderId) ?? 0) + entry.amountCents);
-    if (entry.kind === "release") netByOrigin.set(entry.fromOrderId, (netByOrigin.get(entry.fromOrderId) ?? 0) - entry.amountCents);
-  }
-  let expected = 0;
-  let budget = capCents;
-  for (const netCents of netByOrigin.values()) {
-    if (netCents <= 0 || budget <= 0) continue;
-    const take = Math.min(netCents, budget);
-    expected += take;
-    budget -= take;
-  }
-  return expected;
-}
-
-/**
- * #380 QA r2: how much of a CONFIRMED incident's credit restitution is still
- * pending — the audible, retryable figure the incident card shows. The greedy
- * net-walk bound already nets out landed releases (per-origin nets shrink as
- * releases land), so this is exactly what the next successful retry moves.
- * Zero when there is no confirmed event, no credit obligation, or nothing
- * left to release.
+ * #380 QA r2/r3: how much of a CONFIRMED incident's credit restitution is
+ * still pending — the audible, retryable figure the incident card shows.
+ * The obligation is the FROZEN figure the confirm transaction stamped into
+ * the event (QA r3 MAYOR-1: recomputing from mutated credit fields made a
+ * retry after a partial release report success with the clienta short);
+ * only hand-seeded legacy docs fall back to a fresh reconcile. Pending is
+ * the frozen obligation minus what already landed tagged for this event.
  */
 export function pendingRestitutionCents(order: Order, incident: OrderIncident): number {
   const confirmEvent = (incident.events ?? []).find((event) => event.kind === "confirmed");
   if (!confirmEvent) return 0;
-  const capCents = reconcileIncidentMoney(order, incident).restitutionCents;
+  const frozen = confirmEvent.detail?.restitutionCents;
+  const capCents = typeof frozen === "number" && Number.isSafeInteger(frozen) && frozen > 0
+    ? frozen
+    : reconcileIncidentMoney(order, incident).restitutionCents;
   if (capCents <= 0) return 0;
-  return restitutionExpectedCents(order.creditLedger, capCents);
+  return Math.max(0, capCents - restitutionReleasedCents(order.creditLedger, confirmEvent.id));
 }
 
 /**
