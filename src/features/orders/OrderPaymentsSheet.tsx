@@ -130,6 +130,25 @@ export function OrderPaymentsSheet({
       toast.error("Captura la fecha del anticipo previo (estímala si no la recuerdas).");
       return;
     }
+    // #455 r4 (UX): the pending anticipo is ALREADY-received money that this
+    // same write materializes. A collection bigger than what is actually
+    // missing registers the same money twice and mints saldo a favor — the
+    // dialog must close that case by itself, not guide into it.
+    if (summary.inheritedPendingCents > 0) {
+      const collectCents = Math.round((Number(sanitizeMoneyInput(amountText)) || 0) * 100);
+      // summary.receivedCents ALREADY includes the pending anticipo when it
+      // is unmaterialized (payments.ts) — subtracting it again would double-
+      // count and let the very duplication this gate exists to stop.
+      const stillOwedCents = Math.max(0, summary.totalCents - summary.receivedCents);
+      if (collectCents > stillOwedCents) {
+        toast.error(
+          stillOwedCents === 0
+            ? "El anticipo previo ya cubre el total: no hay nada nuevo que cobrar aquí. Su fecha y método quedan al registrar cualquier otro movimiento del pedido."
+            : `El anticipo previo de ${formatMoneyExact(summary.inheritedPendingCents / 100)} ya está recibido y se registra junto con este cobro. Captura solo lo que falte: hasta ${formatMoneyExact(stillOwedCents / 100)}.`
+        );
+        return;
+      }
+    }
     const id = intentIdRef.current.payment ?? uid("pay");
     intentIdRef.current.payment = id;
     await save(
@@ -225,8 +244,9 @@ export function OrderPaymentsSheet({
           <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
             <p className="text-xs text-on-surface-soft">
               Anticipo previo: <Money exact amount={summary.inheritedPendingCents / 100} /> recibido
-              antes de llevar registro. Se materializa junto con el primer cobro — captura su fecha
-              y método (estímalos si no los recuerdas).
+              antes de llevar registro — ese dinero ya está en tus manos. Se registra (fecha y método,
+              estímalos si no los recuerdas) junto con el primer cobro nuevo; el monto de abajo es
+              SOLO lo que falte cobrar hoy, nunca el total del pedido.
             </p>
             <div className="grid grid-cols-2 gap-3">
               <SelectField
@@ -348,6 +368,18 @@ export function OrderPaymentsSheet({
           </div>
         ) : null}
 
+        {summary.inheritedPendingCents > 0
+          && summary.totalCents - summary.receivedCents <= 0 ? (
+          <div className="space-y-2 border-t border-edge pt-4">
+            <p className="text-sm text-on-surface">
+              El anticipo previo ya cubre el total — no hay nada nuevo que cobrar en este pedido.
+            </p>
+            <p className="text-xs text-on-surface-soft">
+              Para dejar su fecha y método registrados, usa «Registrar ajuste o devolución» o registra
+              el movimiento real cuando ocurra; duplicar el cobro crearía saldo a favor por error.
+            </p>
+          </div>
+        ) : (
         <div className="space-y-3 border-t border-edge pt-4">
           <div className="grid grid-cols-2 gap-3">
             <TextField
@@ -450,6 +482,7 @@ export function OrderPaymentsSheet({
             </Button>
           )}
         </div>
+        )}
       </div>
     </Sheet>
   );

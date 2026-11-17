@@ -490,6 +490,28 @@ describe("#456 r2 — posventa confirmada ajusta el periodo", () => {
     expect(close.costCents).toBe(0); // sin costo conocido originalmente, nada que revertir
     expect(close.details.sales.some((row) => row.amountCents < 0)).toBe(true);
   });
+  it("el reembolso ejecutado resta del mes con fila y grupo propios", () => {
+    const incident = refundIncident("2026-11-20T12:00:00.000Z", 18000);
+    incident.events = [
+      { id: "e1", kind: "resolution_agreed", at: "2026-11-19T12:00:00.000Z", by: "u1" },
+      { id: "e2", kind: "confirmed", at: "2026-11-20T12:00:00.000Z", by: "u1", detail: { refundExecutedCents: 18000 } },
+    ];
+    const close = monthlyClose({ storeId: "s1", month: M(2026, 11), orders: [baseOrder({ incidents: [incident] })], paymentsByOrder: {}, expenses: [] });
+    const outRow = close.details.collections.find((row) => row.concept === "Reembolso de posventa entregado");
+    expect(outRow).toMatchObject({ amountCents: -18000, date: "2026-11-20" });
+    const group = close.collectionGroups.find((g) => g.group === "reembolsos_posventa");
+    expect(group).toMatchObject({ totalCents: -18000, count: 1 });
+    expect(close.collectionsCents).toBe(-18000);
+  });
+
+  it("sin reembolso ejecutado no aparece la fila ni el grupo", () => {
+    const incident = refundIncident("2026-11-20T12:00:00.000Z", 18000);
+    // confirmada pero el dinero NO entregado (comprometido): sin salida.
+    const close = monthlyClose({ storeId: "s1", month: M(2026, 11), orders: [baseOrder({ incidents: [incident] })], paymentsByOrder: {}, expenses: [] });
+    expect(close.details.collections.find((row) => row.concept === "Reembolso de posventa entregado")).toBeUndefined();
+    expect(close.collectionGroups.find((g) => g.group === "reembolsos_posventa")).toBeUndefined();
+  });
+
 });
 
 describe("#458 r3 — cobros con ajustes correctivos", () => {

@@ -52,13 +52,14 @@ export type CloseContribution = {
   evidence: "verified" | "pending";
 };
 
-export type CollectionGroupKey = "anticipos_del_mes" | "liquidaciones_del_mes" | "pagos_de_ventas_previas" | "sin_clasificar";
+export type CollectionGroupKey = "anticipos_del_mes" | "liquidaciones_del_mes" | "pagos_de_ventas_previas" | "sin_clasificar" | "reembolsos_posventa";
 
 export const COLLECTION_GROUP_LABELS: Record<CollectionGroupKey, string> = {
   anticipos_del_mes: "Anticipos del mes",
   liquidaciones_del_mes: "Liquidaciones del mes",
   pagos_de_ventas_previas: "Pagos de ventas previas",
   sin_clasificar: "Origen pendiente de clasificar",
+  reembolsos_posventa: "Reembolsos de posventa (salida)",
 };
 
 export type CollectionGroup = { group: CollectionGroupKey; label: string; totalCents: number; count: number };
@@ -321,6 +322,31 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
         amountCents: adjustment,
         evidence: "verified",
       });
+      // #455 r4 (UX): the EXECUTED refund is money that LEFT in its own
+      // month — "Dinero recibido" must net it as a signed outflow or the
+      // figure never reconciles with the cashbox. The confirmation month
+      // owns it (execution follows confirmation in the same flow).
+      const executedRefundCents = (incident.events ?? []).reduce(
+        (sum, event) => sum + ((event.kind === "confirmed" || event.kind === "refund_executed") && typeof event.detail?.refundExecutedCents === "number" && Number.isSafeInteger(event.detail.refundExecutedCents) ? event.detail.refundExecutedCents : 0),
+        0
+      );
+      if (executedRefundCents > 0) {
+        collectionsCents -= executedRefundCents;
+        const refundBucket = groupTotals.get("reembolsos_posventa") ?? { totalCents: 0, count: 0 };
+        refundBucket.totalCents -= executedRefundCents;
+        refundBucket.count += 1;
+        groupTotals.set("reembolsos_posventa", refundBucket);
+        details.collections.push({
+          date: confirmedAt.slice(0, 10),
+          kind: "collection",
+          reference: orderReference(order),
+          orderId: order.id,
+          customerName: customerNameOf(order.customerId),
+          concept: "Reembolso de posventa entregado",
+          amountCents: -executedRefundCents,
+          evidence: "verified",
+        });
+      }
       // Reversible cost: the refunded piece's line, when its cost is KNOWN.
       if (adjustment < 0 && typeof incident.quantity === "number") {
         const item = items.find(
