@@ -406,6 +406,100 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit through t
     expect(dest.creditAppliedCents).toBe(10000);
   });
 
+  it("#380 QA r3 (MAYOR-1): el reintento tras liberación PARCIAL completa la obligación congelada", async () => {
+    // Single origin whose committed mirror (12000) is smaller than its net
+    // (30000): the callable conservatively releases only 12000. The retry —
+    // after the mirror is repaired — must release the REMAINING 18000 against
+    // the FROZEN obligation (30000), not a recomputed 18000−12000=6000.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/ic-origin-p1"), orderDoc("ic-origin-p1", {
+        items: [{ productName: "Broche", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "ic-origin-p1_L0" }],
+        paymentsReceivedCents: 40000,
+        creditConsumedCents: 12000,
+        creditLedger: [{ id: "con_p1", kind: "consumption", fromOrderId: "ic-dest-p1", amountCents: 12000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" }],
+        revision: 1,
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/ic-dest-p1"), orderDoc("ic-dest-p1", {
+        items: [{ lineId: "p1_L0", productId: "ic-product", productName: "Anillo QA", quantity: 1, unitPrice: 400, subtotal: 400 }],
+        paymentsReceivedCents: 10000,
+        creditAppliedCents: 30000,
+        creditLedger: [{ id: "p1", kind: "application", fromOrderId: "ic-origin-p1", amountCents: 30000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" }],
+        revision: 1,
+        incidents: [agreedRefund("inc-p1")],
+      }));
+    });
+    await expect(
+      applyIncidentEventTx({ orderId: "ic-dest-p1", storeId: "credit-store", incidentId: "inc-p1", event: event("ic-conf-p1", "confirmed") })
+    ).rejects.toThrow(/solo se restituyeron 120 de los 200/i);
+    let dest = (await getDoc(doc(holder.db, "orders/ic-dest-p1"))).data()!;
+    expect(dest.creditAppliedCents).toBe(18000); // 30000 − the 12000 that landed
+    // The mirror gets repaired (the drift was the cap): now the retry must
+    // finish the job against the FROZEN 30000 — exactly once, no double.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/ic-origin-p1"), {
+        ...( (await getDoc(doc(holder.db, "orders/ic-origin-p1"))).data() as object),
+        creditConsumedCents: 18000,
+      }, { merge: true });
+    });
+    await applyIncidentEventTx({
+      orderId: "ic-dest-p1", storeId: "credit-store", incidentId: "inc-p1", event: event("ic-conf-p1", "confirmed"),
+    });
+    dest = (await getDoc(doc(holder.db, "orders/ic-dest-p1"))).data()!;
+    const origin = (await getDoc(doc(holder.db, "orders/ic-origin-p1"))).data()!;
+    // The obligation was 20000; the other 10000 stays applied by design.
+    expect(dest.creditAppliedCents).toBe(10000);
+    expect(origin.creditConsumedCents).toBe(10000); // 18000 repaired − the 8000 the retry returned
+    const released = ((dest.creditLedger as Array<{ kind: string; id: string; amountCents: number }>) ?? [])
+      .filter((entry) => entry.kind === "release" && entry.id.startsWith("rel_ic-conf-p1"))
+      .reduce((sum, entry) => sum + entry.amountCents, 0);
+    expect(released).toBe(20000); // exactly the obligation — una sola vez
+  });
+
+  it("#380 QA r3 (MAYOR-1): liberación parcial con deriva NO repara — reintenta con las MISMAS cifras, jamás éxito falso", async () => {
+    // Two origins: one healthy (15000), one drifted (no mirror). The confirm
+    // releases the healthy 15000; retries can do no better — and must keep
+    // saying "150 de los 300" against the frozen obligation instead of
+    // reporting success with the clienta short.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/ic-origin-q1"), orderDoc("ic-origin-q1", {
+        items: [{ productName: "Aro", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "ic-origin-q1_L0" }],
+        paymentsReceivedCents: 20000,
+        creditConsumedCents: 15000,
+        creditLedger: [{ id: "con_q1", kind: "consumption", fromOrderId: "ic-dest-q1", amountCents: 15000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" }],
+        revision: 1,
+      }));
+      // q2: drift — the ledger claims credit the mirror never recorded.
+      await setDoc(doc(ctx.firestore(), "orders/ic-origin-q2"), orderDoc("ic-origin-q2", {
+        items: [{ productName: "Esclava", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "ic-origin-q2_L0" }],
+        paymentsReceivedCents: 20000,
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/ic-dest-q1"), orderDoc("ic-dest-q1", {
+        items: [{ lineId: "q1_L0", productId: "ic-product", productName: "Anillo QA", quantity: 1, unitPrice: 400, subtotal: 400 }],
+        paymentsReceivedCents: 10000,
+        creditAppliedCents: 30000,
+        creditLedger: [
+          { id: "q1a", kind: "application", fromOrderId: "ic-origin-q1", amountCents: 15000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" },
+          { id: "q1b", kind: "application", fromOrderId: "ic-origin-q2", amountCents: 15000, at: "2026-11-05T10:05:00.000Z", by: "tx-user" },
+        ],
+        revision: 1,
+        incidents: [agreedRefund("inc-q1")],
+      }));
+    });
+    await expect(
+      applyIncidentEventTx({ orderId: "ic-dest-q1", storeId: "credit-store", incidentId: "inc-q1", event: event("ic-conf-q1", "confirmed") })
+    ).rejects.toThrow(/solo se restituyeron 150 de los 200/i);
+    // Retry: nothing changed — the SAME loud shortfall, never a false success.
+    await expect(
+      applyIncidentEventTx({ orderId: "ic-dest-q1", storeId: "credit-store", incidentId: "inc-q1", event: event("ic-conf-q1", "confirmed") })
+    ).rejects.toThrow(/solo se restituyeron 150 de los 200/i);
+    const dest = (await getDoc(doc(holder.db, "orders/ic-dest-q1"))).data()!;
+    expect(dest.creditAppliedCents).toBe(15000); // only the healthy 15000 came back
+    const released = ((dest.creditLedger as Array<{ kind: string; id: string; amountCents: number }>) ?? [])
+      .filter((entry) => entry.kind === "release" && entry.id.startsWith("rel_ic-conf-q1"))
+      .reduce((sum, entry) => sum + entry.amountCents, 0);
+    expect(released).toBe(15000);
+  });
+
   it("an absent credit origin surfaces the same loud shortfall (r4 successor)", async () => {
     // The backing order document no longer exists: the callable skips it
     // (conservative), the confirmation lands, and the shortfall is loud —

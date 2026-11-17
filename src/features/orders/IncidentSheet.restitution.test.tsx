@@ -155,6 +155,24 @@ describe("pendingRestitutionCents (motor compartido con la capa de datos)", () =
     expect(pendingRestitutionCents(partial, incidentOf(partial))).toBe(18000);
   });
 
+  it("usa la obligación CONGELADA aunque el crédito aplicado ya bajó (QA r3 MAYOR-1)", () => {
+    // Post-partial-release: the callable already decremented creditApplied
+    // (30000→12000) and a partial 12000 release is tagged. Pending is the
+    // FROZEN 20000 − 12000 landed = 8000 — a recomputed min(12000, …) would
+    // hide the clienta's missing money.
+    const incident = { ...baseOrder(undefined, true).incidents![0] };
+    incident.events = [
+      ...incident.events!.filter((e) => e.kind !== "confirmed"),
+      { id: "iev-c9", at: NOW, by: "u1", kind: "confirmed", detail: { restitutionCents: 20000 } },
+    ];
+    const order = {
+      ...baseOrder([{ id: "rel_iev-c9_1", kind: "release", fromOrderId: "oA", amountCents: 12000, at: NOW, by: "u1" }], false),
+      creditAppliedCents: 12000,
+      incidents: [incident],
+    } as Order;
+    expect(pendingRestitutionCents(order, incident)).toBe(8000);
+  });
+
   it("es cero sin confirmación o sin obligación de crédito", () => {
     const unconfirmed = baseOrder(undefined, false);
     expect(pendingRestitutionCents(unconfirmed, incidentOf(unconfirmed))).toBe(0);
