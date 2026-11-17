@@ -64,7 +64,7 @@ export function AppShell() {
   if (storeSettingsRoute) {
     tab = "tienda";
   } else if (seg === "productos") {
-    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : sub === "reparto" ? "productos_reparto" : sub === "diagnostico" ? "productos_diagnostico" : sub === "simulador" ? "productos_simulador" : sub === "ranking" ? "productos_ranking" : "productos";
+    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : sub === "reparto" ? "productos_reparto" : sub === "diagnostico" ? "productos_diagnostico" : sub === "simulador-contribucion" ? "productos_simulador_contribucion" : sub === "ranking" ? "productos_ranking" : "productos";
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
@@ -181,7 +181,7 @@ export function AppShell() {
     case "productos_diagnostico":
       screen = <PriceDiagnosticsScreen key={activeStore?.id ?? "store"} />;
       break;
-    case "productos_simulador":
+    case "productos_simulador_contribucion":
       screen = <ContributionSimulatorScreen key={activeStore?.id ?? "store"} />;
       break;
     case "productos_estrategia":

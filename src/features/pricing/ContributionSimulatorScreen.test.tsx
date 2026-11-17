@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { ContributionSimulatorScreen } from "./ContributionSimulatorScreen";
+import { resetBandSimulatorPrefillForTests, setBandSimulatorPrefill } from "../../lib/bandSimulatorPrefill";
 import type { Category, Product } from "../../types";
 
 const mocks = vi.hoisted(() => ({
@@ -96,5 +97,46 @@ describe("ContributionSimulatorScreen (#336)", () => {
     expect(screen.getByText(/1 pieza en esta categoría/)).toBeTruthy();
     expect(screen.getByText(/sin canibalización ni aumento de demanda simulados/)).toBeTruthy();
     expect(screen.getByText("8.6")).toBeTruthy();
+  });
+});
+
+describe("ContributionSimulatorScreen — modo banda (#336 QA MAYOR-1)", () => {
+  it("simula una banda de costo: miembros por categoría y rango, con pista de entradas incompletas", () => {
+    mocks.state.products = [
+      design("barato", 20, { t_retail: 60, t_girly: 90 }),
+      design("medio", 55, { t_retail: 93, t_girly: 150 }),
+      design("caro", 120, { t_retail: 190, t_girly: 260 }),
+      design("sincosto", undefined, { t_retail: 70, t_girly: 100 }),
+    ];
+    render(<ToastProvider><ContributionSimulatorScreen /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Simular"), { target: { value: "banda" } });
+    // Sin completar nada: pista explícita de qué falta (antes, silencio).
+    expect(screen.getByText(/Completa precio actual, precio propuesto y volumen/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "c1" } });
+    fill("Costo desde $", "50");
+    fill("Costo hasta $", "100");
+    // La banda [50, 100) contiene a «medio» (55); barato (20), caro (120) y
+    // sincosto quedan fuera — el conjunto es visible, no un misterio.
+    expect(screen.getByText(/1 pieza en esta banda/)).toBeTruthy();
+    expect(screen.getByText(/medio/)).toBeTruthy();
+    expect(screen.queryByText(/barato/)).toBeNull();
+    fill("Precio actual", "93");
+    fill("Precio propuesto", "100");
+    fill("Volumen base (piezas)", "10");
+    // En banda no hay pieza seleccionada: el costo variable se captura (55,
+    // el de «medio»): c0 = 38, c1 = 45 → q* = 8.44 → 9 igualan o superan.
+    fill("Costo variable por pieza (opcional)", "55");
+    expect(screen.getByText(/9 piezas igualan o superan/)).toBeTruthy();
+  });
+
+  it("toma el prefills de banda dejado por Estrategia (sin recaptura)", () => {
+    resetBandSimulatorPrefillForTests();
+    setBandSimulatorPrefill({ categoryId: "c1", min: 50, max: 100 });
+    render(<ToastProvider><ContributionSimulatorScreen /></ToastProvider>);
+    expect((screen.getByLabelText("Simular") as HTMLSelectElement).value).toBe("banda");
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe("c1");
+    expect((screen.getByLabelText("Costo desde $") as HTMLInputElement).value).toBe("50");
+    expect((screen.getByLabelText("Costo hasta $") as HTMLInputElement).value).toBe("100");
+    // El prefill se consume una vez: un remount no hereda la banda vieja.
   });
 });

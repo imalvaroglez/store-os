@@ -165,3 +165,28 @@ describe("simulateContribution — sin sorpresas numéricas", () => {
     }
   });
 });
+
+describe("nota de límite precisa con contribuciones no positivas (#336 QA menor)", () => {
+  it("c0 ≤ 0 y c1 = 0: cualquier volumen iguala o supera (no «ningún volumen alcanza»)", () => {
+    const result = simulateContribution({
+      priceCurrentCents: 1000, priceProposedCents: 1000,
+      basePieces: 5, volumeSource: "ingresado",
+      variableCostCents: 1000, // c0 = c1 = 0
+      minContributionPerPieceCents: null, ladder: null, simulatedTierIndex: undefined, sensitivityPct: [],
+    });
+    expect(result.status).toBe("limit");
+    expect(result.notes.some((note) => note.includes("cualquier volumen iguala o supera"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("ningún volumen alcanza"))).toBe(false);
+  });
+
+  it("c0 > 0 y c1 = 0: aquí sí ningún volumen alcanza", () => {
+    const result = simulateContribution({
+      priceCurrentCents: 1500, priceProposedCents: 1000,
+      basePieces: 5, volumeSource: "ingresado",
+      variableCostCents: 1000, // c0 = 500, c1 = 0
+      minContributionPerPieceCents: null, ladder: null, simulatedTierIndex: undefined, sensitivityPct: [],
+    });
+    expect(result.status).toBe("limit");
+    expect(result.notes.some((note) => note.includes("ningún volumen alcanza"))).toBe(true);
+  });
+});

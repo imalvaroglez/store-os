@@ -146,9 +146,14 @@ export function simulateContribution(input: ContributionInput): ContributionResu
       unitCurrentCents: c0, unitProposedCents: c1,
       baseTotalCents: c0 * input.basePieces, scenarioTotalCents: null, deltaCents: null,
       breakEven: null, perOrderPackagingCents,
-      notes: [...notes, c1 === 0
-        ? "La contribución por pieza propuesta es $0.00: ningún volumen alcanza la contribución actual."
-        : "La contribución por pieza propuesta es negativa: ningún volumen alcanza la contribución actual."],
+      notes: [...notes, c1 >= c0
+        // #336 QA: when the CURRENT contribution is also non-positive, the
+        // proposal (0 or a smaller loss) matches or beats it at ANY volume —
+        // "ningún volumen alcanza" would be false.
+        ? `La contribución por pieza propuesta no es positiva y la actual tampoco: cualquier volumen iguala o supera.`
+        : c1 === 0
+          ? "La contribución por pieza propuesta es $0.00: ningún volumen alcanza la contribución actual."
+          : "La contribución por pieza propuesta es negativa: ningún volumen alcanza la contribución actual."],
       blockers, sensitivity: [],
     };
   }

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Badge, Button, Card, Money, Screen, ScreenHeader, SelectField, TextField } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
 import { tiersForStore } from "../../lib/pricing";
+import { takeBandSimulatorPrefill } from "../../lib/bandSimulatorPrefill";
 import { parseAmount } from "../../lib/money";
 import { navigate } from "../../lib/router";
 import { simulateContribution, type VolumeSource } from "../../lib/contribution";
@@ -11,7 +12,7 @@ import { simulateContribution, type VolumeSource } from "../../lib/contribution"
 // lib/contribution.ts (probada aparte); esta pantalla la alimenta con los
 // valores reales de la pieza/nivel y declara la fuente del volumen.
 
-type Mode = "pieza" | "categoria";
+type Mode = "pieza" | "categoria" | "banda";
 
 function pesosInputToCents(raw: string): number | null {
   const parsed = parseAmount(raw);
@@ -25,9 +26,12 @@ function centsPesos(cents: number | null): number | undefined {
 export function ContributionSimulatorScreen() {
   const { state, activeStore } = useStore();
   const tiers = useMemo(() => tiersForStore(activeStore), [activeStore]);
-  const [mode, setMode] = useState<Mode>("pieza");
+  // #336: a band "Simular" from Estrategia leaves a one-shot prefill so the
+  // simulator opens scoped to that category + cost range (no recapture).
+  const [bandPrefill] = useState(() => takeBandSimulatorPrefill());
+  const [mode, setMode] = useState<Mode>(bandPrefill ? "banda" : "pieza");
   const [productId, setProductId] = useState("");
-  const [categoryId, setCategoryId] = useState("");
+  const [categoryId, setCategoryId] = useState(bandPrefill?.categoryId ?? "");
   const [tierId, setTierId] = useState(tiers[0]?.id ?? "");
   const [priceCurrent, setPriceCurrent] = useState("");
   const [priceProposed, setPriceProposed] = useState("");
@@ -36,18 +40,17 @@ export function ContributionSimulatorScreen() {
   const [minPerPiece, setMinPerPiece] = useState("");
   const [variableCost, setVariableCost] = useState("");
   const [sensitivity, setSensitivity] = useState("-20, 10");
+  const [bandMin, setBandMin] = useState(bandPrefill && bandPrefill.min > 0 ? String(bandPrefill.min) : "");
+  const [bandMax, setBandMax] = useState(bandPrefill?.max != null ? String(bandPrefill.max) : "");
 
-  if (!activeStore) return null;
-  const storeProducts = state.products.filter((p) => p.storeId === activeStore.id);
-  const categories = state.categories.filter((c) => c.storeId === activeStore.id);
-  const product = storeProducts.find((p) => p.id === productId) ?? null;
-
+  // (#336 QA menor: hooks must run unconditionally — the early return used to
+  // sit ABOVE these useMemos, a latent rules-of-hooks violation.)
   // Variable cost per piece: acquisition + the level's per-piece packaging.
   // Any missing figure (product cost, a material without estimated cost)
   // leaves the cost UNKNOWN — never zero.
   const packagingCost = useMemo(() => {
-    const materials = new Map((activeStore.packaging?.materials ?? []).map((m) => [m.id, m]));
-    const tierPackaging = tierId ? activeStore.packaging?.byTier?.[tierId] : undefined;
+    const materials = new Map((activeStore?.packaging?.materials ?? []).map((m) => [m.id, m]));
+    const tierPackaging = tierId ? activeStore?.packaging?.byTier?.[tierId] : undefined;
     const perPieceCents = (tierPackaging?.perPiece ?? []).reduce<number | null>((sum, line) => {
       const cost = materials.get(line.materialId)?.estimatedCost;
       if (sum == null || cost === undefined || !Number.isFinite(cost)) return null;
@@ -59,7 +62,13 @@ export function ContributionSimulatorScreen() {
       return sum + Math.round(cost * 100 * line.units);
     }, 0);
     return { perPieceCents, perOrderCents, perPieceIncomplete: (tierPackaging?.perPiece ?? []).length > 0 && perPieceCents == null };
-  }, [activeStore.packaging, tierId]);
+  }, [activeStore?.packaging, tierId]);
+
+  // (#336: the ladder memo needs the product, so it is derived before it —
+  // null-safe without the store guard that now lives below the hooks.)
+  const product = activeStore
+    ? state.products.find((p) => p.id === productId && p.storeId === activeStore.id) ?? null
+    : null;
 
   const productCostCents = product && product.cost !== undefined && Number.isFinite(product.cost) ? Math.round(product.cost * 100) : null;
   const autoVariableCostCents = mode === "pieza" && productCostCents != null && packagingCost.perPieceCents != null
@@ -79,10 +88,21 @@ export function ContributionSimulatorScreen() {
     return rungs.length > 1 && index >= 0 ? { rungs, index } : null;
   }, [mode, product, tiers, tierId]);
 
-  const sensitivityPct = sensitivity
+  if (!activeStore) return null;
+  const storeProducts = state.products.filter((p) => p.storeId === activeStore.id);
+  const categories = state.categories.filter((c) => c.storeId === activeStore.id);
+
+  const sensitivityTokens = sensitivity
     .split(",")
-    .map((part) => Number(part.trim()))
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  const sensitivityPct = sensitivityTokens
+    .map((part) => Number(part))
     .filter((pct) => Number.isFinite(pct) && pct !== 0)
+    .slice(0, 4);
+  // #336 QA (menor): invalid tokens are named, never dropped in silence.
+  const sensitivityIgnored = sensitivityTokens
+    .filter((part) => !Number.isFinite(Number(part)) || Number(part) === 0)
     .slice(0, 4);
 
   const manualCostCents = pesosInputToCents(variableCost);
@@ -109,6 +129,17 @@ export function ContributionSimulatorScreen() {
 
   const categoryProducts = mode === "categoria" && categoryId
     ? storeProducts.filter((p) => (p.categoryIds ?? []).includes(categoryId))
+    : [];
+  // #336 banda: the members of a cost band of ONE category — the same shape
+  // Estrategia's band tables use (acquisition cost per piece, pesos).
+  const bandMinPesos = pesosInputToCents(bandMin) != null ? pesosInputToCents(bandMin)! / 100 : null;
+  const bandMaxPesos = pesosInputToCents(bandMax) != null ? pesosInputToCents(bandMax)! / 100 : null;
+  const bandProducts = mode === "banda" && categoryId && bandMinPesos != null
+    ? storeProducts.filter((p) =>
+        (p.categoryIds ?? []).includes(categoryId)
+        && p.cost !== undefined && Number.isFinite(p.cost)
+        && p.cost >= bandMinPesos
+        && (bandMaxPesos == null || p.cost < bandMaxPesos))
     : [];
 
   function pickProduct(next: string) {
@@ -142,6 +173,7 @@ export function ContributionSimulatorScreen() {
               onChange={(value) => { setMode(value as Mode); setProductId(""); setPriceCurrent(""); }}
               options={[
                 { value: "pieza", label: "Una pieza" },
+                { value: "banda", label: "Una banda de costo" },
                 { value: "categoria", label: "Una categoría (conjunto)" },
               ]}
             />
@@ -158,6 +190,31 @@ export function ContributionSimulatorScreen() {
                 onChange={pickProduct}
                 options={[{ value: "", label: "Elige una pieza" }, ...storeProducts.map((p) => ({ value: p.id, label: p.name }))]}
               />
+            ) : mode === "banda" ? (
+              <>
+                <SelectField
+                  label="Categoría"
+                  value={categoryId}
+                  onChange={(value) => { setCategoryId(value); setPriceCurrent(""); }}
+                  options={[{ value: "", label: "Elige una categoría" }, ...categories.map((c) => ({ value: c.id, label: c.name }))]}
+                />
+                <TextField
+                  label="Costo desde $"
+                  value={bandMin}
+                  onChange={(e) => setBandMin(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="50"
+                  title="Límite inferior del rango de costo de adquisición, como en la tabla de bandas de Estrategia."
+                />
+                <TextField
+                  label="Costo hasta $"
+                  value={bandMax}
+                  onChange={(e) => setBandMax(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="sin tope"
+                  title="Límite superior del rango (la pieza que cuesta exactamente el tope pertenece a la banda siguiente)."
+                />
+              </>
             ) : (
               <SelectField
                 label="Categoría"
@@ -180,10 +237,22 @@ export function ContributionSimulatorScreen() {
             />
             <TextField label="Mínimo de contribución por pieza (opcional)" value={minPerPiece} onChange={(e) => setMinPerPiece(e.target.value)} inputMode="decimal" placeholder="Solo si lo decides" title="Restricción dura: si la propuesta no lo alcanza, el escenario es infactible." />
             <TextField label="Cambios de volumen a comparar (%)" value={sensitivity} onChange={(e) => setSensitivity(e.target.value)} placeholder="-20, 10" title="Hasta cuatro porcentajes separados por comas. Comparación de escenario, nunca demanda esperada." />
+            {sensitivityIgnored.length > 0 && (
+              <p className="-mt-1 text-xs text-on-surface-soft">
+                Se ignoraron por no ser porcentajes válidos: {sensitivityIgnored.join(", ")}.
+              </p>
+            )}
           </div>
           {mode === "categoria" && categoryId && (
             <p className="mt-2 text-xs text-on-surface-soft">
               {categoryProducts.length} {categoryProducts.length === 1 ? "pieza en esta categoría" : "piezas en esta categoría"} · resultado conjunto: el volumen y el precio son el supuesto global que ingresas — sin canibalización ni aumento de demanda simulados.
+            </p>
+          )}
+          {mode === "banda" && categoryId && (
+            <p className="mt-2 text-xs text-on-surface-soft">
+              {bandProducts.length === 1 ? "1 pieza en esta banda" : `${bandProducts.length} piezas en esta banda`}
+              {bandProducts.length > 0 ? `: ${bandProducts.slice(0, 6).map((p) => p.name).join(", ")}${bandProducts.length > 6 ? ` y ${bandProducts.length - 6} más` : ""}` : ""}
+              {" "}· resultado conjunto: el volumen y el precio son el supuesto global que ingresas. Piezas sin costo registrado quedan fuera (la banda se define por costo de adquisición).
             </p>
           )}
           <p className="mt-2 text-xs text-on-surface-soft" title="La serie histórica de volumen se integrará con el análisis por periodo; mientras tanto, el volumen es un valor que ingresas.">
@@ -191,13 +260,22 @@ export function ContributionSimulatorScreen() {
           </p>
         </Card>
 
+        {!result && (
+          <Card>
+            <p className="text-sm text-on-surface">
+              Completa precio actual, precio propuesto y volumen para simular
+              {variableCostCents == null ? " — y captura el costo variable por pieza (o regístralo en Compras): sin costo completo no hay contribución." : "."}
+            </p>
+          </Card>
+        )}
+
         {result && (
           <Card>
             <div className="flex items-baseline justify-between gap-2 flex-wrap">
               <h2 className="font-semibold text-ink text-sm">Resultado</h2>
               <span className="text-xs text-on-surface-soft">
                 Simulación · {new Date().toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" })}
-                {period ? ` · periodo: ${period}` : ""} · volumen {volumeSource}
+                {period ? ` · periodo: ${period}` : ""} · volumen {volumeSource} · {Math.max(0, pieces)} {Math.max(0, pieces) === 1 ? "pieza" : "piezas"} · precio <Money exact amount={currentCents! / 100} /> → <Money exact amount={proposedCents! / 100} />
               </span>
             </div>
             {result.status === "infeasible" ? (
