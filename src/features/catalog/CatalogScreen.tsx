@@ -273,26 +273,26 @@ function ProductCard({
       {isTiered && typeof product.quantityOnHand === "number" && (
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,.8fr)] gap-x-4 mt-4 min-w-0">
           <StatRow label="Disponible">{product.quantityOnHand}</StatRow>
-          <StatRow label="Comprometido" tone={committed > 0 ? "danger" : "default"}>
-            {committed > 0 ? (
-              // #463: tap the figure to see WHICH orders hold the pieces;
-              // zero stays a plain number (no dead control).
-              <Button
-                variant="ghost"
-                className="!px-1 !py-0 -ml-1 serif-display tnum font-bold text-danger underline decoration-dotted underline-offset-2"
-                aria-label={`Ver pedidos con piezas comprometidas (${committed})`}
-                onClick={(e) => {
-                  // The card itself opens the editor on click — the
-                  // drill-down must not bubble into it.
-                  e.stopPropagation();
-                  onCommitted();
-                }}
-              >
-                {committed}
-              </Button>
-            ) : (
-              committed
-            )}
+          <StatRow
+            label="Comprometido"
+            tone={committed > 0 ? "danger" : "default"}
+            {...(committed > 0
+              ? {
+                  onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+                    // The card itself opens the editor on click — the
+                    // drill-down owns its full area without bubbling.
+                    event.stopPropagation();
+                    onCommitted();
+                  },
+                  interactiveTitle: `Ver pedidos con piezas comprometidas (${committed})`,
+                }
+              : {})}
+          >
+            {/* #463 r2 (revisión UX): the WHOLE cell is the tap target — a
+                lone underlined figure was unreachable on touch. The dotted
+                underline stays as the visual affordance; zero stays a plain
+                number (no dead control). */}
+            {committed > 0 ? <span className="underline decoration-dotted underline-offset-2">{committed}</span> : committed}
           </StatRow>
           <StatRow label="Físico">{product.quantityOnHand + committed}</StatRow>
         </div>
