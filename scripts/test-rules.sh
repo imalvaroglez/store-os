@@ -11,6 +11,7 @@ FIRESTORE_FILES=(
   src/app/firebase/securityMatrix.emulator.test.ts
   src/app/firebase/orderTransactions.emulator.test.ts
   src/app/firebase/orderPayments.emulator.test.ts
+  src/app/firebase/creditEditInvariants.emulator.test.ts
   src/app/firebase/incidents.emulator.test.ts
   src/app/firebase/expenses.emulator.test.ts
   src/app/firebase/installments.emulator.test.ts
