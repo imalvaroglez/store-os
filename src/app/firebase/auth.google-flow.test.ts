@@ -113,11 +113,20 @@ describe("signInWithGoogle", () => {
     expect(result).toMatchObject({ uid: "uid_google", email: "fer@example.com", role: "member" });
   });
 
-  it("explains an unauthorized domain in Spanish", async () => {
+  it("propagates the original code so the UI can translate it (review #486 R1)", async () => {
     vi.stubGlobal("navigator", { userAgent: WINDOWS_CHROME, maxTouchPoints: 0 });
     mocks.signInWithPopup.mockRejectedValue({ code: "auth/unauthorized-domain" });
 
-    await expect(signInWithGoogle()).rejects.toThrow(/dominio no está autorizado/);
+    // The code must survive to AuthScreen.friendlyError — wrapping the error
+    // here left known codes masked by the generic message.
+    await expect(signInWithGoogle()).rejects.toMatchObject({ code: "auth/unauthorized-domain" });
+  });
+
+  it("keeps the popup-cancellation code intact for desktop", async () => {
+    vi.stubGlobal("navigator", { userAgent: WINDOWS_CHROME, maxTouchPoints: 0 });
+    mocks.signInWithPopup.mockRejectedValue({ code: "auth/popup-closed-by-user" });
+
+    await expect(signInWithGoogle()).rejects.toMatchObject({ code: "auth/popup-closed-by-user" });
   });
 });
 

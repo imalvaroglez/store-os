@@ -64,4 +64,17 @@ describe("Google redirect failure surfaces on the sign-in screen", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Entrar" })).toBeTruthy());
     expect(screen.queryByText(/inicio con Google/)).toBeNull();
   });
+
+  it("translates known Google codes in the popup path instead of the generic mask (review #486 R1)", async () => {
+    mocks.signInWithGoogle.mockRejectedValue({ code: "auth/unauthorized-domain" });
+    mountAuthTree(<AuthScreen />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar con Google" }));
+    await waitFor(() => expect(screen.getByText(/dominio no está autorizado/)).toBeTruthy());
+
+    // Desktop cancellation keeps its clear message too.
+    mocks.signInWithGoogle.mockRejectedValue({ code: "auth/popup-closed-by-user" });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar con Google" }));
+    await waitFor(() => expect(screen.getByText("Se canceló el inicio con Google.")).toBeTruthy());
+  });
 });
