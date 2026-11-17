@@ -22,6 +22,7 @@ import { AuthScreen } from "./AuthScreen";
 // the Firebase interstitial and never a swallowed generic message.
 beforeEach(() => {
   mocks.signInWithGoogle.mockReset();
+  mocks.signInWithEmail.mockReset();
 });
 
 function attemptGoogle() {
@@ -80,5 +81,46 @@ describe("Google popup failures on the sign-in screen", () => {
       expect(screen.getByText("No se pudo completar. Intenta de nuevo.")).toBeTruthy()
     );
     expect(screen.getByRole("button", { name: "Continuar con Google" })).not.toBeDisabled();
+  });
+
+  it("explains a superseded popup attempt as a cancellation", async () => {
+    mocks.signInWithGoogle.mockRejectedValue({ code: "auth/cancelled-popup-request" });
+
+    render(<AuthScreen />);
+
+    attemptGoogle();
+    await waitFor(() =>
+      expect(screen.getByText("Se canceló el inicio con Google.")).toBeTruthy()
+    );
+  });
+});
+
+describe("email/password failures share the same screen mapping", () => {
+  async function attemptEmailSignIn() {
+    fireEvent.change(screen.getByLabelText("Correo"), { target: { value: "fer@test.os" } });
+    fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: "secreto123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+  }
+
+  it("treats an unknown email like a wrong password", async () => {
+    mocks.signInWithEmail.mockRejectedValue({ code: "auth/user-not-found" });
+
+    render(<AuthScreen />);
+
+    await attemptEmailSignIn();
+    await waitFor(() =>
+      expect(screen.getByText("Correo o contraseña incorrectos.")).toBeTruthy()
+    );
+  });
+
+  it("explains a connection failure with a flow-neutral message (no Google out of context)", async () => {
+    mocks.signInWithEmail.mockRejectedValue({ code: "auth/network-request-failed" });
+
+    render(<AuthScreen />);
+
+    await attemptEmailSignIn();
+    await waitFor(() =>
+      expect(screen.getByText("No hubo conexión. Revisa tu conexión e inténtalo de nuevo.")).toBeTruthy()
+    );
   });
 });
