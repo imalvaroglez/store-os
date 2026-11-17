@@ -47,11 +47,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deliveredWithBalance seal
       // Delivered order already sealed by the legitimate path (simulated
       // history): the seal is evidence and must survive edits verbatim.
       await setDoc(doc(ctx.firestore(), "orders/inv383-sealed"), orderDoc({
-        orderStatus: "delivered", paymentsReceivedCents: 30000, note: "original", revision: 5, ...SEAL,
+        orderStatus: "delivered", paymentsReceivedCents: 30000, notes: "original", revision: 5, ...SEAL,
       }));
       // #370 compat: a historical DELIVERED order that predates the seal.
       await setDoc(doc(ctx.firestore(), "orders/inv383-historical"), orderDoc({
-        orderStatus: "delivered", paymentsReceivedCents: 30000, note: "viejo", revision: 2,
+        orderStatus: "delivered", paymentsReceivedCents: 30000, notes: "viejo", revision: 2,
       }));
       // For the legitimate delivery path.
       await setDoc(doc(ctx.firestore(), "orders/inv383-deliver"), orderDoc({ paymentsReceivedCents: 30000, revision: 1 }));
@@ -95,7 +95,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deliveredWithBalance seal
       updateDoc(doc(holder.db, "orders/inv383-sealed"), { deliveredWithBalanceCents: deleteField() })
     ).rejects.toThrow(/permission/i);
     await expect(
-      updateDoc(doc(holder.db, "orders/inv383-sealed"), { note: "edit inocuo", ...SEAL, deliveredWithBalanceCents: 100 })
+      updateDoc(doc(holder.db, "orders/inv383-sealed"), { notes: "edit inocuo", ...SEAL, deliveredWithBalanceCents: 100 })
     ).rejects.toThrow(/permission/i);
   });
 
@@ -116,11 +116,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deliveredWithBalance seal
   it("a later edit of the sealed order carries the seal VERBATIM and saves", async () => {
     const saved = await saveOrderWithStockTx(
       { uid: "inv383-user" } as never,
-      asOrder("inv383-sealed", { orderStatus: "delivered", note: "editado", revision: 5, ...SEAL } as never),
+      asOrder("inv383-sealed", { orderStatus: "delivered", notes: "editado", revision: 5, ...SEAL } as never),
       5,
       "mut-383-edit",
     );
-    expect(saved.order.note).toBe("editado");
+    expect(saved.order.notes).toBe("editado");
     expect(saved.order.deliveredWithBalanceCents).toBe(70000);
   });
 
@@ -138,10 +138,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deliveredWithBalance seal
   it("historical delivered orders without a seal keep editing normally (#370 compat)", async () => {
     const saved = await saveOrderWithStockTx(
       { uid: "inv383-user" } as never,
-      asOrder("inv383-historical", { orderStatus: "delivered", note: "aún editable", revision: 2 }),
+      asOrder("inv383-historical", { orderStatus: "delivered", notes: "aún editable", revision: 2 }),
       2,
       "mut-383-hist",
     );
-    expect(saved.order.note).toBe("aún editable");
+    expect(saved.order.notes).toBe("aún editable");
   });
 });
