@@ -512,6 +512,51 @@ describe("#456 r2 — posventa confirmada ajusta el periodo", () => {
     expect(close.collectionGroups.find((g) => g.group === "reembolsos_posventa")).toBeUndefined();
   });
 
+  it("#458 r5: la ejecución TARDÍA resta del mes de ejecución, no del de confirmación", () => {
+    // Confirmada 28-nov con la devolución pendiente; «Devolví el dinero» 3-dic.
+    const incident = refundIncident("2026-11-28T12:00:00.000Z", 18000);
+    incident.events = [
+      { id: "e1", kind: "resolution_agreed", at: "2026-11-19T12:00:00.000Z", by: "u1" },
+      { id: "e2", kind: "confirmed", at: "2026-11-28T12:00:00.000Z", by: "u1" },
+      { id: "e3", kind: "refund_executed", at: "2026-12-03T12:00:00.000Z", by: "u1", detail: { refundExecutedCents: 18000 } },
+    ];
+    const nov = monthlyClose({ storeId: "s1", month: M(2026, 11), orders: [baseOrder({ incidents: [incident] })], paymentsByOrder: {}, expenses: [] });
+    expect(nov.collectionsCents).toBe(0); // la salida NO pertenece a noviembre
+    expect(nov.details.collections.find((row) => row.concept === "Reembolso de posventa entregado")).toBeUndefined();
+    const dic = monthlyClose({ storeId: "s1", month: M(2026, 12), orders: [baseOrder({ incidents: [incident] })], paymentsByOrder: {}, expenses: [] });
+    expect(dic.collectionsCents).toBe(-18000);
+    expect(dic.details.collections.find((row) => row.concept === "Reembolso de posventa entregado")).toMatchObject({ amountCents: -18000, date: "2026-12-03" });
+  });
+
+  it("#458 r5: ejecuciones repartidas entre meses — cada salida en el suyo", () => {
+    const incident = refundIncident("2026-11-20T12:00:00.000Z", 18000);
+    incident.events = [
+      { id: "e1", kind: "resolution_agreed", at: "2026-11-19T12:00:00.000Z", by: "u1" },
+      { id: "e2", kind: "confirmed", at: "2026-11-20T12:00:00.000Z", by: "u1", detail: { refundExecutedCents: 10000 } },
+      { id: "e3", kind: "refund_executed", at: "2026-12-05T12:00:00.000Z", by: "u1", detail: { refundExecutedCents: 8000 } },
+    ];
+    const nov = monthlyClose({ storeId: "s1", month: M(2026, 11), orders: [baseOrder({ incidents: [incident] })], paymentsByOrder: {}, expenses: [] });
+    expect(nov.collectionsCents).toBe(-10000);
+    const dic = monthlyClose({ storeId: "s1", month: M(2026, 12), orders: [baseOrder({ incidents: [incident] })], paymentsByOrder: {}, expenses: [] });
+    expect(dic.collectionsCents).toBe(-8000);
+  });
+
+  it("#458 r5: borde CDMX — una ejecución tras la medianoche UTC pertenece al mes CDMX anterior", () => {
+    // 2026-12-01T05:30Z = 2026-11-30 23:30 en CDMX: la salida es de NOVIEMBRE
+    // y la fila muestra la fecha CDMX, no el corte UTC.
+    const incident = refundIncident("2026-11-20T12:00:00.000Z", 18000);
+    incident.events = [
+      { id: "e1", kind: "resolution_agreed", at: "2026-11-19T12:00:00.000Z", by: "u1" },
+      { id: "e2", kind: "confirmed", at: "2026-11-20T12:00:00.000Z", by: "u1" },
+      { id: "e3", kind: "refund_executed", at: "2026-12-01T05:30:00.000Z", by: "u1", detail: { refundExecutedCents: 18000 } },
+    ];
+    const nov = monthlyClose({ storeId: "s1", month: M(2026, 11), orders: [baseOrder({ incidents: [incident] })], paymentsByOrder: {}, expenses: [] });
+    const row = nov.details.collections.find((r) => r.concept === "Reembolso de posventa entregado");
+    expect(row).toMatchObject({ amountCents: -18000, date: "2026-11-30" });
+    const dic = monthlyClose({ storeId: "s1", month: M(2026, 12), orders: [baseOrder({ incidents: [incident] })], paymentsByOrder: {}, expenses: [] });
+    expect(dic.details.collections.find((r) => r.concept === "Reembolso de posventa entregado")).toBeUndefined();
+  });
+
 });
 
 describe("#458 r3 — cobros con ajustes correctivos", () => {
