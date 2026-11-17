@@ -250,13 +250,29 @@ export function OrderForm({
   const missingTier = isTiered && !!assignedTier && !tiers.some((tier) => tier.id === assignedTier) && !orderTierOverride;
   const currentTier = orderTierOverride || assignedTier || defaultPriceTier;
 
+  /** #467: the effective price for a line's tier — the VARIANT's own map when
+   * the line carries a color (a color with own prices and a missing level is
+   * SIN precio: never the design's figure), the design's map otherwise.
+   * undefined = sin precio (the line empties for manual capture). */
+  function effectiveLinePrice(
+    product: Product | undefined,
+    line: Pick<DraftLine, "variantId">,
+    tierId: string
+  ): number | undefined {
+    if (!product) return undefined;
+    const variant = line.variantId ? product.variants?.find((v) => v.id === line.variantId) : undefined;
+    if (variant) return variantEffectivePrice(variant, tierId, product);
+    const price = product.prices?.[tierId];
+    return price !== undefined && price > 0 ? price : undefined;
+  }
+
   function applyCustomer(customer: Customer, reprice: boolean) {
     const tier = customer.assignedPriceTierId ?? defaultPriceTier;
     const tierAvailable = !isTiered || tiers.some((candidate) => candidate.id === tier);
     if (reprice) setLines((current) => current.map((line) => {
       if (line.priceSource !== "automatic" || !line.productId) return line;
       const product = products.find((item) => item.id === line.productId);
-      const price = isTiered ? (tierAvailable ? product?.prices?.[tier ?? ""] : undefined) : product?.price;
+      const price = isTiered ? (tierAvailable ? effectiveLinePrice(product, line, tier ?? "") : undefined) : product?.price;
       return { ...line, priceTier: isTiered ? tier : undefined, unitPriceText: price == null ? "" : String(price), unitPrice: price ?? 0 };
     }));
     setOrderTierOverride("");
@@ -275,7 +291,7 @@ export function OrderForm({
     setOrderTierOverride(tier);
     setLines((current) => current.map((line) => {
       if (line.priceSource !== "automatic" || !line.productId) return line;
-      const price = products.find((product) => product.id === line.productId)?.prices?.[tier];
+      const price = effectiveLinePrice(products.find((product) => product.id === line.productId), line, tier);
       return { ...line, priceTier: tier, unitPriceText: price == null ? "" : String(price), unitPrice: price ?? 0 };
     }));
   }
@@ -561,8 +577,22 @@ export function OrderForm({
 
   function changeTier(line: DraftLine, value: string) {
     const product = products.find((candidate) => candidate.id === line.productId);
-    const unitPrice = product?.prices?.[value];
-    updateLine(line.key, { priceTier: value, priceSource: "manual", unitPrice: unitPrice ?? 0, unitPriceText: unitPrice == null ? "" : String(unitPrice) });
+    // #467 (QA UX): the tier change re-prices through the SAME source as the
+    // color choice — a color with own prices and a missing level is SIN
+    // precio (empty for manual capture), never the design's figure. The
+    // app-filled price is automatic: the "ajustado manualmente" badge only
+    // ever marks prices a person actually typed.
+    const unitPrice = isTiered ? effectiveLinePrice(product, line, value) : product?.price;
+    updateLine(line.key, {
+      priceTier: isTiered ? value : undefined,
+      // A tier chosen BEFORE the product stays an explicit (manual-tier) line
+      // so the product selection honors it; on a filled line the app fills
+      // the price → automatic, and the manual badge only marks hand-typed
+      // prices (#93 pre-select flow preserved).
+      priceSource: line.productId ? "automatic" : "manual",
+      unitPrice: unitPrice ?? 0,
+      unitPriceText: unitPrice == null ? "" : String(unitPrice),
+    });
   }
 
   async function submit() {

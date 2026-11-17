@@ -316,6 +316,59 @@ describe("explicit line tier", () => {
   });
 });
 
+describe("#467 — cambiar el nivel de una línea con color", () => {
+  it("un color con precios propios y nivel ausente queda SIN precio, nunca el del diseño", () => {
+    state.products.push({
+      id: "prod_dual",
+      storeId: "store_olivia",
+      name: "Collar Dual",
+      imageUrl: "https://example.test/dual.jpg",
+      category: "jewelry" as const,
+      categoryIds: ["cat_rings"],
+      isPublic: true,
+      status: "published" as const,
+      prices: { t_retail: 500, t_girly: 450 },
+      variants: [
+        { id: "v_rojo", color: "Rojo", prices: { t_retail: 560 }, createdAt: "", updatedAt: "" },
+        { id: "v_azul", color: "Azul", createdAt: "", updatedAt: "" },
+      ],
+      createdAt: "",
+      updatedAt: "",
+    } as typeof state.products[number]);
+    const order = {
+      id: "dual-order",
+      storeId: "store_olivia",
+      customerId: "customer_1",
+      items: [],
+      deposit: 0,
+      orderStatus: "asked" as const,
+      paymentStatus: "unpaid" as const,
+      schemaVersion: 2,
+      createdAt: "",
+      updatedAt: "",
+    };
+    const rendered = render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+
+    // Pick the design (exact-name match selects it), then the color Rojo —
+    // its OWN Iconic price ($560), not the design's ($500).
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Collar Dual" } });
+    fireEvent.change(screen.getByLabelText("Color"), { target: { value: "v_rojo" } });
+    expect(screen.getByLabelText(/Precio unitario/)).toHaveValue("560");
+
+    // QA blocker: changing the tier to Girly — Rojo has NO Girly price of its
+    // own. The line must EMPTY for manual capture (never the design's $450)
+    // and must NOT claim a manual adjustment nobody made.
+    fireEvent.change(screen.getAllByLabelText("Nivel de precio")[0], { target: { value: "t_girly" } });
+    expect(screen.getByLabelText(/Precio unitario/)).toHaveValue("");
+    expect(screen.queryByText("Precio ajustado manualmente.")).toBeNull();
+
+    // Azul shares the design's map: Girly IS $450 for it.
+    fireEvent.change(screen.getByLabelText("Color"), { target: { value: "v_azul" } });
+    expect(screen.getByLabelText(/Precio unitario/)).toHaveValue("450");
+    rendered.unmount();
+  });
+});
+
 describe("new order lines prepend (OLI-011)", () => {
   it("adds the fresh line at the top, keeping captured content below", () => {
     localStorage.clear(); // other tests in this file leave drafts behind

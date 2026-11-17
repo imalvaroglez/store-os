@@ -48,3 +48,22 @@ describe("designPriceFallback (#467)", () => {
     expect(designPriceFallback(own, "t_girly", design)).toBeUndefined();
   });
 });
+
+describe("#467 semántica de propiedad del mapa (fijada por revisión)", () => {
+  const baseVariant = { id: "v1", color: "Rojo", createdAt: "", updatedAt: "" } as ProductVariant;
+  const designPrices = { prices: { t1: 100 } };
+
+  it("un mapa propio VACÍO es propio: ningún nivel tiene precio", () => {
+    expect(variantHasOwnPrices({ ...baseVariant, prices: {} })).toBe(true);
+    expect(variantEffectivePrice({ ...baseVariant, prices: {} }, "t1", designPrices)).toBeUndefined();
+  });
+  it("ausente y null comparten el mapa del diseño", () => {
+    expect(variantHasOwnPrices(baseVariant)).toBe(false);
+    expect(variantEffectivePrice({ ...baseVariant, prices: null } as unknown as ProductVariant, "t1", designPrices)).toBe(100);
+  });
+  it("Infinity/NaN no son precio", () => {
+    expect(variantEffectivePrice({ ...baseVariant, prices: { t1: Infinity } }, "t1", designPrices)).toBeUndefined();
+    expect(variantEffectivePrice({ ...baseVariant, prices: { t1: Number.NaN } }, "t1", designPrices)).toBeUndefined();
+    expect(variantEffectivePrice(baseVariant, "t1", { prices: { t1: Infinity } })).toBeUndefined();
+  });
+});

@@ -21,10 +21,10 @@ export function variantEffectivePrice(
   design: Pick<Product, "prices">
 ): number | undefined {
   const own = variantHasOwnPrices(variant) ? (variant.prices as Record<string, number>)[tierId] : undefined;
-  if (own !== undefined) return own > 0 ? own : undefined;
+  if (own !== undefined) return Number.isFinite(own) && own > 0 ? own : undefined; // no-finito no es precio
   if (variantHasOwnPrices(variant)) return undefined; // own map: missing level stays missing
   const shared = (design as Priceable).prices?.[tierId];
-  return shared !== undefined && shared > 0 ? shared : undefined;
+  return shared !== undefined && Number.isFinite(shared) && shared > 0 ? shared : undefined;
 }
 
 /** The DESIGN price as fallback — only legitimate for sharing variants. */
@@ -35,5 +35,5 @@ export function designPriceFallback(
 ): number | undefined {
   if (variantHasOwnPrices(variant)) return undefined;
   const shared = (design as Priceable).prices?.[tierId];
-  return shared !== undefined && shared > 0 ? shared : undefined;
+  return shared !== undefined && Number.isFinite(shared) && shared > 0 ? shared : undefined;
 }
