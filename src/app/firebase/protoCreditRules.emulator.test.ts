@@ -116,3 +116,28 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#380 prototype — reglas
     expect(saved.order.notes).toBe("nota inofensiva");
   });
 });
+
+// Runs in CI's rules job (emulator); skipped locally without FIRESTORE_EMULATOR_HOST.
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#380 r2 — create fabricado con crédito denegado", () => {
+  it("un miembro no puede CREAR un pedido que ya traiga campos de crédito", async () => {
+    const env2 = await initializeTestEnvironment({
+      projectId: "store-os-dev",
+      firestore: { rules: readFileSync("firestore.rules", "utf8") },
+    });
+    try {
+      await env2.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "adminStores/r2-store"), { ownerUid: "r2-user", memberUids: ["r2-user"] });
+      });
+      const db = env2.authenticatedContext("r2-user").firestore();
+      const base = { storeId: "r2-store", customerId: "c1", items: [], deposit: 0, orderStatus: "confirmed", createdAt: "", updatedAt: "" };
+      // Con acumuladores: fabricar saldo desde la cuna.
+      await expect(setDoc(doc(db, "orders/r2-o1"), { ...base, creditAppliedCents: 10000, creditLedger: [] })).rejects.toThrow(/PERMISSION/i);
+      await expect(setDoc(doc(db, "orders/r2-o2"), { ...base, creditConsumedCents: 5000 })).rejects.toThrow(/PERMISSION/i);
+      // El create limpio pasa.
+      await setDoc(doc(db, "orders/r2-ok"), base);
+      expect((await getDoc(doc(db, "orders/r2-ok"))).exists()).toBe(true);
+    } finally {
+      await env2.cleanup();
+    }
+  });
+});

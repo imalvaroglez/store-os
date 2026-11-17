@@ -2,7 +2,7 @@
 // order that sold the piece. Facts are registered as they happen (PO design:
 // acciones directas, no cadena de estados obligatoria). Mobile-first, every
 // action one tap away, errors explain themselves in Spanish.
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -168,6 +168,10 @@ function IncidentCard({
   run: (action: () => Promise<void>, success: string) => Promise<void>;
 }) {
   const { applyIncidentEvent } = useStore();
+  // #380 (revisión r2, MAYOR): one STABLE event id per confirmation intent —
+  // a retry after a failed post-commit restitution must hit the same id (the
+  // self-heal key); a fresh confirmation after success gets a new one.
+  const confirmEventIdRef = useRef<string | null>(null);
   const info = incidentState(incident);
   // #212 F6: the settle button only exists while money is actually pending
   // (executing at confirm already settles it once).
@@ -259,10 +263,13 @@ function IncidentCard({
       info.resolution?.kind === "refund" && refundExecuted
         ? { refundExecutedCents: owedCents }
         : undefined;
+    confirmEventIdRef.current ??= uid("iev");
+    const eventId = confirmEventIdRef.current;
     await run(
-      () => applyIncidentEvent(order, incident.id, { id: uid("iev"), kind: "confirmed", ...(detail ? { detail } : {}) }),
+      () => applyIncidentEvent(order, incident.id, { id: eventId, kind: "confirmed", ...(detail ? { detail } : {}) }),
       "Recepción y entrega registradas."
     );
+    confirmEventIdRef.current = null; // success closes this intent
     onConfirming(null);
   }
 

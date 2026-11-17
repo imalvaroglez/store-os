@@ -107,6 +107,19 @@ viaja en el PR.
    `firebase emulators:exec --project store-os-dev --config firebase.emulator.json --only auth,firestore,functions "node scripts/proto-applycredit.emulator.mjs"` — $300 sobre $100 rechazado, devolución parcial exacta y su reintento sin duplicar, escritura directa denegada.
 4. **Guard de respaldo en la edición**: `src/app/firebase/protoCreditRules.emulator.test.ts` (en `npm run test:rules`) — la edición que dejaría el saldo sin respaldo se rechaza en español; la inofensiva pasa.
 
+## Plan de transición para PWA viejas (conciliado con el PR real)
+
+Este PR **ya no libera una fase de reglas permisivas**: llega con las reglas
+cerradas y con el paso `deploy-functions` de CI publicando y verificando los
+callables ANTES de `deploy-rules` en cada entorno (ver arriba). La transición
+que queda es sólo la ventana de PWA cacheada: un build viejo que intente
+escribir crédito directo recibe denegación fail-closed → el banner de
+sincronización con reintento → al recargar, la PWA actualiza y usa los
+callables. Sin pérdida de datos (el dinero no se toca si la escritura se
+rechaza) y con reversión documentada (revertir reglas re-habilita la vía
+directa). Las fases originales de dos etapas quedan como histórico del diseño;
+el estado vigente es éste.
+
 ## Plan de transición para PWA viejas
 
 - **Fase 0 (este PR, sin desplegar):** solo el prototipo en rama. Producción intacta.
