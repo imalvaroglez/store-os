@@ -475,7 +475,11 @@ service cloud.firestore {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries'])
+        // #380 (revisión r2, CRÍTICO): a fabricated create must not arrive
+        // with credit either — cancellation would launder it into real,
+        // spendable saldo a favor. Same deny-list discipline as money.
+        && !request.resource.data.keys().hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
