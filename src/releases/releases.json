@@ -1,5 +1,25 @@
 [
   {
+    "version": "1.20.0",
+    "date": "2026.11.17",
+    "title": "Entrar con Google desde el iPhone y saldo a favor blindado",
+    "notes": [
+      "«Continuar con Google» ya funciona en Safari del iPhone: se actualiza el motor de acceso con los arreglos de Safari y cualquier fallo se explica en español, con reintento.",
+      "El saldo a favor de tus clientas sólo se mueve por operaciones firmadas y verificadas contra el servidor. Si al confirmar una devolución el movimiento no se completa, la ficha te avisa con la cifra exacta y un botón para reintentarlo; el dinero nunca se restituye dos veces.",
+      "Convertir un pedido a pagos por partes capturando el anticipo en el mismo guardado vuelve a funcionar, y el apartado de piezas por dinero queda blindado contra escrituras directas.",
+      "Seguridad: reglas de datos endurecidas para el crédito y el apartado por cuotas."
+    ]
+  },
+  {
+    "version": "1.19.0",
+    "date": "2026.11.17",
+    "title": "Un pedido cancelado ya no admite cobros",
+    "notes": [
+      "Al cancelar un pedido, «Cobrar» y «Abonar» desaparecen de su tarjeta, de Inicio y de su hoja de Cobros, y el sistema ya no acepta registrar cobros nuevos por ninguna vía. Los pagos registrados antes de cancelar quedan como evidencia.",
+      "Correcciones internas de estabilidad — sin cambios en tu forma de trabajar."
+    ]
+  },
+  {
     "version": "1.18.0",
     "date": "2026.11.16",
     "title": "Cada tarea en su lugar",

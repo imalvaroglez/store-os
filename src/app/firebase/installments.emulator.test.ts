@@ -47,6 +47,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
       await setDoc(doc(ctx.firestore(), "products/p-plan"), { storeId: "tx-store", quantityOnHand: 5 });
       await setDoc(doc(ctx.firestore(), "products/p-short"), { storeId: "tx-store", quantityOnHand: 1 });
       await setDoc(doc(ctx.firestore(), "products/p-conv"), { storeId: "tx-store", quantityOnHand: 1 });
+      await setDoc(doc(ctx.firestore(), "products/p-conv2"), { storeId: "tx-store", quantityOnHand: 1 });
     });
     holder.db = env.authenticatedContext("tx-user").firestore();
   });
@@ -218,6 +219,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("installment reservation a
     });
     const result = await saveOrderWithStockTx(user, converted, snapshot.revision, "convert-dep-plan");
     expect(result.order.installmentsReservedAt).toBeTruthy(); // depósito = dinero recibido
+  });
+
+  it("#478 C1: convertir a plan con el anticipo capturado en el MISMO guardado pasa por reglas", async () => {
+    // Ordinary order, no receipts, zero deposit. ONE edit installs the plan
+    // and captures the first anticipo — the marker is born from THIS write's
+    // deposit (firestoreData L791 counts it). The rules must let exactly this
+    // shape through; the bare marker add (no money anywhere) stays denied.
+    const ordinary = makeOrder("conv-same-deposit", "p-conv2", 1);
+    await saveOrderWithStockTx(user, ordinary, null, "conv-same-create");
+    const snapshot = (await orderDoc("conv-same-deposit"))!;
+    const converted = makeOrder("conv-same-deposit", "p-conv2", 1, {
+      installments: plan,
+      deposit: 300, // primer anticipo en la misma escritura
+      revision: snapshot.revision,
+    });
+    const result = await saveOrderWithStockTx(user, converted, snapshot.revision, "conv-same-plan");
+    expect(result.order.installmentsReservedAt).toBeTruthy();
+    expect((await orderDoc("conv-same-deposit"))?.deposit).toBe(300);
   });
 
   it("a member of another store cannot reserve through the payment path", async () => {

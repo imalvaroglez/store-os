@@ -3,8 +3,9 @@ name: CI
 # CI/CD pipeline. Vercel Git auto-deploy is disabled; deploys run only after
 # build-test and rules-and-e2e pass.
 #   - PR / branch push → validation with dev credentials and Firebase emulators.
-#   - Push to main     → dev Firebase rules + Vercel Preview.
-#   - Manual main run with release_production=true → production rules + deploy.
+#   - Push to main     → dev functions (verified) → dev rules + Vercel Preview.
+#   - Manual main run with release_production=true → release guard →
+#     production functions (verified) → production rules + deploy.
 # If Vercel ever starts auto-deploying again (new deployments you didn't trigger
 # from this workflow), the Ignored Build Step regressed — re-set it to `exit 0`.
 # Tests always use Preview credentials. Only the explicitly approved release
@@ -342,17 +343,20 @@ jobs:
           node scripts/check-sev1-ci-reuse.cjs --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
           echo "reused=true" >> "$GITHUB_OUTPUT"
 
-  # ───────────────────── deploy-rules (anti-drift) ─────────────────────
-  # Born from the 2026-08-11 incident: production ran three-week-old rules
-  # while the repo evolved (rules deploys were a manual DEPLOYMENT.md step and
-  # nothing compared deployed vs repo), surfacing as silently-denied
-  # public-catalog writes. This job is now the ONLY regular path to a rules
-  # deployment: main pushes update only dev; an explicitly approved manual
-  # production release updates only production. Each target gets a parity pass.
-  deploy-rules:
+  # ─────────────── deploy-functions (#380): callables BEFORE rules ───────────────
+  # The credit rules deny every client write to the credit fields, so the
+  # applyCredit/releaseCredit callables must ALREADY exist in the target
+  # project when those rules land. This job publishes them (idempotent: a
+  # no-change deploy uploads nothing) and VERIFIES the endpoints answer
+  # BEFORE deploy-rules can harden anything. Dev on every main push;
+  # production only on the approved release dispatch — the release guard
+  # lives HERE now, ahead of the first production mutation of the release
+  # (it previously sat inside deploy-rules; functions deploy first).
+  deploy-functions:
     needs: [env-select, build-test, rules-and-e2e, sev1-verify]
-    # #227: same gate shape as deploy (always() + explicit branch results) so a
-    # skipped-in-Sev-1 suite never blocks the release the verifier approved.
+    # #227: same always()-gate shape as deploy-rules so a skipped-in-Sev-1
+    # suite never blocks the release the verifier approved (in that path the
+    # functions of this exact SHA already deployed with its push to main).
     if: >-
       always() &&
       github.ref_name == 'main' &&
@@ -369,13 +373,92 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Release guard — versión incrementada y con notas (solo producción)
-        # #179/#194-F1: this job deploys RULES first and `deploy` (the app) needs
-        # this job — so guarding HERE is the single choke point that runs before
-        # ANY production mutation. The candidate release must beat what production
-        # ALREADY serves (stamped as <meta store-os-version> in its HTML). Fails
-        # closed: no verified reference → no rules deploy, no app deploy.
-        if: github.event_name == 'workflow_dispatch' && inputs.release_production == true
         run: node scripts/check-release.cjs --probe-url https://store-os-alpha.vercel.app
+        # (guard moved from deploy-rules: functions are now the FIRST
+        # production mutation of a release, so the choke point moved with it)
+        if: github.event_name == 'workflow_dispatch' && inputs.release_production == true
+      - name: Install Firebase CLI
+        run: npm i -g firebase-tools
+      - name: Install functions dependencies
+        run: npm --prefix functions ci --silent
+      - name: Publish callables to the selected Firebase project
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          P=store-os-dev
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release_production }}" = "true" ]; then
+            P=store-os-f7cf8
+          fi
+          echo "── deploying functions → $P"
+          # --force: auto-accepts the artifact cleanup policy setup (first
+          # deploy of functions in a project cannot set it non-interactively
+          # and fails otherwise — seen on store-os-f7cf8's first deploy).
+          # NON-DESTRUCTIVE explicit targets: dev also carries experimental
+          # functions from other in-flight fronts (e.g. submitPublicOrderRequest);
+          # a bare --only functions tries to DELETE anything absent from this
+          # branch's source and aborts non-interactively — blocking rules deploys
+          # on unrelated work. Listing the exact callables never deletes others.
+          firebase deploy --only functions:applyCredit,functions:releaseCredit,functions:importPurchasePdf --project "$P" \
+            --token "$FIREBASE_TOKEN" --non-interactive --force
+      - name: Verify the trusted callables answer before rules harden
+        # An onCall endpoint that EXISTS rejects a session-less probe with a
+        # client error (401 UNAUTHENTICATED in production; 400 INVALID_ARGUMENT
+        # under the emulator) and a Firebase error body; a missing one is a
+        # 404. Anything else (5xx, empty) fails closed — deploy-rules (which
+        # needs this job) must never harden rules against absent callables.
+        run: |
+          P=store-os-dev
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release_production }}" = "true" ]; then
+            P=store-os-f7cf8
+          fi
+          for fn in applyCredit releaseCredit; do
+            URL="https://us-east1-${P}.cloudfunctions.net/${fn}"
+            CODE="$(curl -s -o /tmp/fn-body -w '%{http_code}' -X POST "$URL" \
+              -H 'Content-Type: application/json' -d '{}')"
+            case "$CODE" in
+              400|401|403)
+                if ! grep -qE 'UNAUTHENTICATED|INVALID_ARGUMENT|PERMISSION_DENIED' /tmp/fn-body; then
+                  echo "::error::$fn en $P: HTTP $CODE sin cuerpo de error Firebase: $(head -c 200 /tmp/fn-body)"
+                  exit 1
+                fi
+                echo "✓ $fn responde en $P (rechaza el sondeo sin sesión, como debe)"
+                ;;
+              *)
+                echo "::error::$fn en $P respondió HTTP $CODE — las reglas no deben endurecerse: $(head -c 200 /tmp/fn-body)"
+                exit 1
+                ;;
+            esac
+          done
+
+  # ───────────────────── deploy-rules (anti-drift) ─────────────────────
+  # Born from the 2026-08-11 incident: production ran three-week-old rules
+  # while the repo evolved (rules deploys were a manual DEPLOYMENT.md step and
+  # nothing compared deployed vs repo), surfacing as silently-denied
+  # public-catalog writes. This job is now the ONLY regular path to a rules
+  # deployment: main pushes update only dev; an explicitly approved manual
+  # production release updates only production. Each target gets a parity pass.
+  deploy-rules:
+    needs: [env-select, build-test, rules-and-e2e, sev1-verify, deploy-functions]
+    # #227: same gate shape as deploy (always() + explicit branch results) so a
+    # skipped-in-Sev-1 suite never blocks the release the verifier approved.
+    # #380: deploy-functions must have PUBLISHED and VERIFIED the callables —
+    # hardening rules without them would strand every credit write.
+    if: >-
+      always() &&
+      github.ref_name == 'main' &&
+      needs.env-select.outputs.app-changed == 'true' &&
+      (github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_production == true)) &&
+      needs.deploy-functions.result == 'success' &&
+      ((needs.build-test.result == 'success' && needs.rules-and-e2e.result == 'success') ||
+      (needs.sev1-verify.result == 'success' && needs.sev1-verify.outputs.reused == 'true' &&
+      needs.build-test.result == 'skipped' && needs.rules-and-e2e.result == 'skipped'))
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.release_production && 'Production' || 'Preview' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
       - name: Install Firebase CLI
         run: npm i -g firebase-tools
       - name: Deploy rules to the selected Firebase project
