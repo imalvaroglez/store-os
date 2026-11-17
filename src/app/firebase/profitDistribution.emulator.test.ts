@@ -52,6 +52,20 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#459 r4 — autorización
     expect(snap.size).toBe(1);
   });
 
+  it("#459 r5: una SEGUNDA autorización por un monto distinto SÍ escribe (autorizaciones parciales sucesivas)", async () => {
+    // Antes: devolvía el id de la primera sin escribir — el remanente quedaba
+    // permanentemente inautorizable con éxito aparente en pantalla.
+    const second = await authorizeProfitDistribution(distribution("2026-11-01T11:00:00.000Z", 40000));
+    expect(second.id).toBeTruthy();
+    const snap = await getDocs(query(collection(holder.db, "profitDistributions"), where("storeId", "==", "dist-store")));
+    expect(snap.size).toBe(2); // 96000 + 40000: autorizaciones sucesivas del periodo
+    // Y su reintento (otro `now`, mismo monto) sigue idempotente por INTENTO.
+    const retrySecond = await authorizeProfitDistribution(distribution("2026-11-01T11:30:00.000Z", 40000));
+    expect(retrySecond.id).toBe(second.id);
+    const after = await getDocs(query(collection(holder.db, "profitDistributions"), where("storeId", "==", "dist-store")));
+    expect(after.size).toBe(2);
+  });
+
   it("una colega miembro NO puede autorizar (reglas owner-only)", async () => {
     const memberDb = env.authenticatedContext("member-user").firestore();
     await expect(

@@ -117,9 +117,13 @@ export type ProfitDistributionDoc = {
   createdAt: string;
 };
 
-/** Deterministic id: the same authorization intent lands on the same doc. */
-export function profitDistributionDocId(storeId: string, period: string, authorizedAt: string): string {
-  return `${storeId}__${period}__${authorizedAt}`;
+/** Deterministic id: the same authorization INTENT (store + period + amount)
+ * lands on the same doc. Successive PARTIAL authorizations of one period are
+ * different intents — different docs — while a retry of the same amount
+ * (whatever its clock) is idempotent (#459 r5: the previous time-based id
+ * silently no-opped a second, different authorization). */
+export function profitDistributionDocId(storeId: string, period: string, amountCents: number): string {
+  return `${storeId}__${period}__${amountCents}`;
 }
 
 /** The doc for an OWNER-authorized distribution (rules demand id==body.id,
@@ -134,7 +138,7 @@ export function buildProfitDistributionDoc(input: {
   now: string;
 }): ProfitDistributionDoc {
   return {
-    id: profitDistributionDocId(input.storeId, input.period, input.now),
+    id: profitDistributionDocId(input.storeId, input.period, input.authorizedAmountCents),
     storeId: input.storeId,
     period: input.period,
     closeId: input.closeId,
