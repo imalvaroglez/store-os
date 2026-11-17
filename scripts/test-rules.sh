@@ -19,6 +19,7 @@ FIRESTORE_FILES=(
   src/app/firebase/customerPricing.emulator.test.ts
   src/app/firebase/variantConversion.emulator.test.ts
   src/app/firebase/republishStockSignals.emulator.test.ts
+  src/app/firebase/financialRules.emulator.test.ts
   src/app/firebase/closeAdjustments.emulator.test.ts
   src/app/firebase/staleWrites.emulator.test.ts
   src/app/firebase/rankingConfirmations.emulator.test.ts

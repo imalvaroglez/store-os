@@ -24,6 +24,7 @@ import type {
   PricingRulesConfig,
   PricingRule,
   OrderDeliveryLine,
+  CardPayment,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -33,6 +34,7 @@ import { nowIso, todayIso } from "../lib/dates";
 import { reservationDeltasForOrderChange } from "../lib/inventory";
 import { receivedProductsFromStockUpdates } from "../lib/purchases";
 import { ruleChangeEvent } from "../lib/priceDiagnostics";
+import { ensureStoreFinancials, loadCardPayments, saveCardPayment } from "./firebase/firestoreData";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
@@ -313,6 +315,10 @@ type StoreContextValue = {
   stateStatus: "idle" | "loading" | "ready" | "error";
   stateError: string | null;
   retryStateLoad: () => void;
+  /** #279: from-activation position state + its on-demand actions. */
+  financial: { status: "idle" | "loading" | "ready" | "error"; activatedAt?: string; cardPayments: CardPayment[] };
+  loadFinancialPosition: () => Promise<void>;
+  registerCardPayment: (input: { amountCents: number; date: string; note?: string }) => Promise<void>;
   /**
    * A background WRITE that Firestore rejected (the initial LOAD failure is
    * `stateError` instead). `retry` replays the failed operation — never a page
@@ -435,6 +441,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // failure lives in stateError/stateStatus). Versioned so a retry can't clear
   // a notice a newer failure already replaced.
   const [syncError, setSyncError] = useState<StoreContextValue["syncError"]>(null);
+  // #279: the from-activation financial position state — loaded on demand
+  // (two bounded reads, no listener) and reset when the active store changes.
+  const [financial, setFinancial] = useState<{ status: "idle" | "loading" | "ready" | "error"; activatedAt?: string; cardPayments: CardPayment[] }>({ status: "idle", cardPayments: [] });
+  useEffect(() => {
+    setFinancial({ status: "idle", cardPayments: [] });
+  }, [state.activeStoreId]);
   const syncErrorVersion = useRef(0);
   // Hydration-race guard: auth can change while a load/write/retry is in
   // flight. A previous account's late landing must never reach the provider
@@ -678,6 +690,54 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     stateStatus,
     stateError,
     retryStateLoad: () => setLoadAttempt((attempt) => attempt + 1),
+    financial,
+    loadFinancialPosition: async () => {
+      const storeId = state.activeStoreId;
+      if (!storeId) return;
+      setFinancial((prev) => ({ ...prev, status: "loading" }));
+      try {
+        const [marker, cardPayments, orderPayments] = await Promise.all([
+          ensureStoreFinancials(storeId),
+          loadCardPayments(storeId),
+          // The registered cash needs each order's payment evidence — a
+          // bounded, on-demand sweep of THIS store's orders (no listener);
+          // #279 presupuesto: one subcollection read per order, only when
+          // the position is opened.
+          Promise.all(state.orders.filter((order) => order.storeId === storeId).map((order) => fetchOrderPayments(order.id))),
+        ]);
+        setPaymentCache((prev) => ({
+          uid: paymentUid,
+          generation: paymentSession.current.generation,
+          records: orderPayments.reduce(
+            (acc: OrderPayment[], result) => mergePayments(acc, result.payments),
+            prev.uid === paymentUid && prev.generation === paymentSession.current.generation ? prev.records : [],
+          ),
+        }));
+        // The store may have changed while loading — keep the freshest only.
+        setFinancial((prev) => (state.activeStoreId === storeId
+          ? { status: "ready", activatedAt: marker.activatedAt, cardPayments }
+          : prev));
+      } catch (error) {
+        console.error("[Firestore] Error al cargar la posición financiera:", error);
+        setFinancial((prev) => ({ ...prev, status: "error" }));
+      }
+    },
+    registerCardPayment: async (input: { amountCents: number; date: string; note?: string }) => {
+      const currentUser = requireAuthenticatedUser();
+      const storeId = state.activeStoreId;
+      if (!storeId) throw new Error("No hay una tienda activa.");
+      await saveCardPayment({
+        id: uid("cardpay"),
+        storeId,
+        date: input.date,
+        amountCents: input.amountCents,
+        ...(input.note ? { note: input.note } : {}),
+        createdAt: nowIso(),
+        createdBy: currentUser.uid,
+      });
+      const cardPayments = await loadCardPayments(storeId);
+      setFinancial((prev) => ({ ...prev, cardPayments }));
+    },
     syncError,
     dismissSyncError: () => { syncErrorVersion.current += 1; setSyncError(null); },
     draftOwnerId: user?.uid ?? "",

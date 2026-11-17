@@ -554,6 +554,33 @@ service cloud.firestore {
     // slugs/{slug} — global slug reservation. Doc existence IS the lock. `get` is
     // allowed for signed-in clients (the claim transaction reads-then-creates to
     // enforce atomic uniqueness); `list` is always denied (no enumeration).
+    // ── #279: financial position from activation ─────────────────────────
+    // T0 marker: members create it idempotently; `activatedAt` is immutable
+    // once set (the cut must never move).
+    match /storeFinancials/{storeId} {
+      allow get: if canOperateStore(storeId);
+      allow create: if canOperateStore(storeId)
+        && request.resource.data.storeId == storeId
+        && request.resource.data.activatedAt is string;
+      allow update: if canOperateStore(storeId)
+        && resource.data.activatedAt == request.resource.data.activatedAt;
+      allow delete: if false;
+    }
+
+    // Card payments: append-only money evidence (same doctrine as order
+    // payments) — they reduce cash and debt, never duplicate an expense.
+    match /cardPayments/{id} {
+      allow get, list: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && request.resource.data.amountCents is int
+        && request.resource.data.amountCents > 0
+        && request.resource.data.amountCents < 9007199254740991
+        && request.resource.data.date is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /slugs/{slug} {
       allow get: if isSignedIn();
       allow list: if false;
