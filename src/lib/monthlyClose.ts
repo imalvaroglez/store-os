@@ -123,6 +123,14 @@ export function cdmxMonthKey(iso: string): string {
   return date.slice(0, 7);
 }
 
+/** Full DATE (YYYY-MM-DD) in America/Mexico_City for a date-only string or an
+ * instant — the same resolution rule as cdmxMonthKey, keeping a row's date
+ * consistent with the month it was bucketed into (#458 r5). */
+export function cdmxDateOf(iso: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+}
+
 /** Today's DATE (YYYY-MM-DD) in America/Mexico_City — never the UTC slice
  * (the UTC day rolls 6h before CDMX midnight; #458 r2 review MAYOR-1). */
 export function cdmxToday(): string {
@@ -322,31 +330,6 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
         amountCents: adjustment,
         evidence: "verified",
       });
-      // #455 r4 (UX): the EXECUTED refund is money that LEFT in its own
-      // month — "Dinero recibido" must net it as a signed outflow or the
-      // figure never reconciles with the cashbox. The confirmation month
-      // owns it (execution follows confirmation in the same flow).
-      const executedRefundCents = (incident.events ?? []).reduce(
-        (sum, event) => sum + ((event.kind === "confirmed" || event.kind === "refund_executed") && typeof event.detail?.refundExecutedCents === "number" && Number.isSafeInteger(event.detail.refundExecutedCents) ? event.detail.refundExecutedCents : 0),
-        0
-      );
-      if (executedRefundCents > 0) {
-        collectionsCents -= executedRefundCents;
-        const refundBucket = groupTotals.get("reembolsos_posventa") ?? { totalCents: 0, count: 0 };
-        refundBucket.totalCents -= executedRefundCents;
-        refundBucket.count += 1;
-        groupTotals.set("reembolsos_posventa", refundBucket);
-        details.collections.push({
-          date: confirmedAt.slice(0, 10),
-          kind: "collection",
-          reference: orderReference(order),
-          orderId: order.id,
-          customerName: customerNameOf(order.customerId),
-          concept: "Reembolso de posventa entregado",
-          amountCents: -executedRefundCents,
-          evidence: "verified",
-        });
-      }
       // Reversible cost: the refunded piece's line, when its cost is KNOWN.
       if (adjustment < 0 && typeof incident.quantity === "number") {
         const item = items.find(
@@ -366,6 +349,40 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
             evidence: "verified",
           });
         }
+      }
+    }
+
+    // #455 r4 (UX) + #458 r5: each EXECUTED refund nets "Dinero recibido" as
+    // a signed outflow in the month the money actually LEFT — the EVENT's own
+    // CDMX month, not the confirmation's (a devolución confirmed 28-nov and
+    // handed back 3-dic belongs to December; November never sees it). The
+    // confirm event's own figure lands in its confirmation month by
+    // construction (money returned in the same act), and executions split
+    // across months each land in theirs.
+    for (const incident of order.incidents ?? []) {
+      for (const execEvent of incident.events ?? []) {
+        const cents = (execEvent.kind === "confirmed" || execEvent.kind === "refund_executed")
+          && typeof execEvent.detail?.refundExecutedCents === "number"
+          && Number.isSafeInteger(execEvent.detail.refundExecutedCents)
+          ? execEvent.detail.refundExecutedCents
+          : 0;
+        if (cents <= 0) continue;
+        if (cdmxMonthKey(execEvent.at) !== monthKey) continue;
+        collectionsCents -= cents;
+        const refundBucket = groupTotals.get("reembolsos_posventa") ?? { totalCents: 0, count: 0 };
+        refundBucket.totalCents -= cents;
+        refundBucket.count += 1;
+        groupTotals.set("reembolsos_posventa", refundBucket);
+        details.collections.push({
+          date: cdmxDateOf(execEvent.at),
+          kind: "collection",
+          reference: orderReference(order),
+          orderId: order.id,
+          customerName: customerNameOf(order.customerId),
+          concept: "Reembolso de posventa entregado",
+          amountCents: -cents,
+          evidence: "verified",
+        });
       }
     }
 
