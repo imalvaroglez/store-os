@@ -321,3 +321,36 @@ describe("text-entry-audit · flujo Productos (#219)", () => {
     expect(screen.getByRole("button", { name: "Guardar producto" })).toBeDisabled();
   });
 });
+
+
+describe("ProductForm #489 — one stock adjustment per save", () => {
+  const watch = { ...design, status: "draft" as const, quantityOnHand: 0, cost: 100, categoryIds: ["c1"] };
+
+  it("locks a save without photos while the stock write is pending", async () => {
+    let finish!: () => void;
+    mocks.upsertProduct.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const done = vi.fn();
+    render(<ProductForm product={watch} onDone={done} />);
+    fireEvent.change(screen.getByLabelText(/^En existencia$/), { target: { value: "1" } });
+    const save = screen.getByRole("button", { name: "Guardar producto" });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    expect(mocks.upsertProduct).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Guardando…" })).toBeDisabled();
+    expect(done).not.toHaveBeenCalled();
+    finish();
+    await waitFor(() => expect(done).toHaveBeenCalledTimes(1));
+  });
+
+  it("unlocks after a rejected canonical write, keeping the captured count for retry", async () => {
+    mocks.upsertProduct.mockRejectedValueOnce(new Error("permission-denied")).mockResolvedValueOnce(watch);
+    render(<ProductForm product={watch} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText(/^En existencia$/), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await screen.findByText("No se pudo guardar. Intenta de nuevo.");
+    expect(screen.getByRole("button", { name: "Guardar producto" })).toBeEnabled();
+    expect(screen.getByLabelText(/^En existencia$/)).toHaveValue("1");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(2));
+  });
+});

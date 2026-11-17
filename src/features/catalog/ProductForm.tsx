@@ -275,6 +275,9 @@ export function ProductForm({
       setSaving(false);
     };
     if (!draft.name.trim() || saving) return;
+    // #489: every save moves stock, even without new photos. Lock before
+    // the first await so repeated taps cannot replay the same manual delta.
+    setSaving(true);
 
     // Upload staged images first; block save on failure (no half-uploaded state).
     let uploaded: ProductImageType[] = [];
