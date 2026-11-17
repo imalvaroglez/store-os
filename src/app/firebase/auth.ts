@@ -219,7 +219,12 @@ export function googleUsesRedirect(userAgent: string, maxTouchPoints: number): b
 const UNAUTHORIZED_DOMAIN_MESSAGE =
   "Este dominio no está autorizado para entrar con Google. Pide a la administración que lo agregue en Firebase Console → Authentication → Settings → Authorized domains.";
 
-function googleErrorMessage(code: string | undefined): string | null {
+/**
+ * Final Spanish messages for Google sign-in error codes. Shared by the
+ * redirect-consumption path (throws them) and AuthScreen's friendlyError
+ * (renders them) — one wording, never a generic mask on a known code.
+ */
+export function googleAuthErrorMessage(code: string | undefined): string | null {
   if (code === "auth/unauthorized-domain") return UNAUTHORIZED_DOMAIN_MESSAGE;
   if (code === "auth/network-request-failed")
     return "No hubo conexión con Google. Revisa tu conexión e inténtalo de nuevo.";
@@ -247,9 +252,9 @@ export async function signInWithGoogle(): Promise<AppUser | null> {
     const cred = await signInWithPopup(auth, GOOGLE);
     return afterLogin(cred.user);
   } catch (error) {
-    const code = (error as AuthError)?.code;
-    const mapped = googleErrorMessage(code);
-    if (mapped) throw new Error(mapped);
+    // Rethrow the ORIGINAL error: its `code` is what AuthScreen's
+    // friendlyError maps to Spanish — wrapping it here would leave the UI
+    // with a generic mask on known codes (review #486 R1).
     throw error;
   }
 }
@@ -268,7 +273,7 @@ export async function consumeGoogleRedirectResult(): Promise<AppUser | null> {
     return cred?.user ? afterLogin(cred.user) : null;
   } catch (error) {
     const code = (error as AuthError)?.code;
-    const mapped = googleErrorMessage(code);
+    const mapped = googleAuthErrorMessage(code);
     throw new Error(mapped ?? "No se pudo completar el acceso con Google. Intenta de nuevo.");
   }
 }

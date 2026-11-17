@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { signInWithEmail as signIn, signUpWithEmail as signUp, signInWithGoogle } from "./auth";
+import { signInWithEmail as signIn, signUpWithEmail as signUp, signInWithGoogle, googleAuthErrorMessage } from "./auth";
 import { useAuth } from "./AuthProvider";
 import { Button, TextField, ScreenHeader } from "../../design-system";
 
@@ -92,10 +92,14 @@ export function AuthScreen({ onDone }: { onDone?: () => void }) {
 
 function friendlyError(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
+  // Google sign-in codes carry their own final Spanish wording (shared with
+  // the redirect path in auth.ts) — never mask a known code with the generic
+  // fallback (review #486 R1).
+  const googleMessage = googleAuthErrorMessage(code);
+  if (googleMessage) return googleMessage;
   if (code.includes("email-already-in-use")) return "Ese correo ya está registrado. Intenta entrar.";
   if (code.includes("invalid-credential") || code.includes("wrong-password")) return "Correo o contraseña incorrectos.";
   if (code.includes("weak-password")) return "La contraseña debe tener al menos 6 caracteres.";
-  if (code.includes("popup-closed")) return "Se canceló el inicio con Google.";
   if (code.includes("popup-blocked"))
     return "Tu navegador bloqueó la ventana de Google. Permite las ventanas emergentes y vuelve a intentar.";
   return "No se pudo completar. Intenta de nuevo.";

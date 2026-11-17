@@ -49,7 +49,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!active) return;
           setUser(u);
           setError(null);
-          setGoogleError(null);
+          // Only a REAL session clears the redirect error: if the SDK's
+          // initial null emission ever landed after a failed redirect's
+          // rejection, clearing unconditionally would swallow the message
+          // (#481 again). Retry and sign-out clear it explicitly.
+          if (u) setGoogleError(null);
           setAuthReady(true);
         },
         () => {
@@ -80,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut: async () => {
       await doSignOut();
       setUser(null);
+      setGoogleError(null);
     },
   };
 
