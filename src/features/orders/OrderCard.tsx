@@ -198,12 +198,21 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
           {/* #455 r3 (UX): a confirmed posventa adjustment reconciles the card
               with the close — without it, three surfaces showed two totals. */}
           {(() => {
-            const confirmed = (order.incidents ?? []).some((incident) => (incident.events ?? []).some((event) => event.kind === "confirmed"));
-            const adjustment = incidentsSaleAdjustmentCents(order.incidents);
-            if (!confirmed || !adjustment) return null;
+            // #455 r4 (MAYOR-2): the Total above is the GROSS historical
+            // snapshot — it does NOT include the adjustment. The note must
+            // read as a derivation, never as an inclusion: "Menos $X de
+            // posventa confirmada · total efectivo $Y".
+            // #455 r4 (MAYOR-3): same basis as the close — ONLY confirmed
+            // incidents count (an agreed-but-unconfirmed replacement must
+            // not change the card's number nor wear the "confirmada" label).
+            const confirmedIncidents = (order.incidents ?? []).filter((incident) => (incident.events ?? []).some((event) => event.kind === "confirmed"));
+            const adjustment = confirmedIncidents.reduce((sum, incident) => sum + incidentsSaleAdjustmentCents([incident]), 0);
+            if (confirmedIncidents.length === 0 || !adjustment) return null;
+            const effective = Math.max(0, totals.estimatedTotal * 100 + adjustment) / 100;
             return (
               <p className="text-xs text-on-surface-soft">
-                Incluye {adjustment < 0 ? "−" : "+"}${(Math.abs(adjustment) / 100).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} de posventa confirmada
+                {adjustment < 0 ? "Menos" : "Más"} ${(Math.abs(adjustment) / 100).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} de posventa confirmada · total efectivo{" "}
+                <Money exact amount={effective} />
               </p>
             );
           })()}
