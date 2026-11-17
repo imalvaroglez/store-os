@@ -214,6 +214,10 @@ export function ProfitDistributionScreen() {
                     accumulatedLossCents: lossBefore,
                     proposedAmountCents: amount,
                   }).split;
+                  // The intent is born WITH the review: a cancelled/failed
+                  // attempt never lends its identity to a different amount
+                  // later (review r6 minor 2).
+                  intentIdRef.current = uid("dist");
                   setReview({ amountCents: amount, split });
                 }}
               >
@@ -234,12 +238,11 @@ export function ProfitDistributionScreen() {
                         if (!close || !review) return;
                         setAuthorizing(true);
                         setError(null);
-                        intentIdRef.current ??= uid("dist");
                         const doc = buildProfitDistributionDoc({
                           storeId: activeStore.id, period: close.period, closeId: close.id,
                           authorizedAmountCents: review.amountCents, split: review.split,
                           uid: draftOwnerId, now: new Date().toISOString(),
-                          intentId: intentIdRef.current,
+                          intentId: intentIdRef.current ?? uid("dist"), // defensive: the review minted one
                         });
                         authorizeProfitDistribution(doc)
                           .then(() => loadProfitDistributions(activeStore.id, close.period))
