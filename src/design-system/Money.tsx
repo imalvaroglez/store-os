@@ -47,7 +47,10 @@ export function StatRow({
       : "font-bold text-on-surface";
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} title={interactiveTitle} className="text-left w-full min-w-0 touch-manipulation">
+      <button type="button" onClick={onClick} title={interactiveTitle}
+          // #463 QA (menor): the clickable StatRow is a tap target — honor the
+          // DS ~40px convention instead of the ~37.75px of bare text.
+          className="text-left w-full min-w-0 min-h-10 touch-manipulation">
         <span className="text-on-surface-soft text-[11px] uppercase tracking-wide leading-tight break-words block">
           {label}
         </span>
