@@ -220,7 +220,7 @@ describe("CatalogScreen filtro por categoría real", () => {
       },
     ] as never;
     const view = await renderCatalog(state);
-    const cell = view.container.querySelector('button[title^="Ver pedidos con piezas comprometidas"]')!;
+    const cell = view.container.querySelector('button[title^="Ver pedidos con piezas comprometidas"]') as HTMLButtonElement;
     expect(cell).toBeTruthy();
     cell.focus();
     // A native button element activates on Enter in real browsers; jsdom does not
