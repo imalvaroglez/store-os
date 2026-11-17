@@ -395,3 +395,35 @@ describe("#271 correcciones del anticipo visibles en Cobros", () => {
     expect(screen.getByText(/\$500\.00 → \$100\.00 — Anticipo capturado por error: era \$100 · 9\/11\/2026/)).toBeInTheDocument();
   });
 });
+
+// #455 r4 (UX): el anticipo previo no se cuenta dos veces siguiendo el propio
+// diálogo. Escenario del dictamen: pedido de $1,500 con anticipo heredado de
+// $1,500 — capturar el TOTAL como cobro crea "Recibido $3,000 · A favor $1,500".
+describe("#455 r4 — anticipo sin doble conteo", () => {
+  const inheritedOrder: Order = {
+    ...order,
+    deposit: 1500,
+    // unmaterialized legacy anticipo (no flag, no records)
+  };
+
+  it("rechaza cobrar el total cuando el anticipo cubre parte — pide solo lo que falte", async () => {
+    // Pedido $2,500 con anticipo heredado $1,500: la operadora sigue el texto
+    // viejo y captura el TOTAL; el tope la guía a los $1,000 reales.
+    const partial: Order = { ...inheritedOrder, items: [{ lineId: "l1", productName: "Caja adviento", quantity: 1, unitPrice: 2500, subtotal: 2500 }] };
+    store.registerOrderPayment.mockClear();
+    renderSheet(partial);
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Fecha del anticipo"), { target: { value: "2026-10-31" } });
+    fireEvent.change(screen.getByLabelText("Monto"), { target: { value: "2500" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
+    await waitFor(() => expect(screen.getByText(/solo lo que falte/i)).toBeInTheDocument());
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it("con el anticipo cubriendo todo, el formulario de cobro desaparece (el caso se cierra solo)", async () => {
+    renderSheet(inheritedOrder);
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument());
+    expect(screen.getByText(/no hay nada nuevo que cobrar/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Monto")).toBeNull();
+  });
+});
