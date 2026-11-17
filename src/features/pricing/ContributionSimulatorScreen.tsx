@@ -40,7 +40,7 @@ export function ContributionSimulatorScreen() {
   const [minPerPiece, setMinPerPiece] = useState("");
   const [variableCost, setVariableCost] = useState("");
   const [sensitivity, setSensitivity] = useState("-20, 10");
-  const [bandMin, setBandMin] = useState(bandPrefill && bandPrefill.min > 0 ? String(bandPrefill.min) : "");
+  const [bandMin, setBandMin] = useState(bandPrefill ? String(bandPrefill.min) : "");
   const [bandMax, setBandMax] = useState(bandPrefill?.max != null ? String(bandPrefill.max) : "");
 
   // (#336 QA menor: hooks must run unconditionally — the early return used to
@@ -132,9 +132,12 @@ export function ContributionSimulatorScreen() {
     : [];
   // #336 banda: the members of a cost band of ONE category — the same shape
   // Estrategia's band tables use (acquisition cost per piece, pesos).
-  const bandMinPesos = pesosInputToCents(bandMin) != null ? pesosInputToCents(bandMin)! / 100 : null;
+  // #336 r2 (UX B1): the FIRST band of every Estrategia table opens at $0 —
+  // an empty "Costo desde" means 0 (or arrives prefilled as "0"), never a
+  // false "0 piezas en esta banda".
+  const bandMinPesos = pesosInputToCents(bandMin) != null ? pesosInputToCents(bandMin)! / 100 : 0;
   const bandMaxPesos = pesosInputToCents(bandMax) != null ? pesosInputToCents(bandMax)! / 100 : null;
-  const bandProducts = mode === "banda" && categoryId && bandMinPesos != null
+  const bandProducts = mode === "banda" && categoryId
     ? storeProducts.filter((p) =>
         (p.categoryIds ?? []).includes(categoryId)
         && p.cost !== undefined && Number.isFinite(p.cost)

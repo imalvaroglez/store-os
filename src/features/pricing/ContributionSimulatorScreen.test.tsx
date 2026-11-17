@@ -140,3 +140,31 @@ describe("ContributionSimulatorScreen — modo banda (#336 QA MAYOR-1)", () => {
     // El prefill se consume una vez: un remount no hereda la banda vieja.
   });
 });
+
+describe("ContributionSimulatorScreen — primera banda abre en $0 (#336 r2 UX B1)", () => {
+  it("el prefill de la primera banda (min 0) llega explícito y los miembros se cuentan", () => {
+    resetBandSimulatorPrefillForTests();
+    mocks.state.products = [
+      design("barato", 20, { t_retail: 60, t_girly: 90 }),
+      design("medio", 55, { t_retail: 93, t_girly: 150 }),
+    ];
+    setBandSimulatorPrefill({ categoryId: "c1", min: 0, max: 50 });
+    render(<ToastProvider><ContributionSimulatorScreen /></ToastProvider>);
+    expect((screen.getByLabelText("Costo desde $") as HTMLInputElement).value).toBe("0");
+    // La banda [0, 50) contiene a barato ($20); medio ($55) queda fuera.
+    expect(screen.getByText(/1 pieza en esta banda/)).toBeTruthy();
+    expect(screen.getByText(/barato/)).toBeTruthy();
+    expect(screen.queryByText(/medio/)).toBeNull();
+  });
+
+  it("«Costo desde» vacío cuenta como 0 — jamás «0 piezas» falso", () => {
+    mocks.state.products = [design("barato", 20, { t_retail: 60, t_girly: 90 })];
+    render(<ToastProvider><ContributionSimulatorScreen /></ToastProvider>);
+    fireEvent.change(screen.getByLabelText("Simular"), { target: { value: "banda" } });
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "c1" } });
+    fill("Costo hasta $", "50");
+    // desde vacío = banda [0, 50): la pieza de $20 pertenece.
+    expect(screen.getByText(/1 pieza en esta banda/)).toBeTruthy();
+    expect(screen.getByText(/barato/)).toBeTruthy();
+  });
+});
