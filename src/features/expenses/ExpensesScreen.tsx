@@ -23,6 +23,8 @@ import {
 import { formatDate } from "../../lib/dates";
 import { uid } from "../../lib/ids";
 import { sanitizeMoneyInput, formatMoneyExact } from "../../lib/money";
+import { lastPaymentMethodUsed, PURCHASE_PAYMENT_METHOD_LABEL } from "../financial/position";
+import type { PurchasePaymentMethod } from "../../types";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { effectivePurchaseStatus } from "../../types";
 import {
@@ -43,6 +45,10 @@ import {
 
 export function ExpensesScreen() {
   const { state, activeStore, saveExpense } = useStore();
+  // #279: the payment method is captured ONCE with the expense; the default
+  // is contextual (the store's most recent classified record).
+  const defaultMethod = lastPaymentMethodUsed({ purchases: state.purchases, expenses: state.expenses });
+  const [paymentMethod, setPaymentMethod] = useState<PurchasePaymentMethod | "">("");
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<LooseExpense | null>(null);
@@ -150,6 +156,7 @@ export function ExpensesScreen() {
         storeId: activeStore!.id,
         amount,
         date,
+        ...(paymentMethod ? { paymentMethod } : {}),
         description: description.trim() || undefined,
         category,
         ...(category === "supplies" && !simplified
@@ -204,6 +211,17 @@ export function ExpensesScreen() {
           <div className="grid grid-cols-2 gap-3">
             <TextField label="Importe" inputMode="decimal" placeholder="0.00" disabled={!!editing} value={amountText} onChange={(e) => setAmountText(sanitizeMoneyInput(e.target.value))} />
             <TextField label="Fecha" type="date" disabled={!!editing} value={date} onChange={(e) => setDate(e.target.value)} />
+            {!editing && (
+            <SelectField
+              label="Forma de pago"
+              value={paymentMethod}
+              onChange={(value) => setPaymentMethod(value as PurchasePaymentMethod)}
+              options={[
+                { value: "", label: defaultMethod ? `${PURCHASE_PAYMENT_METHOD_LABEL[defaultMethod]} (última)` : "Sin clasificar" },
+                ...PAYMENT_METHOD_OPTIONS,
+              ]}
+            />
+            )}
           </div>
           <TextField label="Descripción (opcional)" placeholder="p. ej. gasolina del viaje" value={description} onChange={(e) => setDescription(e.target.value)} />
           <SelectField
@@ -534,3 +552,6 @@ function ConsumeSheet({ expense, orders, onClose, onConsume }: {
     </Sheet>
   );
 }
+
+const PAYMENT_METHOD_OPTIONS = (Object.keys(PURCHASE_PAYMENT_METHOD_LABEL) as PurchasePaymentMethod[])
+  .map((method) => ({ value: method, label: PURCHASE_PAYMENT_METHOD_LABEL[method] }));

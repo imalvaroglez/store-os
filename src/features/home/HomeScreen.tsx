@@ -20,6 +20,7 @@ import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { OrderPaymentsSheet } from "../orders/OrderPaymentsSheet";
+import { FinancialPositionCard } from "../financial/FinancialPositionCard";
 import { DeliverySheet } from "../orders/DeliverySheet";
 import { pendingDeliveries } from "../../lib/deliveries";
 import { navigate } from "../../lib/router";
@@ -150,6 +151,10 @@ export function HomeScreen() {
             </StatRow>
           </Card>
         </div>
+      </Reveal>
+
+      <Reveal>
+        <FinancialPositionCard />
       </Reveal>
 
       {iconicRenewals.length > 0 && (

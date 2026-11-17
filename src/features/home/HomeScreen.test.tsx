@@ -17,6 +17,10 @@ vi.mock("../../app/StoreProvider", () => ({
     payments: [],
     loadOrderPayments: mocks.loadOrderPayments,
     registerOrderPayment: mocks.registerOrderPayment,
+    // #279: the from-activation position card (idle → nothing loads in unit tests).
+    financial: { status: "idle" as const, cardPayments: [] },
+    loadFinancialPosition: async () => {},
+    registerCardPayment: async () => {},
   }),
 }));
 

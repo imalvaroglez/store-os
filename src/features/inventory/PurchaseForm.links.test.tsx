@@ -10,8 +10,9 @@ import type { Purchase, Product, SupplierProductLink } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   state: {
-    products: [] as Product[],
     purchases: [],
+    expenses: [],
+    products: [] as Product[],
     categories: [],
     suppliers: [],
     supplierLinks: [] as SupplierProductLink[],
