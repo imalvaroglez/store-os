@@ -238,7 +238,11 @@ service cloud.firestore {
     // (Fer) creates them against a CLOSED period; append-only like closes:
     // an authorized history is never edited, corrections come as new docs.
     match /profitDistributions/{id} {
-      allow get, list: if canOperateStore(resource.data.storeId);
+      // #459 r6: the retry contract reads the deterministic doc id directly;
+      // a not-yet-existing doc must read cleanly for signed-in operators
+      // (same null-safe pattern as orders/products).
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
       allow create: if isOwner(request.resource.data.storeId)
         && request.resource.data.id == id
         && request.resource.data.createdBy == request.auth.uid;

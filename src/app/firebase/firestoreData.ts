@@ -523,18 +523,27 @@ export async function authorizeProfitDistribution(
   doc_: ReturnType<typeof buildProfitDistributionDoc>
 ): Promise<{ id: string }> {
   const { db } = getFirebase();
-  // #459 r5: idempotency is per INTENT (store + period + amount), not per
-  // period. A second, DIFFERENT amount is a legitimate successive partial
-  // authorization and MUST write; returning the period's first doc here made
-  // the remainder permanently unauthorizable with apparent success.
-  const samePeriod = await getDocs(
-    query(collection(db, "profitDistributions"), where("storeId", "==", doc_.storeId), where("period", "==", doc_.period))
-  );
-  const sameIntent = samePeriod.docs.find((saved) => saved.data().authorizedAmountCents === doc_.authorizedAmountCents);
-  if (sameIntent) return { id: sameIntent.id };
-  // The deterministic doc id makes a same-intent race land on ONE doc.
-  await setDoc(doc(db, "profitDistributions", doc_.id), doc_ as unknown as Record<string, unknown>);
-  return { id: doc_.id };
+  // #459 r6: idempotency is per INTENT (the doc id itself is deterministic
+  // in tienda+periodo+intentId). A retry after a lost response re-reads the
+  // existing doc; two LEGITIMATE authorizations — even of the SAME amount —
+  // carry different intents and both write. A same-intent race loses exactly
+  // one writer to the immutable-doc rule and resolves to the winner.
+  const ref = doc(db, "profitDistributions", doc_.id);
+  const existing = await getDoc(ref);
+  if (existing.exists()) return { id: doc_.id };
+  try {
+    await setDoc(ref, doc_ as unknown as Record<string, unknown>);
+    return { id: doc_.id };
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
+    if (code === "permission-denied") {
+      // The concurrent twin of THIS intent already wrote it (rules: update
+      // false) — the retry contract holds.
+      const winner = await getDoc(ref);
+      if (winner.exists()) return { id: doc_.id };
+    }
+    throw error;
+  }
 }
 
 /** #458: read the latest AUTHORIZED close snapshot for a period (if any). */

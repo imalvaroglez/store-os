@@ -107,15 +107,13 @@ describe("proposeDistribution (#128 etapa lista)", () => {
   });
 });
 
-describe("#459 r5 — id determinista por intento (tienda+periodo+monto)", () => {
-  it("el mismo monto produce el mismo id aunque el reloj avance", () => {
-    const a = profitDistributionDocId("s1", "2026-10", 96000);
-    const b = profitDistributionDocId("s1", "2026-10", 96000);
-    expect(a).toBe(b);
+describe("#459 r6 — id determinista por INTENTO (tienda+periodo+intentId)", () => {
+  it("el mismo intento produce el mismo id aunque el reloj avance (reintento tras respuesta perdida)", () => {
+    expect(profitDistributionDocId("s1", "2026-10", "int-7")).toBe(profitDistributionDocId("s1", "2026-10", "int-7"));
   });
 
-  it("un monto distinto es un INTENTO distinto (autorizaciones sucesivas)", () => {
-    expect(profitDistributionDocId("s1", "2026-10", 96000))
-      .not.toBe(profitDistributionDocId("s1", "2026-10", 40000));
+  it("el MISMO importe en intents distintos NO colapsa (dos autorizaciones legítimas)", () => {
+    expect(profitDistributionDocId("s1", "2026-10", "int-7"))
+      .not.toBe(profitDistributionDocId("s1", "2026-10", "int-8"));
   });
 });
