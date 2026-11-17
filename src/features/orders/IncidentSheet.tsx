@@ -2,7 +2,7 @@
 // order that sold the piece. Facts are registered as they happen (PO design:
 // acciones directas, no cadena de estados obligatoria). Mobile-first, every
 // action one tap away, errors explain themselves in Spanish.
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -22,7 +22,7 @@ import { uid } from "../../lib/ids";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { totalStock, variantSku } from "../../lib/variants";
 import { incidentState, type IncidentPieceLocation } from "./incidents";
-import { reconcileIncidentMoney } from "./incidentMoney";
+import { pendingRestitutionCents, reconcileIncidentMoney } from "./incidentMoney";
 import type { IncidentResolutionKind, Order, OrderIncident, ProductVariant } from "../../types";
 
 const PIECE_LABEL: Record<IncidentPieceLocation, string> = {
@@ -56,12 +56,17 @@ export function IncidentSheet({ order, open, onClose }: { order: Order; open: bo
     ? state.products.filter((product) => product.storeId === activeStore.id).sort((a, b) => a.name.localeCompare(b.name, "es-MX"))
     : [];
 
-  async function run(action: () => Promise<void>, success: string) {
+  // #380 QA r2: run() reports whether the action landed. A failed confirm must
+  // NOT look like success — its outcome decides whether the attempt id (the
+  // restitution self-heal key) stays alive for the retry.
+  async function run(action: () => Promise<void>, success: string): Promise<boolean> {
     try {
       await action();
       toast.success(success);
+      return true;
     } catch (error) {
       toast.error(error instanceof Error && error.message ? error.message : "No se pudo registrar. Intenta de nuevo.");
+      return false;
     }
   }
 
@@ -165,10 +170,21 @@ function IncidentCard({
   confirming: boolean;
   onAgreeing: (id: string | null) => void;
   onConfirming: (id: string | null) => void;
-  run: (action: () => Promise<void>, success: string) => Promise<void>;
+  run: (action: () => Promise<void>, success: string) => Promise<boolean>;
 }) {
   const { applyIncidentEvent } = useStore();
+  // #380 (revisión r2, MAYOR): one STABLE event id per confirmation intent —
+  // a retry after a failed post-commit restitution must hit the same id (the
+  // self-heal key); a fresh confirmation after success gets a new one.
+  const confirmEventIdRef = useRef<string | null>(null);
   const info = incidentState(incident);
+  // #380 QA r2: a confirmed incident with credit that did NOT make it back to
+  // the clienta's saldo a favor stays visible and retryable — the pending
+  // figure is the SAME arithmetic the data layer uses to self-heal.
+  const storedConfirmEvent = (incident.events ?? []).find((event) => event.kind === "confirmed");
+  const pendingRestitution = info.confirmed && storedConfirmEvent
+    ? pendingRestitutionCents(order, incident)
+    : 0;
   // #212 F6: the settle button only exists while money is actually pending
   // (executing at confirm already settles it once).
   const owedCents = typeof incident.resolution?.refundOwedCents === "number"
@@ -259,9 +275,28 @@ function IncidentCard({
       info.resolution?.kind === "refund" && refundExecuted
         ? { refundExecutedCents: owedCents }
         : undefined;
-    await run(
-      () => applyIncidentEvent(order, incident.id, { id: uid("iev"), kind: "confirmed", ...(detail ? { detail } : {}) }),
+    confirmEventIdRef.current ??= uid("iev");
+    const eventId = confirmEventIdRef.current;
+    const landed = await run(
+      () => applyIncidentEvent(order, incident.id, { id: eventId, kind: "confirmed", ...(detail ? { detail } : {}) }),
       "Recepción y entrega registradas."
+    );
+    // #380 QA r2: only SUCCESS closes the intent — after a failed post-commit
+    // restitution the retry must replay the SAME event id (the self-heal key);
+    // a fresh id would die on the transaction's duplicate guard.
+    if (landed) confirmEventIdRef.current = null;
+    onConfirming(null);
+  }
+
+  // #380 QA r2: a confirmed incident whose credit restitution did not land
+  // keeps a VISIBLE, retryable pending notice — the failure is audible at the
+  // confirmation point and the retry replays the stored confirm event (same
+  // identity → the release callable completes or reports the shortfall again).
+  async function retryRestitution(confirmEvent: { id: string; detail?: Record<string, string | number> }) {
+    onConfirming(incident.id);
+    await run(
+      () => applyIncidentEvent(order, incident.id, { id: confirmEvent.id, kind: "confirmed", ...(confirmEvent.detail ? { detail: confirmEvent.detail } : {}) }),
+      "Saldo a favor restituido."
     );
     onConfirming(null);
   }
@@ -431,6 +466,18 @@ function IncidentCard({
           <p className="text-xs text-on-surface-soft">
             Se registra junto: la pieza dañada entra en cuarentena (no vendible) y la solución sale de inventario con su costo real.
           </p>
+        </div>
+      )}
+
+      {info.confirmed && pendingRestitution > 0 && storedConfirmEvent && (
+        <div className="space-y-2 border-t border-edge pt-3 rounded-xl bg-terracotta-soft/60 ring-1 ring-terracotta/20 p-3">
+          <p className="text-sm text-terracotta">
+            Quedan <Money exact amount={pendingRestitution / 100} /> por devolver al saldo a favor de la clienta. El
+            movimiento no se completó solo; reinténtalo y, si no termina, revisa los pedidos origen del saldo.
+          </p>
+          <Button size="sm" variant="secondary" disabled={confirming} onClick={() => void retryRestitution(storedConfirmEvent)}>
+            Reintentar restitución
+          </Button>
         </div>
       )}
 

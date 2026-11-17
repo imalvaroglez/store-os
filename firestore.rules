@@ -361,6 +361,11 @@ service cloud.firestore {
     function validReceipt(data, orderId, paymentId) {
       return data.id == paymentId && data.orderId == orderId
         && data.createdBy == request.auth.uid
+        // #369: no new cobros on a CANCELLED order — the money has no exit
+        // path (compensations exclude cancelled, incidents reject them).
+        // Signed adjustments stay valid evidence for the PO's future exit.
+        && (data.kind != 'payment'
+            || get(/databases/$(database)/documents/orders/$(orderId)).data.get('orderStatus', get(/databases/$(database)/documents/orders/$(orderId)).data.get('status', '')) != 'cancelled')
         && data.createdAt is string && data.createdAt.size() > 0
         && data.amount is number && data.amount != 0
         && math.abs(data.amount) <= 9000000000000
@@ -512,10 +517,22 @@ service cloud.firestore {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries'])
+        // #380 (revisión r2, CRÍTICO): a fabricated create must not arrive
+        // with credit either — cancellation would launder it into real,
+        // spendable saldo a favor. Same deny-list discipline as money.
+        && !request.resource.data.keys().hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
+        // #380 prototype: saldo a favor moves ONLY through the trusted
+        // applyCredit/releaseCredit callables. The Admin SDK bypasses rules
+        // (IAM), so the FINAL protection is this total client-side lock:
+        // any CHANGE to the credit fields from a client SDK is denied.
+        // Verbatim carries (unchanged keys) are unaffected — ordinary
+        // saves keep working.
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger'])
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision'])
             || validMoneyUpdate(id, resource.data, request.resource.data))
         // #218: legacy deposit cannot rise after receipts, and is frozen once
@@ -547,8 +564,46 @@ service cloud.firestore {
             || request.resource.data.get('deliveries', [])
                 == resource.data.get('deliveries', [])
             || validDeliveryAppend(id, resource.data, request.resource.data))
-        && (!('installmentsReservedAt' in resource.data)
-            || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
+        // #478: the installment reservation marker never changes once
+        // present, and may only be BORN on money it can point to: a doc
+        // that ALREADY carries received money (the legitimate edit path
+        // stamps it exactly then), or this very write being a signed
+        // payment (validMoneyUpdate — the first-abono stamp; CEL's ||
+        // short-circuits, so the expensive check only runs in that rare
+        // case). A bare update forging it on an unbacked order made
+        // cancellation keep the pieces (destroyed availability) and
+        // blocked deletion.
+        && (request.resource.data.get('installmentsReservedAt', null)
+              == resource.data.get('installmentsReservedAt', null)
+            || (!('installmentsReservedAt' in resource.data)
+              && (resource.data.get('paymentsReceivedCents', 0) > 0
+                  || resource.data.get('inheritedDepositMaterialized', false) == true
+                  // #168 F2: a still-unmaterialized legacy deposit is money
+                  // too — converting such an order to installments stamps
+                  // the marker legitimately. (#218 already freezes the
+                  // deposit against silent rises once receipts exist.)
+                  || resource.data.get('deposit', 0) > 0
+                  // #478 C1: the legitimate single-save conversion installs
+                  // the plan AND captures the first anticipo in ONE write —
+                  // the marker is born from THIS write's deposit rise. Same
+                  // trust as the previous line: the deposit field is money
+                  // evidence either way, a forged rise is a visible lie in
+                  // the doc (auditable), and #218 freezes rises once
+                  // receipts exist. A plan must be present (this write or
+                  // the doc) — the marker without a plan is not a shape the
+                  // legitimate client ever writes.
+                  || (request.resource.data.get('deposit', 0) > 0
+                      && resource.data.get('deposit', 0) == 0
+                      && !('paymentsReceivedCents' in resource.data)
+                      && ('installments' in request.resource.data
+                          || 'installments' in resource.data))
+                  // ...or THIS write itself is a money write: the money
+                  // branch above has already forced it through
+                  // validMoneyUpdate, so re-evaluating here would only
+                  // burn CEL budget (1000-expression limit) for the same
+                  // verdict.
+                  || request.resource.data.diff(resource.data).affectedKeys()
+                    .hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision']))))
         && (resource.data.get('inheritedDepositMaterialized', false) != true
             || request.resource.data.get('inheritedDepositMaterialized', false) == true);
       // Preserve the parent of immutable money evidence, including net-zero

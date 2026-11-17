@@ -7,7 +7,6 @@ import {
   onAuthStateChanged,
   sendEmailVerification,
   sendSignInLinkToEmail,
-  type AuthError,
   type User as FbUser,
 } from "firebase/auth";
 import {
@@ -200,20 +199,22 @@ export async function signInWithEmail(email: string, password: string): Promise<
   return afterLogin(cred.user);
 }
 
+/**
+ * Google sign-in always uses the popup flow (#481). Redirect is NOT viable for
+ * Store OS: the app is served from Vercel/localhost while the authDomain stays
+ * *.firebaseapp.com, and Firebase's own guidance says signInWithRedirect fails
+ * silently in that setup on Safari 16.1+ / Firefox 109+ / Chrome M115+ because
+ * the blocked third-party authDomain iframe breaks the return trip. The popup's
+ * iOS Safari failures ("Database is closing" while the opener sits behind the
+ * popup; the interstitial's "The requested action is invalid" when persistence
+ * is inaccessible) are fixed inside the Firebase SDK — this repo requires
+ * firebase >= 12.19.0 (SDK release notes 12.18.0/12.19.0, issues #10264/#10318).
+ * Raw AuthErrors bubble up so AuthScreen can explain them in Spanish.
+ */
 export async function signInWithGoogle(): Promise<AppUser> {
   const { auth } = getFirebase();
-  try {
-    const cred = await signInWithPopup(auth, GOOGLE);
-    return afterLogin(cred.user);
-  } catch (error) {
-    const code = (error as AuthError)?.code;
-    if (code === "auth/unauthorized-domain") {
-      throw new Error(
-        "Este dominio no está autorizado para entrar con Google. Pide a la administración que lo agregue en Firebase Console → Authentication → Settings → Authorized domains."
-      );
-    }
-    throw error;
-  }
+  const cred = await signInWithPopup(auth, GOOGLE);
+  return afterLogin(cred.user);
 }
 
 export async function signOutFirebase(): Promise<void> {

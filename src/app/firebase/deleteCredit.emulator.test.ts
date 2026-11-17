@@ -1,12 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { deleteDoc, doc, getDoc, setDoc } from "firebase/firestore";
+import { connectFirestoreEmulator, deleteDoc, doc, getDoc, initializeFirestore, setDoc } from "firebase/firestore";
+import { initializeApp } from "firebase/app";
+import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth } from "firebase/auth";
 import { readFileSync } from "node:fs";
 import type { AppUser } from "./auth";
 import type { Order, OrderCreditLedgerEntry } from "../../types";
 
-const holder = vi.hoisted(() => ({ db: null as any }));
-vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
+const holder = vi.hoisted(() => ({ db: null as any, app: null as any }));
+vi.mock("./config", () => ({
+  getFirebase: () => ({ app: holder.app, db: holder.db }),
+  isFirebaseConfigured: () => true,
+  FIREBASE_EMULATOR_ENABLED: true,
+}));
 import {
   applyCustomerCreditTx,
   deleteOrderWithStockTx,
@@ -44,10 +50,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deletion vs outstanding c
       projectId: "store-os-dev",
       firestore: { rules: readFileSync("firestore.rules", "utf8") },
     });
+    // Real Auth-emulator user: the trusted callables authenticate this
+    // identity (the rules-level fixtures keep using tx-user contexts).
+    const app = initializeApp(
+      { projectId: "store-os-dev", apiKey: "demo-api-key", authDomain: "store-os-dev.firebaseapp.com" },
+      `dc-credit-${Date.now()}`
+    );
+    const auth = getAuth(app);
+    connectAuthEmulator(auth, `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST ?? "127.0.0.1:9099"}`, { disableWarnings: true });
+    const created = await createUserWithEmailAndPassword(auth, `dc-credit-${Date.now()}@example.test`, "password123");
+    const clientDb = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+    const [fsHost, fsPort] = (process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080").split(":");
+    connectFirestoreEmulator(clientDb, fsHost, Number(fsPort));
     await env.withSecurityRulesDisabled(async (ctx) => {
       const db = ctx.firestore();
       await setDoc(doc(db, "users/tx-user"), { role: "member" });
-      await setDoc(doc(db, "adminStores/dc-store"), { ownerUid: "tx-user", memberUids: ["tx-user"] });
+      await setDoc(doc(db, "adminStores/dc-store"), { ownerUid: "tx-user", memberUids: ["tx-user", created.user.uid] });
       // Overpaid origin: $200 total, $400 received → $200 of clienta credit.
       await setDoc(doc(db, "orders/dc-origin"), orderDoc("dc-origin", {
         items: [{ productName: "Anillo", quantity: 1, unitPrice: 200, subtotal: 200, lineId: "dc-origin_L0" }],
@@ -58,6 +76,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deletion vs outstanding c
       // Destination owing $200 that the credit will cover.
       await setDoc(doc(db, "orders/dc-dest"), orderDoc("dc-dest"));
     });
+    holder.app = app;
     holder.db = env.authenticatedContext("tx-user").firestore();
   });
   afterAll(async () => {
