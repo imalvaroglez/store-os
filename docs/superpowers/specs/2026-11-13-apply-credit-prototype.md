@@ -74,43 +74,27 @@ públicas no cambian (`applyCustomerCreditTx` / `releaseCustomerCreditTx`):
   dinero nunca se mueve a ciegas: la restitución corta es visible y el reintento
   es idempotente por evento.
 
-**Plan de liberación por entorno (compuerta operativa).** El endurecimiento
-de reglas no llega a los dos entornos al mismo tiempo: el **push a main
-publica reglas en dev** (job `deploy-rules`, tras build-test + rules-and-e2e
-verdes), y **producción solo recibe reglas vía CI con release guard**
-(`workflow_dispatch release_production=true`: versión incrementada + notas →
-`deploy-rules` a `store-os-f7cf8` → deploy de la app). Las callables no
-tienen job de CI: su despliegue es un paso humano (`firebase deploy --only
-functions`, jamás ejecutado por el agente). Orden por entorno:
+**Plan de liberación por entorno (AUTOMATIZADO en CI).** El job
+`deploy-functions` publica y VERIFICA los callables antes de que
+`deploy-rules` endurezca nada, en cada entorno: push a main → funciones a
+`store-os-dev` + sondeo → reglas a dev; dispatch de release con su guard →
+funciones a `store-os-f7cf8` + sondeo → reglas a producción → app. El release
+guard (versión+notas) vive ahora en `deploy-functions` — es la PRIMERA
+mutación productiva del release, y el choke point se movió con ella. El
+sondeo post-deploy exige que cada callable exista y rechace una llamada sin
+sesión (401/403/400 con cuerpo de error Firebase; 404 o 5xx falla cerrado).
+Ya no hay paso manual de functions: la coordinación con liberación se reduce
+a despachar la ventana con el orden del workflow. Rollback: revert en main →
+el mismo job re-publica las functions del estado anterior y las reglas
+revertidas re-habilitan la vía directa (sin migración; ledger idéntico).
 
-1. **Dev — funciones antes de reglas.** Antes de integrar este PR:
-   `npm --prefix functions run deploy` (proyecto `store-os-dev`, ya el
-   predeterminado del script). Luego el merge → push a main → reglas
-   cerradas en dev. La PWA de dev liberada en ese mismo push ya llama a los
-   callables disponibles; una PWA vieja cacheada que aún escriba directo
-   recibe denegación fail-closed → banner de sincronización → al recargar
-   actualiza y usa la vía nueva (sin pérdida de datos). Verificación
-   post-merge: registrar una compensación en dev y comprobar en el ledger
-   entradas `app_*`/`con_*` con `by` = uid de la operadora.
-2. **Producción — funciones antes del dispatch.** El merge a main NO toca
-   producción. Antes de despachar el release:
-   `npm --prefix functions run deploy -- --project store-os-f7cf8`. Con los
-   callables ya publicados, el `workflow_dispatch` de la ventana ejecuta
-   release guard → reglas a producción → app nueva: el cliente que ya usa
-   callables los encuentra disponibles y ninguna PWA queda sin vía de
-   escritura de crédito.
-3. **Rollback:** revertir las reglas re-habilita la escritura directa (los
-   callables siguen siendo la vía de los builds nuevos); sin migración de
-   datos — el ledger es idéntico.
-
-**Validación de disponibilidad:** en emulador, las suites callable de
-`test:rules` ya corren exactamente esta combinación (reglas cerradas del
-repo + callables sirviendo las tres rutas de crédito). La disponibilidad
-real por entorno queda a cargo del paso 1/2 humano con la verificación
-post-deploy descrita; si un callable faltara, el efecto es fail-closed
-visible (banner con reintento), nunca dinero en estado intermedio.
-
-## Guion de verificación para la revisora (fallos parciales, reintentos, recuperación de saldo)
+**Validación de disponibilidad:** réplica local de la secuencia completa del
+pipeline sobre emuladores (2026-11-17): (1) funciones sirviendo; (2) el
+sondeo del job en verde para ambos callables; (3) reglas del repo endurecidas
+con funciones disponibles → suite callable 14/14; (4) rollback con reglas
+previas → la escritura directa de cliente vuelve a pasar. La compatibilidad
+de transición (PWA vieja bajo reglas cerradas: denegación → banner con
+reintento → recarga) está cubierta por la spec fase 2 y por P5 del demo.## Guion de verificación para la revisora (fallos parciales, reintentos, recuperación de saldo)
 
 Todo reproduce desde la raíz del repo con emuladores; el SHA de esta entrega
 viaja en el PR.
