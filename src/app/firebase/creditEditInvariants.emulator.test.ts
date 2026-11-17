@@ -14,7 +14,7 @@ const line = (lineId: string, unitPrice: number, quantity = 1) =>
   ({ lineId, productId: `p-${lineId}`, name: `Pieza ${lineId}`, quantity, unitPrice, subtotal: unitPrice * quantity });
 
 const orderDoc = (items: unknown[], extra: Record<string, unknown> = {}) =>
-  ({ storeId: "inv366-store", items, deposit: 0, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", ...extra });
+  ({ storeId: "inv366-store", customerId: "c1", items, deposit: 0, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", ...extra });
 
 const asOrder = (id: string, items: unknown[], extra: Record<string, unknown> = {}): Order =>
   ({ id, storeId: "inv366-store", customerId: "c1", items: items as Order["items"], deposit: 0,

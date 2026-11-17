@@ -733,6 +733,21 @@ export async function saveOrderWithStockTx(
     // math runs (same fail-closed discipline as the incident evidence above).
     const coverageError = previous ? creditEditCoverageError(docData, order) : null;
     if (coverageError) throw new CreditCoverageError(coverageError);
+    // #367: changing the clienta of an order that MOVED credit transfers that
+    // money between people (Ana would see María's saldo; María's views lose
+    // it). Block until the credit is settled — restituted or fully consumed.
+    if (previous && previous.customerId !== order.customerId) {
+      const movedCredit = creditFieldCents(docData ?? {}, "creditAppliedCents") > 0
+        || creditFieldCents(docData ?? {}, "creditConsumedCents") > 0
+        || (Array.isArray(docData?.creditLedger) && (docData.creditLedger as unknown[]).some(
+          (entry) => typeof (entry as { amountCents?: unknown })?.amountCents === "number" && (entry as { amountCents: number }).amountCents !== 0
+        ));
+      if (movedCredit) {
+        throw new Error(
+          "Este pedido tiene saldo a favor aplicado o generado; cambiar la clienta movería ese dinero a otra persona. Restituye el saldo (o termina su uso) antes de cambiar la clienta."
+        );
+      }
+    }
     // #218: full saves cannot invent legacy money after payment evidence.
     // Use the RAW deposit: migration can inflate it for legacy paid orders.
     const rawDeposit = typeof docData?.deposit === "number" && Number.isFinite(docData.deposit) ? docData.deposit : 0;
