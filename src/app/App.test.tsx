@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./firebase/AuthProvider", () => ({
   AuthProvider: ({ children }: { children: ReactNode }) => children,
-  useAuth: () => ({ user: mocks.user, authReady: true, enabled: true, error: null, signOut: async () => {} }),
+  useAuth: () => ({ user: mocks.user, authReady: true, enabled: true, error: null, googleError: null, clearGoogleError: () => {}, signOut: async () => {} }),
 }));
 
 vi.mock("./firebase/firestoreData", async (importOriginal) => {
