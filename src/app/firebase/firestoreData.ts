@@ -41,11 +41,12 @@ import {
   orderMoneyAfterPayments,
   signedAmountCents,
 } from "../../features/orders/payments";
+import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 import { normalizeEmail, type AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
-import { creditAvailableCents, pendingCents } from "../../features/orders/customerCredit";
+import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
-import { reconcileIncidentMoney } from "../../features/orders/incidentMoney";
+import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
@@ -791,6 +792,29 @@ export async function saveOrderWithStockTx(
     if (next.installments && !previous?.installments && docMoney.receivedCents > 0 && !next.installmentsReservedAt) {
       next.installmentsReservedAt = new Date().toISOString();
     }
+    // #380 prototype: an edit can never invalidate the balance that backs
+    // another sale — after this save, the order's fresh surplus (received
+    // minus effective total, refunds committed blocking it like the read
+    // model) must still cover the credit it mirrors as consumed. Without
+    // this, raising the total (or lowering received money) on the ORIGIN
+    // would retroactively unback a sister order's applied credit.
+    {
+      const consumedNow = typeof docData?.creditConsumedCents === "number" && Number.isSafeInteger(docData.creditConsumedCents)
+        ? Math.max(0, docData.creditConsumedCents)
+        : 0;
+      if (consumedNow > 0) {
+        const itemsCents = orderItems(next).reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+        const adjustmentsCents = incidentsSaleAdjustmentCents(next.incidents);
+        const receivedCents = Math.max(docReceivedCents(next), docReceivedCents(previous ?? {}));
+        const refundCommittedCents = incidentsRefundCommittedCents(next.incidents);
+        const surplusAfter = Math.max(0, receivedCents - Math.max(0, itemsCents + adjustmentsCents) - refundCommittedCents);
+        if (surplusAfter < consumedNow) {
+          throw new Error(
+            `Este pedido respalda ${consumedNow / 100} pesos de saldo a favor que otra venta ya usa; la edición dejaría ese saldo sin respaldo (${surplusAfter / 100} disponibles tras el cambio). Devuelve el saldo primero o corrige la edición.`
+          );
+        }
+      }
+    }
     // #165/#168 F1 → PO 2026-11-03 (R9): the transition INTO delivered still
     // fires the gate for a plan order or any order with registered cobros
     // whose doc money does not cover the total — but the operator may now
@@ -1114,15 +1138,19 @@ export async function registerOrderPaymentTx(
 }
 
 /**
- * #189: apply ONE planned compensation between two orders of the same clienta
- * and store, atomically (the #168 accumulator discipline). One commit touches
- * both documents: the destination gains `creditAppliedCents` + the immutable
- * ledger entry (arrayUnion), the origin gains its `creditConsumedCents`
- * mirror — mirrors can never drift. Idempotent on the entry id: a retry that
- * finds it already persisted returns success without applying twice. The
- * amounts are re-validated against the FRESH docs inside the transaction, so
- * a stale plan (concurrent cobro, edited total) aborts instead of inventing
- * money; the caller replans on the next trigger.
+ * #189/#380: apply ONE planned compensation between two orders of the same
+ * clienta and store. The write is the TRUSTED applyCredit callable — the
+ * rules deny every client write to the credit fields, and the callable
+ * re-validates the planned amount against the FRESH docs inside its own
+ * transaction (same clienta, nobody cancelled, real surplus ≥ amount, real
+ * pending ≥ amount), then writes the full pair — destination accumulator +
+ * immutable ledger entry, origin `creditConsumedCents` mirror, revision
+ * bumps — atomically. Idempotent on the entry id: a retry that finds it
+ * already persisted returns success without applying twice. A stale plan
+ * (concurrent cobro, edited total) aborts with the historical "cambió
+ * mientras se aplicaba" wording so callers treat it as the expected
+ * concurrency it is; the listener round-trip replans. The callable stamps
+ * `at`/`by` itself — the planned entry's values ride along unused.
  */
 export async function applyCustomerCreditTx(params: {
   entry: OrderCreditLedgerEntry;
@@ -1130,136 +1158,55 @@ export async function applyCustomerCreditTx(params: {
   orderId: string;
   storeId: string;
 }): Promise<void> {
-  const { db } = getFirebase();
   const { entry, orderId, storeId } = params;
   if (entry.kind !== "application" || !Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) {
     throw new Error("La compensación a aplicar no es válida.");
   }
-  const destRef = doc(db, "orders", orderId);
-  const originRef = doc(db, "orders", entry.fromOrderId);
-  await runTransaction(db, async (tx) => {
-    // READ PHASE (Firestore requires every read before any write).
-    const destSnap = await tx.get(destRef);
-    const originSnap = await tx.get(originRef);
-    if (!destSnap.exists()) throw new Error("No se encontró el pedido a compensar.");
-    if (!originSnap.exists()) throw new Error("No se encontró el pedido con el saldo a favor.");
-    const destData = destSnap.data() as Record<string, unknown>;
-    const originData = originSnap.data() as Record<string, unknown>;
-    if ((destData.storeId ?? "") !== storeId || (originData.storeId ?? "") !== storeId) {
-      throw new Error("Los pedidos pertenecen a otra tienda.");
-    }
-    if ((destData.customerId ?? "") !== (originData.customerId ?? "") || !destData.customerId) {
-      throw new Error("El saldo a favor solo compensa pedidos de la misma clienta.");
-    }
-    if (destData.orderStatus === "cancelled" || originData.orderStatus === "cancelled") {
-      throw new Error("Un pedido cancelado no participa en la compensación.");
-    }
-    const ledger = Array.isArray(destData.creditLedger) ? (destData.creditLedger as OrderCreditLedgerEntry[]) : [];
-    if (ledger.some((saved) => saved.id === entry.id)) return; // idempotent retry
-    // Fresh-doc validation: the planned amount must still fit both sides.
-    if (creditAvailableCents(originData) < entry.amountCents) {
-      throw new Error("El saldo a favor cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
-    }
-    if (pendingCents(destData) < entry.amountCents) {
-      throw new Error("El saldo del pedido cambió mientras se aplicaba. Se reintentará con las cifras nuevas.");
-    }
-    // WRITE PHASE — one atomic commit across both documents. #363: both docs
-    // bump `revision` so concurrent writers (an open editor, the deletion
-    // flow) fail closed on their revision check while the clienta's money
-    // position just changed — instead of saving a stale business state over
-    // it. (saveOrderWithStockTx re-reads credit verbatim from the fresh doc,
-    // so the bump is not needed to protect the credit fields themselves; it
-    // is the fail-closed signal. Trade-off: an editor open when the auto
-    // compensation lands gets a StaleOrderError and its capture goes to the
-    // local draft — documented in #363.)
-    tx.update(destRef, {
-      creditAppliedCents: increment(entry.amountCents),
-      creditLedger: arrayUnion(stripUndefined(entry)),
-      revision: increment(1),
-      updatedAt: entry.at,
-    });
-    tx.update(originRef, {
-      creditConsumedCents: increment(entry.amountCents),
-      revision: increment(1),
-    });
+  await applyCreditTrusted({
+    storeId,
+    fromOrderId: entry.fromOrderId,
+    toOrderId: orderId,
+    amountCents: entry.amountCents,
+    intentId: entry.id,
   });
 }
 
 /**
- * #189: restitute the credit a CANCELLED order had consumed, atomically. PO
- * decision 2026-11-05: cancelling a valid order that used saldo a favor
- * returns that credit to the clienta. For every origin still owed restitution
- * (net applications − releases from the ledger), the reversal is ONE commit:
- * destination accumulator down, origin mirror down, release entries appended
- * as evidence. Idempotent: re-running after a successful release finds net
- * zero and writes nothing.
+ * #189/#380: restitute the credit a CANCELLED order had consumed (PO decision
+ * 2026-11-05), or the credit a to-be-deleted order consumed (deletion keeps
+ * the origin's mirror honest). The write is the TRUSTED releaseCredit
+ * callable: net by origin from this order's own ledger, capped per origin by
+ * its REAL committed mirror (drift stays conservative — a release can never
+ * drive `creditConsumedCents` negative), release entries appended as
+ * evidence, revision bumps included. Idempotent: re-running after a
+ * successful release finds net zero and writes nothing. The callable stamps
+ * the authenticated operator; `by` is kept for call-site compatibility only.
  */
 export async function releaseCustomerCreditTx(params: {
   orderId: string;
   storeId: string;
   by: string;
   /** "cancellation" (default): only a cancelled order restitutes — the PO
-   * rule. "deletion": the order is about to be deleted; its consumed credit
-   * is restituted so the origin's mirror never overstates consumption. */
+   * rule, checked against the fresh doc before calling. "deletion": the
+   * order is about to be deleted; its consumed credit is restituted so the
+   * origin's mirror never overstates consumption. */
   reason?: "cancellation" | "deletion";
 }): Promise<number> {
   const { db } = getFirebase();
-  const { orderId, storeId, by, reason = "cancellation" } = params;
-  const destRef = doc(db, "orders", orderId);
-  // Per-ATTEMPT accumulator: Firestore retries the transaction body on
-  // conflicts, so a total accumulated across attempts would over-report.
-  let released = 0;
-  await runTransaction(db, async (tx) => {
-    released = 0;
-    const destSnap = await tx.get(destRef);
-    if (!destSnap.exists()) return;
-    const destData = destSnap.data() as Record<string, unknown>;
-    if ((destData.storeId ?? "") !== storeId) return;
-    if (reason === "cancellation" && destData.orderStatus !== "cancelled") return;
-    const ledger = Array.isArray(destData.creditLedger) ? (destData.creditLedger as OrderCreditLedgerEntry[]) : [];
-    const netByOrigin = new Map<string, number>();
-    for (const saved of ledger) {
-      if (saved.kind !== "application" || !Number.isSafeInteger(saved.amountCents)) continue;
-      netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
-    }
-    for (const saved of ledger) {
-      if (saved.kind !== "release" || !Number.isSafeInteger(saved.amountCents)) continue;
-      netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
-    }
-    const entries: OrderCreditLedgerEntry[] = [];
-    const writes: Array<{ ref: ReturnType<typeof doc>; data: Record<string, unknown> }> = [];
-    let appliedDown = 0;
-    for (const [fromOrderId, netCents] of netByOrigin) {
-      if (netCents <= 0) continue;
-      const originRef = doc(db, "orders", fromOrderId);
-      const originSnap = await tx.get(originRef);
-      if (!originSnap.exists() || (originSnap.data().storeId ?? "") !== storeId) continue;
-      entries.push({
-        id: `release_${orderId}_${fromOrderId}_${(ledger.filter((e) => e.kind === "release" && e.fromOrderId === fromOrderId).length) + 1}`,
-        kind: "release",
-        fromOrderId,
-        amountCents: netCents,
-        at: new Date().toISOString(),
-        by,
-      });
-      writes.push({ ref: originRef, data: { creditConsumedCents: increment(-netCents) } });
-      appliedDown += netCents;
-      released += netCents;
-    }
-    if (entries.length === 0) return;
-    // #363: same revision bump as the application side — a fail-closed signal
-    // for concurrent writers while the clienta's money position changes.
-    // (Known exception documented in #363: applyIncidentEventTx also writes
-    // credit fields without a bump — its own guards cover it.)
-    tx.update(destRef, {
-      creditAppliedCents: increment(-appliedDown),
-      creditLedger: arrayUnion(...entries.map(stripUndefined)),
-      revision: increment(1),
-      updatedAt: entries[0].at,
-    });
-    for (const write of writes) tx.update(write.ref, { ...write.data, revision: increment(1) });
+  const { orderId, storeId, reason = "cancellation" } = params;
+  if (reason === "cancellation") {
+    const snap = await getDoc(doc(db, "orders", orderId));
+    if (!snap.exists()) return 0;
+    const data = snap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId || data.orderStatus !== "cancelled") return 0;
+  }
+  const result = await releaseCreditTrusted({
+    storeId,
+    orderId,
+    intentId: `${reason}_${orderId}`,
+    idPrefix: "release_",
   });
-  return released;
+  return result.released;
 }
 
 /**
@@ -2252,7 +2199,7 @@ export async function applyIncidentEventTx(params: {
   const { db } = getFirebase();
   const { orderId, storeId, incidentId, event, resolution, replacement } = params;
   const orderRef = doc(db, "orders", orderId);
-  return runTransaction(db, async (tx) => {
+  const result = await runTransaction(db, async (tx) => {
     const snap = await tx.get(orderRef);
     if (!snap.exists()) throw new Error("No se encontró el pedido.");
     const data = snap.data() as Record<string, unknown>;
@@ -2342,56 +2289,11 @@ export async function applyIncidentEventTx(params: {
     if (kind === "provider_compensation" && (incident.events ?? []).some((saved) => saved.kind === "provider_compensation")) {
       throw new Error("La compensación del proveedor ya está registrada en esta incidencia.");
     }
-    // #203 r2-criterio 1: at confirm (the piece is physically back), the
-    // applied credit that covered the reconciled value is RESTITUTED to its
-    // origins — that is how the clienta's money becomes available again in
-    // #189 (the reconcile effect re-applies it). Reads happen before writes.
-    const creditReleases: Array<{ originRef: ReturnType<typeof doc>; cents: number; entry: OrderCreditLedgerEntry }> = [];
-    let restitutionTotal = 0;
-    if (kind === "confirmed") {
-      const money = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), incident);
-      let remaining = money.restitutionCents;
-      const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
-      const netByOrigin = new Map<string, number>();
-      for (const saved of ledger) {
-        if (saved.kind === "application" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) + saved.amountCents);
-        if (saved.kind === "release" && Number.isSafeInteger(saved.amountCents)) netByOrigin.set(saved.fromOrderId, (netByOrigin.get(saved.fromOrderId) ?? 0) - saved.amountCents);
-      }
-      for (const [fromOrderId, netCents] of netByOrigin) {
-        if (remaining <= 0) break;
-        if (netCents <= 0) continue;
-        const originRef = doc(db, "orders", fromOrderId);
-        const originSnap = await tx.get(originRef);
-        // PO directive (r4): a NEEDED origin that is missing, foreign or
-        // inconsistent ABORTS the whole confirmation — never a silent skip.
-        // The clienta's credit would vanish with no signal; fail closed and
-        // explain so the operator can repair the data first.
-        if (!originSnap.exists()) {
-          throw new Error(`No se encontró el pedido origen del saldo a favor (${fromOrderId}). Repara ese pedido antes de confirmar: la devolución necesita devolverle su crédito.`);
-        }
-        const originData = originSnap.data() as Record<string, unknown>;
-        if ((originData.storeId ?? "") !== storeId) {
-          throw new Error("El pedido origen del saldo a favor pertenece a otra tienda. Revisa la ficha antes de confirmar.");
-        }
-        // F4: cap against the origin's REAL mirror so a release can never
-        // drive creditConsumed negative (manual-repair scenarios included).
-        const originConsumed = typeof originData.creditConsumedCents === "number" && Number.isSafeInteger(originData.creditConsumedCents)
-          ? Math.max(0, originData.creditConsumedCents)
-          : 0;
-        if (originConsumed <= 0) {
-          throw new Error(`El pedido origen del saldo a favor no refleja el crédito consumido (${fromOrderId}). Revisa sus cobros de saldo antes de confirmar.`);
-        }
-        const release = Math.min(netCents, remaining, originConsumed);
-        if (release <= 0) continue;
-        remaining -= release;
-        creditReleases.push({
-          originRef,
-          cents: release,
-          entry: { id: `rel_${event.id}_${fromOrderId}`, kind: "release", fromOrderId, amountCents: release, at: event.at, by: event.by },
-        });
-        restitutionTotal += release;
-      }
-    }
+    // #203 r2-criterio 1 / #380: at confirm, the applied credit that covered
+    // the reconciled value is restituted to its origins AFTER this commit,
+    // through the TRUSTED releaseCredit callable (the rules deny client
+    // writes to the credit fields). See restituteIncidentCredit below — the
+    // release is idempotent per event id and self-heals on retry.
 
     // ── Inventory effects (same commit; shortages abort the whole event).
     // Firestore requires EVERY read before ANY write: both product reads
@@ -2503,6 +2405,20 @@ export async function applyIncidentEventTx(params: {
       }
     }
 
+    // #380 QA r3 (MAYOR-1): FREEZE the restitution obligation into the confirm
+    // event itself. Recomputing it later reads a creditAppliedCents the
+    // callable already decremented, so a retry after a partial release
+    // under-counted (releasing obligation−2·partial and then "succeeding"
+    // with the clienta short). The frozen figure is what the callable is
+    // capped with and what completeness is judged against — forever.
+    if (kind === "confirmed") {
+      const restitutionCents = reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), incident).restitutionCents;
+      // Stamped UNCONDITIONALLY (zero included): a hand-crafted figure can
+      // never become a fabricated cap, and zero-obligation confirms are
+      // frozen too (review r3 residuals 2–3).
+      event.detail = { ...(event.detail ?? {}), restitutionCents: Math.max(0, restitutionCents) };
+    }
+
     // ── Order doc: append the event (and the agreed resolution, once). ──
     const updated: OrderIncident = {
       ...incident,
@@ -2512,21 +2428,81 @@ export async function applyIncidentEventTx(params: {
     };
     const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));
     const updatedAt = event.at;
-    if (restitutionTotal > 0) {
-      for (const release of creditReleases) {
-        tx.update(release.originRef, { creditConsumedCents: increment(-release.cents) });
-      }
-      tx.update(orderRef, {
-        incidents: stripUndefined(nextIncidents),
-        updatedAt,
-        creditAppliedCents: increment(-restitutionTotal),
-        creditLedger: arrayUnion(...creditReleases.map((release) => stripUndefined(release.entry))),
-      });
-    } else {
-      tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
-    }
+    tx.update(orderRef, { incidents: stripUndefined(nextIncidents), updatedAt });
     return { order: migrateOrder({ ...data, id: orderId, incidents: nextIncidents, updatedAt }), changedProductIds };
   });
+  // #380: the confirm's credit restitution runs post-commit. When it cannot
+  // complete, the incident IS confirmed and this throws loudly — the retry
+  // path above (idempotent on the event id) re-runs the release until the
+  // clienta's saldo a favor is whole again.
+  if (event.kind === "confirmed") {
+    await restituteIncidentCredit({ orderId, storeId, incidentId, event });
+  }
+  return result;
+}
+
+/**
+ * #203 r2 / #380: restitute, through the TRUSTED releaseCredit callable, the
+ * applied credit that a CONFIRMED incident must hand back to its origins.
+ * Runs after the incident event commits; idempotent per event id (the
+ * callable tags its entries `rel_<eventId>_`, and a ledger that already
+ * carries them makes this a no-op), so the transaction's idempotent retry of
+ * a confirmed event self-heals a restitution that failed mid-flight. The cap
+ * is the incident's own obligation (reconciled exactly as the pre-#380
+ * in-transaction code did: against the incident WITHOUT this confirm event).
+ * A shortfall — an origin missing, foreign, or not mirroring the credit it
+ * should return — is never silent: it throws with an actionable Spanish
+ * message, mirroring the pre-#380 fail-closed aborts.
+ */
+async function restituteIncidentCredit(params: {
+  orderId: string;
+  storeId: string;
+  incidentId: string;
+  event: OrderIncidentEvent;
+}): Promise<void> {
+  const { db } = getFirebase();
+  const { orderId, storeId, incidentId, event } = params;
+  const snap = await getDoc(doc(db, "orders", orderId));
+  if (!snap.exists()) return;
+  const data = snap.data() as Record<string, unknown>;
+  if ((data.storeId ?? "") !== storeId) return;
+  const incidents = Array.isArray(data.incidents) ? (data.incidents as OrderIncident[]) : [];
+  const stored = incidents.find((existing) => existing.id === incidentId);
+  if (!stored) return;
+  const ledger = Array.isArray(data.creditLedger) ? (data.creditLedger as OrderCreditLedgerEntry[]) : [];
+  // The FROZEN obligation stamped into the confirm event at confirmation
+  // time (QA r3 MAYOR-1). Hand-seeded legacy docs without it fall back to a
+  // fresh reconcile — the best available figure, exact for the first run.
+  const storedConfirm = (stored.events ?? []).find((saved) => saved.id === event.id);
+  const frozen = storedConfirm?.detail?.restitutionCents;
+  const pre = { ...stored, events: (stored.events ?? []).filter((saved) => saved.id !== event.id) };
+  // A frozen 0 is a FROZEN zero (no obligation ever) — only the absence of
+  // the stamp (hand-seeded legacy docs) falls back to a fresh reconcile.
+  const capCents = typeof frozen === "number" && Number.isSafeInteger(frozen) && frozen >= 0
+    ? frozen
+    : Math.max(0, reconcileIncidentMoney(migrateOrder({ ...data, id: orderId }), pre).restitutionCents);
+  if (capCents <= 0) return;
+  // The callable's budget is capCents − its own already-released tally, so
+  // passing the FROZEN total makes each attempt release exactly the missing
+  // remainder. Completeness is tagged (already landed) vs the frozen figure.
+  const tagged = restitutionReleasedCents(ledger, event.id);
+  if (tagged >= capCents) return; // whole — idempotent
+  try {
+    const result = await releaseCreditTrusted({ storeId, orderId, intentId: event.id, capCents, idPrefix: "rel_" });
+    if (tagged + result.released < capCents) {
+      throw new Error(
+        `La incidencia quedó confirmada, pero solo se restituyeron ${(tagged + result.released) / 100} de los ${capCents / 100} pesos de saldo a favor que debían volver a la clienta. Revisa los pedidos origen del saldo (pueden faltar o no reflejar el crédito consumido) y reintenta la restitución desde la ficha de la incidencia.`
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error && /solo se restituyeron/.test(error.message)) throw error;
+    // Transport failure (callable down / network): the incident IS confirmed
+    // and the release did not land — say so in Spanish with the pending
+    // figure instead of leaking a raw `internal` at the operator (#413 UX).
+    throw new Error(
+      `La incidencia quedó confirmada, pero el movimiento del saldo a favor no se completó (quedan ${(capCents - tagged) / 100} pesos por devolver). Inténtalo de nuevo con el botón «Reintentar restitución» de la ficha.`
+    );
+  }
 }
 
 /** Σ money actually handed back (executed refunds) for this incident. */
