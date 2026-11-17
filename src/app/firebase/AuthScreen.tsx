@@ -89,14 +89,16 @@ export function AuthScreen({ onDone }: { onDone?: () => void }) {
 function friendlyError(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
   if (code.includes("email-already-in-use")) return "Ese correo ya está registrado. Intenta entrar.";
-  if (code.includes("invalid-credential") || code.includes("wrong-password")) return "Correo o contraseña incorrectos.";
+  if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found"))
+    return "Correo o contraseña incorrectos.";
   if (code.includes("weak-password")) return "La contraseña debe tener al menos 6 caracteres.";
   if (code.includes("unauthorized-domain"))
     return "Este dominio no está autorizado para entrar con Google. Pide a la administración que lo agregue en Firebase Console → Authentication → Settings → Authorized domains.";
   if (code.includes("popup-blocked"))
     return "Tu navegador bloqueó la ventana de Google. Permite las ventanas emergentes y vuelve a intentar.";
+  // Shared by the email/password and Google flows — keep it flow-neutral.
   if (code.includes("network-request-failed"))
-    return "No hubo conexión con Google. Revisa tu conexión e inténtalo de nuevo.";
+    return "No hubo conexión. Revisa tu conexión e inténtalo de nuevo.";
   if (code.includes("popup-closed") || code.includes("cancelled-popup-request"))
     return "Se canceló el inicio con Google.";
   return "No se pudo completar. Intenta de nuevo.";
