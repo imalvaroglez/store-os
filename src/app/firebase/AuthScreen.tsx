@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { signInWithEmail as signIn, signUpWithEmail as signUp, signInWithGoogle } from "./auth";
+import { useAuth } from "./AuthProvider";
 import { Button, TextField, ScreenHeader } from "../../design-system";
 
 // Email/password sign-in / sign-up + Google. Shown as a sheet from Settings or a
 // standalone screen. Only the allowlisted platform emails (auth.ts:
 // PLATFORM_ADMIN_EMAILS) become super_admin; every other signup is a member.
 export function AuthScreen({ onDone }: { onDone?: () => void }) {
+  const { googleError, clearGoogleError } = useAuth();
   const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,10 +31,14 @@ export function AuthScreen({ onDone }: { onDone?: () => void }) {
 
   async function google() {
     setError(null);
+    clearGoogleError();
     setBusy(true);
     try {
-      await signInWithGoogle();
-      onDone?.();
+      const signedIn = await signInWithGoogle();
+      // On iOS Safari the redirect flow navigates away and resolves without a
+      // user; the session arrives via the auth subscription after the return
+      // trip (#481). Don't treat that as success or failure here.
+      if (signedIn) onDone?.();
     } catch (err) {
       setError(friendlyError(err));
     } finally {
@@ -61,7 +67,8 @@ export function AuthScreen({ onDone }: { onDone?: () => void }) {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        {error && <p className="text-sm text-danger">{error}</p>}
+        {(error ?? googleError) && <p className="text-sm text-danger">{error ?? googleError}</p>}
+
         <Button full size="lg" disabled={busy || !email || !password}>
           {mode === "in" ? "Entrar" : "Crear cuenta"}
         </Button>
@@ -89,5 +96,7 @@ function friendlyError(err: unknown): string {
   if (code.includes("invalid-credential") || code.includes("wrong-password")) return "Correo o contraseña incorrectos.";
   if (code.includes("weak-password")) return "La contraseña debe tener al menos 6 caracteres.";
   if (code.includes("popup-closed")) return "Se canceló el inicio con Google.";
+  if (code.includes("popup-blocked"))
+    return "Tu navegador bloqueó la ventana de Google. Permite las ventanas emergentes y vuelve a intentar.";
   return "No se pudo completar. Intenta de nuevo.";
 }
