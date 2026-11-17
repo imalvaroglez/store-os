@@ -476,6 +476,37 @@ service cloud.firestore {
         && int(entry.get('deliveredAt', '0000')[0:4]) >= 2020
         && int(entry.get('deliveredAt', '0000')[0:4]) <= 2035;
     }
+    // #383: the "entregado con saldo" authorization is money evidence — a
+    // direct SDK write must not forge, erase, or retouch it. A COMPLETE,
+    // self-attributed stamp may only be born riding the legitimate
+    // transition INTO delivered (the #165/#168 gate the client transaction
+    // enforces with the operator's explicit confirmation); anything else
+    // must carry the seal VERBATIM (never rewritten, never erased — the
+    // same doctrine as depositCorrections/deliveries). Historical delivered
+    // orders without a seal (#370) are unaffected: absent == absent.
+    function validDeliveredBalanceSeal(before, after) {
+      let beforeStatus = before.get('orderStatus', before.get('status', ''));
+      let afterStatus = after.get('orderStatus', after.get('status', ''));
+      let afterComplete = 'deliveredWithBalanceCents' in after
+        && 'deliveredWithBalanceConfirmedAt' in after
+        && 'deliveredWithBalanceConfirmedBy' in after
+        && after.deliveredWithBalanceCents is int
+        && after.deliveredWithBalanceCents >= 0
+        && after.deliveredWithBalanceCents <= 100000000000
+        && after.deliveredWithBalanceConfirmedAt is string
+        && after.deliveredWithBalanceConfirmedAt.size() > 0
+        && after.deliveredWithBalanceConfirmedBy == request.auth.uid;
+      return (afterComplete
+          && afterStatus == 'delivered'
+          && beforeStatus != 'delivered')
+        || (!afterComplete
+          && after.get('deliveredWithBalanceCents', -1) == before.get('deliveredWithBalanceCents', -1)
+          && after.get('deliveredWithBalanceConfirmedAt', '') == before.get('deliveredWithBalanceConfirmedAt', '')
+          && after.get('deliveredWithBalanceConfirmedBy', '') == before.get('deliveredWithBalanceConfirmedBy', '')
+          && ('deliveredWithBalanceCents' in after) == ('deliveredWithBalanceCents' in before)
+          && ('deliveredWithBalanceConfirmedAt' in after) == ('deliveredWithBalanceConfirmedAt' in before)
+          && ('deliveredWithBalanceConfirmedBy' in after) == ('deliveredWithBalanceConfirmedBy' in before));
+    }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
@@ -527,6 +558,12 @@ service cloud.firestore {
             || request.resource.data.get('deliveries', [])
                 == resource.data.get('deliveries', [])
             || validDeliveryAppend(id, resource.data, request.resource.data))
+        // #383: the delivered-with-balance seal only moves with the
+        // legitimate transition (see validDeliveredBalanceSeal); the diff
+        // short-circuit keeps ordinary edits cheap.
+        && (!request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['deliveredWithBalanceCents', 'deliveredWithBalanceConfirmedAt', 'deliveredWithBalanceConfirmedBy'])
+            || validDeliveredBalanceSeal(resource.data, request.resource.data))
         // #478: the installment reservation marker never changes once
         // present, and may only be BORN on money it can point to: a doc
         // that ALREADY carries received money (the legitimate edit path
