@@ -2,8 +2,6 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
@@ -202,79 +200,19 @@ export async function signInWithEmail(email: string, password: string): Promise<
   return afterLogin(cred.user);
 }
 
-/**
- * iOS Safari cannot complete the Google popup flow: its storage partitioning
- * breaks the opener↔interstitial handshake, so the Firebase interstitial dies
- * with "The requested action is invalid" before the account selector (#481).
- * Those devices use the top-level redirect flow instead, which finishes inside
- * the page itself and survives Safari's restrictions.
- */
-export function googleUsesRedirect(userAgent: string, maxTouchPoints: number): boolean {
-  const isIOS = /iPad|iPhone|iPod/.test(userAgent);
-  // iPadOS 13+ reports itself as desktop Safari; the touch screen gives it away.
-  const isIPadOS = /Macintosh/.test(userAgent) && maxTouchPoints > 1;
-  return isIOS || isIPadOS;
-}
-
-const UNAUTHORIZED_DOMAIN_MESSAGE =
-  "Este dominio no está autorizado para entrar con Google. Pide a la administración que lo agregue en Firebase Console → Authentication → Settings → Authorized domains.";
-
-/**
- * Final Spanish messages for Google sign-in error codes. Shared by the
- * redirect-consumption path (throws them) and AuthScreen's friendlyError
- * (renders them) — one wording, never a generic mask on a known code.
- */
-export function googleAuthErrorMessage(code: string | undefined): string | null {
-  if (code === "auth/unauthorized-domain") return UNAUTHORIZED_DOMAIN_MESSAGE;
-  if (code === "auth/network-request-failed")
-    return "No hubo conexión con Google. Revisa tu conexión e inténtalo de nuevo.";
-  if (code?.includes("cancelled") || code?.includes("popup-closed"))
-    return "Se canceló el inicio con Google.";
-  return null;
-}
-
-/**
- * Start Google sign-in. On iOS/iPadOS Safari this navigates away (redirect
- * flow) and resolves to null — the session lands later through
- * consumeGoogleRedirectResult + onAuthStateChanged. Everywhere else the popup
- * flow resolves with the signed-in user.
- */
-export async function signInWithGoogle(): Promise<AppUser | null> {
+export async function signInWithGoogle(): Promise<AppUser> {
   const { auth } = getFirebase();
   try {
-    if (
-      typeof navigator !== "undefined" &&
-      googleUsesRedirect(navigator.userAgent, navigator.maxTouchPoints ?? 0)
-    ) {
-      await signInWithRedirect(auth, GOOGLE);
-      return null;
-    }
     const cred = await signInWithPopup(auth, GOOGLE);
     return afterLogin(cred.user);
   } catch (error) {
-    // Rethrow the ORIGINAL error: its `code` is what AuthScreen's
-    // friendlyError maps to Spanish — wrapping it here would leave the UI
-    // with a generic mask on known codes (review #486 R1).
-    throw error;
-  }
-}
-
-/**
- * Consume the pending Google redirect result once, at startup. Returns the
- * signed-in user when the redirect succeeded, null when no redirect is
- * pending, and throws a Spanish, retryable message when the return trip
- * failed or was cancelled — the AuthScreen shows it so nobody lands back on
- * the entry screen without knowing what happened.
- */
-export async function consumeGoogleRedirectResult(): Promise<AppUser | null> {
-  const { auth } = getFirebase();
-  try {
-    const cred = await getRedirectResult(auth);
-    return cred?.user ? afterLogin(cred.user) : null;
-  } catch (error) {
     const code = (error as AuthError)?.code;
-    const mapped = googleAuthErrorMessage(code);
-    throw new Error(mapped ?? "No se pudo completar el acceso con Google. Intenta de nuevo.");
+    if (code === "auth/unauthorized-domain") {
+      throw new Error(
+        "Este dominio no está autorizado para entrar con Google. Pide a la administración que lo agregue en Firebase Console → Authentication → Settings → Authorized domains."
+      );
+    }
+    throw error;
   }
 }
 
