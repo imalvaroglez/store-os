@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Card, Dialog, Money, Screen, ScreenHeader, SelectField, TextField } from "../../design-system";
 import { parseAmount } from "../../lib/money";
+import { uid } from "../../lib/ids";
 import {
   accumulatedLossBefore,
   latestClosePerPeriod,
@@ -51,6 +52,10 @@ export function ProfitDistributionScreen() {
   // the review; nothing writes without the explicit «Autorizar» confirmation
   // (AGENTS: seguridad antes que velocidad).
   const [review, setReview] = useState<{ amountCents: number; split: { ferCents: number; oliviaCents: number; investorCents: number } } | null>(null);
+  // #459 r6: one STABLE intent id per attempt — a retry after a lost response
+  // replays it (idempotent); a NEW authorization mints a fresh one, so two
+  // legitimate authorizations of the same amount never collapse.
+  const intentIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -229,14 +234,16 @@ export function ProfitDistributionScreen() {
                         if (!close || !review) return;
                         setAuthorizing(true);
                         setError(null);
+                        intentIdRef.current ??= uid("dist");
                         const doc = buildProfitDistributionDoc({
                           storeId: activeStore.id, period: close.period, closeId: close.id,
                           authorizedAmountCents: review.amountCents, split: review.split,
                           uid: draftOwnerId, now: new Date().toISOString(),
+                          intentId: intentIdRef.current,
                         });
                         authorizeProfitDistribution(doc)
                           .then(() => loadProfitDistributions(activeStore.id, close.period))
-                          .then((list) => { setDistributions(list); setAmountText(""); setReview(null); })
+                          .then((list) => { setDistributions(list); setAmountText(""); setReview(null); intentIdRef.current = null; })
                           .catch(() => setError("No se pudo autorizar el reparto. Revisa tu conexión; si persiste, verifica que eres la dueña de la tienda."))
                           .finally(() => setAuthorizing(false));
                       }}
