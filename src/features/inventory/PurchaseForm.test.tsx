@@ -18,7 +18,7 @@ const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, 
   pdfPayloads: [] as PdfApplyPayload[],
   activeStore: { id: "olivia", name: "Olivia", type: "inventory_tiered" as const },
   state: {
-    purchases: [],
+    purchases: [] as Purchase[],
     expenses: [],
     suppliers: [],
     products: [{

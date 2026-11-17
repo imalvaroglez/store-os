@@ -6,7 +6,7 @@ import type { ExpenseAssignment, LooseExpense } from "../../types";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
-import { assignExpenseTx, consumeSupplyTx } from "./firestoreData";
+import { assignExpenseTx, consumeSupplyTx , saveEntity } from "./firestoreData";
 
 let env: RulesTestEnvironment;
 
@@ -211,5 +211,31 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#279 — clasificación d
     await expect(
       updateDoc(doc(holder.db, "purchases/cls-received"), { totalConfirmed: 99, paymentMethod: "cash", updatedAt: "2026-11-07T10:01:00Z" })
     ).rejects.toThrow(/PERMISSION/i);
+  });
+});
+
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("declassify payment method persists (#279 r2 M1)", () => {
+  // Own environment: the sibling suite's afterAll already cleaned the shared
+  // one, terminating its client before this block runs.
+  let env279: RulesTestEnvironment;
+  beforeAll(async () => {
+    env279 = await initializeTestEnvironment({
+      projectId: "store-os-dev",
+      firestore: { rules: readFileSync("firestore.rules", "utf8") },
+    });
+    await env279.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users/exp279-user"), { role: "member" });
+      await setDoc(doc(ctx.firestore(), "adminStores/exp279-store"), { ownerUid: "exp279-user", memberUids: ["exp279-user"] });
+    });
+    holder.db = env279.authenticatedContext("exp279-user").firestore();
+  });
+  afterAll(async () => { await env279?.cleanup(); });
+  it("an expense edited to \"Sin clasificar\" REMOVES the stored paymentMethod", async () => {
+    await setDoc(doc(holder.db, "expenses/exp279-m1"), { ...expense("exp279-m1"), id: "exp279-m1", storeId: "exp279-store", paymentMethod: "cash" });
+    await saveEntity({ uid: "exp279-user" } as never, "expenses", {
+      id: "exp279-m1", storeId: "exp279-store", paymentMethod: undefined, note: "desclasificado",
+    });
+    const after = (await getDoc(doc(holder.db, "expenses/exp279-m1"))).data()!;
+    expect("paymentMethod" in after).toBe(false); // gone, not stale cash
   });
 });

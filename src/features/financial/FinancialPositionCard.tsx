@@ -111,7 +111,7 @@ export function FinancialPositionCard() {
                 Salidas sin forma de pago ({formatMoneyExact(position.unclassifiedOutflowsCents / 100)}) fuera de estas cifras — clasifícalas editando su compra o gasto.
               </li>
             )}
-            {position.notes.slice(0, 1).map((noteText) => (
+            {position.notes.map((noteText) => (
               <li key={noteText} className="text-xs text-on-surface-soft">{noteText}</li>
             ))}
           </ul>

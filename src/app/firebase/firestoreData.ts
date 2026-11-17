@@ -286,6 +286,13 @@ export async function saveEntity(
   if (name === "expenses" && Object.prototype.hasOwnProperty.call(data, "simplifiedOperation") && data.simplifiedOperation === undefined) {
     clean.simplifiedOperation = deleteField();
   }
+  // #279 r2 (M1): declassifying a payment method ("Sin clasificar") must
+  // REMOVE the stored field — stripping undefined alone kept the previous
+  // method counting in the caja/adeudo figures forever.
+  if ((name === "expenses" || name === "purchases")
+    && Object.prototype.hasOwnProperty.call(data, "paymentMethod") && data.paymentMethod === undefined) {
+    clean.paymentMethod = deleteField();
+  }
   // #355: a "se vende por color" transition must actually swap the shelf
   // canonically. Enabling colors discards the design-level stock (each color
   // owns its own); disabling discards the color array. Without deleteField,
