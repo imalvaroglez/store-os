@@ -98,9 +98,12 @@ export function financialPosition(input: FinancialPositionInput): FinancialPosit
   };
 }
 
-/** The store's position from activation, straight from app state. */
+/** The store's position from activation, straight from app state.
+ * #279 QA (MAYOR-1): the shared payments cache accumulates every store
+ * opened in the session — only THIS store's collections enter the position. */
 export function positionOfStore(input: {
   activatedAt: string;
+  storeId: string;
   payments: OrderPayment[];
   purchases: Purchase[];
   expenses: LooseExpense[];
@@ -108,7 +111,9 @@ export function positionOfStore(input: {
 }): FinancialPosition {
   return financialPosition({
     activatedAt: input.activatedAt,
-    payments: input.payments.map((payment) => ({ date: payment.date, amountCents: payment.amountCents ?? centsOf(payment.amount) })),
+    payments: input.payments
+      .filter((payment) => payment.storeId === input.storeId)
+      .map((payment) => ({ date: payment.date, amountCents: payment.amountCents ?? centsOf(payment.amount) })),
     purchases: input.purchases.map((purchase) => ({ date: purchase.date, total: purchase.totalConfirmed, paymentMethod: purchase.paymentMethod })),
     expenses: input.expenses.map((expense) => ({ date: expense.date, amount: expense.amount, paymentMethod: expense.paymentMethod })),
     cardPayments: input.cardPayments.map((payment) => ({ date: payment.date, amountCents: payment.amountCents })),

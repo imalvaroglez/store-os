@@ -37,6 +37,7 @@ export function FinancialPositionCard() {
   const position = financial.status === "ready" && financial.activatedAt
     ? positionOfStore({
         activatedAt: financial.activatedAt,
+        storeId: activeStore.id,
         payments,
         purchases: state.purchases.filter((purchase) => purchase.storeId === activeStore.id),
         expenses: state.expenses.filter((expense) => expense.storeId === activeStore.id),

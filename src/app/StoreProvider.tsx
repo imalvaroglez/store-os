@@ -25,6 +25,7 @@ import type {
   PricingRule,
   OrderDeliveryLine,
   CardPayment,
+  PurchasePaymentMethod,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -373,6 +374,10 @@ type StoreContextValue = {
   upsertSupplier: (supplier: Supplier) => Promise<void>;
   deleteSupplier: (supplierId: string) => Promise<void>;
   upsertPurchase: (purchase: Purchase, expectedRevision?: number | null, baseline?: Purchase) => Promise<Purchase>;
+  /** #279 QA (MAYOR-3): classify (or reclassify) a received purchase's
+   * payment method — the only edit received evidence allows besides
+   * saleCostAdjustments (rules-enforced). */
+  classifyPurchasePayment: (purchase: Purchase, paymentMethod: PurchasePaymentMethod | undefined) => Promise<void>;
   /**
    * Bulk-create private draft products and save the purchase that links them
    * in one atomic commit (cloud-only: the PDF import flow requires cloud).
@@ -496,11 +501,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     paymentSession.current.uid = paymentUid;
     paymentSession.current.generation += 1;
   }
-  const [paymentCache, setPaymentCache] = useState({ uid: paymentUid, generation: paymentSession.current.generation, records: [] as OrderPayment[] });
+  // #279 QA (MAYOR-4): payments cache per ORDER, gated by the order's
+  // paymentsRevision — the position sweep only refetches orders whose money
+  // evidence actually changed, so openings stay bounded instead of O(pedidos).
+  // #279 QA (MAYOR-1): entries are keyed per order; consumers filter by store.
+  const [paymentCache, setPaymentCache] = useState({
+    uid: paymentUid,
+    generation: paymentSession.current.generation,
+    byOrder: {} as Record<string, { revision: number; payments: OrderPayment[] }>,
+  });
+  const paymentCacheRef = useRef(paymentCache);
+  paymentCacheRef.current = paymentCache;
   const payments = paymentCache.uid === paymentUid && paymentCache.generation === paymentSession.current.generation
-    ? paymentCache.records : [];
+    ? Object.values(paymentCache.byOrder).flatMap((entry) => entry.payments) : [];
   useEffect(() => {
-    setPaymentCache({ uid: paymentUid, generation: paymentSession.current.generation, records: [] });
+    setPaymentCache({ uid: paymentUid, generation: paymentSession.current.generation, byOrder: {} });
   }, [paymentUid]);
   useEffect(() => {
     paymentSession.current.mounted = true;
@@ -696,23 +711,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!storeId) return;
       setFinancial((prev) => ({ ...prev, status: "loading" }));
       try {
-        const [marker, cardPayments, orderPayments] = await Promise.all([
+        // #279 QA (MAYOR-4): revision-gated incremental sweep — only orders
+        // whose paymentsRevision moved since the last pass are refetched
+        // (the first open pays the full cost once; openings afterwards read
+        // only what changed). A mid-read revision race leaves the order
+        // stale for the next round instead of failing the whole position.
+        const cachedByOrder = paymentCacheRef.current.uid === paymentUid && paymentCacheRef.current.generation === paymentSession.current.generation
+          ? paymentCacheRef.current.byOrder : {};
+        const storeOrders = state.orders.filter((order) => order.storeId === storeId);
+        const results = await Promise.all(
+          storeOrders.map((order) =>
+            cachedByOrder[order.id]?.revision === (order.paymentsRevision ?? 0)
+              ? Promise.resolve(null)
+              : fetchOrderPayments(order.id).catch(() => null)
+          )
+        );
+        const [marker, cardPayments] = await Promise.all([
           ensureStoreFinancials(storeId),
           loadCardPayments(storeId),
-          // The registered cash needs each order's payment evidence — a
-          // bounded, on-demand sweep of THIS store's orders (no listener);
-          // #279 presupuesto: one subcollection read per order, only when
-          // the position is opened.
-          Promise.all(state.orders.filter((order) => order.storeId === storeId).map((order) => fetchOrderPayments(order.id))),
         ]);
-        setPaymentCache((prev) => ({
-          uid: paymentUid,
-          generation: paymentSession.current.generation,
-          records: orderPayments.reduce(
-            (acc: OrderPayment[], result) => mergePayments(acc, result.payments),
-            prev.uid === paymentUid && prev.generation === paymentSession.current.generation ? prev.records : [],
-          ),
-        }));
+        setPaymentCache((prev) => {
+          const base = prev.uid === paymentUid && prev.generation === paymentSession.current.generation ? { ...prev.byOrder } : {};
+          for (const result of results) {
+            if (result) base[result.order.id] = { revision: result.order.paymentsRevision ?? 0, payments: result.payments };
+          }
+          return { uid: paymentUid, generation: paymentSession.current.generation, byOrder: base };
+        });
         // The store may have changed while loading — keep the freshest only.
         setFinancial((prev) => (state.activeStoreId === storeId
           ? { status: "ready", activatedAt: marker.activatedAt, cardPayments }
@@ -1098,6 +1122,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "DELETE_SUPPLIER", supplierId });
       await deleteEntity(currentUser, "suppliers", supplierId);
     },
+    classifyPurchasePayment: async (purchase, paymentMethod) => {
+      await persistEntity("purchases", { ...purchase, paymentMethod, updatedAt: nowIso() } as unknown as { id: string } & Record<string, unknown>);
+      dispatch({ type: "REPLACE_CLOUD_STATE", state: { ...state, purchases: state.purchases.map((existing) => (existing.id === purchase.id ? { ...existing, paymentMethod, updatedAt: nowIso() } : existing)) } });
+    },
     upsertPurchase: async (purchase, expectedRevision, baseline) => {
       requireAuthenticatedUser();
       // #373: persist-first with the revision contract — a save from a stale
@@ -1402,10 +1430,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const generation = paymentSession.current.generation;
       const result = await fetchOrderPayments(orderId);
       if (!paymentSession.current.mounted || paymentSession.current.uid !== user.uid || paymentSession.current.generation !== generation) return;
-      setPaymentCache((prev) => ({
-        uid: user.uid, generation,
-        records: mergePayments(prev.uid === user.uid && prev.generation === generation ? prev.records : [], result.payments),
-      }));
+      setPaymentCache((prev) => {
+        const base = prev.uid === user.uid && prev.generation === generation ? prev.byOrder : {};
+        return {
+          uid: user.uid, generation,
+          byOrder: {
+            ...base,
+            [orderId]: {
+              revision: Math.max(base[orderId]?.revision ?? 0, result.order.paymentsRevision ?? 0),
+              payments: mergePayments(base[orderId]?.payments ?? [], result.payments),
+            },
+          },
+        };
+      });
       dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
     },
     registerOrderPayment: async (order, input) => {
@@ -1419,10 +1456,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         input.kind === "payment" ? input.inherited : undefined
       );
       if (!paymentSession.current.mounted || paymentSession.current.uid !== user.uid || paymentSession.current.generation !== generation) return;
-      setPaymentCache((prev) => ({
-        uid: user.uid, generation,
-        records: mergePayments(prev.uid === user.uid && prev.generation === generation ? prev.records : [], result.payments),
-      }));
+      setPaymentCache((prev) => {
+        const base = prev.uid === user.uid && prev.generation === generation ? prev.byOrder : {};
+        return {
+          uid: user.uid, generation,
+          byOrder: {
+            ...base,
+            [order.id]: {
+              revision: Math.max(base[order.id]?.revision ?? 0, result.order.paymentsRevision ?? 0),
+              // Per-call receipts MERGE into the order's entry: a late or
+              // out-of-order response still contributes its evidence without
+              // erasing the rest.
+              payments: mergePayments(base[order.id]?.payments ?? [], result.payments),
+            },
+          },
+        };
+      });
       // Canonical amounts replace a versioned snapshot; a retried receipt is
       // never added to the local accumulator and late responses cannot undo it.
       dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });

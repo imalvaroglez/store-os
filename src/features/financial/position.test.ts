@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { financialPosition, centsOf } from "./position";
-import type { PurchasePaymentMethod } from "../../types";
+import { financialPosition, centsOf, positionOfStore } from "./position";
+import type { PurchasePaymentMethod, OrderPayment, Purchase } from "../../types";
 
 // #279 frente 1: posición financiera desde la activación (T0). Derivación
 // pura en centavos exactos: nada anterior a T0 cuenta, el método se captura
@@ -139,5 +139,31 @@ describe("financialPosition — exactitud", () => {
     expect(centsOf(123.45)).toBe(12345);
     expect(centsOf(0.005)).toBe(1);
     expect(centsOf(undefined)).toBe(0);
+  });
+});
+
+
+describe("positionOfStore — aislamiento por tienda (#279 QA MAYOR-1)", () => {
+  const payment = (storeId: string, amount: number): OrderPayment => ({
+    id: `p-${storeId}-${amount}`, orderId: `o-${storeId}`, storeId,
+    date: "2026-11-05", method: "cash", kind: "payment",
+    amount, createdAt: NOV(5), createdBy: "u1",
+  });
+  const purchase = (storeId: string): Purchase => ({
+    id: `buy-${storeId}`, storeId, supplierName: "S",
+    items: [], status: "received", totalConfirmed: 0,
+    createdAt: "", updatedAt: "",
+  } as unknown as Purchase);
+
+  it("los cobros de OTRAS tiendas en la caché compartida no contaminan la caja", () => {
+    const result = positionOfStore({
+      activatedAt: T0,
+      storeId: "store-a",
+      payments: [payment("store-a", 2000), payment("store-b", 5000)], // pesos → 200000¢ / 500000¢
+      purchases: [purchase("store-a")],
+      expenses: [],
+      cardPayments: [],
+    });
+    expect(result.registeredCashCents).toBe(200000);
   });
 });

@@ -315,7 +315,10 @@ service cloud.firestore {
           // status as received) — so absent means RECEIVED evidence, immutable
           // like any other (#373 review: '' reopened legacy mutation by SDK).
           resource.data.get('status', 'received') != 'received'
-          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'updatedAt'])
+          // #279 QA (MAYOR-3): the payment method is the classification a
+          // received purchase can still receive — classification corrects
+          // where the money came from; inventory evidence stays identical.
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'paymentMethod', 'updatedAt'])
         );
       allow delete: if canOperateStore(resource.data.storeId)
         && resource.data.status != 'received';

@@ -70,6 +70,9 @@ export function ExpensesScreen() {
     setAmountText(""); setDescription(""); setQuantityText(""); setSimplified(false);
     setCategory("operation");
     setDate(new Date().toISOString().slice(0, 10));
+    // #279 QA (MAYOR-2): the contextual default is SELECTED, not suggested by
+    // a label — an untouched form saves the classification it displays.
+    setPaymentMethod(defaultMethod ?? "");
     setOpen(true);
   }
 
@@ -81,6 +84,9 @@ export function ExpensesScreen() {
     setCategory(expense.category);
     setQuantityText(expense.supply ? String(expense.supply.quantityInitial) : "");
     setSimplified(!!expense.simplifiedOperation);
+    // #279 QA (MAYOR-3): the payment method is the classification an
+    // unclassified expense can still receive — editable while unlocked.
+    setPaymentMethod(expense.paymentMethod ?? "");
     setOpen(true);
   }
 
@@ -130,6 +136,8 @@ export function ExpensesScreen() {
           ...editing,
           description: description.trim() || undefined,
           category: locked ? editing.category : category,
+          // #279 QA (MAYOR-3): the method edit IS the classification path.
+          paymentMethod: paymentMethod || undefined,
           // R1: the simplified treatment IS editable while nothing has been
           // assigned/consumed and there is no stash (locked otherwise).
           ...(locked ? {} : { simplifiedOperation: simplified ? true : undefined }),
@@ -211,14 +219,18 @@ export function ExpensesScreen() {
           <div className="grid grid-cols-2 gap-3">
             <TextField label="Importe" inputMode="decimal" placeholder="0.00" disabled={!!editing} value={amountText} onChange={(e) => setAmountText(sanitizeMoneyInput(e.target.value))} />
             <TextField label="Fecha" type="date" disabled={!!editing} value={date} onChange={(e) => setDate(e.target.value)} />
-            {!editing && (
+            {!locked && (
             <SelectField
               label="Forma de pago"
               value={paymentMethod}
               onChange={(value) => setPaymentMethod(value as PurchasePaymentMethod)}
               options={[
-                { value: "", label: defaultMethod ? `${PURCHASE_PAYMENT_METHOD_LABEL[defaultMethod]} (última)` : "Sin clasificar" },
-                ...PAYMENT_METHOD_OPTIONS,
+                { value: "", label: "Sin clasificar" },
+                ...PAYMENT_METHOD_OPTIONS.map((option) => (
+                  option.value === defaultMethod && !editing
+                    ? { ...option, label: `${option.label} (última)` }
+                    : option
+                )),
               ]}
             />
             )}
