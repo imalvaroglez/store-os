@@ -31,6 +31,7 @@ vi.mock("../../app/firebase/firestoreData", async (importOriginal) => {
     // unit tests it behaves as a passthrough of the incoming product.
     saveProductPreservingConcurrentTx: mocks.saveProduct,
     projectPublicForStore: vi.fn(async () => {}),
+    upsertPublicProduct: vi.fn(async () => {}),
   };
 });
 
