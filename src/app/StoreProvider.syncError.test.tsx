@@ -257,7 +257,7 @@ describe("#489 product save vs public projection failure", () => {
     const retry = result.current.syncError!.retry;
     // Another session publishes a second product before this failure is retried.
     const added = { ...baseline, id: "watch-b", name: "Otra pieza" };
-    const publish = mocks.subscribeCloudState.mock.calls.at(-1)![1];
+    const publish = mocks.subscribeCloudState.mock.calls[mocks.subscribeCloudState.mock.calls.length - 1][1];
     await act(async () => publish({ ...testState, products: [{ ...baseline, quantityOnHand: 1 }, added] }));
     await waitFor(() => expect(result.current.state.products).toHaveLength(2));
     await act(async () => retry());
