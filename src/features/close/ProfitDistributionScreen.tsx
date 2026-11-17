@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, Screen, ScreenHeader, SelectField, TextField } from "../../design-system";
+import { Badge, Button, Card, Dialog, Money, Screen, ScreenHeader, SelectField, TextField } from "../../design-system";
 import { parseAmount } from "../../lib/money";
 import {
   accumulatedLossBefore,
@@ -47,6 +47,10 @@ export function ProfitDistributionScreen() {
   const [authorizing, setAuthorizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // #459 r5: authorizing money is a two-step action — the button only opens
+  // the review; nothing writes without the explicit «Autorizar» confirmation
+  // (AGENTS: seguridad antes que velocidad).
+  const [review, setReview] = useState<{ amountCents: number; split: { ferCents: number; oliviaCents: number; investorCents: number } } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -121,7 +125,7 @@ export function ProfitDistributionScreen() {
         subtitle={close ? `Periodo: ${periodLabel(close.period)}` : "Cargando periodo…"}
         badge={close ? <Badge tone="success">Cerrado · v{close.version}</Badge> : undefined}
         action={
-          <div className="w-56">
+          <div className="w-56 max-w-full">
             <SelectField
               label="Periodo cerrado"
               value={period}
@@ -199,28 +203,62 @@ export function ProfitDistributionScreen() {
                 disabled={authorizing || cents(amountText) <= 0 || cents(amountText) > maxPending || !close}
                 onClick={() => {
                   if (!close) return;
-                  setAuthorizing(true);
-                  setError(null);
                   const amount = cents(amountText);
                   const split = proposeDistribution({
                     operatingResultCents: close.totals.operatingResultCents ?? 0,
                     accumulatedLossCents: lossBefore,
                     proposedAmountCents: amount,
                   }).split;
-                  const doc = buildProfitDistributionDoc({
-                    storeId: activeStore.id, period: close.period, closeId: close.id,
-                    authorizedAmountCents: amount, split, uid: draftOwnerId, now: new Date().toISOString(),
-                  });
-                  authorizeProfitDistribution(doc)
-                    .then(() => loadProfitDistributions(activeStore.id, close.period))
-                    .then((list) => { setDistributions(list); setAmountText(""); })
-                    .catch(() => setError("No se pudo autorizar el reparto. Revisa tu conexión; si persiste, verifica que eres la dueña de la tienda."))
-                    .finally(() => setAuthorizing(false));
+                  setReview({ amountCents: amount, split });
                 }}
               >
-                {authorizing ? "Autorizando…" : "Revisar y autorizar reparto"}
+                Revisar y autorizar reparto
               </Button>
               {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+
+              <Dialog
+                open={review !== null}
+                title="Autorizar reparto"
+                onClose={() => { if (!authorizing) setReview(null); }}
+                footer={
+                  <>
+                    <Button variant="ghost" disabled={authorizing} onClick={() => setReview(null)}>Cancelar</Button>
+                    <Button
+                      disabled={authorizing}
+                      onClick={() => {
+                        if (!close || !review) return;
+                        setAuthorizing(true);
+                        setError(null);
+                        const doc = buildProfitDistributionDoc({
+                          storeId: activeStore.id, period: close.period, closeId: close.id,
+                          authorizedAmountCents: review.amountCents, split: review.split,
+                          uid: draftOwnerId, now: new Date().toISOString(),
+                        });
+                        authorizeProfitDistribution(doc)
+                          .then(() => loadProfitDistributions(activeStore.id, close.period))
+                          .then((list) => { setDistributions(list); setAmountText(""); setReview(null); })
+                          .catch(() => setError("No se pudo autorizar el reparto. Revisa tu conexión; si persiste, verifica que eres la dueña de la tienda."))
+                          .finally(() => setAuthorizing(false));
+                      }}
+                    >
+                      {authorizing ? "Autorizando…" : "Autorizar"}
+                    </Button>
+                  </>
+                }
+              >
+                <p className="text-sm text-on-surface-soft">
+                  Se autoriza repartir <strong><Money exact amount={(review?.amountCents ?? 0) / 100} /></strong> de
+                  la utilidad de {periodLabel(close?.period ?? "")} con el reparto propuesto:
+                </p>
+                <ul className="mt-2 space-y-1 text-sm">
+                  <li className="flex items-baseline justify-between"><span>Fer 50%</span><span className="tnum"><Money exact amount={(review?.split.ferCents ?? 0) / 100} /></span></li>
+                  <li className="flex items-baseline justify-between"><span>Fondo Olivia 30%</span><span className="tnum"><Money exact amount={(review?.split.oliviaCents ?? 0) / 100} /></span></li>
+                  <li className="flex items-baseline justify-between"><span>Inversionista 20%</span><span className="tnum"><Money exact amount={(review?.split.investorCents ?? 0) / 100} /></span></li>
+                </ul>
+                <p className="mt-2 text-xs text-on-surface-soft">
+                  Solo la dueña puede autorizar; la operación queda firmada a su nombre en el historial del periodo.
+                </p>
+              </Dialog>
             </>
           ) : (
             <p className="mt-1 text-xs text-on-surface-soft">Solo la dueña de la tienda puede autorizar un reparto.</p>

@@ -523,13 +523,16 @@ export async function authorizeProfitDistribution(
   doc_: ReturnType<typeof buildProfitDistributionDoc>
 ): Promise<{ id: string }> {
   const { db } = getFirebase();
+  // #459 r5: idempotency is per INTENT (store + period + amount), not per
+  // period. A second, DIFFERENT amount is a legitimate successive partial
+  // authorization and MUST write; returning the period's first doc here made
+  // the remainder permanently unauthorizable with apparent success.
   const samePeriod = await getDocs(
     query(collection(db, "profitDistributions"), where("storeId", "==", doc_.storeId), where("period", "==", doc_.period))
   );
-  if (!samePeriod.empty) {
-    const first = [...samePeriod.docs].sort((a, b) => ((a.data().authorizedAt as string) < (b.data().authorizedAt as string) ? -1 : 1))[0];
-    return { id: first.id };
-  }
+  const sameIntent = samePeriod.docs.find((saved) => saved.data().authorizedAmountCents === doc_.authorizedAmountCents);
+  if (sameIntent) return { id: sameIntent.id };
+  // The deterministic doc id makes a same-intent race land on ONE doc.
   await setDoc(doc(db, "profitDistributions", doc_.id), doc_ as unknown as Record<string, unknown>);
   return { id: doc_.id };
 }
@@ -1190,6 +1193,54 @@ export async function registerOrderPaymentTx(
     }
   }
   throw new Error("No se pudo registrar el cobro. Revisa los cobros guardados antes de reintentarlo.");
+}
+
+/**
+ * #455 r5: register the legacy deposit's DATE and METHOD without a new cobro.
+ * The "anticipo total al crear" order has nothing left to collect, so no
+ * future payment would ever date that money — and the monthly close needs the
+ * date to answer "¿cuánto entró de verdad?". Creates the inherited_deposit
+ * receipt (operator-supplied date/method, estimated when she does not
+ * remember — PO 2026-11-03) and births the accumulator from it, exactly once.
+ * The rules accept this shape ONLY here: no accumulator yet, deposit and
+ * lastPaymentId untouched, revision +1.
+ */
+export async function materializeInheritedDepositTx(params: {
+  orderId: string;
+  storeId: string;
+  input: { method: "cash" | "transfer"; date: string };
+  by: string;
+}): Promise<{ order: Order }> {
+  const { db } = getFirebase();
+  const { orderId, storeId, input, by } = params;
+  const orderRef = doc(db, "orders", orderId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) throw new Error("No se encontró el pedido.");
+    const data = snap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    if (data.inheritedDepositMaterialized === true) throw new Error("El anticipo ya está registrado.");
+    if ("paymentsReceivedCents" in data) {
+      throw new Error("El pedido ya tiene cobros: la fecha del anticipo se registra junto con el siguiente cobro.");
+    }
+    const inheritedRef = doc(db, "orders", orderId, "payments", INHERITED_DEPOSIT_PAYMENT_ID);
+    const inheritedSnap = await tx.get(inheritedRef);
+    if (inheritedSnap.exists()) throw new Error("El anticipo ya está registrado.");
+    const deposit = typeof data.deposit === "number" && Number.isFinite(data.deposit) ? data.deposit : 0;
+    // inheritedDepositRecord validates the method/date with Spanish errors and
+    // returns null when there is nothing to register.
+    const record = inheritedDepositRecord(orderId, storeId, deposit, by, input);
+    if (!record) throw new Error("Este pedido no tiene un anticipo pendiente de registrar.");
+    tx.set(inheritedRef, stripUndefined({ ...record, amountCents: signedAmountCents(record.amount) }) as Record<string, unknown>);
+    tx.update(orderRef, {
+      paymentsReceivedCents: increment(signedAmountCents(record.amount)),
+      inheritedDepositMaterialized: true,
+      paymentsRevision: increment(1),
+      updatedAt: new Date().toISOString(),
+    });
+  });
+  const fresh = await getDoc(orderRef);
+  return { order: migrateOrder({ ...(fresh.data() as Record<string, unknown>), id: orderId }) };
 }
 
 /**

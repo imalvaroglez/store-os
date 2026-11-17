@@ -55,7 +55,7 @@ describe("ProfitDistributionScreen (#459 reparto real)", () => {
     expect(screen.getByText(/Liquidez y obligaciones: no confirmadas/i)).toBeTruthy();
   });
 
-  it("la dueña autoriza $400 sobre $3,000 → $200/$120/$80 y $2,600 remanente; idempotente", async () => {
+  it("la dueña autoriza $400 sobre $3,000 → $200/$120/$80 y $2,600 remanente; con confirmación explícita", async () => {
     render(<ToastProvider><ProfitDistributionScreen /></ToastProvider>);
     await waitFor(() => expect(screen.getByRole("button", { name: /Revisar y autorizar/i })).toBeTruthy());
     fireEvent.change(screen.getByLabelText(/Importe a autorizar/i), { target: { value: "400" } });
@@ -63,12 +63,26 @@ describe("ProfitDistributionScreen (#459 reparto real)", () => {
     expect(screen.getByText("$120.00")).toBeTruthy();
     expect(screen.getByText("$80.00")).toBeTruthy();
     expect(screen.getByText(/\$2,600\.00/)).toBeTruthy(); // remanente sin autorizar
+    // #459 r5: autorizar dinero exige confirmación — el botón solo abre la
+    // revisión; NADA se escribe sin el «Autorizar» explícito.
     fireEvent.click(screen.getByRole("button", { name: /Revisar y autorizar/i }));
+    expect(mocks.authorizeProfitDistribution).not.toHaveBeenCalled();
+    expect(screen.getByText(/Autorizar reparto/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Autorizar" }));
     await waitFor(() => expect(mocks.authorizeProfitDistribution).toHaveBeenCalledTimes(1));
     const doc = mocks.authorizeProfitDistribution.mock.calls[0][0];
     expect(doc.authorizedAmountCents).toBe(40000);
     expect(doc.split).toEqual({ ferCents: 20000, oliviaCents: 12000, investorCents: 8000 });
     expect(doc.period).toBe("2026-11");
+  });
+
+  it("#459 r5: cancelar la revisión NO autoriza nada", async () => {
+    render(<ToastProvider><ProfitDistributionScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Revisar y autorizar/i })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Importe a autorizar/i), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: /Revisar y autorizar/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(mocks.authorizeProfitDistribution).not.toHaveBeenCalled();
   });
 
   it("ya autorizado descuenta del máximo: $3,000 − $400 previos → máximo $2,600 visible", async () => {
