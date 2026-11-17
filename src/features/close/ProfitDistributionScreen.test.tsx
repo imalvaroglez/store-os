@@ -129,3 +129,25 @@ describe("ProfitDistributionScreen (#459 reparto real)", () => {
     expect(screen.getByText(/Cerrado · v1/i)).toBeTruthy(); // noviembre v1 (único)
   });
 });
+
+
+describe("#459 r6 — ciclo de vida del intento en la UI", () => {
+  it("cada revisión acuña un intentId nuevo; el reintento de la MISMA revisión lo conserva", async () => {
+    render(<ToastProvider><ProfitDistributionScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Revisar y autorizar/i })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Importe a autorizar/i), { target: { value: "400" } });
+    fireEvent.click(screen.getByRole("button", { name: /Revisar y autorizar/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Autorizar" }));
+    await waitFor(() => expect(mocks.authorizeProfitDistribution).toHaveBeenCalledTimes(1));
+    const first = mocks.authorizeProfitDistribution.mock.calls[0][0].intentId;
+    expect(first).toBeTruthy();
+    // Una NUEVA revisión (tras éxito el importe se limpia): nuevo intento —
+    // nunca absorbe un importe distinto con la identidad del anterior.
+    fireEvent.change(screen.getByLabelText(/Importe a autorizar/i), { target: { value: "600" } });
+    fireEvent.click(screen.getByRole("button", { name: /Revisar y autorizar/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Autorizar" }));
+    await waitFor(() => expect(mocks.authorizeProfitDistribution).toHaveBeenCalledTimes(2));
+    expect(mocks.authorizeProfitDistribution.mock.calls[1][0].intentId).not.toBe(first);
+    expect(mocks.authorizeProfitDistribution.mock.calls[1][0].authorizedAmountCents).toBe(60000);
+  });
+});
