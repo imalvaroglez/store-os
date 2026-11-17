@@ -91,10 +91,13 @@ async function main() {
       // REST reads (…/documents:runQuery, :batchGet, plain document GETs).
       const onRequest = (request) => {
         const requestUrl = request.url();
-        if (!requestUrl.includes("firestore.googleapis.com")) return;
+        // Dev-cloud (firestore.googleapis.com) OR the local emulator harness
+        // (#192 fase 2: the same flows measured against 127.0.0.1:8080 — the
+        // request SHAPES are identical, which is what the counters classify).
+        if (!/firestore\.googleapis\.com|127\.0\.0\.1:8080|localhost:8080/.test(requestUrl)) return;
         const grpc = /Firestore\/(Listen|RunQuery|BatchGet|GetDocument|Write|Commit)\b/.exec(requestUrl);
         // REST captures arrive lowercase; the counters speak camelCase (#192 F1).
-        const restRaw = /documents:(runQuery|batchGet)/.exec(requestUrl)?.[1]
+        const restRaw = /documents:(runQuery|batchGet|commit)/.exec(requestUrl)?.[1]
           ?? (/\/databases\/\(default\)\/documents\/[^:]+$/.test(requestUrl) ? "GetDocument" : null);
         const key = grpc?.[1] ?? (restRaw ? restRaw[0].toUpperCase() + restRaw.slice(1) : null);
         if (key && key in requests) requests[key] += 1;
@@ -166,6 +169,31 @@ async function main() {
           await page.waitForTimeout(2500);
         });
       }
+
+      // #192 fase 2 — the WRITE phase: what saving an order COSTS (the
+      // contract tx + the reload the store listener triggers), measured from
+      // the guardado click so setup navigation never inflates it.
+      await phase("admin · escritura: guardar pedido", `${base}/pedidos/nuevo`, async (page, url) => {
+        await page.goto(url, { waitUntil: "networkidle" });
+        await signInIn(page);
+        await page.waitForTimeout(2500);
+        // Cliente y producto del fixture (emulador/dev con datos sintéticos).
+        const clientBox = page.getByLabel("Cliente");
+        await clientBox.fill("Luc");
+        await page.waitForTimeout(800);
+        await page.keyboard.press("Enter");
+        await page.waitForTimeout(600);
+        const productBox = page.getByLabel("Producto", { exact: true });
+        await productBox.fill("Anillo");
+        await page.waitForTimeout(900);
+        await page.keyboard.press("Enter");
+        await page.waitForTimeout(800);
+        // Zero the counters right before the money move: this phase reports
+        // ONLY the write + its reload.
+        page.__measureReset();
+        await page.getByRole("button", { name: "Guardar pedido" }).click();
+        await page.waitForTimeout(4000);
+      });
     }
   } finally {
     await browser.close();
