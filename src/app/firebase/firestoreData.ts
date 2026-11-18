@@ -1,3 +1,4 @@
+import { publicAvailabilityValue } from "../../lib/publicAvailability";
 import {
   collection,
   doc,
@@ -1700,7 +1701,7 @@ function publicPricesByTier(
   return Object.keys(prices).length ? prices : undefined;
 }
 
-type PublicPricingSource = Pick<Store, "priceTiers" | "defaultTierId">;
+type PublicPricingSource = Pick<Store, "priceTiers" | "defaultTierId"> & Partial<Pick<Store, "type">>;
 
 /** Public storefront projection: identity + storefront content + contact + tiers. */
 export function projectPublicStore(store: Store) {
@@ -1754,7 +1755,7 @@ export function projectPublicProductSummary(
       .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.order - b.order)
       .slice(0, 5)
       .map(({ url, alt, width, height }) => ({ url, alt: alt ?? null, width: width ?? null, height: height ?? null })),
-    availability: product.availability ?? "available",
+    availability: publicAvailabilityValue({ availability: product.availability, stockSignal: publicStockSignal(product) }, pricing?.type),
     finish: product.finish ?? null,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
@@ -1806,7 +1807,7 @@ export function projectPublicProductDetail(
     finish: product.finish ?? null,
     dimensions: product.dimensions ?? null,
     care: product.care ?? null,
-    availability: product.availability ?? "available",
+    availability: publicAvailabilityValue({ availability: product.availability, stockSignal: publicStockSignal(product) }, pricing?.type),
     canInquire: product.canInquire ?? false,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
@@ -1866,17 +1867,14 @@ export function buildPublicCatalogDoc(
 }
 
 /** Refresh a published document's availability without replacing its other fields. */
-function publicStockPatch(current: Product, existing: Record<string, unknown>): Record<string, unknown> {
+function publicStockPatch(current: Product, existing: Record<string, unknown>, storeType: Store["type"]): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   const stockSignal = publicStockSignal(current);
   if (stockSignal !== existing.stockSignal) patch.stockSignal = stockSignal;
-  // #353 (UX review): the public page reads availability OR stockSignal; a
-  // stale manual «sold_out» must travel with the stock sync when canonical
-  // carries an explicit value (a restock clears it in the same reception
-  // commit). Undefined stays untouched — nothing to say.
-  if (current.availability !== undefined && current.availability !== existing.availability) {
-    patch.availability = current.availability;
-  }
+  // #489: the public state follows stock in inventory stores; manual
+  // availability remains authoritative only for on-demand stores.
+  const availability = publicAvailabilityValue({ availability: current.availability, stockSignal }, storeType);
+  if (availability !== existing.availability) patch.availability = availability;
 
   const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant.stockSignal]));
   if (signals.size && Array.isArray(existing.variants)) {
@@ -1968,7 +1966,7 @@ export async function republishStockSignals(
         const activeStore = await currentStore(tx);
         if (activeStore) tx.set(detailRef, projectPublicProductDetail(current, activeStore.slug, categories, activeStore));
       } else {
-        const patch = publicStockPatch(current, detail.data());
+        const patch = publicStockPatch(current, detail.data(), store.type);
         if (Object.keys(patch).length) tx.update(detailRef, patch);
       }
     })
@@ -1996,7 +1994,7 @@ export async function republishStockSignals(
     const next = summaries.map((summary) => {
       const product = typeof summary.productSlug === "string" ? currentBySlug.get(summary.productSlug) : undefined;
       if (!product) return summary;
-      const patch = publicStockPatch(product, summary);
+      const patch = publicStockPatch(product, summary, store.type);
       return Object.keys(patch).length ? { ...summary, ...patch } : summary;
     });
     current.forEach((product, index) => {

@@ -516,3 +516,15 @@ describe("applyRelativeDeltas — reservas relativas al stock canónico (E1)", (
     expect(result.updates).toEqual([{ productId: "a", quantityOnHand: 5 }, { productId: "b", quantityOnHand: 0 }]);
   });
 });
+
+describe("#489 inventory publication", () => {
+  it("normalizes legacy manual marks in summary and detail, preserving on-demand manual state", () => {
+    const p = baseProduct({ quantityOnHand: 5, availability: "sold_out" });
+    const inventory = { ...store, type: "inventory_tiered" as const };
+    expect(projectPublicProductSummary(p, "santi", inventory).availability).toBe("available");
+    expect(projectPublicProductDetail(p, "santi", [], inventory).availability).toBe("available");
+    expect(projectPublicProductSummary(p, "santi", store).availability).toBe("sold_out");
+    expect(projectPublicProductSummary({ ...p, quantityOnHand: -1, availability: "available" }, "santi", inventory).availability).toBe("sold_out");
+    expect(projectPublicProductSummary({ ...p, quantityOnHand: undefined, variants: [{ id: "silver", color: "Plata", quantityOnHand: 2, createdAt: "", updatedAt: "" }] }, "santi", inventory).availability).toBe("available");
+  });
+});
