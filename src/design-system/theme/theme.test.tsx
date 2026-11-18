@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import { ThemeProvider, useTheme, THEMES } from "./ThemeProvider";
