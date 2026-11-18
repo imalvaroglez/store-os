@@ -295,6 +295,11 @@ describe("mobile adjustment direction (#218)", () => {
     fireEvent.change(amount, { target: { value: "150" } });
     fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Corrección" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    if (direction === "subtract") {
+      // #474: money leaving needs the explicit second tap.
+      const confirm = await screen.findByRole("button", { name: /Confirmar devolución de \$150\.00/ });
+      fireEvent.click(confirm);
+    }
     await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledWith(withAccumulator, expect.objectContaining({ kind: "adjustment", direction, amountText: "150", note: "Corrección" })));
   });
 });
@@ -341,6 +346,8 @@ describe("#270 subtract cap: Restar is limited to what this order received", () 
     fireEvent.change(screen.getByLabelText("Monto del ajuste"), { target: { value: "100" } });
     fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    // #474: the first tap only arms; the second confirms the exact amount.
+    fireEvent.click(await screen.findByRole("button", { name: /Confirmar devolución de \$100\.00/ }));
     await waitFor(() =>
       expect(store.registerOrderPayment).toHaveBeenCalledWith(
         expect.objectContaining({ paymentsReceivedCents: 10000 }),
@@ -489,5 +496,59 @@ describe("#369 pedido cancelado: Cobros en modo consulta", () => {
     expect(screen.getByText(/pedido cancelado/i)).toBeInTheDocument();
     // La vía de salida con evidencia (ajuste firmado) no es un cobro: queda.
     expect(screen.getByRole("button", { name: /Registrar ajuste o devolución/i })).toBeInTheDocument();
+  });
+});
+
+
+describe("#474 — confirmación explícita de la devolución (dinero sale)", () => {
+  beforeEach(() => {
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    store.materializeInheritedDeposit.mockReset().mockResolvedValue(undefined);
+  });
+  const paid = { ...order, paymentsReceivedCents: 300000 } as Order;
+
+  async function openAdjust() {
+    renderSheet(paid);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Registrar ajuste o devolución/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /Registrar ajuste o devolución/i }));
+  }
+
+  it("el primer toque ARMA con el monto nombrado y no registra; el segundo confirma", async () => {
+    await openAdjust();
+    fireEvent.change(screen.getByLabelText(/Monto del ajuste/i), { target: { value: "150" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución en efectivo" } });
+    const saveBtn = screen.getByRole("button", { name: "Guardar ajuste" });
+    fireEvent.click(saveBtn);
+    // Armed, NOT saved: the button renames with the exact amount.
+    expect(await screen.findByRole("button", { name: /Confirmar devolución de \$150\.00/i })).toBeInTheDocument();
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar devolución de \$150\.00/i }));
+    await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledTimes(1));
+    const input = store.registerOrderPayment.mock.calls[0][1];
+    expect(input.kind).toBe("adjustment");
+    expect(input.direction).toBe("subtract");
+  });
+
+  it("editar el monto tras armar DESARMA la confirmación (nunca confirma otro importe)", async () => {
+    await openAdjust();
+    fireEvent.change(screen.getByLabelText(/Monto del ajuste/i), { target: { value: "150" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución en efectivo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    expect(await screen.findByRole("button", { name: /Confirmar devolución de \$150\.00/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Monto del ajuste/i), { target: { value: "200" } });
+    expect(screen.queryByRole("button", { name: /Confirmar devolución de/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Guardar ajuste" })).toBeInTheDocument();
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it("un Sumar NO exige confirmación (dinero que entra, no sale)", async () => {
+    await openAdjust();
+    fireEvent.change(screen.getByLabelText(/Dirección/i), { target: { value: "add" } });
+    fireEvent.change(screen.getByLabelText(/Monto del ajuste/i), { target: { value: "50" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "cobro missed en vivo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledTimes(1));
   });
 });

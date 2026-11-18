@@ -61,6 +61,10 @@ export function OrderPaymentsSheet({
   const [adjustAmountText, setAdjustAmountText] = useState("");
   const [adjustDirection, setAdjustDirection] = useState<"subtract" | "add">("subtract");
   const [adjustNote, setAdjustNote] = useState("");
+  // #474: money LEAVING needs an explicit, two-step confirmation — the first
+  // tap only ARMS with the exact amount; any edit disarms. Mirrors the
+  // card-overpay confirmation (#279 B2).
+  const [adjustArmed, setAdjustArmed] = useState<number | null>(null);
   // #455 r5: dating the TOTAL anticipo captured at creation (no cobro will
   // ever ride it) is its own save.
   const [dating, setDating] = useState(false);
@@ -198,6 +202,20 @@ export function OrderPaymentsSheet({
         return;
       }
     }
+    // #474: money LEAVING needs an explicit, two-step confirmation — the
+    // first tap only ARMS with the exact amount (cap already cleared above);
+    // any edit disarms, so an edited figure never confirms. Mirrors the
+    // card-overpay confirmation (#279 B2).
+    if (adjustDirection === "subtract") {
+      const amount = parseAmount(adjustAmountText);
+      const centsNow = amount == null ? null : Math.round(amount * 100);
+      if (adjustArmed == null) {
+        if (centsNow != null && centsNow > 0 && adjustNote.trim()) setAdjustArmed(centsNow);
+        return; // armed only; nothing registered
+      }
+      if (adjustArmed !== centsNow) { setAdjustArmed(null); return; }
+    }
+    setAdjustArmed(null);
     const id = intentIdRef.current.adjust ?? uid("adj");
     intentIdRef.current.adjust = id;
     await save({ kind: "adjustment", id, direction: adjustDirection, amountText: adjustAmountText, note: adjustNote }, () => {
@@ -486,7 +504,7 @@ export function OrderPaymentsSheet({
               <SelectField
                 label="Dirección"
                 value={adjustDirection}
-                onChange={setAdjustDirection}
+                onChange={(d) => { setAdjustArmed(null); setAdjustDirection(d); }}
                 options={[
                   { value: "subtract", label: "Restar (devolución)" },
                   { value: "add", label: "Sumar" },
@@ -497,20 +515,27 @@ export function OrderPaymentsSheet({
                 inputMode="decimal"
                 placeholder="150 para devolver"
                 value={adjustAmountText}
-                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, "")))}
+                onChange={(e) => { setAdjustArmed(null); setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, ""))); }}
               />
               <TextField
                 label="Motivo"
                 value={adjustNote}
-                onChange={(e) => setAdjustNote(e.target.value)}
+                onChange={(e) => { setAdjustArmed(null); setAdjustNote(e.target.value); }}
                 placeholder="p. ej. devolución en efectivo"
               />
               <div className="flex gap-2">
                 <Button variant="secondary" full disabled={saving} onClick={() => setAdjustOpen(false)}>
                   Cancelar
                 </Button>
-                <Button full disabled={saving || loading || loadFailed} onClick={submitAdjustment}>
-                  Guardar ajuste
+                <Button
+                  full
+                  variant={adjustArmed != null ? "danger" : "primary"}
+                  disabled={saving || loading || loadFailed}
+                  onClick={submitAdjustment}
+                >
+                  {adjustArmed != null
+                    ? `Confirmar devolución de ${formatMoneyExact(adjustArmed / 100)}`
+                    : "Guardar ajuste"}
                 </Button>
               </div>
             </div>
