@@ -1,5 +1,33 @@
 #!/usr/bin/env bash
 
+purge_assert_fork_policy() {
+  local visibility="$1"
+  local allow_forking="$2"
+  local forks_count="$3"
+  local phase="$4"
+
+  if [ "$forks_count" != 0 ]; then
+    printf 'ABORT: forks_count=%s durante %s; coordinar los forks antes de continuar.\n' "$forks_count" "$phase" >&2
+    return 1
+  fi
+
+  case "$visibility" in
+    public)
+      printf 'AVISO: GitHub no permite deshabilitar forks para repos públicos; exigir forks_count=0 y congelar refs durante %s.\n' "$phase"
+      ;;
+    private)
+      if [ "$allow_forking" != false ]; then
+        printf 'ABORT: allow_forking=%s en repo privado durante %s; deshabilitar forks antes de seguir.\n' "$allow_forking" "$phase" >&2
+        return 1
+      fi
+      ;;
+    *)
+      printf 'ABORT: visibilidad de repo no reconocida (%s) durante %s.\n' "$visibility" "$phase" >&2
+      return 1
+      ;;
+  esac
+}
+
 purge_filter_history() {
   local paths_file="$1"
   git-filter-repo --sensitive-data-removal --invert-paths --paths-from-file "$paths_file"

@@ -33,20 +33,24 @@ umask 077
 EXPECTED_REFS="$SCRIPT_DIR/history-purge-2026-11-03.refs.tsv"
 EXPECTED_PULL_REFS="$SCRIPT_DIR/history-purge-2026-11-03.pull-refs.tsv"
 EXPECTED_TREE_FILE="$SCRIPT_DIR/history-purge-2026-11-03.main-tree.txt"
+EXPECTED_REPO_POLICY="$SCRIPT_DIR/history-purge-2026-11-03.repo-policy.tsv"
 PATHS_FILE="$SCRATCH/paths.txt"
 REMOTE_REFS="$SCRATCH/remote-refs.tsv"
 ALL_REFS="$SCRATCH/all-refs.tsv"
 CLONED_REFS="$SCRATCH/cloned-refs.tsv"
 MIRROR="$SCRATCH/store-os.git"
 BASELINE_MIRROR="$SCRATCH/store-os-before.git"
+CURRENT_REPO_POLICY="$SCRATCH/repo-policy.tsv"
 
-gh api repos/imalvaroglez/store-os --jq .forks_count > "$SCRATCH/forks-count"
-FORKS="$(cat "$SCRATCH/forks-count")"
-[ "$FORKS" = 0 ] || { echo "ABORT: forks_count=$FORKS; revisar y coordinar antes de reescribir." >&2; exit 1; }
+source "$SCRIPT_DIR/history-purge-2026-11-03.lib.sh"
+gh api repos/imalvaroglez/store-os --jq '[.visibility,.owner.type,.allow_forking,.forks_count] | @tsv' > "$CURRENT_REPO_POLICY"
+IFS=$'\t' read -r REPO_VISIBILITY REPO_OWNER_TYPE ALLOW_FORKING FORKS < "$CURRENT_REPO_POLICY"
+purge_assert_fork_policy "$REPO_VISIBILITY" "$ALLOW_FORKING" "$FORKS" "$MODE"
 
 if [[ "$MODE" = snapshot ]]; then
   SNAPSHOT_DIR="$APPROVAL"
   mkdir -m 700 "$SNAPSHOT_DIR"
+  cp "$CURRENT_REPO_POLICY" "$SNAPSHOT_DIR/history-purge-2026-11-03.repo-policy.tsv"
   git clone --quiet --mirror "$REMOTE_URL" "$MIRROR"
   git -C "$MIRROR" for-each-ref --format='%(objectname)%09%(refname)' refs/heads refs/tags | sort > "$SNAPSHOT_DIR/history-purge-2026-11-03.refs.tsv"
   git -C "$MIRROR" for-each-ref --format='%(objectname)%09%(refname)' refs/pull | sort > "$SNAPSHOT_DIR/history-purge-2026-11-03.pull-refs.tsv"
@@ -54,8 +58,16 @@ if [[ "$MODE" = snapshot ]]; then
   [ "$(wc -l < "$SNAPSHOT_DIR/history-purge-2026-11-03.refs.tsv" | tr -d ' ')" -gt 0 ] || { echo "ABORT: snapshot público vacío." >&2; exit 1; }
   echo "== snapshot creado: $SNAPSHOT_DIR"
   echo "== refs públicas: $(wc -l < "$SNAPSHOT_DIR/history-purge-2026-11-03.refs.tsv" | tr -d ' '); refs/pull: $(wc -l < "$SNAPSHOT_DIR/history-purge-2026-11-03.pull-refs.tsv" | tr -d ' ')"
+  echo "== repo policy (visibilidad, owner, forks, conteo): $(tr '\t' ' ' < "$CURRENT_REPO_POLICY")"
   echo "== main tree: $(cat "$SNAPSHOT_DIR/history-purge-2026-11-03.main-tree.txt")"
   exit 0
+fi
+
+[ -f "$EXPECTED_REPO_POLICY" ] || { echo "ABORT: falta el repo-policy.tsv del snapshot revisado." >&2; exit 1; }
+if ! cmp -s "$EXPECTED_REPO_POLICY" "$CURRENT_REPO_POLICY"; then
+  echo "ABORT: cambió la política de forks o su conteo desde el snapshot revisado." >&2
+  diff -u "$EXPECTED_REPO_POLICY" "$CURRENT_REPO_POLICY" >&2 || true
+  exit 1
 fi
 
 EXPECTED_MAIN_TREE="$(cat "$EXPECTED_TREE_FILE")"
@@ -105,7 +117,6 @@ printf '%s\n' "== main: $OLD_MAIN | árbol: $OLD_TREE"
 
 git clone --quiet --mirror "$MIRROR" "$BASELINE_MIRROR"
 git -C "$MIRROR" filter-repo --sensitive-data-removal --invert-paths --paths-from-file "$PATHS_FILE"
-source "$SCRIPT_DIR/history-purge-2026-11-03.lib.sh"
 (cd "$MIRROR" && purge_assert_paths_absent "$PATHS_FILE")
 (cd "$MIRROR" && purge_assert_same_tree refs/heads/main "$OLD_TREE")
 purge_assert_commit_map_changes_limited_to_paths "$MIRROR/filter-repo/commit-map" "$BASELINE_MIRROR" "$MIRROR" "$PATHS_FILE"
@@ -118,16 +129,14 @@ cat "$MIRROR/filter-repo/first-changed-commits"
 METADATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/store-os-purge-metadata.XXXXXX")"
 chmod 700 "$METADATA_DIR"
 cp "$MIRROR/filter-repo/commit-map" "$MIRROR/filter-repo/changed-refs" "$MIRROR/filter-repo/first-changed-commits" "$METADATA_DIR/"
-cp "$REMOTE_REFS" "$SCRATCH/remote-pull-refs.tsv" "$ALL_REFS" "$METADATA_DIR/"
+cp "$REMOTE_REFS" "$SCRATCH/remote-pull-refs.tsv" "$ALL_REFS" "$CURRENT_REPO_POLICY" "$METADATA_DIR/"
 exec > >(tee "$METADATA_DIR/run.log") 2>&1
 printf '%s\n' "== mapa de SHA (sin contenido sensible): $METADATA_DIR; revisar los $BRANCH_COUNT heads y $PULL_COUNT refs/pull con GitHub Support"
 if [[ "$MODE" = push ]]; then
-  gh api repos/imalvaroglez/store-os --jq .allow_forking > "$SCRATCH/allow-forking-before-push"
-  ALLOW_FORKING="$(cat "$SCRATCH/allow-forking-before-push")"
-  [ "$ALLOW_FORKING" = false ] || { echo "ABORT: deshabilita temporalmente la creación de forks antes del purge." >&2; exit 1; }
-  gh api repos/imalvaroglez/store-os --jq .forks_count > "$SCRATCH/forks-count-before-push"
-  FORKS="$(cat "$SCRATCH/forks-count-before-push")"
-  [ "$FORKS" = 0 ] || { echo "ABORT: aparecieron forks antes del push (forks_count=$FORKS); coordinar antes de seguir." >&2; exit 1; }
+  gh api repos/imalvaroglez/store-os --jq '[.visibility,.owner.type,.allow_forking,.forks_count] | @tsv' > "$SCRATCH/repo-policy-before-push.tsv"
+  IFS=$'\t' read -r REPO_VISIBILITY REPO_OWNER_TYPE ALLOW_FORKING FORKS < "$SCRATCH/repo-policy-before-push.tsv"
+  purge_assert_fork_policy "$REPO_VISIBILITY" "$ALLOW_FORKING" "$FORKS" "push"
+  purge_assert_same_ref_snapshot "$EXPECTED_REPO_POLICY" "$SCRATCH/repo-policy-before-push.tsv" "política y conteo de forks"
   git ls-remote --refs "$REMOTE_URL" 'refs/heads/*' 'refs/tags/*' 'refs/pull/*' | sort > "$SCRATCH/before-push-all.tsv"
   cmp -s "$SCRATCH/expected-all-refs.tsv" "$SCRATCH/before-push-all.tsv" || { echo "ABORT: cambió alguna ref pública o refs/pull antes del push." >&2; exit 1; }
   cp "$SCRATCH/before-push-all.tsv" "$METADATA_DIR/all-refs-before-push.tsv"
@@ -139,12 +148,10 @@ if [[ "$MODE" = push ]]; then
     exit "$PUSH_STATUS"
   fi
   purge_assert_same_ref_snapshot "$SCRATCH/remote-pull-refs.tsv" "$METADATA_DIR/pull-refs-after-attempt.tsv" "refs/pull (nombres y SHA)"
-  gh api repos/imalvaroglez/store-os --jq .allow_forking > "$SCRATCH/allow-forking-after-push"
-  ALLOW_FORKING="$(cat "$SCRATCH/allow-forking-after-push")"
-  [ "$ALLOW_FORKING" = false ] || { echo "FALLO: se habilitó la creación de forks durante el push; investigar antes de continuar." >&2; exit 1; }
-  gh api repos/imalvaroglez/store-os --jq .forks_count > "$SCRATCH/forks-count-after-push"
-  FORKS="$(cat "$SCRATCH/forks-count-after-push")"
-  [ "$FORKS" = 0 ] || { echo "FALLO: forks_count=$FORKS tras el push; coordinar limpieza con cada fork antes de continuar." >&2; exit 1; }
+  gh api repos/imalvaroglez/store-os --jq '[.visibility,.owner.type,.allow_forking,.forks_count] | @tsv' > "$METADATA_DIR/repo-policy-after-push.tsv"
+  IFS=$'\t' read -r REPO_VISIBILITY REPO_OWNER_TYPE ALLOW_FORKING FORKS < "$METADATA_DIR/repo-policy-after-push.tsv"
+  purge_assert_fork_policy "$REPO_VISIBILITY" "$ALLOW_FORKING" "$FORKS" "post-push"
+  purge_assert_same_ref_snapshot "$EXPECTED_REPO_POLICY" "$METADATA_DIR/repo-policy-after-push.tsv" "política y conteo de forks"
   git ls-remote --refs "$REMOTE_URL" 'refs/heads/*' 'refs/tags/*' | sort > "$SCRATCH/after-push.tsv"
   while IFS=$'\t' read -r _ ref; do
     expected="$(git -C "$MIRROR" rev-parse "$ref")"
