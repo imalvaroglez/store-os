@@ -988,3 +988,21 @@ describe("#489 legacy sold_out cannot override inventory", () => {
     expect(screen.getByRole("group", { name: `Cantidad de ${stocked.name}` })).toHaveTextContent("1");
   });
 });
+
+it("#489 preserves the chosen color in quantity, saved cart and WhatsApp", async () => {
+  const design = { ...detail, stockSignal: "disponible" as const, availability: "sold_out", canInquire: true, variants: [
+    { id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" as const },
+    { id: "gold", color: "Dorado", imageUrl: null, stockSignal: "agotado" as const },
+  ] };
+  localStorage.setItem(cartKey, JSON.stringify({ v: 1, lines: [{ productSlug: `${detail.productSlug}~silver`, name: `${detail.name} · Plateado`, sku: detail.sku, qty: 2, inquire: true }] }));
+  mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [design] } });
+  mocks.loadPublicProduct.mockResolvedValue({ store, product: design });
+  render(<OliviaStorefront route={productRoute} />);
+  await screen.findByRole("heading", { name: detail.name, level: 1 });
+  expect(screen.getByRole("combobox", { name: "Color" })).toBeTruthy();
+  expect(screen.getByRole("group", { name: `Cantidad de ${detail.name} · Plateado` })).toHaveTextContent("2");
+  expect(decodeURIComponent(screen.getByRole("link", { name: /Comprar por WhatsApp/ }).getAttribute("href")!)).toContain("Plateado");
+  fireEvent.change(screen.getByRole("combobox", { name: "Color" }), { target: { value: "gold" } });
+  expect(screen.getByText("Agotado")).toBeTruthy();
+  expect(screen.getByRole("link", { name: /Preguntar por esta pieza/ })).toBeTruthy();
+});
