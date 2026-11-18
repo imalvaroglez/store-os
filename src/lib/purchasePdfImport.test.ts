@@ -69,7 +69,7 @@ describe("parseSupplierOrder — §31 fixture regression", () => {
     expect(x3.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("keeps Dorado/Plateado and ring letters as variants", () => {
+  it("keeps Dorado/Plateado and ring-3 letters as variants", () => {
     const variants = new Set(parsed.lines.map((l) => l.variant));
     expect(variants.has("Dorado")).toBe(true);
     expect(variants.has("Plateado")).toBe(true);

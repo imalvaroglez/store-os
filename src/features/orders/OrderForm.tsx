@@ -832,7 +832,7 @@ export function OrderForm({
                   <div key={line.key} className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2.5">
                       <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} className="h-10 w-10 shrink-0" />
-                      <span className="min-w-0 break-words">{line.quantityText} × {line.productName || "Producto sin nombre"}{line.variantColor ? ` · ${line.variantColor}` : ""}</span>
+                      <span className="min-w-0 wrap-break-word">{line.quantityText} × {line.productName || "Producto sin nombre"}{line.variantColor ? ` · ${line.variantColor}` : ""}</span>
                     </span>
                     <span className="ml-auto hidden items-baseline gap-2 text-sm text-ink-soft md:flex tabular-nums">
                       {unitPrice > 0 && <>{formatOrderUnitPrice(unitPrice)} × {reviewQty} =</>}
@@ -991,7 +991,7 @@ export function OrderForm({
                 {!isTiered && <div className="hidden md:block" aria-hidden />}
                 {/* #310: subtotal rides the same aligned row (4th column) — the
                     one-line box below was a whole extra block per article. */}
-                <div className="col-span-2 flex min-h-[2.75rem] items-center md:col-span-1">
+                <div className="col-span-2 flex min-h-11 items-center md:col-span-1">
                   <StatRow label="Subtotal">{lineSubtotal == null ? "—" : <Money exact amount={lineSubtotal} />}</StatRow>
                 </div>
               </div>
@@ -1103,7 +1103,7 @@ export function OrderForm({
       <SelectField label="Estado del pedido" value={orderStatus} onChange={setOrderStatus} options={STATUS_OPTIONS} />
       <TextArea label="Notas" value={notes} onChange={(event) => setNotes(event.target.value)} />
 
-      <div className="sticky bottom-3 z-10 rounded-xl border border-edge bg-paper/95 p-4 shadow-lift backdrop-blur">
+      <div className="sticky bottom-3 z-10 rounded-xl border border-edge bg-paper/95 p-4 shadow-lift backdrop-blur-sm">
         <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-5">
           <StatRow label="Piezas">{totals?.pieces ?? "—"}</StatRow>
           <StatRow label="Total">{totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</StatRow>
@@ -1128,7 +1128,7 @@ export function OrderForm({
           sticks above the bottom nav while the form scrolls (md: the row stays
           in its natural place at the end).
         */}
-        <div className="fixed inset-x-0 bottom-[3.75rem] md:static md:inset-auto z-20 mt-4 border-t border-edge bg-paper/95 backdrop-blur px-4 py-2.5 shadow-lift md:border-0 md:bg-transparent md:px-0 md:py-0 md:shadow-none md:backdrop-blur-none" aria-label="Acciones del pedido">
+        <div className="fixed inset-x-0 bottom-15 md:static md:inset-auto z-20 mt-4 border-t border-edge bg-paper/95 backdrop-blur-sm px-4 py-2.5 shadow-lift md:border-0 md:bg-transparent md:px-0 md:py-0 md:shadow-none md:backdrop-blur-none" aria-label="Acciones del pedido">
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1 md:hidden">
               <p className="text-xs text-ink-soft">Total {totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</p>

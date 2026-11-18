@@ -2,18 +2,18 @@ import { describe, expect, it } from "vitest";
 import { itemsProfitBreakdown, orderProfitBreakdown } from "./saleProfit";
 import type { Order, OrderItem, Purchase } from "../types";
 
-/** A received trip: 10 pieces of "ring" at $10, with the given sale-side cents
+/** A received trip: 10 pieces of "ring-3" at $10, with the given sale-side cents
  * already persisted as reception evidence (FER-02). */
 function receivedTrip(saleCents: number, at = "2026-11-01T00:00:00.000Z"): Purchase {
   return {
     id: `trip-${at}`, storeId: "store", date: "2026-10-30", status: "received", costingMethod: "latest_purchase",
     receivedAt: at, subtotal: 100, totalConfirmed: 100, createdAt: "", updatedAt: "",
-    lines: [{ lineId: "line", productId: "ring", name: "Anillo", quantity: 10, unitCost: 10 }],
+    lines: [{ lineId: "line", productId: "ring-3", name: "Anillo", quantity: 10, unitCost: 10 }],
     costAllocations: [{ lineId: "line", merchandiseCents: 10000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: saleCents, totalCents: 10000 }],
   };
 }
 
-const ring: OrderItem = { productId: "ring", productName: "Anillo", quantity: 3, unitPrice: 25, subtotal: 75, cost: 10 };
+const ring: OrderItem = { productId: "ring-3", productName: "Anillo", quantity: 3, unitPrice: 25, subtotal: 75, cost: 10 };
 const order: Order = {
   id: "o1", storeId: "store", customerId: "c1", items: [ring], deposit: 0,
   orderStatus: "delivered", paymentStatus: "paid", createdAt: "", updatedAt: "",

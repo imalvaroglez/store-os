@@ -2,7 +2,90 @@
    Google Fonts import (fonts are self-hosted and declared in public.html).
    Only src/public-main.tsx may import this file — a shared module importing
    it would drag it back into the admin entry. */
-@import "./tokens.css";
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import './tokens.css' layer(base);
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+
+  --color-paper-2: var(--paper-2);
+  --color-paper: var(--paper);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+
+  --color-rule: var(--rule);
+
+  --color-terracotta: var(--terracotta);
+  --color-terracotta-soft: var(--terracotta-soft);
+
+  --color-forest: var(--forest);
+  --color-forest-soft: var(--forest-soft);
+
+  --color-rose: var(--rose);
+  --color-rose-soft: var(--rose-soft);
+
+  --color-accent: var(--accent, var(--terracotta));
+
+  --color-surface-2: var(--surface-2);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+
+  --color-on-surface: var(--on-surface);
+  --color-on-surface-soft: var(--on-surface-soft);
+
+  --color-edge: var(--border);
+  --color-on-accent: var(--on-accent);
+
+  --color-brand-50: var(--paper);
+  --color-brand-100: var(--paper-2);
+  --color-brand-900: var(--ink);
+  --color-brand-950: var(--ink);
+
+  --color-success-50: var(--forest-soft);
+  --color-success-100: var(--forest-soft);
+  --color-success-600: var(--forest);
+  --color-success-700: var(--forest);
+  --color-success: var(--success);
+
+  --color-danger-50: var(--rose-soft);
+  --color-danger-100: var(--rose-soft);
+  --color-danger-600: var(--rose);
+  --color-danger-700: var(--rose);
+  --color-danger: var(--danger);
+
+  --color-warning-50: var(--terracotta-soft);
+  --color-warning-100: var(--terracotta-soft);
+  --color-warning-500: var(--terracotta);
+  --color-warning-700: var(--terracotta);
+  --color-warning: var(--terracotta);
+
+  --radius-card: var(--radius-lg);
+  --radius-sheet: var(--radius-sheet);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-lg);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-lift: var(--shadow-lift);
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}

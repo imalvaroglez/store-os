@@ -21,7 +21,7 @@ export function VersionFooter() {
       <Button
         variant="ghost"
         size="sm"
-        className="!px-2 text-xs text-on-surface-soft"
+        className="px-2! text-xs text-on-surface-soft"
         onClick={() => setOpen(true)}
         aria-label={`Versión ${versionLabel}: ver notas de versión`}
       >

@@ -121,7 +121,7 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
           {pending.map((line) => (
             <div key={line.key} className="flex items-end justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm text-on-surface break-words">{nameFor(line.productId, line.variantId)}</p>
+                <p className="text-sm text-on-surface wrap-break-word">{nameFor(line.productId, line.variantId)}</p>
                 <p className="text-xs text-on-surface-soft">Pendientes: {line.quantity}</p>
               </div>
               <div className="w-28 shrink-0">

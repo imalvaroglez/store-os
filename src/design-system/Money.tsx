@@ -51,7 +51,7 @@ export function StatRow({
           // #463 QA (menor): the clickable StatRow is a tap target — honor the
           // DS ~40px convention instead of the ~37.75px of bare text.
           className="text-left w-full min-w-0 min-h-10 touch-manipulation">
-        <span className="text-on-surface-soft text-[11px] uppercase tracking-wide leading-tight break-words block">
+        <span className="text-on-surface-soft text-[11px] uppercase tracking-wide leading-tight wrap-break-word block">
           {label}
         </span>
         <span className={`serif-display tnum ${valueColor}`}>{children}</span>
@@ -60,7 +60,7 @@ export function StatRow({
   }
   return (
     <div className="min-w-0">
-      <span className="text-on-surface-soft text-[11px] uppercase tracking-wide leading-tight break-words block">
+      <span className="text-on-surface-soft text-[11px] uppercase tracking-wide leading-tight wrap-break-word block">
         {label}
       </span>
       <span className={`serif-display tnum ${valueColor}`}>{children}</span>
