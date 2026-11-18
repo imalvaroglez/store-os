@@ -26,10 +26,18 @@ export function StatRow({
   label,
   children,
   tone,
+  onClick,
+  interactiveTitle,
 }: {
   label: string;
   children: ReactNode;
   tone?: "default" | "danger" | "success";
+  /** #463: when given, the WHOLE stat cell becomes one comfortable tap
+   * target (button semantics: keyboard + focus for free) — e.g. the
+   * "Comprometido" drill-down on a product card whose click opens the
+   * editor, so the control must own its full area. */
+  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  interactiveTitle?: string;
 }) {
   const valueColor =
     tone === "danger"
@@ -37,6 +45,19 @@ export function StatRow({
       : tone === "success"
       ? "font-semibold text-success"
       : "font-bold text-on-surface";
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} title={interactiveTitle}
+          // #463 QA (menor): the clickable StatRow is a tap target — honor the
+          // DS ~40px convention instead of the ~37.75px of bare text.
+          className="text-left w-full min-w-0 min-h-10 touch-manipulation">
+        <span className="text-on-surface-soft text-[11px] uppercase tracking-wide leading-tight break-words block">
+          {label}
+        </span>
+        <span className={`serif-display tnum ${valueColor}`}>{children}</span>
+      </button>
+    );
+  }
   return (
     <div className="min-w-0">
       <span className="text-on-surface-soft text-[11px] uppercase tracking-wide leading-tight break-words block">

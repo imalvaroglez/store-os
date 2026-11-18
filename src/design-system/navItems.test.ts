@@ -21,7 +21,7 @@ describe("#454 áreas de navegación", () => {
       "Estrategia de precios",
     ]);
     expect(nav.areas[2].children.map((c) => c.label)).toEqual(["Compras", "Empaques"]);
-    expect(nav.areas[3].children.map((c) => c.label)).toEqual(["Gastos", "Cierre mensual", "Reparto de utilidades"]);
+    expect(nav.areas[3].children.map((c) => c.label)).toEqual(["Gastos", "Cierre mensual", "Reparto de utilidades", "Simulador de reparto"]); // #459: hoja propia en Administración
     // Inicio y Opciones viven FUERA de los grupos.
     expect(nav.flat.map((f) => f.label)).toEqual(["Inicio"]);
   });
@@ -33,7 +33,7 @@ describe("#454 áreas de navegación", () => {
       "/pedidos", "/clientes", "/productos/ranking",
       "/productos", "/productos/categorias", "/productos/reglas", "/productos/estrategia",
       "/productos/compras", "/productos/empaques",
-      "/productos/gastos", "/productos/cierre", "/productos/reparto",
+      "/productos/gastos", "/productos/cierre", "/productos/reparto", "/productos/simulador",
     ]);
   });
 
@@ -49,7 +49,7 @@ describe("#454 áreas de navegación", () => {
     const admin = nav.areas.find((a) => a.label === "Administración")!;
     // Cierre mensual y Reparto de utilidades SÍ viven aquí (son administración);
     // ranking y compras ya no.
-    expect(admin.children.map((c) => c.id)).toEqual(["productos_gastos", "productos_cierre", "productos_reparto"]);
+    expect(admin.children.map((c) => c.id)).toEqual(["productos_gastos", "productos_cierre", "productos_reparto", "productos_simulador"]);
   });
 
   it("área activa por tab — deep-links abren el grupo correcto", () => {

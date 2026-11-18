@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, deleteDoc, where } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 
 // #202: closes and their adjustments are append-only, store-scoped evidence.
@@ -70,5 +70,55 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#202 closes & ajustes (re
     // LIST must not hand them to any signed-up user (class #176/#438).
     await expect(getDocs(collection(foreign, "closes"))).rejects.toThrow();
     await expect(getDocs(collection(foreign, "closeAdjustments"))).rejects.toThrow();
+  });
+
+  it("#458: el snapshot de cierre oficial pasa las reglas closes — dueña sí, miembro no, suplantación de actor no", async () => {
+    const owner = env.authenticatedContext("fer-uid").firestore();
+    const member = env.authenticatedContext("member-uid").firestore();
+    const snapshot = {
+      id: "olivia__2026-09__v1", storeId: "olivia", period: "2026-09", version: 1,
+      monthLabel: "septiembre 2026",
+      totals: { salesCents: 1, costCents: 1, expensesCents: 1, operatingResultCents: 1, collectionsCents: 1 },
+      coverageComplete: true, fingerprint: "fp_x", state: "closed",
+      authorizedByUid: "fer-uid", authorizedAt: "2026-10-01T00:00:00.000Z",
+      createdBy: "fer-uid", createdAt: "2026-10-01T00:00:00.000Z",
+    };
+    await expect(setDoc(doc(owner, "closes/olivia__2026-09__v1"), snapshot)).resolves.toBeUndefined();
+    await expect(setDoc(doc(member, "closes/olivia__2026-09__v2"), { ...snapshot, id: "olivia__2026-09__v2", version: 2, createdBy: "member-uid", authorizedByUid: "member-uid" })).rejects.toThrow();
+    await expect(setDoc(doc(owner, "closes/olivia__2026-09__v3"), { ...snapshot, id: "olivia__2026-09__v3", version: 3, createdBy: "someone-else" })).rejects.toThrow();
+    // Miembro de la tienda SÍ lee el snapshot sellado (consulta), ajeno no (ya cubierto).
+    await expect((await getDoc(doc(member, "closes/olivia__2026-09__v1"))).exists()).toBe(true);
+  });
+
+  it("#459: autorización de reparto — dueña crea, miembro no, suplantación no; todos consultan", async () => {
+    const owner = env.authenticatedContext("fer-uid").firestore();
+    const member = env.authenticatedContext("member-uid").firestore();
+    const base = {
+      id: "olivia__2026-11__d1", storeId: "olivia", period: "2026-11", closeId: "olivia__2026-11__v9",
+      authorizedAmountCents: 40000, split: { ferCents: 20000, oliviaCents: 12000, investorCents: 8000 },
+      status: "authorized", authorizedByUid: "fer-uid", authorizedAt: "2026-12-02T00:00:00.000Z",
+      createdBy: "fer-uid", createdAt: "2026-12-02T00:00:00.000Z",
+    };
+    await expect(setDoc(doc(owner, "profitDistributions/olivia__2026-11__d1"), base)).resolves.toBeUndefined();
+    await expect(setDoc(doc(member, "profitDistributions/olivia__2026-11__d2"), { ...base, id: "olivia__2026-11__d2", createdBy: "member-uid", authorizedByUid: "member-uid" })).rejects.toThrow();
+    await expect(setDoc(doc(owner, "profitDistributions/olivia__2026-11__d3"), { ...base, id: "olivia__2026-11__d3", createdBy: "someone-else" })).rejects.toThrow();
+    // Append-only: ni la dueña edita el histórico.
+    await expect(updateDoc(doc(owner, "profitDistributions/olivia__2026-11__d1"), { authorizedAmountCents: 1 })).rejects.toThrow();
+    await expect((await getDoc(doc(member, "profitDistributions/olivia__2026-11__d1"))).exists()).toBe(true);
+  });
+
+  it("#458 r3: el PRIMER cierre de una tienda SÍ se autoriza (existencia por query, no get de doc nulo)", async () => {
+    const owner = env.authenticatedContext("fer-uid").firestore();
+    const snapshot = {
+      id: "olivia__2026-08__v1", storeId: "olivia", period: "2026-08", version: 1,
+      monthLabel: "agosto 2026",
+      totals: { salesCents: 1, costCents: 1, expensesCents: 1, operatingResultCents: 1, collectionsCents: 1 },
+      coverageComplete: true, fingerprint: "fp_first", state: "closed",
+      authorizedByUid: "fer-uid", authorizedAt: "2026-09-01T00:00:00.000Z",
+      createdBy: "fer-uid", createdAt: "2026-09-01T00:00:00.000Z",
+    };
+    await expect(setDoc(doc(owner, "closes/olivia__2026-08__v1"), snapshot)).resolves.toBeUndefined();
+    const seen = await getDocs(query(collection(owner, "closes"), where("storeId", "==", "olivia"), where("id", "==", "olivia__2026-08__v1")));
+    expect(seen.size).toBe(1);
   });
 });

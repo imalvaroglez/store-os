@@ -83,6 +83,31 @@ describe("useListRestore key change (#233)", () => {
     setScrollY(0);
   });
 
+  it("#346: same-batch key change + filter — the switch's fresh view wins (no stale-key leak)", () => {
+    // An update queued under the OLD key (the closure that captured it) that
+    // lands in the same batch as the key change is a filter for the OLD
+    // list: the reset must win — leaking it into the new store's list is the
+    // exact bug #233 closed. Pins the reset's precedence so the #346
+    // render-phase rework can never trade this guarantee away.
+    const view = renderHook(({ key }) => useListRestore(key, { query: "" }), {
+      initialProps: { key: "products:late-a" },
+    });
+    act(() => {
+      view.rerender({ key: "products:late-b" });
+      view.result.current.setFilters({ query: "aretes" }); // stale-A closure
+    });
+    expect(view.result.current.filters).toEqual({ query: "" }); // fresh view for B
+    // And the new key's cache is clean: the transient that persisted the OLD
+    // filters under the NEW key (effect-order lag) never becomes visible.
+    act(() => { view.result.current.setFilters({ query: "nuevo" }); });
+    view.unmount();
+    const third = renderHook(({ key }) => useListRestore(key, { query: "" }), {
+      initialProps: { key: "products:late-b" },
+    });
+    expect(third.result.current.filters).toEqual({ query: "nuevo" });
+    expect(third.result.current.hadSavedState).toBe(true);
+  });
+
   it("resets to defaults on a live key change so store-scoped filters never leak (store switch)", () => {
     // Simulate two stores' product lists with different saved state.
     const first = renderHook(({ key }) => useListRestore(key, { restockOnly: false as boolean, query: "" }), {
@@ -104,5 +129,48 @@ describe("useListRestore key change (#233)", () => {
     // A live key change resets (fresh view per list); restoration only happens
     // on a fresh MOUNT of the same key (returning from a detail/editor).
     expect(second.result.current.filters).toEqual({ restockOnly: false, query: "" });
+  });
+});
+
+describe("restoreScroll sticks against late resets (#463)", () => {
+  afterEach(() => {
+    resetListRestoreForTests();
+    setScrollY(0);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("re-lands when a late agent zeroes the document after the first landing", async () => {
+    const rafs: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { rafs.push(cb); return rafs.length; });
+    const scrollTo = vi.fn((_opts: ScrollOptions) => {
+      setScrollY(1500); // the landing applies…
+    });
+    Object.defineProperty(window, "scrollTo", { value: scrollTo, configurable: true });
+
+    const first = renderHook(() => useListRestore("orders-sticky", { filter: "all", query: "" }));
+    setScrollY(1500);
+    act(() => window.dispatchEvent(new Event("scroll")));
+    first.unmount();
+
+    const second = renderHook(() => useListRestore("orders-sticky", { filter: "all", query: "" }));
+    let origin = 0;
+    act(() => { origin = second.result.current.restoreScroll(); });
+    expect(origin).toBe(1500);
+
+    // Double rAF → first landing.
+    act(() => { rafs.splice(0).forEach((cb) => cb(0)); });
+    act(() => { rafs.splice(0).forEach((cb) => cb(0)); });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    // A late agent (route reset / focus-return) zeroes the document BEFORE
+    // the verification frame runs.
+    setScrollY(0);
+    act(() => { rafs.splice(0).forEach((cb) => cb(0)); });
+    // Verification sees the loss → re-lands.
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+    // No further interference: the next verify frame confirms the position.
+    act(() => { rafs.splice(0).forEach((cb) => cb(0)); });
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+    expect(window.scrollY).toBe(1500);
   });
 });

@@ -87,6 +87,7 @@ import {
   deleteOrderWithStockTx,
   fetchOrderPayments,
   registerOrderPaymentTx,
+  materializeInheritedDepositTx,
   applyCustomerCreditTx,
   releaseCustomerCreditTx,
   getOrderFreshRevision,
@@ -428,6 +429,7 @@ type StoreContextValue = {
   loadOrderPayments: (orderId: string) => Promise<void>;
   /** Register a cobro/adjustment idempotently; requires a session. */
   registerOrderPayment: (order: Order, input: PaymentRecordInput) => Promise<void>;
+  materializeInheritedDeposit: (order: Order, input: { method: "cash" | "transfer"; date: string }) => Promise<void>;
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -1474,6 +1476,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       // Canonical amounts replace a versioned snapshot; a retried receipt is
       // never added to the local accumulator and late responses cannot undo it.
+      dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
+    },
+    // #455 r5: date the TOTAL anticipo captured at creation (no cobro will
+    // ever ride it) — materializes the inherited receipt with the operator's
+    // date/method and births the accumulator from it.
+    materializeInheritedDeposit: async (order, input) => {
+      if (!cloud || !user) throw new Error("Registrar el anticipo requiere iniciar sesión.");
+      const result = await materializeInheritedDepositTx({
+        orderId: order.id,
+        storeId: order.storeId,
+        input,
+        by: user.uid,
+      });
       dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
     },
     // #203: after-sales ficha. Both actions AWAIT their transaction and throw

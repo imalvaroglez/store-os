@@ -9,6 +9,7 @@ const store = vi.hoisted(() => ({
   payments: [] as OrderPayment[],
   loadOrderPayments: vi.fn(),
   registerOrderPayment: vi.fn(),
+  materializeInheritedDeposit: vi.fn(),
 }));
 vi.mock("../../app/StoreProvider", () => ({ useStore: () => store }));
 
@@ -49,6 +50,7 @@ describe("OrderPaymentsSheet", () => {
     store.payments = [];
     store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
     store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    store.materializeInheritedDeposit.mockReset().mockResolvedValue(undefined);
   });
 
   it("lists the payments with method and amount, and shows received/balance (issue case)", async () => {
@@ -160,6 +162,7 @@ describe("OrderPaymentsSheet installment calendar (#165)", () => {
     store.payments = [];
     store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
     store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    store.materializeInheritedDeposit.mockReset().mockResolvedValue(undefined);
   });
 
   function renderPlanSheet(orderOverride: Order = planOrder) {
@@ -225,6 +228,7 @@ describe("payment history loading and recovery", () => {
     store.payments = [];
     store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
     store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    store.materializeInheritedDeposit.mockReset().mockResolvedValue(undefined);
   });
   it("keeps canonical money visible and blocks registration until the history loads", async () => {
     let finish!: () => void;
@@ -276,6 +280,7 @@ describe("mobile adjustment direction (#218)", () => {
     store.payments = [];
     store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
     store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    store.materializeInheritedDeposit.mockReset().mockResolvedValue(undefined);
   });
   it.each(["subtract", "add"] as const)("submits %s without typing a sign", async (direction) => {
     // $200 received: the $150 subtract stays inside the #270 cap.
@@ -299,6 +304,7 @@ describe("#270 subtract cap: Restar is limited to what this order received", () 
     store.payments = [];
     store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
     store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    store.materializeInheritedDeposit.mockReset().mockResolvedValue(undefined);
   });
 
   async function openAdjust(o: Order) {
@@ -393,5 +399,95 @@ describe("#271 correcciones del anticipo visibles en Cobros", () => {
     );
     expect(await screen.findByText("Correcciones del anticipo")).toBeInTheDocument();
     expect(screen.getByText(/\$500\.00 → \$100\.00 — Anticipo capturado por error: era \$100 · 9\/11\/2026/)).toBeInTheDocument();
+  });
+});
+
+// #455 r4 (UX): el anticipo previo no se cuenta dos veces siguiendo el propio
+// diálogo. Escenario del dictamen: pedido de $1,500 con anticipo heredado de
+// $1,500 — capturar el TOTAL como cobro crea "Recibido $3,000 · A favor $1,500".
+describe("#455 r4 — anticipo sin doble conteo", () => {
+  const inheritedOrder: Order = {
+    ...order,
+    deposit: 1500,
+    // unmaterialized legacy anticipo (no flag, no records)
+  };
+
+  it("rechaza cobrar el total cuando el anticipo cubre parte — pide solo lo que falte", async () => {
+    // Pedido $2,500 con anticipo heredado $1,500: la operadora sigue el texto
+    // viejo y captura el TOTAL; el tope la guía a los $1,000 reales.
+    const partial: Order = { ...inheritedOrder, items: [{ lineId: "l1", productName: "Caja adviento", quantity: 1, unitPrice: 2500, subtotal: 2500 }] };
+    store.registerOrderPayment.mockClear();
+    renderSheet(partial);
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Fecha del anticipo"), { target: { value: "2026-10-31" } });
+    fireEvent.change(screen.getByLabelText("Monto"), { target: { value: "2500" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
+    await waitFor(() => expect(screen.getByText(/solo lo que falte/i)).toBeInTheDocument());
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it("con el anticipo cubriendo todo, el formulario de cobro desaparece (el caso se cierra solo)", async () => {
+    renderSheet(inheritedOrder);
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument());
+    expect(screen.getByText(/no hay nada nuevo que cobrar/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Monto")).toBeNull();
+  });
+});
+
+
+describe("#455 r5 — fechar el anticipo total capturado al crear", () => {
+  const totalAnticipoOrder: Order = {
+    ...order,
+    deposit: 1500, // the TOTAL as anticipo; nothing left to collect
+    paymentStatus: "paid",
+    orderStatus: "delivered",
+  };
+
+  it("muestra la vía de registro de fecha y método cuando no falta cobrar nada", async () => {
+    renderSheet(totalAnticipoOrder);
+    const button = await screen.findByRole("button", { name: "Registrar fecha y método del anticipo" });
+    // Sin fecha capturada no se puede registrar: nunca 'sin fecha' en el cierre.
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Fecha del anticipo"), { target: { value: "2026-11-04" } });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(store.materializeInheritedDeposit).toHaveBeenCalledWith(
+        totalAnticipoOrder,
+        { method: "cash", date: "2026-11-04" }
+      )
+    );
+  });
+
+  it("un fallo del registro se muestra en español sin fingir éxito", async () => {
+    store.materializeInheritedDeposit.mockRejectedValue(new Error("El anticipo ya está registrado."));
+    renderSheet(totalAnticipoOrder);
+    fireEvent.change(await screen.findByLabelText("Fecha del anticipo"), { target: { value: "2026-11-04" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar fecha y método del anticipo" }));
+    await waitFor(() => expect(screen.getByText("El anticipo ya está registrado.")).toBeTruthy());
+  });
+});
+
+describe("#369 pedido cancelado: Cobros en modo consulta", () => {
+  it("no ofrece registrar cobros; los ajustes firmados y la evidencia quedan", async () => {
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    const cancelled = {
+      ...order,
+      orderStatus: "cancelled" as const,
+      paymentsReceivedCents: 12000,
+    };
+    render(
+      <ToastProvider>
+        <OrderPaymentsSheet order={cancelled} open onClose={() => {}} />
+      </ToastProvider>
+    );
+    await screen.findByText("Cobros del pedido");
+    expect(screen.queryByRole("button", { name: "Registrar cobro" })).toBeNull();
+    expect(screen.queryByLabelText("Monto")).toBeNull();
+    expect(screen.getByText(/pedido cancelado/i)).toBeInTheDocument();
+    // La vía de salida con evidencia (ajuste firmado) no es un cobro: queda.
+    expect(screen.getByRole("button", { name: /Registrar ajuste o devolución/i })).toBeInTheDocument();
   });
 });
