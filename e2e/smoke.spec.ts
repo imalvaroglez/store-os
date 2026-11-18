@@ -390,7 +390,9 @@ test("recorded payments survive reload and an adjustment updates card and histor
   await sheet.getByRole("combobox", { name: /^Dirección/ }).selectOption("subtract");
   await sheet.getByLabel("Monto del ajuste", { exact: true }).fill("150");
   await sheet.getByLabel("Motivo", { exact: true }).fill("Corrección de prueba");
+  // #474: money leaving needs the explicit two-tap confirmation.
   await sheet.getByRole("button", { name: "Guardar ajuste", exact: true }).click();
+  await sheet.getByRole("button", { name: /Confirmar devolución de \$150\.00/, exact: true }).click();
   await expect(sheet.getByText("$1,250.00", { exact: true })).toBeVisible();
   await expect(sheet.getByText("$950.00", { exact: true })).toBeVisible();
   await sheet.getByRole("button", { name: "Cerrar", exact: true }).click();
