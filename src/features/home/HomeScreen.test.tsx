@@ -355,9 +355,13 @@ describe("HomeScreen alertas de existencias (FER-09)", () => {
 
     await screen.findByText("Cobrar");
     fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
-    await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledTimes(1));
-    expect(mocks.upsertOrder.mock.calls[0][0].deposit).toBe(500);
-    expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
+    // #279 r4: evidence rule everywhere — the sheet opens with the net
+    // prefilled; a bare deposit (upsertOrder) never happens from Inicio.
+    expect(await screen.findByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
+    const amount = await screen.findByLabelText(/Monto/i);
+    expect((amount as HTMLInputElement).value).toBe("500");
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+    expect(screen.queryByText("Pedido cobrado")).toBeNull();
   });
 
   it("#362 Cobrar collects the NET pending — saldo a favor applied from a sister order is never re-charged as cash", async () => {
@@ -377,10 +381,11 @@ describe("HomeScreen alertas de existencias (FER-09)", () => {
 
     await screen.findByText("Cobrar");
     fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
-    await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledTimes(1));
-    // NET ($500), never the gross historical total ($1,000).
-    expect(mocks.upsertOrder.mock.calls[0][0].deposit).toBe(500);
-    expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
+    // #279 r4: NET prefilled ($500, never the gross $1,000) via evidence.
+    expect(await screen.findByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
+    const amount = await screen.findByLabelText(/Monto/i);
+    expect((amount as HTMLInputElement).value).toBe("500");
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
   });
 });
 
@@ -393,9 +398,12 @@ it("opens Cobros with honest feedback when a stale home collection is pinned (#2
   const Wrapper = withState(state);
   render(<Wrapper><HomeScreen /></Wrapper>);
   fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
-  expect(await screen.findByText("Este pedido ya tiene cobros registrados. Regístralos en Cobros.")).toBeInTheDocument();
-  expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
+  // #279 r4: the sheet opens directly with the net prefilled; concurrent
+  // cobros reconcile inside registerOrderPaymentTx (#218), never by a
+  // deposit write that ignores them.
+  expect(await screen.findByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
   expect(screen.queryByText("Pedido cobrado")).toBeNull();
+  expect(mocks.upsertOrder).not.toHaveBeenCalled();
 });
 
 describe("#406 r2 — ventana de carga sin $0 falso", () => {
