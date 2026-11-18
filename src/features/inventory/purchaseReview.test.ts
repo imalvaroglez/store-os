@@ -29,6 +29,14 @@ describe("#219 Compras — importes en centavos exactos (purchaseReviewIssues)",
     }
   });
 
+  it("acepta importes grandes VÁLIDOS de dos decimales (regresión H1: 132000.02 / 131072.05)", () => {
+    const issues = purchaseReviewIssues(purchase({
+      lines: [line(132000.02)] as never,
+      tickets: [{ id: "t1", supplierId: "sup1", date: "2026-01-01", discount: 0, shipping: 0, tax: 0, totalConfirmed: 132000.05, folio: "" }] as never,
+    }), {});
+    expect(issues.some((i) => /centavos|decimales/.test(i.message))).toBe(false);
+  });
+
   it("un costo exacto en centavos no produce el issue nuevo", () => {
     const issues = purchaseReviewIssues(purchase({ lines: [line(10.5)] as never }), {});
     expect(issues.some((i) => i.target === "line:L1" && /centavos|decimales/.test(i.message))).toBe(false);
