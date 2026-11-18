@@ -484,7 +484,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     retryWrite: () => Promise<unknown> = write
   ) {
     const ownerUid = user?.uid;
-    void write().catch((error) => {
+    // #488 write-side probe: pairs with the read-side poll probe. A flake
+    // failure will now tell whether the projection write STARTED, FINISHED
+    // or THREW — distinguishing a lost write from one that never ran.
+    // Single flight: the ORIGINAL call is observed, never repeated.
+    const probeTag = `#488-PROJ-WRITE[${label}]`;
+    console.info(`${probeTag} start`);
+    const flight = write().then(
+      (value) => { console.info(`${probeTag} ok`); return value; },
+      (error) => { console.info(`${probeTag} threw:${String(error)}`); throw error; }
+    );
+    void flight.catch((error) => {
       console.error(`[Firestore] No se pudo ${label}:`, error);
       if (!ownerUid || currentUid.current !== ownerUid) return;
       const version = ++syncErrorVersion.current;

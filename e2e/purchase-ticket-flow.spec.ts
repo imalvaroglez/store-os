@@ -132,7 +132,14 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   // diff tells absent (404), denied (403), server error (5xx) or a thrown
   // fetch apart — the deciding evidence for the flake's root cause.
   const pollProbe = { status: 0, checks: 0 };
-  await expect.poll(async () => {
+  // #488 write-side probe log (console from the app under test).
+  const writeProbeLog: string[] = [];
+  page.on("console", (msg) => {
+    const text = msg.text();
+    if (text.includes("#488-PROJ-WRITE")) writeProbeLog.push(text.slice(0, 140));
+  });
+  try {
+    await expect.poll(async () => {
     pollProbe.checks += 1;
     let response: Response;
     try {
@@ -151,6 +158,11 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
     };
   }, { timeout: 30_000, message: "La proyección pública de la compra por ticket no llegó (escritura tardía o ausente; el diff muestra el último estado del sondeo)" })
     .toEqual({ name: "Pieza QA por ticket", storeId: "store_joyeria", stockSignal: "disponible" });
+  void writeProbeLog; // keeps the collector referenced on the happy path
+  } catch (error) {
+    console.log(`#488-PROJ-WRITE-HISTORY: ${writeProbeLog.join(" | ") || "EMPTY (write never started)"}`);
+    throw error;
+  }
 
   await gotoClean(page, "/pedidos/nuevo");
   await ensureStoreActive(page, "Joyería");
