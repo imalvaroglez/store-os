@@ -93,6 +93,16 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("store deletion retention 
     await expect(ownerDb.doc("adminStores/ret-store").update({ name: "Zombie" })).rejects.toThrow();
   });
 
+  it("H2: the owner cannot REMOVE the seal via deleteField (one-way, re-review probe C/D/E)", async () => {
+    const ownerDb = holder.env!.authenticatedContext("fer375").firestore();
+    await expect(ownerDb.doc("adminStores/ret-store").update({ retainedAt: null as never })).rejects.toThrow();
+    // And with the key absent the normal path stays closed: re-adding members
+    // must also fail (the seal's evidence stays platform-only).
+    const superReader = holder.env!.authenticatedContext("plat375", { email: "admin@store.os", email_verified: true }).firestore();
+    await superReader.doc("adminStores/ret-store").update({ retainedAt: new Date().toISOString() }); // platform re-seals
+    await expect(ownerDb.doc("adminStores/ret-store").update({ memberUids: ["fer375"] })).rejects.toThrow();
+  });
+
   it("H3: a pending invite cannot join a sealed store, and the seal empties invites", async () => {
     const sealed = await holder.env!.authenticatedContext("plat375", { email: "admin@store.os", email_verified: true })
       .firestore().doc("adminStores/ret-store").get();

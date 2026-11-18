@@ -131,7 +131,7 @@ service cloud.firestore {
         && request.resource.data.memberUids.size() == 0
         // .get with default: dot access on a MISSING key is an evaluation
         // ERROR in CEL — it poisoned the whole || chain (invitee joins died).
-        && request.resource.data.get('retainedAt', '') is string
+        && request.resource.data.get('retainedAt', null) is string
         && request.resource.data.ownerUid == adminStore(storeId).ownerUid
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['memberUids', 'retainedAt', 'pendingInvites', 'updatedAt']);
