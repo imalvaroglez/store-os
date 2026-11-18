@@ -10,8 +10,11 @@ const store = vi.hoisted(() => ({
   loadOrderPayments: vi.fn(),
   registerOrderPayment: vi.fn(),
   materializeInheritedDeposit: vi.fn(),
+  state: { stores: [{ id: "s1", ownerUid: "owner-1" }] },
 }));
 vi.mock("../../app/StoreProvider", () => ({ useStore: () => store }));
+const auth = vi.hoisted(() => ({ user: { uid: "owner-1", role: "member" } as { uid: string; role: string } | null }));
+vi.mock("../../app/firebase/AuthProvider", () => ({ useAuth: () => ({ user: auth.user }) }));
 
 const order: Order = {
   id: "o1",
@@ -293,7 +296,7 @@ describe("mobile adjustment direction (#218)", () => {
     const amount = screen.getByLabelText("Monto del ajuste");
     expect(amount).toHaveAttribute("inputMode", "decimal");
     fireEvent.change(amount, { target: { value: "150" } });
-    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Corrección" } });
+    fireEvent.change(screen.getByLabelText("Motivo (obligatorio)"), { target: { value: "Corrección" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
     if (direction === "subtract") {
       // #474: money leaving needs the explicit second tap.
@@ -333,18 +336,18 @@ describe("#270 subtract cap: Restar is limited to what this order received", () 
   it("blocks a subtract beyond the cap without losing the capture (#270 repro)", async () => {
     await openAdjust({ ...order, paymentsReceivedCents: 10000 });
     fireEvent.change(screen.getByLabelText("Monto del ajuste"), { target: { value: "600" } });
-    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución con typo" } });
+    fireEvent.change(screen.getByLabelText("Motivo (obligatorio)"), { target: { value: "Devolución con typo" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
     expect(await screen.findByText(/El ajuste excede lo recibido en este pedido\. Puedes restar hasta \$100\.00/)).toBeInTheDocument();
     expect(store.registerOrderPayment).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Monto del ajuste")).toHaveValue("600");
-    expect(screen.getByLabelText("Motivo")).toHaveValue("Devolución con typo");
+    expect(screen.getByLabelText("Motivo (obligatorio)")).toHaveValue("Devolución con typo");
   });
 
   it("submits a subtract within the cap", async () => {
     await openAdjust({ ...order, paymentsReceivedCents: 10000 });
     fireEvent.change(screen.getByLabelText("Monto del ajuste"), { target: { value: "100" } });
-    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución" } });
+    fireEvent.change(screen.getByLabelText("Motivo (obligatorio)"), { target: { value: "Devolución" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
     // #474: the first tap only arms; the second confirms the exact amount.
     fireEvent.click(await screen.findByRole("button", { name: /Confirmar devolución de \$100\.00/ }));
@@ -518,7 +521,7 @@ describe("#474 — confirmación explícita de la devolución (dinero sale)", ()
   it("el primer toque ARMA con el monto nombrado y no registra; el segundo confirma", async () => {
     await openAdjust();
     fireEvent.change(screen.getByLabelText(/Monto del ajuste/i), { target: { value: "150" } });
-    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución en efectivo" } });
+    fireEvent.change(screen.getByLabelText("Motivo (obligatorio)"), { target: { value: "Devolución en efectivo" } });
     const saveBtn = screen.getByRole("button", { name: "Guardar ajuste" });
     fireEvent.click(saveBtn);
     // Armed, NOT saved: the button renames with the exact amount.
@@ -534,7 +537,7 @@ describe("#474 — confirmación explícita de la devolución (dinero sale)", ()
   it("editar el monto tras armar DESARMA la confirmación (nunca confirma otro importe)", async () => {
     await openAdjust();
     fireEvent.change(screen.getByLabelText(/Monto del ajuste/i), { target: { value: "150" } });
-    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Devolución en efectivo" } });
+    fireEvent.change(screen.getByLabelText("Motivo (obligatorio)"), { target: { value: "Devolución en efectivo" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
     expect(await screen.findByRole("button", { name: /Confirmar devolución de \$150\.00/i })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/Monto del ajuste/i), { target: { value: "200" } });
@@ -547,8 +550,76 @@ describe("#474 — confirmación explícita de la devolución (dinero sale)", ()
     await openAdjust();
     fireEvent.change(screen.getByLabelText(/Dirección/i), { target: { value: "add" } });
     fireEvent.change(screen.getByLabelText(/Monto del ajuste/i), { target: { value: "50" } });
-    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "cobro missed en vivo" } });
+    fireEvent.change(screen.getByLabelText("Motivo (obligatorio)"), { target: { value: "cobro missed en vivo" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajuste" }));
     await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("#474 QA — devolución en pedido cancelado (hallazgos de la revisora)", () => {
+  beforeEach(() => {
+    auth.user = { uid: "owner-1", role: "member" };
+    store.payments = [];
+    store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
+    store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
+    store.materializeInheritedDeposit.mockReset().mockResolvedValue(undefined);
+  });
+
+  const cancelledOrder: Order = { ...order, orderStatus: "cancelled", paymentStatus: "partial", paymentsReceivedCents: 15000 };
+
+  async function openAdjust() {
+    const button = await screen.findByRole("button", { name: /Registrar ajuste o devolución/i });
+    await waitFor(() => expect(button).toBeEnabled()); // still loading right after mount
+    fireEvent.click(button);
+    await screen.findByText(/Los ajustes no borran cobros/i);
+  }
+
+  it("una colega miembro NO ve «Registrar ajuste o devolución» en un pedido cancelado", async () => {
+    auth.user = { uid: "member-1", role: "member" };
+    store.payments = [transfer(150, "2026-11-01", "p1")];
+    renderSheet(cancelledOrder);
+    await screen.findByText(/Pedido cancelado/i);
+    expect(screen.queryByRole("button", { name: /Registrar ajuste o devolución/i })).toBeNull();
+  });
+
+  it("la dueña SÍ registra: dos toques sobre el pedido CANCELADO (escenario real de #474)", async () => {
+    auth.user = { uid: "owner-1", role: "member" };
+    store.payments = [transfer(150, "2026-11-01", "p1")];
+    renderSheet(cancelledOrder);
+    await openAdjust();
+    fireEvent.change(screen.getByLabelText("Monto del ajuste"), { target: { value: "150" } });
+    fireEvent.change(screen.getByLabelText(/Motivo/), { target: { value: "Devolución en efectivo" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar ajuste/i })); // primer toque: arma
+    const confirm = await screen.findByRole("button", { name: /Confirmar devolución de \$150\.00/i });
+    fireEvent.click(confirm); // segundo toque: registra
+    await waitFor(() => expect(store.registerOrderPayment).toHaveBeenCalledTimes(1));
+  });
+
+  it("MAYOR: «Cancelar» desarma — reabrir el formulario nunca hereda la confirmación", async () => {
+    auth.user = { uid: "owner-1", role: "member" };
+    store.payments = [transfer(150, "2026-11-01", "p1")];
+    renderSheet({ ...order, paymentsReceivedCents: 15000 });
+    await openAdjust();
+    fireEvent.change(screen.getByLabelText("Monto del ajuste"), { target: { value: "150" } });
+    fireEvent.change(screen.getByLabelText(/Motivo/), { target: { value: "Devolución en efectivo" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar ajuste/i }));
+    await screen.findByRole("button", { name: /Confirmar devolución de \$150\.00/i });
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await openAdjust();
+    expect(screen.queryByRole("button", { name: /Confirmar devolución de/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /Guardar ajuste/i })).toBeTruthy();
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it("menor: el primer toque con motivo vacío no arma y explica el motivo obligatorio", async () => {
+    auth.user = { uid: "owner-1", role: "member" };
+    store.payments = [transfer(150, "2026-11-01", "p1")];
+    renderSheet({ ...order, paymentsReceivedCents: 15000 });
+    await openAdjust();
+    fireEvent.change(screen.getByLabelText("Monto del ajuste"), { target: { value: "150" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar ajuste/i }));
+    expect(await screen.findByText("Escribe el motivo del ajuste.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar ajuste/i })).toBeTruthy();
+    expect(store.registerOrderPayment).not.toHaveBeenCalled();
   });
 });

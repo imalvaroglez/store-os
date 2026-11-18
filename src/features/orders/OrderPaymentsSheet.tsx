@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
+import { useAuth } from "../../app/firebase/AuthProvider";
 import {
   Badge,
   Button,
@@ -46,7 +47,7 @@ export function OrderPaymentsSheet({
   open: boolean;
   onClose: () => void;
 }) {
-  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId } = useStore();
+  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId, state } = useStore();
   const toast = useToast();
   const [amountText, setAmountText] = useState("");
   const [method, setMethod] = useState<"cash" | "transfer">("cash");
@@ -76,6 +77,12 @@ export function OrderPaymentsSheet({
   // path); the sheet stays as evidence, and signed adjustments remain the
   // record with which Fer documents anything handed back.
   const cancelled = effectiveOrderStatus(order) === "cancelled";
+  // #474 (QA 18-nov): on a CANCELLED order the refund (negative adjustment) is
+  // the OWNER's call alone — UI hides it for members; the transaction and the
+  // rules re-validate for any other client.
+  const { user } = useAuth();
+  const storeDoc = state.stores.find((st) => st.id === order.storeId);
+  const isOwnerOrAdmin = user?.role === "super_admin" || (storeDoc?.ownerUid != null && storeDoc.ownerUid === user?.uid);
   const view = useRef({ open, orderId: order.id, owner: draftOwnerId, generation: 0, mounted: true });
   if (view.current.open !== open || view.current.orderId !== order.id || view.current.owner !== draftOwnerId) {
     view.current = { ...view.current, open, orderId: order.id, owner: draftOwnerId, generation: view.current.generation + 1 };
@@ -210,7 +217,17 @@ export function OrderPaymentsSheet({
       const amount = parseAmount(adjustAmountText);
       const centsNow = amount == null ? null : Math.round(amount * 100);
       if (adjustArmed == null) {
-        if (centsNow != null && centsNow > 0 && adjustNote.trim()) setAdjustArmed(centsNow);
+        // #474 (QA menor): the first tap explains WHY it does not arm —
+        // no silent dead button while the capture is incomplete.
+        if (centsNow == null || centsNow <= 0) {
+          toast.error("Escribe un monto válido para el ajuste.");
+          return;
+        }
+        if (!adjustNote.trim()) {
+          toast.error("Escribe el motivo del ajuste.");
+          return;
+        }
+        setAdjustArmed(centsNow);
         return; // armed only; nothing registered
       }
       if (adjustArmed !== centsNow) { setAdjustArmed(null); return; }
@@ -228,7 +245,17 @@ export function OrderPaymentsSheet({
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="Cobros del pedido">
+    <Sheet
+      open={open}
+      onClose={() => {
+        // #474 (QA MAYOR): closing the sheet must also disarm a pending
+        // confirmation — reopening can never inherit a one-tap money exit.
+        setAdjustArmed(null);
+        setAdjustOpen(false);
+        onClose();
+      }}
+      title="Cobros del pedido"
+    >
       <div className="space-y-4">
         <div className="grid grid-cols-3 gap-3">
           <StatRow label="Total">
@@ -429,8 +456,8 @@ export function OrderPaymentsSheet({
             <div className="space-y-1">
               <p className="text-sm font-semibold text-on-surface">Pedido cancelado: no se pueden registrar cobros.</p>
               <p className="text-xs text-on-surface-soft">
-                Los cobros ya registrados quedan como evidencia. La devolución de dinero ya recibido se define aparte;
-                entre tanto, un ajuste firmado (con motivo) documenta lo entregado.
+                Los cobros ya registrados quedan como evidencia. La devolución de dinero ya recibido la registra
+                la dueña de la tienda con un ajuste firmado (con motivo).
               </p>
             </div>
           ) : (
@@ -471,7 +498,8 @@ export function OrderPaymentsSheet({
             </>
           )}
 
-          {adjustOpen ? (
+          {(isOwnerOrAdmin || !cancelled) && (
+          adjustOpen ? (
             <div className="space-y-3 rounded-xl bg-surface p-3 ring-1 ring-edge">
               <p className="text-xs text-on-surface-soft">
                 Los ajustes no borran cobros: quedan como registros con signo y motivo.
@@ -518,13 +546,23 @@ export function OrderPaymentsSheet({
                 onChange={(e) => { setAdjustArmed(null); setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, ""))); }}
               />
               <TextField
-                label="Motivo"
+                label="Motivo (obligatorio)"
                 value={adjustNote}
                 onChange={(e) => { setAdjustArmed(null); setAdjustNote(e.target.value); }}
                 placeholder="p. ej. devolución en efectivo"
               />
               <div className="flex gap-2">
-                <Button variant="secondary" full disabled={saving} onClick={() => setAdjustOpen(false)}>
+                <Button
+                  variant="secondary"
+                  full
+                  disabled={saving}
+                  onClick={() => {
+                    // #474 (QA MAYOR): cancel disarms — reopening starts from
+                    // "Guardar ajuste", never a one-tap confirmation.
+                    setAdjustArmed(null);
+                    setAdjustOpen(false);
+                  }}
+                >
                   Cancelar
                 </Button>
                 <Button
@@ -543,7 +581,7 @@ export function OrderPaymentsSheet({
             <Button variant="ghost" full disabled={saving || loading || loadFailed} onClick={() => setAdjustOpen(true)}>
               Registrar ajuste o devolución
             </Button>
-          )}
+          ))}
         </div>
         )}
       </div>

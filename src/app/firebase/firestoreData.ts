@@ -1119,6 +1119,21 @@ export async function registerOrderPaymentTx(
     if (payment.kind === "payment" && effectiveOrderStatus(order) === "cancelled") {
       throw new Error("Este pedido está cancelado: no se pueden registrar cobros.");
     }
+    // #474 (QA 18-nov): on a CANCELLED order, a refund (negative adjustment) is
+    // the OWNER's call alone. The UI hides the form for members; this is the
+    // authoritative guard for any other client (rules repeat it server-side).
+    if (payment.kind === "adjustment" && payment.amount < 0 && effectiveOrderStatus(order) === "cancelled") {
+      const adminStoreSnap = await tx.get(doc(db, "adminStores", order.storeId));
+      const ownerUid = adminStoreSnap.get("ownerUid") as string | undefined;
+      let superAdmin = false;
+      if (ownerUid !== payment.createdBy) {
+        const actorSnap = await tx.get(doc(db, "users", payment.createdBy));
+        superAdmin = actorSnap.get("role") === "super_admin";
+      }
+      if (ownerUid !== payment.createdBy && !superAdmin) {
+        throw new Error("Solo la dueña de la tienda puede registrar la devolución de un pedido cancelado.");
+      }
+    }
     // Inherited deposit materialization (#123, PO 2026-11-03): only a real
     // payment carries it, and the operator-supplied date/method is required.
     const inheritedInput = payment.kind === "payment" ? inherited : undefined;

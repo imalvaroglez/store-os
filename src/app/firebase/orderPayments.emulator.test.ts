@@ -608,3 +608,34 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
   });
 
 });
+
+  it("#474 QA: la devolución de un cancelado la registra solo la dueña — transacción y reglas", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users/tx-colleague"), { role: "member" });
+      await setDoc(doc(ctx.firestore(), "adminStores/refund-store"), { ownerUid: "tx-user", memberUids: ["tx-user", "tx-colleague"] });
+      await setDoc(doc(ctx.firestore(), "orders/refund-cancelled"), {
+        storeId: "refund-store", items: [], deposit: 0, orderStatus: "cancelled",
+        paymentsReceivedCents: 15000, createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(ctx.firestore(), "orders/refund-cancelled/payments/received-1"), {
+        id: "received-1", orderId: "refund-cancelled", storeId: "refund-store", date: "2026-11-01",
+        method: "cash", kind: "payment", amount: 150, amountCents: 15000,
+        createdAt: "2026-11-01T10:00:00.000Z", createdBy: "tx-user",
+      });
+    });
+    const refund = (id: string, createdBy: string): OrderPayment => ({
+      id, orderId: "refund-cancelled", storeId: "refund-store", date: "2026-11-02",
+      method: "unknown", kind: "adjustment", amount: -150, createdAt: "2026-11-02T10:00:00.000Z", createdBy,
+    });
+    // A member of the store is stopped by the TRANSACTION with the owner-only reason.
+    holder.db = env.authenticatedContext("tx-colleague").firestore();
+    await expect(registerOrderPaymentTx(refund("refund-member", "tx-colleague"))).rejects.toThrow(/Solo la dueña/);
+    // She is ALSO stopped by the rules writing the receipt directly.
+    await expect(setDoc(doc(holder.db, "orders/refund-cancelled/payments/refund-direct"), { ...refund("refund-direct", "tx-colleague"), amountCents: -15000 })).rejects.toThrow();
+    // The owner registers the devolución; the accumulator leaves at $0.
+    holder.db = env.authenticatedContext("tx-user").firestore();
+    const saved = await registerOrderPaymentTx(refund("refund-owner", "tx-user"));
+    expect(saved.payments).toHaveLength(1);
+    const orderDoc = (await getDoc(doc(holder.db, "orders/refund-cancelled"))).data();
+    expect(orderDoc?.paymentsReceivedCents).toBe(0);
+  });
