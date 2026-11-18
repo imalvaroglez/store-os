@@ -497,7 +497,10 @@ export function OrderForm({
     // with the DESIGN's price map — the color chosen next owns the price, and a
     // level the chosen color lacks must stay EMPTY (never the design's figure,
     // never a misleading manual badge). A price Fer actually TYPED is kept.
-    const colorDesign = (product.variants?.length ?? 0) > 0;
+    // Tiered only: in non-tiered stores the base price IS the shared color
+    // price (no per-color maps exist) — blocking it would strand the line
+    // without any price (e2e #394 regression).
+    const colorDesign = isTiered && (product.variants?.length ?? 0) > 0;
     const unitPrice = colorDesign
       ? currentPrice > 0 && line.priceSource === "manual" ? currentPrice : undefined
       : missingTier && !manualTier
