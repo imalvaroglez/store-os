@@ -183,6 +183,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("stock projection with Fir
       catalog?.products.map((entry: { productSlug: string }) => [entry.productSlug, entry] as const)
     );
     expect(bySlug.get(product.slug!)?.stockSignal).toBe("disponible");
+    expect(bySlug.get(product.slug!)?.availability).toBe("available");
     expect(bySlug.get(chain.slug)?.name).toBe("Cadena actualizada");
     expect(bySlug.get(chain.slug)?.stockSignal).toBe("agotado");
   });

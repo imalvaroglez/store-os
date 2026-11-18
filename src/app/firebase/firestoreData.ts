@@ -1896,7 +1896,8 @@ function publicStockPatch(current: Product, existing: Record<string, unknown>, s
  */
 function preservePublicAvailability(
   next: Record<string, unknown>,
-  prior: Record<string, unknown>
+  prior: Record<string, unknown>,
+  storeType?: Store["type"]
 ): Record<string, unknown> {
   const merged = { ...next };
   if (typeof prior.stockSignal === "string" && prior.stockSignal !== next.stockSignal) {
@@ -1914,6 +1915,10 @@ function preservePublicAvailability(
         : variant
     );
     if (variants.some((variant, index) => variant !== (next.variants as unknown[])[index])) merged.variants = variants;
+  }
+  // Normalize AFTER preserving the fresh signal, not from the stale input.
+  if (storeType === "inventory_tiered" && typeof merged.stockSignal === "string") {
+    merged.availability = publicAvailabilityValue({ stockSignal: merged.stockSignal }, storeType);
   }
   return merged;
 }
@@ -2189,7 +2194,7 @@ export async function rebuildPublicCatalog(
         if (touched.has(p.id)) return projectPublicProductSummary(canonical.get(p.id)!, storeSlug, pricing);
         const summary = projectPublicProductSummary(p, storeSlug, pricing) as Record<string, unknown>;
         const existing = prior.get(p.slug!);
-        return existing ? preservePublicAvailability(summary, existing) : summary;
+        return existing ? preservePublicAvailability(summary, existing, pricing?.type) : summary;
       });
     tx.set(catalogRef, { storeId, storeSlug, products: next }, { merge: true });
   });
