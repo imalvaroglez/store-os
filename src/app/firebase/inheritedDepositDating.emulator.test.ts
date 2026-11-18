@@ -128,3 +128,46 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#455 r5 — materializar 
     ).rejects.toThrow(/PERMISSION/i);
   });
 });
+
+
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#455×#369 — fechado del anticipo en pedido CANCELADO", () => {
+  let env3: RulesTestEnvironment;
+  beforeAll(async () => {
+    env3 = await initializeTestEnvironment({
+      projectId: "store-os-dev",
+      firestore: { rules: readFileSync("firestore.rules", "utf8") },
+    });
+    await env3.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "adminStores/date-store"), { ownerUid: "date-owner", memberUids: ["date-owner"] });
+      await setDoc(doc(ctx.firestore(), "orders/cancelled-dated"), orderDoc({
+        orderStatus: "cancelled",
+      }));
+    });
+    holder.db = env3.authenticatedContext("date-owner").firestore();
+  });
+  afterAll(async () => { await env3?.cleanup(); });
+
+  it("el recibo heredado es evidencia, no cobro nuevo: la regla de cancelados lo permite", async () => {
+    // The dating-only shape on a cancelled order: ALLOWED (evidence of money
+    // received before the cancellation; the close still counts that cash).
+    await runTransaction(holder.db, async (tx) => {
+      tx.set(doc(holder.db as never, "orders/cancelled-dated/payments/inherited_deposit"), {
+        id: "inherited_deposit", orderId: "cancelled-dated", storeId: "date-store",
+        date: "2026-11-05", method: "cash", kind: "payment", amount: 300, amountCents: 30000,
+        note: "Anticipo previo: fecha y método estimados por la operadora.",
+        createdAt: "2026-11-17T10:00:00.000Z", createdBy: "date-owner",
+      });
+      tx.update(doc(holder.db as never, "orders/cancelled-dated"), { paymentsReceivedCents: 30000, inheritedDepositMaterialized: true, paymentsRevision: 1, updatedAt: "2026-11-17T10:00:00.000Z" });
+    });
+    const saved = (await getDoc(doc(holder.db, "orders/cancelled-dated"))).data();
+    expect(saved?.inheritedDepositMaterialized).toBe(true);
+    // A REAL new cobro on the cancelled order keeps dying (#369 intact).
+    await expect(
+      setDoc(doc(holder.db as never, "orders/cancelled-dated/payments/pay_x"), {
+        id: "pay_x", orderId: "cancelled-dated", storeId: "date-store",
+        date: "2026-11-06", method: "cash", kind: "payment", amount: 100, amountCents: 10000,
+        createdAt: "2026-11-17T10:00:00.000Z", createdBy: "date-owner",
+      })
+    ).rejects.toThrow(/PERMISSION/i);
+  });
+});

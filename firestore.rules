@@ -365,6 +365,10 @@ service cloud.firestore {
         // path (compensations exclude cancelled, incidents reject them).
         // Signed adjustments stay valid evidence for the PO's future exit.
         && (data.kind != 'payment'
+            // #455 r5 (merge review): dating the legacy anticipo is EVIDENCE
+            // of money received BEFORE the cancellation, not a new cobro —
+            // the close still counts that cash, so it stays fechable.
+            || paymentId == 'inherited_deposit'
             || get(/databases/$(database)/documents/orders/$(orderId)).data.get('orderStatus', get(/databases/$(database)/documents/orders/$(orderId)).data.get('status', '')) != 'cancelled')
         && data.createdAt is string && data.createdAt.size() > 0
         && data.amount is number && data.amount != 0
