@@ -208,30 +208,6 @@ test('operator CLI creates a usable backup and safely rejects damaged recovery a
     assert.deepEqual(documentSnapshot(await client.documents()), expectedDocs);
     await reset(client, config); await assertEmpty(client);
   });
-
-  await t.test('verification suspension skips the schedule and a manual run recovers', async () => {
-    // The blocked verification above left the runtime suspended with a safe code.
-    const suspendedState = await readJson(path.join(home, 'state.json'));
-    assert.equal(suspendedState.suspendedForVerification, config.reviewedPreflightSha256);
-    assert.match(suspendedState.verificationFailure ?? '', /^[A-Z_]+$/);
-    const blockedStatus = await success(configPath, 'status');
-    assert.equal(blockedStatus.suspended, true);
-    assert.equal(blockedStatus.verificationSuspended, true);
-    assert.match(blockedStatus.verificationFailure, /^[A-Z_]+$/);
-    // A scheduled cycle stays suspended: no output, no capture, no budget spent.
-    const blocked = await invoke(configPath, 'run');
-    assert.equal(blocked.code, 0); assert.equal(blocked.result, null);
-    assert.equal(JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8')).reservedReads, suspendedState.reservedReads);
-    // An explicit manual run captures the (now synthetic-empty) source, verifies and clears the suspension.
-    const recovered = await success(configPath, 'run', ['--manual']);
-    assert.equal(recovered.completed, true);
-    assert.equal(recovered.verification.restoreVerified, true);
-    assert.equal(JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8')).suspendedForVerification, null);
-    const recoveredStatus = await success(configPath, 'status');
-    assert.equal(recoveredStatus.suspended, false);
-    assert.equal(recoveredStatus.verificationSuspended, false);
-  });
-
   await t.test('wrong key and truncated ciphertext reject recovery without creating data', async () => {
     const wrong = await invoke(recoveryConfig, 'restore', ['--archive', archive, '--identity', wrongKey]);
     assert.equal(wrong.code, 1); await assertEmpty(client);
@@ -319,4 +295,27 @@ test('operator CLI creates a usable backup and safely rejects damaged recovery a
     assert.deepEqual(documentSnapshot(await client.documents()), expectedDocs);
   });
 
+  await t.test('verification suspension skips the schedule and a manual run recovers', async () => {
+    // The blocked verification above left the runtime suspended with a safe code.
+    const suspendedState = await readJson(path.join(home, 'state.json'));
+    assert.equal(suspendedState.suspendedForVerification, config.reviewedPreflightSha256);
+    assert.match(suspendedState.verificationFailure ?? '', /^[A-Z_]+$/);
+    const blockedStatus = await success(configPath, 'status');
+    assert.equal(blockedStatus.suspended, true);
+    assert.equal(blockedStatus.verificationSuspended, true);
+    assert.match(blockedStatus.verificationFailure, /^[A-Z_]+$/);
+    // A scheduled cycle stays suspended: no output, no capture, no budget spent.
+    const blocked = await invoke(configPath, 'run');
+    assert.equal(blocked.code, 0); assert.equal(blocked.result, null);
+    assert.equal(JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8')).reservedReads, suspendedState.reservedReads);
+    // An explicit manual run captures the fully restored synthetic source, verifies and clears the suspension.
+    const recovered = await success(configPath, 'run', ['--manual']);
+    assert.equal(recovered.completed, true);
+    assert.equal(recovered.verification.restoreVerified, true);
+    assert.equal(JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8')).suspendedForVerification, null);
+    const recoveredStatus = await success(configPath, 'status');
+    assert.equal(recoveredStatus.suspended, false);
+    assert.equal(recoveredStatus.verificationSuspended, false);
+  });
 });
+
