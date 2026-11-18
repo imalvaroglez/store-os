@@ -44,9 +44,14 @@ const store: Store = { id: "s1", name: "S", slug: "s", type: "inventory_tiered",
 const product: Product = { id: "p1", storeId: "s1", name: "P", sku: "P1", category: "other", status: "published", createdAt: now, updatedAt: now } as Product;
 const paidOrder: Order = { id: "o-paid", storeId: "s1", customerId: "c1", items: [], deposit: 0, paymentsReceivedCents: 50000, orderStatus: "delivered", revision: 1, createdAt: now, updatedAt: now } as unknown as Order;
 const freeOrder: Order = { id: "o-free", storeId: "s1", customerId: "c1", items: [], deposit: 0, orderStatus: "asked", revision: 1, createdAt: now, updatedAt: now } as unknown as Order;
+// Net-zero correction: the KEY exists with value 0 — the rules keep it, so the
+// client must not attempt its delete (chain poison otherwise).
+const netZeroOrder: Order = { id: "o-netzero", storeId: "s1", customerId: "c1", items: [], deposit: 0, paymentsReceivedCents: 0, orderStatus: "delivered", revision: 1, createdAt: now, updatedAt: now } as unknown as Order;
+const receivedPurchase = { id: "pu-recv", storeId: "s1", status: "received" as const, date: "2026-11-01", lines: [], subtotal: 0, createdAt: now, updatedAt: now } as never;
+const draftPurchase = { id: "pu-draft", storeId: "s1", status: "draft" as const, date: "2026-11-01", lines: [], subtotal: 0, createdAt: now, updatedAt: now } as never;
 
 function stateWith(): AppState {
-  return { stores: [store], products: [product], customers: [], orders: [paidOrder, freeOrder], suppliers: [], purchases: [], categories: [], activeStoreId: "s1" } as unknown as AppState;
+  return { stores: [store], products: [product], customers: [], orders: [paidOrder, freeOrder, netZeroOrder], suppliers: [], purchases: [receivedPurchase, draftPurchase], categories: [], activeStoreId: "s1" } as unknown as AppState;
 }
 
 describe("#375 deleteStore sequencing", () => {
@@ -72,6 +77,9 @@ describe("#375 deleteStore sequencing", () => {
     expect(calls).toContain("delete:products:p1");
     expect(calls).toContain("delete:orders:o-free");
     expect(calls).not.toContain("delete:orders:o-paid"); // money evidence retained
+    expect(calls).not.toContain("delete:orders:o-netzero"); // key-presence = retained by rules
+    expect(calls).not.toContain("delete:purchases:pu-recv"); // received purchase: rules deny forever
+    expect(calls).toContain("delete:purchases:pu-draft"); // deletable purchase goes
     expect(calls.indexOf("unproject")).toBeLessThan(calls.indexOf("seal"));
     for (const c of calls) if (c.startsWith("delete:")) expect(calls.indexOf(c)).toBeLessThan(calls.indexOf("seal"));
   });

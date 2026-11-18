@@ -857,18 +857,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // membership, so every membership-gated cleanup write (entities,
         // Storage files, public projections) MUST land BEFORE it. The previous
         // fire-and-forget shape raced the seal (H1, code review 4def270).
-        const moneyEvidence = (o: Order) => (o.paymentsReceivedCents ?? 0) > 0 || (o.deposit ?? 0) > 0
-          || (o.deliveries?.length ?? 0) > 0 || o.installmentsReservedAt != null
-          || o.inheritedDepositMaterialized === true
+        // Parity with the rules' delete guard: the rules judge KEY PRESENCE
+        // ('paymentsReceivedCents' in resource.data — net-zero corrections stay
+        // undeletable by design), and received purchases are NEVER deletable.
+        // Anything the rules retain, the client must not even attempt.
+        const moneyEvidence = (o: Order) => o.paymentsReceivedCents !== undefined
+          || (o.deposit ?? 0) > 0 || o.installmentsReservedAt !== undefined
+          || (o.deliveries?.length ?? 0) > 0 || o.inheritedDepositMaterialized === true
           || (o.creditAppliedCents ?? 0) > 0 || (o.creditConsumedCents ?? 0) > 0;
+        const purchaseDeletable = (p: Purchase) => effectivePurchaseStatus(p) !== "received";
         const storeProducts = state.products.filter((p) => p.storeId === storeId);
         const storeCustomers = state.customers.filter((c) => c.storeId === storeId);
         const freeOrders = state.orders.filter((o) => o.storeId === storeId && !moneyEvidence(o));
         const storeSuppliers = state.suppliers.filter((x) => x.storeId === storeId);
-        const storePurchases = state.purchases.filter((p) => p.storeId === storeId);
+        const storePurchases = state.purchases.filter((p) => p.storeId === storeId && purchaseDeletable(p));
+        // Received purchases (or legacy status-less ones) are RETAINED with the
+        // money evidence — the rules deny their delete to everyone, forever.
         persistInBackground("eliminar la tienda", async () => {
           // 1) Operational cleanup while the owner still passes the rules.
-          await Promise.all([
+          // allSettled: a residual denial (e.g. a doc already deleted on a
+          // retry) must NOT abort the chain — the seal (privacy: public catalog
+          // off + membership expelled) proceeds; leftovers stay inaccessible
+          // except platform, which is the retention doctrine. Idempotent retry.
+          await Promise.allSettled([
             deleteEntity(currentUser, "stores", storeId),
             ...storeProducts.map((p) => deleteEntity(currentUser, "products", p.id)),
             ...storeCustomers.map((c) => deleteEntity(currentUser, "customers", c.id)),
