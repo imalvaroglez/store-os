@@ -232,3 +232,55 @@ describe("#289 misión 5a — config sin byTier (regresión)", () => {
     expect(screen.getAllByText(/\$90/).length).toBeGreaterThan(0);
   });
 });
+
+describe("#219 — contratos de captura de Reglas (auditoría)", () => {
+  it("el porcentaje tolera «12.» intermedio y rechaza dobles puntos sin volverse 0", async () => {
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    const field = screen.getAllByLabelText(/Porcentaje sobre el costo/)[0] as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "12." } });
+    expect(field.value).toBe("12.");
+    fireEvent.change(field, { target: { value: "12.5" } });
+    expect(field.value).toBe("12.5");
+    fireEvent.change(field, { target: { value: "12.5.5" } });
+    expect(await screen.findAllByText(/Escribe el porcentaje con un solo punto decimal/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar reglas/ })).toBeDisabled();
+    expect(mocks.savePricingRules).not.toHaveBeenCalled();
+  });
+
+  it("el importe fijo con fracción sub-centavo se rechaza con mensaje y bloquea guardar", async () => {
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    fireEvent.change(screen.getAllByLabelText("Método")[0], { target: { value: "fixed" } });
+    fireEvent.change(screen.getAllByLabelText(/Importe fijo \(pesos sobre el costo\)/)[0], { target: { value: "50.005" } });
+    expect(await screen.findAllByText(/pesos con centavos \(máximo dos decimales\)/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar reglas/ })).toBeDisabled();
+    expect(mocks.savePricingRules).not.toHaveBeenCalled();
+  });
+
+  it("bandas: el precio admite «60.» intermedio y «60.5» final; «60.005» se rechaza", async () => {
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    fireEvent.change(screen.getAllByLabelText("Método")[0], { target: { value: "bands" } });
+    const price = screen.getAllByLabelText(/Precio Iconic/)[0] as HTMLInputElement;
+    fireEvent.change(price, { target: { value: "60." } });
+    expect(price.value).toBe("60.");
+    fireEvent.change(price, { target: { value: "60.5" } });
+    expect(price.value).toBe("60.5");
+    fireEvent.change(screen.getAllByLabelText(/Hasta \$/)[0], { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar reglas/ }));
+    await screen.findByText("Reglas de venta guardadas."); // wait for the save to land before editing again
+    expect(mocks.savePricingRules).toHaveBeenCalledTimes(1);
+    const [config] = mocks.savePricingRules.mock.calls[0];
+    expect((config as { byTier: Record<string, { kind: string; bands: Array<{ price: number }> }> }).byTier.t_iconic.bands[0].price).toBe(60.5);
+    fireEvent.change(screen.getAllByLabelText(/Hasta \$/)[0], { target: { value: "120" } }); // dirty again after the save above
+    fireEvent.change(price, { target: { value: "60.005" } });
+    expect(await screen.findAllByText(/pesos con centavos \(máximo dos decimales\)/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar reglas/ })).toBeDisabled();
+  });
+
+  it("captura no numérica en banda no se convierte en 0 silencioso: queda visible con error", async () => {
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    fireEvent.change(screen.getAllByLabelText("Método")[0], { target: { value: "bands" } });
+    fireEvent.change(screen.getAllByLabelText(/Precio Iconic/)[0], { target: { value: "xyz" } });
+    expect(await screen.findAllByText(/pesos con centavos \(máximo dos decimales\)/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar reglas/ })).toBeDisabled();
+  });
+});

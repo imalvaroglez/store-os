@@ -390,3 +390,66 @@ describe("#402 limpieza de ruido en Estrategia de precios", () => {
   });
 });
 
+
+describe("#219 — contratos de captura de Estrategia (auditoría)", () => {
+  it("el punto decimal no se pierde al teclear: «165.» espera al «5» y guarda 165.5", async () => {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    const field = screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "165." } });
+    expect(field.value).toBe("165.");
+    fireEvent.change(field, { target: { value: "165.5" } });
+    expect(field.value).toBe("165.5");
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    expect(await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.")).toBeTruthy();
+    const [, rules] = mocks.saveCategoryPricingRules.mock.calls[0];
+    expect((rules as Record<string, { bands: Array<{ price: number }> }>).t_iconic.bands[0].price).toBe(165.5);
+  });
+
+  it("un precio con fracción sub-centavo se rechaza con mensaje explícito — nunca truncación silenciosa", async () => {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    // A valid edit first: the table is savable before the rejected capture.
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    expect(screen.getByRole("button", { name: /Guardar tabla/ })).toBeEnabled();
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165.005" } });
+    expect(await screen.findByText(/pesos con centavos \(máximo dos decimales\)/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar tabla/ })).toBeDisabled();
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("«Hasta $» con fracción sub-centavo bloquea el guardado con el mismo mensaje", async () => {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    fireEvent.change(screen.getAllByLabelText(/Hasta \$/)[0], { target: { value: "60.005" } });
+    expect(await screen.findByText(/pesos con centavos \(máximo dos decimales\)/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar tabla/ })).toBeDisabled();
+  });
+
+  it("captura no numérica en el precio queda visible con error y bloquea guardar — sin 0 silencioso", async () => {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "abc" } });
+    expect(await screen.findByText(/pesos con centavos \(máximo dos decimales\)/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar tabla/ })).toBeDisabled();
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("un precio válido con centavos guarda sin fricción (regresión de magnitud)", async () => {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "131072.02" } });
+    expect(screen.queryByText(/máximo dos decimales/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    expect(await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.")).toBeTruthy();
+    const [, rules] = mocks.saveCategoryPricingRules.mock.calls[0];
+    expect((rules as Record<string, { bands: Array<{ price: number }> }>).t_iconic.bands[0].price).toBe(131072.02);
+  });
+});
