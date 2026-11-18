@@ -15,7 +15,7 @@ import { ordersForStore, productsToRestock, customersForStore } from "../../lib/
 import { monthRanking, currentMonth } from "../../lib/resellerRanking";
 import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
-import { effectiveOrderStatus, legacyCollectDeposit, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
+import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";

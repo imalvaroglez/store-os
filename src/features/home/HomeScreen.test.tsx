@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
