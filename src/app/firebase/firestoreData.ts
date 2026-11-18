@@ -1916,6 +1916,13 @@ function preservePublicAvailability(
     );
     if (variants.some((variant, index) => variant !== (next.variants as unknown[])[index])) merged.variants = variants;
   }
+  // A legacy summary without a signal has no evidence that the caller's
+  // stale quantity is current. Keep its manual fallback until a canonical read.
+  if (storeType === "inventory_tiered" && typeof prior.stockSignal !== "string") {
+    delete merged.stockSignal;
+    merged.availability = prior.availability ?? "available";
+    return merged;
+  }
   // Normalize AFTER preserving the fresh signal, not from the stale input.
   if (storeType === "inventory_tiered" && typeof merged.stockSignal === "string") {
     merged.availability = publicAvailabilityValue({ stockSignal: merged.stockSignal }, storeType);

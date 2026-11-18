@@ -598,3 +598,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("stock projection with Fir
     expect((await getDoc(doc(db, "products", paused.id))).data()).toMatchObject({ availability: "sold_out", quantityOnHand: 8 });
   });
 });
+
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#489 legacy summaries without stock signals", () => {
+  it("preserves the conservative legacy state instead of using an unrelated stale product snapshot", async () => {
+    const testEnv = await initializeTestEnvironment({ projectId: FIREBASE_DEV_PROJECT_ID, firestore: { rules: readFileSync("firestore.rules", "utf8") } });
+    try {
+      config.db = testEnv.authenticatedContext("stock-member").firestore();
+      const chain = { ...product, id: "stock-legacy-chain", slug: "legacy-chain" };
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const admin = context.firestore();
+        await setDoc(doc(admin, "adminStores", store.id), { ownerUid: "stock-member", memberUids: ["stock-member"] });
+        await setDoc(doc(admin, "stores", store.id), store);
+        await setDoc(doc(admin, "products", product.id), { ...product, availability: "sold_out" });
+        await setDoc(doc(admin, "products", chain.id), chain);
+        await setDoc(doc(admin, "publicCatalogs", store.slug), { storeId: store.id, storeSlug: store.slug, products: [{ productSlug: product.slug, availability: "sold_out" }] });
+      });
+      await upsertPublicProduct(chain, store.slug, [{ ...product, quantityOnHand: 5 }, chain], [], store);
+      const result = (await getDoc(doc(config.db!, "publicCatalogs", store.slug))).data()?.products.find((p: { productSlug: string }) => p.productSlug === product.slug);
+      expect(result.availability).toBe("sold_out");
+      expect(result.stockSignal).toBeUndefined();
+    } finally { await testEnv.cleanup(); }
+  });
+});
