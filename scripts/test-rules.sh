@@ -24,6 +24,7 @@ FIRESTORE_FILES=(
   src/app/firebase/supplierLinks.emulator.test.ts
   src/app/firebase/storefrontSave.emulator.test.ts
   src/app/firebase/priceEvents.emulator.test.ts
+  src/app/firebase/profitDistribution.emulator.test.ts
   src/app/firebase/installmentsMarkerRules.emulator.test.ts
 )
 # #380: the saldo-a-favor suites drive the TRUSTED applyCredit/releaseCredit

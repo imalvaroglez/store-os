@@ -15,6 +15,7 @@ export type Tab =
   | "productos_estrategia"
   | "productos_cierre"
   | "productos_reparto"
+  | "productos_simulador"
   | "productos_diagnostico"
   | "productos_ranking"
   | "pedidos"
@@ -32,7 +33,6 @@ export type NavArea = { id: string; label: string; children: NavLeaf[] };
 // #454 — single source of truth for admin navigation (contract PO 15-nov-2026).
 // Exactly four areas, in this order, with these children and this copy.
 // Group labels are NOT screens ("un contenedor no abre pantalla cajón de sastre").
-// "Simulador de reparto" joins Administración when #459 delivers its screen —
 // no dead links, no decorative "Próximamente".
 const NAV_AREAS: NavArea[] = [
   {
@@ -69,6 +69,9 @@ const NAV_AREAS: NavArea[] = [
       { id: "productos_gastos", label: "Gastos", path: "/productos/gastos" },
       { id: "productos_cierre", label: "Cierre mensual", path: "/productos/cierre" },
       { id: "productos_reparto", label: "Reparto de utilidades", path: "/productos/reparto" },
+      // #459: the what-if simulator — its screen ships in this same PR; the
+      // entry is reachable as its own task, never hidden inside another one.
+      { id: "productos_simulador", label: "Simulador de reparto", path: "/productos/simulador" },
     ],
   },
 ];

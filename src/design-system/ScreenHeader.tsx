@@ -5,16 +5,19 @@ export function ScreenHeader({
   title,
   subtitle,
   action,
+  badge,
 }: {
   title: string;
   subtitle?: string;
   action?: ReactNode;
+  /** Contextual state next to the title (e.g. «En revisión»). */
+  badge?: ReactNode;
 }) {
   return (
     <div className="mb-5">
       <div className="flex items-end justify-between gap-3">
         <h1 className="serif-display text-[1.7rem] leading-none font-semibold text-ink tracking-tight">
-          {title}
+          {title} {badge}
         </h1>
         {/* #294 r3: min-w-0 (not shrink-0) lets a multi-action header WRAP to
             a second row on narrow screens — shrink-0 froze the row at

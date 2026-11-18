@@ -34,6 +34,8 @@ import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
 import { buildManualPriceEvents, priceChangeEvent, type PriceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
+import { buildCloseSnapshot, type CloseSnapshotDoc } from "../../lib/closeAuthorization";
+import { buildProfitDistributionDoc, type ProfitDistributionDoc } from "../../lib/profitDistribution";
 import {
   INHERITED_DEPOSIT_PAYMENT_ID,
   docReceivedCents,
@@ -484,6 +486,102 @@ export async function saveProductWithPriceEvents(
     batch.set(doc(db, "priceEvents", event.id), event as unknown as Record<string, unknown>);
   }
   await batch.commit();
+}
+
+/** #459: every AUTHORIZED close snapshot of the store (prior-loss history). */
+export async function loadClosesForStore(storeId: string): Promise<Array<CloseSnapshotDoc & { id: string }>> {
+  const { db } = getFirebase();
+  const snap = await getDocs(query(collection(db, "closes"), where("storeId", "==", storeId)));
+  return snap.docs
+    .map((d) => ({ ...(d.data() as CloseSnapshotDoc), id: d.id }))
+    .sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : (a.version ?? 0) - (b.version ?? 0)));
+}
+
+/** #459: the period's authorized profit distributions (history + cap). */
+export async function loadProfitDistributions(
+  storeId: string,
+  period: string
+): Promise<Array<ProfitDistributionDoc & { id: string }>> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(collection(db, "profitDistributions"), where("storeId", "==", storeId), where("period", "==", period))
+  );
+  return snap.docs
+    .map((d) => ({ ...(d.data() as ProfitDistributionDoc), id: d.id }))
+    .sort((a, b) => (a.authorizedAt < b.authorizedAt ? -1 : 1));
+}
+
+/** #459: authorize a distribution — IDEMPOTENT per period; rules enforce
+ * OWNER-ONLY (same contract as closes).
+ * #459 r4 (CRÍTICO): existence is checked with the store-scoped QUERY — a
+ * direct get of a not-yet-existing doc makes the rules dereference
+ * resource.data on null and EVERY first authorization died with
+ * permission-denied (verified by the review's emulator probes). The query
+ * also makes a RETRY idempotent in business terms: the period's existing
+ * authorization is returned untouched instead of minting a second doc with
+ * a fresh timestamp id. */
+export async function authorizeProfitDistribution(
+  doc_: ReturnType<typeof buildProfitDistributionDoc>
+): Promise<{ id: string }> {
+  const { db } = getFirebase();
+  // #459 r6: idempotency is per INTENT (the doc id itself is deterministic
+  // in tienda+periodo+intentId). A retry after a lost response re-reads the
+  // existing doc; two LEGITIMATE authorizations — even of the SAME amount —
+  // carry different intents and both write. A same-intent race loses exactly
+  // one writer to the immutable-doc rule and resolves to the winner.
+  const ref = doc(db, "profitDistributions", doc_.id);
+  const existing = await getDoc(ref);
+  if (existing.exists()) return { id: doc_.id };
+  try {
+    await setDoc(ref, doc_ as unknown as Record<string, unknown>);
+    return { id: doc_.id };
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
+    if (code === "permission-denied") {
+      // The concurrent twin of THIS intent already wrote it (rules: update
+      // false) — the retry contract holds.
+      const winner = await getDoc(ref);
+      if (winner.exists()) return { id: doc_.id };
+    }
+    throw error;
+  }
+}
+
+/** #458: read the latest AUTHORIZED close snapshot for a period (if any). */
+export async function loadLatestClose(
+  storeId: string,
+  period: string
+): Promise<(CloseSnapshotDoc & { id: string }) | null> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(collection(db, "closes"), where("storeId", "==", storeId), where("period", "==", period))
+  );
+  const docs = snap.docs.map((d) => ({ ...(d.data() as CloseSnapshotDoc), id: d.id }));
+  if (docs.length === 0) return null;
+  return docs.sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0];
+}
+
+/** #458: authorize the official close — IDEMPOTENT by deterministic doc id:
+ * a retry (double click, reconnect) lands on the same doc and returns the
+ * authorized snapshot without a second write. Firestore rules enforce
+ * OWNER-ONLY creation (#202 closes contract); a rejected write propagates. */
+export async function authorizeMonthlyClose(
+  snapshot: ReturnType<typeof buildCloseSnapshot>
+): Promise<{ id: string; version: number }> {
+  const { db } = getFirebase();
+  // #458 r3 (UX review): a DIRECT get of a doc that may not exist makes the
+  // rules dereference resource.data on null → permission-denied (the FIRST
+  // close of every store was impossible). Existence is checked with the
+  // store-scoped query, which the list rule covers cleanly.
+  const sameIntent = await getDocs(
+    query(collection(db, "closes"), where("storeId", "==", snapshot.storeId), where("id", "==", snapshot.id))
+  );
+  if (!sameIntent.empty) {
+    const data = sameIntent.docs[0].data() as { id?: string; version?: number };
+    return { id: sameIntent.docs[0].id, version: data.version ?? snapshot.version };
+  }
+  await setDoc(doc(db, "closes", snapshot.id), snapshot as unknown as Record<string, unknown>);
+  return { id: snapshot.id, version: snapshot.version };
 }
 
 /** #335 r2: a rule CONFIG change — its own append-only trail, recorded right
@@ -1138,6 +1236,54 @@ export async function registerOrderPaymentTx(
 }
 
 /**
+ * #455 r5: register the legacy deposit's DATE and METHOD without a new cobro.
+ * The "anticipo total al crear" order has nothing left to collect, so no
+ * future payment would ever date that money — and the monthly close needs the
+ * date to answer "¿cuánto entró de verdad?". Creates the inherited_deposit
+ * receipt (operator-supplied date/method, estimated when she does not
+ * remember — PO 2026-11-03) and births the accumulator from it, exactly once.
+ * The rules accept this shape ONLY here: no accumulator yet, deposit and
+ * lastPaymentId untouched, revision +1.
+ */
+export async function materializeInheritedDepositTx(params: {
+  orderId: string;
+  storeId: string;
+  input: { method: "cash" | "transfer"; date: string };
+  by: string;
+}): Promise<{ order: Order }> {
+  const { db } = getFirebase();
+  const { orderId, storeId, input, by } = params;
+  const orderRef = doc(db, "orders", orderId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) throw new Error("No se encontró el pedido.");
+    const data = snap.data() as Record<string, unknown>;
+    if ((data.storeId ?? "") !== storeId) throw new Error("El pedido pertenece a otra tienda.");
+    if (data.inheritedDepositMaterialized === true) throw new Error("El anticipo ya está registrado.");
+    if ("paymentsReceivedCents" in data) {
+      throw new Error("El pedido ya tiene cobros: la fecha del anticipo se registra junto con el siguiente cobro.");
+    }
+    const inheritedRef = doc(db, "orders", orderId, "payments", INHERITED_DEPOSIT_PAYMENT_ID);
+    const inheritedSnap = await tx.get(inheritedRef);
+    if (inheritedSnap.exists()) throw new Error("El anticipo ya está registrado.");
+    const deposit = typeof data.deposit === "number" && Number.isFinite(data.deposit) ? data.deposit : 0;
+    // inheritedDepositRecord validates the method/date with Spanish errors and
+    // returns null when there is nothing to register.
+    const record = inheritedDepositRecord(orderId, storeId, deposit, by, input);
+    if (!record) throw new Error("Este pedido no tiene un anticipo pendiente de registrar.");
+    tx.set(inheritedRef, stripUndefined({ ...record, amountCents: signedAmountCents(record.amount) }) as Record<string, unknown>);
+    tx.update(orderRef, {
+      paymentsReceivedCents: increment(signedAmountCents(record.amount)),
+      inheritedDepositMaterialized: true,
+      paymentsRevision: increment(1),
+      updatedAt: new Date().toISOString(),
+    });
+  });
+  const fresh = await getDoc(orderRef);
+  return { order: migrateOrder({ ...(fresh.data() as Record<string, unknown>), id: orderId }) };
+}
+
+/**
  * #189/#380: apply ONE planned compensation between two orders of the same
  * clienta and store. The write is the TRUSTED applyCredit callable — the
  * rules deny every client write to the credit fields, and the callable
@@ -1150,8 +1296,7 @@ export async function registerOrderPaymentTx(
  * (concurrent cobro, edited total) aborts with the historical "cambió
  * mientras se aplicaba" wording so callers treat it as the expected
  * concurrency it is; the listener round-trip replans. The callable stamps
- * `at`/`by` itself — the planned entry's values ride along unused.
- */
+ * `at`/`by` itself — the planned entry's values ride along unused. */
 export async function applyCustomerCreditTx(params: {
   entry: OrderCreditLedgerEntry;
   /** Destination order: the pending balance being compensated. */
