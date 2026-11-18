@@ -26,7 +26,9 @@ contención, y pausa de features nuevas mientras exista daño activo.
 
 ### Vía directa autorizada (parche de aplicación)
 
-1. Identifica el despliegue activo y su commit. Crea un worktree sobre ese commit y registra la autorización, la operación bloqueada y el resultado esperado en la issue. Conserva el ID del despliegue previo para volver a él.
+**Alcance exclusivo: parches de aplicación.** La excepción no incluye desplegar reglas de Firestore ni índices (requieren su ruta separada con CI completo y paridad verificada del desplegado) ni reparar datos (requieren alcance exacto, respaldo verificado y una autorización expresa separada del PO).
+
+1. Identifica el despliegue activo y su commit. Crea un worktree sobre ese commit y registra en la issue **quién autorizó cada una de las dos condiciones y cuándo** (la declaración del Sev-1 y la publicación directa — una autorización no implica la otra), la operación bloqueada y el resultado esperado. Conserva el ID del despliegue previo para volver a él.
 2. Reproduce el fallo con datos sintéticos en local. Aplica el cambio mínimo y comprueba que la regresión falla antes y pasa después. Usa emulador si el flujo toca Auth, Firestore, cobros o existencias. Si el fallo no se reproduce, registra qué evidencia falta y elige una contención que puedas verificar.
 3. Comprueba que el parche es compatible con las reglas, índices y esquema que ya están en producción. Si necesita cambiar alguno, usa el flujo de CI correspondiente. No leas ni escribas datos de producción desde desarrollo.
 4. Incrementa la versión y añade notas. Haz el build de producción con la configuración verificada de Vercel/Firebase y ejecuta el guard de liberación contra la versión servida. Sube el build como producción sin asignar dominio (`vercel deploy --prebuilt --prod --skip-domain`). Verifica la versión y el despliegue candidato y promuévelo (`vercel promote <deployment> --yes`). Si usas una credencial temporal para verificar el candidato, retírala al acabar. No copies datos ni respaldos a Vercel.
