@@ -461,6 +461,17 @@ describe("#219 Cobros — contratos de captura (auditoría del flujo)", () => {
     expect(record.date).toBe(now.slice(0, 10));
   });
 
+  it("acepta montos grandes VÁLIDOS de dos decimales (regresión H1 del dictamen: 131072.02 / 262144.10)", () => {
+    for (const amountText of ["131072.02", "262144.10", "1000000.99"]) {
+      expect(() =>
+        buildPaymentRecord(order(), { kind: "payment", id: `pay_big_${amountText}`, method: "cash", amountText }, "u1")
+      ).not.toThrow();
+    }
+    expect(() =>
+      buildAdjustmentRecord(order(), { kind: "adjustment", id: "adj_big", direction: "subtract", amountText: "131072.02", note: "x" }, "u1")
+    ).not.toThrow();
+  });
+
   it("rechaza precisión menor al centavo (0.001) con mensaje claro, también en ajustes", () => {
     expect(() =>
       buildPaymentRecord(order(), { kind: "payment", id: "pay_p", method: "cash", amountText: "0.001" }, "u1")

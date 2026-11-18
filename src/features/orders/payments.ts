@@ -82,8 +82,10 @@ function normalizeAmount(amountText: string): number {
   // #219 (Cobros audit): money moves in whole centavos — a sub-cent figure
   // would silently round in the accumulator while the record keeps the
   // fraction (record ≠ Σ). Fail with a clear capture message instead.
-  const cents = amount * 100;
-  if (Math.abs(cents - Math.round(cents)) > 1e-9) {
+  // Compare in PESOS after canonical rounding: an absolute epsilon on the
+  // cents product drifts with magnitude and rejected VALID two-decimal
+  // amounts ≥ $131,072.02 (review H1 — 0 false positives swept to $10M).
+  if (Math.abs(amount - Math.round(amount * 100) / 100) > 1e-9) {
     throw new Error("Captura el monto en pesos con centavos (máximo dos decimales).");
   }
   return amount;
