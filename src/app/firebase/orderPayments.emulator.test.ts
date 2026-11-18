@@ -607,8 +607,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     expect(order.paymentsReceivedCents).toBe(0); // 3000 − 3000, evidence kept
   });
 
-});
-
   it("#474 QA: la devolución de un cancelado la registra solo la dueña — transacción y reglas", async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "users/tx-colleague"), { role: "member" });
@@ -639,3 +637,4 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     const orderDoc = (await getDoc(doc(holder.db, "orders/refund-cancelled"))).data();
     expect(orderDoc?.paymentsReceivedCents).toBe(0);
   });
+});
