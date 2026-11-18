@@ -2202,11 +2202,13 @@ export async function projectPublicForStore(
 export async function unprojectPublicForStore(store: Store): Promise<void> {
   const { db } = getFirebase();
   const writes: Promise<unknown>[] = [];
-  writes.push(deleteDoc(doc(db, "publicStores", store.slug)));
-  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)));
+  // #375: swallowing already-deleted docs keeps the store-deletion retry
+  // convergent (rules deny re-deleting a missing doc; the seal must still run).
+  writes.push(deleteDoc(doc(db, "publicStores", store.slug)).catch(() => {}));
+  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)).catch(() => {}));
   writes.push(releaseSlug(store.slug));
   const snap = await getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug)));
-  for (const d of snap.docs) writes.push(deleteDoc(d.ref));
+  for (const d of snap.docs) writes.push(deleteDoc(d.ref).catch(() => {}));
   await Promise.all(writes);
 }
 

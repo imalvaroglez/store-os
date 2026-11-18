@@ -129,7 +129,9 @@ service cloud.firestore {
     function retentionSeal(storeId) {
       return (isSuperAdmin() || isOwner(storeId))
         && request.resource.data.memberUids.size() == 0
-        && request.resource.data.retainedAt is string
+        // .get with default: dot access on a MISSING key is an evaluation
+        // ERROR in CEL — it poisoned the whole || chain (invitee joins died).
+        && request.resource.data.get('retainedAt', '') is string
         && request.resource.data.ownerUid == adminStore(storeId).ownerUid
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['memberUids', 'retainedAt', 'pendingInvites', 'updatedAt']);
@@ -137,7 +139,8 @@ service cloud.firestore {
     // #375 H2: once sealed, the doc is frozen for the normal update path —
     // the ONLY way back is platform acting directly (documented, auditable).
     function notSealed() {
-      return resource.data.retainedAt == null;
+      // .get with default: same CEL-safety as the seal (missing key ≠ error).
+      return resource.data.get('retainedAt', null) == null;
     }
 
     match /adminStores/{storeId} {
