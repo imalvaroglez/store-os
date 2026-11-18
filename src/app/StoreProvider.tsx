@@ -853,43 +853,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (store) {
         // #375 (PO decision, 18-nov): retention with expulsion. Money evidence
         // (paid orders + payments + priceEvents) stays frozen, readable only by
-        // platform. The seal goes LAST: sealing first would revoke the owner's
-        // membership and deny every best-effort delete below (H1 of the code
-        // review), orphaning PII and leaving public projections exposed.
-        persistInBackground("eliminar la tienda", () => deleteEntity(currentUser, "stores", storeId));
-        // Best-effort: delete the store's entities + product photos in the cloud.
-        state.products.filter((p) => p.storeId === storeId).forEach((p) => {
-          persistInBackground("eliminar un producto", () => deleteEntity(currentUser, "products", p.id));
-          persistInBackground("eliminar una foto", () => deleteProductImage(storeId, p.id));
+        // platform. ONE sequential background job: the seal revokes the
+        // membership, so every membership-gated cleanup write (entities,
+        // Storage files, public projections) MUST land BEFORE it. The previous
+        // fire-and-forget shape raced the seal (H1, code review 4def270).
+        const moneyEvidence = (o: Order) => (o.paymentsReceivedCents ?? 0) > 0 || (o.deposit ?? 0) > 0
+          || (o.deliveries?.length ?? 0) > 0 || o.installmentsReservedAt != null
+          || o.inheritedDepositMaterialized === true
+          || (o.creditAppliedCents ?? 0) > 0 || (o.creditConsumedCents ?? 0) > 0;
+        const storeProducts = state.products.filter((p) => p.storeId === storeId);
+        const storeCustomers = state.customers.filter((c) => c.storeId === storeId);
+        const freeOrders = state.orders.filter((o) => o.storeId === storeId && !moneyEvidence(o));
+        const storeSuppliers = state.suppliers.filter((x) => x.storeId === storeId);
+        const storePurchases = state.purchases.filter((p) => p.storeId === storeId);
+        persistInBackground("eliminar la tienda", async () => {
+          // 1) Operational cleanup while the owner still passes the rules.
+          await Promise.all([
+            deleteEntity(currentUser, "stores", storeId),
+            ...storeProducts.map((p) => deleteEntity(currentUser, "products", p.id)),
+            ...storeCustomers.map((c) => deleteEntity(currentUser, "customers", c.id)),
+            ...freeOrders.map((o) => deleteEntity(currentUser, "orders", o.id)),
+            ...storeSuppliers.map((x) => deleteEntity(currentUser, "suppliers", x.id)),
+            ...storePurchases.map((p) => deleteEntity(currentUser, "purchases", p.id)),
+          ]);
+          // Storage files (photos + supplier PII PDFs): best-effort, but BEFORE
+          // the seal — storage rules also resolve membership from adminStores.
+          await Promise.allSettled([
+            ...storeProducts.map((p) => deleteProductImage(storeId, p.id)),
+            ...storePurchases.filter((p) => p.documentPath).map((p) => deletePurchasePdf(p.documentPath!)),
+          ]);
+          // 2) Public projections off (still membership-gated).
+          await unprojectPublicForStore(store);
+          // 3) The seal LAST: expel every member and freeze pending invites.
+          await retainStoreEvidence(currentUser, storeId);
         });
-        state.customers.filter((c) => c.storeId === storeId).forEach((c) => persistInBackground("eliminar una clienta", () => deleteEntity(currentUser, "customers", c.id)));
-        // #375: orders WITH money evidence are RETAINED (never deleted); the
-        // criterion matches the rules' own delete guard (H4) so nothing is
-        // denied with a useless retry loop. Only money-free orders go away.
-        state.orders.filter((o) => o.storeId === storeId).forEach((o) => {
-          const moneyEvidence = (o.paymentsReceivedCents ?? 0) > 0 || (o.deposit ?? 0) > 0
-            || (o.deliveries?.length ?? 0) > 0 || o.installmentsReservedAt != null
-            || o.inheritedDepositMaterialized === true
-            || (o.creditAppliedCents ?? 0) > 0 || (o.creditConsumedCents ?? 0) > 0;
-          if (!moneyEvidence) persistInBackground("eliminar un pedido", () => deleteEntity(currentUser, "orders", o.id));
-        });
-        // #375: the seal LAST — expel every member and freeze pending invites
-        // once the operational cleanup above already ran.
-        persistInBackground("conservar la evidencia de dinero y revocar las membresías", () => retainStoreEvidence(currentUser, storeId));
-        state.suppliers.filter((s) => s.storeId === storeId).forEach((s) => persistInBackground("eliminar un proveedor", () => deleteEntity(currentUser, "suppliers", s.id)));
-        state.purchases.filter((p) => p.storeId === storeId).forEach((p) => persistInBackground("eliminar una compra", () => deleteEntity(currentUser, "purchases", p.id)));
-        // Supplier PDFs are PII: delete them along with the store. Best-effort
-        // (consistent with the entity deletes above) — a failure is logged so
-        // orphaned files are traceable, not guaranteed cleanup.
-        state.purchases
-          .filter((p) => p.storeId === storeId && p.documentPath)
-          .forEach((p) =>
-            deletePurchasePdf(p.documentPath!).catch((e) =>
-              console.error(`[Storage] No se pudo borrar el PDF de la compra ${p.id}:`, e)
-            )
-          );
-        // Remove the public catalog projection + release the slug.
-        persistInBackground("retirar el catálogo público", () => unprojectPublicForStore(store));
       }
     },
     inviteMember: async (storeId, email) => {

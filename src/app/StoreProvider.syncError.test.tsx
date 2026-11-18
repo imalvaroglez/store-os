@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   subscribeCloudState: vi.fn(),
   deleteEntity: vi.fn(),
   unprojectPublicForStore: vi.fn(),
+  retainStoreEvidence: vi.fn(async () => {}),
   reload: vi.fn(),
 }));
 
@@ -33,6 +34,7 @@ vi.mock("./firebase/firestoreData", async (importOriginal) => {
     subscribeCloudState: mocks.subscribeCloudState,
     deleteEntity: mocks.deleteEntity,
     unprojectPublicForStore: mocks.unprojectPublicForStore,
+    retainStoreEvidence: mocks.retainStoreEvidence,
   };
 });
 vi.mock("../lib/storage", async (importOriginal) => {
