@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
-import { useAuth } from "../../app/firebase/AuthProvider";
 import {
   Badge,
   Button,
@@ -47,7 +46,7 @@ export function OrderPaymentsSheet({
   open: boolean;
   onClose: () => void;
 }) {
-  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId, state } = useStore();
+  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId, state, authUser } = useStore();
   const toast = useToast();
   const [amountText, setAmountText] = useState("");
   const [method, setMethod] = useState<"cash" | "transfer">("cash");
@@ -80,9 +79,8 @@ export function OrderPaymentsSheet({
   // #474 (QA 18-nov): on a CANCELLED order the refund (negative adjustment) is
   // the OWNER's call alone — UI hides it for members; the transaction and the
   // rules re-validate for any other client.
-  const { user } = useAuth();
-  const storeDoc = state.stores.find((st) => st.id === order.storeId);
-  const isOwnerOrAdmin = user?.role === "super_admin" || (storeDoc?.ownerUid != null && storeDoc.ownerUid === user?.uid);
+  const storeDoc = state?.stores?.find((st) => st.id === order.storeId);
+  const isOwnerOrAdmin = authUser?.role === "super_admin" || (storeDoc?.ownerUid != null && storeDoc.ownerUid === authUser?.uid);
   const view = useRef({ open, orderId: order.id, owner: draftOwnerId, generation: 0, mounted: true });
   if (view.current.open !== open || view.current.orderId !== order.id || view.current.owner !== draftOwnerId) {
     view.current = { ...view.current, open, orderId: order.id, owner: draftOwnerId, generation: view.current.generation + 1 };

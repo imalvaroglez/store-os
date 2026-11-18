@@ -11,10 +11,9 @@ const store = vi.hoisted(() => ({
   registerOrderPayment: vi.fn(),
   materializeInheritedDeposit: vi.fn(),
   state: { stores: [{ id: "s1", ownerUid: "owner-1" }] },
+  authUser: { uid: "owner-1", role: "member" } as { uid: string; role: string } | null,
 }));
 vi.mock("../../app/StoreProvider", () => ({ useStore: () => store }));
-const auth = vi.hoisted(() => ({ user: { uid: "owner-1", role: "member" } as { uid: string; role: string } | null }));
-vi.mock("../../app/firebase/AuthProvider", () => ({ useAuth: () => ({ user: auth.user }) }));
 
 const order: Order = {
   id: "o1",
@@ -558,7 +557,7 @@ describe("#474 — confirmación explícita de la devolución (dinero sale)", ()
 
 describe("#474 QA — devolución en pedido cancelado (hallazgos de la revisora)", () => {
   beforeEach(() => {
-    auth.user = { uid: "owner-1", role: "member" };
+    store.authUser = { uid: "owner-1", role: "member" };
     store.payments = [];
     store.loadOrderPayments.mockReset().mockResolvedValue(undefined);
     store.registerOrderPayment.mockReset().mockResolvedValue(undefined);
@@ -575,7 +574,7 @@ describe("#474 QA — devolución en pedido cancelado (hallazgos de la revisora)
   }
 
   it("una colega miembro NO ve «Registrar ajuste o devolución» en un pedido cancelado", async () => {
-    auth.user = { uid: "member-1", role: "member" };
+    store.authUser = { uid: "member-1", role: "member" };
     store.payments = [transfer(150, "2026-11-01", "p1")];
     renderSheet(cancelledOrder);
     await screen.findByText(/Pedido cancelado/i);
@@ -583,7 +582,7 @@ describe("#474 QA — devolución en pedido cancelado (hallazgos de la revisora)
   });
 
   it("la dueña SÍ registra: dos toques sobre el pedido CANCELADO (escenario real de #474)", async () => {
-    auth.user = { uid: "owner-1", role: "member" };
+    store.authUser = { uid: "owner-1", role: "member" };
     store.payments = [transfer(150, "2026-11-01", "p1")];
     renderSheet(cancelledOrder);
     await openAdjust();
@@ -596,7 +595,7 @@ describe("#474 QA — devolución en pedido cancelado (hallazgos de la revisora)
   });
 
   it("MAYOR: «Cancelar» desarma — reabrir el formulario nunca hereda la confirmación", async () => {
-    auth.user = { uid: "owner-1", role: "member" };
+    store.authUser = { uid: "owner-1", role: "member" };
     store.payments = [transfer(150, "2026-11-01", "p1")];
     renderSheet({ ...order, paymentsReceivedCents: 15000 });
     await openAdjust();
@@ -612,7 +611,7 @@ describe("#474 QA — devolución en pedido cancelado (hallazgos de la revisora)
   });
 
   it("menor: el primer toque con motivo vacío no arma y explica el motivo obligatorio", async () => {
-    auth.user = { uid: "owner-1", role: "member" };
+    store.authUser = { uid: "owner-1", role: "member" };
     store.payments = [transfer(150, "2026-11-01", "p1")];
     renderSheet({ ...order, paymentsReceivedCents: 15000 });
     await openAdjust();

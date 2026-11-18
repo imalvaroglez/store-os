@@ -322,6 +322,9 @@ type StoreContextValue = {
   syncError: { label: string; retry: () => Promise<void> } | null;
   dismissSyncError: () => void;
   draftOwnerId: string;
+  /** The signed-in operator (uid + role) — screens gate owner-only actions
+   * without every test tree needing an AuthProvider. #474. */
+  authUser: ReturnType<typeof useAuth>["user"];
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
   saveStorefront: (storeId: string, storefront: Storefront) => Promise<void>;
@@ -683,6 +686,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     syncError,
     dismissSyncError: () => { syncErrorVersion.current += 1; setSyncError(null); },
     draftOwnerId: user?.uid ?? "",
+    authUser: user ?? null,
     payments,
     addStore: async (input) => {
       const currentUser = requireAuthenticatedUser();
