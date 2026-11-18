@@ -23,17 +23,17 @@ const base: Purchase = {
   id: "trip", name: "Centro joyero", storeId: "store", date: "2026-10-30", status: "draft",
   costingMethod: "latest_purchase", subtotal: 700, totalConfirmed: 700, createdAt: "", updatedAt: "",
   tickets: [{ id: "one", supplierName: "Proveedor uno", folio: "T-1", totalConfirmed: 700 }],
-  lines: [{ lineId: "line", ticketId: "one", productId: "ring-3", name: "Anillo", quantity: 70, unitCost: 10 }],
+  lines: [{ lineId: "line", ticketId: "one", productId: "ring", name: "Anillo", quantity: 70, unitCost: 10 }],
   sourcingExpenses: [{ id: "transport", category: "sourcing_transport", amount: 44 }],
 };
-const products = [{ id: "ring-3", storeId: "store", quantityOnHand: 10, cost: 3 }] as Product[];
+const products = [{ id: "ring", storeId: "store", quantityOnHand: 10, cost: 3 }] as Product[];
 
 describe("purchase acquisition costs", () => {
   it("conserves 44 pesos across 70 pieces and does not mix existing inventory cost", () => {
     const result = purchaseInventoryUpdates(products, base);
     expect(result.costAllocations).toEqual([{ lineId: "line", merchandiseCents: 70000, supplierAdjustmentCents: 0, sourcingExpenseCents: 4400, saleExpenseCents: 0, totalCents: 74400 }]);
-    expect(result.stockUpdates.get("ring-3")!.quantityOnHand).toBe(80);
-    expect(result.stockUpdates.get("ring-3")!.cost).toBeCloseTo(744 / 70, 10);
+    expect(result.stockUpdates.get("ring")!.quantityOnHand).toBe(80);
+    expect(result.stockUpdates.get("ring")!.cost).toBeCloseTo(744 / 70, 10);
     expect(base.lines[0].unitCost).toBe(10);
   });
   it("assigns all cents exactly, with stable ties independent of line order", () => {
@@ -47,7 +47,7 @@ describe("purchase acquisition costs", () => {
   it("allocates 150 pesos of supplier shipping across 100 pieces", () => {
     const purchase: Purchase = { ...base, sourcingExpenses: [], tickets: [{ id: "one", shipping: 150, totalConfirmed: 1150 }], lines: [{ ...base.lines[0], quantity: 100 }] };
     const result = purchaseInventoryUpdates(products, purchase);
-    expect(result.stockUpdates.get("ring-3")!.cost).toBe(11.5);
+    expect(result.stockUpdates.get("ring")!.cost).toBe(11.5);
     expect(result.costAllocations![0].supplierAdjustmentCents).toBe(15000);
   });
   it("keeps supplier shipping inside its ticket and shares transport over all tickets", () => {
@@ -60,7 +60,7 @@ describe("purchase acquisition costs", () => {
     const allocation = purchaseCostAllocation(purchase);
     expect(allocation.map((line) => line.supplierAdjustmentCents)).toEqual([600, 0]);
     expect(allocation.map((line) => line.sourcingExpenseCents)).toEqual([200, 100]);
-    expect(purchaseInventoryUpdates(products, purchase).stockUpdates.get("ring-3")!.cost).toBe(13);
+    expect(purchaseInventoryUpdates(products, purchase).stockUpdates.get("ring")!.cost).toBe(13);
     expect(purchaseTotals(purchase).calculated).toBe(36);
   });
   it("does not let errors from two supplier tickets cancel each other", () => {
@@ -122,7 +122,7 @@ describe("purchase sale expenses (FER-02)", () => {
     // The inventory cost ignores sale expenses: no double count with FER-03.
     expect(allocation[0].totalCents).toBe(74400);
     const result = purchaseInventoryUpdates(products, saleTrip);
-    expect(result.stockUpdates.get("ring-3")!.cost).toBeCloseTo(744 / 70, 10);
+    expect(result.stockUpdates.get("ring")!.cost).toBeCloseTo(744 / 70, 10);
     // What reception persists is the allocation snapshot the reports read.
     const persisted: Purchase = { ...saleTrip, costAllocations: allocation };
     expect(purchaseSaleExpenseTotalCents(persisted)).toBe(2500);
@@ -139,7 +139,7 @@ describe("purchase sale expenses (FER-02)", () => {
     expect(allocation.map((line) => line.saleExpenseCents)).toEqual([1667, 833]);
     // Per product the sale cost folds with quantities: 3 piezas de ring.
     const persisted: Purchase = { ...purchase, costAllocations: allocation };
-    expect(purchaseProductSaleCosts(persisted).get("ring-3")).toEqual({ quantity: 3, cents: 2500 });
+    expect(purchaseProductSaleCosts(persisted).get("ring")).toEqual({ quantity: 3, cents: 2500 });
   });
 
   it("counts an opted-in sale expense on the inventory side only, never both", () => {
@@ -157,7 +157,7 @@ describe("purchase sale expenses (FER-02)", () => {
     const purchase: Purchase = { ...base, sourcingExpenses: [] };
     const result = purchaseInventoryUpdates(products, purchase);
     expect(result.costAllocations![0]).toEqual({ lineId: "line", merchandiseCents: 70000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 0, totalCents: 70000 });
-    expect(result.stockUpdates.get("ring-3")!.cost).toBe(10);
+    expect(result.stockUpdates.get("ring")!.cost).toBe(10);
     expect(purchaseSaleExpenseTotalCents(purchase)).toBe(0);
   });
 });
@@ -202,7 +202,7 @@ describe("post-reception expense adjustments (FER-02)", () => {
   });
 
   it("refuses to allocate over lines without stable identity", () => {
-    const legacy: Purchase = { ...received, lines: [{ productId: "ring-3", name: "Anillo", quantity: 70, unitCost: 10 }] };
+    const legacy: Purchase = { ...received, lines: [{ productId: "ring", name: "Anillo", quantity: 70, unitCost: 10 }] };
     expect(() => purchaseExpenseAdjustment(legacy, { id: "adj", category: "shared_packaging", amount: 7 }, "2026-11-02T00:00:00Z")).toThrow(/líneas/);
   });
 });

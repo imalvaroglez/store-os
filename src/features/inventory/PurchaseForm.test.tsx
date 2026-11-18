@@ -19,7 +19,7 @@ const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, 
   state: {
     suppliers: [],
     products: [{
-      id: "ring-3", storeId: "olivia", name: "Anillo", cost: 99,
+      id: "ring", storeId: "olivia", name: "Anillo", cost: 99,
       quantityOnHand: 3, createdAt: "", updatedAt: "",
     }, {
       id: "foreign", storeId: "another_store", name: "Anillo de otra tienda", cost: 25,
@@ -58,7 +58,7 @@ describe("sale expenses and post-reception adjustments (FER-02)", () => {
       receivedAt: "2026-11-01T12:00:00Z",
       costingMethod: "latest_purchase",
       tickets: [{ id: "ticket:purchase", totalConfirmed: 65.8 }],
-      lines: [{ lineId: "line", ticketId: "ticket:purchase", productId: "ring-3", name: "Pieza del ticket", quantity: 4, unitCost: 16.45 }],
+      lines: [{ lineId: "line", ticketId: "ticket:purchase", productId: "ring", name: "Pieza del ticket", quantity: 4, unitCost: 16.45 }],
       costAllocations: [{ lineId: "line", merchandiseCents: 6580, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 0, totalCents: 6580 }],
     };
   }
@@ -144,7 +144,7 @@ describe("purchase amount entry", () => {
     expect(screen.getByLabelText("Costo unitario")).toHaveValue("16.45");
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
     await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
-    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "ring-3", unitCost: 16.45 });
+    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "ring", unitCost: 16.45 });
   });
 
   it.each([0, 16.45])("preserves an explicit %s cost and unresolved imported semantics when linking", async (amount) => {
@@ -156,7 +156,7 @@ describe("purchase amount entry", () => {
     expect(screen.getByLabelText("Costo unitario")).toHaveValue(String(amount));
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
     await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
-    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "ring-3", unitCost: amount, sourceAmountType: "unknown" });
+    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "ring", unitCost: amount, sourceAmountType: "unknown" });
   });
 
   it("keeps adjustment decimals while editing and saves numeric amounts", async () => {
@@ -192,7 +192,7 @@ describe("purchase amount entry", () => {
   it("explains a Firebase receipt failure in Spanish and keeps the purchase open", async () => {
     receivePurchase.mockRejectedValueOnce(Object.assign(new Error("Missing or insufficient permissions"), { code: "permission-denied" }));
     const value = purchase();
-    value.lines[0].productId = "ring-3";
+    value.lines[0].productId = "ring";
     open(value);
     fireEvent.click(screen.getByRole("button", { name: "Recibir mercancía" }));
     await waitFor(() => expect(screen.getByText("No se pudo recibir la mercancía. Intenta de nuevo.")).toBeVisible());
@@ -260,8 +260,8 @@ describe("purchase amount entry", () => {
       ...purchase(), totalConfirmed: 70,
       tickets: [{ id: "a", folio: "A", totalConfirmed: 40 }, { id: "b", folio: "B", totalConfirmed: 30 }],
       lines: [
-        { lineId: "a-line", ticketId: "a", productId: "ring-3", name: "A", quantity: 2, unitCost: 0, sourceAmount: 20, sourceAmountType: "unknown" },
-        { lineId: "b-line", ticketId: "b", productId: "ring-3", name: "B", quantity: 3, unitCost: 0, sourceAmount: 30, sourceAmountType: "unknown" },
+        { lineId: "a-line", ticketId: "a", productId: "ring", name: "A", quantity: 2, unitCost: 0, sourceAmount: 20, sourceAmountType: "unknown" },
+        { lineId: "b-line", ticketId: "b", productId: "ring", name: "B", quantity: 3, unitCost: 0, sourceAmount: 30, sourceAmountType: "unknown" },
       ],
     };
     open(value);
@@ -285,8 +285,8 @@ describe("ticket capture and journey review (#206)", () => {
     ...purchase(), totalConfirmed: 30,
     tickets: [{ id: "a", folio: "A", totalConfirmed: 10 }, { id: "b", folio: "B", totalConfirmed: 20 }],
     lines: [
-      { lineId: "a1", ticketId: "a", productId: "ring-3", name: "Pieza A", quantity: 1, unitCost: 10 },
-      { lineId: "b1", ticketId: "b", productId: "ring-3", name: "Pieza B", quantity: 2, unitCost: 10 },
+      { lineId: "a1", ticketId: "a", productId: "ring", name: "Pieza A", quantity: 1, unitCost: 10 },
+      { lineId: "b1", ticketId: "b", productId: "ring", name: "Pieza B", quantity: 2, unitCost: 10 },
     ],
   });
 
@@ -353,7 +353,7 @@ it("importing a new ticket preserves invalid text in the previous ticket", async
   open();
   fireEvent.change(screen.getByLabelText("Total pagado", { exact: true }), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "+ Agregar ticket" }));
-  pdfPayloads.push({ supplierOrder: "PDF-NEW", total: 15, lines: [{ productId: "ring-3", name: "PDF piece", quantity: 3, unitCost: 5 }] });
+  pdfPayloads.push({ supplierOrder: "PDF-NEW", total: 15, lines: [{ productId: "ring", name: "PDF piece", quantity: 3, unitCost: 5 }] });
   fireEvent.click(screen.getByRole("button", { name: "Importar PDF de prueba" }));
   expect(screen.getByLabelText("Total pagado", { exact: true })).toHaveValue("15");
   fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
@@ -434,7 +434,7 @@ describe("ticket code preservation (PO report in #206)", () => {
     expect(screen.getByLabelText("Costo unitario")).toHaveValue("80");
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
     await waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
-    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "ring-3", name: "123-ABC", unitCost: 80 });
+    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ productId: "ring", name: "123-ABC", unitCost: 80 });
   });
 
   it.each([false, true])("creates a complete product without overwriting the ticket when publishing is %s", async (publish) => {
