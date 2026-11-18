@@ -46,7 +46,7 @@ export function OrderPaymentsSheet({
   open: boolean;
   onClose: () => void;
 }) {
-  const { payments, loadOrderPayments, registerOrderPayment, draftOwnerId } = useStore();
+  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId } = useStore();
   const toast = useToast();
   const [amountText, setAmountText] = useState("");
   const [method, setMethod] = useState<"cash" | "transfer">("cash");
@@ -61,6 +61,9 @@ export function OrderPaymentsSheet({
   const [adjustAmountText, setAdjustAmountText] = useState("");
   const [adjustDirection, setAdjustDirection] = useState<"subtract" | "add">("subtract");
   const [adjustNote, setAdjustNote] = useState("");
+  // #455 r5: dating the TOTAL anticipo captured at creation (no cobro will
+  // ever ride it) is its own save.
+  const [dating, setDating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -133,6 +136,25 @@ export function OrderPaymentsSheet({
     if (summary.inheritedPendingCents > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(inheritedDate)) {
       toast.error("Captura la fecha del anticipo previo (estímala si no la recuerdas).");
       return;
+    }
+    // #455 r4 (UX): the pending anticipo is ALREADY-received money that this
+    // same write materializes. A collection bigger than what is actually
+    // missing registers the same money twice and mints saldo a favor — the
+    // dialog must close that case by itself, not guide into it.
+    if (summary.inheritedPendingCents > 0) {
+      const collectCents = Math.round((Number(sanitizeMoneyInput(amountText)) || 0) * 100);
+      // summary.receivedCents ALREADY includes the pending anticipo when it
+      // is unmaterialized (payments.ts) — subtracting it again would double-
+      // count and let the very duplication this gate exists to stop.
+      const stillOwedCents = Math.max(0, summary.totalCents - summary.receivedCents);
+      if (collectCents > stillOwedCents) {
+        toast.error(
+          stillOwedCents === 0
+            ? "El anticipo previo ya cubre el total: no hay nada nuevo que cobrar aquí. Su fecha y método quedan al registrar cualquier otro movimiento del pedido."
+            : `El anticipo previo de ${formatMoneyExact(summary.inheritedPendingCents / 100)} ya está recibido y se registra junto con este cobro. Captura solo lo que falte: hasta ${formatMoneyExact(stillOwedCents / 100)}.`
+        );
+        return;
+      }
     }
     const id = intentIdRef.current.payment ?? uid("pay");
     intentIdRef.current.payment = id;
@@ -229,8 +251,9 @@ export function OrderPaymentsSheet({
           <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
             <p className="text-xs text-on-surface-soft">
               Anticipo previo: <Money exact amount={summary.inheritedPendingCents / 100} /> recibido
-              antes de llevar registro. Se materializa junto con el primer cobro — captura su fecha
-              y método (estímalos si no los recuerdas).
+              antes de llevar registro — ese dinero ya está en tus manos. Se registra (fecha y método,
+              estímalos si no los recuerdas) junto con el primer cobro nuevo; el monto de abajo es
+              SOLO lo que falte cobrar hoy, nunca el total del pedido.
             </p>
             <div className="grid grid-cols-2 gap-3">
               <SelectField
@@ -352,6 +375,37 @@ export function OrderPaymentsSheet({
           </div>
         ) : null}
 
+        {summary.inheritedPendingCents > 0
+          && summary.totalCents - summary.receivedCents <= 0 ? (
+          <div className="space-y-2 border-t border-edge pt-4">
+            <p className="text-sm text-on-surface">
+              El anticipo previo ya cubre el total — no hay nada nuevo que cobrar en este pedido.
+            </p>
+            <p className="text-xs text-on-surface-soft">
+              Registra arriba su fecha y método para que el cierre mensual cuadre con tu caja;
+              estímalos si no los recuerdas. Duplicar el cobro crearía saldo a favor por error.
+            </p>
+            <Button
+              variant="secondary"
+              disabled={dating || !/^\d{4}-\d{2}-\d{2}$/.test(inheritedDate)}
+              onClick={() => {
+                setDating(true);
+                materializeInheritedDeposit(order, { method: inheritedMethod, date: inheritedDate })
+                  .then(() => toast.success("Anticipo registrado."))
+                  .catch((error: unknown) => {
+                    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
+                    // Rules denials arrive as raw Firestore English — never show that.
+                    toast.error(code === "permission-denied" || !(error instanceof Error) || !error.message
+                      ? "No se pudo registrar el anticipo. Inténtalo de nuevo."
+                      : error.message);
+                  })
+                  .finally(() => setDating(false));
+              }}
+            >
+              {dating ? "Registrando…" : "Registrar fecha y método del anticipo"}
+            </Button>
+          </div>
+        ) : (
         <div className="space-y-3 border-t border-edge pt-4">
           {cancelled ? (
             <div className="space-y-1">
@@ -466,6 +520,7 @@ export function OrderPaymentsSheet({
             </Button>
           )}
         </div>
+        )}
       </div>
     </Sheet>
   );

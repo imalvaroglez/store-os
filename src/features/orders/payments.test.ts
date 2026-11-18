@@ -420,3 +420,28 @@ describe("#270 subtract cap bound", () => {
     expect(maxAdjustmentSubtractCents({ paymentsReceivedCents: "20000" as unknown as number })).toBe(0);
   });
 });
+
+describe("#455/#458 r4 — materializar el anticipo ES el cobro (una sola entrada)", () => {
+  it("pedido con deposit 1500: registrar un cobro de 1500 cuenta UNA vez (marcador evita el doble conteo)", () => {
+    // After the tx: one record of $1,500 (the caller's, now the deposit's
+    // materialization) + inheritedDepositMaterialized=true → docReceivedCents
+    // must NOT add the deposit again.
+    const after = order({
+      deposit: 1500,
+      paymentsReceivedCents: 150000,
+      inheritedDepositMaterialized: true,
+    });
+    expect(docReceivedCents(after)).toBe(150000);
+  });
+
+  it("sin el marcador, el depósito sigue sumándose (comportamiento legado intacto)", () => {
+    const legacy = order({ deposit: 1500, paymentsReceivedCents: 0 });
+    expect(docReceivedCents(legacy)).toBe(150000);
+  });
+
+  it("orderMoneyAfterPayments marca materializado cuando la llamada lo dice", () => {
+    const money = orderMoneyAfterPayments(order({ deposit: 1500, paymentsReceivedCents: 0 }), 150000, true);
+    expect(money.paymentsReceivedCents).toBe(150000);
+    expect(money.inheritedDepositMaterialized).toBe(true);
+  });
+});
