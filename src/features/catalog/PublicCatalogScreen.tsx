@@ -103,7 +103,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
 
   const { store, catalog } = data;
   // #489: stock governs inventory; on-demand retains manual availability.
-  const isSoldOut = (product: { availability?: string | null; stockSignal?: string | null }) =>
+  const isSoldOut = (product: { availability?: string | null; stockSignal?: string | null; variants?: { stockSignal?: string | null }[] }) =>
     publicAvailabilitySignal(product, store.type) === "agotado";
   const showSoldOut = store.storefront?.showSoldOut ?? true;
   const soldOutAware = catalog.products; // sold-out keeps its card for encargo (#135)

@@ -528,3 +528,13 @@ describe("#489 inventory publication", () => {
     expect(projectPublicProductSummary({ ...p, quantityOnHand: undefined, variants: [{ id: "silver", color: "Plata", quantityOnHand: 2, createdAt: "", updatedAt: "" }] }, "santi", inventory).availability).toBe("available");
   });
 });
+
+it("#489 public availability never subtracts a different color's shortage from sellable pieces", () => {
+  const inventory = { ...store, type: "inventory_tiered" as const };
+  const p = baseProduct({ availability: "sold_out", variants: [
+    { id: "silver", color: "Plateado", quantityOnHand: 1, createdAt: "", updatedAt: "" },
+    { id: "gold", color: "Dorado", quantityOnHand: -1, createdAt: "", updatedAt: "" },
+  ] });
+  expect(projectPublicProductSummary(p, "santi", inventory)).toMatchObject({ availability: "available", stockSignal: "disponible" });
+  expect(p.variants?.map((v) => v.quantityOnHand)).toEqual([1, -1]);
+});

@@ -462,3 +462,15 @@ it("#489 refreshes a persisted color inquiry before composing WhatsApp", async (
   const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
   expect(saved.lines[0]).toMatchObject({ qty: 2, inquire: false });
 });
+
+it("#489 keeps a sellable color visible despite an old aggregate shortage signal", async () => {
+  mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, type: "inventory_tiered", storefront: { showSoldOut: false } }, catalog: { categories: [], products: [{
+    ...catalog.products[0], availability: "sold_out", stockSignal: "agotado", variants: [
+      { id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" },
+      { id: "gold", color: "Dorado", imageUrl: null, stockSignal: "agotado" },
+    ],
+  }] } });
+  render(<PublicCatalogScreen slug="santi" />);
+  await screen.findByText("Perfume");
+  expect(screen.getByRole("button", { name: "Agregar al carrito" })).toBeTruthy();
+});

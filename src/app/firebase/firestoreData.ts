@@ -1,4 +1,4 @@
-import { publicAvailabilityValue } from "../../lib/publicAvailability";
+import { publicAvailabilitySignal, publicAvailabilityValue } from "../../lib/publicAvailability";
 import {
   collection,
   doc,
@@ -1676,11 +1676,16 @@ function publicVariants(product: Product) {
 }
 
 export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible" {
-  // #124: a design sold by color signals over the SUM of its colors.
-  const qty = isVariantProduct(p) ? totalStock(p) : p.quantityOnHand;
+  // Each color is a separate shelf: a shortage cannot consume sellable
+  // pieces of another color. Only this PUBLIC coarse signal uses the positive
+  // shelves; canonical quantities and private shortage math stay untouched.
+  const colors = isVariantProduct(p) ? p.variants! : undefined;
+  if (colors?.some((v) => typeof v.quantityOnHand !== "number")) return "disponible";
+  const qty = colors ? colors.reduce((sum, v) => sum + Math.max(0, v.quantityOnHand ?? 0), 0) : p.quantityOnHand;
   if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
   if (qty <= 0) return "agotado";
   if (typeof p.lowStockAt === "number" && qty <= p.lowStockAt) return "pocas";
+  if (colors && colors.filter((v) => (v.quantityOnHand ?? 0) > 0).every((v) => variantPublicStockSignal(v) === "pocas")) return "pocas";
   return "disponible";
 }
 
@@ -1925,7 +1930,9 @@ function preservePublicAvailability(
   }
   // Normalize AFTER preserving the fresh signal, not from the stale input.
   if (storeType === "inventory_tiered" && typeof merged.stockSignal === "string") {
-    merged.availability = publicAvailabilityValue({ stockSignal: merged.stockSignal }, storeType);
+    const signal = publicAvailabilitySignal({ stockSignal: merged.stockSignal, variants: Array.isArray(merged.variants) ? merged.variants : undefined }, storeType);
+    merged.stockSignal = signal;
+    merged.availability = publicAvailabilityValue({ stockSignal: signal }, storeType);
   }
   return merged;
 }

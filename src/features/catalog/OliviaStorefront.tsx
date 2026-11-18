@@ -26,7 +26,7 @@ function useCartContext() { return useContext(CartContext)!; }
 // logos (sf.logoUrl) already carry unique URLs per upload.
 const OLIVIA_LOGO_URL = `/images/olivia-logo.png?v=${typeof __BUILD_SHA__ !== "undefined" ? __BUILD_SHA__ : "dev"}`;
 
-function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSignal">, store: PublicStore) {
+function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSignal" | "variants">, store: PublicStore) {
   return publicAvailabilitySignal(product, store.type) === "agotado";
 }
 

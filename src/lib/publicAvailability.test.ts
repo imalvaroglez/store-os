@@ -13,3 +13,9 @@ describe("inventory authority (#489)", () => {
     expect(publicAvailabilitySignal({ availability: 'sold_out' }, 'inventory_tiered')).toBe('agotado');
   });
 });
+
+it("#489 does not net a sellable color against another color's shortage", () => {
+  const product = { availability: "sold_out", stockSignal: "agotado", variants: [{ stockSignal: "disponible" }, { stockSignal: "agotado" }] };
+  expect(publicAvailabilitySignal(product, "inventory_tiered")).toBe("disponible");
+  expect(publicAvailabilitySignal(product, "on_demand")).toBe("agotado");
+});
