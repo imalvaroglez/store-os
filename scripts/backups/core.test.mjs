@@ -8,13 +8,13 @@ import childProcess, { execFileSync, spawn } from 'node:child_process';
 import fsPromises, { symlink } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, dueDate, privateDirectory, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
+import { acquireLock, backupTime, command, decryptArchive, encryptDirectory, fileHash, isDue, dueDate, localDate, privateDirectory, json, manifest, prune, publish, retention, sha256, verifyDirectory, exists, DEFAULT_DESTINATION } from './core.mjs';
 import { DEV, PROD } from './core.mjs';
 import { capture, restore, remapFields, validateTarget, validateUsers, EMULATORS } from './cloud.mjs';
 import { startSupervisor, stopSupervisor, supervisedCommand, cleanupStaleWorkspaces } from './supervisor.mjs';
 import { launchAgent } from './install.mjs';
-import { checkRecoveryIdentity, hasVerifiedBackup, recoveryKeyProof, verificationEnvironment, verifyCandidate } from './verification.mjs';
-import { parseArgs, preflight, pruneTolerant, runBackup, safeCode } from './cli.mjs';
+import { checkRecoveryIdentity, hasVerifiedBackup, recoveryKeyProof, verificationEnvironment, verifyCandidate, verificationReceiptFailure } from './verification.mjs';
+import { clearVerificationFailure, migrateVerificationFailure, notificationDecision, parseArgs, preflight, pruneTolerant, runBackup, safeCode, verificationRetryBlocked } from './cli.mjs';
 
 async function workspace(t) { const dir = await mkdtemp(path.join(os.tmpdir(), 'store-os-backup-test-')); t.after(() => trash(dir)); return dir; }
 const name = date => `backup-${date.toISOString().replace(/[:.]/g, '-')}.tar.gz.age`;
@@ -143,6 +143,79 @@ test('budget failures suspend repeated scans; transient retries are bounded per 
     await assert.rejects(runBackup(config, transient), /503/); await assert.rejects(runBackup(config, transient), /503/);
     assert.equal((await runBackup(config, transient)).dailyBudgetExhausted, true); assert.equal(attempts, 3);
     assert.equal(JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8')).reservedReads, 20);
+  } finally { for (const [k, v] of Object.entries(original)) v === undefined ? delete process.env[k] : process.env[k] = v; }
+});
+
+test('notification cooldown is independent per message and migrates the previous single-message state', () => {
+  const firstAt = 1_795_000_000_000;
+  const budget = 'Se agotó el presupuesto diario de lecturas para respaldos.';
+  const overdue = 'No hay un respaldo completo disponible de las últimas 26 horas.';
+  let state = {};
+  let decision = notificationDecision(state, budget, firstAt);
+  assert.equal(decision.shouldNotify, true); state = decision.state;
+  decision = notificationDecision(state, overdue, firstAt + 1000);
+  assert.equal(decision.shouldNotify, true); state = decision.state;
+  decision = notificationDecision(state, budget, firstAt + 2000);
+  assert.equal(decision.shouldNotify, false);
+  decision = notificationDecision(state, overdue, firstAt + 3000);
+  assert.equal(decision.shouldNotify, false);
+
+  assert.equal(notificationDecision({ message: budget, at: firstAt }, budget, firstAt + 1000).shouldNotify, false);
+  assert.equal(notificationDecision({ message: budget, at: firstAt }, overdue, firstAt + 1000).shouldNotify, true);
+});
+
+test('verification receipt mismatches produce bounded diagnostic codes', () => {
+  const result = {
+    version: 1, archiveSha256: 'archive', restoreVerified: true, encryptedArchiveVerified: true,
+    sourceSnapshotVerified: true, verifiedAt: '2026-11-18T00:00:00Z', sourceManifestSha256: 'manifest',
+    sourceProjectId: PROD, authPasswordHashesVerified: true, counts: { documents: 10, users: 2, objects: 3 },
+  };
+  const expected = {
+    archiveSha256: 'archive', sourceManifestSha256: 'manifest', sourceDirectory: true,
+    sourceProjectId: PROD, sourceCounts: { documents: 10, users: 2, objects: 3 },
+  };
+  assert.equal(verificationReceiptFailure({ ...result, counts: { ...result.counts, documents: 11 } }, expected), 'VERIFICATION_COUNTS_MISMATCH');
+  assert.equal(verificationReceiptFailure({ ...result, sourceManifestSha256: 'wrong-private-value' }, expected), 'VERIFICATION_MANIFEST_MISMATCH');
+  assert.equal(verificationReceiptFailure(result, expected), null);
+});
+
+test('verification failure pauses scheduled runs until a reviewed preflight or explicit manual retry', () => {
+  const state = { suspendedForVerification: 'reviewed-sha', verificationFailure: 'VERIFICATION_COUNTS_MISMATCH' };
+  assert.equal(verificationRetryBlocked(state, { reviewedPreflightSha256: 'reviewed-sha' }), true);
+  assert.equal(verificationRetryBlocked(state, { reviewedPreflightSha256: 'new-reviewed-sha' }), false);
+  assert.equal(verificationRetryBlocked(state, { reviewedPreflightSha256: 'reviewed-sha' }, true), false);
+  assert.deepEqual(clearVerificationFailure(state), { suspendedForVerification: null, verificationFailure: null });
+  assert.deepEqual(migrateVerificationFailure({ lastError: 'VERIFICATION_FAILED' }, { reviewedPreflightSha256: 'reviewed-sha' }), {
+    lastError: 'VERIFICATION_FAILED', suspendedForVerification: 'reviewed-sha', verificationFailure: 'VERIFICATION_FAILED',
+  });
+  assert.deepEqual(migrateVerificationFailure({ lastError: 'CLOUD_HTTP_503' }, { reviewedPreflightSha256: 'reviewed-sha' }), { lastError: 'CLOUD_HTTP_503' });
+});
+
+test('scheduled verification failures stop before Firebase; manual retry still obeys the daily read cap', async t => {
+  const dir = await workspace(t); const home = path.join(dir, 'home'); await mkdir(home);
+  const now = new Date('2026-11-18T18:00:00Z');
+  const config = { projectId: DEV, bucket: `${DEV}.firebasestorage.app`, home, destination: path.join(dir, 'cloud'), recipient: 'fixture', firebase: process.execPath, age: execFileSync('/usr/bin/which', ['age'], { encoding: 'utf8' }).trim(), notifications: false, maxDocuments: 0, maxStorageBytes: 0, maxFirestoreReads: 10, maxDailyFirestoreReads: 20 };
+  const fake = { settings: async () => ({}), documents: async () => [], users: async () => [], authConfig: async () => ({ hashConfig: {} }), files: async () => [], close: async () => {} };
+  await preflight(config, fake); config.reviewedPreflightSha256 = await fileHash(path.join(home, 'preflight.json'));
+  await json(path.join(home, 'recovery-key-proof.json'), { version: 1, projectId: DEV, recipient: config.recipient, verifiedAt: now.toISOString() });
+  const state = {
+    lastSuccess: '2026-11-17T03:00:00Z', lastScheduledDate: '2026-11-16', lastRunKind: 'scheduled', lastArchive: 'backup.age', sha256: 'hash', ownedArchives: [],
+    verification: { version: 1, restoreVerified: true, encryptedArchiveVerified: true, sourceSnapshotVerified: true, recoveryRecipientVerified: true, archive: 'backup.age', archiveSha256: 'hash', verifiedAt: '2026-11-17T03:00:00Z' },
+    lastError: 'VERIFICATION_FAILED', readBudgetDate: localDate(now), reservedReads: 20,
+  };
+  await json(path.join(home, 'state.json'), state);
+  const original = Object.fromEntries(Object.keys(EMULATORS).map(k => [k, process.env[k]])); Object.assign(process.env, EMULATORS);
+  try {
+    let connections = 0;
+    const factory = async () => { connections++; return fake; };
+    const scheduled = await runBackup(config, factory, now);
+    assert.deepEqual(scheduled, { skipped: true, suspended: true, verificationReviewRequired: true });
+    const manual = await runBackup(config, factory, now, { manual: true });
+    assert.equal(manual.dailyBudgetExhausted, true);
+    assert.equal(connections, 0);
+    const after = JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8'));
+    assert.equal(after.reservedReads, 20);
+    assert.equal(after.suspendedForVerification, config.reviewedPreflightSha256);
   } finally { for (const [k, v] of Object.entries(original)) v === undefined ? delete process.env[k] : process.env[k] = v; }
 });
 
