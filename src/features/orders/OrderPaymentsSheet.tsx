@@ -393,7 +393,11 @@ export function OrderPaymentsSheet({
                 materializeInheritedDeposit(order, { method: inheritedMethod, date: inheritedDate })
                   .then(() => toast.success("Anticipo registrado."))
                   .catch((error: unknown) => {
-                    toast.error(error instanceof Error && error.message ? error.message : "No se pudo registrar el anticipo.");
+                    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
+                    // Rules denials arrive as raw Firestore English — never show that.
+                    toast.error(code === "permission-denied" || !(error instanceof Error) || !error.message
+                      ? "No se pudo registrar el anticipo. Inténtalo de nuevo."
+                      : error.message);
                   })
                   .finally(() => setDating(false));
               }}
