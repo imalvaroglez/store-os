@@ -354,3 +354,12 @@ describe("ProductForm #489 — one stock adjustment per save", () => {
     await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("#489 inventory availability editor", () => {
+  it("uses inventory guidance instead of a conflicting manual availability selector", () => {
+    render(<ProductForm product={{ ...design, quantityOnHand: 5, availability: "sold_out" }} onDone={() => {}} />);
+    expect(screen.queryByRole("combobox", { name: "Disponibilidad" })).toBeNull();
+    expect(screen.getByText(/La disponibilidad se calcula con las existencias/)).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Estado de publicación" })).toBeTruthy();
+  });
+});

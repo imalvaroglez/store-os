@@ -783,7 +783,9 @@ export function ProductForm({
           { value: "archived", label: "Archivado (no visible)" },
         ]}
       />
-      <SelectField
+      {isTiered ? (
+        <p className="text-sm text-on-surface-soft">La disponibilidad se calcula con las existencias. Para retirar una pieza del catálogo, elige «Borrador» en Estado de publicación.</p>
+      ) : <SelectField
         label="Disponibilidad"
         value={draft.availability ?? "available"}
         onChange={(v) => setDraft({ ...draft, availability: v as Product["availability"] })}
@@ -792,7 +794,7 @@ export function ProductForm({
           { value: "low_stock", label: "Pocas piezas" },
           { value: "sold_out", label: "Agotado" },
         ]}
-      />
+      />}
 
       <div className="grid grid-cols-3 gap-2">
         <CheckboxField

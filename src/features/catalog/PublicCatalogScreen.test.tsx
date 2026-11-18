@@ -414,3 +414,37 @@ describe("missing real vs fallo de red (#276)", () => {
     expect(screen.queryByText(/no existe o no está disponible/)).toBeNull();
   });
 });
+
+describe("#489 stock determines inventory availability", () => {
+  it("keeps a stocked legacy sold_out product visible and selectable with sold-out products hidden", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, type: "inventory_tiered", storefront: { showSoldOut: false } },
+      catalog: { categories: [], products: [
+        { ...catalog.products[0], name: "Pieza con stock", availability: "sold_out", stockSignal: "disponible" },
+        { ...catalog.products[1], name: "Pieza sin stock", availability: "available", stockSignal: "agotado" },
+      ] },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    await screen.findByText("Pieza con stock");
+    expect(screen.queryByText("Pieza sin stock")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
+    expect(screen.getByRole("group", { name: "Cantidad de Pieza con stock" })).toHaveTextContent("1");
+  });
+});
+
+
+it("#489 a legacy manual mark cannot block an available color or offer an empty one", async () => {
+  mocks.loadPublicCatalog.mockResolvedValue({
+    store: { ...store, type: "inventory_tiered" },
+    catalog: { categories: [], products: [{ ...catalog.products[0], availability: "sold_out", stockSignal: "disponible", variants: [
+      { id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" },
+      { id: "gold", color: "Dorado", imageUrl: null, stockSignal: "agotado" },
+    ] }] },
+  });
+  render(<PublicCatalogScreen slug="santi" />);
+  await screen.findByText("Perfume");
+  expect(screen.getByRole("button", { name: "Agregar al carrito" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Dorado" }));
+  expect(screen.queryByRole("button", { name: "Agregar al carrito" })).toBeNull();
+  expect(screen.getByText("Agotado")).toBeTruthy();
+});

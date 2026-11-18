@@ -972,3 +972,19 @@ describe("carrito — filas por tarifa (#442, revisión)", () => {
     expect(screen.queryByText(/Agrega \d piezas más/)).toBeNull();
   });
 });
+
+describe("#489 legacy sold_out cannot override inventory", () => {
+  it("shows the stocked piece in the hidden-sold-out grid and offers a normal purchase in its detail", async () => {
+    const stocked = { ...catalog.products[0], availability: "sold_out", stockSignal: "disponible" as const };
+    mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, storefront: { showSoldOut: false } }, catalog: { ...catalog, products: [stocked] } });
+    const view = await renderStore();
+    expect(screen.getByRole("article", { name: stocked.name })).toBeTruthy();
+    mocks.loadPublicProduct.mockResolvedValue({ store, product: { ...detail, ...stocked, images: [], categories: [] } });
+    view.rerender(<OliviaStorefront route={productRoute} />);
+    await screen.findByRole("heading", { name: stocked.name, level: 1 });
+    expect(screen.queryByText("Agotado")).toBeNull();
+    expect(screen.getByRole("link", { name: /Comprar por WhatsApp/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
+    expect(screen.getByRole("group", { name: `Cantidad de ${stocked.name}` })).toHaveTextContent("1");
+  });
+});

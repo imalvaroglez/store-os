@@ -1,3 +1,4 @@
+import { publicAvailabilitySignal } from "../../lib/publicAvailability";
 import { useEffect, useState } from "react";
 import { Badge, Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
 import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
@@ -101,11 +102,9 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   }
 
   const { store, catalog } = data;
-  // #371: the SAME truth Olivia's storefront uses — a manual «Agotado» pause
-  // (availability) or a real empty shelf (stockSignal) applies to EVERY
-  // store's public catalog, and «Agotados: Ocultos» hides them from the grid.
+  // #489: stock governs inventory; on-demand retains manual availability.
   const isSoldOut = (product: { availability?: string | null; stockSignal?: string | null }) =>
-    product.availability === "sold_out" || product.stockSignal === "agotado";
+    publicAvailabilitySignal(product, store.type) === "agotado";
   const showSoldOut = store.storefront?.showSoldOut ?? true;
   const soldOutAware = catalog.products; // sold-out keeps its card for encargo (#135)
   const products = showSoldOut ? soldOutAware : soldOutAware.filter((product) => !isSoldOut(product));
@@ -136,7 +135,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   // A paused piece reads as agotado EVERYWHERE — including a cart saved before
   // the pause: the drawer turns that line into "sobre pedido", never a firm order.
   const signalBySlug = products.reduce<Record<string, PublicStockSignal>>((signals, product) => {
-    signals[product.productSlug] = isSoldOut(product) ? "agotado" : (product.stockSignal ?? "disponible");
+    signals[product.productSlug] = isSoldOut(product) ? "agotado" : publicAvailabilitySignal(product, store.type);
     // #137: per-color lines carry `slug~variantId` keys — give each color's
     // line its OWN signal so the drawer explains exactly that color.
     for (const variant of product.variants ?? []) {
