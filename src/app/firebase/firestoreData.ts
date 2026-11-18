@@ -706,6 +706,8 @@ export async function retainStoreEvidence(_user: AppUser, storeId: string): Prom
   const { db } = getFirebase();
   await updateDoc(doc(db, "adminStores", storeId), {
     memberUids: [],
+    // H3: a pending invite must never join a deleted store.
+    pendingInvites: [],
     retainedAt: new Date().toISOString(),
   });
 }

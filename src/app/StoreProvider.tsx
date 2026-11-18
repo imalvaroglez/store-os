@@ -851,11 +851,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const store = state.stores.find((s) => s.id === storeId);
       dispatch({ type: "DELETE_STORE", storeId });
       if (store) {
-        // #375 (PO decision, 18-nov): retention with expulsion. The seal
-        // expels every member FIRST so no one can operate the store mid-flight;
-        // money evidence (paid orders + payments + priceEvents) stays frozen,
-        // readable only by platform.
-        persistInBackground("conservar la evidencia de dinero y revocar las membresías", () => retainStoreEvidence(currentUser, storeId));
+        // #375 (PO decision, 18-nov): retention with expulsion. Money evidence
+        // (paid orders + payments + priceEvents) stays frozen, readable only by
+        // platform. The seal goes LAST: sealing first would revoke the owner's
+        // membership and deny every best-effort delete below (H1 of the code
+        // review), orphaning PII and leaving public projections exposed.
         persistInBackground("eliminar la tienda", () => deleteEntity(currentUser, "stores", storeId));
         // Best-effort: delete the store's entities + product photos in the cloud.
         state.products.filter((p) => p.storeId === storeId).forEach((p) => {
@@ -863,12 +863,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           persistInBackground("eliminar una foto", () => deleteProductImage(storeId, p.id));
         });
         state.customers.filter((c) => c.storeId === storeId).forEach((c) => persistInBackground("eliminar una clienta", () => deleteEntity(currentUser, "customers", c.id)));
-        // #375: orders WITH money evidence are RETAINED (never deleted); only
-        // money-free orders go away with the store.
+        // #375: orders WITH money evidence are RETAINED (never deleted); the
+        // criterion matches the rules' own delete guard (H4) so nothing is
+        // denied with a useless retry loop. Only money-free orders go away.
         state.orders.filter((o) => o.storeId === storeId).forEach((o) => {
-          const moneyEvidence = (o.paymentsReceivedCents ?? 0) > 0 || (o.deposit ?? 0) > 0;
+          const moneyEvidence = (o.paymentsReceivedCents ?? 0) > 0 || (o.deposit ?? 0) > 0
+            || (o.deliveries?.length ?? 0) > 0 || o.installmentsReservedAt != null
+            || o.inheritedDepositMaterialized === true
+            || (o.creditAppliedCents ?? 0) > 0 || (o.creditConsumedCents ?? 0) > 0;
           if (!moneyEvidence) persistInBackground("eliminar un pedido", () => deleteEntity(currentUser, "orders", o.id));
         });
+        // #375: the seal LAST — expel every member and freeze pending invites
+        // once the operational cleanup above already ran.
+        persistInBackground("conservar la evidencia de dinero y revocar las membresías", () => retainStoreEvidence(currentUser, storeId));
         state.suppliers.filter((s) => s.storeId === storeId).forEach((s) => persistInBackground("eliminar un proveedor", () => deleteEntity(currentUser, "suppliers", s.id)));
         state.purchases.filter((p) => p.storeId === storeId).forEach((p) => persistInBackground("eliminar una compra", () => deleteEntity(currentUser, "purchases", p.id)));
         // Supplier PDFs are PII: delete them along with the store. Best-effort

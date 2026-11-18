@@ -131,7 +131,13 @@ service cloud.firestore {
         && request.resource.data.memberUids.size() == 0
         && request.resource.data.retainedAt is string
         && request.resource.data.ownerUid == adminStore(storeId).ownerUid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids', 'retainedAt']);
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['memberUids', 'retainedAt', 'pendingInvites', 'updatedAt']);
+    }
+    // #375 H2: once sealed, the doc is frozen for the normal update path —
+    // the ONLY way back is platform acting directly (documented, auditable).
+    function notSealed() {
+      return resource.data.retainedAt == null;
     }
 
     match /adminStores/{storeId} {
@@ -141,8 +147,9 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
       allow update: if ((isSuperAdmin() || isOwner(storeId))
+          && notSealed()
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
-        || inviteeJoinOk()
+        || (inviteeJoinOk() && notSealed())
         || retentionSeal(storeId);
       allow delete: if false;
     }

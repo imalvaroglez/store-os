@@ -30,7 +30,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("store deletion retention 
       await admin.doc("users/plat375").set({ email: "admin@store.os", emailNormalized: "admin@store.os", emailVerified: true, role: "super_admin", createdAt: "2026-01-01", updatedAt: "2026-01-01" });
       await admin.doc("users/fer375").set({ email: "fer375@test.mx", emailNormalized: "fer375@test.mx", emailVerified: true, role: "member", createdAt: "2026-01-01", updatedAt: "2026-01-01" });
       await admin.doc("users/col375").set({ email: "col375@test.mx", emailNormalized: "col375@test.mx", emailVerified: true, role: "member", createdAt: "2026-01-01", updatedAt: "2026-01-01" });
-      await admin.doc("adminStores/ret-store").set({ ownerUid: "fer375", memberUids: ["fer375", "col375"], name: "Fer", slug: "fer-ret", type: "inventory_tiered" });
+      await admin.doc("adminStores/ret-store").set({ ownerUid: "fer375", memberUids: ["fer375", "col375"], pendingInvites: [{ email: "invited375@test.mx", invitedBy: "fer375", at: "2026-11-01" }], name: "Fer", slug: "fer-ret", type: "inventory_tiered" });
       await admin.doc("stores/ret-store").set({ id: "ret-store", name: "Fer", slug: "fer-ret", ownerUid: "fer375", memberUids: ["fer375", "col375"] });
       await admin.doc("products/ret-p1").set({ storeId: "ret-store", name: "Pieza", status: "published" });
       await admin.doc("orders/ret-paid").set({ storeId: "ret-store", customerId: "c1", paymentsReceivedCents: 50000, orderStatus: "delivered", revision: 1 });
@@ -82,6 +82,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("store deletion retention 
     expect(payment.get("amountCents")).toBe(50000);
     const event = await superDb.doc("priceEvents/ret-pe1").get();
     expect(event.exists).toBe(true);
+  });
+
+  it("H2: the seal is one-way — the normal update path cannot unseal or re-add members", async () => {
+    const ownerDb = holder.env!.authenticatedContext("fer375").firestore();
+    const superDb2 = holder.env!.authenticatedContext("plat375", { email: "admin@store.os", email_verified: true }).firestore();
+    await expect(ownerDb.doc("adminStores/ret-store").update({ memberUids: ["fer375"], retainedAt: null as never }))
+      .rejects.toThrow();
+    await expect(superDb2.doc("adminStores/ret-store").update({ memberUids: ["fer375"] })).rejects.toThrow();
+    await expect(ownerDb.doc("adminStores/ret-store").update({ name: "Zombie" })).rejects.toThrow();
+  });
+
+  it("H3: a pending invite cannot join a sealed store, and the seal empties invites", async () => {
+    const sealed = await holder.env!.authenticatedContext("plat375", { email: "admin@store.os", email_verified: true })
+      .firestore().doc("adminStores/ret-store").get();
+    expect(sealed.get("pendingInvites")).toEqual([]);
+    const inviteeDb = holder.env!.authenticatedContext("invited375", { email: "invited375@test.mx", email_verified: true }).firestore();
+    await expect(inviteeDb.doc("adminStores/ret-store").update({
+      memberUids: ["invited375"],
+      pendingInvites: [],
+    })).rejects.toThrow();
   });
 
   it("the control doc stays undeletable even for platform", async () => {
