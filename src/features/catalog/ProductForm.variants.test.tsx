@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   user: null as AppUser | null,
   state: null as ReturnType<typeof fixtureState> | null,
   upsertProduct: vi.fn(),
+  cloud: false,
 }));
 
 vi.mock("../../app/firebase/AuthProvider", () => ({
@@ -25,7 +26,7 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
       state: mocks.state,
       upsertProduct: mocks.upsertProduct,
       activeStore: mocks.state?.stores.find((s) => s.id === "store_olivia"),
-      cloud: false,
+      cloud: mocks.cloud,
     }),
   };
 });
@@ -56,6 +57,7 @@ function tieredState() {
 
 beforeEach(() => {
   mocks.state = tieredState();
+  mocks.cloud = false;
   mocks.upsertProduct.mockReset().mockResolvedValue(undefined);
 });
 
@@ -361,5 +363,30 @@ describe("#489 inventory availability editor", () => {
     expect(screen.queryByRole("combobox", { name: "Disponibilidad" })).toBeNull();
     expect(screen.getByText(/La disponibilidad se calcula con las existencias/)).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Estado de publicación" })).toBeTruthy();
+  });
+});
+
+describe("#489 legacy cover republish (PO decision, 18-nov)", () => {
+  const legacy = { ...design, status: "draft" as const, quantityOnHand: 0, cost: 100, prices: { t_retail: 100 }, categoryIds: ["c1"] };
+
+  it("returns a legacy piece with a bare imageUrl to published in cloud without a new photo", async () => {
+    mocks.cloud = true;
+    render(<ProductForm product={legacy} onDone={() => {}} />);
+    await screen.findByLabelText(/^En existencia$/);
+    fireEvent.change(screen.getByRole("combobox", { name: "Estado de publicación" }), { target: { value: "published" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Para publicar, agrega una foto de portada.")).toBeNull();
+  });
+
+  it("keeps the cover gate in cloud for a piece with no photo at all", async () => {
+    mocks.cloud = true;
+    const bare = { ...legacy, imageUrl: undefined };
+    render(<ProductForm product={bare} onDone={() => {}} />);
+    await screen.findByLabelText(/^En existencia$/);
+    fireEvent.change(screen.getByRole("combobox", { name: "Estado de publicación" }), { target: { value: "published" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await screen.findByText("Para publicar, agrega una foto de portada.");
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
   });
 });

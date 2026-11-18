@@ -365,7 +365,12 @@ export function ProductForm({
       const hasPrice = isTiered ? !!parseAmount(tierPrices[def?.id ?? ""]) : !!parseAmount(price);
       if (!hasPrice) return fail("Para publicar, define un precio.");
       if ((draft.categoryIds ?? []).length === 0) return fail("Para publicar, elige al menos una categoría.");
-      const hasPhoto = cloud ? merged.length > 0 && merged.some((image) => image.isPrimary) : !!draft.imageUrl || (variantsEnabled && merged.length > 0);
+      // #489 (PO decision, 18-nov): a legacy cover — a bare imageUrl from
+      // pre-gallery data — is a valid cover in cloud too, so a published
+      // piece can return from Borrador without re-uploading. Pieces with no
+      // photo at all keep the gate.
+      const hasCover = (merged.length > 0 && merged.some((image) => image.isPrimary)) || !!draft.imageUrl;
+      const hasPhoto = cloud ? hasCover : !!draft.imageUrl || (variantsEnabled && merged.length > 0);
       if (!hasPhoto) return fail("Para publicar, agrega una foto de portada.");
       // #124: per-color publish gates (photo, clave, distinct names) on the
       // FINAL array (staged photos already uploaded into finalVariants).
