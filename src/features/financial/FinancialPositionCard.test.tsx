@@ -67,6 +67,9 @@ describe("FinancialPositionCard (#279 frente 1)", () => {
   });
 
   it("registrar un pago de tarjeta llama a la acción con centavos exactos", async () => {
+    // Dentro del adeudo ($1,000 tarjeta): un toque registra, sin confirmación
+    // de sobre-pago (#279 r3 B2).
+    mocks.purchases = [purchase({ id: "pcard0", paymentMethod: "credit_card", totalConfirmed: 1000, lines: [{ lineId: "l1", ticketId: "t1", productId: "x", name: "Pieza", quantity: 1, unitCost: 1000 }], costAllocations: [{ lineId: "l1", merchandiseCents: 100000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 0, totalCents: 100000 }], status: "received" })];
     render(<ToastProvider><FinancialPositionCard /></ToastProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Pago de tarjeta" }));
     fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "500" } });
@@ -81,5 +84,34 @@ describe("FinancialPositionCard (#279 frente 1)", () => {
     expect(screen.getByText(/No se pudo cargar la posición/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
     expect(screen.queryByText("$0.00")).toBeNull();
+  });
+});
+
+describe("#279 r3 B2 — sobre-pago de tarjeta explícito", () => {
+  it("un pago MAYOR al adeudo muestra el aviso y exige confirmación antes de registrar", async () => {
+    // Adeudo: compra de $1,000 pagada con tarjeta.
+    mocks.purchases = [purchase({ id: "pcard", paymentMethod: "credit_card", totalConfirmed: 1000, lines: [{ lineId: "l1", ticketId: "t1", productId: "x", name: "Pieza", quantity: 1, unitCost: 1000 }], costAllocations: [{ lineId: "l1", merchandiseCents: 100000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 0, totalCents: 100000 }], status: "received" })];
+    render(<ToastProvider><FinancialPositionCard /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Pago de tarjeta" }));
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "1500" } });
+    // El aviso nombra el adeudo y el exceso antes de dejar registrar.
+    expect(await screen.findByText(/excede el adeudo/i)).toBeTruthy();
+    const button = screen.getByRole("button", { name: /Registrar pago/ });
+    fireEvent.click(button); // primer toque: arma la confirmación, NO registra
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Confirmar sobre-pago/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar sobre-pago/ }));
+    await waitFor(() => expect(mocks.register).toHaveBeenCalledTimes(1));
+    expect(mocks.register).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 150000 }));
+  });
+
+  it("un pago DENTRO del adeudo registra al primer toque, sin confirmación extra", async () => {
+    mocks.purchases = [purchase({ id: "pcard2", paymentMethod: "credit_card", totalConfirmed: 1000, lines: [{ lineId: "l1", ticketId: "t1", productId: "x", name: "Pieza", quantity: 1, unitCost: 1000 }], costAllocations: [{ lineId: "l1", merchandiseCents: 100000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 0, totalCents: 100000 }], status: "received" })];
+    render(<ToastProvider><FinancialPositionCard /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Pago de tarjeta" }));
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "600" } });
+    fireEvent.click(screen.getByRole("button", { name: /Registrar pago/ }));
+    await waitFor(() => expect(mocks.register).toHaveBeenCalledTimes(1));
+    expect(mocks.register).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 60000 }));
   });
 });

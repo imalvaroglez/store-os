@@ -12,7 +12,7 @@ import {
   TextArea,
   useToast,
 } from "../../design-system";
-import { legacyCollectDeposit, orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
 import { shortageByDimension } from "../../lib/inventory";
 import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
@@ -30,6 +30,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const { upsertOrder, state, activeStore } = useStore();
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
+  const [expressPrefillCents, setExpressPrefillCents] = useState<number | null>(null);
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [packagingOpen, setPackagingOpen] = useState(false);
@@ -101,25 +102,16 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     }
   }
 
-  /** One-tap payment collection: the deposit rises by the NET pending amount
-   * — saldo a favor applied from a sister order is the clienta's money already
-   * received there (#189) and must never be counted as cash here. */
-  async function collect() {
-    try {
-      const saved = await upsertOrder({
-        ...order,
-        deposit: legacyCollectDeposit(order),
-        updatedAt: new Date().toISOString(),
-      });
-      if (orderTotals(saved).balance > 0) {
-        toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
-        setPaymentsOpen(true);
-        return;
-      }
-      toast.success("Pedido cobrado");
-    } catch {
-      toast.error("No se pudo registrar el cobro.");
-    }
+  /** #279 r3 B1: the express "Cobrar" no longer writes a bare deposit — a
+   * deposit without a receipt never fed the caja and lied to the operator.
+   * It opens the Cobros sheet with the NET pending amount prefilled (saldo a
+   * favor from a sister order is the clienta's money already received there,
+   * #189, and is never counted as cash here); the operator confirms method
+   * and date and the receipt becomes valid evidence in the same tap-count. */
+  function collect() {
+    const { balance } = orderTotals(order);
+    setExpressPrefillCents(balance > 0 ? Math.round(balance * 100) : null);
+    setPaymentsOpen(true);
   }
 
   const ticket = ticketOpen ? orderTicketText(order, activeStore?.name ?? "Tienda", customer?.name) : "";
@@ -288,7 +280,12 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         </div>
       </div>
     </Sheet>
-    <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
+    <OrderPaymentsSheet
+      order={order}
+      open={paymentsOpen}
+      onClose={() => { setPaymentsOpen(false); setExpressPrefillCents(null); }}
+      prefillAmountCents={expressPrefillCents}
+    />
     <IncidentSheet order={order} open={incidentOpen} onClose={() => setIncidentOpen(false)} />
     <DeliverySheet order={order} open={deliveryOpen} onClose={() => setDeliveryOpen(false)} />
     {packagingOpen && <PackagingSheet order={order} onClose={() => setPackagingOpen(false)} />}

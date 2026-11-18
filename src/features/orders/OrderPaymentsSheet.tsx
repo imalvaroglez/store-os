@@ -41,14 +41,25 @@ export function OrderPaymentsSheet({
   order,
   open,
   onClose,
+  prefillAmountCents,
 }: {
   order: Order;
   open: boolean;
   onClose: () => void;
+  /** #279 r3 B1: the express "Cobrar" opens this sheet with the NET pending
+   * amount ready — the operator confirms method and date and the receipt is
+   * VALID payment evidence that feeds the caja. Never a silent deposit. */
+  prefillAmountCents?: number | null;
 }) {
   const { payments, loadOrderPayments, registerOrderPayment, draftOwnerId } = useStore();
   const toast = useToast();
   const [amountText, setAmountText] = useState("");
+  useEffect(() => {
+    if (open && prefillAmountCents != null && prefillAmountCents > 0) {
+      setAmountText((prefillAmountCents / 100).toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefillAmountCents]);
   const [method, setMethod] = useState<"cash" | "transfer">("cash");
   const [date, setDate] = useState(todayIso());
   const [note, setNote] = useState("");

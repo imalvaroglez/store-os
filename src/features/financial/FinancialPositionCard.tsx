@@ -26,11 +26,19 @@ export function FinancialPositionCard() {
   const [date, setDate] = useState(todayIso());
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  // #279 r3 B2: an overpayment is accepted only EXPLICITLY — the first tap
+  // arms the confirmation (with the excess named), the second registers.
+  const [armedOverpay, setArmedOverpay] = useState(false);
 
   useEffect(() => {
     if (activeStore && financial.status === "idle") void loadFinancialPosition();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStore?.id, financial.status]);
+
+  useEffect(() => {
+    if (!isOverpay) setArmedOverpay(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amountText]);
 
   if (!activeStore) return null;
 
@@ -45,9 +53,16 @@ export function FinancialPositionCard() {
       })
     : null;
 
-  async function savePayment() {
+  const cardDebtCents = position?.cardDebtCents ?? 0;
+  const draftAmountCents = (() => {
     const amount = parseAmount(amountText);
-    const amountCents = amount !== undefined ? Math.round(amount * 100) : 0;
+    return amount !== undefined ? Math.round(amount * 100) : 0;
+  })();
+  const overpayCents = position && draftAmountCents > 0 ? draftAmountCents - cardDebtCents : 0;
+  const isOverpay = overpayCents > 0;
+
+  async function savePayment() {
+    const amountCents = draftAmountCents;
     if (!(amountCents > 0)) {
       toast.error("El importe del pago debe ser mayor que cero.");
       return;
@@ -126,9 +141,18 @@ export function FinancialPositionCard() {
             <TextField label="Importe" inputMode="decimal" placeholder="0.00" value={amountText} onChange={(e) => setAmountText(e.target.value)} />
             <TextField label="Fecha" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             <TextField label="Nota (opcional)" placeholder="p. ej. pago parcial noviembre" value={note} onChange={(e) => setNote(e.target.value)} />
+            {isOverpay && (
+              <p className="text-sm text-danger">
+                El importe excede el adeudo de tarjeta por {formatMoneyExact(overpayCents / 100)} (adeudo actual: {formatMoneyExact(cardDebtCents / 100)}). Confirma que realmente pagaste de más.
+              </p>
+            )}
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setPayOpen(false)}>Cancelar</Button>
-              <Button disabled={saving} onClick={() => void savePayment()}>{saving ? "Guardando…" : "Registrar pago"}</Button>
+              <Button variant="ghost" onClick={() => { setPayOpen(false); setArmedOverpay(false); }}>Cancelar</Button>
+              {isOverpay && !armedOverpay ? (
+                <Button disabled={saving} onClick={() => setArmedOverpay(true)}>Registrar pago</Button>
+              ) : (
+                <Button disabled={saving} onClick={() => void savePayment()}>{saving ? "Guardando…" : isOverpay ? "Confirmar sobre-pago" : "Registrar pago"}</Button>
+              )}
             </div>
           </div>
         </Dialog>

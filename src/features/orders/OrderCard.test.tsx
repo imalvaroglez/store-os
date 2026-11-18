@@ -212,20 +212,18 @@ describe("estimated profit on the order card", () => {
 });
 
 
-describe("one-tap collection reconciliation (#218)", () => {
-  it.each([true, false])("reports canonical collection (pinned=%s)", async (pinned) => {
+describe("one-tap collection reconciliation (#218 → #279 r3 B1)", () => {
+  it("el cobro exprés SIEMPRE pasa por la evidencia de Cobros; la conciliación con pagos concurrentes vive en la transacción de cobro", async () => {
     holder.payments = [];
-    holder.upsertOrder.mockReset().mockResolvedValue({ ...order, deposit: pinned ? 0 : 1.25, ...(pinned ? { paymentsReceivedCents: 50 } : {}) });
+    holder.upsertOrder.mockReset();
     render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
-    if (pinned) {
-      expect(await screen.findByText("Este pedido ya tiene cobros registrados. Regístralos en Cobros.")).toBeInTheDocument();
-      expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
-      expect(screen.queryByText("Pedido cobrado")).toBeNull();
-    } else {
-      expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
-      expect(screen.queryByRole("dialog", { name: "Cobros del pedido" })).toBeNull();
-    }
+    // La hoja se abre con el monto listo: registrar el cobro ahí usa
+    // registerOrderPaymentTx, que relee el canónico y reconcilia (#218) —
+    // el anticipo mudo que ignoraba cobros concurrentes desaparece.
+    expect(await screen.findByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
+    expect(holder.upsertOrder).not.toHaveBeenCalled();
+    expect(screen.queryByText("Pedido cobrado")).toBeNull();
   });
 });
 
