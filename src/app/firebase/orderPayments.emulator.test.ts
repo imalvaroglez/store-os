@@ -532,4 +532,79 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     expect((await getDoc(parent)).data()?.depositCorrections).toHaveLength(1);
   });
 
+  // ── #369: no new cobros on a cancelled order ─────────────────────────────
+  // A cancelled order's money has no way out (no compensations, no incident
+  // refund, no delete-with-evidence), so receiving MORE there traps cash.
+
+  it("#369 rejects a cobro on a cancelled order (tx fail-closed, prior evidence preserved)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "orders/cancelled-pay-order"), {
+        storeId: "tx-store",
+        items: [{ lineId: "cp_L0", productName: "Aro Sol", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, orderStatus: "cancelled",
+        paymentsReceivedCents: 3000, paymentsRevision: 1, lastPaymentId: "canc_prior",
+        inheritedDepositMaterialized: true,
+        createdAt: "", updatedAt: "",
+      });
+      await setDoc(doc(db, "orders/cancelled-pay-order/payments/canc_prior"), {
+        id: "canc_prior", orderId: "cancelled-pay-order", storeId: "tx-store",
+        date: "2026-11-01", method: "cash", kind: "payment", amount: 30, amountCents: 3000,
+        createdAt: "2026-11-01T10:00:00.000Z", createdBy: "tx-user",
+      });
+    });
+    await expect(
+      registerOrderPaymentTx({ ...payment("canc_new", 50), orderId: "cancelled-pay-order" })
+    ).rejects.toThrow(/cancelado/i);
+    // Fail-closed leaves NO partial writes: prior evidence intact, nothing new.
+    const order = (await getDoc(doc(holder.db, "orders/cancelled-pay-order"))).data()!;
+    expect(order.orderStatus).toBe("cancelled");
+    expect(order.paymentsReceivedCents).toBe(3000);
+    expect(order.lastPaymentId).toBe("canc_prior");
+    const docs = await getDocs(collection(holder.db, "orders/cancelled-pay-order/payments"));
+    expect(docs.size).toBe(1);
+  });
+
+  it("#369 rules deny a raw SDK cobro batch on a cancelled order", async () => {
+    const parent = doc(holder.db, "orders/cancelled-pay-order");
+    const before = (await getDoc(parent)).data()!;
+    const record = { ...payment("canc_sdk", 50), orderId: "cancelled-pay-order", amountCents: 5000 };
+    const batch = writeBatch(holder.db);
+    batch.set(doc(holder.db, "orders/cancelled-pay-order/payments/canc_sdk"), record);
+    batch.update(parent, { lastPaymentId: "canc_sdk", paymentsRevision: (before.paymentsRevision ?? 0) + 1, paymentsReceivedCents: before.paymentsReceivedCents + 5000 });
+    await expect(batch.commit()).rejects.toThrow();
+    const docs = await getDocs(collection(holder.db, "orders/cancelled-pay-order/payments"));
+    expect(docs.size).toBe(1); // only the prior evidence
+  });
+
+  it("#369 regla: cancelado LEGADO con campo plano status también rechaza el lote SDK", async () => {
+    // Review #1 hallazgo MENOR: docs previos a orderStatus solo portan `status`.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/cancelled-legacy-status"), {
+        storeId: "tx-store",
+        items: [{ lineId: "cls_L0", productName: "Aro Sol", quantity: 1, unitPrice: 100, subtotal: 100 }],
+        deposit: 0, status: "cancelled", // legacy plane field — no orderStatus
+        createdAt: "", updatedAt: "",
+      });
+    });
+    const parent = doc(holder.db, "orders/cancelled-legacy-status");
+    const record = { ...payment("cls_sdk", 50), orderId: "cancelled-legacy-status", amountCents: 5000 };
+    const batch = writeBatch(holder.db);
+    batch.set(doc(holder.db, "orders/cancelled-legacy-status/payments/cls_sdk"), record);
+    batch.update(parent, { lastPaymentId: "cls_sdk", paymentsRevision: 1, paymentsReceivedCents: 5000 });
+    await expect(batch.commit()).rejects.toThrow();
+    const docs = await getDocs(collection(holder.db, "orders/cancelled-legacy-status/payments"));
+    expect(docs.size).toBe(0);
+  });
+
+  it("#369 a signed adjustment on a cancelled order stays valid evidence (the exit is a separate PO decision)", async () => {
+    const saved = await registerOrderPaymentTx({
+      ...payment("canc_adj", -30), orderId: "cancelled-pay-order",
+      kind: "adjustment", method: "unknown", note: "Devolución en efectivo",
+    });
+    expect(saved.payments[0]).toMatchObject({ amount: -30, kind: "adjustment" });
+    const order = (await getDoc(doc(holder.db, "orders/cancelled-pay-order"))).data()!;
+    expect(order.paymentsReceivedCents).toBe(0); // 3000 − 3000, evidence kept
+  });
+
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { proposeDistribution } from "./profitDistribution";
+import { proposeDistribution, profitDistributionDocId } from "./profitDistribution";
 
 // #128 — etapa lista: propuesta de reparto 50/30/20, SOLO LECTURA respecto de
 // dinero. Entradas EXPLÍCITAS (resultado operativo del periodo, pérdida
@@ -104,5 +104,16 @@ describe("proposeDistribution (#128 etapa lista)", () => {
   it("pura e idempotente: mismas entradas, misma propuesta", () => {
     const input = { operatingResultCents: 123456, accumulatedLossCents: 10000, proposedAmountCents: 50000 };
     expect(proposeDistribution(input)).toEqual(proposeDistribution(input));
+  });
+});
+
+describe("#459 r6 — id determinista por INTENTO (tienda+periodo+intentId)", () => {
+  it("el mismo intento produce el mismo id aunque el reloj avance (reintento tras respuesta perdida)", () => {
+    expect(profitDistributionDocId("s1", "2026-10", "int-7")).toBe(profitDistributionDocId("s1", "2026-10", "int-7"));
+  });
+
+  it("el MISMO importe en intents distintos NO colapsa (dos autorizaciones legítimas)", () => {
+    expect(profitDistributionDocId("s1", "2026-10", "int-7"))
+      .not.toBe(profitDistributionDocId("s1", "2026-10", "int-8"));
   });
 });

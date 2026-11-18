@@ -1,6 +1,6 @@
 import type { Product, PurchaseLine, Order, OrderItem } from "../types";
 import { totalStock, variantReservationDeltas, type VariantStockDelta } from "./variants";
-import { effectiveOrderStatus, orderItems, orderStatusIsOpen } from "./orders";
+import { effectiveOrderStatus, orderItems, orderReference, orderStatusIsOpen } from "./orders";
 
 // Inventory math — pure functions used by the StoreProvider (to apply purchases
 // and reserve stock on order changes) and by the inventory UI (committed stock).
@@ -111,20 +111,94 @@ export function applyPurchaseLines(
   return updates;
 }
 
+/** #463: one row per order that still holds pending pieces of the product. */
+export type CommittedLine = {
+  variantId?: string;
+  variantColor?: string;
+  quantity: number;
+};
+
+export type CommittedOrderRow = {
+  orderId: string;
+  /** The same visible reference Pedidos shows (#TOR…). */
+  reference: string;
+  customerId?: string;
+  /** Cancelled but still holding (money-backed R9) — the row must say so. */
+  cancelled: boolean;
+  /** Pending pieces unified per variant (no variantId: design-level line). */
+  lines: CommittedLine[];
+  /** This order's pending pieces of the product (Σ lines). */
+  total: number;
+};
+
+export type CommittedBreakdown = { total: number; rows: CommittedOrderRow[] };
+
+/**
+ * #463: THE single derivation of a product's "Comprometido" — the figure the
+ * card shows AND its per-order breakdown both come from here, so they can
+ * never disagree. Pieces still PENDING delivery, per stock dimension:
+ * creation-time plan reservations included (R8), partial deliveries
+ * subtract (#333 — the delivered piece left with the clienta, it is not
+ * committed), fully delivered orders are consumed rather than committed, and
+ * a money-backed cancelled order keeps its still-pending pieces off the
+ * shelf with its row flagged cancelled.
+ */
+export function committedBreakdownForProduct(
+  orders: Order[],
+  storeId: string,
+  productId: string
+): CommittedBreakdown {
+  const rows: CommittedOrderRow[] = [];
+  let total = 0;
+  for (const order of orders) {
+    if (order.storeId !== storeId || !holdsPieces(order)) continue;
+    const status = effectiveOrderStatus(order);
+    if (status === "delivered") continue; // consumed, not committed
+    // Delivered-so-far per dimension, consumed line by line so each pending
+    // quantity lands on its own line (the same greedy walk heldOrderItems
+    // uses — a delivered piece always discounts its own dimension).
+    const delivered = new Map(deliveredByDimension(order));
+    const byVariant = new Map<string, CommittedLine>();
+    let orderTotal = 0;
+    for (const item of orderItems(order)) {
+      if (item.productId !== productId) continue;
+      const key = stockDimensionKey(item.productId, item.variantId);
+      const left = Math.max(0, delivered.get(key) ?? 0);
+      const take = Math.min(item.quantity, left);
+      delivered.set(key, left - take);
+      const pending = item.quantity - take;
+      if (pending <= 0) continue;
+      const variantKey = item.variantId ?? "";
+      const existing = byVariant.get(variantKey);
+      if (existing) existing.quantity += pending;
+      else byVariant.set(variantKey, { ...(item.variantId ? { variantId: item.variantId } : {}), ...(item.variantColor ? { variantColor: item.variantColor } : {}), quantity: pending });
+      orderTotal += pending;
+    }
+    if (orderTotal <= 0) continue;
+    rows.push({
+      orderId: order.id,
+      reference: orderReference(order.id),
+      ...(order.customerId ? { customerId: order.customerId } : {}),
+      cancelled: status === "cancelled",
+      lines: [...byVariant.values()],
+      total: orderTotal,
+    });
+    total += orderTotal;
+  }
+  return { total, rows };
+}
+
 /**
  * Sum of stock still held for PENDING delivery — the "Comprometido" the
- * product card shows next to the available quantityOnHand. Mirrors
- * `holdsPieces` exactly (creation-time plan reservations included, R8) minus
- * delivered orders, whose pieces are consumed rather than committed.
+ * product card shows next to the available quantityOnHand. Derived from the
+ * same breakdown the #463 drill-down shows (one truth for both).
  */
 export function committedForProduct(
   orders: Order[],
   storeId: string,
   productId: string
 ): number {
-  return orders
-    .filter((o) => o.storeId === storeId && holdsPieces(o) && effectiveOrderStatus(o) !== "delivered")
-    .reduce((sum, o) => sum + orderItems(o).filter((item) => item.productId === productId).reduce((lineSum, item) => lineSum + item.quantity, 0), 0);
+  return committedBreakdownForProduct(orders, storeId, productId).total;
 }
 
 /**

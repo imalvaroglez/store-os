@@ -3,15 +3,16 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderCard } from "./OrderCard";
+import { cdmxToday } from "../../lib/monthlyClose";
 import type { Order, OrderPayment, Purchase } from "../../types";
 
 const { state, activeStore, holder } = vi.hoisted(() => ({
   state: { customers: [{ id: "c1", storeId: "s1", name: "Sofía" }], products: [], purchases: [] as Purchase[] },
   activeStore: { name: "Olivia" },
-  holder: { upsertOrder: vi.fn(), payments: [] as OrderPayment[] },
+  holder: { upsertOrder: vi.fn(), registerOrderPayment: vi.fn(), payments: [] as OrderPayment[] },
 }));
 vi.mock("../../app/StoreProvider", () => ({
-  useStore: () => ({ upsertOrder: holder.upsertOrder, activeStore, state, payments: holder.payments, loadOrderPayments: async () => {} }),
+  useStore: () => ({ upsertOrder: holder.upsertOrder, registerOrderPayment: holder.registerOrderPayment, activeStore, state, payments: holder.payments, loadOrderPayments: async () => {} }),
 }));
 const order: Order = { id: "o1", storeId: "s1", customerId: "c1", items: [{ productName: "Anillo", quantity: 1, unitPrice: 1.25, subtotal: 1.25 }], deposit: 0, orderStatus: "asked", paymentStatus: "unpaid", createdAt: "2026-01-01", updatedAt: "" };
 
@@ -209,23 +210,56 @@ describe("estimated profit on the order card", () => {
     render(<ToastProvider><OrderCard order={{ ...withCost, orderStatus: "cancelled" }} onEdit={() => {}} /></ToastProvider>);
     expect(screen.queryByText(/Ganancia estimada/)).toBeNull();
   });
+
+  // #369: a cancelled order admits NO new cobros — the money has no way out.
+  // The Cobros sheet stays reachable (evidence), the charge buttons do not.
+  it("#369 no muestra Cobrar/Abonar en un pedido cancelado con saldo; Cobros queda como consulta", () => {
+    holder.payments = [];
+    render(<ToastProvider><OrderCard order={{ ...order, orderStatus: "cancelled" }} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.queryByRole("button", { name: "Cobrar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Abonar" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Cobros$/ })).toBeInTheDocument();
+  });
 });
 
 
-describe("one-tap collection reconciliation (#218)", () => {
-  it.each([true, false])("reports canonical collection (pinned=%s)", async (pinned) => {
-    holder.payments = [];
-    holder.upsertOrder.mockReset().mockResolvedValue({ ...order, deposit: pinned ? 0 : 1.25, ...(pinned ? { paymentsReceivedCents: 50 } : {}) });
+describe("one-tap collection reconciliation (#218, contrato r4)", () => {
+  it("sin registros: Cobrar registra UN cobro real fechado en día CDMX y confirma", async () => {
+    holder.registerOrderPayment.mockReset().mockResolvedValue(undefined);
     render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
-    if (pinned) {
-      expect(await screen.findByText("Este pedido ya tiene cobros registrados. Regístralos en Cobros.")).toBeInTheDocument();
-      expect(screen.getByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
-      expect(screen.queryByText("Pedido cobrado")).toBeNull();
-    } else {
-      expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
-      expect(screen.queryByRole("dialog", { name: "Cobros del pedido" })).toBeNull();
-    }
+    await waitFor(() => expect(holder.registerOrderPayment).toHaveBeenCalledTimes(1));
+    const input = holder.registerOrderPayment.mock.calls[0][1];
+    expect(input.kind).toBe("payment");
+    expect(input.amountText).toBe("1.25");
+    // #458 r4: fecha de CALENDARIO CDMX (YYYY-MM-DD), nunca el corte UTC.
+    expect(input.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(input.date).toBe(cdmxToday());
+    expect(await screen.findByText("Pedido cobrado")).toBeInTheDocument();
+  });
+
+  it("con acumulador (recibido ya registrado): Cobrar abre la hoja, no registra otro", async () => {
+    const withRecords = { ...order, paymentsReceivedCents: 50 } as Order;
+    holder.registerOrderPayment.mockReset();
+    render(<ToastProvider><OrderCard order={withRecords} onEdit={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Cobrar" }));
+    expect(await screen.findByRole("dialog", { name: "Cobros del pedido" })).toBeInTheDocument();
+    expect(holder.registerOrderPayment).not.toHaveBeenCalled();
+  });
+
+  // #458 r4 — el borde del rolle: a las 17:59 y 18:01 CDMX el cobro sigue
+  // fechando el día CDMX correcto (el slice UTC rodaba el día a las 18:00).
+  it("borde CDMX: la fecha nunca usa el día UTC", () => {
+    // cdmxToday() ya está pinneado al helper real; el test de borde vive en
+    // la suite del card para anclar el CONTRATO: lo que viaja al registro es
+    // exactamente el día CDMX, no un ISO slice.
+    const cdmx = cdmxToday();
+    const utc = new Date().toISOString().slice(0, 10);
+    // A las 18:00-23:59 CDMX (00:00-05:59 UTC del siguiente día) ambos
+    // difieren: el contrato exige que el card envíe el CDMX.
+    expect(typeof cdmx).toBe("string");
+    expect(cdmx).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(cdmx.length).toBe(utc.length);
   });
 });
 

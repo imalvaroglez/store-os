@@ -234,6 +234,21 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // #459: authorized profit distributions — money authorizations. Owner
+    // (Fer) creates them against a CLOSED period; append-only like closes:
+    // an authorized history is never edited, corrections come as new docs.
+    match /profitDistributions/{id} {
+      // #459 r6: the retry contract reads the deterministic doc id directly;
+      // a not-yet-existing doc must read cleanly for signed-in operators
+      // (same null-safe pattern as orders/products).
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     // #202: post-close adjustments — linked to their origin close, applied in
     // an OPEN period or PENDING. Owner creates; saved entries are immutable.
     match /closeAdjustments/{id} {
@@ -346,6 +361,15 @@ service cloud.firestore {
     function validReceipt(data, orderId, paymentId) {
       return data.id == paymentId && data.orderId == orderId
         && data.createdBy == request.auth.uid
+        // #369: no new cobros on a CANCELLED order — the money has no exit
+        // path (compensations exclude cancelled, incidents reject them).
+        // Signed adjustments stay valid evidence for the PO's future exit.
+        && (data.kind != 'payment'
+            // #455 r5 (merge review): dating the legacy anticipo is EVIDENCE
+            // of money received BEFORE the cancellation, not a new cobro —
+            // the close still counts that cash, so it stays fechable.
+            || paymentId == 'inherited_deposit'
+            || get(/databases/$(database)/documents/orders/$(orderId)).data.get('orderStatus', get(/databases/$(database)/documents/orders/$(orderId)).data.get('status', '')) != 'cancelled')
         && data.createdAt is string && data.createdAt.size() > 0
         && data.amount is number && data.amount != 0
         && math.abs(data.amount) <= 9000000000000
@@ -376,7 +400,25 @@ service cloud.firestore {
       let path = /databases/$(database)/documents/orders/$(orderId)/payments/$(paymentId);
       let receipt = getAfter(path).data;
       let inheritedChanged = before.get('inheritedDepositMaterialized', false) != after.get('inheritedDepositMaterialized', false);
-      return paymentId is string && paymentId.size() > 0 && paymentId != 'inherited_deposit'
+      // #455 r5: DATING-ONLY materialization of the legacy deposit — the
+      // TOTAL anticipo captured at creation has no new cobro to ride, so the
+      // inherited receipt itself is the movement's evidence: no receipt id in
+      // lastPaymentId, no cobro. Narrow by construction: only an order with
+      // NO accumulator yet, deposit untouched, lastPaymentId untouched, the
+      // accumulator born EXACTLY from the inherited receipt's amount, one
+      // revision bump. Anything else keeps demanding a real cobro.
+      let inheritedOnly = inheritedChanged
+        && before.get('inheritedDepositMaterialized', false) == false
+        && !('paymentsReceivedCents' in before)
+        && after.get('lastPaymentId', '') == before.get('lastPaymentId', '')
+        && after.get('deposit', 0) == before.get('deposit', 0)
+        && validInheritedReceipt(orderId, before, after)
+        && after.paymentsReceivedCents is int
+        && after.paymentsReceivedCents == getAfter(/databases/$(database)/documents/orders/$(orderId)/payments/inherited_deposit).data.amountCents
+        && after.get('paymentsRevision', 0) is int
+        && after.get('paymentsRevision', 0) == before.get('paymentsRevision', 0) + 1;
+      return inheritedOnly
+        || (paymentId is string && paymentId.size() > 0 && paymentId != 'inherited_deposit'
         && paymentId != before.get('lastPaymentId', '') && !exists(path)
         && receipt.orderId == orderId && receipt.storeId == before.storeId
         && before.get('paymentsRevision', 0) is int && before.get('paymentsRevision', 0) >= 0
@@ -394,19 +436,23 @@ service cloud.firestore {
         && (!inheritedChanged || validInheritedReceipt(orderId, before, after))
         && after.paymentsReceivedCents == before.get('paymentsReceivedCents', 0) + receipt.amountCents
           + (inheritedChanged
-            ? getAfter(/databases/$(database)/documents/orders/$(orderId)/payments/inherited_deposit).data.amountCents : 0);
+            ? getAfter(/databases/$(database)/documents/orders/$(orderId)/payments/inherited_deposit).data.amountCents : 0));
     }
     function receiptUpdatesParent(orderId, paymentId, receipt) {
       let path = /databases/$(database)/documents/orders/$(orderId);
       let before = get(path).data;
       let after = getAfter(path).data;
+      // #455 r5: the inherited receipt may arrive ALONE (dating-only
+      // materialization — no cobro to name in lastPaymentId) or riding a real
+      // cobro (which then owns lastPaymentId). A real cobro ALWAYS names
+      // itself and only itself.
       return receipt.storeId == before.storeId
-        && after.get('lastPaymentId', '') != before.get('lastPaymentId', '')
         && (paymentId == 'inherited_deposit'
           ? (before.get('inheritedDepositMaterialized', false) == false
               && after.get('inheritedDepositMaterialized', false) == true
-              && after.lastPaymentId != 'inherited_deposit' && receipt.amount == before.get('deposit', 0))
-          : after.lastPaymentId == paymentId);
+              && receipt.amount == before.get('deposit', 0))
+          : (after.get('lastPaymentId', '') != before.get('lastPaymentId', '')
+              && after.get('lastPaymentId', '') == paymentId));
     }
     // #271 (PO 2026-11-09): a deposit LOWERING on an order with an accumulator
     // and no materialization is valid ONLY as a signed correction. The trail
@@ -475,10 +521,22 @@ service cloud.firestore {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries'])
+        // #380 (revisión r2, CRÍTICO): a fabricated create must not arrive
+        // with credit either — cancellation would launder it into real,
+        // spendable saldo a favor. Same deny-list discipline as money.
+        && !request.resource.data.keys().hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
+        // #380 prototype: saldo a favor moves ONLY through the trusted
+        // applyCredit/releaseCredit callables. The Admin SDK bypasses rules
+        // (IAM), so the FINAL protection is this total client-side lock:
+        // any CHANGE to the credit fields from a client SDK is denied.
+        // Verbatim carries (unchanged keys) are unaffected — ordinary
+        // saves keep working.
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger'])
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision'])
             || validMoneyUpdate(id, resource.data, request.resource.data))
         // #218: legacy deposit cannot rise after receipts, and is frozen once
@@ -510,8 +568,46 @@ service cloud.firestore {
             || request.resource.data.get('deliveries', [])
                 == resource.data.get('deliveries', [])
             || validDeliveryAppend(id, resource.data, request.resource.data))
-        && (!('installmentsReservedAt' in resource.data)
-            || request.resource.data.get('installmentsReservedAt', null) == resource.data.installmentsReservedAt)
+        // #478: the installment reservation marker never changes once
+        // present, and may only be BORN on money it can point to: a doc
+        // that ALREADY carries received money (the legitimate edit path
+        // stamps it exactly then), or this very write being a signed
+        // payment (validMoneyUpdate — the first-abono stamp; CEL's ||
+        // short-circuits, so the expensive check only runs in that rare
+        // case). A bare update forging it on an unbacked order made
+        // cancellation keep the pieces (destroyed availability) and
+        // blocked deletion.
+        && (request.resource.data.get('installmentsReservedAt', null)
+              == resource.data.get('installmentsReservedAt', null)
+            || (!('installmentsReservedAt' in resource.data)
+              && (resource.data.get('paymentsReceivedCents', 0) > 0
+                  || resource.data.get('inheritedDepositMaterialized', false) == true
+                  // #168 F2: a still-unmaterialized legacy deposit is money
+                  // too — converting such an order to installments stamps
+                  // the marker legitimately. (#218 already freezes the
+                  // deposit against silent rises once receipts exist.)
+                  || resource.data.get('deposit', 0) > 0
+                  // #478 C1: the legitimate single-save conversion installs
+                  // the plan AND captures the first anticipo in ONE write —
+                  // the marker is born from THIS write's deposit rise. Same
+                  // trust as the previous line: the deposit field is money
+                  // evidence either way, a forged rise is a visible lie in
+                  // the doc (auditable), and #218 freezes rises once
+                  // receipts exist. A plan must be present (this write or
+                  // the doc) — the marker without a plan is not a shape the
+                  // legitimate client ever writes.
+                  || (request.resource.data.get('deposit', 0) > 0
+                      && resource.data.get('deposit', 0) == 0
+                      && !('paymentsReceivedCents' in resource.data)
+                      && ('installments' in request.resource.data
+                          || 'installments' in resource.data))
+                  // ...or THIS write itself is a money write: the money
+                  // branch above has already forced it through
+                  // validMoneyUpdate, so re-evaluating here would only
+                  // burn CEL budget (1000-expression limit) for the same
+                  // verdict.
+                  || request.resource.data.diff(resource.data).affectedKeys()
+                    .hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision']))))
         && (resource.data.get('inheritedDepositMaterialized', false) != true
             || request.resource.data.get('inheritedDepositMaterialized', false) == true);
       // Preserve the parent of immutable money evidence, including net-zero
