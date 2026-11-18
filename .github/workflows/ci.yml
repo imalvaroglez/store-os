@@ -398,7 +398,11 @@ jobs:
           # a bare --only functions tries to DELETE anything absent from this
           # branch's source and aborts non-interactively — blocking rules deploys
           # on unrelated work. Listing the exact callables never deletes others.
-          firebase deploy --only functions:applyCredit,functions:releaseCredit,functions:importPurchasePdf --project "$P" \
+          # --force sets the artifacts-repo cleanup policy (container images otherwise
+# accumulate toward a monthly bill — cero-costos hygiene). Deterministic
+# without it: the deploy SUCCEEDS but the step exits 1 on policy setup
+# (release window 2026-11-17: two failed production dispatches).
+firebase deploy --only functions:applyCredit,functions:releaseCredit,functions:importPurchasePdf --force --project "$P" \
             --token "$FIREBASE_TOKEN" --non-interactive --force
       - name: Verify the trusted callables answer before rules harden
         # An onCall endpoint that EXISTS rejects a session-less probe with a
