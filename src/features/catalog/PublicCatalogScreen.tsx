@@ -10,7 +10,7 @@ import {
   type PublicStore,
   type PublicStockSignal,
 } from "../../app/firebase/publicCatalog";
-import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
+import { cartItemsForPublicProduct, cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 import { useCart } from "./useCart";
 import { useSeo } from "./useSeo";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
@@ -57,7 +57,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   useEffect(() => {
     if (!data) return;
     cart.prune(new Set(data.catalog.products.map((product) => product.productSlug)));
-    cart.refresh(data.catalog.products.map(cartItemFromPublicProduct));
+    cart.refresh(data.catalog.products.flatMap((product) => cartItemsForPublicProduct(product, data.store.type)));
   }, [cart.prune, cart.refresh, data]);
 
   // Same per-route SEO contract as the Olivia storefront: title/canonical/og

@@ -13,7 +13,7 @@ import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
 import { useSeo } from "./useSeo";
 import { useCart } from "./useCart";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
-import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
+import { cartItemsForPublicProduct, cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 import type { Storefront, StorefrontSection } from "../../types";
 import { InlineEditable, InlineFaqEditor } from "./InlineEditable";
 
@@ -321,7 +321,7 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
   useEffect(() => {
     if (!store || !catalog) return;
     cart.prune(new Set(catalog.products.map((p) => p.productSlug)));
-    cart.refresh(catalog.products.map(cartItemFromPublicProduct));
+    cart.refresh(catalog.products.flatMap((product) => cartItemsForPublicProduct(product, store.type)));
   }, [cart.prune, cart.refresh, store, catalog]);
   const visibleSlugs = useMemo(() => catalog ? new Set(catalog.products.map((p) => p.productSlug)) : undefined, [catalog]);
   const lines = visibleSlugs ? pruneCartLines(cart.lines, visibleSlugs) : cart.lines;

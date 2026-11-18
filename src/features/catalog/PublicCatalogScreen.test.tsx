@@ -448,3 +448,17 @@ it("#489 a legacy manual mark cannot block an available color or offer an empty 
   expect(screen.queryByRole("button", { name: "Agregar al carrito" })).toBeNull();
   expect(screen.getByText("Agotado")).toBeTruthy();
 });
+
+
+it("#489 refreshes a persisted color inquiry before composing WhatsApp", async () => {
+  localStorage.setItem("store-os:cart:santi", JSON.stringify({ v: 1, lines: [{ productSlug: "perfume~silver", name: "Perfume · Plateado", sku: "OLD", qty: 2, inquire: true }] }));
+  mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, type: "inventory_tiered" }, catalog: { categories: [], products: [{
+    ...catalog.products[0], availability: "sold_out", stockSignal: "disponible", variants: [{ id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" }],
+  }] } });
+  render(<PublicCatalogScreen slug="santi" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Abrir pedido/ }));
+  const link = await screen.findByRole("link", { name: "Enviar solicitud por WhatsApp" });
+  await waitFor(() => expect(decodeURIComponent(link.getAttribute("href")!)).not.toContain("sobre pedido"));
+  const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+  expect(saved.lines[0]).toMatchObject({ qty: 2, inquire: false });
+});
