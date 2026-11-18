@@ -972,3 +972,44 @@ describe("carrito — filas por tarifa (#442, revisión)", () => {
     expect(screen.queryByText(/Agrega \d piezas más/)).toBeNull();
   });
 });
+
+describe("#219 — contratos de captura del catálogo público (auditoría)", () => {
+  async function openNamedDrawer() {
+    const view = await renderStore();
+    await addFromDetail(view, 0);
+    await openDrawer();
+    const dialog = screen.getByRole("dialog", { name: "Tu pedido" });
+    const field = within(dialog).getByLabelText("Tu nombre") as HTMLInputElement;
+    return { field };
+  }
+
+  it("«Tu nombre»: el pegado con saltos de línea queda en una sola línea; el mensaje usa el nombre limpio", async () => {
+    const { field } = await openNamedDrawer();
+    // The single-line input itself drops the pasted newline (DOM value
+    // sanitization); our handler turns the tab into a space. Either way the
+    // capture can never hold a control character.
+    fireEvent.change(field, { target: { value: "Ana\nPaola\tGarcía" } });
+    expect(field.value).not.toMatch(/[\r\n\t]/);
+    expect(field.value).toContain("Paola García");
+    fireEvent.change(field, { target: { value: "Ana Paola García" } });
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("soy Ana Paola García,");
+  });
+
+  it("«Tu nombre» declara tope de 60 y la captura nunca lo excede", async () => {
+    const { field } = await openNamedDrawer();
+    expect(field).toHaveAttribute("maxlength", "60");
+    fireEvent.change(field, { target: { value: "x".repeat(80) } });
+    expect(field.value).toBe("x".repeat(60));
+  });
+
+  it("el nombre con marcas de WhatsApp llega escapado y sin espacios de más (regresión de uso)", async () => {
+    const { field } = await openNamedDrawer();
+    fireEvent.change(field, { target: { value: "  Ana *Lux*  " } });
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("soy Ana \\*Lux\\*,");
+    expect(text).not.toMatch(/soy {2,}/);
+  });
+});
