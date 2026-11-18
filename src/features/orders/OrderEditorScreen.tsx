@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useStore, newOrder } from "../../app/StoreProvider";
 import { Button, EmptyState, Screen, ScreenHeader } from "../../design-system";
 import { navigate } from "../../lib/router";
+import { takeReturnOrigin } from "../../lib/returnOrigin";
 import { useRoute } from "../../app/router";
 import { OrderForm } from "./OrderForm";
 
@@ -10,6 +11,11 @@ export function OrderEditorScreen() {
   const route = useRoute();
   const sub = route.name === "admin" ? route.params.sub ?? "" : "";
   const [draft] = useState(() => newOrder(activeStore?.id ?? ""));
+  // #463: a pedido opened from another area's task (e.g. the products'
+  // "Comprometido" breakdown) returns THERE — same list state, same scroll —
+  // instead of stranding the operator in the orders list. Consumed once on
+  // mount so every exit of this visit uses the same target.
+  const [returnTo] = useState(() => (sub === "nuevo" ? undefined : takeReturnOrigin(sub)));
 
   if (!activeStore) return null;
   const order = sub === "nuevo"
@@ -29,15 +35,30 @@ export function OrderEditorScreen() {
     <Screen>
       <ScreenHeader
         title={sub === "nuevo" ? "Nuevo pedido" : "Editar pedido"}
-        action={<Button variant="ghost" onClick={() => navigate("/pedidos")}>← Pedidos</Button>}
+        action={(
+          <Button
+            variant="ghost"
+            onClick={() => {
+              // #463 r2: the sheet's navigation PUSHED this editor onto the
+              // history stack — going BACK lets the browser restore the
+              // catalog's exact scroll position natively (the in-app restore
+              // could not survive the route-change scroll reset poisoning the
+              // saved value at unmount; native restoration does, 10/10).
+              if (returnTo) window.history.back();
+              else navigate("/pedidos");
+            }}
+          >
+            {returnTo === "/productos" ? "← Productos" : "← Pedidos"}
+          </Button>
+        )}
       />
       <div className="mx-auto max-w-5xl">
         <OrderForm
           key={`${draftOwnerId}::${activeStore.id}::${sub}`}
           order={order}
           isNew={sub === "nuevo"}
-          onDone={() => navigate("/pedidos")}
-          onCancel={() => navigate("/pedidos")}
+          onDone={() => { if (returnTo) window.history.back(); else navigate("/pedidos"); }}
+          onCancel={() => { if (returnTo) window.history.back(); else navigate("/pedidos"); }}
         />
       </div>
     </Screen>
