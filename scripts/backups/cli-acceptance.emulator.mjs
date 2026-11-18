@@ -75,7 +75,7 @@ async function signIn(email) {
   return fetch(`http://${EMULATORS.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fixture`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }) });
 }
 
-test('operator CLI creates a usable backup and safely rejects damaged recovery attempts', { timeout: 240000 }, async t => {
+test('operator CLI creates a usable backup and safely rejects damaged recovery attempts', { timeout: 300000 }, async t => {
   Object.assign(process.env, EMULATORS);
   const root = await mkdtemp(path.join(os.tmpdir(), 'store-os-backup-cli-'));
   const home = path.join(root, 'operator-home'); await mkdir(home);
@@ -139,7 +139,7 @@ test('operator CLI creates a usable backup and safely rejects damaged recovery a
     assert.equal((await success(configPath, 'check-key', ['--identity', key])).recoveryRecipientVerified, true);
     const report = await success(configPath, 'preflight');
     assert.equal(report.users, 1004); assert.equal(report.documents, Object.keys(records).length); assert.equal(report.objects, 2);
-    Object.assign(config, { reviewedPreflightSha256: report.approvalSha256, maxDocuments: 30, maxFirestoreReads: report.firestoreReadOperations + 50, maxDailyFirestoreReads: (report.firestoreReadOperations + 50) * 3, maxStorageBytes: 10000 });
+    Object.assign(config, { reviewedPreflightSha256: report.approvalSha256, maxDocuments: 30, maxFirestoreReads: report.firestoreReadOperations + 50, maxDailyFirestoreReads: (report.firestoreReadOperations + 50) * 4, maxStorageBytes: 10000 });
     await json(configPath, config);
     const hubFile = path.join(os.tmpdir(), `hub-${DEV}.json`); const hubBefore = await readFile(hubFile, 'utf8');
     const vaultKey = path.join(root, 'vault-identity'); await rename(key, vaultKey);
@@ -207,6 +207,29 @@ test('operator CLI creates a usable backup and safely rejects damaged recovery a
     assert(!(await readdir(home)).some(name => name.startsWith('capture-')));
     assert.deepEqual(documentSnapshot(await client.documents()), expectedDocs);
     await reset(client, config); await assertEmpty(client);
+  });
+
+  await t.test('verification suspension skips the schedule and a manual run recovers', async () => {
+    // The blocked verification above left the runtime suspended with a safe code.
+    const suspendedState = await readJson(path.join(home, 'state.json'));
+    assert.equal(suspendedState.suspendedForVerification, config.reviewedPreflightSha256);
+    assert.match(suspendedState.verificationFailure ?? '', /^[A-Z_]+$/);
+    const blockedStatus = await success(configPath, 'status');
+    assert.equal(blockedStatus.suspended, true);
+    assert.equal(blockedStatus.verificationSuspended, true);
+    assert.match(blockedStatus.verificationFailure, /^[A-Z_]+$/);
+    // A scheduled cycle stays suspended: no output, no capture, no budget spent.
+    const blocked = await invoke(configPath, 'run');
+    assert.equal(blocked.code, 0); assert.equal(blocked.result, null);
+    assert.equal(JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8')).reservedReads, suspendedState.reservedReads);
+    // An explicit manual run captures the (now synthetic-empty) source, verifies and clears the suspension.
+    const recovered = await success(configPath, 'run', ['--manual']);
+    assert.equal(recovered.completed, true);
+    assert.equal(recovered.verification.restoreVerified, true);
+    assert.equal(JSON.parse(await readFile(path.join(home, 'state.json'), 'utf8')).suspendedForVerification, null);
+    const recoveredStatus = await success(configPath, 'status');
+    assert.equal(recoveredStatus.suspended, false);
+    assert.equal(recoveredStatus.verificationSuspended, false);
   });
 
   await t.test('wrong key and truncated ciphertext reject recovery without creating data', async () => {
