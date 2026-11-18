@@ -39,11 +39,16 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("credit customer change wi
         orderStatus: "confirmed", paymentsReceivedCents: 150000, creditConsumedCents: 50000, revision: 1,
         createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z",
       });
-      // A plain order with a real ledger entry but zeroed accumulators (settled).
+      // A REAL settled credit: application + release entries (both positive,
+      // append-only) with zero accumulators — the state releaseCredit leaves.
       await setDoc(doc(ctx.firestore(), "orders/inv367-o3"), {
         storeId: "inv367-store", customerId: "maria", items: [line("o3-a", 400)], deposit: 0,
         orderStatus: "confirmed", revision: 1,
-        creditLedger: [{ id: "e1", kind: "release", amountCents: 0, at: "2026-11-01T00:00:00.000Z", by: "inv367-user" }],
+        creditAppliedCents: 0,
+        creditLedger: [
+          { id: "e1", kind: "application", amountCents: 40000, at: "2026-11-01T00:00:00.000Z", by: "inv367-user" },
+          { id: "e2", kind: "release", amountCents: 40000, at: "2026-11-02T00:00:00.000Z", by: "inv367-user" },
+        ],
         createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z",
       });
       // A credit-free order: changing its clienta is ordinary work.
@@ -74,7 +79,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("credit customer change wi
     ).rejects.toThrow(/cambiar la clienta movería ese dinero/);
   });
 
-  it("keeps the clienta change allowed when the ledger is settled (zero accumulators, harmless entry)", async () => {
+  it("allows the clienta change after a REAL settled ledger (application + release, zero accumulators)", async () => {
     const saved = await saveOrderWithStockTx({ uid: "inv367-user" } as never, asOrder("inv367-o3", "ana", [line("o3-a", 400)]), 1, "mut-367-c");
     expect(saved.order.revision).toBe(2);
     expect((await getDoc(doc(holder.db, "orders/inv367-o3"))).data()?.customerId).toBe("ana");

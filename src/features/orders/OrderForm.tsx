@@ -25,7 +25,7 @@ import { attributeProjectedShortageToLines, orderWillHoldPieces } from "../../li
 import { formatOrderUnitPrice, orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
-import { CreditCoverageError, DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
+import { CreditCoverageError, CreditCustomerChangeError, DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
 import { IncidentEvidenceError } from "./incidents";
 import { pendingDeliveries } from "../../lib/deliveries";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
@@ -729,6 +729,12 @@ export function OrderForm({
       // #366: a credit-coverage block explains WHAT sustained saldo a favor
       // the edit would strand — never a generic retry-loop toast.
       if (error instanceof CreditCoverageError) {
+        toast.error(error.message);
+        return;
+      }
+      // #367: the clienta-change block explains HOW to leave the block
+      // (restitute or finish the credit) instead of a generic retry toast.
+      if (error instanceof CreditCustomerChangeError) {
         toast.error(error.message);
         return;
       }
