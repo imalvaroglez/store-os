@@ -682,8 +682,10 @@ export function creditEditCoverageError(docData: Record<string, unknown> | undef
   const consumed = creditFieldCents(docData ?? {}, "creditConsumedCents");
   const applied = creditFieldCents(docData ?? {}, "creditAppliedCents");
   if (consumed <= 0 && applied <= 0) return null; // pre-ledger document: nothing to protect
-  const received = typeof docData?.paymentsReceivedCents === "number" && Number.isFinite(docData.paymentsReceivedCents)
-    ? docData.paymentsReceivedCents : 0;
+  // #366 H2 (review): the REAL received money includes the legacy
+  // un-materialized deposit (#168 F2) — accumulator-only misses pre-payments
+  // model docs and blocks legitimate edits with a misleading reason.
+  const received = docReceivedCents((docData ?? {}) as Partial<Order> & Record<string, unknown>);
   const total = Math.round(orderTotals(next).estimatedTotal * 100);
   if (consumed > 0 && consumed > Math.max(0, received - total)) {
     return `Este pedido sostiene ${formatMoneyExact(consumed / 100)} de saldo a favor ya usados en otros pedidos y el cambio dejaría ese dinero sin respaldo. Restituye ese saldo (o quita su uso) antes de guardar este cambio.`;
@@ -836,7 +838,7 @@ export async function saveOrderWithStockTx(
         const refundCommittedCents = incidentsRefundCommittedCents(next.incidents);
         const surplusAfter = Math.max(0, receivedCents - Math.max(0, itemsCents + adjustmentsCents) - refundCommittedCents);
         if (surplusAfter < consumedNow) {
-          throw new Error(
+          throw new CreditCoverageError(
             `Este pedido respalda ${consumedNow / 100} pesos de saldo a favor que otra venta ya usa; la edición dejaría ese saldo sin respaldo (${surplusAfter / 100} disponibles tras el cambio). Devuelve el saldo primero o corrige la edición.`
           );
         }
@@ -1107,16 +1109,28 @@ export async function registerOrderPaymentTx(
           `El ajuste excede lo recibido en este pedido. Puedes restar hasta ${formatMoneyExact(Math.max(0, current) / 100)}.`
         );
       }
-      // #366 (criterio 2): money already consumed as saldo a favor by sister
-      // orders cannot leave through the adjustment door either — the ceiling
-      // is what was received MINUS what this order sustains.
+      // #366 (criterio 2, review H1): money already consumed as saldo a favor
+      // by sister orders cannot leave through the adjustment door. The real
+      // invariant (same one creditMath/orderTotals enforce) is
+      //   received − effectiveTotal − refundCommitted ≥ consumed
+      // so the ceiling SUBTRACTS the order's effective total — an
+      // accumulator-only ceiling left a breach exactly equal to the total.
       const sustainedCredit = typeof orderSnap.data().creditConsumedCents === "number"
         && Number.isSafeInteger(orderSnap.data().creditConsumedCents)
         ? Math.max(0, orderSnap.data().creditConsumedCents as number) : 0;
-      if (sustainedCredit > 0 && current + savedCents < sustainedCredit) {
-        throw new Error(
-          `Este pedido sostiene ${formatMoneyExact(sustainedCredit / 100)} de saldo a favor ya usados en otros pedidos. Puedes restar hasta ${formatMoneyExact(Math.max(0, current - sustainedCredit) / 100)}.`
-        );
+      if (sustainedCredit > 0) {
+        const fresh = { ...order, ...orderSnap.data() } as Partial<Order> & Record<string, unknown>;
+        const receivedCents = Math.max(docReceivedCents(fresh), docReceivedCents(order));
+        const itemsCents = orderItems(fresh as Order).reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+        const effectiveCents = Math.max(0, itemsCents + incidentsSaleAdjustmentCents((fresh as Order).incidents));
+        const refundCommitted = incidentsRefundCommittedCents((fresh as Order).incidents);
+        const ceiling = Math.max(0, receivedCents - effectiveCents - refundCommitted - sustainedCredit);
+        const subtractCents = -savedCents;
+        if (subtractCents > ceiling) {
+          throw new Error(
+            `Este pedido sostiene ${formatMoneyExact(sustainedCredit / 100)} de saldo a favor ya usados en otros pedidos y ya no tiene excedente libre. Puedes restar hasta ${formatMoneyExact(ceiling / 100)}.`
+          );
+        }
       }
     }
     const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);

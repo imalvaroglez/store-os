@@ -231,7 +231,18 @@ export function orderPaymentsFor(
  */
 export function maxAdjustmentSubtractCents(order: Partial<Order> & Record<string, unknown>): number {
   const acc = order.paymentsReceivedCents;
-  return typeof acc === "number" && Number.isFinite(acc) ? Math.max(0, acc) : 0;
+  const accumulatorCeiling = typeof acc === "number" && Number.isFinite(acc) ? Math.max(0, acc) : 0;
+  // #366 H4 (review): the honest ceiling also subtracts the effective total —
+  // money consumed as saldo a favor by sister orders cannot leave through
+  // this door (same invariant as the transaction; the old label promised an
+  // amount the tx would deny).
+  const received = docReceivedCents(order);
+  const items = orderItems(order as Order).reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+  const effective = Math.max(0, items + incidentsSaleAdjustmentCents((order as Order).incidents));
+  const refundCommitted = incidentsRefundCommittedCents((order as Order).incidents);
+  const consumed = creditFieldCents(order, "creditConsumedCents");
+  const coverageCeiling = Math.max(0, received - effective - refundCommitted - consumed);
+  return Math.min(accumulatorCeiling, coverageCeiling);
 }
 
 /** Merge loaded/saved records by id (replace, never duplicate). */

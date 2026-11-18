@@ -41,6 +41,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("credit edit invariants wi
       }));
       // O3 — pre-ledger: no credit accumulators at all.
       await setDoc(doc(ctx.firestore(), "orders/inv366-o3"), orderDoc([line("o3-a", 400)], { revision: 1 }));
+      // O4 — review H1: received $2,000, total $1,000, consumed $500 → the
+      // FREE surplus (honest Restar ceiling) is $500, not $1,500.
+      await setDoc(doc(ctx.firestore(), "orders/inv366-o4"), orderDoc([line("o4-a", 1000)], {
+        orderStatus: "confirmed", paymentsReceivedCents: 200000, creditConsumedCents: 50000, revision: 1,
+      }));
+      // O5 — review H3: starts WITHOUT credit; the concurrent test seeds it
+      // after the editor captured its stale copy.
+      await setDoc(doc(ctx.firestore(), "orders/inv366-o5"), orderDoc([line("o5-a", 1000)], { revision: 1 }));
+      // O6 — review H1: EXACT coverage (received 1500, total 1000, consumed
+      // 500) on its own doc so the suite stays order-independent.
+      await setDoc(doc(ctx.firestore(), "orders/inv366-o6"), orderDoc([line("o6-a", 1000)], {
+        orderStatus: "confirmed", paymentsReceivedCents: 150000, creditConsumedCents: 50000, revision: 1,
+      }));
     });
     holder.db = env.authenticatedContext("inv366-user").firestore();
   });
@@ -87,17 +100,48 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("credit edit invariants wi
     expect(saved.order.revision).toBe(2);
   });
 
-  it("the «Restar» adjustment cap accounts for the credit this order sustains (criterion 2)", async () => {
-    // O1 received $1,500 and sustains $500 consumed — the ceiling is $1,000,
-    // not $1,500: draining the consumed surplus by another door is the same
-    // broken invariant as scenario 1. Subtracting $1,100 lands at $400 < $500.
+  it("the «Restar» cap subtracts the EFFECTIVE TOTAL — exact coverage means $0 (review H1)", async () => {
+    // O1: received $1,500, total $1,000, consumed $500 → invariant
+    // received − total ≥ consumed leaves NO free surplus: even −$1,000 (the
+    // old, wrong ceiling) must be DENIED — it strands the $500 consumed.
     const adjustment: OrderPayment = {
-      id: "adj-366-fresh", orderId: "inv366-o1", storeId: "inv366-store",
-      date: "2026-11-10", method: "cash", kind: "adjustment", amount: -1100,
+      id: "adj-366-h1a", orderId: "inv366-o6", storeId: "inv366-store",
+      date: "2026-11-10", method: "cash", kind: "adjustment", amount: -1000,
       note: "prueba", createdAt: "2026-11-10T10:00:00.000Z", createdBy: "inv366-user",
     };
-    await expect(registerOrderPaymentTx(adjustment)).rejects.toThrow(/Puedes restar hasta \$1,000\.00/);
-    const after = (await getDoc(doc(holder.db, "orders/inv366-o1"))).data();
+    await expect(registerOrderPaymentTx(adjustment)).rejects.toThrow(/Puedes restar hasta \$0\.00/);
+    const after = (await getDoc(doc(holder.db, "orders/inv366-o6"))).data();
     expect(after?.paymentsReceivedCents).toBe(150000); // untouched
+  });
+
+  it("the «Restar» cap lets the FREE surplus out and not a cent more (review H1)", async () => {
+    const base = { date: "2026-11-10", method: "cash", kind: "adjustment", note: "prueba", createdAt: "2026-11-10T10:00:00.000Z", createdBy: "inv366-user" } as const;
+    // O4: $2,000 − $1,000 − $500 consumed = $500 free.
+    const within: OrderPayment = { ...base, id: "adj-366-h1b", orderId: "inv366-o4", storeId: "inv366-store", amount: -500 };
+    await registerOrderPaymentTx(within);
+    const after = (await getDoc(doc(holder.db, "orders/inv366-o4"))).data();
+    expect(after?.paymentsReceivedCents).toBe(150000); // 2000 − 500
+    // Now received == total + consumed → ceiling is $0 again.
+    const greedy: OrderPayment = { ...base, id: "adj-366-h1c", orderId: "inv366-o4", storeId: "inv366-store", amount: -100 };
+    await expect(registerOrderPaymentTx(greedy)).rejects.toThrow(/Puedes restar hasta \$0\.00/);
+  });
+
+  it("a credit applied BETWEEN capture and save is caught by the fresh-doc guard (review H3: cambio concurrente)", async () => {
+    // The editor captured O5 with NO credit; a sister order's applyCredit
+    // lands on the doc before the save — the transaction re-reads the fresh
+    // doc and blocks the under-covering edit fail-closed.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inv366-o5"), orderDoc([line("o5-a", 1000)], {
+        orderStatus: "confirmed", paymentsReceivedCents: 150000, creditConsumedCents: 50000, revision: 2,
+      }));
+    });
+    // Fail-closed either way: the coverage guard blocks the under-covering
+    // edit, or the stale-capture guard (revision moved) rejects first — the
+    // concurrent change can NEVER slip through.
+    await expect(
+      saveOrderWithStockTx({ uid: "inv366-user" } as never, asOrder("inv366-o5", [line("o5-a", 1400)]), 1, "mut-366-h3")
+    ).rejects.toThrow(/sostiene \$500\.00 de saldo a favor|otro dispositivo|stale/i);
+    const after = (await getDoc(doc(holder.db, "orders/inv366-o5"))).data();
+    expect(after?.revision).toBe(2); // nothing was written
   });
 });
