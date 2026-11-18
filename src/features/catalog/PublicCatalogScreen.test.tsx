@@ -463,6 +463,23 @@ it("#489 refreshes a persisted color inquiry before composing WhatsApp", async (
   expect(saved.lines[0]).toMatchObject({ qty: 2, inquire: false });
 });
 
+
+it("#489 a session-added color line is a firm order despite a stale global sold-out signal", async () => {
+  // Legacy RCA shape: the aggregate stockSignal is an old "agotado" while the
+  // chosen color is available. The new line must not inherit "sobre pedido".
+  mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, type: "inventory_tiered" }, catalog: { categories: [], products: [{
+    ...catalog.products[0], availability: "sold_out", stockSignal: "agotado", variants: [{ id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" }],
+  }] } });
+  render(<PublicCatalogScreen slug="santi" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar al carrito" }));
+  fireEvent.click(screen.getByRole("button", { name: /Abrir pedido/ }));
+  const link = await screen.findByRole("link", { name: "Enviar solicitud por WhatsApp" });
+  expect(decodeURIComponent(link.getAttribute("href")!)).toContain("1× Perfume · Plateado");
+  expect(decodeURIComponent(link.getAttribute("href")!)).not.toContain("sobre pedido");
+  const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+  expect(saved.lines[0]).toMatchObject({ productSlug: "perfume~silver", qty: 1, inquire: false });
+});
+
 it("#489 keeps a sellable color visible despite an old aggregate shortage signal", async () => {
   mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, type: "inventory_tiered", storefront: { showSoldOut: false } }, catalog: { categories: [], products: [{
     ...catalog.products[0], availability: "sold_out", stockSignal: "agotado", variants: [

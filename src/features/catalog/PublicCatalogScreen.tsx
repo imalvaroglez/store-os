@@ -215,7 +215,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                     productSlug={lineSlug}
                     productName={lineName}
                     quantity={quantityBySlug.get(lineSlug) ?? 0}
-                    onAdd={() => cart.add({ ...cartItemFromPublicProduct({ ...product, image: lineImage }), ...(chosen ? { productSlug: lineSlug, name: lineName } : {}) })}
+                    onAdd={() => cart.add({ ...cartItemFromPublicProduct({ ...product, image: lineImage }), ...(chosen ? { productSlug: lineSlug, name: lineName } : {}), inquire: soldOut })}
                     onSetQty={cart.setQty}
                     full
                     className="mt-2"
