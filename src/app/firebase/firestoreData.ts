@@ -1,26 +1,27 @@
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
+  deleteDoc,
+  deleteField,
   doc,
+  documentId,
   getDoc,
   getDocFromServer,
   getDocs,
   getDocsFromServer,
-  setDoc,
-  deleteDoc,
-  deleteField,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-  limit,
-  documentId,
-  runTransaction,
   increment,
-  arrayUnion,
-  arrayRemove,
-  writeBatch,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+  setDoc,
   type Transaction,
   type Unsubscribe,
+  updateDoc,
+  where,
+  writeBatch,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
@@ -691,6 +692,22 @@ export async function deleteEntity(
 ): Promise<void> {
   const { db } = getFirebase();
   await deleteDoc(doc(db, name, id));
+}
+
+/**
+ * #375 (PO decision, 18-nov): retention with expulsion. Deleting a store
+ * expels every member (memberUids emptied) and seals the control doc with
+ * retainedAt. The doc SURVIVES as the retention seal — money evidence (paid
+ * orders, payments, priceEvents) stays readable only by platform, because
+ * isMember no longer matches anyone. The seal is one-way: rules only accept
+ * the empty-membership update together with retainedAt.
+ */
+export async function retainStoreEvidence(_user: AppUser, storeId: string): Promise<void> {
+  const { db } = getFirebase();
+  await updateDoc(doc(db, "adminStores", storeId), {
+    memberUids: [],
+    retainedAt: new Date().toISOString(),
+  });
 }
 
 /** The order changed on another device after this editor loaded it. */

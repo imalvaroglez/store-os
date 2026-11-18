@@ -123,6 +123,17 @@ service cloud.firestore {
         && !request.resource.data.pendingInvites.hasAny([canonicalEmail()]);
     }
 
+    // #375 (PO decision, 18-nov): the retention seal. Deleting a store expels
+    // every member: the ONLY accepted empty-membership update is the seal
+    // itself (retainedAt added, ownership unchanged, nothing else touched).
+    function retentionSeal(storeId) {
+      return (isSuperAdmin() || isOwner(storeId))
+        && request.resource.data.memberUids.size() == 0
+        && request.resource.data.retainedAt is string
+        && request.resource.data.ownerUid == adminStore(storeId).ownerUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids', 'retainedAt']);
+    }
+
     match /adminStores/{storeId} {
       allow get: if isSuperAdmin() || isMember(storeId);
       allow list: if isSuperAdmin();
@@ -131,7 +142,8 @@ service cloud.firestore {
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
       allow update: if ((isSuperAdmin() || isOwner(storeId))
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
-        || inviteeJoinOk();
+        || inviteeJoinOk()
+        || retentionSeal(storeId);
       allow delete: if false;
     }
 

@@ -71,6 +71,7 @@ import {
   recordRuleChangeEvent,
   projectPublicForStore,
   deleteEntity,
+  retainStoreEvidence,
   claimSlug,
   republishStockSignals,
   unprojectPublicForStore,
@@ -850,6 +851,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const store = state.stores.find((s) => s.id === storeId);
       dispatch({ type: "DELETE_STORE", storeId });
       if (store) {
+        // #375 (PO decision, 18-nov): retention with expulsion. The seal
+        // expels every member FIRST so no one can operate the store mid-flight;
+        // money evidence (paid orders + payments + priceEvents) stays frozen,
+        // readable only by platform.
+        persistInBackground("conservar la evidencia de dinero y revocar las membresías", () => retainStoreEvidence(currentUser, storeId));
         persistInBackground("eliminar la tienda", () => deleteEntity(currentUser, "stores", storeId));
         // Best-effort: delete the store's entities + product photos in the cloud.
         state.products.filter((p) => p.storeId === storeId).forEach((p) => {
@@ -857,7 +863,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           persistInBackground("eliminar una foto", () => deleteProductImage(storeId, p.id));
         });
         state.customers.filter((c) => c.storeId === storeId).forEach((c) => persistInBackground("eliminar una clienta", () => deleteEntity(currentUser, "customers", c.id)));
-        state.orders.filter((o) => o.storeId === storeId).forEach((o) => persistInBackground("eliminar un pedido", () => deleteEntity(currentUser, "orders", o.id)));
+        // #375: orders WITH money evidence are RETAINED (never deleted); only
+        // money-free orders go away with the store.
+        state.orders.filter((o) => o.storeId === storeId).forEach((o) => {
+          const moneyEvidence = (o.paymentsReceivedCents ?? 0) > 0 || (o.deposit ?? 0) > 0;
+          if (!moneyEvidence) persistInBackground("eliminar un pedido", () => deleteEntity(currentUser, "orders", o.id));
+        });
         state.suppliers.filter((s) => s.storeId === storeId).forEach((s) => persistInBackground("eliminar un proveedor", () => deleteEntity(currentUser, "suppliers", s.id)));
         state.purchases.filter((p) => p.storeId === storeId).forEach((p) => persistInBackground("eliminar una compra", () => deleteEntity(currentUser, "purchases", p.id)));
         // Supplier PDFs are PII: delete them along with the store. Best-effort
