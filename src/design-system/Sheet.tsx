@@ -42,10 +42,16 @@ export function Sheet({
       else if (!e.shiftKey && (document.activeElement === last || document.activeElement === panelRef.current)) { e.preventDefault(); first.focus(); }
     };
     window.addEventListener("keydown", onKey);
+    // #463: `body { overflow: hidden }` propagates to the viewport and clamps
+    // the document scroll to 0 — the operator's list position would be lost
+    // the moment the sheet opens. Capture it here and restore it on unlock so
+    // the position survives open→close BY CONSTRUCTION.
+    const lockedScrollY = window.scrollY;
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
+      window.scrollTo(0, lockedScrollY);
       if (previous?.isConnected) previous.focus();
     };
   }, [open]);
