@@ -8,7 +8,7 @@ Guía para trabajar en Store OS. Lee esto antes de empezar.
 
 **Handoff y gates:** el implementador trabaja solo issues elegibles, conserva rama + draft PR y no se autoaprueba. La sesión de QA recibe issue, diff y contexto técnico mínimo, **no las conclusiones del autor**; ejecuta pruebas funcionales/UX/regresión y deja evidencia. Los dos revisores independientes read-only de Code y UX siguen siendo obligatorios según las reglas actuales. El Release Manager verifica CI, revisiones, aprobaciones, release guard y despliegue vía GitHub Actions; **merge no significa Hecho**: la historia pasa a Por liberar y solo cierra con publicación verificada. Nunca se inventan reglas de dinero, existencias, accesos o privacidad.
 
-**Contrato detallado:** [docs/agent-operating-model.md](docs/agent-operating-model.md). Complementa, sin sustituir, las compuertas y autorizaciones de este archivo, \`LOOPS.md\` y el README vigente del tablero Store OS.
+**Contrato detallado:** [docs/agent-operating-model.md](docs/agent-operating-model.md). Complementa, sin sustituir, las compuertas y autorizaciones de este archivo, `LOOPS.md` y el README vigente del tablero Store OS.
 
 ## Flujo de entrega
 
