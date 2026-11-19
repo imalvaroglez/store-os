@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   subscribeCloudState: vi.fn(),
   deleteEntity: vi.fn(),
   unprojectPublicForStore: vi.fn(),
+  retainStoreEvidence: vi.fn(async () => {}),
   reload: vi.fn(),
 }));
 
@@ -33,6 +34,7 @@ vi.mock("./firebase/firestoreData", async (importOriginal) => {
     subscribeCloudState: mocks.subscribeCloudState,
     deleteEntity: mocks.deleteEntity,
     unprojectPublicForStore: mocks.unprojectPublicForStore,
+    retainStoreEvidence: mocks.retainStoreEvidence,
   };
 });
 vi.mock("../lib/storage", async (importOriginal) => {
@@ -87,7 +89,9 @@ describe("StoreProvider background save errors", () => {
   afterEach(() => cleanup());
 
   it("shows a rejected background write and clears it after a successful retry", async () => {
-    mocks.deleteEntity.mockRejectedValueOnce(new Error("permission-denied"));
+    // #375: entity deletes are allSettled (a denial must not abort the chain),
+    // so the honest-error vehicle is the AWAITED retention step.
+    mocks.retainStoreEvidence.mockReset().mockRejectedValueOnce(new Error("permission-denied")).mockResolvedValue(undefined);
     const { result } = renderHook(() => useStore(), { wrapper: Wrapper });
     await waitForCloudHydration();
 
@@ -106,31 +110,31 @@ describe("StoreProvider background save errors", () => {
     expect(screen.getByRole("alert").textContent).toContain("No se pudo eliminar la tienda.");
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
 
-    await waitFor(() => expect(mocks.deleteEntity).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.retainStoreEvidence).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(result.current.syncError).toBeNull());
     notice.unmount();
   });
 
   it("ignores a failed write from a previous UID and prevents its retry under the new UID", async () => {
     let rejectOldWrite!: (error: Error) => void;
-    mocks.deleteEntity.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+    mocks.retainStoreEvidence.mockReset().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
       rejectOldWrite = reject;
     }));
     const { result, rerender } = renderHook(() => useStore(), { wrapper: Wrapper });
     await waitForCloudHydration();
 
     act(() => result.current.deleteStore(store.id));
-    await waitFor(() => expect(mocks.deleteEntity).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.retainStoreEvidence).toHaveBeenCalledTimes(1));
     mocks.user = { uid: "uid-b", email: "b@example.com", role: "member" };
     rerender();
     await waitFor(() => expect(mocks.loadCloudState).toHaveBeenCalledTimes(2));
     await act(async () => rejectOldWrite(new Error("permission-denied")));
     await waitFor(() => expect(result.current.syncError).toBeNull());
-    expect(mocks.deleteEntity).toHaveBeenCalledTimes(1);
+    expect(mocks.retainStoreEvidence).toHaveBeenCalledTimes(1);
   });
 
   it("does not let a retry from the old UID write after the account changes", async () => {
-    mocks.deleteEntity.mockRejectedValueOnce(new Error("permission-denied"));
+    mocks.retainStoreEvidence.mockReset().mockRejectedValueOnce(new Error("permission-denied")).mockResolvedValue(undefined);
     const { result, rerender } = renderHook(() => useStore(), { wrapper: Wrapper });
     await waitForCloudHydration();
 
@@ -143,7 +147,7 @@ describe("StoreProvider background save errors", () => {
     await waitFor(() => expect(result.current.syncError).toBeNull());
     await act(async () => staleRetry());
 
-    expect(mocks.deleteEntity).toHaveBeenCalledTimes(1);
+    expect(mocks.retainStoreEvidence).toHaveBeenCalledTimes(1);
   });
 });
 

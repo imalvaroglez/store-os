@@ -1,26 +1,27 @@
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
+  deleteDoc,
+  deleteField,
   doc,
+  documentId,
   getDoc,
   getDocFromServer,
   getDocs,
   getDocsFromServer,
-  setDoc,
-  deleteDoc,
-  deleteField,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-  limit,
-  documentId,
-  runTransaction,
   increment,
-  arrayUnion,
-  arrayRemove,
-  writeBatch,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+  setDoc,
   type Transaction,
   type Unsubscribe,
+  updateDoc,
+  where,
+  writeBatch,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
@@ -691,6 +692,24 @@ export async function deleteEntity(
 ): Promise<void> {
   const { db } = getFirebase();
   await deleteDoc(doc(db, name, id));
+}
+
+/**
+ * #375 (PO decision, 18-nov): retention with expulsion. Deleting a store
+ * expels every member (memberUids emptied) and seals the control doc with
+ * retainedAt. The doc SURVIVES as the retention seal — money evidence (paid
+ * orders, payments, priceEvents) stays readable only by platform, because
+ * isMember no longer matches anyone. The seal is one-way: rules only accept
+ * the empty-membership update together with retainedAt.
+ */
+export async function retainStoreEvidence(_user: AppUser, storeId: string): Promise<void> {
+  const { db } = getFirebase();
+  await updateDoc(doc(db, "adminStores", storeId), {
+    memberUids: [],
+    // H3: a pending invite must never join a deleted store.
+    pendingInvites: [],
+    retainedAt: new Date().toISOString(),
+  });
 }
 
 /** The order changed on another device after this editor loaded it. */
@@ -2253,11 +2272,13 @@ export async function projectPublicForStore(
 export async function unprojectPublicForStore(store: Store): Promise<void> {
   const { db } = getFirebase();
   const writes: Promise<unknown>[] = [];
-  writes.push(deleteDoc(doc(db, "publicStores", store.slug)));
-  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)));
+  // #375: swallowing already-deleted docs keeps the store-deletion retry
+  // convergent (rules deny re-deleting a missing doc; the seal must still run).
+  writes.push(deleteDoc(doc(db, "publicStores", store.slug)).catch(() => {}));
+  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)).catch(() => {}));
   writes.push(releaseSlug(store.slug));
   const snap = await getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug)));
-  for (const d of snap.docs) writes.push(deleteDoc(d.ref));
+  for (const d of snap.docs) writes.push(deleteDoc(d.ref).catch(() => {}));
   await Promise.all(writes);
 }
 

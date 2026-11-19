@@ -123,6 +123,26 @@ service cloud.firestore {
         && !request.resource.data.pendingInvites.hasAny([canonicalEmail()]);
     }
 
+    // #375 (PO decision, 18-nov): the retention seal. Deleting a store expels
+    // every member: the ONLY accepted empty-membership update is the seal
+    // itself (retainedAt added, ownership unchanged, nothing else touched).
+    function retentionSeal(storeId) {
+      return (isSuperAdmin() || isOwner(storeId))
+        && request.resource.data.memberUids.size() == 0
+        // .get with default: dot access on a MISSING key is an evaluation
+        // ERROR in CEL — it poisoned the whole || chain (invitee joins died).
+        && request.resource.data.get('retainedAt', null) is string
+        && request.resource.data.ownerUid == adminStore(storeId).ownerUid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['memberUids', 'retainedAt', 'pendingInvites', 'updatedAt']);
+    }
+    // #375 H2: once sealed, the doc is frozen for the normal update path —
+    // the ONLY way back is platform acting directly (documented, auditable).
+    function notSealed() {
+      // .get with default: same CEL-safety as the seal (missing key ≠ error).
+      return resource.data.get('retainedAt', null) == null;
+    }
+
     match /adminStores/{storeId} {
       allow get: if isSuperAdmin() || isMember(storeId);
       allow list: if isSuperAdmin();
@@ -130,8 +150,10 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
       allow update: if ((isSuperAdmin() || isOwner(storeId))
+          && notSealed()
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
-        || inviteeJoinOk();
+        || (inviteeJoinOk() && notSealed())
+        || retentionSeal(storeId);
       allow delete: if false;
     }
 
