@@ -5,6 +5,7 @@
 // piece belongs to is decided by its ACQUISITION cost alone — a packaging
 // cent never jumps bands.
 import type { PackagingMaterial, PriceRounding, PricingRule, StorePackaging, Product, TierPackaging } from "../types";
+import { parseAmount } from "./money";
 
 export type RuleOrigin = "product" | "category" | "general";
 
@@ -87,6 +88,25 @@ export function validateBands(bands: Array<{ min: number; max?: number; price: n
   }
   return null;
 }
+
+/** #219 (Estrategia/Reglas audit): money capture moves in whole centavos. A
+ * sub-cent figure must be REJECTED at capture — sanitizeMoneyInput would
+ * silently truncate it, and applyRound with "none" keeps cents into product
+ * prices. Canonical pesos comparison, same contract as Cobros/Compras/Reparto. */
+export function hasSubCentFraction(value: number): boolean {
+  return Number.isFinite(value) && Math.abs(value - Math.round(value * 100) / 100) > 1e-9;
+}
+
+/** True when a RAW money capture breaks the contract: text that does not
+ * parse or carries a sub-cent fraction. Empty is always allowed (each field
+ * decides what "no value" means). */
+export function moneyCaptureInvalid(raw: string): boolean {
+  if (raw.trim() === "") return false;
+  const parsed = parseAmount(raw);
+  return parsed == null || hasSubCentFraction(parsed);
+}
+
+export const MONEY_CAPTURE_ERROR = "Escribe el importe en pesos con centavos (máximo dos decimales).";
 
 function bandPrice(bands: Array<{ min: number; max?: number; price: number }>, acquisitionCost: number): number | null {
   for (const band of [...bands].sort((a, b) => a.min - b.min)) {

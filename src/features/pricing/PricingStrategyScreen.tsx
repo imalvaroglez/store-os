@@ -22,7 +22,7 @@ import { navigate } from "../../lib/router";
 import { setBandSimulatorPrefill } from "../../lib/bandSimulatorPrefill";
 import { tiersForStore } from "../../lib/pricing";
 import { parseAmount, sanitizeMoneyInput } from "../../lib/money";
-import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, rulesSignature } from "../../lib/pricingRules";
+import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, rulesSignature, moneyCaptureInvalid, MONEY_CAPTURE_ERROR } from "../../lib/pricingRules";
 import {
   analyzeCategory,
   packagingConfigured,
@@ -245,11 +245,24 @@ export function PricingStrategyScreen() {
     });
   }
 
+  // #219 (Estrategia audit): keep the RAW text while editing so an incomplete
+  // capture ("165.") survives the round trip, and reject (never silently
+  // rewrite) money that does not parse or carries a sub-cent fraction.
+  const [rawCaptures, setRawCaptures] = useState<Record<string, string>>({});
+  const captureInvalid = useMemo(
+    () => Object.values(rawCaptures).some((raw) => moneyCaptureInvalid(raw)),
+    [rawCaptures]
+  );
+  const captureError = (key: string) => (rawCaptures[key] !== undefined && moneyCaptureInvalid(rawCaptures[key]) ? MONEY_CAPTURE_ERROR : undefined);
+  const rawValue = (key: string, derived: string) => (rawCaptures[key] !== undefined ? rawCaptures[key] : derived);
+
   function setLimit(index: number, field: "min" | "max", raw: string) {
+    setRawCaptures((prev) => ({ ...prev, [`${field}-${index}`]: raw }));
+    if (moneyCaptureInvalid(raw)) return; // rejected at capture: the draft keeps its previous value
     const value = parseAmount(sanitizeMoneyInput(raw));
     patchDraft((next) => {
       if (field === "max") {
-        const max = raw.trim() === "" ? undefined : value ?? 0;
+        const max = raw.trim() === "" ? undefined : value;
         next.limits[index] = { min: next.limits[index].min, ...(max !== undefined ? { max } : {}) };
         // Contiguity: the next band's min IS this band's max.
         if (index + 1 < next.limits.length && max !== undefined) next.limits[index + 1].min = max;
@@ -261,6 +274,8 @@ export function PricingStrategyScreen() {
   }
 
   function setPrice(tierId: string, index: number, raw: string) {
+    setRawCaptures((prev) => ({ ...prev, [`price-${tierId}-${index}`]: raw }));
+    if (moneyCaptureInvalid(raw)) return;
     const value = parseAmount(sanitizeMoneyInput(raw));
     patchDraft((next) => {
       const list = next.prices[tierId] ?? [];
@@ -270,6 +285,7 @@ export function PricingStrategyScreen() {
   }
 
   function addBand() {
+    setRawCaptures({}); // band indexes shift: raw texts no longer map to fields
     patchDraft((next) => {
       const last = next.limits[next.limits.length - 1];
       if (!last) {
@@ -291,6 +307,7 @@ export function PricingStrategyScreen() {
   }
 
   function removeBand(index: number) {
+    setRawCaptures({});
     patchDraft((next) => {
       next.limits = next.limits.filter((_, i) => i !== index);
       for (const tier of tiers) {
@@ -311,6 +328,7 @@ export function PricingStrategyScreen() {
   }
 
   function splitBand(index: number) {
+    setRawCaptures({});
     // Data-driven cut: the midpoint of this band's member costs (defaults to
     // +50% of min for an empty band) — Fer adjusts before saving. Members are
     // matched by COST RANGE, not by proposal index: removeBand/addBand shift
@@ -339,6 +357,10 @@ export function PricingStrategyScreen() {
 
   async function save() {
     if (!categoryId || !draft || !serialized) return;
+    if (captureInvalid) {
+      toast.error(MONEY_CAPTURE_ERROR);
+      return;
+    }
     if (limitError) {
       toast.error(`Límites: ${limitError}`);
       return;
@@ -355,6 +377,7 @@ export function PricingStrategyScreen() {
       setDraft((current) => (current ? { ...current, dirty: false } : current));
       setDraftBase(rulesSignature(serialized));
       setReplaceExisting(false);
+      setRawCaptures({});
       toast.success("Tabla guardada. Los precios de tus productos no cambiaron.");
     } catch (error) {
       // P0-2: a same-category concurrent edit REFUSES the save (nothing is
@@ -586,7 +609,8 @@ export function PricingStrategyScreen() {
                         inputMode="decimal"
                         disabled={index === 0}
                         hint={index === 0 ? "la primera banda abre en $0" : undefined}
-                        value={index === 0 ? "0" : String(limit.min)}
+                        error={index === 0 ? undefined : captureError(`min-${index}`)}
+                        value={index === 0 ? "0" : rawValue(`min-${index}`, String(limit.min))}
                         onChange={(e) => setLimit(index, "min", e.target.value)}
                       />
                     </div>
@@ -595,7 +619,8 @@ export function PricingStrategyScreen() {
                         label="Hasta $"
                         inputMode="decimal"
                         placeholder="sin tope"
-                        value={limit.max !== undefined ? String(limit.max) : ""}
+                        error={captureError(`max-${index}`)}
+                        value={rawValue(`max-${index}`, limit.max !== undefined ? String(limit.max) : "")}
                         onChange={(e) => setLimit(index, "max", e.target.value)}
                       />
                     </div>
@@ -625,9 +650,9 @@ export function PricingStrategyScreen() {
                           key={tier.id}
                           label={`${tier.label} (pesos)`}
                           inputMode="decimal"
-                          error={value === null || value === undefined || !(value > 0) ? "Precio pendiente" : undefined}
+                          error={captureError(`price-${tier.id}-${index}`) ?? (value === null || value === undefined || !(value > 0) ? "Precio pendiente" : undefined)}
                           hint={support ? `Mediana actual, ${SUPPORT_HINT[support]} · ${tier.label}: ${EVIDENCE_LABEL[tierEvidence(tier.label)]}` : undefined}
-                          value={value === null || value === undefined ? "" : String(value)}
+                          value={rawValue(`price-${tier.id}-${index}`, value === null || value === undefined ? "" : String(value))}
                           onChange={(e) => setPrice(tier.id, index, e.target.value)}
                         />
                       );
@@ -680,7 +705,7 @@ export function PricingStrategyScreen() {
               exactamente el tope entra en la siguiente. Guardar la tabla NO cambia ningún precio.
             </p>
             <div className="space-y-2 pb-2">
-              <Button full disabled={!draft.dirty || busy || !!limitError || pendingPrices.length > 0} onClick={() => void save()}>
+              <Button full disabled={!draft.dirty || busy || !!limitError || captureInvalid || pendingPrices.length > 0} onClick={() => void save()}>
                 {busy ? "Guardando…" : draft.dirty ? "Guardar tabla" : "Sin cambios"}
               </Button>
               {existing && (
