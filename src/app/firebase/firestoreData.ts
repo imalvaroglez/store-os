@@ -1,3 +1,4 @@
+import { publicAvailabilitySignal, publicAvailabilityValue } from "../../lib/publicAvailability";
 import {
   arrayRemove,
   arrayUnion,
@@ -1914,11 +1915,16 @@ function publicVariants(product: Product) {
 }
 
 export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible" {
-  // #124: a design sold by color signals over the SUM of its colors.
-  const qty = isVariantProduct(p) ? totalStock(p) : p.quantityOnHand;
+  // Each color is a separate shelf: a shortage cannot consume sellable
+  // pieces of another color. Only this PUBLIC coarse signal uses the positive
+  // shelves; canonical quantities and private shortage math stay untouched.
+  const colors = isVariantProduct(p) ? p.variants! : undefined;
+  if (colors?.some((v) => typeof v.quantityOnHand !== "number")) return "disponible";
+  const qty = colors ? colors.reduce((sum, v) => sum + Math.max(0, v.quantityOnHand ?? 0), 0) : p.quantityOnHand;
   if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
   if (qty <= 0) return "agotado";
   if (typeof p.lowStockAt === "number" && qty <= p.lowStockAt) return "pocas";
+  if (colors && colors.filter((v) => (v.quantityOnHand ?? 0) > 0).every((v) => variantPublicStockSignal(v) === "pocas")) return "pocas";
   return "disponible";
 }
 
@@ -1939,7 +1945,7 @@ function publicPricesByTier(
   return Object.keys(prices).length ? prices : undefined;
 }
 
-type PublicPricingSource = Pick<Store, "priceTiers" | "defaultTierId">;
+type PublicPricingSource = Pick<Store, "priceTiers" | "defaultTierId"> & Partial<Pick<Store, "type">>;
 
 /** Public storefront projection: identity + storefront content + contact + tiers. */
 export function projectPublicStore(store: Store) {
@@ -1993,7 +1999,7 @@ export function projectPublicProductSummary(
       .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.order - b.order)
       .slice(0, 5)
       .map(({ url, alt, width, height }) => ({ url, alt: alt ?? null, width: width ?? null, height: height ?? null })),
-    availability: product.availability ?? "available",
+    availability: publicAvailabilityValue({ availability: product.availability, stockSignal: publicStockSignal(product) }, pricing?.type),
     finish: product.finish ?? null,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
@@ -2045,7 +2051,7 @@ export function projectPublicProductDetail(
     finish: product.finish ?? null,
     dimensions: product.dimensions ?? null,
     care: product.care ?? null,
-    availability: product.availability ?? "available",
+    availability: publicAvailabilityValue({ availability: product.availability, stockSignal: publicStockSignal(product) }, pricing?.type),
     canInquire: product.canInquire ?? false,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
@@ -2105,17 +2111,14 @@ export function buildPublicCatalogDoc(
 }
 
 /** Refresh a published document's availability without replacing its other fields. */
-function publicStockPatch(current: Product, existing: Record<string, unknown>): Record<string, unknown> {
+function publicStockPatch(current: Product, existing: Record<string, unknown>, storeType: Store["type"]): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   const stockSignal = publicStockSignal(current);
   if (stockSignal !== existing.stockSignal) patch.stockSignal = stockSignal;
-  // #353 (UX review): the public page reads availability OR stockSignal; a
-  // stale manual «sold_out» must travel with the stock sync when canonical
-  // carries an explicit value (a restock clears it in the same reception
-  // commit). Undefined stays untouched — nothing to say.
-  if (current.availability !== undefined && current.availability !== existing.availability) {
-    patch.availability = current.availability;
-  }
+  // #489: the public state follows stock in inventory stores; manual
+  // availability remains authoritative only for on-demand stores.
+  const availability = publicAvailabilityValue({ availability: current.availability, stockSignal }, storeType);
+  if (availability !== existing.availability) patch.availability = availability;
 
   const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant.stockSignal]));
   if (signals.size && Array.isArray(existing.variants)) {
@@ -2137,7 +2140,8 @@ function publicStockPatch(current: Product, existing: Record<string, unknown>): 
  */
 function preservePublicAvailability(
   next: Record<string, unknown>,
-  prior: Record<string, unknown>
+  prior: Record<string, unknown>,
+  storeType?: Store["type"]
 ): Record<string, unknown> {
   const merged = { ...next };
   if (typeof prior.stockSignal === "string" && prior.stockSignal !== next.stockSignal) {
@@ -2155,6 +2159,19 @@ function preservePublicAvailability(
         : variant
     );
     if (variants.some((variant, index) => variant !== (next.variants as unknown[])[index])) merged.variants = variants;
+  }
+  // A legacy summary without a signal has no evidence that the caller's
+  // stale quantity is current. Keep its manual fallback until a canonical read.
+  if (storeType === "inventory_tiered" && typeof prior.stockSignal !== "string") {
+    delete merged.stockSignal;
+    merged.availability = prior.availability ?? "available";
+    return merged;
+  }
+  // Normalize AFTER preserving the fresh signal, not from the stale input.
+  if (storeType === "inventory_tiered" && typeof merged.stockSignal === "string") {
+    const signal = publicAvailabilitySignal({ stockSignal: merged.stockSignal, variants: Array.isArray(merged.variants) ? merged.variants : undefined }, storeType);
+    merged.stockSignal = signal;
+    merged.availability = publicAvailabilityValue({ stockSignal: signal }, storeType);
   }
   return merged;
 }
@@ -2207,7 +2224,7 @@ export async function republishStockSignals(
         const activeStore = await currentStore(tx);
         if (activeStore) tx.set(detailRef, projectPublicProductDetail(current, activeStore.slug, categories, activeStore));
       } else {
-        const patch = publicStockPatch(current, detail.data());
+        const patch = publicStockPatch(current, detail.data(), store.type);
         if (Object.keys(patch).length) tx.update(detailRef, patch);
       }
     })
@@ -2235,7 +2252,7 @@ export async function republishStockSignals(
     const next = summaries.map((summary) => {
       const product = typeof summary.productSlug === "string" ? currentBySlug.get(summary.productSlug) : undefined;
       if (!product) return summary;
-      const patch = publicStockPatch(product, summary);
+      const patch = publicStockPatch(product, summary, store.type);
       return Object.keys(patch).length ? { ...summary, ...patch } : summary;
     });
     current.forEach((product, index) => {
@@ -2432,7 +2449,7 @@ export async function rebuildPublicCatalog(
         if (touched.has(p.id)) return projectPublicProductSummary(canonical.get(p.id)!, storeSlug, pricing);
         const summary = projectPublicProductSummary(p, storeSlug, pricing) as Record<string, unknown>;
         const existing = prior.get(p.slug!);
-        return existing ? preservePublicAvailability(summary, existing) : summary;
+        return existing ? preservePublicAvailability(summary, existing, pricing?.type) : summary;
       });
     tx.set(catalogRef, { storeId, storeSlug, products: next }, { merge: true });
   });

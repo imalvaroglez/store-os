@@ -442,6 +442,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const cloud = !!user;
   const [state, dispatch] = useReducer(reducer, undefined, emptyAppState);
+  // Background retries must use this render's catalog, not their old capture.
+  const latestState = useRef(state);
+  latestState.current = state;
   const [cloudLoad, setCloudLoad] = useState<{
     uid: string | null;
     status: "idle" | "loading" | "ready" | "error";
@@ -475,7 +478,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * it: the failure raises a retryable Spanish notice (syncError) scoped to
    * the uid that started the write. `retry` replays the operation itself.
    */
-  function persistInBackground(label: string, write: () => Promise<unknown>) {
+  function persistInBackground(
+    label: string,
+    write: () => Promise<unknown>,
+    retryWrite: () => Promise<unknown> = write
+  ) {
     const ownerUid = user?.uid;
     void write().catch((error) => {
       console.error(`[Firestore] No se pudo ${label}:`, error);
@@ -483,7 +490,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const version = ++syncErrorVersion.current;
       setSyncError({ label, retry: async () => {
         if (currentUid.current !== ownerUid) return;
-        await write();
+        await retryWrite();
         if (currentUid.current === ownerUid && syncErrorVersion.current === version) {
           setSyncError(null);
         }
@@ -1077,7 +1084,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const next = state.products.some((p) => p.id === product.id)
             ? state.products.map((p) => (p.id === product.id ? saved : p))
             : [...state.products, saved];
-          await upsertPublicProduct(saved, store.slug, next, state.categories, store);
+          // #489: the canonical adjustment is already committed. A public
+          // projection failure must retry ONLY publication, never invite the
+          // editor to replay its stock delta. Use the existing visible notice.
+          persistInBackground("actualizar el catálogo público del producto guardado", () =>
+            upsertPublicProduct(saved, store.slug, next, state.categories, store),
+            async () => {
+              const current = latestState.current;
+              const currentStore = current.stores.find((s) => s.id === saved.storeId);
+              const currentProduct = current.products.find((p) => p.id === saved.id && p.storeId === saved.storeId);
+              if (!currentStore || !currentProduct) return;
+              await upsertPublicProduct(currentProduct, currentStore.slug, current.products, current.categories, currentStore);
+            }
+          );
         }
       }
       return saved;

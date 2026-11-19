@@ -1,3 +1,4 @@
+import { publicAvailabilitySignal } from "../../lib/publicAvailability";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 // Scoped editorial styles travel with the storefront chunk, not the shared barrel.
@@ -12,7 +13,7 @@ import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
 import { useSeo } from "./useSeo";
 import { useCart } from "./useCart";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
-import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
+import { cartItemsForPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 import type { Storefront, StorefrontSection } from "../../types";
 import { InlineEditable, InlineFaqEditor } from "./InlineEditable";
 
@@ -25,8 +26,8 @@ function useCartContext() { return useContext(CartContext)!; }
 // logos (sf.logoUrl) already carry unique URLs per upload.
 const OLIVIA_LOGO_URL = `/images/olivia-logo.png?v=${typeof __BUILD_SHA__ !== "undefined" ? __BUILD_SHA__ : "dev"}`;
 
-function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSignal">) {
-  return product.availability === "sold_out" || product.stockSignal === "agotado";
+function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSignal" | "variants">, store: PublicStore) {
+  return publicAvailabilitySignal(product, store.type) === "agotado";
 }
 
 function normalizeCatalogText(value: string) {
@@ -134,7 +135,7 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
   const sf = store.storefront ?? {};
   const hasHeroBanner = !!(sf.hero?.imageUrl || sf.hero?.mobileImageUrl);
   const heroProduct = catalog?.products
-    .filter((product) => ((sf.showSoldOut ?? true) || !isSoldOut(product)) && (product.images?.[0]?.url || product.imageUrl))
+    .filter((product) => ((sf.showSoldOut ?? true) || !isSoldOut(product, store)) && (product.images?.[0]?.url || product.imageUrl))
     .sort((a, b) => Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured)) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0))[0];
   const heroBody = sf.hero?.body ?? OLIVIA_CONTENT.hero!.body;
   const slug = store.slug;
@@ -143,20 +144,20 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
   useEffect(() => { setQuery(""); setFinishFilter(""); }, [focusCategory]);
   const finishOptions = useMemo(() => {
     const visibleFinishes = (catalog?.products ?? [])
-      .filter((product) => (!category || product.categoryIds?.includes(category.id)) && ((sf.showSoldOut ?? true) || !isSoldOut(product)))
+      .filter((product) => (!category || product.categoryIds?.includes(category.id)) && ((sf.showSoldOut ?? true) || !isSoldOut(product, store)))
       .map((product) => product.finish?.trim())
       .filter((finish): finish is string => !!finish);
     const unique = new Map(visibleFinishes.map((finish) => [normalizeCatalogText(finish), finish]));
     return [...unique.entries()].sort((a, b) => a[1].localeCompare(b[1], "es-MX"));
-  }, [catalog, category, sf.showSoldOut]);
+  }, [catalog, category, sf.showSoldOut, store.type]);
   const categoryCards = useMemo(() => (catalog?.categories ?? []).map((item) => {
     const productsInCategory = (catalog?.products ?? []).filter((product) =>
-      product.categoryIds?.includes(item.id) && ((sf.showSoldOut ?? true) || !isSoldOut(product))
+      product.categoryIds?.includes(item.id) && ((sf.showSoldOut ?? true) || !isSoldOut(product, store))
     );
     const firstProduct = productsInCategory[0];
     const fallbackImage = firstProduct?.images?.[0]?.url ?? firstProduct?.imageUrl ?? undefined;
     return { ...item, image: item.imageUrl || fallbackImage, pieceCount: productsInCategory.length };
-  }).filter((item) => item.pieceCount > 0), [catalog, sf.showSoldOut]);
+  }).filter((item) => item.pieceCount > 0), [catalog, sf.showSoldOut, store.type]);
   useSeo({
     title: category ? `${category.name} · ${store.name}` : sf.seo?.title || `${store.name} — Joyería`,
     description: sf.seo?.description || sf.hero?.body || OLIVIA_CONTENT.hero?.body,
@@ -167,7 +168,7 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
   const products = useMemo(() => {
     const needle = normalizeCatalogText(query.trim());
     return (catalog?.products ?? []).filter((p) =>
-      ((sf.showSoldOut ?? true) || !isSoldOut(p)) &&
+      ((sf.showSoldOut ?? true) || !isSoldOut(p, store)) &&
       (!category || p.categoryIds?.includes(category.id)) &&
       (!finishFilter || normalizeCatalogText(p.finish ?? "") === finishFilter) &&
       normalizeCatalogText(`${p.name} ${p.sku ?? ""} ${p.finish ?? ""}`).includes(needle)
@@ -181,7 +182,7 @@ function StoreView({ store, catalog, focusCategory, editing, patchStorefront, pa
       const flag = sort === "new" ? "isNew" : "isFeatured";
       return Number(Boolean(b[flag])) - Number(Boolean(a[flag])) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
     });
-  }, [catalog, category, finishFilter, query, sort, sf.showSoldOut, store.defaultTierId]);
+  }, [catalog, category, finishFilter, query, sort, sf.showSoldOut, store.defaultTierId, store.type]);
 
   if (focusCategory && catalog && !category) return <div className="olv-container olv-empty"><EmptyState title="Categoría no encontrada" subtitle="Explora las demás piezas de Olivia." /><StorefrontLink to={`/catalogo/${slug}`} className="olv-link-button">Ver catálogo</StorefrontLink></div>;
   return <>
@@ -246,7 +247,7 @@ function ProductCard({ p, slug }: { p: PublicProductSummary; slug: string }) {
   const { store } = useCartContext();
   const href = `/catalogo/${slug}/producto/${p.productSlug}`;
   const images = p.images?.length ? p.images : p.imageUrl ? [{ url: p.imageUrl }] : [];
-  const soldOut = isSoldOut(p);
+  const soldOut = isSoldOut(p, store);
   return <article className="olv-product" aria-label={p.name}>
     <ProductGallery images={images} name={p.name} href={href} onNavigate={() => navigate(href)} />
     <div className="olv-product-info">
@@ -274,29 +275,39 @@ function ProductView({ initialStore, productSlug }: { initialStore: PublicStore;
     description: product?.publicDescription ?? undefined,
     canonicalPath: `/catalogo/${store.slug}/producto/${productSlug}`,
     ogImageUrl: product?.images[0]?.url,
-    jsonLd: product ? { "@context": "https://schema.org", "@type": "Product", name: product.name, description: product.publicDescription, image: product.images.map((i) => i.url), url: `${window.location.origin}/catalogo/${store.slug}/producto/${productSlug}`, ...(typeof publicPrice(product) === "number" ? { offers: { "@type": "Offer", price: String(publicPrice(product)), priceCurrency: "MXN", availability: isSoldOut(product) ? "https://schema.org/OutOfStock" : "https://schema.org/InStock" } } : {}) } : undefined,
+    jsonLd: product ? { "@context": "https://schema.org", "@type": "Product", name: product.name, description: product.publicDescription, image: product.images.map((i) => i.url), url: `${window.location.origin}/catalogo/${store.slug}/producto/${productSlug}`, ...(typeof publicPrice(product) === "number" ? { offers: { "@type": "Offer", price: String(publicPrice(product)), priceCurrency: "MXN", availability: isSoldOut(product, store) ? "https://schema.org/OutOfStock" : "https://schema.org/InStock" } } : {}) } : undefined,
   });
   if (failed) return <div className="olv-container olv-empty"><EmptyState title="No se pudo abrir la pieza" subtitle="Puede que ya no esté disponible. Revisa tu conexión o vuelve al catálogo." /><StorefrontLink to={`/catalogo/${store.slug}`} className="olv-link-button">Volver al catálogo</StorefrontLink></div>;
   if (!product) return <div className="olv-container olv-loading"><SkeletonCard /></div>;
-  return <ProductDetail product={product} store={store} />;
+  return <ProductDetail key={product.productSlug} product={product} store={store} />;
 }
 
 function ProductDetail({ product, store }: { product: PublicProductDetail; store: PublicStore }) {
   const { add, lines, setQty, notifyAdded } = useCartContext();
-  const quantity = lines.find((line) => line.productSlug === product.productSlug)?.qty ?? 0;
-  const soldOut = isSoldOut(product);
-  const images = [...product.images].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+  const [chosenColor, setChosenColor] = useState(product.variants?.[0]?.id ?? "");
+  const variant = product.variants?.find((v) => v.id === chosenColor) ?? product.variants?.[0];
+  const lineSlug = variant ? `${product.productSlug}~${variant.id}` : product.productSlug;
+  const line = cartItemsForPublicProduct(product, store.type).find((item) => item.productSlug === lineSlug)!;
+  const quantity = lines.find((item) => item.productSlug === lineSlug)?.qty ?? 0;
+  const soldOut = variant
+    ? (store.type !== "inventory_tiered" && isSoldOut(product, store)) || variant.stockSignal === "agotado"
+    : isSoldOut(product, store);
+  const baseImages = [...product.images].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+  const images = variant?.imageUrl
+    ? [{ url: variant.imageUrl, isPrimary: true }, ...baseImages.filter((image) => image.url !== variant.imageUrl)]
+    : baseImages;
   return <main className="olv-container olv-detail">
     <StorefrontLink className="olv-back" to={`/catalogo/${store.slug}`}>← Volver al catálogo</StorefrontLink>
     <div className="olv-detail-grid">
       <ProductGallery images={images} name={product.name} thumbnails />
       <div className="olv-detail-info"><p className="olv-eyebrow">Una pieza. Tu manera de llevarla.</p><h1>{product.name}</h1>
         <PublicTierPrices store={store} product={product} mode="detail" />
+        {!!product.variants?.length && <SelectField label="Color" value={variant?.id ?? ""} onChange={setChosenColor} options={product.variants.map((v) => ({ value: v.id, label: `${v.color}${v.stockSignal === "agotado" ? " (agotado)" : ""}` }))} />}
         {soldOut && <Badge tone="neutral">Agotado</Badge>}
         {product.publicDescription && <p className="olv-body-copy">{product.publicDescription}</p>}
         <dl className="olv-specs">{([["Material", product.material], ["Acabado", product.finish], ["Medidas", product.dimensions], ["Cuidados", product.care]] as const).filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-        <div className="olv-detail-actions"><CartProductControl key={`${product.productSlug}-${quantity}`} productSlug={product.productSlug} productName={product.name} quantity={quantity} onAdd={() => { add(cartItemFromPublicProduct({ ...product, image: images[0]?.url, inquire: soldOut })); notifyAdded(product.name); }} onSetQty={setQty} full size="lg" />
-          {(product.canInquire || !soldOut) && <a className="olv-text-link" target="_blank" rel="noreferrer" href={createStorefrontBuyUrl(store, store.slug, { name: product.name, productSlug: product.productSlug, intent: soldOut ? "inquire" : "buy" })}>{soldOut ? "Preguntar por esta pieza" : "Comprar por WhatsApp"} ↗</a>}
+        <div className="olv-detail-actions"><CartProductControl key={`${lineSlug}-${quantity}`} productSlug={lineSlug} productName={line.name} quantity={quantity} onAdd={() => { add({ ...line, image: images[0]?.url, inquire: soldOut }); notifyAdded(line.name); }} onSetQty={setQty} full size="lg" />
+          {(product.canInquire || !soldOut) && <a className="olv-text-link" target="_blank" rel="noreferrer" href={createStorefrontBuyUrl(store, store.slug, { name: line.name, productSlug: product.productSlug, intent: soldOut ? "inquire" : "buy" })}>{soldOut ? "Preguntar por esta pieza" : "Comprar por WhatsApp"} ↗</a>}
           <p className="olv-muted text-sm">Enviar tu selección no confirma ni reserva el pedido.</p>
         </div>
         <details className="olv-delivery" open><summary>Entregas y envíos</summary><p>{store.storefront?.shipping || OLIVIA_CONTENT.shipping}</p></details>
@@ -320,7 +331,7 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
   useEffect(() => {
     if (!store || !catalog) return;
     cart.prune(new Set(catalog.products.map((p) => p.productSlug)));
-    cart.refresh(catalog.products.map(cartItemFromPublicProduct));
+    cart.refresh(catalog.products.flatMap((product) => cartItemsForPublicProduct(product, store.type)));
   }, [cart.prune, cart.refresh, store, catalog]);
   const visibleSlugs = useMemo(() => catalog ? new Set(catalog.products.map((p) => p.productSlug)) : undefined, [catalog]);
   const lines = visibleSlugs ? pruneCartLines(cart.lines, visibleSlugs) : cart.lines;
@@ -354,7 +365,10 @@ function StoreChrome({ store, catalog, children, isHomeRoute, editing, patchStor
     {store && <>
       {addedName && !open && <div className="olv-added-status" role="status" aria-live="polite"><span><strong>Agregado a tu pedido</strong><span className="olv-added-name">{addedName}</span></span><Button variant="primary" onClick={openCart}>Ver mi pedido</Button></div>}
       <CartFloatingButton pieces={pieces} onClick={openCart} className={`olv-floating ${open ? "hidden" : ""}`} />
-      {catalog && <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, p.stockSignal ?? "disponible"]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} categoryNameBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, catalog.categories.find((category) => p.categoryIds?.[0] === category.id)?.name ?? ""]))} summaryMode="tiers" />}
+      {catalog && <CartDrawer open={open} onClose={() => setOpen(false)} store={store} lines={lines} signalBySlug={Object.fromEntries(catalog.products.flatMap((p) => [
+        [p.productSlug, publicAvailabilitySignal(p, store.type)],
+        ...(p.variants ?? []).map((v) => [`${p.productSlug}~${v.id}`, store.type !== "inventory_tiered" && isSoldOut(p, store) ? "agotado" : v.stockSignal]),
+      ]))} visibleSlugs={visibleSlugs} onSetQty={cart.setQty} categoryNameBySlug={Object.fromEntries(catalog.products.map((p) => [p.productSlug, catalog.categories.find((category) => p.categoryIds?.[0] === category.id)?.name ?? ""]))} summaryMode="tiers" />}
     </>}
   </div>;
   return store ? <CartContext.Provider value={{ ...cart, lines, store, notifyAdded }}>{body}</CartContext.Provider> : body;
