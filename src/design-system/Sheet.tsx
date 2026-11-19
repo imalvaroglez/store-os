@@ -75,7 +75,7 @@ export function Sheet({
           animation: `slideUp var(--motion-base) var(--ease-smooth)`,
         }}
       >
-        <div className="sticky top-0 bg-paper/95 backdrop-blur px-5 pt-4 pb-3 flex items-center justify-between border-b border-rule/70">
+        <div className="sticky top-0 bg-paper/95 backdrop-blur-sm px-5 pt-4 pb-3 flex items-center justify-between border-b border-rule/70">
           <h2 className="serif-display text-xl font-semibold text-ink">{title}</h2>
           <IconButton variant="ghost" aria-label="Cerrar" onClick={onClose} className="text-2xl">
             ×

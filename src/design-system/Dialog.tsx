@@ -77,7 +77,7 @@ export function Dialog({
 
   return (
     <div
-      className="fixed inset-0 z-[65] flex items-center justify-center p-4"
+      className="fixed inset-0 z-65 flex items-center justify-center p-4"
       style={{ animation: "dialogIn var(--motion-fast) var(--ease-smooth)" }}
     >
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]" onClick={onClose} aria-hidden />

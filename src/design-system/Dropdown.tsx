@@ -39,7 +39,7 @@ export function Dropdown({
       {open && (
         <div
           role="menu"
-          className={`absolute right-0 ${flipUp ? "bottom-full mb-2" : "top-full mt-2"} z-50 min-w-[10rem] rounded-lg bg-paper border border-rule shadow-lift py-1`}
+          className={`absolute right-0 ${flipUp ? "bottom-full mb-2" : "top-full mt-2"} z-50 min-w-40 rounded-lg bg-paper border border-rule shadow-lift py-1`}
           style={{ animation: "dropdownIn var(--motion-fast) var(--ease-smooth)" }}
         >
           {children}

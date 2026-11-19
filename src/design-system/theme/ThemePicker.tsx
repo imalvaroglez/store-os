@@ -24,11 +24,11 @@ function ThemePreview({ theme }: { theme: Theme }) {
   return (
     <div
       style={style}
-      className="rounded-[var(--radius-md)] p-3 border border-rule/60"
+      className="rounded-md p-3 border border-rule/60"
       // scoped bg so the preview shows the theme's paper color
     >
       <div
-        className="rounded-[var(--radius-md)] p-3 shadow-card"
+        className="rounded-md p-3 shadow-card"
         style={{
           background: theme.vars["--surface"],
           transform: `rotate(var(--card-tilt))`,

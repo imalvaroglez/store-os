@@ -48,7 +48,7 @@ export function BottomNav({
   return (
     <nav
       ref={navRef}
-      className="fixed bottom-0 inset-x-0 bg-paper/95 backdrop-blur border-t border-rule/80 flex z-30 md:hidden"
+      className="fixed bottom-0 inset-x-0 bg-paper/95 backdrop-blur-sm border-t border-rule/80 flex z-30 md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {flat.map((f) => {
