@@ -13,6 +13,7 @@ FIRESTORE_FILES=(
   src/app/firebase/orderPayments.emulator.test.ts
   src/app/firebase/creditEditInvariants.emulator.test.ts
   src/app/firebase/creditCustomerChange.emulator.test.ts
+  src/app/firebase/deliveredBalanceSeal.emulator.test.ts
   src/app/firebase/incidents.emulator.test.ts
   src/app/firebase/expenses.emulator.test.ts
   src/app/firebase/installments.emulator.test.ts
