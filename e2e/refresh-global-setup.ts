@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import type { FullConfig } from "@playwright/test";
 
@@ -11,9 +11,12 @@ import type { FullConfig } from "@playwright/test";
 // cloud case tests subscription + session rehydration, not the SW.
 function build(outDir: string, args: string[], env: NodeJS.ProcessEnv) {
   rmSync(outDir, { recursive: true, force: true });
-  execSync(`npx vite build --outDir ${outDir} ${args.join(" ")}`, {
+  // #484 P6 (SAST): array form — no shell interpolation, silences the
+  // exec-with-template alert for good. Behavior is unchanged (fixed literals).
+  execFileSync("npx", ["vite", "build", "--outDir", outDir, ...args], {
     env: { ...process.env, ...env },
     stdio: "inherit",
+    shell: process.platform === "win32",
   });
 }
 
