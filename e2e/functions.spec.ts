@@ -92,6 +92,35 @@ test("@functions member with a missing path → not-found (authorization passed,
   expect(body.error?.message).toMatch(/No se encontró el PDF|NOT_FOUND/i);
 });
 
+// #176 (Funciones/importaciones): the storagePath regex is the ONLY thing
+// standing between the callable and a Storage read — traversal, escapes from
+// purchases/, and non-PDF suffixes must die on invalid-argument before the
+// auth check even runs (no Storage access, no OCR).
+test("@functions malformed storagePath → invalid-argument, no Storage/OCR access", async () => {
+  const auth = admin!;
+  const malformed = [
+    "../etc/passwd.pdf",                              // traversal, no prefix
+    "purchases/../secret.pdf",                        // escape after the prefix
+    "purchases/store_joyeria/../../other-store/a.pdf", // nested escape
+    "purchases/store_joyeria/notas.txt",              // not a PDF
+    "purchases/store_joyeria/a%2Fb.pdf",              // encoded separator
+    "orders/store_joyeria/a.pdf",                     // wrong collection
+    "",                                               // empty
+    "purchases/store_joyeria/",                       // missing file segment
+  ];
+  for (const storagePath of malformed) {
+    const res = await callCallable({ storagePath }, auth.token);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error?.message).toMatch(/Ruta de PDF inválida|INVALID_ARGUMENT/i);
+  }
+  // Non-string shapes share the same fate.
+  for (const storagePath of [null, 42, { evil: "purchases/store_joyeria/x.pdf" }]) {
+    const res = await callCallable({ storagePath }, auth.token);
+    expect(res.status).toBe(400);
+  }
+});
+
 test("@functions failed OCR on an UNLINKED pdf deletes the file", async () => {
   const auth = admin!;
   await uploadPdf("store_joyeria", "cleanup-free", auth.token);
