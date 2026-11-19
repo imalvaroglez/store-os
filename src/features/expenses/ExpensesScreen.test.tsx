@@ -199,3 +199,37 @@ describe("importes extremos (hallazgos adversariales A y B)", () => {
     expect(mocks.saveExpense).not.toHaveBeenCalled();
   });
 });
+
+
+describe("#279 QA (MAYOR-2/3) — la forma de pago mostrada es la que se guarda", () => {
+  const classified = (): void => {
+    // A prior purchase classified as cash makes the contextual default "cash".
+    mocks.state!.purchases = [...(mocks.state!.purchases ?? []),
+      { id: "buy-cls", storeId: mocks.state!.activeStoreId!, supplierName: "S", items: [], status: "received", totalConfirmed: 10, paymentMethod: "cash", date: "2026-11-10", createdAt: "", updatedAt: "" } as never];
+  };
+
+  it("al agregar, el default contextual queda SELECCIONADO y se guarda", async () => {
+    classified();
+    render(<ToastProvider><ExpensesScreen /></ToastProvider>);
+    await openCreate();
+    const select = screen.getByLabelText("Forma de pago") as HTMLSelectElement;
+    expect(select.value).toBe("cash"); // lo que se muestra es lo que se guarda
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "50" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    expect(await screen.findByText("Gasto registrado.")).toBeTruthy();
+    expect(mocks.saveExpense.mock.calls[0][0].paymentMethod).toBe("cash");
+  });
+
+  it("un gasto sin clasificar se clasifica editándolo (la vía que el panel ordena)", async () => {
+    classified();
+    mocks.state!.expenses = [{ id: "exp-cls", storeId: mocks.state!.activeStoreId!, amount: 15, date: "2026-11-06", category: "operation", createdAt: "", updatedAt: "" } as never];
+    render(<ToastProvider><ExpensesScreen /></ToastProvider>);
+    await openEdit(0);
+    const select = screen.getByLabelText("Forma de pago") as HTMLSelectElement;
+    expect(select.value).toBe("");
+    fireEvent.change(select, { target: { value: "cash" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar gasto" }));
+    expect(await screen.findByText("Gasto actualizado.")).toBeTruthy();
+    expect(mocks.saveExpense.mock.calls[0][0].paymentMethod).toBe("cash");
+  });
+});

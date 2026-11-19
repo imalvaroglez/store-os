@@ -30,6 +30,7 @@ import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
+import { todayIso } from "../../lib/dates";
 import { creditFieldCents, effectiveOrderStatus, migrateOrder, orderItems, orderTotals, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
@@ -46,7 +47,7 @@ import {
 } from "../../features/orders/payments";
 import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 import { normalizeEmail, type AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
+import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
@@ -288,6 +289,13 @@ export async function saveEntity(
   // keep the stored true and strand the supply stash as "Reconocido".
   if (name === "expenses" && Object.prototype.hasOwnProperty.call(data, "simplifiedOperation") && data.simplifiedOperation === undefined) {
     clean.simplifiedOperation = deleteField();
+  }
+  // #279 r2 (M1): declassifying a payment method ("Sin clasificar") must
+  // REMOVE the stored field — stripping undefined alone kept the previous
+  // method counting in the caja/adeudo figures forever.
+  if ((name === "expenses" || name === "purchases")
+    && Object.prototype.hasOwnProperty.call(data, "paymentMethod") && data.paymentMethod === undefined) {
+    clean.paymentMethod = deleteField();
   }
   // #355: a "se vende por color" transition must actually swap the shelf
   // canonically. Enabling colors discards the design-level stock (each color
@@ -590,6 +598,41 @@ export async function authorizeMonthlyClose(
 /** #335 (M2): the "Decisiones" history reads the store's OWN events on demand —
  * one bounded query (composite index storeId+recordedAt, deployed with the
  * release), no listener. The rules' list guard keeps foreign stores out. */
+// ── #279: financial position from activation ────────────────────────────────
+
+/**
+ * T0, idempotent: returns the store's activation marker, creating it on
+ * first use (the cut is IMMUTABLE afterwards — the rules enforce it).
+ */
+export async function ensureStoreFinancials(storeId: string): Promise<StoreFinancials> {
+  const { db } = getFirebase();
+  const ref = doc(db, "storeFinancials", storeId);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return { storeId, activatedAt: snap.data().activatedAt as string };
+  // The cut is the OPERATOR's calendar day (es-MX), not a UTC instant: a
+  // payment captured "today" must never fall before the activation. Same
+  // YYYY-MM-DD shape the app's money dates use.
+  const activatedAt = todayIso();
+  await setDoc(ref, { storeId, activatedAt }, { merge: true });
+  const fresh = await getDoc(ref);
+  return { storeId, activatedAt: (fresh.data()?.activatedAt as string) ?? activatedAt };
+}
+
+/** Bounded, on-demand load (no listener): the store's card payments. */
+export async function loadCardPayments(storeId: string): Promise<CardPayment[]> {
+  const { db } = getFirebase();
+  const snap = await getDocs(query(collection(db, "cardPayments"), where("storeId", "==", storeId)));
+  return snap.docs
+    .map((d) => ({ ...(d.data() as CardPayment), id: d.id }))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+/** One REAL card payment — append-only money evidence. */
+export async function saveCardPayment(payment: CardPayment): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "cardPayments", payment.id), payment);
+}
+
 export async function loadPriceEvents(
   storeId: string,
   limitCount = 50

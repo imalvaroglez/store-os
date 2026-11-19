@@ -20,6 +20,8 @@ vi.mock("./firebase/firestoreData", async (importOriginal) => ({
   loadCloudState: hooks.load, subscribeCloudState: hooks.subscribe,
   registerOrderPaymentTx: hooks.register, fetchOrderPayments: hooks.fetch, saveOrderWithStockTx: hooks.save,
   saveEntity: vi.fn().mockResolvedValue(undefined), projectPublicForStore: vi.fn().mockResolvedValue(undefined),
+  ensureStoreFinancials: vi.fn().mockResolvedValue({ storeId: "retry-store", activatedAt: "2026-11-01T00:00:00.000Z" }),
+  loadCardPayments: vi.fn().mockResolvedValue([]),
 }));
 import { StoreProvider, useStore } from "./StoreProvider";
 import type { OrderPaymentsResult } from "./firebase/firestoreData";
@@ -156,4 +158,34 @@ it("returns the canonical saved order so a caller can detect a pinned deposit (#
   await act(async () => { saved = await context.upsertOrder({ ...order, deposit: 1000 }); });
   expect(saved).toEqual(canonical);
   expect(context.state.orders[0]).toMatchObject(canonical);
+});
+
+
+describe("#279 QA MAYOR-4 — barrido incremental por revisión", () => {
+  it("la segunda carga de posición NO re-barre pedidos sin cambios de cobros", async () => {
+    hooks.fetch.mockResolvedValue({ payments: [receipt], order: { ...order, paymentsReceivedCents: 40000 } });
+    await mount();
+    await act(async () => { await context.loadFinancialPosition(); });
+    expect(hooks.fetch).toHaveBeenCalledTimes(1);
+    expect(context.payments).toHaveLength(1);
+    // Nothing changed (the order's paymentsRevision still matches the cached
+    // one): reopening the position reads no order payments again.
+    await act(async () => { await context.loadFinancialPosition(); });
+    expect(hooks.fetch).toHaveBeenCalledTimes(1);
+    expect(context.payments).toHaveLength(1);
+  });
+
+  it("un cambio de revisión re-barre SÓLO ese pedido", async () => {
+    hooks.fetch.mockResolvedValue({ payments: [receipt], order: { ...order, paymentsReceivedCents: 40000 } });
+    await mount();
+    await act(async () => { await context.loadFinancialPosition(); });
+    expect(hooks.fetch).toHaveBeenCalledTimes(1);
+    // A new cobro landed: the listener's order snapshot now carries revision 2.
+    const changed = { ...order, paymentsRevision: 2 };
+    await act(async () => {
+      hooks.snapshot?.({ ...state(), orders: [changed] });
+    });
+    await act(async () => { await context.loadFinancialPosition(); });
+    expect(hooks.fetch).toHaveBeenCalledTimes(2);
+  });
 });
