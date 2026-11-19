@@ -2,6 +2,14 @@
 
 Guía para trabajar en Store OS. Lee esto antes de empezar.
 
+## Modelo operativo multiagente (acuerdo del PO, 2026-11-18)
+
+**Asignación preferida:** Codex funciona como **Tech Lead / Product Architect** para descubrir y aterrizar necesidades del negocio en una issue verificable; ZCode actúa como **implementador TDD**, **QA/Testing en una sesión independiente de la implementación** y **Release Manager en su propia sesión de entrega**. Son roles y límites de responsabilidad, **no modelos o versiones obligatorios**. La issue aprobada es la fuente de verdad: debe transmitir objetivos, reglas, recorrido y contrato visual cuando aplique, casos de aceptación, riesgos y decisiones pendientes **sin depender del chat previo**.
+
+**Handoff y gates:** el implementador trabaja solo issues elegibles, conserva rama + draft PR y no se autoaprueba. La sesión de QA recibe issue, diff y contexto técnico mínimo, **no las conclusiones del autor**; ejecuta pruebas funcionales/UX/regresión y deja evidencia. Los dos revisores independientes read-only de Code y UX siguen siendo obligatorios según las reglas actuales. El Release Manager verifica CI, revisiones, aprobaciones, release guard y despliegue vía GitHub Actions; **merge no significa Hecho**: la historia pasa a Por liberar y solo cierra con publicación verificada. Nunca se inventan reglas de dinero, existencias, accesos o privacidad.
+
+**Contrato detallado:** [docs/agent-operating-model.md](docs/agent-operating-model.md). Complementa, sin sustituir, las compuertas y autorizaciones de este archivo, \`LOOPS.md\` y el README vigente del tablero Store OS.
+
 ## Flujo de entrega
 
 Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI, Preview, y —bajo la autorización permanente del PO (2026-11-08)— merge y liberación a producción, siempre con CI completo en verde, revisión independiente sin contexto del PR y release guard (versión + notas). Nunca push directo a `main` ni leer/escribir datos productivos.
