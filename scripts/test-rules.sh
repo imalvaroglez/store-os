@@ -11,6 +11,9 @@ FIRESTORE_FILES=(
   src/app/firebase/securityMatrix.emulator.test.ts
   src/app/firebase/orderTransactions.emulator.test.ts
   src/app/firebase/orderPayments.emulator.test.ts
+  src/app/firebase/creditEditInvariants.emulator.test.ts
+  src/app/firebase/creditCustomerChange.emulator.test.ts
+  src/app/firebase/deliveredBalanceSeal.emulator.test.ts
   src/app/firebase/incidents.emulator.test.ts
   src/app/firebase/expenses.emulator.test.ts
   src/app/firebase/installments.emulator.test.ts
@@ -35,6 +38,7 @@ FIRESTORE_FILES=(
 CALLABLE_FILES=(
   src/app/firebase/customerCredit.emulator.test.ts
   src/app/firebase/deleteCredit.emulator.test.ts
+  src/app/firebase/deleteStoreRetention.emulator.test.ts
 )
 # Storage suites (#176): the emulator loads each file's rules explicitly, so
 # they do NOT use firebase.emulator.json's storage.rules.emulator swap.

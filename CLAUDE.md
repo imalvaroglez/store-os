@@ -4,6 +4,20 @@ Guía para trabajar en Store OS. Lee esto antes de empezar.
 
 @LOOPS.md
 
+## Modelo operativo multiagente (acuerdo del PO, 2026-11-18)
+
+**Asignación preferida:** Codex funciona como **Tech Lead / Product Architect** para descubrir y aterrizar necesidades del negocio en una issue verificable; ZCode actúa como **implementador TDD**, **QA/Testing en una sesión independiente de la implementación** y **Release Manager en su propia sesión de entrega**. Son roles y límites de responsabilidad, **no modelos o versiones obligatorios**. La issue aprobada es la fuente de verdad: debe transmitir objetivos, reglas, recorrido y contrato visual cuando aplique, casos de aceptación, riesgos y decisiones pendientes **sin depender del chat previo**.
+
+**Handoff y gates:** el implementador trabaja solo issues elegibles, conserva rama + draft PR y no se autoaprueba. La sesión de QA recibe issue, diff y contexto técnico mínimo, **no las conclusiones del autor**; ejecuta pruebas funcionales/UX/regresión y deja evidencia. Los dos revisores independientes read-only de Code y UX siguen siendo obligatorios según las reglas actuales. El Release Manager verifica CI, revisiones, aprobaciones, release guard y despliegue vía GitHub Actions; QA mueve la historia de Testing a Por liberar tras aprobarla. La publicación verificada cierra la historia. Nunca se inventan reglas de dinero, existencias, accesos o privacidad.
+
+**Contrato detallado:** [docs/agent-operating-model.md](docs/agent-operating-model.md). Complementa, sin sustituir, las compuertas y autorizaciones de este archivo, `LOOPS.md` y el README vigente del tablero Store OS.
+
+## Memoria técnica y reflexiones editoriales (acuerdo del PO, 2026-11-18)
+
+Cuando una decisión, experimento, error o hallazgo produzca un aprendizaje de ingeniería significativo, el agente registra una reflexión breve en el MCP `store-os-memory` configurado **si está disponible**: problema, alternativas, decisión, evidencia, resultado observado (distinguiéndolo de hipótesis) y aprendizaje transferible. Identifica el registro como **candidato editorial no aprobado**, sin forzar notas rutinarias ni interrumpir entregas por fallos de memoria. La issue, el PR y el tablero siguen siendo las fuentes operativas de verdad; la sesión de QA mantiene su independencia y no hereda las reflexiones del implementador sobre la entrega que revisa.
+
+Estas reflexiones podrán alimentar, cada 2–3 días, propuestas personales para X; **ningún agente publica, comparte externamente ni presupone autorización del PO**. Nunca registrar para divulgación secretos, datos personales o de clientas, información comercial privada, detalles internos de IBM/clientes o configuraciones de seguridad sensibles. Antes de redactar o publicar, verificar hechos y privacidad; la aprobación humana es obligatoria. Protocolo completo en [docs/agent-operating-model.md](docs/agent-operating-model.md).
+
 ## Flujo de entrega
 
 Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI, Preview, y —bajo la autorización permanente del PO (2026-11-08)— merge y liberación a producción, siempre con CI completo en verde, revisión independiente sin contexto del PR y release guard (versión + notas). Nunca push directo a `main` ni leer/escribir datos productivos.
@@ -14,8 +28,7 @@ El acuerdo vigente del proceso está en el README del tablero Store OS. Prevalec
 sobre documentos históricos para organización, estados y evidencias. El feedback
 se refina en issues, sin PR de documentación por cada solicitud; las áreas son
 permanentes y las épicas tienen objetivos finitos. Solo se asignan historias
-Listo; al tomar una se registra responsable y worktree. Para producto, merge
-significa Por liberar; la liberación a producción cierra la historia como
+Listo; al tomar una se registra responsable y worktree. QA mueve la historia de Testing a Por liberar tras aprobarla; la liberación a producción cierra la historia como
 Hecho, sin ronda adicional de aceptación. Defectos o ajustes posteriores nacen
 como items nuevos.
 
@@ -54,9 +67,9 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Promoción de Preview a producción
 
-`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y solo recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. El mismo commit revisado en el PR y la rama `main` es el que se libera; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
+`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y normalmente recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. En la vía normal se libera el commit revisado e integrado en `main`. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
 
-**Excepción Sev-1 (declarada por el PO; ver `docs/runbook-sev1-hotfix.md`):** durante un incidente activo de dinero/datos, el despacho `release_production=true` puede ir acompañado de `sev1_reuse_ci=true`: las suites se reusan solo si `sev1-verify` prueba que el commit exacto despachado (punta de `main`) ya pasó `build-test` y `rules-and-e2e` en su push; falla cerrado en cualquier duda. El release guard de versión+notas, el despliegue de reglas con paridad y la verificación post-release NO se omiten. La vía normal queda intacta.
+**Excepción Sev-1 (declarada por el PO; ver [runbook](docs/runbook-sev1-hotfix.md)):** si el PO autoriza expresamente la vía directa, se puede publicar un parche acotado de la aplicación sobre el commit que sirve producción sin esperar CI global ni merge. Requiere reproducción y prueba enfocada, build, versión y notas, comprobación del despliegue y registro del commit para incorporar el arreglo a `main`. La vía directa es exclusivamente para parches de aplicación: reglas Firestore o índices requieren su ruta separada con CI y paridad, y toda reparación de datos requiere alcance exacto, respaldo verificado y autorización expresa separada. Si el commit exacto de `main` ya pasó ambas suites, también se puede usar `sev1_reuse_ci=true` para evitar repetirlas. La vía normal conserva sus compuertas.
 
 ## Regla de Firebase
 
@@ -64,7 +77,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Todo desarrollo conectado, prueba contra emuladores y Preview usa el ID `store-os-dev`.
 - Los emuladores usan ese mismo ID y el bucket de dev, pero todos sus servicios apuntan a `127.0.0.1`; no se crea otro proyecto ni namespace para el trabajo local.
 - `.firebaserc` deja `store-os-dev` como proyecto predeterminado. Todo comando Firebase que permita elegir proyecto debe indicar el destino explícitamente; los comandos de desarrollo apuntan a `store-os-dev`.
-- Producción (`store-os-f7cf8`) solo recibe releases vía CI (persona o agente bajo la autorización permanente del PO, 2026-11-08). El trabajo de desarrollo nunca ejecuta operaciones de datos contra producción.
+- Producción (`store-os-f7cf8`) recibe releases vía CI, salvo la excepción Sev-1 documentada. El trabajo de desarrollo nunca ejecuta operaciones de datos contra producción.
 
 ## Regla permanente de arquitectura administrativa
 
@@ -222,7 +235,7 @@ Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno
 
 ### Ambientes y backends (cableado)
 
-Desarrollo y Preview usan `store-os-dev`. Producción usa `store-os-f7cf8` y solo recibe releases vía CI (persona o agente con la autorización permanente del PO, 2026-11-08). El proyecto predeterminado de Firebase es dev. Los emuladores locales usan el mismo ID de dev y servicios en `127.0.0.1`.
+Desarrollo y Preview usan `store-os-dev`. Producción usa `store-os-f7cf8` y recibe releases vía CI, salvo la excepción Sev-1 documentada. El proyecto predeterminado de Firebase es dev. Los emuladores locales usan el mismo ID de dev y servicios en `127.0.0.1`.
 
 | Ambiente | Backend Firebase | Cómo se cablea |
 |---|---|---|

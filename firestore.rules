@@ -123,6 +123,26 @@ service cloud.firestore {
         && !request.resource.data.pendingInvites.hasAny([canonicalEmail()]);
     }
 
+    // #375 (PO decision, 18-nov): the retention seal. Deleting a store expels
+    // every member: the ONLY accepted empty-membership update is the seal
+    // itself (retainedAt added, ownership unchanged, nothing else touched).
+    function retentionSeal(storeId) {
+      return (isSuperAdmin() || isOwner(storeId))
+        && request.resource.data.memberUids.size() == 0
+        // .get with default: dot access on a MISSING key is an evaluation
+        // ERROR in CEL — it poisoned the whole || chain (invitee joins died).
+        && request.resource.data.get('retainedAt', null) is string
+        && request.resource.data.ownerUid == adminStore(storeId).ownerUid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['memberUids', 'retainedAt', 'pendingInvites', 'updatedAt']);
+    }
+    // #375 H2: once sealed, the doc is frozen for the normal update path —
+    // the ONLY way back is platform acting directly (documented, auditable).
+    function notSealed() {
+      // .get with default: same CEL-safety as the seal (missing key ≠ error).
+      return resource.data.get('retainedAt', null) == null;
+    }
+
     match /adminStores/{storeId} {
       allow get: if isSuperAdmin() || isMember(storeId);
       allow list: if isSuperAdmin();
@@ -130,8 +150,10 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
       allow update: if ((isSuperAdmin() || isOwner(storeId))
+          && notSealed()
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
-        || inviteeJoinOk();
+        || (inviteeJoinOk() && notSealed())
+        || retentionSeal(storeId);
       allow delete: if false;
     }
 
@@ -361,7 +383,19 @@ service cloud.firestore {
       let magnitude = int(prefix) + (next >= '5' ? 1 : 0);
       return amount < 0 ? -magnitude : magnitude;
     }
-    function validReceipt(data, orderId, paymentId) {
+    /** #474 (QA 18-nov): on a CANCELLED order, a refund (negative adjustment)
+     * is the owner's call alone (super_admin may too, by platform policy).
+     * Anything else — positive adjustments, non-cancelled orders — is
+     * unaffected. Single let-bound get: the CEL expression budget is tight. */
+    function ownerOnlyRefundOk(orderId, data) {
+      let order = get(/databases/$(database)/documents/orders/$(orderId)).data;
+      return data.kind != 'adjustment'
+        || data.amount > 0
+        || order.get('orderStatus', order.get('status', '')) != 'cancelled'
+        || isOwner(order.storeId)
+        || isSuperAdmin();
+    }
+        function validReceipt(data, orderId, paymentId) {
       return data.id == paymentId && data.orderId == orderId
         && data.createdBy == request.auth.uid
         // #369: no new cobros on a CANCELLED order — the money has no exit
@@ -381,6 +415,10 @@ service cloud.firestore {
         && data.kind in ['payment', 'adjustment']
         && (data.kind == 'adjustment' || data.amount > 0)
         && (data.kind != 'adjustment' || (data.note is string && data.note.trim().size() > 0))
+        // #474 (QA 18-nov): a refund (negative adjustment) on a CANCELLED
+        // order is the OWNER's call alone — members never register the exit.
+        // One let-bound parent read keeps this far under the CEL budget.
+        && ownerOnlyRefundOk(orderId, data)
         && ((paymentId == 'inherited_deposit' && data.kind == 'payment'
               && data.method in ['cash', 'transfer']
               && data.date is string && data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}'))
@@ -520,6 +558,37 @@ service cloud.firestore {
         && int(entry.get('deliveredAt', '0000')[0:4]) >= 2020
         && int(entry.get('deliveredAt', '0000')[0:4]) <= 2035;
     }
+    // #383: the "entregado con saldo" authorization is money evidence — a
+    // direct SDK write must not forge, erase, or retouch it. A COMPLETE,
+    // self-attributed stamp may only be born riding the legitimate
+    // transition INTO delivered (the #165/#168 gate the client transaction
+    // enforces with the operator's explicit confirmation); anything else
+    // must carry the seal VERBATIM (never rewritten, never erased — the
+    // same doctrine as depositCorrections/deliveries). Historical delivered
+    // orders without a seal (#370) are unaffected: absent == absent.
+    function validDeliveredBalanceSeal(before, after) {
+      let beforeStatus = before.get('orderStatus', before.get('status', ''));
+      let afterStatus = after.get('orderStatus', after.get('status', ''));
+      let afterComplete = 'deliveredWithBalanceCents' in after
+        && 'deliveredWithBalanceConfirmedAt' in after
+        && 'deliveredWithBalanceConfirmedBy' in after
+        && after.deliveredWithBalanceCents is int
+        && after.deliveredWithBalanceCents >= 0
+        && after.deliveredWithBalanceCents <= 100000000000
+        && after.deliveredWithBalanceConfirmedAt is string
+        && after.deliveredWithBalanceConfirmedAt.size() > 0
+        && after.deliveredWithBalanceConfirmedBy == request.auth.uid;
+      return (afterComplete
+          && afterStatus == 'delivered'
+          && beforeStatus != 'delivered')
+        || (!afterComplete
+          && after.get('deliveredWithBalanceCents', -1) == before.get('deliveredWithBalanceCents', -1)
+          && after.get('deliveredWithBalanceConfirmedAt', '') == before.get('deliveredWithBalanceConfirmedAt', '')
+          && after.get('deliveredWithBalanceConfirmedBy', '') == before.get('deliveredWithBalanceConfirmedBy', '')
+          && ('deliveredWithBalanceCents' in after) == ('deliveredWithBalanceCents' in before)
+          && ('deliveredWithBalanceConfirmedAt' in after) == ('deliveredWithBalanceConfirmedAt' in before)
+          && ('deliveredWithBalanceConfirmedBy' in after) == ('deliveredWithBalanceConfirmedBy' in before));
+    }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
@@ -571,6 +640,12 @@ service cloud.firestore {
             || request.resource.data.get('deliveries', [])
                 == resource.data.get('deliveries', [])
             || validDeliveryAppend(id, resource.data, request.resource.data))
+        // #383: the delivered-with-balance seal only moves with the
+        // legitimate transition (see validDeliveredBalanceSeal); the diff
+        // short-circuit keeps ordinary edits cheap.
+        && (!request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['deliveredWithBalanceCents', 'deliveredWithBalanceConfirmedAt', 'deliveredWithBalanceConfirmedBy'])
+            || validDeliveredBalanceSeal(resource.data, request.resource.data))
         // #478: the installment reservation marker never changes once
         // present, and may only be BORN on money it can point to: a doc
         // that ALREADY carries received money (the legitimate edit path

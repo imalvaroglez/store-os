@@ -19,13 +19,14 @@ import {
 import { customersForStore } from "../../lib/selectors";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { isVariantProduct } from "../../lib/variants";
+import { variantEffectivePrice } from "../../lib/variantPrice";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { attributeProjectedShortageToLines, orderWillHoldPieces } from "../../lib/inventory";
 import { formatOrderUnitPrice, orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
-import { DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
+import { CreditCoverageError, CreditCustomerChangeError, DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
 import { IncidentEvidenceError } from "./incidents";
 import { pendingDeliveries } from "../../lib/deliveries";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
@@ -249,13 +250,29 @@ export function OrderForm({
   const missingTier = isTiered && !!assignedTier && !tiers.some((tier) => tier.id === assignedTier) && !orderTierOverride;
   const currentTier = orderTierOverride || assignedTier || defaultPriceTier;
 
+  /** #467: the effective price for a line's tier — the VARIANT's own map when
+   * the line carries a color (a color with own prices and a missing level is
+   * SIN precio: never the design's figure), the design's map otherwise.
+   * undefined = sin precio (the line empties for manual capture). */
+  function effectiveLinePrice(
+    product: Product | undefined,
+    line: Pick<DraftLine, "variantId">,
+    tierId: string
+  ): number | undefined {
+    if (!product) return undefined;
+    const variant = line.variantId ? product.variants?.find((v) => v.id === line.variantId) : undefined;
+    if (variant) return variantEffectivePrice(variant, tierId, product);
+    const price = product.prices?.[tierId];
+    return price !== undefined && price > 0 ? price : undefined;
+  }
+
   function applyCustomer(customer: Customer, reprice: boolean) {
     const tier = customer.assignedPriceTierId ?? defaultPriceTier;
     const tierAvailable = !isTiered || tiers.some((candidate) => candidate.id === tier);
     if (reprice) setLines((current) => current.map((line) => {
       if (line.priceSource !== "automatic" || !line.productId) return line;
       const product = products.find((item) => item.id === line.productId);
-      const price = isTiered ? (tierAvailable ? product?.prices?.[tier ?? ""] : undefined) : product?.price;
+      const price = isTiered ? (tierAvailable ? effectiveLinePrice(product, line, tier ?? "") : undefined) : product?.price;
       return { ...line, priceTier: isTiered ? tier : undefined, unitPriceText: price == null ? "" : String(price), unitPrice: price ?? 0 };
     }));
     setOrderTierOverride("");
@@ -274,7 +291,7 @@ export function OrderForm({
     setOrderTierOverride(tier);
     setLines((current) => current.map((line) => {
       if (line.priceSource !== "automatic" || !line.productId) return line;
-      const price = products.find((product) => product.id === line.productId)?.prices?.[tier];
+      const price = effectiveLinePrice(products.find((product) => product.id === line.productId), line, tier);
       return { ...line, priceTier: tier, unitPriceText: price == null ? "" : String(price), unitPrice: price ?? 0 };
     }));
   }
@@ -476,11 +493,21 @@ export function OrderForm({
     // the new line (review MAYOR: a dropdown pick without typing kept the old
     // price silently, marked "manual").
     const firstLink = line.productId == null;
-    const unitPrice = missingTier && !manualTier
-      ? undefined
-      : firstLink
-        ? currentPrice > 0 ? currentPrice : tierPrice
-        : tierPrice ?? (currentPrice > 0 ? currentPrice : undefined);
+    // #467 (re-review, ruta #93): a per-COLOR design must never seed the line
+    // with the DESIGN's price map — the color chosen next owns the price, and a
+    // level the chosen color lacks must stay EMPTY (never the design's figure,
+    // never a misleading manual badge). A price Fer actually TYPED is kept.
+    // Tiered only: in non-tiered stores the base price IS the shared color
+    // price (no per-color maps exist) — blocking it would strand the line
+    // without any price (e2e #394 regression).
+    const colorDesign = isTiered && (product.variants?.length ?? 0) > 0;
+    const unitPrice = colorDesign
+      ? currentPrice > 0 && line.priceSource === "manual" ? currentPrice : undefined
+      : missingTier && !manualTier
+        ? undefined
+        : firstLink
+          ? currentPrice > 0 ? currentPrice : tierPrice
+          : tierPrice ?? (currentPrice > 0 ? currentPrice : undefined);
     const category = state.categories.find((item) => item.storeId === order.storeId && item.id === product.categoryIds?.[0]);
     const categorySnapshot = line.productId === product.id ? line.categorySnapshot : category ? { id: category.id, name: category.name } : undefined;
     updateLine(line.key, {
@@ -513,11 +540,27 @@ export function OrderForm({
       updateLine(line.key, { variantId: undefined, variantColor: undefined, variantSku: undefined });
       return;
     }
+    // #467: selecting a color re-prices the AUTOMATIC line with the color's
+    // EFFECTIVE price (own map or shared design price) — orders and catalog
+    // read the same source. A sin-precio level empties the automatic price
+    // (manual capture stays free); manual prices are never touched.
+    let reprice: Partial<DraftLine> = {};
+    // #467 (re-review): a manual-TIER line with NO typed price (tier chosen
+    // before the product — ruta #93) also re-prices from the color; only a
+    // price Fer actually typed stays untouched.
+    const typedManual = line.priceSource === "manual" && numberFromText(line.unitPriceText) > 0;
+    if (isTiered && (line.priceSource === "automatic" || !typedManual)) {
+      const effective = variantEffectivePrice(variant, line.priceTier ?? currentTier ?? "", product);
+      reprice = effective === undefined
+        ? { unitPriceText: "", unitPrice: 0 }
+        : { unitPriceText: String(effective), unitPrice: effective, priceSource: "automatic" };
+    }
     updateLine(line.key, {
       variantId: variant.id,
       variantColor: variant.color,
       variantSku: variant.sku ?? (variant.skuSuffix ? `${product.sku ?? ""}-${variant.skuSuffix}` : undefined),
       ...(variant.cost != null ? { cost: variant.cost, costText: String(variant.cost) } : {}),
+      ...reprice,
     });
   }
 
@@ -548,8 +591,22 @@ export function OrderForm({
 
   function changeTier(line: DraftLine, value: string) {
     const product = products.find((candidate) => candidate.id === line.productId);
-    const unitPrice = product?.prices?.[value];
-    updateLine(line.key, { priceTier: value, priceSource: "manual", unitPrice: unitPrice ?? 0, unitPriceText: unitPrice == null ? "" : String(unitPrice) });
+    // #467 (QA UX): the tier change re-prices through the SAME source as the
+    // color choice — a color with own prices and a missing level is SIN
+    // precio (empty for manual capture), never the design's figure. The
+    // app-filled price is automatic: the "ajustado manualmente" badge only
+    // ever marks prices a person actually typed.
+    const unitPrice = isTiered ? effectiveLinePrice(product, line, value) : product?.price;
+    updateLine(line.key, {
+      priceTier: isTiered ? value : undefined,
+      // A tier chosen BEFORE the product stays an explicit (manual-tier) line
+      // so the product selection honors it; on a filled line the app fills
+      // the price → automatic, and the manual badge only marks hand-typed
+      // prices (#93 pre-select flow preserved).
+      priceSource: line.productId ? "automatic" : "manual",
+      unitPrice: unitPrice ?? 0,
+      unitPriceText: unitPrice == null ? "" : String(unitPrice),
+    });
   }
 
   async function submit() {
@@ -723,6 +780,18 @@ export function OrderForm({
       // #368: the incident-evidence guard explains itself — show WHY the save
       // was rejected instead of a generic failure (the capture stays here).
       if (error instanceof IncidentEvidenceError) {
+        toast.error(error.message);
+        return;
+      }
+      // #366: a credit-coverage block explains WHAT sustained saldo a favor
+      // the edit would strand — never a generic retry-loop toast.
+      if (error instanceof CreditCoverageError) {
+        toast.error(error.message);
+        return;
+      }
+      // #367: the clienta-change block explains HOW to leave the block
+      // (restitute or finish the credit) instead of a generic retry toast.
+      if (error instanceof CreditCustomerChangeError) {
         toast.error(error.message);
         return;
       }
@@ -950,7 +1019,10 @@ export function OrderForm({
                   />
                 );
               })()}
-              {line.priceSource === "manual" && <p className="text-xs text-on-surface-soft">Precio ajustado manualmente.</p>}
+              {/* #467: the badge marks a price Fer actually TYPED — a manual
+                  TIER with an empty price (ruta #93) is a pending capture,
+                  not an adjustment. */}
+              {line.priceSource === "manual" && numberFromText(line.unitPriceText) > 0 && <p className="text-xs text-on-surface-soft">Precio ajustado manualmente.</p>}
               {line.productId && !line.unitPriceText && <p className="text-danger">Falta capturar el precio de este producto.</p>}
               <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(7rem,0.65fr)_minmax(9rem,1fr)_minmax(10rem,1fr)_minmax(8rem,0.9fr)]">
                 <TextField

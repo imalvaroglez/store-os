@@ -51,7 +51,7 @@ export function OrderPaymentsSheet({
    * VALID payment evidence that feeds the caja. Never a silent deposit. */
   prefillAmountCents?: number | null;
 }) {
-  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId } = useStore();
+  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId, state, authUser } = useStore();
   const toast = useToast();
   const [amountText, setAmountText] = useState("");
   useEffect(() => {
@@ -72,6 +72,10 @@ export function OrderPaymentsSheet({
   const [adjustAmountText, setAdjustAmountText] = useState("");
   const [adjustDirection, setAdjustDirection] = useState<"subtract" | "add">("subtract");
   const [adjustNote, setAdjustNote] = useState("");
+  // #474: money LEAVING needs an explicit, two-step confirmation — the first
+  // tap only ARMS with the exact amount; any edit disarms. Mirrors the
+  // card-overpay confirmation (#279 B2).
+  const [adjustArmed, setAdjustArmed] = useState<number | null>(null);
   // #455 r5: dating the TOTAL anticipo captured at creation (no cobro will
   // ever ride it) is its own save.
   const [dating, setDating] = useState(false);
@@ -83,6 +87,11 @@ export function OrderPaymentsSheet({
   // path); the sheet stays as evidence, and signed adjustments remain the
   // record with which Fer documents anything handed back.
   const cancelled = effectiveOrderStatus(order) === "cancelled";
+  // #474 (QA 18-nov): on a CANCELLED order the refund (negative adjustment) is
+  // the OWNER's call alone — UI hides it for members; the transaction and the
+  // rules re-validate for any other client.
+  const storeDoc = state?.stores?.find((st) => st.id === order.storeId);
+  const isOwnerOrAdmin = authUser?.role === "super_admin" || (storeDoc?.ownerUid != null && storeDoc.ownerUid === authUser?.uid);
   const view = useRef({ open, orderId: order.id, owner: draftOwnerId, generation: 0, mounted: true });
   if (view.current.open !== open || view.current.orderId !== order.id || view.current.owner !== draftOwnerId) {
     view.current = { ...view.current, open, orderId: order.id, owner: draftOwnerId, generation: view.current.generation + 1 };
@@ -209,6 +218,30 @@ export function OrderPaymentsSheet({
         return;
       }
     }
+    // #474: money LEAVING needs an explicit, two-step confirmation — the
+    // first tap only ARMS with the exact amount (cap already cleared above);
+    // any edit disarms, so an edited figure never confirms. Mirrors the
+    // card-overpay confirmation (#279 B2).
+    if (adjustDirection === "subtract") {
+      const amount = parseAmount(adjustAmountText);
+      const centsNow = amount == null ? null : Math.round(amount * 100);
+      if (adjustArmed == null) {
+        // #474 (QA menor): the first tap explains WHY it does not arm —
+        // no silent dead button while the capture is incomplete.
+        if (centsNow == null || centsNow <= 0) {
+          toast.error("Escribe un monto válido para el ajuste.");
+          return;
+        }
+        if (!adjustNote.trim()) {
+          toast.error("Escribe el motivo del ajuste.");
+          return;
+        }
+        setAdjustArmed(centsNow);
+        return; // armed only; nothing registered
+      }
+      if (adjustArmed !== centsNow) { setAdjustArmed(null); return; }
+    }
+    setAdjustArmed(null);
     const id = intentIdRef.current.adjust ?? uid("adj");
     intentIdRef.current.adjust = id;
     await save({ kind: "adjustment", id, direction: adjustDirection, amountText: adjustAmountText, note: adjustNote }, () => {
@@ -221,7 +254,17 @@ export function OrderPaymentsSheet({
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="Cobros del pedido">
+    <Sheet
+      open={open}
+      onClose={() => {
+        // #474 (QA MAYOR): closing the sheet must also disarm a pending
+        // confirmation — reopening can never inherit a one-tap money exit.
+        setAdjustArmed(null);
+        setAdjustOpen(false);
+        onClose();
+      }}
+      title="Cobros del pedido"
+    >
       <div className="space-y-4">
         <div className="grid grid-cols-3 gap-3">
           <StatRow label="Total">
@@ -422,8 +465,8 @@ export function OrderPaymentsSheet({
             <div className="space-y-1">
               <p className="text-sm font-semibold text-on-surface">Pedido cancelado: no se pueden registrar cobros.</p>
               <p className="text-xs text-on-surface-soft">
-                Los cobros ya registrados quedan como evidencia. La devolución de dinero ya recibido se define aparte;
-                entre tanto, un ajuste firmado (con motivo) documenta lo entregado.
+                Los cobros ya registrados quedan como evidencia. La devolución de dinero ya recibido la registra
+                la dueña de la tienda con un ajuste firmado (con motivo).
               </p>
             </div>
           ) : (
@@ -464,7 +507,8 @@ export function OrderPaymentsSheet({
             </>
           )}
 
-          {adjustOpen ? (
+          {(isOwnerOrAdmin || !cancelled) && (
+          adjustOpen ? (
             <div className="space-y-3 rounded-xl bg-surface p-3 ring-1 ring-edge">
               <p className="text-xs text-on-surface-soft">
                 Los ajustes no borran cobros: quedan como registros con signo y motivo.
@@ -497,7 +541,7 @@ export function OrderPaymentsSheet({
               <SelectField
                 label="Dirección"
                 value={adjustDirection}
-                onChange={setAdjustDirection}
+                onChange={(d) => { setAdjustArmed(null); setAdjustDirection(d); }}
                 options={[
                   { value: "subtract", label: "Restar (devolución)" },
                   { value: "add", label: "Sumar" },
@@ -508,20 +552,37 @@ export function OrderPaymentsSheet({
                 inputMode="decimal"
                 placeholder="150 para devolver"
                 value={adjustAmountText}
-                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, "")))}
+                onChange={(e) => { setAdjustArmed(null); setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, ""))); }}
               />
               <TextField
-                label="Motivo"
+                label="Motivo (obligatorio)"
                 value={adjustNote}
-                onChange={(e) => setAdjustNote(e.target.value)}
+                onChange={(e) => { setAdjustArmed(null); setAdjustNote(e.target.value); }}
                 placeholder="p. ej. devolución en efectivo"
               />
               <div className="flex gap-2">
-                <Button variant="secondary" full disabled={saving} onClick={() => setAdjustOpen(false)}>
+                <Button
+                  variant="secondary"
+                  full
+                  disabled={saving}
+                  onClick={() => {
+                    // #474 (QA MAYOR): cancel disarms — reopening starts from
+                    // "Guardar ajuste", never a one-tap confirmation.
+                    setAdjustArmed(null);
+                    setAdjustOpen(false);
+                  }}
+                >
                   Cancelar
                 </Button>
-                <Button full disabled={saving || loading || loadFailed} onClick={submitAdjustment}>
-                  Guardar ajuste
+                <Button
+                  full
+                  variant={adjustArmed != null ? "danger" : "primary"}
+                  disabled={saving || loading || loadFailed}
+                  onClick={submitAdjustment}
+                >
+                  {adjustArmed != null
+                    ? `Confirmar devolución de ${formatMoneyExact(adjustArmed / 100)}`
+                    : "Guardar ajuste"}
                 </Button>
               </div>
             </div>
@@ -529,7 +590,7 @@ export function OrderPaymentsSheet({
             <Button variant="ghost" full disabled={saving || loading || loadFailed} onClick={() => setAdjustOpen(true)}>
               Registrar ajuste o devolución
             </Button>
-          )}
+          ))}
         </div>
         )}
       </div>

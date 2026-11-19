@@ -210,6 +210,12 @@ export type ProductVariant = {
   photos?: ProductImage[];
   /** Per-color acquisition cost; starts from the design's cost (decision 2). */
   cost?: number;
+  /** #467 (PO 15-nov): the color's OWN sale prices per level. Absent = the
+   * variant shares the design's map (legacy fichas keep their effective
+   * prices); present = only these levels are sellable for this color — a
+   * missing level is sin precio, never the design's or another level's.
+   * Resolved ONLY through lib/variantPrice. */
+  prices?: Record<string, number>;
   quantityOnHand?: number;
   lowStockAt?: number;
   createdAt: string;

@@ -1,26 +1,27 @@
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
+  deleteDoc,
+  deleteField,
   doc,
+  documentId,
   getDoc,
   getDocFromServer,
   getDocs,
   getDocsFromServer,
-  setDoc,
-  deleteDoc,
-  deleteField,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-  limit,
-  documentId,
-  runTransaction,
   increment,
-  arrayUnion,
-  arrayRemove,
-  writeBatch,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+  setDoc,
   type Transaction,
   type Unsubscribe,
+  updateDoc,
+  where,
+  writeBatch,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
@@ -30,7 +31,7 @@ import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/p
 import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { todayIso } from "../../lib/dates";
-import { effectiveOrderStatus, migrateOrder, orderItems, paymentStatusForOrder } from "../../lib/orders";
+import { creditFieldCents, effectiveOrderStatus, migrateOrder, orderItems, orderTotals, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
@@ -736,6 +737,24 @@ export async function deleteEntity(
   await deleteDoc(doc(db, name, id));
 }
 
+/**
+ * #375 (PO decision, 18-nov): retention with expulsion. Deleting a store
+ * expels every member (memberUids emptied) and seals the control doc with
+ * retainedAt. The doc SURVIVES as the retention seal — money evidence (paid
+ * orders, payments, priceEvents) stays readable only by platform, because
+ * isMember no longer matches anyone. The seal is one-way: rules only accept
+ * the empty-membership update together with retainedAt.
+ */
+export async function retainStoreEvidence(_user: AppUser, storeId: string): Promise<void> {
+  const { db } = getFirebase();
+  await updateDoc(doc(db, "adminStores", storeId), {
+    memberUids: [],
+    // H3: a pending invite must never join a deleted store.
+    pendingInvites: [],
+    retainedAt: new Date().toISOString(),
+  });
+}
+
 /** The order changed on another device after this editor loaded it. */
 export class StaleOrderError extends Error {
   constructor() {
@@ -815,6 +834,31 @@ export class InsufficientStockError extends Error {
  * still-unmaterialized legacy deposit are the truth of received money, so a
  * fresh session with no payment records loaded can no longer undercount them.
  */
+/** #366: an edit must never break the coverage of money that already moved
+ * as saldo a favor. Returns the actionable reason to BLOCK the change, or
+ * null when the edit is safe (or the order never touched credit). Deliberate
+ * scope: explicit blocking + explanation — never auto-restitution. */
+export function creditEditCoverageError(docData: Record<string, unknown> | undefined, next: Order): string | null {
+  const consumed = creditFieldCents(docData ?? {}, "creditConsumedCents");
+  const applied = creditFieldCents(docData ?? {}, "creditAppliedCents");
+  if (consumed <= 0 && applied <= 0) return null; // pre-ledger document: nothing to protect
+  // #366 H2 (review): the REAL received money includes the legacy
+  // un-materialized deposit (#168 F2) — accumulator-only misses pre-payments
+  // model docs and blocks legitimate edits with a misleading reason.
+  const received = docReceivedCents((docData ?? {}) as Partial<Order> & Record<string, unknown>);
+  const total = Math.round(orderTotals(next).estimatedTotal * 100);
+  if (consumed > 0 && consumed > Math.max(0, received - total)) {
+    return `Este pedido sostiene ${formatMoneyExact(consumed / 100)} de saldo a favor ya usados en otros pedidos y el cambio dejaría ese dinero sin respaldo. Restituye ese saldo (o quita su uso) antes de guardar este cambio.`;
+  }
+  if (applied > 0 && received + applied > total) {
+    return `Este pedido tiene ${formatMoneyExact(applied / 100)} de saldo a favor aplicado; bajando el total quedaría ${formatMoneyExact((received + applied - total) / 100)} sin destino (no vuelve solo al pedido origen). Restituye el saldo que ya no necesita antes de guardar.`;
+  }
+  return null;
+}
+
+export class CreditCoverageError extends Error {}
+export class CreditCustomerChangeError extends Error {}
+
 export async function saveOrderWithStockTx(
   user: AppUser,
   order: Order,
@@ -845,6 +889,28 @@ export async function saveOrderWithStockTx(
     // can never wipe a concurrent abono's accumulator (Firestore retries this
     // transaction whenever the doc changed after this read).
     const docData = snap.data() as Record<string, unknown> | undefined;
+    // #366: an edit that would strand or under-cover money already moved as
+    // saldo a favor is blocked with the explanation BEFORE any money/stock
+    // math runs (same fail-closed discipline as the incident evidence above).
+    const coverageError = previous ? creditEditCoverageError(docData, order) : null;
+    if (coverageError) throw new CreditCoverageError(coverageError);
+    // #367: changing the clienta of an order that MOVED credit transfers that
+    // money between people (Ana would see María's saldo; María's views lose
+    // it). Block until the credit is settled — restituted or fully consumed.
+    if (previous && previous.customerId !== order.customerId) {
+      // Only the accumulators carry LIVE credit. The ledger is append-only
+      // evidence — releaseCredit adds positive release entries and never
+      // zeroes the originals — so judging raw entries would block a settled
+      // credit forever. Same criterion as the delete guard (#363) and the
+      // credit read models (net by accumulators, never raw entries).
+      const movedCredit = creditFieldCents(docData ?? {}, "creditAppliedCents") > 0
+        || creditFieldCents(docData ?? {}, "creditConsumedCents") > 0;
+      if (movedCredit) {
+        throw new CreditCustomerChangeError(
+          "Este pedido tiene saldo a favor aplicado o generado; cambiar la clienta movería ese dinero a otra persona. Restituye el saldo (o termina su uso) antes de cambiar la clienta."
+        );
+      }
+    }
     // #218: full saves cannot invent legacy money after payment evidence.
     // Use the RAW deposit: migration can inflate it for legacy paid orders.
     const rawDeposit = typeof docData?.deposit === "number" && Number.isFinite(docData.deposit) ? docData.deposit : 0;
@@ -950,7 +1016,7 @@ export async function saveOrderWithStockTx(
         const refundCommittedCents = incidentsRefundCommittedCents(next.incidents);
         const surplusAfter = Math.max(0, receivedCents - Math.max(0, itemsCents + adjustmentsCents) - refundCommittedCents);
         if (surplusAfter < consumedNow) {
-          throw new Error(
+          throw new CreditCoverageError(
             `Este pedido respalda ${consumedNow / 100} pesos de saldo a favor que otra venta ya usa; la edición dejaría ese saldo sin respaldo (${surplusAfter / 100} disponibles tras el cambio). Devuelve el saldo primero o corrige la edición.`
           );
         }
@@ -1162,6 +1228,21 @@ export async function registerOrderPaymentTx(
     if (payment.kind === "payment" && effectiveOrderStatus(order) === "cancelled") {
       throw new Error("Este pedido está cancelado: no se pueden registrar cobros.");
     }
+    // #474 (QA 18-nov): on a CANCELLED order, a refund (negative adjustment) is
+    // the OWNER's call alone. The UI hides the form for members; this is the
+    // authoritative guard for any other client (rules repeat it server-side).
+    if (payment.kind === "adjustment" && payment.amount < 0 && effectiveOrderStatus(order) === "cancelled") {
+      const adminStoreSnap = await tx.get(doc(db, "adminStores", order.storeId));
+      const ownerUid = adminStoreSnap.get("ownerUid") as string | undefined;
+      let superAdmin = false;
+      if (ownerUid !== payment.createdBy) {
+        const actorSnap = await tx.get(doc(db, "users", payment.createdBy));
+        superAdmin = actorSnap.get("role") === "super_admin";
+      }
+      if (ownerUid !== payment.createdBy && !superAdmin) {
+        throw new Error("Solo la dueña de la tienda puede registrar la devolución de un pedido cancelado.");
+      }
+    }
     // Inherited deposit materialization (#123, PO 2026-11-03): only a real
     // payment carries it, and the operator-supplied date/method is required.
     const inheritedInput = payment.kind === "payment" ? inherited : undefined;
@@ -1220,6 +1301,29 @@ export async function registerOrderPaymentTx(
         throw new Error(
           `El ajuste excede lo recibido en este pedido. Puedes restar hasta ${formatMoneyExact(Math.max(0, current) / 100)}.`
         );
+      }
+      // #366 (criterio 2, review H1): money already consumed as saldo a favor
+      // by sister orders cannot leave through the adjustment door. The real
+      // invariant (same one creditMath/orderTotals enforce) is
+      //   received − effectiveTotal − refundCommitted ≥ consumed
+      // so the ceiling SUBTRACTS the order's effective total — an
+      // accumulator-only ceiling left a breach exactly equal to the total.
+      const sustainedCredit = typeof orderSnap.data().creditConsumedCents === "number"
+        && Number.isSafeInteger(orderSnap.data().creditConsumedCents)
+        ? Math.max(0, orderSnap.data().creditConsumedCents as number) : 0;
+      if (sustainedCredit > 0) {
+        const fresh = { ...order, ...orderSnap.data() } as Partial<Order> & Record<string, unknown>;
+        const receivedCents = Math.max(docReceivedCents(fresh), docReceivedCents(order));
+        const itemsCents = orderItems(fresh as Order).reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+        const effectiveCents = Math.max(0, itemsCents + incidentsSaleAdjustmentCents((fresh as Order).incidents));
+        const refundCommitted = incidentsRefundCommittedCents((fresh as Order).incidents);
+        const ceiling = Math.max(0, receivedCents - effectiveCents - refundCommitted - sustainedCredit);
+        const subtractCents = -savedCents;
+        if (subtractCents > ceiling) {
+          throw new Error(
+            `Este pedido sostiene ${formatMoneyExact(sustainedCredit / 100)} de saldo a favor ya usados en otros pedidos y ya no tiene excedente libre. Puedes restar hasta ${formatMoneyExact(ceiling / 100)}.`
+          );
+        }
       }
     }
     const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
@@ -2226,11 +2330,13 @@ export async function projectPublicForStore(
 export async function unprojectPublicForStore(store: Store): Promise<void> {
   const { db } = getFirebase();
   const writes: Promise<unknown>[] = [];
-  writes.push(deleteDoc(doc(db, "publicStores", store.slug)));
-  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)));
+  // #375: swallowing already-deleted docs keeps the store-deletion retry
+  // convergent (rules deny re-deleting a missing doc; the seal must still run).
+  writes.push(deleteDoc(doc(db, "publicStores", store.slug)).catch(() => {}));
+  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)).catch(() => {}));
   writes.push(releaseSlug(store.slug));
   const snap = await getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug)));
-  for (const d of snap.docs) writes.push(deleteDoc(d.ref));
+  for (const d of snap.docs) writes.push(deleteDoc(d.ref).catch(() => {}));
   await Promise.all(writes);
 }
 
