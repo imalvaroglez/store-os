@@ -795,6 +795,7 @@ export function creditEditCoverageError(docData: Record<string, unknown> | undef
 }
 
 export class CreditCoverageError extends Error {}
+export class CreditCustomerChangeError extends Error {}
 
 export async function saveOrderWithStockTx(
   user: AppUser,
@@ -831,6 +832,23 @@ export async function saveOrderWithStockTx(
     // math runs (same fail-closed discipline as the incident evidence above).
     const coverageError = previous ? creditEditCoverageError(docData, order) : null;
     if (coverageError) throw new CreditCoverageError(coverageError);
+    // #367: changing the clienta of an order that MOVED credit transfers that
+    // money between people (Ana would see María's saldo; María's views lose
+    // it). Block until the credit is settled — restituted or fully consumed.
+    if (previous && previous.customerId !== order.customerId) {
+      // Only the accumulators carry LIVE credit. The ledger is append-only
+      // evidence — releaseCredit adds positive release entries and never
+      // zeroes the originals — so judging raw entries would block a settled
+      // credit forever. Same criterion as the delete guard (#363) and the
+      // credit read models (net by accumulators, never raw entries).
+      const movedCredit = creditFieldCents(docData ?? {}, "creditAppliedCents") > 0
+        || creditFieldCents(docData ?? {}, "creditConsumedCents") > 0;
+      if (movedCredit) {
+        throw new CreditCustomerChangeError(
+          "Este pedido tiene saldo a favor aplicado o generado; cambiar la clienta movería ese dinero a otra persona. Restituye el saldo (o termina su uso) antes de cambiar la clienta."
+        );
+      }
+    }
     // #218: full saves cannot invent legacy money after payment evidence.
     // Use the RAW deposit: migration can inflate it for legacy paid orders.
     const rawDeposit = typeof docData?.deposit === "number" && Number.isFinite(docData.deposit) ? docData.deposit : 0;

@@ -1216,3 +1216,4 @@ describe("densidad en Revisar por categoría (#345)", () => {
     }
   });
 });
+
