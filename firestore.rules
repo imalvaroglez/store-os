@@ -380,7 +380,19 @@ service cloud.firestore {
       let magnitude = int(prefix) + (next >= '5' ? 1 : 0);
       return amount < 0 ? -magnitude : magnitude;
     }
-    function validReceipt(data, orderId, paymentId) {
+    /** #474 (QA 18-nov): on a CANCELLED order, a refund (negative adjustment)
+     * is the owner's call alone (super_admin may too, by platform policy).
+     * Anything else — positive adjustments, non-cancelled orders — is
+     * unaffected. Single let-bound get: the CEL expression budget is tight. */
+    function ownerOnlyRefundOk(orderId, data) {
+      let order = get(/databases/$(database)/documents/orders/$(orderId)).data;
+      return data.kind != 'adjustment'
+        || data.amount > 0
+        || order.get('orderStatus', order.get('status', '')) != 'cancelled'
+        || isOwner(order.storeId)
+        || isSuperAdmin();
+    }
+        function validReceipt(data, orderId, paymentId) {
       return data.id == paymentId && data.orderId == orderId
         && data.createdBy == request.auth.uid
         // #369: no new cobros on a CANCELLED order — the money has no exit
@@ -400,6 +412,10 @@ service cloud.firestore {
         && data.kind in ['payment', 'adjustment']
         && (data.kind == 'adjustment' || data.amount > 0)
         && (data.kind != 'adjustment' || (data.note is string && data.note.trim().size() > 0))
+        // #474 (QA 18-nov): a refund (negative adjustment) on a CANCELLED
+        // order is the OWNER's call alone — members never register the exit.
+        // One let-bound parent read keeps this far under the CEL budget.
+        && ownerOnlyRefundOk(orderId, data)
         && ((paymentId == 'inherited_deposit' && data.kind == 'payment'
               && data.method in ['cash', 'transfer']
               && data.date is string && data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}'))
