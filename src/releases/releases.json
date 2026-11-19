@@ -1,5 +1,19 @@
 [
   {
+    "version": "1.21.0",
+    "date": "2026.11.18",
+    "title": "Cierre de mes, reparto del dinero y tienda protegida",
+    "notes": [
+      "Llega el Cierre mensual: un panel explica el dinero del mes y cada cifra abre su detalle para revisarla. El cierre oficial lo autoriza sólo la dueña y queda guardado con su historial.",
+      "El Reparto de utilidades tiene vista propia con su Simulador: define cómo repartir el dinero del mes, autorízalo con confirmación y quédate tranquila, sólo puede aplicarse una vez.",
+      "En la ficha de cada producto ves en qué pedidos están comprometidas sus piezas: toca la cifra y te lleva a ellos.",
+      "Compras y Gastos registran la forma de pago; lo pagado con tarjeta se separa del dinero en caja desde que activas la tienda.",
+      "Editar un pedido o cambiar de clienta ya no rompe el saldo a favor: el sistema lo bloquea a tiempo y te explica cómo corregirlo.",
+      "Eliminar una tienda conserva su historial y su dinero como evidencia, y la retira del catálogo público.",
+      "Nuevo simulador de contribución y punto de equilibrio junto a Estrategia de precios. Correcciones internas: respaldos y reglas más estables."
+    ]
+  },
+  {
     "version": "1.20.0",
     "date": "2026.11.17",
     "title": "Entrar con Google desde el iPhone y saldo a favor blindado",
