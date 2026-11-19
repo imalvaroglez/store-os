@@ -9,6 +9,7 @@
       "En la ficha de cada producto ves en qué pedidos están comprometidas sus piezas: toca la cifra y te lleva a ellos.",
       "Compras y Gastos registran la forma de pago; lo pagado con tarjeta se separa del dinero en caja desde que activas la tienda.",
       "Editar un pedido o cambiar de clienta ya no rompe el saldo a favor: el sistema lo bloquea a tiempo y te explica cómo corregirlo.",
+      "Si un pedido cancelado ya tenía dinero recibido, la dueña puede registrar la devolución con confirmación explícita en dos pasos; queda como evidencia en el pedido.",
       "Eliminar una tienda conserva su historial y su dinero como evidencia, y la retira del catálogo público.",
       "Nuevo simulador de contribución y punto de equilibrio junto a Estrategia de precios. Correcciones internas: respaldos y reglas más estables."
     ]
