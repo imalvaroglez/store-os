@@ -19,6 +19,7 @@ import {
   useToast,
 } from "../../design-system";
 import { navigate } from "../../lib/router";
+import { setBandSimulatorPrefill } from "../../lib/bandSimulatorPrefill";
 import { tiersForStore } from "../../lib/pricing";
 import { parseAmount, sanitizeMoneyInput } from "../../lib/money";
 import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, rulesSignature } from "../../lib/pricingRules";
@@ -392,7 +393,10 @@ export function PricingStrategyScreen() {
         title="Estrategia de precios"
         subtitle="Tablas por categoría: rangos de costo con precios Iconic, Girly y Regular"
         action={
-          <Button variant="ghost" size="sm" onClick={() => navigate("/productos/diagnostico")}>Diagnóstico</Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/productos/simulador-contribucion")}>Simulador</Button>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/productos/diagnostico")}>Diagnóstico</Button>
+          </div>
         }
       />
       <div className="space-y-4">
@@ -597,6 +601,20 @@ export function PricingStrategyScreen() {
                     </div>
                     <Button size="sm" variant="ghost" onClick={() => splitBand(index)}>Dividir</Button>
                     <Button size="sm" variant="ghost" onClick={() => removeBand(index)}>Quitar</Button>
+                    {/* #336: simulate THIS band in the contribution simulator without retyping it. */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title="Simular esta banda en el simulador de contribución"
+                      onClick={() => {
+                        setBandSimulatorPrefill({
+                          categoryId,
+                          min: limit.min,
+                          max: limit.max ?? null,
+                        });
+                        navigate("/productos/simulador-contribucion");
+                      }}
+                    >Simular banda</Button>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-3">
                     {tiers.map((tier) => {
