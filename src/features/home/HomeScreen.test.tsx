@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
