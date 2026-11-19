@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   user: { uid: "uid_test", email: "test@store-os.mx", role: "super_admin" as const },
   state: null as AppState | null,
   loadCloudState: vi.fn(),
+  saveProduct: vi.fn(),
 }));
 
 vi.mock("../../app/firebase/AuthProvider", () => ({
@@ -28,8 +29,9 @@ vi.mock("../../app/firebase/firestoreData", async (importOriginal) => {
     saveEntity: vi.fn(async () => {}),
     // #373: product saves persist through the concurrent-preserving tx; in
     // unit tests it behaves as a passthrough of the incoming product.
-    saveProductPreservingConcurrentTx: vi.fn(async (_baseline: unknown, next: import("../../types").Product) => next),
+    saveProductPreservingConcurrentTx: mocks.saveProduct,
     projectPublicForStore: vi.fn(async () => {}),
+    upsertPublicProduct: vi.fn(async () => {}),
   };
 });
 
@@ -120,6 +122,7 @@ function lastByLabel(label: string) {
 }
 
 beforeEach(() => {
+  mocks.saveProduct.mockReset().mockImplementation(async (_baseline: unknown, next: Product) => next);
   resetListRestoreForTests(); // #233: la caché de lista es de sesión; cada prueba parte de defaults
   localStorage.clear();
 });
@@ -558,5 +561,19 @@ describe("CatalogScreen en tienda on_demand", () => {
 
     changeSelect("Ordenar por", "price");
     expect(cardNames()).toEqual(["Perfume Beta", "Perfume Alfa"]);
+  });
+});
+
+
+describe("#489 rejected quick stock correction", () => {
+  it("shows the failure and keeps the saved quantity when the minus button is rejected", async () => {
+    const state = sortFilterState();
+    state.products = [tieredProduct({ id: "watch-audit", name: "Reloj prueba", quantityOnHand: 5 })];
+    mocks.saveProduct.mockRejectedValueOnce(new Error("permission-denied"));
+    await renderCatalog(state);
+    fireEvent.click(screen.getByRole("button", { name: "Restar uno" }));
+    await screen.findByText("No se pudo actualizar la existencia. Revisa tu conexión e intenta de nuevo.");
+    expect(mocks.saveProduct).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Existencia: 5")).toBeTruthy();
   });
 });

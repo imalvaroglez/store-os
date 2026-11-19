@@ -469,10 +469,13 @@ export function CatalogScreen() {
                 // Physical-count corrections floor at 0 (same rule the old
                 // InventoryScreen ± buttons had).
                 if (typeof p.quantityOnHand !== "number") return;
-                upsertProduct({
+                void upsertProduct({
                   ...p,
                   quantityOnHand: Math.max(0, p.quantityOnHand + delta),
                   updatedAt: nowIso(),
+                }).catch(() => {
+                  // #489: a rejected count must never fail silently.
+                  toast.error("No se pudo actualizar la existencia. Revisa tu conexión e intenta de nuevo.");
                 });
               }}
             />

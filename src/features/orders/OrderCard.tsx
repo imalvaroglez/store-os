@@ -342,7 +342,11 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
         </div>
       </div>
     </Sheet>
-    <OrderPaymentsSheet order={order} open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
+    <OrderPaymentsSheet
+      order={order}
+      open={paymentsOpen}
+      onClose={() => setPaymentsOpen(false)}
+    />
     <IncidentSheet order={order} open={incidentOpen} onClose={() => setIncidentOpen(false)} />
     <DeliverySheet order={order} open={deliveryOpen} onClose={() => setDeliveryOpen(false)} />
     {packagingOpen && <PackagingSheet order={order} onClose={() => setPackagingOpen(false)} />}
