@@ -127,17 +127,42 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   // the old default 5 s poll lost the race under emulator load. 30 s matches
   // the receive budget, keeps the full content assertion, and the poll's
   // actual distinguishes late/absent (null) from wrong content on failure.
-  await expect.poll(async () => {
-    const response = await fetch(detailUrl);
-    if (!response.ok) return null;
+  // #488 instrumentation: the old poll collapsed every read problem into
+  // `null`; the received value now CARRIES the last HTTP status so a failure
+  // diff tells absent (404), denied (403), server error (5xx) or a thrown
+  // fetch apart — the deciding evidence for the flake's root cause.
+  const pollProbe = { status: 0, checks: 0 };
+  // #488 write-side probe log (console from the app under test).
+  const writeProbeLog: string[] = [];
+  page.on("console", (msg) => {
+    const text = msg.text();
+    if (text.includes("#488-PROJ-WRITE")) writeProbeLog.push(text.slice(0, 140));
+  });
+  try {
+    await expect.poll(async () => {
+    pollProbe.checks += 1;
+    let response: Response;
+    try {
+      response = await fetch(detailUrl);
+    } catch (error) {
+      pollProbe.status = -1;
+      return `fetch-threw:${String(error)}`;
+    }
+    pollProbe.status = response.status;
+    if (!response.ok) return `status:${response.status}`;
     const detail = await response.json();
     return {
       name: detail.fields.name.stringValue,
       storeId: detail.fields.storeId.stringValue,
       stockSignal: detail.fields.stockSignal.stringValue,
     };
-  }, { timeout: 30_000, message: "La proyección pública de la compra por ticket no llegó (null = escritura tardía o ausente)" })
+  }, { timeout: 30_000, message: "La proyección pública de la compra por ticket no llegó (escritura tardía o ausente; el diff muestra el último estado del sondeo)" })
     .toEqual({ name: "Pieza QA por ticket", storeId: "store_joyeria", stockSignal: "disponible" });
+  void writeProbeLog; // keeps the collector referenced on the happy path
+  } catch (error) {
+    console.log(`#488-PROJ-WRITE-HISTORY: ${writeProbeLog.join(" | ") || "EMPTY (write never started)"}`);
+    throw error;
+  }
 
   await gotoClean(page, "/pedidos/nuevo");
   await ensureStoreActive(page, "Joyería");
