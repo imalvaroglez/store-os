@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 
 const mocks = vi.hoisted(() => ({
-  consumeGoogleRedirectResult: vi.fn(),
   signInWithGoogle: vi.fn(),
   signInWithEmail: vi.fn(),
   signUpWithEmail: vi.fn(),
@@ -11,70 +10,117 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./auth", async (importOriginal) => ({
   ...await importOriginal<object>(),
-  consumeGoogleRedirectResult: mocks.consumeGoogleRedirectResult,
   signInWithGoogle: mocks.signInWithGoogle,
   signInWithEmail: mocks.signInWithEmail,
   signUpWithEmail: mocks.signUpWithEmail,
-  subscribeToAuth: (onChange: (u: null) => void) => {
-    onChange(null);
-    return () => {};
-  },
-  signOutFirebase: vi.fn(async () => {}),
 }));
 
-vi.mock("./config", () => ({
-  isFirebaseConfigured: () => true,
-  getFirebaseConfigurationError: () => null,
-}));
-
-import { AuthProvider } from "./AuthProvider";
 import { AuthScreen } from "./AuthScreen";
-import type { ReactNode } from "react";
 
-function mountAuthTree(children: ReactNode) {
-  return render(<AuthProvider>{children}</AuthProvider>);
-}
-
+// #481: a failed or cancelled Google attempt must land the person back on this
+// screen with a specific Spanish message and a working retry — never stuck on
+// the Firebase interstitial and never a swallowed generic message.
 beforeEach(() => {
-  mocks.consumeGoogleRedirectResult.mockReset();
   mocks.signInWithGoogle.mockReset();
-  mocks.consumeGoogleRedirectResult.mockResolvedValue(null);
+  mocks.signInWithEmail.mockReset();
 });
 
-describe("Google redirect failure surfaces on the sign-in screen", () => {
-  it("shows the Spanish redirect error when the return trip failed, and a retry clears it", async () => {
-    mocks.consumeGoogleRedirectResult.mockRejectedValue(
-      new Error("Se canceló el inicio con Google.")
+function attemptGoogle() {
+  fireEvent.click(screen.getByRole("button", { name: "Continuar con Google" }));
+}
+
+describe("Google popup failures on the sign-in screen", () => {
+  it("explains a blocked popup in Spanish and stays retryable", async () => {
+    mocks.signInWithGoogle.mockRejectedValue({ code: "auth/popup-blocked" });
+
+    render(<AuthScreen />);
+
+    attemptGoogle();
+    await waitFor(() =>
+      expect(screen.getByText(/bloqueó la ventana de Google/)).toBeTruthy()
     );
-    mocks.signInWithGoogle.mockResolvedValue(null);
 
-    mountAuthTree(<AuthScreen />);
-
-    await waitFor(() => expect(screen.getByText("Se canceló el inicio con Google.")).toBeTruthy());
-
-    // Retry starts a fresh attempt and clears the stale message.
-    fireEvent.click(screen.getByRole("button", { name: "Continuar con Google" }));
-    await waitFor(() => expect(mocks.signInWithGoogle).toHaveBeenCalledTimes(1));
-    expect(screen.queryByText("Se canceló el inicio con Google.")).toBeNull();
+    // Retry works: a fresh attempt clears the stale message.
+    mocks.signInWithGoogle.mockResolvedValue({ uid: "u", email: "f@e.com", role: "member" });
+    attemptGoogle();
+    await waitFor(() => expect(mocks.signInWithGoogle).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/bloqueó la ventana de Google/)).toBeNull());
   });
 
-  it("shows no redirect error when the flow completed or never started", async () => {
-    mountAuthTree(<AuthScreen />);
-
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Entrar" })).toBeTruthy());
-    expect(screen.queryByText(/inicio con Google/)).toBeNull();
-  });
-
-  it("translates known Google codes in the popup path instead of the generic mask (review #486 R1)", async () => {
+  it("shows the unauthorized-domain guidance instead of the generic message", async () => {
     mocks.signInWithGoogle.mockRejectedValue({ code: "auth/unauthorized-domain" });
-    mountAuthTree(<AuthScreen />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Continuar con Google" }));
-    await waitFor(() => expect(screen.getByText(/dominio no está autorizado/)).toBeTruthy());
+    render(<AuthScreen />);
 
-    // Desktop cancellation keeps its clear message too.
+    attemptGoogle();
+    // Regression: this message used to be thrown code-less from auth.ts and
+    // swallowed by friendlyError's code check, so nobody ever saw it.
+    await waitFor(() =>
+      expect(screen.getByText(/dominio no está autorizado/)).toBeTruthy()
+    );
+  });
+
+  it("explains a cancelled attempt without calling it a failure to complete", async () => {
     mocks.signInWithGoogle.mockRejectedValue({ code: "auth/popup-closed-by-user" });
-    fireEvent.click(screen.getByRole("button", { name: "Continuar con Google" }));
-    await waitFor(() => expect(screen.getByText("Se canceló el inicio con Google.")).toBeTruthy());
+
+    render(<AuthScreen />);
+
+    attemptGoogle();
+    await waitFor(() =>
+      expect(screen.getByText("Se canceló el inicio con Google.")).toBeTruthy()
+    );
+  });
+
+  it("falls back to a retryable Spanish message for unknown errors", async () => {
+    mocks.signInWithGoogle.mockRejectedValue({ code: "auth/internal-error" });
+
+    render(<AuthScreen />);
+
+    attemptGoogle();
+    await waitFor(() =>
+      expect(screen.getByText("No se pudo completar. Intenta de nuevo.")).toBeTruthy()
+    );
+    expect(screen.getByRole("button", { name: "Continuar con Google" })).not.toBeDisabled();
+  });
+
+  it("explains a superseded popup attempt as a cancellation", async () => {
+    mocks.signInWithGoogle.mockRejectedValue({ code: "auth/cancelled-popup-request" });
+
+    render(<AuthScreen />);
+
+    attemptGoogle();
+    await waitFor(() =>
+      expect(screen.getByText("Se canceló el inicio con Google.")).toBeTruthy()
+    );
+  });
+});
+
+describe("email/password failures share the same screen mapping", () => {
+  async function attemptEmailSignIn() {
+    fireEvent.change(screen.getByLabelText("Correo"), { target: { value: "fer@test.os" } });
+    fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: "secreto123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+  }
+
+  it("treats an unknown email like a wrong password", async () => {
+    mocks.signInWithEmail.mockRejectedValue({ code: "auth/user-not-found" });
+
+    render(<AuthScreen />);
+
+    await attemptEmailSignIn();
+    await waitFor(() =>
+      expect(screen.getByText("Correo o contraseña incorrectos.")).toBeTruthy()
+    );
+  });
+
+  it("explains a connection failure with a flow-neutral message (no Google out of context)", async () => {
+    mocks.signInWithEmail.mockRejectedValue({ code: "auth/network-request-failed" });
+
+    render(<AuthScreen />);
+
+    await attemptEmailSignIn();
+    await waitFor(() =>
+      expect(screen.getByText("No hubo conexión. Revisa tu conexión e inténtalo de nuevo.")).toBeTruthy()
+    );
   });
 });

@@ -46,7 +46,7 @@ export function OrderPaymentsSheet({
   open: boolean;
   onClose: () => void;
 }) {
-  const { payments, loadOrderPayments, registerOrderPayment, draftOwnerId } = useStore();
+  const { payments, loadOrderPayments, registerOrderPayment, materializeInheritedDeposit, draftOwnerId, state, authUser } = useStore();
   const toast = useToast();
   const [amountText, setAmountText] = useState("");
   const [method, setMethod] = useState<"cash" | "transfer">("cash");
@@ -61,6 +61,13 @@ export function OrderPaymentsSheet({
   const [adjustAmountText, setAdjustAmountText] = useState("");
   const [adjustDirection, setAdjustDirection] = useState<"subtract" | "add">("subtract");
   const [adjustNote, setAdjustNote] = useState("");
+  // #474: money LEAVING needs an explicit, two-step confirmation — the first
+  // tap only ARMS with the exact amount; any edit disarms. Mirrors the
+  // card-overpay confirmation (#279 B2).
+  const [adjustArmed, setAdjustArmed] = useState<number | null>(null);
+  // #455 r5: dating the TOTAL anticipo captured at creation (no cobro will
+  // ever ride it) is its own save.
+  const [dating, setDating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -69,6 +76,11 @@ export function OrderPaymentsSheet({
   // path); the sheet stays as evidence, and signed adjustments remain the
   // record with which Fer documents anything handed back.
   const cancelled = effectiveOrderStatus(order) === "cancelled";
+  // #474 (QA 18-nov): on a CANCELLED order the refund (negative adjustment) is
+  // the OWNER's call alone — UI hides it for members; the transaction and the
+  // rules re-validate for any other client.
+  const storeDoc = state?.stores?.find((st) => st.id === order.storeId);
+  const isOwnerOrAdmin = authUser?.role === "super_admin" || (storeDoc?.ownerUid != null && storeDoc.ownerUid === authUser?.uid);
   const view = useRef({ open, orderId: order.id, owner: draftOwnerId, generation: 0, mounted: true });
   if (view.current.open !== open || view.current.orderId !== order.id || view.current.owner !== draftOwnerId) {
     view.current = { ...view.current, open, orderId: order.id, owner: draftOwnerId, generation: view.current.generation + 1 };
@@ -134,6 +146,25 @@ export function OrderPaymentsSheet({
       toast.error("Captura la fecha del anticipo previo (estímala si no la recuerdas).");
       return;
     }
+    // #455 r4 (UX): the pending anticipo is ALREADY-received money that this
+    // same write materializes. A collection bigger than what is actually
+    // missing registers the same money twice and mints saldo a favor — the
+    // dialog must close that case by itself, not guide into it.
+    if (summary.inheritedPendingCents > 0) {
+      const collectCents = Math.round((Number(sanitizeMoneyInput(amountText)) || 0) * 100);
+      // summary.receivedCents ALREADY includes the pending anticipo when it
+      // is unmaterialized (payments.ts) — subtracting it again would double-
+      // count and let the very duplication this gate exists to stop.
+      const stillOwedCents = Math.max(0, summary.totalCents - summary.receivedCents);
+      if (collectCents > stillOwedCents) {
+        toast.error(
+          stillOwedCents === 0
+            ? "El anticipo previo ya cubre el total: no hay nada nuevo que cobrar aquí. Su fecha y método quedan al registrar cualquier otro movimiento del pedido."
+            : `El anticipo previo de ${formatMoneyExact(summary.inheritedPendingCents / 100)} ya está recibido y se registra junto con este cobro. Captura solo lo que falte: hasta ${formatMoneyExact(stillOwedCents / 100)}.`
+        );
+        return;
+      }
+    }
     const id = intentIdRef.current.payment ?? uid("pay");
     intentIdRef.current.payment = id;
     await save(
@@ -176,6 +207,30 @@ export function OrderPaymentsSheet({
         return;
       }
     }
+    // #474: money LEAVING needs an explicit, two-step confirmation — the
+    // first tap only ARMS with the exact amount (cap already cleared above);
+    // any edit disarms, so an edited figure never confirms. Mirrors the
+    // card-overpay confirmation (#279 B2).
+    if (adjustDirection === "subtract") {
+      const amount = parseAmount(adjustAmountText);
+      const centsNow = amount == null ? null : Math.round(amount * 100);
+      if (adjustArmed == null) {
+        // #474 (QA menor): the first tap explains WHY it does not arm —
+        // no silent dead button while the capture is incomplete.
+        if (centsNow == null || centsNow <= 0) {
+          toast.error("Escribe un monto válido para el ajuste.");
+          return;
+        }
+        if (!adjustNote.trim()) {
+          toast.error("Escribe el motivo del ajuste.");
+          return;
+        }
+        setAdjustArmed(centsNow);
+        return; // armed only; nothing registered
+      }
+      if (adjustArmed !== centsNow) { setAdjustArmed(null); return; }
+    }
+    setAdjustArmed(null);
     const id = intentIdRef.current.adjust ?? uid("adj");
     intentIdRef.current.adjust = id;
     await save({ kind: "adjustment", id, direction: adjustDirection, amountText: adjustAmountText, note: adjustNote }, () => {
@@ -188,7 +243,17 @@ export function OrderPaymentsSheet({
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="Cobros del pedido">
+    <Sheet
+      open={open}
+      onClose={() => {
+        // #474 (QA MAYOR): closing the sheet must also disarm a pending
+        // confirmation — reopening can never inherit a one-tap money exit.
+        setAdjustArmed(null);
+        setAdjustOpen(false);
+        onClose();
+      }}
+      title="Cobros del pedido"
+    >
       <div className="space-y-4">
         <div className="grid grid-cols-3 gap-3">
           <StatRow label="Total">
@@ -229,8 +294,9 @@ export function OrderPaymentsSheet({
           <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
             <p className="text-xs text-on-surface-soft">
               Anticipo previo: <Money exact amount={summary.inheritedPendingCents / 100} /> recibido
-              antes de llevar registro. Se materializa junto con el primer cobro — captura su fecha
-              y método (estímalos si no los recuerdas).
+              antes de llevar registro — ese dinero ya está en tus manos. Se registra (fecha y método,
+              estímalos si no los recuerdas) junto con el primer cobro nuevo; el monto de abajo es
+              SOLO lo que falte cobrar hoy, nunca el total del pedido.
             </p>
             <div className="grid grid-cols-2 gap-3">
               <SelectField
@@ -352,13 +418,44 @@ export function OrderPaymentsSheet({
           </div>
         ) : null}
 
+        {summary.inheritedPendingCents > 0
+          && summary.totalCents - summary.receivedCents <= 0 ? (
+          <div className="space-y-2 border-t border-edge pt-4">
+            <p className="text-sm text-on-surface">
+              El anticipo previo ya cubre el total — no hay nada nuevo que cobrar en este pedido.
+            </p>
+            <p className="text-xs text-on-surface-soft">
+              Registra arriba su fecha y método para que el cierre mensual cuadre con tu caja;
+              estímalos si no los recuerdas. Duplicar el cobro crearía saldo a favor por error.
+            </p>
+            <Button
+              variant="secondary"
+              disabled={dating || !/^\d{4}-\d{2}-\d{2}$/.test(inheritedDate)}
+              onClick={() => {
+                setDating(true);
+                materializeInheritedDeposit(order, { method: inheritedMethod, date: inheritedDate })
+                  .then(() => toast.success("Anticipo registrado."))
+                  .catch((error: unknown) => {
+                    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
+                    // Rules denials arrive as raw Firestore English — never show that.
+                    toast.error(code === "permission-denied" || !(error instanceof Error) || !error.message
+                      ? "No se pudo registrar el anticipo. Inténtalo de nuevo."
+                      : error.message);
+                  })
+                  .finally(() => setDating(false));
+              }}
+            >
+              {dating ? "Registrando…" : "Registrar fecha y método del anticipo"}
+            </Button>
+          </div>
+        ) : (
         <div className="space-y-3 border-t border-edge pt-4">
           {cancelled ? (
             <div className="space-y-1">
               <p className="text-sm font-semibold text-on-surface">Pedido cancelado: no se pueden registrar cobros.</p>
               <p className="text-xs text-on-surface-soft">
-                Los cobros ya registrados quedan como evidencia. La devolución de dinero ya recibido se define aparte;
-                entre tanto, un ajuste firmado (con motivo) documenta lo entregado.
+                Los cobros ya registrados quedan como evidencia. La devolución de dinero ya recibido la registra
+                la dueña de la tienda con un ajuste firmado (con motivo).
               </p>
             </div>
           ) : (
@@ -399,7 +496,8 @@ export function OrderPaymentsSheet({
             </>
           )}
 
-          {adjustOpen ? (
+          {(isOwnerOrAdmin || !cancelled) && (
+          adjustOpen ? (
             <div className="space-y-3 rounded-xl bg-surface p-3 ring-1 ring-edge">
               <p className="text-xs text-on-surface-soft">
                 Los ajustes no borran cobros: quedan como registros con signo y motivo.
@@ -432,7 +530,7 @@ export function OrderPaymentsSheet({
               <SelectField
                 label="Dirección"
                 value={adjustDirection}
-                onChange={setAdjustDirection}
+                onChange={(d) => { setAdjustArmed(null); setAdjustDirection(d); }}
                 options={[
                   { value: "subtract", label: "Restar (devolución)" },
                   { value: "add", label: "Sumar" },
@@ -443,20 +541,37 @@ export function OrderPaymentsSheet({
                 inputMode="decimal"
                 placeholder="150 para devolver"
                 value={adjustAmountText}
-                onChange={(e) => setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, "")))}
+                onChange={(e) => { setAdjustArmed(null); setAdjustAmountText(sanitizeMoneyInput(e.target.value.replace(/[+-]/g, ""))); }}
               />
               <TextField
-                label="Motivo"
+                label="Motivo (obligatorio)"
                 value={adjustNote}
-                onChange={(e) => setAdjustNote(e.target.value)}
+                onChange={(e) => { setAdjustArmed(null); setAdjustNote(e.target.value); }}
                 placeholder="p. ej. devolución en efectivo"
               />
               <div className="flex gap-2">
-                <Button variant="secondary" full disabled={saving} onClick={() => setAdjustOpen(false)}>
+                <Button
+                  variant="secondary"
+                  full
+                  disabled={saving}
+                  onClick={() => {
+                    // #474 (QA MAYOR): cancel disarms — reopening starts from
+                    // "Guardar ajuste", never a one-tap confirmation.
+                    setAdjustArmed(null);
+                    setAdjustOpen(false);
+                  }}
+                >
                   Cancelar
                 </Button>
-                <Button full disabled={saving || loading || loadFailed} onClick={submitAdjustment}>
-                  Guardar ajuste
+                <Button
+                  full
+                  variant={adjustArmed != null ? "danger" : "primary"}
+                  disabled={saving || loading || loadFailed}
+                  onClick={submitAdjustment}
+                >
+                  {adjustArmed != null
+                    ? `Confirmar devolución de ${formatMoneyExact(adjustArmed / 100)}`
+                    : "Guardar ajuste"}
                 </Button>
               </div>
             </div>
@@ -464,8 +579,9 @@ export function OrderPaymentsSheet({
             <Button variant="ghost" full disabled={saving || loading || loadFailed} onClick={() => setAdjustOpen(true)}>
               Registrar ajuste o devolución
             </Button>
-          )}
+          ))}
         </div>
+        )}
       </div>
     </Sheet>
   );

@@ -12,7 +12,9 @@ import {
   TextArea,
   useToast,
 } from "../../design-system";
-import { legacyCollectDeposit, orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effectiveOrderStatus } from "../../lib/orders";
+import { cdmxToday } from "../../lib/monthlyClose";
+import { incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
 import { shortageByDimension } from "../../lib/inventory";
 import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
@@ -27,7 +29,7 @@ import { PackagingSheet } from "./PackagingSheet";
 import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
-  const { upsertOrder, state, activeStore } = useStore();
+  const { upsertOrder, registerOrderPayment, state, activeStore } = useStore();
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
@@ -101,25 +103,52 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     }
   }
 
-  /** One-tap payment collection: the deposit rises by the NET pending amount
-   * — saldo a favor applied from a sister order is the clienta's money already
-   * received there (#189) and must never be counted as cash here. */
+  /** One-tap payment collection. #455/#458 r4 (UX review): a REAL payment
+   * record with its date and method captured at the moment — never a deposit
+   * bump that later forces re-registering the same money twice. The amount is
+   * the NET pending (saldo a favor from a sister order is the clienta's money
+   * already received there, #189 — not cash here). A legacy order that still
+   * carries an unmaterialized deposit keeps its existing Cobros flow. */
   async function collect() {
-    try {
-      const saved = await upsertOrder({
-        ...order,
-        deposit: legacyCollectDeposit(order),
-        updatedAt: new Date().toISOString(),
-      });
-      if (orderTotals(saved).balance > 0) {
-        toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
-        setPaymentsOpen(true);
-        return;
+    // orderTotals().balance is PESOS (decimal); payments take amountText.
+    const pendingPesos = orderTotals(order).balance;
+    if (pendingPesos > 0) {
+      try {
+        await registerOrderPayment(order, {
+          kind: "payment",
+          id: `collect-${order.id}-${pendingPesos}`,
+          method: "cash",
+          // #458 r4: the REAL CDMX calendar day — the UTC slice rolls at
+          // 18:00 local and a late-night collection lands on the next day,
+          // leaking a November payment into December's sealed close.
+          date: cdmxToday(),
+          amountText: pendingPesos.toFixed(2),
+          note: "Cobro completo de un toque",
+        });
+        toast.success("Pedido cobrado");
+      } catch (error) {
+        // A pending legacy deposit demands its date/method — the Cobros sheet
+        // carries that guided flow; never invent it here.
+        if (error instanceof Error && error.message.includes("anticipo")) {
+          toast.info("Este pedido tiene un anticipo previo sin fecha. Regístralo en Cobros.");
+          setPaymentsOpen(true);
+          return;
+        }
+        toast.error("No se pudo registrar el cobro.");
       }
-      toast.success("Pedido cobrado");
-    } catch {
-      toast.error("No se pudo registrar el cobro.");
+      return;
     }
+    const saved = await upsertOrder({ ...order, updatedAt: new Date().toISOString() }).catch(() => null);
+    if (!saved) {
+      toast.error("No se pudo actualizar el pedido.");
+      return;
+    }
+    if (orderTotals(saved).balance > 0) {
+      toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
+      setPaymentsOpen(true);
+      return;
+    }
+    toast.success("Pedido cobrado");
   }
 
   const ticket = ticketOpen ? orderTicketText(order, activeStore?.name ?? "Tienda", customer?.name) : "";
@@ -164,7 +193,30 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       </div>
 
       <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
-        <StatRow label="Total"><Money exact amount={totals.estimatedTotal} /></StatRow>
+        <div>
+          <StatRow label="Total"><Money exact amount={totals.estimatedTotal} /></StatRow>
+          {/* #455 r3 (UX): a confirmed posventa adjustment reconciles the card
+              with the close — without it, three surfaces showed two totals. */}
+          {(() => {
+            // #455 r4 (MAYOR-2): the Total above is the GROSS historical
+            // snapshot — it does NOT include the adjustment. The note must
+            // read as a derivation, never as an inclusion: "Menos $X de
+            // posventa confirmada · total efectivo $Y".
+            // #455 r4 (MAYOR-3): same basis as the close — ONLY confirmed
+            // incidents count (an agreed-but-unconfirmed replacement must
+            // not change the card's number nor wear the "confirmada" label).
+            const confirmedIncidents = (order.incidents ?? []).filter((incident) => (incident.events ?? []).some((event) => event.kind === "confirmed"));
+            const adjustment = confirmedIncidents.reduce((sum, incident) => sum + incidentsSaleAdjustmentCents([incident]), 0);
+            if (confirmedIncidents.length === 0 || !adjustment) return null;
+            const effective = Math.max(0, totals.estimatedTotal * 100 + adjustment) / 100;
+            return (
+              <p className="text-xs text-on-surface-soft">
+                {adjustment < 0 ? "Menos" : "Más"} ${(Math.abs(adjustment) / 100).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} de posventa confirmada · total efectivo{" "}
+                <Money exact amount={effective} />
+              </p>
+            );
+          })()}
+        </div>
         {planView ? (
           <>
             <StatRow label="Recibido"><Money exact amount={planView.receivedCents / 100} /></StatRow>

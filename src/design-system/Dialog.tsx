@@ -58,10 +58,15 @@ export function Dialog({
     };
 
     window.addEventListener("keydown", onKey);
+    // #463: same scroll-preserving lock as Sheet — body overflow propagates
+    // to the viewport, so capture the document position at lock and restore
+    // it on unlock instead of letting the clamp eat it.
+    const lockedScrollY = window.scrollY;
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
+      window.scrollTo(0, lockedScrollY);
       lastFocused.current?.focus();
     };
     // Only `open` in deps: onClose is read through onCloseRef, so re-renders

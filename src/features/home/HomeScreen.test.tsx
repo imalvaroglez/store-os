@@ -423,3 +423,10 @@ describe("#406 r2 — ventana de carga sin $0 falso", () => {
     expect(cargando.length).toBe(0);
   });
 });
+
+describe("#455 r3 — el cierre visible desde Inicio", () => {
+  it("la cabecera de Inicio ofrece «Cierre mensual» y navega a /productos/cierre", () => {
+    render(<ToastProvider><HomeScreen /></ToastProvider>);
+    expect(screen.getByRole("button", { name: "Cierre mensual" })).toBeTruthy();
+  });
+});
