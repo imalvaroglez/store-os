@@ -2,7 +2,7 @@
 
 **Acuerdo del Product Owner (2026-11-18).** Aplica a trabajo nuevo y a la continuidad de issues existentes. El objetivo es conservar la intención de negocio de principio a fin, delegar con autonomía y separar implementación de verificación.
 
-Esta política **complementa** \`AGENTS.md\`, \`CLAUDE.md\`, \`LOOPS.md\` y el README vigente del tablero [Store OS](https://github.com/users/imalvaroglez/projects/1). **No reemplaza** las reglas del tablero sobre estados, responsables y evidencias; ni modifica permisos de merge/producción, gates de CI, revisión independiente, decisiones explícitas del PO/Fer o restricciones de Firebase, privacidad y cero costos. Ante discrepancias operativas prevalecen las fuentes vigentes indicadas en esos documentos. La **issue es la fuente de verdad de sus requisitos aprobados**; las conversaciones de agentes no lo son.
+Esta política **complementa** `AGENTS.md`, `CLAUDE.md`, `LOOPS.md` y el README vigente del tablero [Store OS](https://github.com/users/imalvaroglez/projects/1). **No reemplaza** las reglas del tablero sobre estados, responsables y evidencias; ni modifica permisos de merge/producción, gates de CI, revisión independiente, decisiones explícitas del PO/Fer o restricciones de Firebase, privacidad y cero costos. Ante discrepancias operativas prevalecen las fuentes vigentes indicadas en esos documentos. La **issue es la fuente de verdad de sus requisitos aprobados**; las conversaciones de agentes no lo son.
 
 ## Roles y límites de responsabilidad
 
@@ -10,12 +10,12 @@ Esta política **complementa** \`AGENTS.md\`, \`CLAUDE.md\`, \`LOOPS.md\` y el R
 | --- | --- | --- | --- |
 | **Product Owner (PO)** | Persona responsable de Store OS; Fer interviene donde exista una compuerta explícita de negocio | Define intención, prioridades, reglas sensibles y aceptación de decisiones no resueltas | Delegar sin registrar una nueva regla crítica ni tratar una hipótesis como hecho |
 | **Tech Lead / Product Architect** | **Codex** | Descubre necesidades reales, revisa contexto previo, cuestiona supuestos, diseña el recorrido, arquitectura, criterios y contrato de la issue | Inventar precios, dinero, existencias, permisos o decisiones comerciales; dar por aceptado código solo porque coincide con su propuesta |
-| **Implementador** | **ZCode**, sesión de desarrollo | Toma una issue \`Listo\`, implementa con TDD, prepara commits, pruebas técnicas y draft PR | Reinterpretar unilateralmente las reglas aprobadas ni declararse su propio QA independiente |
+| **Implementador** | **ZCode**, sesión de desarrollo | Toma una issue `Listo`, implementa con TDD, prepara commits, pruebas técnicas y draft PR | Reinterpretar unilateralmente las reglas aprobadas ni declararse su propio QA independiente |
 | **QA / Testing** | **ZCode**, **sesión independiente** de la que implementó | Verifica la entrega contra la issue desde el punto de vista de la operadora; ejecuta casos positivos, negativos, regresiones, UX y pruebas necesarias en dev/emuladores | Heredar la defensa del autor, aprobar sin evidencia ni alterar el código de la feature en la sesión de verificación |
-| **Release Manager** | **ZCode**, sesión o ejecución independiente de entrega | Comprueba gates, prepara/promueve la liberación autorizada mediante CI, verifica producción y registra versión/evidencia | Saltar las revisiones, hacer push directo a \`main\`, desplegar manualmente o manipular datos productivos |
+| **Release Manager** | **ZCode**, sesión o ejecución independiente de entrega | Comprueba gates, prepara/promueve la liberación autorizada mediante CI, verifica producción y registra versión/evidencia | Saltar las revisiones, hacer push directo a `main`, desplegar manualmente o manipular datos productivos |
 | **Sistema de despliegue** | GitHub Actions | Ejecuta las validaciones y el deploy bajo los workflows existentes | Ser sustituido por comandos manuales de un agente |
 
-Los nombres de herramientas son la **asignación preferida**, no una garantía de capacidad, una identidad personal ni una exclusividad técnica. Si otro agente asume un rol, debe recibir el contrato y respetar exactamente la misma separación, permisos y compuertas. **Para una misma entrega no se fusionan la sesión de implementación y la sesión de QA.** TDD del autor es obligatorio cuando aplica, pero **no reemplaza** el Testing independiente. Tampoco reemplaza los **dos revisores read-only, sin contexto mutuo (Code y UX)** ya exigidos por \`AGENTS.md\`/\`LOOPS.md\`.
+Los nombres de herramientas son la **asignación preferida**, no una garantía de capacidad, una identidad personal ni una exclusividad técnica. Si otro agente asume un rol, debe recibir el contrato y respetar exactamente la misma separación, permisos y compuertas. **Para una misma entrega no se fusionan la sesión de implementación y la sesión de QA.** TDD del autor es obligatorio cuando aplica, pero **no reemplaza** el Testing independiente. Tampoco reemplaza los **dos revisores read-only, sin contexto mutuo (Code y UX)** ya exigidos por `AGENTS.md`/`LOOPS.md`.
 
 ## Contrato de entrega en la issue
 
@@ -31,7 +31,7 @@ La profundidad es **proporcional al riesgo y tamaño**: no convertir un ajuste t
 6. **Restricciones y alcance:** dependencias, no objetivos, seguridad, aislamiento multitienda, dinero/inventario, Firestore, costos, migración y consecuencias sobre datos existentes cuando corresponda.
 7. **Puertas de decisión:** qué ya resolvió el PO, qué sigue pendiente, si Fer debe validar algo, y qué condición bloquea desarrollo, merge o publicación.
 
-Si la issue es pequeña, basta el conjunto mínimo de objetivo, regla/resultado esperado y casos de aceptación inequívocos. La **spec de archivo** continúa siendo excepcional para arquitectura o reglas de negocio y debe viajar en el mismo PR del código cuando aplique; no se crea un PR documental por cada feedback. Los estados y el significado de \`Listo\`, \`En PR\`, \`Por liberar\` y \`Hecho\` son los del tablero/LOOPS vigentes.
+Si la issue es pequeña, basta el conjunto mínimo de objetivo, regla/resultado esperado y casos de aceptación inequívocos. La **spec de archivo** continúa siendo excepcional para arquitectura o reglas de negocio y debe viajar en el mismo PR del código cuando aplique; no se crea un PR documental por cada feedback. Los estados y el significado de `Listo`, `En PR`, `Por liberar` y `Hecho` son los del tablero/LOOPS vigentes.
 
 ## Transferencias y ejecución
 
@@ -40,12 +40,12 @@ Si la issue es pequeña, basta el conjunto mínimo de objetivo, regla/resultado 
 - Revisa guías, issues/PRs relacionados, código, incidentes y decisiones previas antes de proponer duplicados.
 - Traduce el lenguaje de negocio a un contrato verificable; contrapone recorrido actual y propuesto, propone alternativas con sus riesgos y registra la decisión válida en la issue.
 - Si hay ambigüedad material sobre importes, existencias, reparto, acceso, privacidad o cambios irreversibles, no inventa la regla: señala exactamente la decisión necesaria. Lo no bloqueado sigue avanzando.
-- No manda a implementar como \`Listo\` un requisito que aún depende de una compuerta explícita del PO.
+- No manda a implementar como `Listo` un requisito que aún depende de una compuerta explícita del PO.
 
 ### 2. Implementación con TDD — Developer
 
 - Toma únicamente trabajo elegible según el tablero; registra asignación y worktree.
-- Respeta una issue/cambio por rama desde \`main\` y draft PR; mantiene commits atómicos. Primero observa fallar los tests que correspondan, luego implementa y los deja verdes.
+- Respeta una issue/cambio por rama desde `main` y draft PR; mantiene commits atómicos. Primero observa fallar los tests que correspondan, luego implementa y los deja verdes.
 - Sigue el contrato visual y funcional aprobado, además del sistema de diseño, sin sustituirlo por una interfaz "parecida". Los cambios de alcance o contradicciones vuelven a la issue/Tech Lead con evidencia, no se deciden a escondidas.
 - Ejecuta y documenta validaciones técnicas aplicables; no representa pruebas pendientes como realizadas. El implementador corrige hallazgos, pero no emite su propio veredicto de QA.
 
