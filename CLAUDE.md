@@ -12,6 +12,12 @@ Guía para trabajar en Store OS. Lee esto antes de empezar.
 
 **Contrato detallado:** [docs/agent-operating-model.md](docs/agent-operating-model.md). Complementa, sin sustituir, las compuertas y autorizaciones de este archivo, `LOOPS.md` y el README vigente del tablero Store OS.
 
+## Memoria técnica y reflexiones editoriales (acuerdo del PO, 2026-11-18)
+
+Cuando una decisión, experimento, error o hallazgo produzca un aprendizaje de ingeniería significativo, el agente registra una reflexión breve en el MCP `memory-server` configurado **si está disponible**: problema, alternativas, decisión, evidencia, resultado observado (distinguiéndolo de hipótesis) y aprendizaje transferible. Identifica el registro como **candidato editorial no aprobado**, sin forzar notas rutinarias ni interrumpir entregas por fallos de memoria. La issue, el PR y el tablero siguen siendo las fuentes operativas de verdad; la sesión de QA mantiene su independencia y no hereda las reflexiones del implementador sobre la entrega que revisa.
+
+Estas reflexiones podrán alimentar, cada 2–3 días, propuestas personales para X; **ningún agente publica, comparte externamente ni presupone autorización del PO**. Nunca registrar para divulgación secretos, datos personales o de clientas, información comercial privada, detalles internos de IBM/clientes o configuraciones de seguridad sensibles. Antes de redactar o publicar, verificar hechos y privacidad; la aprobación humana es obligatoria. Protocolo completo en [docs/agent-operating-model.md](docs/agent-operating-model.md).
+
 ## Flujo de entrega
 
 Un cambio = una rama desde `main` = un draft PR (la spec, si la hay, viaja dentro del mismo PR). Ver `LOOPS.md`. Autonomía permitida: rama, commits, push de rama, draft PR, CI, Preview, y —bajo la autorización permanente del PO (2026-11-08)— merge y liberación a producción, siempre con CI completo en verde, revisión independiente sin contexto del PR y release guard (versión + notas). Nunca push directo a `main` ni leer/escribir datos productivos.
