@@ -623,7 +623,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
     });
     const refund = (id: string, createdBy: string): OrderPayment => ({
       id, orderId: "refund-cancelled", storeId: "refund-store", date: "2026-11-02",
-      method: "unknown", kind: "adjustment", amount: -150, createdAt: "2026-11-02T10:00:00.000Z", createdBy,
+      method: "unknown", kind: "adjustment", amount: -150, note: "Devolución en efectivo",
+      createdAt: "2026-11-02T10:00:00.000Z", createdBy,
     });
     // A member of the store is stopped by the TRANSACTION with the owner-only reason.
     holder.db = env.authenticatedContext("tx-colleague").firestore();
