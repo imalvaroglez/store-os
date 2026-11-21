@@ -590,9 +590,11 @@ export function evidenceForTable(
 /**
  * #531: the data-driven cut «Dividir» would apply to a band — midpoint of the
  * member costs inside (min, max), or +50 over the start for an empty band.
- * Returns null when NO valid cut exists (e.g. every piece shares the band's
- * own start cost): the editor disables the button and says why instead of
- * silently doing nothing.
+ * Returns null when NO valid cut exists: every piece shares the band's own
+ * start cost, or the midpoint would leave one side EMPTY of pieces (a
+ * useless sub-band — the same "banda vacía" the proposal's k-candidates
+ * reject). The editor disables the button and says why instead of silently
+ * doing nothing (or worse, splitting into an empty band).
  */
 export function bandSplitCut(band: { min: number; max?: number }, memberCosts: number[]): number | null {
   const inBand = memberCosts.filter((c) => c > 0 && c >= band.min && (band.max === undefined || c < band.max));
@@ -602,6 +604,10 @@ export function bandSplitCut(band: { min: number; max?: number }, memberCosts: n
       : Math.round((band.min + 50) * 100) / 100;
   if (!(cut > band.min)) return null;
   if (band.max !== undefined && !(cut < band.max)) return null;
+  if (inBand.length > 0) {
+    const below = inBand.filter((c) => c < cut).length;
+    if (below === 0 || below === inBand.length) return null;
+  }
   return cut;
 }
 

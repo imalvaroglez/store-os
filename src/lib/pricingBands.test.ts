@@ -379,4 +379,11 @@ describe("bandSplitCut (#531): feedback cuando dividir no tiene corte posible", 
     expect(bandSplitCut({ min: 100, max: 300 }, [])).toBe(150);
     expect(bandSplitCut({ min: 100, max: 120 }, [])).toBeNull(); // 150 no cabe: sin corte
   });
+
+  it("un corte que dejaría una sub-banda SIN piezas tampoco es válido (misión UX 3: [180,420) con sólo $260)", () => {
+    expect(bandSplitCut({ min: 180, max: 420 }, [260, 260, 260, 260])).toBeNull();
+    // Todas las piezas al mismo costo dentro del rango: cualquier punto medio
+    // deja un lado vacío.
+    expect(bandSplitCut({ min: 0, max: 57.5 }, [20, 20, 20])).toBeNull();
+  });
 });

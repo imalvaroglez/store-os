@@ -486,14 +486,18 @@ describe("#531 evidencia por banda con la tabla real", () => {
     selectCategory();
     await screen.findByText("Propuesta");
     fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
-    // La banda alta abre en ~57.5 y sus piezas cuestan 95: el punto medio
-    // ({95}) cae dentro de (57.5,∞) → botón habilitado. Editamos «Desde» a
-    // exactamente 95: el único costo coincide con el inicio y ya no hay corte.
-    const dividir = screen.getAllByRole("button", { name: "Dividir" });
-    expect(dividir[1]).toBeEnabled();
-    fireEvent.change(screen.getAllByLabelText("Desde $")[1], { target: { value: "95" } });
-    expect(screen.getAllByRole("button", { name: "Dividir" })[1]).toBeDisabled();
-    expect(screen.getByText(/Dividir no disponible/)).toBeTruthy();
+    // Cada banda de la propuesta tiene un solo costo: ningún corte válido
+    // (una mitad quedaría vacía) → deshabilitado con motivo.
+    expect(screen.getAllByRole("button", { name: "Dividir" })[0]).toBeDisabled();
+    expect(screen.getAllByText(/Dividir no disponible/).length).toBeGreaterThan(0);
+    // Al fusionar (quitar la banda alta) la banda única mezcla costos
+    // {20,95}: el punto medio 57.5 parte piezas en ambos lados → habilitado.
+    const quitar = screen.getAllByRole("button", { name: "Quitar" });
+    fireEvent.click(quitar[quitar.length - 1]);
+    expect(screen.getAllByRole("button", { name: "Dividir" })[0]).toBeEnabled();
+    // Estrechar «Hasta» a 20 deja fuera todos los costos: sin corte posible.
+    fireEvent.change(screen.getAllByLabelText("Hasta $")[0], { target: { value: "20" } });
+    expect(screen.getAllByRole("button", { name: "Dividir" })[0]).toBeDisabled();
   });
 
   it("la categoría elegida sobrevive vía ?categoria= al volver de Inicio o del simulador", async () => {

@@ -68,9 +68,17 @@ function joinSpanish(items: string[]): string {
 // with a clean URL, and nobody re-chooses what the session already knows.
 let lastChosenCategory = "";
 
+/**
+ * #531: the in-progress draft of the simulator round-trip. «Simular banda»
+ * stashes the current table so «Volver a Estrategia» lands back on the SAME
+ * editing session instead of silently discarding it (UX misión 3).
+ */
+let simulatorRoundTripDraft: { categoryId: string; draft: TableDraft; draftBase: string } | null = null;
+
 /** Test-only: isolate the session-level category between cases. */
 export function resetPricingStrategyCategoryForTests(): void {
   lastChosenCategory = "";
+  simulatorRoundTripDraft = null;
 }
 
 export function PricingStrategyScreen() {
@@ -185,7 +193,10 @@ export function PricingStrategyScreen() {
     setDraft({
       limits: bands.map((b) => ({ min: b.min, max: b.max })),
       prices: Object.fromEntries(tiers.map((t) => [t.id, bands.map((b) => b.prices[t.id] ?? null)])),
-      dirty: false,
+      // #531 (UX misión 3): adopting/restoring the proposal IS a change from
+      // what is saved — the table must be saveable as-is, and the «Sin
+      // cambios» badge must not lie.
+      dirty: true,
     });
   }
 
@@ -214,6 +225,16 @@ export function PricingStrategyScreen() {
   // the banner instead (and the transactional save keeps them safe).
   useEffect(() => {
     if (!categoryId) return;
+    // #531: coming back from the simulator, restore the SAME editing session
+    // (only when the saved table did not change underneath it).
+    if (simulatorRoundTripDraft && simulatorRoundTripDraft.categoryId === categoryId) {
+      if (simulatorRoundTripDraft.draftBase === savedSignature) {
+        setDraft(simulatorRoundTripDraft.draft);
+        setDraftBase(savedSignature);
+      }
+      simulatorRoundTripDraft = null;
+      return;
+    }
     if (draft?.dirty) return;
     if (existing?.compatible) setDraft(existing.draft);
     setDraftBase(savedSignature);
@@ -661,7 +682,7 @@ export function PricingStrategyScreen() {
                           button that looks broken. */}
                       {bandSplitCut(limit, memberCosts) === null ? (
                         <span className="self-center text-xs text-on-surface-soft">
-                          Dividir no disponible: las piezas de esta banda comparten el mismo punto de costo.
+                          Dividir no disponible: el corte dejaría una banda sin piezas.
                         </span>
                       ) : null}
                       <Button
@@ -679,6 +700,10 @@ export function PricingStrategyScreen() {
                         variant="ghost"
                         title="Simular esta banda en el simulador de contribución"
                         onClick={() => {
+                          if (draft) {
+                            // #531: keep the editing session for the round-trip.
+                            simulatorRoundTripDraft = { categoryId, draft, draftBase };
+                          }
                           setBandSimulatorPrefill({
                             categoryId,
                             min: limit.min,
