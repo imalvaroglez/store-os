@@ -90,7 +90,7 @@ export type VisibleNav = { flat: NavLeaf[]; areas: NavArea[] };
 export function visibleNav(storeType: StoreType, userRole?: PlatformRole): VisibleNav {
   const tieredOnly = (leaf: NavLeaf) =>
     storeType === "inventory_tiered" ||
-    (leaf.id !== "productos_compras" && leaf.id !== "productos_reglas" && leaf.id !== "productos_estrategia");
+    (leaf.id !== "productos_compras" && leaf.id !== "productos_reglas" && leaf.id !== "productos_estrategia" && leaf.id !== "ventas_puntos");
   const areas = NAV_AREAS.map((area) => ({ ...area, children: area.children.filter(tieredOnly) })).filter(
     (area) => area.children.length > 0
   );
