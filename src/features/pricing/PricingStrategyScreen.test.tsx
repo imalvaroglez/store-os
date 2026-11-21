@@ -390,3 +390,34 @@ describe("#402 limpieza de ruido en Estrategia de precios", () => {
   });
 });
 
+describe("#526 Tabla de bandas — etiquetas que guían la tarea", () => {
+  it("el subtítulo nombra los niveles REALES de la tienda (fixture: Regular, Girly, Iconic)", () => {
+    mount();
+    expect(screen.getByText(/rangos de costo con precios Regular, Girly e Iconic/)).toBeTruthy();
+  });
+
+  it("una tienda con Menudeo/Mayoreo/Emprendedora ve SUS nombres — nunca los de otra tienda", () => {
+    const store = oliviaStore();
+    store.priceTiers = [
+      { id: "t_retail", label: "Menudeo", order: 1 },
+      { id: "t_girly", label: "Mayoreo", order: 2 },
+      { id: "t_iconic", label: "Emprendedora", order: 3 },
+    ];
+    state.stores[0] = store;
+    mount();
+    expect(screen.getByText(/rangos de costo con precios Menudeo, Mayoreo y Emprendedora/)).toBeTruthy();
+    expect(screen.queryByText(/Iconic, Girly y Regular/)).toBeNull();
+  });
+
+  it("primera banda: conserva el 0 deshabilitado y SIN la nota «la primera banda abre en $0»", async () => {
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    const desde = screen.getAllByLabelText("Desde $")[0] as HTMLInputElement;
+    expect(desde.value).toBe("0");
+    expect(desde.disabled).toBe(true);
+    expect(screen.queryByText(/la primera banda abre en \$0/)).toBeNull();
+  });
+});
+

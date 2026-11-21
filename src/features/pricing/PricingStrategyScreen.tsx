@@ -54,6 +54,14 @@ const SUPPORT_HINT: Record<PriceSupport, string> = {
   pending: "pendiente: sin evidencia",
 };
 
+/** #526: «A, B y C» with Spanish conjunction («e» before i/hi sounds). */
+function joinSpanish(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  const head = items.slice(0, -1).join(", ");
+  const last = items[items.length - 1];
+  return `${head} ${/^[iI]/.test(last) ? "e" : "y"} ${last}`;
+}
+
 export function PricingStrategyScreen() {
   const { state, activeStore, saveCategoryPricingRules } = useStore();
   const toast = useToast();
@@ -391,9 +399,13 @@ export function PricingStrategyScreen() {
     <Screen>
       <ScreenHeader
         title="Estrategia de precios"
-        subtitle="Tablas por categoría: rangos de costo con precios Iconic, Girly y Regular"
+        // #526: the subtitle names THIS store's real tiers — labels are
+        // per-store config, so a hardcoded tier list described another
+        // store's vocabulary (Joyería saw «Iconic, Girly y Regular» while
+        // editing Menudeo/Mayoreo/Emprendedora prices).
+        subtitle={`Tablas por categoría: rangos de costo con precios ${joinSpanish(tiers.map((tier) => tier.label))}`}
         action={
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <Button variant="ghost" size="sm" onClick={() => navigate("/productos/simulador-contribucion")}>Simulador</Button>
             <Button variant="ghost" size="sm" onClick={() => navigate("/productos/diagnostico")}>Diagnóstico</Button>
           </div>
@@ -581,11 +593,12 @@ export function PricingStrategyScreen() {
                 <div key={index} className="space-y-2 rounded-lg border border-edge bg-surface px-3 py-2">
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="w-24">
+                      {/* #526: the first band's 0 stays, disabled — the old hint
+                          repeated the visible value and unbalanced the row. */}
                       <TextField
                         label="Desde $"
                         inputMode="decimal"
                         disabled={index === 0}
-                        hint={index === 0 ? "la primera banda abre en $0" : undefined}
                         value={index === 0 ? "0" : String(limit.min)}
                         onChange={(e) => setLimit(index, "min", e.target.value)}
                       />
@@ -599,22 +612,27 @@ export function PricingStrategyScreen() {
                         onChange={(e) => setLimit(index, "max", e.target.value)}
                       />
                     </div>
-                    <Button size="sm" variant="ghost" onClick={() => splitBand(index)}>Dividir</Button>
-                    <Button size="sm" variant="ghost" onClick={() => removeBand(index)}>Quitar</Button>
-                    {/* #336: simulate THIS band in the contribution simulator without retyping it. */}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      title="Simular esta banda en el simulador de contribución"
-                      onClick={() => {
-                        setBandSimulatorPrefill({
-                          categoryId,
-                          min: limit.min,
-                          max: limit.max ?? null,
-                        });
-                        navigate("/productos/simulador-contribucion");
-                      }}
-                    >Simular banda</Button>
+                    {/* #526: the three band actions travel as ONE group — at 390px
+                        they wrap together instead of stranding Dividir on the
+                        fields' line; on desktop they align to the right edge. */}
+                    <div className="flex flex-wrap gap-2 sm:ml-auto">
+                      <Button size="sm" variant="ghost" onClick={() => splitBand(index)}>Dividir</Button>
+                      <Button size="sm" variant="ghost" onClick={() => removeBand(index)}>Quitar</Button>
+                      {/* #336: simulate THIS band in the contribution simulator without retyping it. */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Simular esta banda en el simulador de contribución"
+                        onClick={() => {
+                          setBandSimulatorPrefill({
+                            categoryId,
+                            min: limit.min,
+                            max: limit.max ?? null,
+                          });
+                          navigate("/productos/simulador-contribucion");
+                        }}
+                      >Simular banda</Button>
+                    </div>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-3">
                     {tiers.map((tier) => {
