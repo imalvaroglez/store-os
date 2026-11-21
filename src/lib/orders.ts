@@ -285,6 +285,9 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
     storeId: String(raw.storeId ?? ""),
     customerId: String(raw.customerId ?? ""),
     ...(typeof raw.customerName === "string" && raw.customerName ? { customerName: raw.customerName } : {}),
+    // #524: the point-of-sale conversion link is order evidence — losing it
+    // on migration resurrected converted orders as collectible after reload.
+    ...(typeof raw.convertedToPointId === "string" && raw.convertedToPointId ? { convertedToPointId: raw.convertedToPointId } : {}),
     items,
     // v1 advanced to status='paid' without ever raising deposit; a migrated
     // collected sale must not show a phantom balance ("Falta cobrar").

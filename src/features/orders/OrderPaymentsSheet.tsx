@@ -87,6 +87,10 @@ export function OrderPaymentsSheet({
   // path); the sheet stays as evidence, and signed adjustments remain the
   // record with which Fer documents anything handed back.
   const cancelled = effectiveOrderStatus(order) === "cancelled";
+  // #524: a converted order's money lives at its point of sale — this sheet
+  // is READ-ONLY evidence (the reviewer's forensic path: an editable sheet
+  // here resurrected the order as collectible).
+  const converted = !!order.convertedToPointId;
   // #474 (QA 18-nov): on a CANCELLED order the refund (negative adjustment) is
   // the OWNER's call alone — UI hides it for members; the transaction and the
   // rules re-validate for any other client.
@@ -461,7 +465,15 @@ export function OrderPaymentsSheet({
           </div>
         ) : (
         <div className="space-y-3 border-t border-edge pt-4">
-          {cancelled ? (
+          {converted ? (
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-on-surface">Mercancía en punto de venta: no se registran cobros aquí.</p>
+              <p className="text-xs text-on-surface-soft">
+                Este pedido surtió un punto de venta; su venta y su cobro se registran en el corte del punto.
+                Los cobros ya registrados quedan como evidencia.
+              </p>
+            </div>
+          ) : cancelled ? (
             <div className="space-y-1">
               <p className="text-sm font-semibold text-on-surface">Pedido cancelado: no se pueden registrar cobros.</p>
               <p className="text-xs text-on-surface-soft">
@@ -507,7 +519,7 @@ export function OrderPaymentsSheet({
             </>
           )}
 
-          {(isOwnerOrAdmin || !cancelled) && (
+          {!converted && (isOwnerOrAdmin || !cancelled) && (
           adjustOpen ? (
             <div className="space-y-3 rounded-xl bg-surface p-3 ring-1 ring-edge">
               <p className="text-xs text-on-surface-soft">

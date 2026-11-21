@@ -140,7 +140,7 @@ describe("Puntos de venta (#524 primer corte UI)", () => {
     // El pedido limpio está habilitado; el pagado explica su impedimento.
     const paid = screen.getByText(/cobros registrados/).closest("button");
     expect(paid).toBeDisabled();
-    expect(screen.getByText("Listo para surtir")).toBeTruthy();
+    expect(screen.getByText(/Listo para surtir/)).toBeTruthy();
   });
 
   it("vista previa y confirmación: entradas exactas y llamada al callable de confianza", async () => {
@@ -150,7 +150,7 @@ describe("Puntos de venta (#524 primer corte UI)", () => {
     mount();
     fireEvent.click(screen.getByText("Mostrador centro"));
     fireEvent.click(screen.getByRole("button", { name: "Usar como surtido inicial" }));
-    fireEvent.click(screen.getByText("Listo para surtir"));
+    fireEvent.click(screen.getByText(/Listo para surtir/).closest("button") ?? screen.getByText(/Listo para surtir/));
     // Vista previa: piezas, variantes y totales del botón.
     expect(screen.getByText("Perfume Chanel Chance 100 ml")).toBeTruthy();
     expect(screen.getByText(/Café/)).toBeTruthy();
@@ -234,7 +234,7 @@ describe("#524 review: candidatos con escala, búsqueda y fecha real", () => {
     mount();
     fireEvent.click(screen.getByText("Mostrador centro"));
     fireEvent.click(screen.getByRole("button", { name: "Usar como surtido inicial" }));
-    fireEvent.click(screen.getByText("Listo para surtir"));
+    fireEvent.click(screen.getByText(/Listo para surtir/).closest("button") ?? screen.getByText(/Listo para surtir/));
     fireEvent.change(screen.getByLabelText("Fecha física de entrega"), { target: { value: "2026-13-99" } });
     expect(screen.getByRole("button", { name: /Surtir 5 piezas/ })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Fecha física de entrega"), { target: { value: "2026-11-21" } });

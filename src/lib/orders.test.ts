@@ -265,3 +265,17 @@ describe("orderBucket — pedido convertido (#524 una sola verdad de dinero)", (
     expect(orderCountsTowardToPay(converted)).toBe(false);
   });
 });
+
+describe("migrateOrder conserva el vínculo de conversión (#524)", () => {
+  it("un pedido recargado no resucita como cobrable: convertedToPointId sobrevive a la migración", () => {
+    const migrated = migrateOrder({
+      id: "order_x", storeId: "s1", customerId: "c1",
+      items: [{ productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid",
+      convertedToPointId: "s1__mostrador", createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    });
+    expect(migrated.convertedToPointId).toBe("s1__mostrador");
+    expect(orderBucket(migrated)).toBe("other");
+    expect(orderCountsTowardToPay(migrated)).toBe(false);
+  });
+});
