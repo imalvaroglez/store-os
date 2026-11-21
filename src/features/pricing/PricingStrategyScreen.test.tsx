@@ -606,21 +606,58 @@ describe("#531 ida y vuelta al simulador con concurrencia y entre tiendas", () =
     expect(await screen.findByText(/cambió mientras editabas|otra sesión/i)).toBeTruthy();
   });
 
-  it("la última categoría NO filtra a otra tienda (select sin valor huérfano)", async () => {
+  it("la última categoría NO filtra a otra tienda (select sin valor huérfano ni análisis fantasma)", async () => {
     products526();
     const view = mount();
     selectCategory();
     await screen.findByText("Propuesta");
-    // Cambia de tienda y re-entra por menú (URL limpia).
+    // Cambia a OTRA tienda (id distinto) y re-entra por menú (URL limpia):
+    // el guard por tienda debe rechazar la memoria de la categoría ajena.
     const otra = fixtureState();
     otra.stores[0] = oliviaStore();
+    otra.activeStoreId = otra.stores[2].id; // Joyería: otra tienda real (id distinto)
     mocks.state = otra;
-    state = otra;
     view.unmount();
     window.history.replaceState({}, "", "/productos/estrategia");
     mount();
     expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe("");
-    // Sin valor huérfano NI análisis fantasma de la categoría ajena.
-    expect(screen.queryByText(/piezas en la categoría/)).toBeNull();
+    // Matcher que atraviesa nodos anidados: sin análisis «0 piezas» fantasma.
+    const phantom = screen.queryByText((_, el) => !!el?.textContent?.includes("piezas en la categoría"));
+    expect(phantom).toBeNull();
+  });
+
+  it("un stash LIMPIO vencido cede ante la tabla guardada fresca (sin banner)", async () => {
+    products526();
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 60, price: 290 }, { min: 60, price: 310 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 60, price: 230 }, { min: 60, price: 260 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 60, price: 160 }, { min: 60, price: 170 }], rounding: "none" },
+        },
+      },
+    };
+    const view = mount();
+    selectCategory();
+    await screen.findAllByLabelText("Hasta $"); // tabla guardada adoptada (limpia)
+    fireEvent.click(screen.getAllByRole("button", { name: "Simular banda" })[0]);
+    view.unmount();
+    // Otra sesión guarda una tabla DISTINTA mientras tanto.
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 80, price: 290 }, { min: 80, price: 310 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 80, price: 230 }, { min: 80, price: 260 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 80, price: 160 }, { min: 80, price: 170 }], rounding: "none" },
+        },
+      },
+    };
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    // El stash limpio cede: la tabla FRESCA (Hasta 80) se adopta, sin banner.
+    expect((screen.getAllByLabelText("Hasta $")[0] as HTMLInputElement).value).toBe("80");
+    expect(screen.queryByText(/cambiaron en otra sesión/i)).toBeNull();
   });
 });
