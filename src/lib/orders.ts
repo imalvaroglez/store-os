@@ -157,8 +157,11 @@ export function orderBucket(order: Partial<Order> & Record<string, unknown>): Or
 }
 
 /** One predicate for "Falta cobrar": every unresolved sale (pending or active)
- * counts, so Home and the customer card can never disagree. */
+ * counts, so Home and the customer card can never disagree. #524: an order
+ * converted into a point's first surtido left the money story on the POINT
+ * (cortes/cobros), so it must leave this list even while still "confirmed". */
 export function orderCountsTowardToPay(order: Partial<Order> & Record<string, unknown>): boolean {
+  if (order.convertedToPointId) return false;
   const bucket = orderBucket(order);
   return bucket === "pending" || bucket === "active";
 }

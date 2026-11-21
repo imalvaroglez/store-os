@@ -6,6 +6,7 @@ import {
   migrateOrder,
   migrateOrders,
   orderBucket,
+  orderCountsTowardToPay,
   orderReference,
   orderTotals,
   paymentStatusForOrder,
@@ -247,5 +248,12 @@ describe("legacyCollectDeposit (#362: Home/card one-tap collect)", () => {
 
   it("a corrupt deposit never poisons the collect", () => {
     expect(legacyCollectDeposit(base({ deposit: Number.NaN }))).toBe(1000);
+  });
+});
+
+describe("orderCountsTowardToPay — pedido convertido a punto de venta (#524)", () => {
+  it("sale de «Falta cobrar» aunque siga confirmado; el pedido ordinario sigue contando", () => {
+    expect(orderCountsTowardToPay(base({ orderStatus: "confirmed", convertedToPointId: "pt1" }))).toBe(false);
+    expect(orderCountsTowardToPay(base({ orderStatus: "confirmed" }))).toBe(true);
   });
 });

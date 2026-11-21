@@ -152,6 +152,9 @@ export function committedBreakdownForProduct(
   let total = 0;
   for (const order of orders) {
     if (order.storeId !== storeId || !holdsPieces(order)) continue;
+    // #524: a converted order's pieces transferred to the point (their own
+    // entries there); they are no longer "comprometidas" by the order.
+    if (order.convertedToPointId) continue;
     const status = effectiveOrderStatus(order);
     if (status === "delivered") continue; // consumed, not committed
     // Delivered-so-far per dimension, consumed line by line so each pending
