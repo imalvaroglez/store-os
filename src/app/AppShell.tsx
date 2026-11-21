@@ -31,6 +31,7 @@ import { MonthlyCloseScreen } from "../features/close/MonthlyCloseScreen";
 import { PackagingScreen } from "../features/packaging/PackagingScreen";
 import { PricingRulesScreen } from "../features/pricing/PricingRulesScreen";
 import { PricingStrategyScreen } from "../features/pricing/PricingStrategyScreen";
+import { PointsOfSaleScreen } from "../features/points/PointsOfSaleScreen";
 import { ResellerRankingScreen } from "../features/close/ResellerRankingScreen";
 import { PriceDiagnosticsScreen } from "../features/pricing/PriceDiagnosticsScreen";
 import { ContributionSimulatorScreen } from "../features/pricing/ContributionSimulatorScreen";
@@ -66,6 +67,9 @@ export function AppShell() {
     tab = "tienda";
   } else if (seg === "productos") {
     tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : sub === "reparto" ? "productos_reparto" : sub === "simulador" ? "productos_simulador" : sub === "simulador-contribucion" ? "productos_simulador_contribucion" : sub === "diagnostico" ? "productos_diagnostico" : sub === "ranking" ? "productos_ranking" : "productos";
+  } else if (seg === "ventas" && sub === "puntos") {
+    // #524: Ventas → Puntos de venta.
+    tab = "ventas_puntos";
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
@@ -192,6 +196,10 @@ export function AppShell() {
     case "productos_estrategia":
       // key: switching stores must never carry one store's draft into another.
       screen = <PricingStrategyScreen key={activeStore?.id ?? "store"} />;
+      break;
+    case "ventas_puntos":
+      // key: switching stores must never carry one store's points into another.
+      screen = <PointsOfSaleScreen key={activeStore?.id ?? "store"} />;
       break;
     case "pedidos":
       // key={sub}: back/forward between two editors must remount the form, or
