@@ -11,6 +11,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { parseSupplierOrder } from "./parser.js";
 export { applyCredit, releaseCredit } from "./applyCredit.mjs";
+export { convertOrderToFirstSurtido } from "./convertOrderToPoint.mjs";
 
 // Initialize the default Admin app once (the emulator may re-evaluate this
 // module on reload; guard against double init).
