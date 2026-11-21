@@ -257,3 +257,11 @@ describe("orderCountsTowardToPay — pedido convertido a punto de venta (#524)",
     expect(orderCountsTowardToPay(base({ orderStatus: "confirmed" }))).toBe(true);
   });
 });
+
+describe("orderBucket — pedido convertido (#524 una sola verdad de dinero)", () => {
+  it("un pedido convertido es historial: no cuenta como activo ni pendiente", () => {
+    const converted = base({ orderStatus: "confirmed", convertedToPointId: "store_olivia__mostrador" });
+    expect(orderBucket(converted)).toBe("other");
+    expect(orderCountsTowardToPay(converted)).toBe(false);
+  });
+});

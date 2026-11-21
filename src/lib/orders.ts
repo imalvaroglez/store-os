@@ -148,6 +148,11 @@ export function orderStatusIsOpen(status: OrderStatus | undefined): boolean {
 export type OrderBucket = "pending" | "active" | "completed" | "cancelled" | "other";
 
 export function orderBucket(order: Partial<Order> & Record<string, unknown>): OrderBucket {
+  // #524: a converted order's pieces live at a point of sale — its money
+  // story continues in cortes/cobros there. It is HISTORY here: it must not
+  // count toward "Falta cobrar" or active buckets anywhere (Home, Pedidos,
+  // clienta cards) — one truth for the whole app.
+  if (order.convertedToPointId) return "other";
   const status = effectiveOrderStatus(order);
   if (status === "cancelled") return "cancelled";
   if (status === "asked" || status === "quoted") return "pending";

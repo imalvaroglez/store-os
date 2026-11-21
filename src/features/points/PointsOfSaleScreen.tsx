@@ -20,7 +20,8 @@ import {
   useToast,
 } from "../../design-system";
 import { slugify } from "../../lib/catalog";
-import { todayIso } from "../../lib/dates";
+import { formatDate, todayIso } from "../../lib/dates";
+import { orderTotals } from "../../lib/orders";
 import { formatMoneyExact } from "../../lib/money";
 import { REGULAR_TIER_ID, tiersForStore } from "../../lib/pricing";
 
@@ -237,7 +238,7 @@ export function PointsOfSaleScreen() {
           <Card className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="font-semibold text-ink">{openPoint.name}</h3>
-              <Badge>{(() => { const oldest = summaries.get(openPoint.id)?.oldestEntryDate; return oldest ? `Pieza más antigua desde el ${oldest}` : "Ficha"; })()}</Badge>
+              <Badge>{(() => { const oldest = summaries.get(openPoint.id)?.oldestEntryDate; return oldest ? `Pieza más antigua desde el ${formatDate(oldest)}` : "Ficha"; })()}</Badge>
             </div>
             {pointEntries.length === 0 ? (
               <EmptyState
@@ -265,7 +266,7 @@ export function PointsOfSaleScreen() {
                         {entry.productName}
                         {entry.variantColor ? ` · ${entry.variantColor}` : ""}
                       </span>
-                      <span className="text-on-surface-soft">{left} de {entry.quantity} · {entry.entryDate}</span>
+                      <span className="text-on-surface-soft">{left} de {entry.quantity} · {formatDate(entry.entryDate)}</span>
                       <span className="font-semibold text-on-surface"><Money exact amount={pesos(entry.markedPriceCents)} /></span>
                       <span className="text-on-surface-soft">
                         {entry.unitCostCents !== undefined ? `costo ${formatMoneyExact(pesos(entry.unitCostCents))}` : "costo pendiente"}
@@ -332,11 +333,9 @@ export function PointsOfSaleScreen() {
                     {orderReference(order.id)} · {order.customerName ?? "clienta"}
                   </span>
                   <span className="text-xs text-on-surface-soft">
-                    {order.convertedToPointId
-                      ? "Ya convertido"
-                      : check.canConvert
-                        ? "Listo para surtir"
-                        : (check.reasons[0] ?? check.lineIssues[0]?.reason ?? "No elegible")}
+                    {check.canConvert
+                      ? `Listo para surtir · ${formatDate(order.createdAt ?? "")} · ${formatMoneyExact(orderTotals(order).estimatedTotal)}`
+                      : (check.reasons[0] ?? check.lineIssues[0]?.reason ?? "No elegible")}
                   </span>
                 </Button>
               );
