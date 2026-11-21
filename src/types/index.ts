@@ -481,7 +481,7 @@ export type PointOperation = {
   id: string;
   storeId: string;
   pointId: string;
-  kind: "first_surtido" | "corte" | "cobro" | "anulacion";
+  kind: "first_surtido" | "surtido" | "retiro" | "corte" | "cobro" | "anulacion";
   intentionId?: string;
   confirmedBy: string;
   confirmedAt: string;
@@ -517,6 +517,9 @@ export type PointOperation = {
   date?: string;
   // anulacion
   motive?: string;
+  // retiro: which entries the returned pieces left (FIFO evidence).
+  entryAllocations?: Array<{ entryId: string; quantity: number }>;
+  originOperationId?: string;
 };
 
 /** One merchandise entry at a point: physical date, quantity, marked price

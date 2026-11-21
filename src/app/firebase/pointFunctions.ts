@@ -94,3 +94,53 @@ export async function annulPointCutTrusted(params: AnnulPointCutParams): Promise
   const res = await call(params);
   return res.data;
 }
+
+export interface StockPointLine {
+  productId: string;
+  variantId?: string;
+  qty: number;
+  markedPriceCents: number;
+  unitCostCents?: number;
+}
+
+export interface StockPointResult {
+  stocked: boolean;
+  alreadyStocked?: boolean;
+  entryCount?: number;
+  units?: number;
+}
+
+export async function stockPointTrusted(params: {
+  storeId: string;
+  pointId: string;
+  intentId: string;
+  physicalDate: string;
+  lines: StockPointLine[];
+}): Promise<StockPointResult> {
+  const call = httpsCallable<Parameters<typeof stockPointTrusted>[0], StockPointResult>(functionsInstance(), "stockPointFromWarehouse");
+  const res = await call(params);
+  return res.data;
+}
+
+export interface WithdrawLine {
+  productId: string;
+  variantId?: string;
+  qty: number;
+}
+
+export interface WithdrawResult {
+  withdrawn: boolean;
+  alreadyWithdrawn?: boolean;
+  units?: number;
+}
+
+export async function withdrawFromPointTrusted(params: {
+  storeId: string;
+  pointId: string;
+  intentId: string;
+  lines: WithdrawLine[];
+}): Promise<WithdrawResult> {
+  const call = httpsCallable<Parameters<typeof withdrawFromPointTrusted>[0], WithdrawResult>(functionsInstance(), "withdrawFromPoint");
+  const res = await call(params);
+  return res.data;
+}

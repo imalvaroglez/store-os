@@ -24,7 +24,8 @@ import {
 import { slugify } from "../../lib/catalog";
 import { formatDate, todayIso } from "../../lib/dates";
 import { orderTotals } from "../../lib/orders";
-import { formatMoneyExact } from "../../lib/money";
+import { formatMoneyExact, parseAmount } from "../../lib/money";
+import { orderAmountCents } from "../../lib/orderMoney";
 import { REGULAR_TIER_ID, tiersForStore } from "../../lib/pricing";
 
 /** Does any sellable row still have pieces? (drives «Registrar corte»). */
@@ -54,7 +55,7 @@ function isRealDate(text: string): boolean {
 }
 
 export function PointsOfSaleScreen() {
-  const { state, activeStore, savePoint, convertOrderToFirstSurtido, registerPointCut, registerPointCutPayment } = useStore();
+  const { state, activeStore, savePoint, convertOrderToFirstSurtido, registerPointCut, registerPointCutPayment, stockPoint, withdrawFromPoint } = useStore();
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -72,6 +73,13 @@ export function PointsOfSaleScreen() {
   const [commissionPct, setCommissionPct] = useState<string>("");
   const [bajas, setBajas] = useState<Array<{ rowKey: string; qty: string; reason: string }>>([]);
   const [payingCorte, setPayingCorte] = useState<string | null>(null);
+  // #524 manual movements: warehouse → point (stocking) and point → warehouse.
+  const [stocking, setStocking] = useState(false);
+  const [stockQuery, setStockQuery] = useState("");
+  const [stockQty, setStockQty] = useState<Record<string, string>>({});
+  const [stockPrice, setStockPrice] = useState<Record<string, string>>({});
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawQty, setWithdrawQty] = useState<Record<string, string>>({});
   const [payDate, setPayDate] = useState(todayIso());
   const [payMethod, setPayMethod] = useState<"cash" | "transfer">("cash");
 
@@ -161,6 +169,65 @@ export function PointsOfSaleScreen() {
     () => Object.values(soldByRow).some((value) => Number(value) > 0) || bajas.some((baja) => Number(baja.qty) > 0),
     [soldByRow, bajas]
   );
+
+  // Warehouse rows for «Surtir del almacén»: sellable shelf per product or
+  // color, with the point's tier price proposed (pilot: Regular).
+  const tierId = openPoint?.priceTierId ?? activeStore?.defaultTierId ?? "t_retail";
+  const warehouseRows = useMemo(() => {
+    if (!stocking) return [];
+    const rows: Array<{ key: string; productId: string; variantId?: string; label: string; available: number; suggestedPrice: number; cost?: number }> = [];
+    for (const product of state.products.filter((p) => p.storeId === storeId)) {
+      const variants = product.variants ?? [];
+      if (variants.length > 0) {
+        for (const variant of variants) {
+          const available = variant.quantityOnHand ?? 0;
+          if (available <= 0) continue;
+          rows.push({
+            key: `${product.id}|${variant.id}`,
+            productId: product.id,
+            variantId: variant.id,
+            label: `${product.name} · ${variant.color}`,
+            available,
+            suggestedPrice: product.prices?.[tierId] ?? 0,
+            cost: variant.cost ?? product.cost,
+          });
+        }
+      } else {
+        const available = product.quantityOnHand ?? 0;
+        if (available <= 0) continue;
+        rows.push({
+          key: `${product.id}|`,
+          productId: product.id,
+          label: product.name,
+          available,
+          suggestedPrice: product.prices?.[tierId] ?? 0,
+          cost: product.cost,
+        });
+      }
+    }
+    const needle = stockQuery.trim().toLowerCase();
+    return needle === "" ? rows : rows.filter((row) => row.label.toLowerCase().includes(needle));
+  }, [stocking, state.products, storeId, tierId, stockQuery]);
+
+  // Point rows for «Retirar»: per product + color (any price), pieces left.
+  const withdrawRows = useMemo(() => {
+    if (!withdrawing) return [];
+    const byDimension = new Map<string, { key: string; productId: string; variantId?: string; label: string; left: number }>();
+    for (const row of cutRows) {
+      const key = `${row.entry.productId}|${row.entry.variantId ?? ""}`;
+      const existing = byDimension.get(key);
+      if (existing) existing.left += row.left;
+      else
+        byDimension.set(key, {
+          key,
+          productId: row.entry.productId,
+          ...(row.entry.variantId ? { variantId: row.entry.variantId } : {}),
+          label: row.label,
+          left: row.left,
+        });
+    }
+    return [...byDimension.values()];
+  }, [withdrawing, cutRows]);
 
   const pointOperations = useMemo(
     () =>
@@ -369,6 +436,74 @@ export function PointsOfSaleScreen() {
     }
   }
 
+  async function confirmStock() {
+    if (!openPoint) return;
+    const lines = warehouseRows
+      .map((row) => ({ row, qty: Number(stockQty[row.key] ?? "") }))
+      .filter((item) => Number.isFinite(item.qty) && item.qty > 0 && item.qty <= item.row.available)
+      .map((item) => {
+        const priceText = stockPrice[item.row.key]?.trim();
+        const price = priceText !== undefined && priceText !== "" ? parseAmount(priceText) : undefined;
+        return {
+          productId: item.row.productId,
+          ...(item.row.variantId ? { variantId: item.row.variantId } : {}),
+          qty: Math.floor(item.qty),
+          markedPriceCents: orderAmountCents(price ?? item.row.suggestedPrice, 1),
+        };
+      });
+    if (lines.length === 0) return;
+    setBusy(true);
+    try {
+      const result = await stockPoint({
+        storeId,
+        pointId: openPoint.id,
+        physicalDate: todayIso(),
+        lines,
+      });
+      toast.success(
+        result.stocked
+          ? `Surtido: ${result.units} piezas al punto.`
+          : "Este surtido ya estaba aplicado; no se hizo ningún cambio."
+      );
+      setStocking(false);
+      setStockQty({});
+      setStockPrice({});
+      setStockQuery("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo surtir el punto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmWithdraw() {
+    if (!openPoint) return;
+    const lines = withdrawRows
+      .map((row) => ({ row, qty: Number(withdrawQty[row.key] ?? "") }))
+      .filter((item) => Number.isFinite(item.qty) && item.qty > 0 && item.qty <= item.row.left)
+      .map((item) => ({
+        productId: item.row.productId,
+        ...(item.row.variantId ? { variantId: item.row.variantId } : {}),
+        qty: Math.floor(item.qty),
+      }));
+    if (lines.length === 0) return;
+    setBusy(true);
+    try {
+      const result = await withdrawFromPoint({ storeId, pointId: openPoint.id, lines });
+      toast.success(
+        result.withdrawn
+          ? `Retiro: ${result.units} piezas de vuelta al almacén.`
+          : "Este retiro ya estaba aplicado; no se hizo ningún cambio."
+      );
+      setWithdrawing(false);
+      setWithdrawQty({});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo retirar la mercancía.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Screen>
       <ScreenHeader
@@ -420,6 +555,19 @@ export function PointsOfSaleScreen() {
               <h3 className="font-semibold text-ink">{openPoint.name}</h3>
               <Badge>{(() => { const oldest = summaries.get(openPoint.id)?.oldestEntryDate; return oldest ? `Pieza más antigua desde el ${formatDate(oldest)}` : "Ficha"; })()}</Badge>
             </div>
+            {openPoint ? (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="ghost" size="sm" onClick={() => { setStocking(true); setStockQuery(""); }}>
+                  Surtir del almacén
+                </Button>
+                {summaryHasStock(cutRows) ? (
+                  <Button variant="ghost" size="sm" onClick={() => setWithdrawing(true)}>
+                    Retirar
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+
             {pointEntries.length > 0 && summaryHasStock(cutRows) ? (
               <Button
                 variant="secondary"
@@ -746,6 +894,102 @@ export function PointsOfSaleScreen() {
           </div>
         ) : null}
       </Dialog>
+      <Dialog
+        open={stocking}
+        onClose={() => setStocking(false)}
+        title="Surtir del almacén"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setStocking(false)}>Cancelar</Button>
+            <Button disabled={busy || !Object.values(stockQty).some((value) => Number(value) > 0)} onClick={() => void confirmStock()}>
+              Surtir piezas
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Mueve piezas disponibles del almacén a este punto. El precio de etiqueta se propone del nivel del punto; confírmalo o ajústalo por fila.
+        </p>
+        <TextField
+          label="Buscar"
+          placeholder="Nombre…"
+          value={stockQuery}
+          onChange={(e) => setStockQuery(e.target.value)}
+        />
+        <div className="max-h-80 space-y-1 overflow-y-auto">
+          {warehouseRows.length === 0 ? (
+            <p className="text-sm text-on-surface-soft">No hay piezas disponibles en el almacén.</p>
+          ) : (
+            warehouseRows.map((row) => (
+              <div key={row.key} className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-1 last:border-0">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-on-surface">{row.label}</p>
+                  <p className="text-xs text-on-surface-soft">
+                    {row.available} en almacén · sugerido <Money amount={row.suggestedPrice} />
+                    {row.cost !== undefined ? ` · costo ${formatMoneyExact(row.cost)}` : " · costo pendiente"}
+                  </p>
+                </div>
+                <div className="w-24">
+                  <TextField
+                    label="Piezas"
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={stockQty[row.key] ?? ""}
+                    onChange={(e) => setStockQty((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                  />
+                </div>
+                <div className="w-28">
+                  <TextField
+                    label="Etiqueta"
+                    inputMode="decimal"
+                    placeholder={String(row.suggestedPrice)}
+                    value={stockPrice[row.key] ?? ""}
+                    onChange={(e) => setStockPrice((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                  />
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={withdrawing}
+        onClose={() => setWithdrawing(false)}
+        title="Retirar mercancía"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setWithdrawing(false)}>Cancelar</Button>
+            <Button disabled={busy || !Object.values(withdrawQty).some((value) => Number(value) > 0)} onClick={() => void confirmWithdraw()}>
+              Retirar piezas
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Las piezas vuelven al almacén en su variedad exacta y vuelven a estar disponibles para vender.
+        </p>
+        <div className="max-h-80 space-y-1 overflow-y-auto">
+          {withdrawRows.map((row) => (
+            <div key={row.key} className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-1 last:border-0">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-on-surface">{row.label}</p>
+                <p className="text-xs text-on-surface-soft">{row.left} en el punto</p>
+              </div>
+              <div className="w-24">
+                <TextField
+                  label="Piezas"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={withdrawQty[row.key] ?? ""}
+                  onChange={(e) => setWithdrawQty((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </Dialog>
+
       <Dialog
         open={!!payingCorteOp}
         onClose={() => setPayingCorte(null)}

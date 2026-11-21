@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   convertOrderToFirstSurtido: vi.fn(),
   registerPointCut: vi.fn(),
   registerPointCutPayment: vi.fn(),
+  stockPoint: vi.fn(),
+  withdrawFromPoint: vi.fn(),
 }));
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => {
@@ -28,6 +30,8 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
       convertOrderToFirstSurtido: mocks.convertOrderToFirstSurtido,
       registerPointCut: mocks.registerPointCut,
       registerPointCutPayment: mocks.registerPointCutPayment,
+      stockPoint: mocks.stockPoint,
+      withdrawFromPoint: mocks.withdrawFromPoint,
     }),
   };
 });
@@ -55,6 +59,7 @@ function plainProduct(): Product {
     isPublic: true,
     quantityOnHand: 4,
     cost: 400,
+    prices: { t_retail: 950, t_girly: 780, t_iconic: 580 },
     createdAt: NOW,
     updatedAt: NOW,
   } as Product;
@@ -113,6 +118,10 @@ beforeEach(() => {
   mocks.registerPointCut.mockResolvedValue({ registered: true, corteId: "corte_x", totals: { netCents: 40000 } });
   mocks.registerPointCutPayment.mockReset();
   mocks.registerPointCutPayment.mockResolvedValue({ registered: true, amountCents: 40000 });
+  mocks.stockPoint.mockReset();
+  mocks.stockPoint.mockResolvedValue({ stocked: true, entryCount: 1, units: 2 });
+  mocks.withdrawFromPoint.mockReset();
+  mocks.withdrawFromPoint.mockResolvedValue({ withdrawn: true, units: 1 });
 });
 
 describe("Puntos de venta (#524 primer corte UI)", () => {
@@ -323,6 +332,56 @@ describe("#524 corte en la ficha: captura, resumen vivo y cobro diferido", () =>
     await screen.findByText(/Cobro registrado/i);
     expect(mocks.registerPointCutPayment).toHaveBeenCalledWith(
       expect.objectContaining({ corteId: "corte_previo", method: "cash", date: "2026-12-03" })
+    );
+  });
+});
+
+describe("#524 surtir del almacén y retirar en la ficha", () => {
+  it("surtir propone el precio del nivel del punto y llama al callable con centavos exactos", async () => {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
+    // El perfume del almacén (6 disponibles, Regular $950) aparece con su precio sugerido.
+    expect(screen.getByText(/4 en almacén/)).toBeTruthy();
+    const piezas = screen.getAllByLabelText("Piezas");
+    fireEvent.change(piezas[0], { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    await screen.findByText(/Surtido: 2 piezas/i);
+    expect(mocks.stockPoint).toHaveBeenCalledTimes(1);
+    expect(mocks.stockPoint.mock.calls[0][0]).toMatchObject({
+      storeId: "store_olivia",
+      pointId: "store_olivia__mostrador",
+      lines: [{ productId: "p1", qty: 2, markedPriceCents: 95000 }],
+    });
+    expect(mocks.stockPoint.mock.calls[0][0].physicalDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("retirar agrupa por producto y color del punto y devuelve al almacén", async () => {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [
+      { id: "pe1", storeId: "store_olivia", pointId: "store_olivia__mostrador", productId: "p1", productName: "Perfume", entryDate: "2026-11-01", quantity: 2, consumedQty: 0, markedPriceCents: 95000, unitCostCents: 40000, createdAt: NOW, updatedAt: NOW } as PointEntry,
+      { id: "pe2", storeId: "store_olivia", pointId: "store_olivia__mostrador", productId: "p2", variantId: "v-cafe", productName: "Cartera", variantColor: "Café", entryDate: "2026-11-01", quantity: 3, consumedQty: 1, markedPriceCents: 68000, unitCostCents: 30000, createdAt: NOW, updatedAt: NOW } as PointEntry,
+    ];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Retirar" }));
+    // Filas por dimensión con sus existencias en el punto.
+    expect(screen.getAllByText(/2 en el punto/).length).toBe(2); // perfume y cartera
+    fireEvent.change(screen.getAllByLabelText("Piezas")[1], { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Retirar piezas" }));
+    await screen.findByText(/Retiro: 1 piezas/i);
+    expect(mocks.withdrawFromPoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storeId: "store_olivia",
+        pointId: "store_olivia__mostrador",
+        lines: [{ productId: "p2", variantId: "v-cafe", qty: 1 }],
+      })
     );
   });
 });

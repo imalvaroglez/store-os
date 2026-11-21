@@ -49,6 +49,12 @@ import {
   registerPointCutTrusted,
   registerPointCutPaymentTrusted,
   annulPointCutTrusted,
+  stockPointTrusted,
+  withdrawFromPointTrusted,
+  type StockPointLine,
+  type StockPointResult,
+  type WithdrawLine,
+  type WithdrawResult,
 } from "./firebase/pointFunctions";
 import {
   ensureStoreFinancials,
@@ -460,6 +466,11 @@ type StoreContextValue = {
   registerPointCutPayment: (params: RegisterPointCutPaymentParams) => Promise<RegisterPointCutPaymentResult>;
   /** #524: annul the latest unpaid corte (motive required). */
   annulPointCut: (params: AnnulPointCutParams) => Promise<AnnulPointCutResult>;
+  /** #524: move available warehouse pieces to the point (label price
+   * confirmed by the operator); republishes public availability after. */
+  stockPoint: (params: { storeId: string; pointId: string; physicalDate: string; lines: StockPointLine[] }) => Promise<StockPointResult>;
+  /** #524: return sellable pieces from the point to their exact variant. */
+  withdrawFromPoint: (params: { storeId: string; pointId: string; lines: WithdrawLine[] }) => Promise<WithdrawResult>;
   deleteExpense: (expenseId: string) => Promise<void>;
   assignExpense: (
     expense: LooseExpense,
@@ -1691,6 +1702,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     annulPointCut: async (params) => {
       requireAuthenticatedUser();
       return annulPointCutTrusted(params);
+    },
+    stockPoint: async (params) => {
+      requireAuthenticatedUser();
+      const result = await stockPointTrusted({ ...params, intentId: uid() });
+      // #524: warehouse stock moved — keep the public catalog's availability
+      // in step (retryable alone through the sync notice, never blocking the
+      // movement itself).
+      const store = state.stores.find((candidate) => candidate.id === params.storeId);
+      if (store && result.stocked) {
+        const changed = [...new Set(params.lines.map((line) => line.productId))];
+        persistInBackground("actualizar la disponibilidad pública", () =>
+          republishStockSignals(store, state.products, state.categories, changed)
+        );
+      }
+      return result;
+    },
+    withdrawFromPoint: async (params) => {
+      requireAuthenticatedUser();
+      const result = await withdrawFromPointTrusted({ ...params, intentId: uid() });
+      const store = state.stores.find((candidate) => candidate.id === params.storeId);
+      if (store && result.withdrawn) {
+        const changed = [...new Set(params.lines.map((line) => line.productId))];
+        persistInBackground("actualizar la disponibilidad pública", () =>
+          republishStockSignals(store, state.products, state.categories, changed)
+        );
+      }
+      return result;
     },
     saveExpense: async (expense) => {
       requireAuthenticatedUser();
