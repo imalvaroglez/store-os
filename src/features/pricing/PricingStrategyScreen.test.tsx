@@ -421,3 +421,31 @@ describe("#526 Tabla de bandas — etiquetas que guían la tarea", () => {
   });
 });
 
+describe("#529 hints de mediana en Tabla de bandas", () => {
+  it("soporte sólido: el hint «Mediana actual, sólido…» NO se repite bajo cada precio de cada banda", async () => {
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // 4 bandas × 3 niveles con soporte sólido = hasta 12 repeticiones antes;
+    // ahora el estado sano no necesita aclaración bajo cada campo.
+    expect(screen.queryByText(/Mediana actual/)).toBeNull();
+  });
+
+  it("un nivel poco respaldado o sin evidencia conserva su advertencia exactamente en su banda", async () => {
+    // Banda baja: 5 piezas con precio Iconic (sólido). Banda alta: 4 piezas SIN
+    // precio Iconic → «pendiente: sin evidencia» debe verse una vez, sólo ahí.
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, { t_retail: pricey.t_retail, t_girly: pricey.t_girly })),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    const pending = screen.getAllByText(/pendiente: sin evidencia/);
+    expect(pending.length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/Mediana actual, sólido/)).toBeNull();
+  });
+});
+

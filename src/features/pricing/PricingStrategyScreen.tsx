@@ -638,13 +638,21 @@ export function PricingStrategyScreen() {
                     {tiers.map((tier) => {
                       const value = draft.prices[tier.id]?.[index];
                       const support = proposal?.bands?.[index]?.priceSupport[tier.id];
+                      // #529: the healthy state (sólido) is the default and used
+                      // to repeat under EVERY price of EVERY band (12+); only the
+                      // exceptional supports (weak/pending) carry a hint now,
+                      // right where the price needs attention.
+                      const supportHint =
+                        support && support !== "strong"
+                          ? `Mediana actual, ${SUPPORT_HINT[support]} · ${tier.label}: ${EVIDENCE_LABEL[tierEvidence(tier.label)]}`
+                          : undefined;
                       return (
                         <TextField
                           key={tier.id}
                           label={`${tier.label} (pesos)`}
                           inputMode="decimal"
                           error={value === null || value === undefined || !(value > 0) ? "Precio pendiente" : undefined}
-                          hint={support ? `Mediana actual, ${SUPPORT_HINT[support]} · ${tier.label}: ${EVIDENCE_LABEL[tierEvidence(tier.label)]}` : undefined}
+                          hint={supportHint}
                           value={value === null || value === undefined ? "" : String(value)}
                           onChange={(e) => setPrice(tier.id, index, e.target.value)}
                         />
