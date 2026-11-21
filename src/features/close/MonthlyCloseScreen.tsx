@@ -301,6 +301,10 @@ export function MonthlyCloseScreen() {
     paymentsByOrder,
     expenses: state.expenses,
     customers: state.customers ?? [],
+    // #524: physical points' cortes/cobros fold into the month by their own
+    // effective/real dates, with their channel subtotal.
+    pointOperations: state.pointOperations,
+    points: state.points,
   });
 
   // #455: skeleton of stable structure while anything is still loading — a
@@ -428,6 +432,11 @@ export function MonthlyCloseScreen() {
             )}
             <div className="mt-2">
               <FormulaRow label="Ventas de productos entregados" cents={loading ? null : close.salesCents} onOpen={() => setDetail("sales")} />
+              {close.salesByChannel.map((channel) =>
+                channel.channel === "puntos_fisicos" && channel.totalCents > 0 ? (
+                  <FormulaRow key={channel.channel} label={`· ${channel.label}`} cents={loading ? null : channel.totalCents} onOpen={() => setDetail("sales")} />
+                ) : null
+              )}
               {/* #455 r3 (UX): net sales vs the operadora's notebook — the
                   returns line is VISIBLE, not hidden inside the drilldown. */}
               {!loading && close.posventaAdjustmentCents !== 0 && (

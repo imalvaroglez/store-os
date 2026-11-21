@@ -5,7 +5,7 @@
 // prices (from the order, exact cents), and the TRUSTED callable does the
 // whole movement in one transaction. Cortes/cobros/anulación and manual
 // Surtir/Retirar arrive in later cuts.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -22,6 +22,7 @@ import {
   useToast,
 } from "../../design-system";
 import { slugify } from "../../lib/catalog";
+import { loadClosesForStore } from "../../app/firebase/firestoreData";
 import { formatDate, todayIso } from "../../lib/dates";
 import { orderTotals } from "../../lib/orders";
 import { formatMoneyExact, parseAmount } from "../../lib/money";
@@ -55,7 +56,7 @@ function isRealDate(text: string): boolean {
 }
 
 export function PointsOfSaleScreen() {
-  const { state, activeStore, savePoint, convertOrderToFirstSurtido, registerPointCut, registerPointCutPayment, stockPoint, withdrawFromPoint } = useStore();
+  const { state, activeStore, savePoint, convertOrderToFirstSurtido, registerPointCut, registerPointCutPayment, stockPoint, withdrawFromPoint, annulPointCut } = useStore();
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -80,6 +81,10 @@ export function PointsOfSaleScreen() {
   const [stockPrice, setStockPrice] = useState<Record<string, string>>({});
   const [withdrawing, setWithdrawing] = useState(false);
   const [withdrawQty, setWithdrawQty] = useState<Record<string, string>>({});
+  // #524 annulment: the latest unpaid corte, with the open-month check.
+  const [annulling, setAnnulling] = useState<string | null>(null);
+  const [annulMotive, setAnnulMotive] = useState("");
+  const [sealedPeriods, setSealedPeriods] = useState<Set<string>>(new Set());
   const [payDate, setPayDate] = useState(todayIso());
   const [payMethod, setPayMethod] = useState<"cash" | "transfer">("cash");
 
@@ -239,6 +244,26 @@ export function PointsOfSaleScreen() {
     [state.pointOperations, openPoint]
   );
   const pendingCortes = pointOperations.filter((op) => op.kind === "corte" && op.status === "pendiente_de_cobro");
+  // #524: annulment applies to the LATEST corte still without cobro; a month
+  // with an AUTHORIZED close is history — the adjustments review owns it.
+  const latestUnpaidCorte =
+    pointOperations.find((op) => op.kind === "corte" && (op.status === "pendiente_de_cobro" || op.status === "sin_cobro")) ?? null;
+  useEffect(() => {
+    if (!openPoint || !storeId) return;
+    let alive = true;
+    loadClosesForStore(storeId)
+      .then((snapshots) => {
+        if (alive) setSealedPeriods(new Set(snapshots.map((snapshot) => snapshot.period)));
+      })
+      .catch(() => {
+        if (alive) setSealedPeriods(new Set());
+      });
+    return () => {
+      alive = false;
+    };
+  }, [openPoint, storeId]);
+  const annulTarget = pointOperations.find((op) => op.id === annulling) ?? null;
+  const annulMonthSealed = annulTarget?.effectiveDate ? sealedPeriods.has(annulTarget.effectiveDate.slice(0, 7)) : false;
   const payingCorteOp = pointOperations.find((op) => op.id === payingCorte) ?? null;
 
   if (activeStore?.type !== "inventory_tiered") {
@@ -504,6 +529,27 @@ export function PointsOfSaleScreen() {
     }
   }
 
+  async function confirmAnnul() {
+    if (!openPoint || !annulTarget || !annulMotive.trim()) return;
+    setBusy(true);
+    try {
+      const result = await annulPointCut({
+        storeId,
+        pointId: openPoint.id,
+        corteId: annulTarget.id,
+        intentId: uid(),
+        motive: annulMotive.trim(),
+      });
+      toast.success(result.registered ? "Corte anulado: las piezas vuelven al punto." : "Este corte ya estaba anulado.");
+      setAnnulling(null);
+      setAnnulMotive("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo anular el corte.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Screen>
       <ScreenHeader
@@ -563,6 +609,11 @@ export function PointsOfSaleScreen() {
                 {summaryHasStock(cutRows) ? (
                   <Button variant="ghost" size="sm" onClick={() => setWithdrawing(true)}>
                     Retirar
+                  </Button>
+                ) : null}
+                {latestUnpaidCorte ? (
+                  <Button variant="ghost" size="sm" onClick={() => { setAnnulling(latestUnpaidCorte.id); setAnnulMotive(""); }}>
+                    Anular corte
                   </Button>
                 ) : null}
               </div>
@@ -894,6 +945,50 @@ export function PointsOfSaleScreen() {
           </div>
         ) : null}
       </Dialog>
+      <Dialog
+        open={!!annulTarget}
+        onClose={() => setAnnulling(null)}
+        title="Anular corte"
+        tone="danger"
+        footer={
+          annulMonthSealed ? (
+            <Button variant="secondary" onClick={() => setAnnulling(null)}>Entendido</Button>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={() => setAnnulling(null)}>Cancelar</Button>
+              <Button variant="secondary" disabled={busy || !annulMotive.trim()} onClick={() => void confirmAnnul()}>
+                Anular corte
+              </Button>
+            </>
+          )
+        }
+      >
+        {annulTarget ? (
+          annulMonthSealed ? (
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-on-surface">El mes de este corte ya tiene un cierre autorizado.</p>
+              <p className="text-xs text-on-surface-soft">
+                Un periodo autorizado no se reescribe: registra el ajuste en la revisión de ajustes del cierre de ese mes.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-on-surface-soft">
+                Corte del {formatDate(annulTarget.effectiveDate ?? "")} · neto{" "}
+                <Money exact amount={pesos(annulTarget.totals?.netCents ?? 0)} />. Las piezas vendidas y dadas de baja
+                vuelven exactamente como estaban y podrás capturar el corte de nuevo.
+              </p>
+              <TextField
+                label="Motivo"
+                placeholder="p. ej. se capturó dos veces"
+                value={annulMotive}
+                onChange={(e) => setAnnulMotive(e.target.value)}
+              />
+            </div>
+          )
+        ) : null}
+      </Dialog>
+
       <Dialog
         open={stocking}
         onClose={() => setStocking(false)}

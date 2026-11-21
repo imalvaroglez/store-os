@@ -35,6 +35,7 @@ const inputs = (over: Partial<QueueInputs> = {}): QueueInputs => ({
     ],
     deliveredWithoutLine: [],
     unreadableData: [],
+    pointCortesWithoutCost: [],
     complete: false,
   },
   orders: [

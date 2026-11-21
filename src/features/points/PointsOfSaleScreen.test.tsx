@@ -17,8 +17,17 @@ const mocks = vi.hoisted(() => ({
   registerPointCutPayment: vi.fn(),
   stockPoint: vi.fn(),
   withdrawFromPoint: vi.fn(),
+  annulPointCut: vi.fn(),
+  closes: [] as Array<{ period: string }>,
 }));
 
+vi.mock("../../app/firebase/firestoreData", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../app/firebase/firestoreData")>();
+  return {
+    ...actual,
+    loadClosesForStore: vi.fn(async () => mocks.closes as never[]),
+  };
+});
 vi.mock("../../app/StoreProvider", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../app/StoreProvider")>();
   return {
@@ -32,6 +41,7 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
       registerPointCutPayment: mocks.registerPointCutPayment,
       stockPoint: mocks.stockPoint,
       withdrawFromPoint: mocks.withdrawFromPoint,
+      annulPointCut: mocks.annulPointCut,
     }),
   };
 });
@@ -122,6 +132,9 @@ beforeEach(() => {
   mocks.stockPoint.mockResolvedValue({ stocked: true, entryCount: 1, units: 2 });
   mocks.withdrawFromPoint.mockReset();
   mocks.withdrawFromPoint.mockResolvedValue({ withdrawn: true, units: 1 });
+  mocks.annulPointCut.mockReset();
+  mocks.annulPointCut.mockResolvedValue({ registered: true });
+  mocks.closes = [];
 });
 
 describe("Puntos de venta (#524 primer corte UI)", () => {
@@ -383,5 +396,57 @@ describe("#524 surtir del almacén y retirar en la ficha", () => {
         lines: [{ productId: "p2", variantId: "v-cafe", qty: 1 }],
       })
     );
+  });
+});
+
+describe("#524 anulación de corte en la ficha con mes-abierto", () => {
+  const CORTE = {
+    id: "corte_latest", storeId: "store_olivia", pointId: "store_olivia__mostrador", kind: "corte" as const,
+    status: "pendiente_de_cobro" as const, effectiveDate: "2026-11-21", confirmedBy: "u1", confirmedAt: "2026-11-21T12:00:00.000Z",
+    totals: { grossSaleCents: 50000, commissionCents: 10000, netCents: 40000, soldCostCents: 25000, pendingCostUnits: 0, writeOffCostCents: 0, writeOffPendingUnits: 0, resultCents: 15000, remainingUnits: 4 },
+  };
+
+  function withCorte() {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointOperations = [CORTE];
+  }
+
+  it("mes abierto: pide motivo, llama al callable y confirma la reposición", async () => {
+    withCorte();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Anular corte" }));
+    expect(screen.getByText(/vuelven exactamente como estaban/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Se capturó dos veces" } });
+    const buttons = screen.getAllByRole("button", { name: "Anular corte" });
+    fireEvent.click(buttons[buttons.length - 1]);
+    await screen.findByText(/Corte anulado/i);
+    expect(mocks.annulPointCut).toHaveBeenCalledWith(
+      expect.objectContaining({ corteId: "corte_latest", storeId: "store_olivia", motive: "Se capturó dos veces" })
+    );
+  });
+
+  it("mes con cierre autorizado: no hay formulario, dirige a la revisión de ajustes", async () => {
+    withCorte();
+    mocks.closes = [{ period: "2026-11" }];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Anular corte" }));
+    await screen.findByText(/cierre autorizado/i);
+    expect(screen.getByText(/revisi[oó]n de ajustes/i)).toBeTruthy();
+    expect(screen.queryByLabelText("Motivo")).toBeNull();
+    expect(mocks.annulPointCut).not.toHaveBeenCalled();
+  });
+
+  it("un corte ya cobrado o sin cortes pendientes no ofrece anulación", () => {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointOperations = [{ ...CORTE, status: "cobrado" as const }];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    expect(screen.queryByRole("button", { name: "Anular corte" })).toBeNull();
   });
 });

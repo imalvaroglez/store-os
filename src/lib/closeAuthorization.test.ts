@@ -14,10 +14,15 @@ const baseClose = (over: Partial<MonthlyClose> = {}): MonthlyClose => ({
   expensesCents: 5000, operatingResultCents: 25000, collectionsCents: 35000,
   coverage: {
     deliveredWithoutDate: [], linesWithoutCost: [], unconfirmedCollections: [],
-    deliveredWithoutLine: [], unreadableData: [], complete: true,
+    deliveredWithoutLine: [], unreadableData: [],
+    pointCortesWithoutCost: [], complete: true,
   },
   details: { sales: [], costs: [], expenses: [], collections: [], excludedCollections: [] },
   collectionGroups: [], costCoverage: { partialByMissingCost: false },
+  salesByChannel: [
+    { channel: "pedidos", label: "Pedidos entregados", totalCents: 50000 },
+    { channel: "puntos_fisicos", label: "Puntos de venta", totalCents: 0 },
+  ],
   ...over,
 });
 
