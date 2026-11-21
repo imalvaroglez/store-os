@@ -89,6 +89,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 conversión «Usar c
       });
       await setDoc(doc(fs, "orders/order-ok"), orderDoc("order-ok"));
       await setDoc(doc(fs, "orders/order-paid"), orderDoc("order-paid", { paymentsReceivedCents: 5000 }));
+      await setDoc(doc(fs, "orders/order-clean2"), orderDoc("order-clean2"));
       await setDoc(doc(fs, "orders/order-noline"), orderDoc("order-noline", {
         items: [{ productName: "Regalo suelto", quantity: 1, unitPrice: 100, subtotal: 100 }],
       }));
@@ -171,5 +172,23 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 conversión «Usar c
       storeId: "pt-store", pointId: "pt-store__mostrador", orderId: "order-ok",
       physicalDate: "2026-11-21", intentId: "int-5",
     })).rejects.toThrow();
+  });
+
+  it("#524 guarda (dictamen de código): un punto con entradas rechaza la conversión con mensaje de operadora", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "points/pt-store__ocupado"), {
+        id: "pt-store__ocupado", storeId: "pt-store", name: "Mostrador ocupado", active: true,
+        createdAt: NOW, updatedAt: NOW,
+      });
+      await setDoc(doc(ctx.firestore(), "pointEntries/pe-previa"), {
+        id: "pe-previa", storeId: "pt-store", pointId: "pt-store__ocupado", productId: "p1",
+        productName: "Perfume", entryDate: "2026-11-20", quantity: 1, consumedQty: 0, markedPriceCents: 95000,
+        createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    await expect(convert(operator.app, {
+      storeId: "pt-store", pointId: "pt-store__ocupado", orderId: "order-clean2",
+      physicalDate: "2026-11-21", intentId: "guard-1",
+    })).rejects.toThrow(/vac[ií]o|mercanc[ií]a/i);
   });
 });

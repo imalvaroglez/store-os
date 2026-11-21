@@ -5,6 +5,7 @@ import {
   consumeFromEntries,
   oldestRemainingDate,
   orderConversionImpediments,
+  planCorte,
   pointSummaries,
   pointValuation,
 } from "./pointOfSale";
@@ -345,5 +346,99 @@ describe("pointSummaries (#524 corte UI): piezas y valoración por punto", () =>
 
   it("un punto sin entradas no aparece (la ficha vacía se detecta aparte)", () => {
     expect(pointSummaries([]).size).toBe(0);
+  });
+});
+
+describe("planCorte (#524): venta, bajas, comisión y resultado con centavos exactos", () => {
+  const NOW = "2026-11-21T12:00:00.000Z";
+  // El ejemplo de la issue: 10 piezas a $100 (costo $50), comisión 20%,
+  // vender 5 y perder 1.
+  const entries = [
+    { id: "e1", pointId: "pt1", productId: "p1", productName: "Reloj", entryDate: "2026-11-01", quantity: 10, consumedQty: 0, markedPriceCents: 10000, unitCostCents: 5000, createdAt: NOW },
+  ];
+
+  it("el ejemplo de la issue: quedan 4, $500 vendidos, $100 comisión, $250 costo, $50 pérdida, $400 por cobrar, $100 resultado", () => {
+    const plan = planCorte(
+      entries,
+      [{ productId: "p1", markedPriceCents: 10000, soldQty: 5 }],
+      [{ productId: "p1", markedPriceCents: 10000, qty: 1, reason: "Dañada en mostrador" }],
+      0.2
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.saleAllocations).toEqual([{ lineIndex: 0, allocations: [{ entryId: "e1", quantity: 5 }] }]);
+    expect(plan.writeOffAllocations).toEqual([{ lineIndex: 0, allocations: [{ entryId: "e1", quantity: 1 }] }]);
+    expect(plan.totals).toEqual({
+      grossSaleCents: 50000,
+      commissionCents: 10000,
+      netCents: 40000,
+      soldCostCents: 25000,
+      pendingCostUnits: 0,
+      writeOffCostCents: 5000,
+      writeOffPendingUnits: 0,
+      resultCents: 10000,
+      remainingUnits: 4,
+    });
+  });
+
+  it("las ventas se aplican antes que las bajas y ambas dejan constancia de las entradas consumidas", () => {
+    const two = [
+      { ...entries[0], id: "e1", entryDate: "2026-11-01", quantity: 3 },
+      { ...entries[0], id: "e2", entryDate: "2026-11-10", quantity: 3 },
+    ];
+    const plan = planCorte(
+      two,
+      [{ productId: "p1", markedPriceCents: 10000, soldQty: 2 }],
+      [{ productId: "p1", markedPriceCents: 10000, qty: 2, reason: "Robo" }],
+      0.2
+    );
+    // Venta: FIFO consume la más antigua (e1). Baja: lo restante, también la
+    // más antigua disponible (1 de e1 + 1 de e2).
+    expect(plan.saleAllocations[0].allocations).toEqual([{ entryId: "e1", quantity: 2 }]);
+    expect(plan.writeOffAllocations[0].allocations).toEqual([
+      { entryId: "e1", quantity: 1 },
+      { entryId: "e2", quantity: 1 },
+    ]);
+    expect(plan.totals.remainingUnits).toBe(2);
+  });
+
+  it("con varios precios marcados, la venta consume las entradas del precio elegido y la baja la más antigua restante", () => {
+    const mixed = [
+      { ...entries[0], id: "e-old-100", entryDate: "2026-11-01", quantity: 3, markedPriceCents: 10000 },
+      { ...entries[0], id: "e-old-120", entryDate: "2026-11-02", quantity: 4, markedPriceCents: 12000 },
+    ];
+    const plan = planCorte(
+      mixed,
+      [{ productId: "p1", markedPriceCents: 12000, soldQty: 2 }],
+      [{ productId: "p1", markedPriceCents: 10000, qty: 1, reason: "Perdida" }],
+      0.2
+    );
+    expect(plan.saleAllocations[0].allocations).toEqual([{ entryId: "e-old-120", quantity: 2 }]);
+    expect(plan.writeOffAllocations[0].allocations).toEqual([{ entryId: "e-old-100", quantity: 1 }]);
+    expect(plan.totals.grossSaleCents).toBe(24000);
+  });
+
+  it("costo faltante: la pérdida queda pendiente y el resultado incompleto, nunca inventado", () => {
+    const noCost = [{ ...entries[0], id: "e1", unitCostCents: undefined }];
+    const plan = planCorte(noCost, [{ productId: "p1", markedPriceCents: 10000, soldQty: 1 }], [], 0.2);
+    expect(plan.totals.soldCostCents).toBeNull();
+    expect(plan.totals.resultCents).toBeNull();
+    expect(plan.totals.pendingCostUnits).toBe(1);
+    expect(plan.totals.grossSaleCents).toBe(10000);
+    expect(plan.totals.netCents).toBe(8000);
+  });
+
+  it("stock insuficiente: error con la línea exacta y el plan no marca consumos parciales", () => {
+    const plan = planCorte(entries, [{ productId: "p1", markedPriceCents: 10000, soldQty: 11 }], [], 0.2);
+    expect(plan.errors).toHaveLength(1);
+    expect(plan.errors[0]).toContain("11");
+    expect(plan.saleAllocations).toEqual([]);
+  });
+
+  it("la comisión se redondea UNA vez al centavo", () => {
+    const odd = [{ ...entries[0], id: "e1", quantity: 3, markedPriceCents: 9999 }];
+    const plan = planCorte(odd, [{ productId: "p1", markedPriceCents: 9999, soldQty: 3 }], [], 0.2);
+    // 29997 × 0.2 = 5999.4 → 5999 (una sola vez).
+    expect(plan.totals.commissionCents).toBe(5999);
+    expect(plan.totals.netCents).toBe(23998);
   });
 });

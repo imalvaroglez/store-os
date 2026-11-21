@@ -163,6 +163,18 @@ export const convertOrderToFirstSurtido = onCall(
         }
       }
 
+      // #524 code review: the FIRST surtido only applies to an EMPTY point —
+      // the authoritative guard (the client check leaves a sub-second race
+      // where two conversions stack two "first" surtidos).
+      const existingEntries = await tx.get(
+        db.collection("pointEntries").where("pointId", "==", pointId).limit(1)
+      );
+      if (!existingEntries.empty) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Este punto ya tiene mercancía: el surtido inicial sólo aplica a un punto vacío."
+        );
+      }
       // Build the entries: one per product + color + marked price (+ known
       // cost), quantities merged across identical lines — the same grouping
       // the client preview shows (src/lib/pointOfSale.ts).

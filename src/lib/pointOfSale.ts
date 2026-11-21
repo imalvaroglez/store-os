@@ -279,3 +279,175 @@ export function pointSummaries(
   }
   return summaries;
 }
+
+export type CorteLineInput = {
+  productId: string;
+  variantId?: string;
+  /** When several marked prices coexist, the operator chooses which price
+   * the sold pieces carry (#524); consumption targets entries at that price. */
+  markedPriceCents: number;
+  soldQty: number;
+};
+
+export type CorteWriteOffInput = {
+  productId: string;
+  variantId?: string;
+  markedPriceCents: number;
+  qty: number;
+  reason: string;
+};
+
+export type CorteAllocation = { entryId: string; quantity: number };
+export type CorteLineAllocation = { lineIndex: number; allocations: CorteAllocation[] };
+
+export type CorteTotals = {
+  /** Σ sold × marked price, cents. */
+  grossSaleCents: number;
+  /** Rounded ONCE to the cent over the gross sale (#524). */
+  commissionCents: number;
+  /** gross − commission: what the point owes the store. */
+  netCents: number;
+  /** FIFO cost of the sold pieces; null when any consumed cost is unknown. */
+  soldCostCents: number | null;
+  pendingCostUnits: number;
+  /** Cost of the written-off pieces (the loss); null when unknown. */
+  writeOffCostCents: number | null;
+  writeOffPendingUnits: number;
+  /** net − soldCost − writeOffCost; null while a cost stays pending. */
+  resultCents: number | null;
+  remainingUnits: number;
+};
+
+export type CortePlan = {
+  saleAllocations: CorteLineAllocation[];
+  writeOffAllocations: CorteLineAllocation[];
+  totals: CorteTotals;
+  /** Operator Spanish, one per offending line; a non-empty list voids the plan. */
+  errors: string[];
+};
+
+/**
+ * Plan a corte (#524): which entries the SALES consume (FIFO, oldest first,
+ * restricted to the chosen marked price), then which entries the WRITE-OFFS
+ * consume (FIFO over whatever remains, any price — a loss is cost, not
+ * revenue). Totals in exact cents; commission rounds ONCE. A missing cost
+ * leaves its figure null and counts pending units — never zero, never
+ * invented. Insufficient stock produces errors naming the line and voids the
+ * allocations; the caller does not write anything on errors.
+ */
+export function planCorte(
+  entries: Array<Pick<PointEntry, "id" | "entryDate" | "productId" | "quantity" | "consumedQty" | "markedPriceCents" | "unitCostCents"> & { variantId?: string; createdAt?: string }>,
+  lines: CorteLineInput[],
+  writeOffs: CorteWriteOffInput[],
+  commissionRate: number
+): CortePlan {
+  const errors: string[] = [];
+  // Working copies: consumption accumulates so sales and write-offs share
+  // one coherent view of what remains.
+  const state = new Map(
+    entries.map((entry) => [
+      entry.id,
+      {
+        entry,
+        left: Math.max(0, entry.quantity - entry.consumedQty),
+      },
+    ])
+  );
+  const fifoSorted = [...entries].sort(
+    (a, b) => [a.entryDate, a.createdAt ?? "", a.id].join("|").localeCompare([b.entryDate, b.createdAt ?? "", b.id].join("|"))
+  );
+  const dimension = (productId: string, variantId: string | undefined, entry: { productId: string; variantId?: string }) =>
+    entry.productId === productId && (entry.variantId ?? "") === (variantId ?? "");
+
+  function consume(productId: string, variantId: string | undefined, priceCents: number | undefined, qty: number) {
+    const allocations: CorteAllocation[] = [];
+    let need = qty;
+    for (const entry of fifoSorted) {
+      if (need <= 0) break;
+      if (!dimension(productId, variantId, entry)) continue;
+      if (priceCents !== undefined && entry.markedPriceCents !== priceCents) continue;
+      const cell = state.get(entry.id)!;
+      if (cell.left <= 0) continue;
+      const take = Math.min(cell.left, need);
+      cell.left -= take;
+      allocations.push({ entryId: entry.id, quantity: take });
+      need -= take;
+    }
+    return { allocations, short: need };
+  }
+
+  const saleAllocations: CorteLineAllocation[] = [];
+  lines.forEach((line, index) => {
+    if (line.soldQty <= 0) return;
+    const { allocations, short } = consume(line.productId, line.variantId, line.markedPriceCents, line.soldQty);
+    if (short > 0) {
+      errors.push(`No hay suficientes piezas a ese precio para vender ${line.soldQty}: faltan ${short}.`);
+      return;
+    }
+    saleAllocations.push({ lineIndex: index, allocations });
+  });
+
+  const writeOffAllocations: CorteLineAllocation[] = [];
+  writeOffs.forEach((writeOff, index) => {
+    if (writeOff.qty <= 0) return;
+    // A write-off consumes the OLDEST remaining pieces of the dimension at
+    // ANY price (loss = cost), after sales already took theirs.
+    const { allocations, short } = consume(writeOff.productId, writeOff.variantId, undefined, writeOff.qty);
+    if (short > 0) {
+      errors.push(`No hay suficientes piezas para dar de baja ${writeOff.qty}: faltan ${short}.`);
+      return;
+    }
+    writeOffAllocations.push({ lineIndex: index, allocations });
+  });
+
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const costOf = (allocations: CorteAllocation[]) => {
+    let cents = 0;
+    let pendingUnits = 0;
+    let unknown = false;
+    for (const allocation of allocations) {
+      const entry = byId.get(allocation.entryId);
+      if (!entry) continue;
+      if (typeof entry.unitCostCents === "number") cents += entry.unitCostCents * allocation.quantity;
+      else {
+        pendingUnits += allocation.quantity;
+        unknown = true;
+      }
+    }
+    return { cents, pendingUnits, unknown };
+  };
+
+  let grossSaleCents = 0;
+  const soldFlat: CorteAllocation[] = [];
+  lines.forEach((line, index) => {
+    if (line.soldQty <= 0) return;
+    const allocation = saleAllocations.find((candidate) => candidate.lineIndex === index);
+    if (!allocation) return;
+    grossSaleCents += line.markedPriceCents * line.soldQty;
+    soldFlat.push(...allocation.allocations);
+  });
+  const writeOffFlat: CorteAllocation[] = writeOffAllocations.flatMap((candidate) => candidate.allocations);
+
+  const soldCost = costOf(soldFlat);
+  const writeOffCost = costOf(writeOffFlat);
+  const commissionCents = Math.round(grossSaleCents * commissionRate);
+  const netCents = grossSaleCents - commissionCents;
+  const costComplete = !soldCost.unknown && !writeOffCost.unknown;
+
+  return {
+    saleAllocations,
+    writeOffAllocations,
+    totals: {
+      grossSaleCents,
+      commissionCents,
+      netCents,
+      soldCostCents: soldCost.unknown ? null : soldCost.cents,
+      pendingCostUnits: soldCost.pendingUnits,
+      writeOffCostCents: writeOffCost.unknown ? null : writeOffCost.cents,
+      writeOffPendingUnits: writeOffCost.pendingUnits,
+      resultCents: costComplete ? netCents - soldCost.cents - writeOffCost.cents : null,
+      remainingUnits: [...state.values()].reduce((sum, cell) => sum + cell.left, 0),
+    },
+    errors,
+  };
+}
