@@ -40,8 +40,9 @@ Ejemplo: #391, versión 1.15.3. Se reprodujo el rechazo al sustituir colores de 
 ### Reuso de CI cuando el commit exacto ya está probado
 
 1. Un PR mínimo desde `main`: parche + regresión exacta del incidente +
-   **versión incrementada y notas** (el release guard de `deploy-rules` sigue
-   vigente en la vía Sev-1 — no se omite). Merge con revisión humana.
+   **versión incrementada y notas** (el release guard sigue vigente en la vía
+   Sev-1 — no se omite; vive en `deploy-functions`, la primera mutación de
+   producción de un release). Merge con revisión humana.
 2. Esperar el CI del push (build-test + rules-and-e2e sobre ese commit).
 3. Despachar la vía Sev-1 desde la **punta de main**:
 
@@ -59,7 +60,8 @@ Ejemplo: #391, versión 1.15.3. Se reprodujo el rechazo al sustituir colores de 
   - esa corrida tiene los jobs `build-test` y `rules-and-e2e` en `success`
     (un push solo-documentación da run verde SIN esas suites: no cuenta).
 - Aprobado el reuso, `build-test` y `rules-and-e2e` se saltan y el release
-  continúa: `deploy-rules` (con release guard y paridad) y `deploy` (producción).
+  continúa: `deploy-functions` (con release guard), `deploy-rules` (paridad) y
+  `deploy` (producción).
 - Rechazado el reuso (SHA distinto, CI inexistente o fallido, corrida de PR,
   SHA no-punta), el release **no ocurre**: corre las suites o despacha desde la
   punta tras integrar el hotfix.
