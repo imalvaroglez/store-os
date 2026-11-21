@@ -50,6 +50,7 @@ import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmoun
 import { normalizeEmail, type AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
+import { convertOrderTrusted, type ConvertOrderResult } from "./pointFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
@@ -3327,4 +3328,30 @@ export async function loadRankingConfirmation(
 /** Deterministic doc id: store + month + revision (append-only versions). */
 export function rankingConfirmationId(storeId: string, year: number, month: number, revision: number): string {
   return `${storeId}__${year}-${String(month).padStart(2, "0")}${revision > 1 ? `__r${revision}` : ""}`;
+}
+
+/**
+ * #524: convert a confirmed order into a point's first surtido
+ * («Usar como surtido inicial»). The TRUSTED convertOrderToFirstSurtido
+ * callable owns the whole movement in one Admin transaction (order link,
+ * point entries with exact cents, operation evidence); this wrapper only
+ * checks the call shape so an obvious client bug fails fast with a clear
+ * message instead of a callable round-trip. Idempotent per intentId: a
+ * retry after success reports alreadyConverted and writes nothing.
+ */
+export async function convertOrderToFirstSurtidoTx(params: {
+  storeId: string;
+  pointId: string;
+  orderId: string;
+  physicalDate: string;
+  intentId: string;
+}): Promise<ConvertOrderResult> {
+  const { storeId, pointId, orderId, physicalDate, intentId } = params;
+  if (!storeId || !pointId || !orderId || !intentId) {
+    throw new Error("La conversión necesita tienda, punto, pedido e identificador de intento.");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(physicalDate)) {
+    throw new Error("La fecha física de entrega no es válida.");
+  }
+  return convertOrderTrusted({ storeId, pointId, orderId, physicalDate, intentId });
 }
