@@ -49,6 +49,7 @@ const stateWith = (s: Store): AppState => ({
   purchases: [], customers: [], orders: [], expenses: [],
   points: [],
   pointEntries: [],
+  pointOperations: [],
 });
 
 let context: ReturnType<typeof useStore>;

@@ -72,6 +72,7 @@ const testState: AppState = {
   expenses: [],
   points: [],
   pointEntries: [],
+  pointOperations: [],
 };
 
 function Wrapper({ children }: { children: React.ReactNode }) {

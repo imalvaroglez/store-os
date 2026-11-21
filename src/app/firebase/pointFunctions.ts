@@ -29,3 +29,68 @@ export async function convertOrderTrusted(params: ConvertOrderParams): Promise<C
   const res = await call(params);
   return res.data;
 }
+
+export interface RegisterPointCutParams {
+  storeId: string;
+  pointId: string;
+  intentId: string;
+  effectiveDate: string;
+  commissionRate: number;
+  lines: Array<{ productId: string; variantId?: string; markedPriceCents: number; soldQty: number }>;
+  writeOffs: Array<{ productId: string; variantId?: string; qty: number; reason: string }>;
+}
+
+export interface RegisterPointCutResult {
+  registered: boolean;
+  alreadyRegistered?: boolean;
+  corteId?: string;
+  totals?: RegisterPointCutParams extends never ? never : Record<string, unknown>;
+}
+
+export async function registerPointCutTrusted(params: RegisterPointCutParams): Promise<RegisterPointCutResult> {
+  const call = httpsCallable<RegisterPointCutParams, RegisterPointCutResult>(functionsInstance(), "registerPointCut");
+  const res = await call(params);
+  return res.data;
+}
+
+export interface RegisterPointCutPaymentParams {
+  storeId: string;
+  pointId: string;
+  corteId: string;
+  intentId: string;
+  method: "cash" | "transfer";
+  date: string;
+}
+
+export interface RegisterPointCutPaymentResult {
+  registered: boolean;
+  alreadyRegistered?: boolean;
+  amountCents?: number;
+  date?: string;
+  method?: string;
+}
+
+export async function registerPointCutPaymentTrusted(params: RegisterPointCutPaymentParams): Promise<RegisterPointCutPaymentResult> {
+  const call = httpsCallable<RegisterPointCutPaymentParams, RegisterPointCutPaymentResult>(functionsInstance(), "registerPointCutPayment");
+  const res = await call(params);
+  return res.data;
+}
+
+export interface AnnulPointCutParams {
+  storeId: string;
+  pointId: string;
+  corteId: string;
+  intentId: string;
+  motive: string;
+}
+
+export interface AnnulPointCutResult {
+  registered: boolean;
+  alreadyRegistered?: boolean;
+}
+
+export async function annulPointCutTrusted(params: AnnulPointCutParams): Promise<AnnulPointCutResult> {
+  const call = httpsCallable<AnnulPointCutParams, AnnulPointCutResult>(functionsInstance(), "annulPointCut");
+  const res = await call(params);
+  return res.data;
+}

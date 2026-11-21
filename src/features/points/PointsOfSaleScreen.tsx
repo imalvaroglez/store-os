@@ -11,11 +11,13 @@ import {
   Badge,
   Button,
   Card,
+  CheckboxField,
   Dialog,
   EmptyState,
   Money,
   Screen,
   ScreenHeader,
+  SelectField,
   TextField,
   useToast,
 } from "../../design-system";
@@ -25,6 +27,11 @@ import { orderTotals } from "../../lib/orders";
 import { formatMoneyExact } from "../../lib/money";
 import { REGULAR_TIER_ID, tiersForStore } from "../../lib/pricing";
 
+/** Does any sellable row still have pieces? (drives «Registrar corte»). */
+function summaryHasStock(rows: Array<{ left: number }>): boolean {
+  return rows.some((row) => row.left > 0);
+}
+
 /** Cents → pesos for the Money component (whole-peso rounding, exact cents kept). */
 const pesos = (cents: number): number => Math.round(cents) / 100;
 import { uid } from "../../lib/ids";
@@ -32,9 +39,10 @@ import { orderReference } from "../../lib/orders";
 import {
   buildFirstSurtidoFromOrder,
   orderConversionImpediments,
+  planCorte,
   pointSummaries,
 } from "../../lib/pointOfSale";
-import type { Order, PointOfSale } from "../../types";
+import type { Order, PointEntry, PointOfSale } from "../../types";
 
 /** A real calendar date (YYYY-MM-DD), semantics checked before confirming. */
 const VALID_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -46,7 +54,7 @@ function isRealDate(text: string): boolean {
 }
 
 export function PointsOfSaleScreen() {
-  const { state, activeStore, savePoint, convertOrderToFirstSurtido } = useStore();
+  const { state, activeStore, savePoint, convertOrderToFirstSurtido, registerPointCut, registerPointCutPayment } = useStore();
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -55,6 +63,17 @@ export function PointsOfSaleScreen() {
   const [surtidoOrder, setSurtidoOrder] = useState<Order | null>(null);
   const [pickingOrder, setPickingOrder] = useState(false);
   const [physicalDate, setPhysicalDate] = useState(todayIso());
+  // #524 corte capture: per-row sold quantities, write-off rows, live plan.
+  const [cutOpen, setCutOpen] = useState(false);
+  const [soldByRow, setSoldByRow] = useState<Record<string, string>>({});
+  const [cutQuery, setCutQuery] = useState("");
+  const [onlyChanged, setOnlyChanged] = useState(false);
+  const [cutDate, setCutDate] = useState(todayIso());
+  const [commissionPct, setCommissionPct] = useState<string>("");
+  const [bajas, setBajas] = useState<Array<{ rowKey: string; qty: string; reason: string }>>([]);
+  const [payingCorte, setPayingCorte] = useState<string | null>(null);
+  const [payDate, setPayDate] = useState(todayIso());
+  const [payMethod, setPayMethod] = useState<"cash" | "transfer">("cash");
 
   const storeId = activeStore?.id ?? "";
   const points = useMemo(
@@ -76,6 +95,84 @@ export function PointsOfSaleScreen() {
         : [],
     [state.pointEntries, openPoint]
   );
+
+  // #524 corte capture rows: one sellable row per product + color + marked
+  // price with pieces remaining (coexisting prices stay separate rows so the
+  // operator sells at the price she actually charged).
+  const cutRows = useMemo(() => {
+    const byKey = new Map<string, { key: string; entry: PointEntry; label: string; left: number }>();
+    for (const entry of pointEntries) {
+      const left = Math.max(0, entry.quantity - entry.consumedQty);
+      if (left <= 0) continue;
+      const key = `${entry.productId}|${entry.variantId ?? ""}|${entry.markedPriceCents}`;
+      const existing = byKey.get(key);
+      if (existing) existing.left += left;
+      else
+        byKey.set(key, {
+          key,
+          entry,
+          label: `${entry.productName}${entry.variantColor ? ` · ${entry.variantColor}` : ""}`,
+          left,
+        });
+    }
+    return [...byKey.values()];
+  }, [pointEntries]);
+
+  const effectiveCommission = useMemo(() => {
+    // An EMPTY field is "use the point's suggestion" — Number("") === 0, so
+    // parse only real input (#524: the rate is confirmed per corte).
+    const text = commissionPct.trim();
+    if (text !== "") {
+      const pct = Number(text.replace(",", "."));
+      if (Number.isFinite(pct) && pct >= 0 && pct <= 100) return pct / 100;
+    }
+    return openPoint?.commissionRate ?? 0.2;
+  }, [commissionPct, openPoint?.commissionRate]);
+
+  const cutPlan = useMemo(() => {
+    if (!cutOpen) return null;
+    const lines = cutRows
+      .map((row) => ({ row, sold: Number(soldByRow[row.key] ?? "") }))
+      .filter((item) => Number.isFinite(item.sold) && item.sold > 0)
+      .map((item) => ({
+        productId: item.row.entry.productId,
+        ...(item.row.entry.variantId ? { variantId: item.row.entry.variantId } : {}),
+        markedPriceCents: item.row.entry.markedPriceCents,
+        soldQty: Math.floor(item.sold),
+      }));
+    const writeOffs = bajas
+      .map((baja) => {
+        const row = cutRows.find((candidate) => candidate.key === baja.rowKey);
+        const qty = Number(baja.qty);
+        if (!row || !Number.isFinite(qty) || qty <= 0 || !baja.reason.trim()) return null;
+        return {
+          productId: row.entry.productId,
+          ...(row.entry.variantId ? { variantId: row.entry.variantId } : {}),
+          markedPriceCents: row.entry.markedPriceCents,
+          qty: Math.floor(qty),
+          reason: baja.reason.trim(),
+        };
+      })
+      .filter((writeOff): writeOff is NonNullable<typeof writeOff> => writeOff !== null);
+    return planCorte(pointEntries, lines, writeOffs, effectiveCommission);
+  }, [cutOpen, cutRows, soldByRow, bajas, pointEntries, effectiveCommission]);
+
+  const cutHasInput = useMemo(
+    () => Object.values(soldByRow).some((value) => Number(value) > 0) || bajas.some((baja) => Number(baja.qty) > 0),
+    [soldByRow, bajas]
+  );
+
+  const pointOperations = useMemo(
+    () =>
+      openPoint
+        ? state.pointOperations
+            .filter((op) => op.pointId === openPoint.id)
+            .sort((a, b) => (b.confirmedAt ?? "").localeCompare(a.confirmedAt ?? ""))
+        : [],
+    [state.pointOperations, openPoint]
+  );
+  const pendingCortes = pointOperations.filter((op) => op.kind === "corte" && op.status === "pendiente_de_cobro");
+  const payingCorteOp = pointOperations.find((op) => op.id === payingCorte) ?? null;
 
   if (activeStore?.type !== "inventory_tiered") {
     return (
@@ -189,6 +286,89 @@ export function PointsOfSaleScreen() {
     }
   }
 
+  async function confirmCut() {
+    if (!openPoint || !cutPlan || cutPlan.errors.length > 0) return;
+    setBusy(true);
+    try {
+      const lines = cutRows
+        .map((row) => ({ row, sold: Number(soldByRow[row.key] ?? "") }))
+        .filter((item) => Number.isFinite(item.sold) && item.sold > 0)
+        .map((item) => ({
+          productId: item.row.entry.productId,
+          ...(item.row.entry.variantId ? { variantId: item.row.entry.variantId } : {}),
+          markedPriceCents: item.row.entry.markedPriceCents,
+          soldQty: Math.floor(item.sold),
+        }));
+      const writeOffs = bajas
+        .map((baja) => {
+          const row = cutRows.find((candidate) => candidate.key === baja.rowKey);
+          const qty = Number(baja.qty);
+          if (!row || !Number.isFinite(qty) || qty <= 0 || !baja.reason.trim()) return null;
+          return {
+            productId: row.entry.productId,
+            ...(row.entry.variantId ? { variantId: row.entry.variantId } : {}),
+            markedPriceCents: row.entry.markedPriceCents,
+            qty: Math.floor(qty),
+            reason: baja.reason.trim(),
+          };
+        })
+        .filter((writeOff): writeOff is NonNullable<typeof writeOff> => writeOff !== null);
+      const result = await registerPointCut({
+        storeId,
+        pointId: openPoint.id,
+        intentId: uid(),
+        effectiveDate: cutDate,
+        commissionRate: effectiveCommission,
+        lines,
+        writeOffs,
+      });
+      const net = result.totals?.netCents;
+      toast.success(
+        result.registered
+          ? typeof net === "number" && net > 0
+            ? `Corte registrado. Neto por cobrar: ${formatMoneyExact(pesos(net))}.`
+            : "Corte registrado sin cobro pendiente."
+          : "Este corte ya estaba registrado; no se hizo ningún cambio."
+      );
+      setCutOpen(false);
+      setSoldByRow({});
+      setBajas([]);
+      setCommissionPct("");
+      setCutDate(todayIso());
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo registrar el corte.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmPay() {
+    if (!openPoint || !payingCorteOp) return;
+    setBusy(true);
+    try {
+      const result = await registerPointCutPayment({
+        storeId,
+        pointId: openPoint.id,
+        corteId: payingCorteOp.id,
+        intentId: uid(),
+        method: payMethod,
+        date: payDate,
+      });
+      toast.success(
+        result.registered
+          ? `Cobro registrado: ${formatMoneyExact(pesos(result.amountCents ?? 0))} (${payMethod === "cash" ? "efectivo" : "transferencia"}).`
+          : "Este cobro ya estaba registrado; no se hizo ningún cambio."
+      );
+      setPayingCorte(null);
+      setPayDate(todayIso());
+      setPayMethod("cash");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo registrar el cobro.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Screen>
       <ScreenHeader
@@ -240,6 +420,190 @@ export function PointsOfSaleScreen() {
               <h3 className="font-semibold text-ink">{openPoint.name}</h3>
               <Badge>{(() => { const oldest = summaries.get(openPoint.id)?.oldestEntryDate; return oldest ? `Pieza más antigua desde el ${formatDate(oldest)}` : "Ficha"; })()}</Badge>
             </div>
+            {pointEntries.length > 0 && summaryHasStock(cutRows) ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setCutOpen((value) => !value);
+                  setCutDate(todayIso());
+                }}
+              >
+                {cutOpen ? "Cerrar captura" : "Registrar corte"}
+              </Button>
+            ) : null}
+
+            {pendingCortes.length > 0 ? (
+              <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
+                <p className="text-sm font-semibold text-on-surface">Cortes por cobrar</p>
+                {pendingCortes.map((corte) => (
+                  <div key={corte.id} className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                    <span className="text-on-surface-soft">
+                      {formatDate(corte.effectiveDate ?? "")} · neto{" "}
+                      <span className="font-semibold text-on-surface"><Money exact amount={pesos(corte.totals?.netCents ?? 0)} /></span>
+                    </span>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setPayingCorte(corte.id);
+                        setPayDate(todayIso());
+                      }}
+                    >
+                      Registrar cobro
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {cutOpen ? (
+              <div className="space-y-3 rounded-xl bg-surface p-3 ring-1 ring-edge">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <TextField
+                    label="Buscar"
+                    placeholder="Nombre o clave…"
+                    value={cutQuery}
+                    onChange={(e) => setCutQuery(e.target.value)}
+                  />
+                  <TextField
+                    label="Fecha efectiva"
+                    inputMode="numeric"
+                    placeholder="AAAA-MM-DD"
+                    value={cutDate}
+                    onChange={(e) => setCutDate(e.target.value)}
+                  />
+                  <TextField
+                    label="Comisión (%)"
+                    inputMode="decimal"
+                    placeholder={`${Math.round(effectiveCommission * 100)}`}
+                    value={commissionPct}
+                    onChange={(e) => setCommissionPct(e.target.value)}
+                  />
+                </div>
+                <CheckboxField
+                  label="Ver sólo filas con cambios"
+                  checked={onlyChanged}
+                  onChange={(checked) => setOnlyChanged(checked)}
+                />
+                <div className="space-y-1">
+                  {cutRows
+                    .filter((row) => {
+                      if (onlyChanged && !(Number(soldByRow[row.key] ?? "") > 0)) return false;
+                      const needle = cutQuery.trim().toLowerCase();
+                      if (!needle) return true;
+                      return (
+                        row.label.toLowerCase().includes(needle) ||
+                        (row.entry.productName.toLowerCase().includes(needle))
+                      );
+                    })
+                    .map((row) => (
+                      <div key={row.key} className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-1 last:border-0">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-on-surface">{row.label}</p>
+                          <p className="text-xs text-on-surface-soft">
+                            {row.left} disponibles · <Money exact amount={pesos(row.entry.markedPriceCents)} />
+                          </p>
+                        </div>
+                        <div className="w-28">
+                          <TextField
+                            label="Vendidas"
+                            inputMode="numeric"
+                            placeholder="0"
+                            value={soldByRow[row.key] ?? ""}
+                            onChange={(e) => setSoldByRow((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-on-surface">Bajas (daño o pérdida)</p>
+                  {bajas.map((baja, index) => {
+                    return (
+                      <div key={index} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_5rem_1fr_auto] sm:items-end">
+                        <SelectField
+                          label="Pieza"
+                          value={baja.rowKey}
+                          onChange={(value) =>
+                            setBajas((prev) => prev.map((item, i) => (i === index ? { ...item, rowKey: value } : item)))
+                          }
+                          options={cutRows.map((candidate) => ({ value: candidate.key, label: candidate.label }))}
+                        />
+                        <TextField
+                          label="Cantidad"
+                          inputMode="numeric"
+                          placeholder="0"
+                          value={baja.qty}
+                          onChange={(e) => setBajas((prev) => prev.map((item, i) => (i === index ? { ...item, qty: e.target.value } : item)))}
+                        />
+                        <TextField
+                          label="Motivo"
+                          placeholder="p. ej. dañada en mostrador"
+                          value={baja.reason}
+                          onChange={(e) => setBajas((prev) => prev.map((item, i) => (i === index ? { ...item, reason: e.target.value } : item)))}
+                        />
+                        <Button variant="ghost" onClick={() => setBajas((prev) => prev.filter((_, i) => i !== index))}>
+                          Quitar
+                        </Button>
+                      </div>
+                    );
+                  })}
+                  <Button variant="ghost" size="sm" onClick={() => setBajas((prev) => [...prev, { rowKey: cutRows[0]?.key ?? "", qty: "", reason: "" }])}>
+                    + Agregar baja
+                  </Button>
+                </div>
+
+                {cutPlan ? (
+                  <div className="space-y-1 rounded-xl bg-paper p-3 ring-1 ring-edge text-sm">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-on-surface-soft">Venta bruta</span>
+                      <span className="font-semibold text-on-surface"><Money exact amount={pesos(cutPlan.totals.grossSaleCents)} /></span>
+                    </div>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-on-surface-soft">Comisión ({Math.round(effectiveCommission * 100)}%)</span>
+                      <span className="font-semibold text-on-surface"><Money exact amount={pesos(cutPlan.totals.commissionCents)} /></span>
+                    </div>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-on-surface-soft">Neto a cobrar</span>
+                      <span className="font-semibold text-on-surface"><Money exact amount={pesos(cutPlan.totals.netCents)} /></span>
+                    </div>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-on-surface-soft">
+                        Resultado del corte
+                        {cutPlan.totals.resultCents === null ? " (costo pendiente)" : ""}
+                      </span>
+                      <span className="font-semibold text-on-surface">
+                        {cutPlan.totals.resultCents === null ? "—" : <Money exact amount={pesos(cutPlan.totals.resultCents)} />}
+                      </span>
+                    </div>
+                    <p className="text-xs text-on-surface-soft">
+                      Quedan {cutPlan.totals.remainingUnits} piezas en el punto.
+                      {cutPlan.totals.writeOffCostCents === null && cutPlan.writeOffAllocations.length > 0
+                        ? " La pérdida queda pendiente hasta completar el costo."
+                        : ""}
+                    </p>
+                    {cutPlan.errors.length > 0 ? (
+                      <p className="text-xs text-danger">{cutPlan.errors.join(" ")}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <Button
+                  full
+                  disabled={
+                    busy ||
+                    !cutHasInput ||
+                    !isRealDate(cutDate) ||
+                    !cutPlan ||
+                    cutPlan.errors.length > 0
+                  }
+                  onClick={() => void confirmCut()}
+                >
+                  Registrar corte
+                </Button>
+              </div>
+            ) : null}
+
             {pointEntries.length === 0 ? (
               <EmptyState
                 title="Este punto todavía no tiene mercancía"
@@ -379,6 +743,47 @@ export function PointsOfSaleScreen() {
                 </div>
               ))}
             </div>
+          </div>
+        ) : null}
+      </Dialog>
+      <Dialog
+        open={!!payingCorteOp}
+        onClose={() => setPayingCorte(null)}
+        title="Registrar cobro del corte"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPayingCorte(null)}>Cancelar</Button>
+            <Button disabled={busy || !isRealDate(payDate)} onClick={() => void confirmPay()}>
+              Registrar cobro
+            </Button>
+          </>
+        }
+      >
+        {payingCorteOp ? (
+          <div className="space-y-3">
+            <p className="text-sm text-on-surface-soft">
+              Importe completo: <span className="font-semibold text-on-surface"><Money exact amount={pesos(payingCorteOp.totals?.netCents ?? 0)} /></span>{" "}
+              (corte del {formatDate(payingCorteOp.effectiveDate ?? "")}).
+            </p>
+            <TextField
+              label="Fecha real del cobro"
+              inputMode="numeric"
+              placeholder="AAAA-MM-DD"
+              value={payDate}
+              onChange={(e) => setPayDate(e.target.value)}
+            />
+            <SelectField
+              label="Medio"
+              value={payMethod}
+              onChange={(value) => setPayMethod(value as "cash" | "transfer")}
+              options={[
+                { value: "cash", label: "Efectivo" },
+                { value: "transfer", label: "Transferencia" },
+              ]}
+            />
+            <p className="text-xs text-on-surface-soft">
+              La fecha decide en qué mes entra el dinero, aunque la venta quedó en el mes del corte.
+            </p>
           </div>
         ) : null}
       </Dialog>

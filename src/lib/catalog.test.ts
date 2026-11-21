@@ -38,6 +38,7 @@ function emptyState(products: Product[]): AppState {
     expenses: [],
   points: [],
   pointEntries: [],
+  pointOperations: [],
   };
 }
 

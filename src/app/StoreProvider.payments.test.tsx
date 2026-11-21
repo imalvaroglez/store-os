@@ -38,6 +38,7 @@ const state = (): AppState => ({
   activeStoreId: "retry-store", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [order], expenses: [],
   points: [],
   pointEntries: [],
+  pointOperations: [],
 });
 const receipt: OrderPayment = {
   id: "same-intent", orderId: order.id, storeId: order.storeId, amount: 400, kind: "payment", method: "cash",

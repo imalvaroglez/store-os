@@ -44,6 +44,7 @@ const stateWith = (orders: Order[]): AppState => ({
   activeStoreId: "s1", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders, expenses: [],
   points: [],
   pointEntries: [],
+  pointOperations: [],
 });
 
 let context: ReturnType<typeof useStore>;

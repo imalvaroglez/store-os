@@ -53,7 +53,7 @@ import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
 import { convertOrderTrusted, type ConvertOrderResult } from "./pointFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
-import type { OrderIncident, OrderIncidentEvent, RankingConfirmation, PointEntry, PointOfSale } from "../../types";
+import type { OrderIncident, OrderIncidentEvent, RankingConfirmation, PointEntry, PointOfSale, PointOperation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -76,7 +76,7 @@ export class PublicCatalogProjectionError extends Error {
 export const COLLECTIONS = ["stores", "products", "categories", "suppliers", "purchases", "customers", "orders", "expenses", "points"] as const;
 // #524: point-of-sale config (client-savable via saveEntity) + evidence
 // (callable-only writes; never in COLLECTIONS).
-const POINT_LISTENERS = ["points", "pointEntries"] as const;
+const POINT_LISTENERS = ["points", "pointEntries", "pointOperations"] as const;
 type CollectionName = (typeof COLLECTIONS)[number];
 
 /** Load all cloud data visible to the user. */
@@ -101,7 +101,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For a
   // super_admin this is the full collection (no `in`-query size limit); for
   // members it remains scoped to their store set.
-  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks" | "rankingConfirmations" | "points" | "pointEntries"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks" | "rankingConfirmations" | "points" | "pointEntries" | "pointOperations"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = user.role === "super_admin"
       ? collection(db, name)
@@ -110,7 +110,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks, rankingConfirmations, points, pointEntries] = await Promise.all([
+  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks, rankingConfirmations, points, pointEntries, pointOperations] = await Promise.all([
     forStores<Product>("products"),
     forStores<Category>("categories"),
     forStores<Supplier>("suppliers"),
@@ -124,6 +124,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     // #524: points of sale and their stock evidence.
     forStores<PointOfSale>("points"),
     forStores<PointEntry>("pointEntries"),
+    forStores<PointOperation>("pointOperations"),
   ]);
 
   return {
@@ -140,6 +141,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     rankingConfirmations,
     points,
     pointEntries,
+    pointOperations,
   };
 }
 

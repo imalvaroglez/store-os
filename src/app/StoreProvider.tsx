@@ -36,7 +36,20 @@ import { nowIso, todayIso } from "../lib/dates";
 import { reservationDeltasForOrderChange } from "../lib/inventory";
 import { receivedProductsFromStockUpdates } from "../lib/purchases";
 import { ruleChangeEvent } from "../lib/priceDiagnostics";
-import type { ConvertOrderResult } from "./firebase/pointFunctions";
+import type {
+  ConvertOrderResult,
+  RegisterPointCutParams,
+  RegisterPointCutResult,
+  RegisterPointCutPaymentParams,
+  RegisterPointCutPaymentResult,
+  AnnulPointCutParams,
+  AnnulPointCutResult,
+} from "./firebase/pointFunctions";
+import {
+  registerPointCutTrusted,
+  registerPointCutPaymentTrusted,
+  annulPointCutTrusted,
+} from "./firebase/pointFunctions";
 import {
   ensureStoreFinancials,
   loadCardPayments,
@@ -440,6 +453,13 @@ type StoreContextValue = {
   /** #524: convert a confirmed order into a point's first surtido (trusted
    * callable; idempotent per intentId). */
   convertOrderToFirstSurtido: (params: { storeId: string; pointId: string; orderId: string; physicalDate: string; intentId: string }) => Promise<ConvertOrderResult>;
+  /** #524: register a point's corte (sales + write-offs + confirmed
+   * commission, effective date) through the trusted callable. */
+  registerPointCut: (params: RegisterPointCutParams) => Promise<RegisterPointCutResult>;
+  /** #524: register a corte's full payment on its real date + method. */
+  registerPointCutPayment: (params: RegisterPointCutPaymentParams) => Promise<RegisterPointCutPaymentResult>;
+  /** #524: annul the latest unpaid corte (motive required). */
+  annulPointCut: (params: AnnulPointCutParams) => Promise<AnnulPointCutResult>;
   deleteExpense: (expenseId: string) => Promise<void>;
   assignExpense: (
     expense: LooseExpense,
@@ -1660,6 +1680,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       requireAuthenticatedUser();
       return convertOrderToFirstSurtidoTx(params);
     },
+    registerPointCut: async (params) => {
+      requireAuthenticatedUser();
+      return registerPointCutTrusted(params);
+    },
+    registerPointCutPayment: async (params) => {
+      requireAuthenticatedUser();
+      return registerPointCutPaymentTrusted(params);
+    },
+    annulPointCut: async (params) => {
+      requireAuthenticatedUser();
+      return annulPointCutTrusted(params);
+    },
     saveExpense: async (expense) => {
       requireAuthenticatedUser();
       const existing = state.expenses.find((candidate) => candidate.id === expense.id);
@@ -1715,7 +1747,8 @@ function storeWithMembership(store: Store, user: AppUser): Store & { ownerUid?: 
 export function emptyAppState(): AppState {
   return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [],
   points: [],
-  pointEntries: [], supplierLinks: [] };
+  pointEntries: [],
+  pointOperations: [], supplierLinks: [] };
 }
 
 export function useStore(): StoreContextValue {

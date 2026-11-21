@@ -474,6 +474,51 @@ export type PointOfSale = {
   updatedAt: string;
 };
 
+/** #524 auditable point operation — the ONLY writers are the trusted
+ * callables (rules deny every client write). Kind tells the story; the
+ * detail fields travel per kind and totals are exact cents. */
+export type PointOperation = {
+  id: string;
+  storeId: string;
+  pointId: string;
+  kind: "first_surtido" | "corte" | "cobro" | "anulacion";
+  intentionId?: string;
+  confirmedBy: string;
+  confirmedAt: string;
+  updatedAt?: string;
+  // first_surtido
+  orderId?: string;
+  physicalDate?: string;
+  entryCount?: number;
+  units?: number;
+  // corte
+  effectiveDate?: string;
+  commissionRate?: number;
+  lines?: Array<{ productId: string; variantId?: string; markedPriceCents: number; soldQty: number }>;
+  writeOffs?: Array<{ productId: string; variantId?: string; qty: number; reason: string }>;
+  saleAllocations?: Array<{ lineIndex: number; allocations: Array<{ entryId: string; quantity: number }> }>;
+  writeOffAllocations?: Array<{ lineIndex: number; allocations: Array<{ entryId: string; quantity: number }> }>;
+  totals?: {
+    grossSaleCents: number;
+    commissionCents: number;
+    netCents: number;
+    soldCostCents: number | null;
+    pendingCostUnits: number;
+    writeOffCostCents: number | null;
+    writeOffPendingUnits: number;
+    resultCents: number | null;
+    remainingUnits: number;
+  };
+  status?: "pendiente_de_cobro" | "sin_cobro" | "cobrado" | "anulado";
+  // cobro
+  corteId?: string;
+  amountCents?: number;
+  method?: "cash" | "transfer";
+  date?: string;
+  // anulacion
+  motive?: string;
+};
+
 /** One merchandise entry at a point: physical date, quantity, marked price
  * and the KNOWN unit cost (absent = valuation pending). Units leave in FIFO
  * order (oldest entry first); `consumedQty` accumulates sold + written-off. */
@@ -1105,9 +1150,11 @@ export type AppState = {
   supplierLinks?: SupplierProductLink[];
   /** #132: confirmed monthly reseller rankings (append-only, owner-only). */
   rankingConfirmations?: RankingConfirmation[];
-  /** #524: physical points of sale (config) and their stock entries (evidence). */
+  /** #524: physical points of sale (config), their stock entries and the
+   * auditable operation evidence (cortes, cobros, anulaciones, conversiones). */
   points: PointOfSale[];
   pointEntries: PointEntry[];
+  pointOperations: PointOperation[];
 };
 
 export type { SupplierProductLink };

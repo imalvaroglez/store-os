@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
   savePoint: vi.fn(),
   convertOrderToFirstSurtido: vi.fn(),
+  registerPointCut: vi.fn(),
+  registerPointCutPayment: vi.fn(),
 }));
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => {
@@ -24,6 +26,8 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
       activeStore: mocks.state?.stores.find((s) => s.id === mocks.state?.activeStoreId) ?? null,
       savePoint: mocks.savePoint,
       convertOrderToFirstSurtido: mocks.convertOrderToFirstSurtido,
+      registerPointCut: mocks.registerPointCut,
+      registerPointCutPayment: mocks.registerPointCutPayment,
     }),
   };
 });
@@ -105,6 +109,10 @@ beforeEach(() => {
   mocks.savePoint.mockResolvedValue(undefined);
   mocks.convertOrderToFirstSurtido.mockReset();
   mocks.convertOrderToFirstSurtido.mockResolvedValue({ converted: true, entryCount: 2, units: 5 });
+  mocks.registerPointCut.mockReset();
+  mocks.registerPointCut.mockResolvedValue({ registered: true, corteId: "corte_x", totals: { netCents: 40000 } });
+  mocks.registerPointCutPayment.mockReset();
+  mocks.registerPointCutPayment.mockResolvedValue({ registered: true, amountCents: 40000 });
 });
 
 describe("Puntos de venta (#524 primer corte UI)", () => {
@@ -239,5 +247,82 @@ describe("#524 review: candidatos con escala, búsqueda y fecha real", () => {
     expect(screen.getByRole("button", { name: /Surtir 5 piezas/ })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Fecha física de entrega"), { target: { value: "2026-11-21" } });
     expect(screen.getByRole("button", { name: /Surtir 5 piezas/ })).toBeEnabled();
+  });
+});
+
+describe("#524 corte en la ficha: captura, resumen vivo y cobro diferido", () => {
+  const ISSUE_ENTRY: PointEntry = {
+    id: "pe1", storeId: "store_olivia", pointId: "store_olivia__mostrador", productId: "p1",
+    productName: "Reloj Citizen", entryDate: "2026-11-01", quantity: 10, consumedQty: 0,
+    markedPriceCents: 10000, unitCostCents: 5000, createdAt: NOW, updatedAt: NOW,
+  };
+
+  function withPointAndStock() {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [ISSUE_ENTRY];
+  }
+
+  it("el ejemplo de la issue en vivo: vender 5 y dar de baja 1 con 20% muestra el resumen exacto y llama al callable", async () => {
+    withPointAndStock();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Registrar corte" }));
+    fireEvent.change(screen.getByLabelText("Vendidas"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar baja" }));
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Pieza perdida" } });
+    // Resumen vivo con las cifras de la issue.
+    expect(screen.getByText("Venta bruta").closest("div")?.textContent).toContain("500");
+    expect(screen.getByText(/Neto a cobrar/).closest("div")?.textContent).toContain("400");
+    expect(screen.getByText(/Resultado del corte/).closest("div")?.textContent).toContain("100");
+    expect(screen.getByText(/Quedan 4 piezas/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Registrar corte" }));
+    await screen.findByText(/Corte registrado/i);
+    expect(mocks.registerPointCut).toHaveBeenCalledTimes(1);
+    expect(mocks.registerPointCut.mock.calls[0][0]).toMatchObject({
+      storeId: "store_olivia",
+      pointId: "store_olivia__mostrador",
+      commissionRate: 0.2,
+      lines: [{ productId: "p1", markedPriceCents: 10000, soldQty: 5 }],
+      writeOffs: [{ productId: "p1", markedPriceCents: 10000, qty: 1, reason: "Pieza perdida" }],
+    });
+  });
+
+  it("vender más de lo disponible bloquea el registro y explica", () => {
+    withPointAndStock();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Registrar corte" }));
+    fireEvent.change(screen.getByLabelText("Vendidas"), { target: { value: "11" } });
+    expect(screen.getByText(/faltan/i)).toBeTruthy();
+    expect((screen.getAllByRole("button", { name: "Registrar corte" }).slice(-1)[0])).toBeDisabled();
+    expect(mocks.registerPointCut).not.toHaveBeenCalled();
+  });
+
+  it("cobro diferido: importa el neto completo, fecha real y medio", async () => {
+    withPointAndStock();
+    state.pointOperations = [
+      {
+        id: "corte_previo", storeId: "store_olivia", pointId: "store_olivia__mostrador", kind: "corte",
+        status: "pendiente_de_cobro", effectiveDate: "2026-11-21", confirmedBy: "u1", confirmedAt: NOW,
+        totals: { grossSaleCents: 50000, commissionCents: 10000, netCents: 40000, soldCostCents: 25000, pendingCostUnits: 0, writeOffCostCents: 0, writeOffPendingUnits: 0, resultCents: 15000, remainingUnits: 4 },
+      },
+    ];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    expect(screen.getByText("Cortes por cobrar")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
+    expect(screen.getAllByText(/\$400/).length).toBeGreaterThan(0); // importe propuesto completo
+    fireEvent.change(screen.getByLabelText("Fecha real del cobro"), { target: { value: "2026-12-03" } });
+    // El botón del DIÁLOGO es el último «Registrar cobro» visible (el de la
+    // lista sigue presente detrás).
+    const payButtons = screen.getAllByRole("button", { name: "Registrar cobro" });
+    fireEvent.click(payButtons[payButtons.length - 1]);
+    await screen.findByText(/Cobro registrado/i);
+    expect(mocks.registerPointCutPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ corteId: "corte_previo", method: "cash", date: "2026-12-03" })
+    );
   });
 });
