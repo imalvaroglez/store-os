@@ -241,3 +241,41 @@ export function oldestRemainingDate(
   }
   return oldest;
 }
+
+export type PointSummary = {
+  units: number;
+  markedValueCents: number;
+  costValueCents: number;
+  pendingCostUnits: number;
+  oldestEntryDate: string | null;
+};
+
+/**
+ * #524 UI: what each point holds, derived from its entries — pieces, value
+ * at the marked price, value at cost (pending units counted apart, never as
+ * zero) and the estimated antiquity of its oldest remaining pieces. Points
+ * without entries simply do not appear here (the empty ficha is the
+ * first-surtido invitation).
+ */
+export function pointSummaries(
+  entries: Array<Pick<PointEntry, "pointId" | "entryDate" | "quantity" | "consumedQty" | "markedPriceCents" | "unitCostCents">>
+): Map<string, PointSummary> {
+  const byPoint = new Map<string, PointEntry[]>();
+  for (const entry of entries) {
+    const list = byPoint.get(entry.pointId);
+    if (list) list.push(entry as PointEntry);
+    else byPoint.set(entry.pointId, [entry as PointEntry]);
+  }
+  const summaries = new Map<string, PointSummary>();
+  for (const [pointId, list] of byPoint) {
+    const valuation = pointValuation(list);
+    summaries.set(pointId, {
+      units: valuation.units,
+      markedValueCents: valuation.markedValueCents,
+      costValueCents: valuation.costValueCents,
+      pendingCostUnits: valuation.pendingCostUnits,
+      oldestEntryDate: oldestRemainingDate(list),
+    });
+  }
+  return summaries;
+}

@@ -5,6 +5,7 @@ import {
   consumeFromEntries,
   oldestRemainingDate,
   orderConversionImpediments,
+  pointSummaries,
   pointValuation,
 } from "./pointOfSale";
 
@@ -308,5 +309,41 @@ describe("oldestRemainingDate — antigüedad estimada", () => {
 
   it("devuelve null cuando no queda mercancía", () => {
     expect(oldestRemainingDate([{ entryDate: "2026-11-01", quantity: 2, consumedQty: 2 }])).toBeNull();
+  });
+});
+
+describe("pointSummaries (#524 corte UI): piezas y valoración por punto", () => {
+  const entry = (pointId: string, over: Partial<Parameters<typeof pointSummaries>[0][number]> = {}) =>
+    ({
+      id: `e-${pointId}-${Math.random()}`,
+      pointId,
+      entryDate: "2026-11-01",
+      quantity: 5,
+      consumedQty: 2,
+      markedPriceCents: 10000,
+      unitCostCents: 5000,
+      ...over,
+    }) as Parameters<typeof pointSummaries>[0][number];
+
+  it("agrupa por punto: unidades restantes, valor marcado, costo y antigüedad", () => {
+    const summaries = pointSummaries([
+      entry("pt1"),
+      entry("pt1", { entryDate: "2026-11-10", quantity: 4, consumedQty: 0, markedPriceCents: 12000, unitCostCents: 6000 }),
+      entry("pt2", { quantity: 3, consumedQty: 0, markedPriceCents: 8000, unitCostCents: undefined }),
+    ]);
+    expect(summaries.get("pt1")).toEqual({
+      units: 7,
+      markedValueCents: 78000,
+      costValueCents: 39000,
+      pendingCostUnits: 0,
+      oldestEntryDate: "2026-11-01",
+    });
+    expect(summaries.get("pt2")?.units).toBe(3);
+    expect(summaries.get("pt2")?.pendingCostUnits).toBe(3);
+    expect(summaries.get("pt2")?.costValueCents).toBe(0);
+  });
+
+  it("un punto sin entradas no aparece (la ficha vacía se detecta aparte)", () => {
+    expect(pointSummaries([]).size).toBe(0);
   });
 });

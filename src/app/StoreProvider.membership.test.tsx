@@ -47,6 +47,8 @@ const store = (extra: Partial<Store> = {}): Store => ({
 const stateWith = (s: Store): AppState => ({
   stores: [s], activeStoreId: "s1", products: [], categories: [], suppliers: [],
   purchases: [], customers: [], orders: [], expenses: [],
+  points: [],
+  pointEntries: [],
 });
 
 let context: ReturnType<typeof useStore>;

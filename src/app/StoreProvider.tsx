@@ -26,6 +26,7 @@ import type {
   OrderDeliveryLine,
   CardPayment,
   PurchasePaymentMethod,
+  PointOfSale,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -35,7 +36,13 @@ import { nowIso, todayIso } from "../lib/dates";
 import { reservationDeltasForOrderChange } from "../lib/inventory";
 import { receivedProductsFromStockUpdates } from "../lib/purchases";
 import { ruleChangeEvent } from "../lib/priceDiagnostics";
-import { ensureStoreFinancials, loadCardPayments, saveCardPayment } from "./firebase/firestoreData";
+import type { ConvertOrderResult } from "./firebase/pointFunctions";
+import {
+  ensureStoreFinancials,
+  loadCardPayments,
+  saveCardPayment,
+  convertOrderToFirstSurtidoTx,
+} from "./firebase/firestoreData";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
@@ -110,6 +117,7 @@ import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 export type Action =
   | { type: "ADD_EXPENSE"; expense: LooseExpense }
   | { type: "UPDATE_EXPENSE"; expense: LooseExpense }
+  | { type: "UPSERT_POINT"; point: PointOfSale }
   | { type: "DELETE_EXPENSE"; expenseId: string }
   | { type: "ADD_STORE"; store: Store }
   | { type: "UPDATE_STORE"; store: Store }
@@ -148,6 +156,13 @@ export type Action =
 // cascade deletes, entity CRUD) without spinning up a React tree.
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case "UPSERT_POINT": {
+      const { point } = action;
+      const nextPoints = state.points.some((p) => p.id === point.id)
+        ? state.points.map((p) => (p.id === point.id ? point : p))
+        : [...state.points, point];
+      return { ...state, points: nextPoints };
+    }
     case "ADD_EXPENSE": {
       if (state.expenses.some((e) => e.id === action.expense.id)) return state;
       return { ...state, expenses: [...state.expenses, action.expense] };
@@ -420,6 +435,11 @@ type StoreContextValue = {
   ) => Promise<void>;
   /** #184 loose expenses. */
   saveExpense: (expense: LooseExpense) => Promise<void>;
+  /** #524: create/update a point of sale (config doc, client-writable). */
+  savePoint: (point: PointOfSale) => Promise<void>;
+  /** #524: convert a confirmed order into a point's first surtido (trusted
+   * callable; idempotent per intentId). */
+  convertOrderToFirstSurtido: (params: { storeId: string; pointId: string; orderId: string; physicalDate: string; intentId: string }) => Promise<ConvertOrderResult>;
   deleteExpense: (expenseId: string) => Promise<void>;
   assignExpense: (
     expense: LooseExpense,
@@ -656,7 +676,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid, state.stores]);
 
-  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses", entity: { id: string } & Record<string, unknown>): Promise<void> {
+  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "points", entity: { id: string } & Record<string, unknown>): Promise<void> {
     const currentUser = requireAuthenticatedUser();
     return saveEntity(currentUser, name, entity).catch((error) => {
       // Log with context for debugging, then re-throw so callers can surface a
@@ -1630,6 +1650,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     // #184 loose expenses: register/classify; assignment and consumption run
     // through their transactions and land via the entity listeners.
+    savePoint: async (point) => {
+      requireAuthenticatedUser();
+      const stamped = { ...point, updatedAt: nowIso() };
+      await persistEntity("points", stamped);
+      dispatch({ type: "UPSERT_POINT", point: stamped });
+    },
+    convertOrderToFirstSurtido: async (params) => {
+      requireAuthenticatedUser();
+      return convertOrderToFirstSurtidoTx(params);
+    },
     saveExpense: async (expense) => {
       requireAuthenticatedUser();
       const existing = state.expenses.find((candidate) => candidate.id === expense.id);
@@ -1683,7 +1713,9 @@ function storeWithMembership(store: Store, user: AppUser): Store & { ownerUid?: 
 }
 
 export function emptyAppState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [], supplierLinks: [] };
+  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [],
+  points: [],
+  pointEntries: [], supplierLinks: [] };
 }
 
 export function useStore(): StoreContextValue {

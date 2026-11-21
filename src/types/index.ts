@@ -1105,6 +1105,9 @@ export type AppState = {
   supplierLinks?: SupplierProductLink[];
   /** #132: confirmed monthly reseller rankings (append-only, owner-only). */
   rankingConfirmations?: RankingConfirmation[];
+  /** #524: physical points of sale (config) and their stock entries (evidence). */
+  points: PointOfSale[];
+  pointEntries: PointEntry[];
 };
 
 export type { SupplierProductLink };
