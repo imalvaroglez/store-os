@@ -260,14 +260,14 @@ export type PointSummary = {
 export function pointSummaries(
   entries: Array<Pick<PointEntry, "pointId" | "entryDate" | "quantity" | "consumedQty" | "markedPriceCents" | "unitCostCents">>
 ): Map<string, PointSummary> {
-  const byPoint = new Map<string, PointEntry[]>();
+  const byPoint = new Map<string, Array<typeof entries[number]>>();
   for (const entry of entries) {
     const list = byPoint.get(entry.pointId);
-    if (list) list.push(entry as PointEntry);
-    else byPoint.set(entry.pointId, [entry as PointEntry]);
+    if (list) list.push(entry);
+    else byPoint.set(entry.pointId, [entry]);
   }
   const summaries = new Map<string, PointSummary>();
-  for (const [pointId, list] of byPoint) {
+  for (const [pointId, list] of byPoint as Map<string, PointEntry[]>) {
     const valuation = pointValuation(list);
     summaries.set(pointId, {
       units: valuation.units,

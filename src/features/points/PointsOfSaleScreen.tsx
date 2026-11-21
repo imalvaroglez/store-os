@@ -20,7 +20,9 @@ import {
   useToast,
 } from "../../design-system";
 import { slugify } from "../../lib/catalog";
+import { todayIso } from "../../lib/dates";
 import { formatMoneyExact } from "../../lib/money";
+import { REGULAR_TIER_ID, tiersForStore } from "../../lib/pricing";
 
 /** Cents → pesos for the Money component (whole-peso rounding, exact cents kept). */
 const pesos = (cents: number): number => Math.round(cents) / 100;
@@ -33,10 +35,14 @@ import {
 } from "../../lib/pointOfSale";
 import type { Order, PointOfSale } from "../../types";
 
-const TODAY = () => new Date().toISOString().slice(0, 10);
-
-/** Pilot defaults from the issue: Regular price level, 20% commission. */
-const PILOT_TIER_CANDIDATE = "t_retail";
+/** A real calendar date (YYYY-MM-DD), semantics checked before confirming. */
+const VALID_DATE = /^\d{4}-\d{2}-\d{2}$/;
+function isRealDate(text: string): boolean {
+  if (!VALID_DATE.test(text)) return false;
+  const [y, m, d] = text.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
 
 export function PointsOfSaleScreen() {
   const { state, activeStore, savePoint, convertOrderToFirstSurtido } = useStore();
@@ -47,7 +53,7 @@ export function PointsOfSaleScreen() {
   const [openPointId, setOpenPointId] = useState<string | null>(null);
   const [surtidoOrder, setSurtidoOrder] = useState<Order | null>(null);
   const [pickingOrder, setPickingOrder] = useState(false);
-  const [physicalDate, setPhysicalDate] = useState(TODAY());
+  const [physicalDate, setPhysicalDate] = useState(todayIso());
 
   const storeId = activeStore?.id ?? "";
   const points = useMemo(
@@ -93,8 +99,9 @@ export function PointsOfSaleScreen() {
         storeId,
         name: clean,
         // Pilot defaults (issue #524): Regular level and 20% commission,
-        // confirmed per corte; editable in a later settings cut.
-        priceTierId: activeStore?.priceTiers?.find((t) => t.id === PILOT_TIER_CANDIDATE)?.id,
+        // confirmed per corte; editable in a later settings cut. Canonical
+        // fallback keeps "Regular" even when the store never saved tiers.
+        priceTierId: tiersForStore(activeStore).find((t) => t.id === REGULAR_TIER_ID)?.id,
         commissionRate: 0.2,
         active: true,
         createdAt: now,
@@ -112,17 +119,28 @@ export function PointsOfSaleScreen() {
     }
   }
 
-  const candidateOrders = useMemo(
-    () =>
-      surtidoOrder === null && openPoint
-        ? state.orders
-            .filter((o) => o.storeId === storeId)
-            .filter((o) => o.orderStatus === "confirmed" || o.convertedToPointId)
-            .slice(0, 50)
-        : [],
-    [surtidoOrder, openPoint, state.orders, storeId]
-  );
+  const [orderQuery, setOrderQuery] = useState("");
+  // #524 review (Mayor 1): candidates are the OPEN confirmed orders, newest
+  // first, with a search — never an arbitrary cap over a set that grows with
+  // every conversion (the 1.11.0 class of defect).
+  const candidateOrders = useMemo(() => {
+    if (surtidoOrder !== null || !openPoint) return [];
+    const needle = orderQuery.trim().toLowerCase();
+    return state.orders
+      .filter((o) => o.storeId === storeId && o.orderStatus === "confirmed" && !o.convertedToPointId)
+      .filter(
+        (o) =>
+          needle === "" ||
+          (o.customerName ?? "").toLowerCase().includes(needle) ||
+          orderReference(o.id).toLowerCase().includes(needle)
+      )
+      .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  }, [surtidoOrder, openPoint, state.orders, storeId, orderQuery]);
 
+  // One intent per (order, dialog) selection: a retry after a lost response
+  // keeps the SAME id so the callable can answer alreadyConverted instead of
+  // bouncing with "ya fue convertido".
+  const [intentId, setIntentId] = useState("");
   const previewEntries = useMemo(
     () =>
       surtidoOrder && openPoint
@@ -133,6 +151,18 @@ export function PointsOfSaleScreen() {
 
   async function confirmConversion() {
     if (!surtidoOrder || !openPoint) return;
+    // Concurrent surtido guard: if entries arrived meanwhile (another tab or
+    // operadora), stop and say so — never stack two "first" surtidos.
+    if (state.pointEntries.some((e) => e.pointId === openPoint.id)) {
+      toast.error("Este punto ya recibió mercancía mientras revisabas; revisa su ficha.");
+      setSurtidoOrder(null);
+      setPickingOrder(false);
+      return;
+    }
+    if (!isRealDate(physicalDate)) {
+      toast.error("La fecha física de entrega no es una fecha real.");
+      return;
+    }
     setBusy(true);
     try {
       const result = await convertOrderToFirstSurtido({
@@ -140,7 +170,7 @@ export function PointsOfSaleScreen() {
         pointId: openPoint.id,
         orderId: surtidoOrder.id,
         physicalDate,
-        intentId: uid(),
+        intentId,
       });
       toast.success(
         result.converted
@@ -190,10 +220,10 @@ export function PointsOfSaleScreen() {
                 {summary ? (
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <p className="text-on-surface-soft">
-                      Valor al precio marcado: <span className="font-semibold text-on-surface"><Money amount={pesos(summary.markedValueCents)} /></span>
+                      Valor al precio marcado: <span className="font-semibold text-on-surface"><Money exact amount={pesos(summary.markedValueCents)} /></span>
                     </p>
                     <p className="text-on-surface-soft">
-                      Valor al costo: <span className="font-semibold text-on-surface"><Money amount={pesos(summary.costValueCents)} /></span>
+                      Valor al costo: <span className="font-semibold text-on-surface"><Money exact amount={pesos(summary.costValueCents)} /></span>
                       {summary.pendingCostUnits > 0 ? ` (${summary.pendingCostUnits} con costo pendiente)` : ""}
                     </p>
                   </div>
@@ -207,7 +237,7 @@ export function PointsOfSaleScreen() {
           <Card className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="font-semibold text-ink">{openPoint.name}</h3>
-              <Badge>{pointEntries.length > 0 ? `Antigüedad estimada: la entrada más antigua con piezas es del ${pointEntries[0].entryDate}` : "Ficha"}</Badge>
+              <Badge>{(() => { const oldest = summaries.get(openPoint.id)?.oldestEntryDate; return oldest ? `Pieza más antigua desde el ${oldest}` : "Ficha"; })()}</Badge>
             </div>
             {pointEntries.length === 0 ? (
               <EmptyState
@@ -217,7 +247,7 @@ export function PointsOfSaleScreen() {
                   <Button
                     onClick={() => {
                       setSurtidoOrder(null);
-                      setPhysicalDate(TODAY());
+                      setPhysicalDate(todayIso());
                       setPickingOrder(true);
                     }}
                   >
@@ -236,7 +266,7 @@ export function PointsOfSaleScreen() {
                         {entry.variantColor ? ` · ${entry.variantColor}` : ""}
                       </span>
                       <span className="text-on-surface-soft">{left} de {entry.quantity} · {entry.entryDate}</span>
-                      <span className="font-semibold text-on-surface"><Money amount={pesos(entry.markedPriceCents)} /></span>
+                      <span className="font-semibold text-on-surface"><Money exact amount={pesos(entry.markedPriceCents)} /></span>
                       <span className="text-on-surface-soft">
                         {entry.unitCostCents !== undefined ? `costo ${formatMoneyExact(pesos(entry.unitCostCents))}` : "costo pendiente"}
                       </span>
@@ -274,6 +304,13 @@ export function PointsOfSaleScreen() {
         <p className="text-sm text-on-surface-soft">
           Elige un pedido confirmado sin cobros: sus piezas reservadas pasan a este punto con el precio y el costo que ya trae.
         </p>
+        <TextField
+          label="Buscar"
+          placeholder="Clienta o referencia…"
+          value={orderQuery}
+          onChange={(e) => setOrderQuery(e.target.value)}
+        />
+        <p className="text-xs text-on-surface-soft">{candidateOrders.length} pedido(s) confirmado(s) abierto(s)</p>
         <div className="space-y-1">
           {candidateOrders.length === 0 ? (
             <p className="text-sm text-on-surface-soft">No hay pedidos confirmados disponibles.</p>
@@ -286,7 +323,10 @@ export function PointsOfSaleScreen() {
                   variant="ghost"
                   disabled={!check.canConvert}
                   className="flex w-full flex-wrap items-baseline justify-between gap-2 text-left text-sm"
-                  onClick={() => setSurtidoOrder(order)}
+                  onClick={() => {
+                    setIntentId(uid());
+                    setSurtidoOrder(order);
+                  }}
                 >
                   <span className="font-medium text-on-surface">
                     {orderReference(order.id)} · {order.customerName ?? "clienta"}
@@ -312,7 +352,7 @@ export function PointsOfSaleScreen() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setSurtidoOrder(null)}>Cancelar</Button>
-            <Button disabled={busy || previewEntries.length === 0} onClick={() => void confirmConversion()}>
+            <Button disabled={busy || previewEntries.length === 0 || !isRealDate(physicalDate)} onClick={() => void confirmConversion()}>
               Surtir {previewEntries.reduce((sum, e) => sum + e.quantity, 0)} piezas
             </Button>
           </>
@@ -333,7 +373,7 @@ export function PointsOfSaleScreen() {
                     {entry.variantColor ? ` · ${entry.variantColor}` : ""}
                   </span>
                   <span className="text-on-surface-soft">{entry.quantity} pzas</span>
-                  <span className="font-semibold text-on-surface"><Money amount={pesos(entry.markedPriceCents)} /></span>
+                  <span className="font-semibold text-on-surface"><Money exact amount={pesos(entry.markedPriceCents)} /></span>
                   <span className="text-on-surface-soft">
                     {entry.unitCostCents !== undefined ? `costo ${formatMoneyExact(pesos(entry.unitCostCents))}` : "costo pendiente"}
                   </span>

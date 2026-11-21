@@ -96,6 +96,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 puntos de venta (reg
       id: "pt-store__vitrina", storeId: "pt-store", name: "Vitrina plaza", active: true,
       createdAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21T00:00:00.000Z",
     })).resolves.toBeUndefined();
+    // #524 review: the REAL client path (saveEntity) keeps ids OUT of the
+    // body — the doc path alone carries the identity.
+    await expect(setDoc(doc(owner, "points/pt-store__mostrador2"), {
+      storeId: "pt-store", name: "Mostrador 2", active: true,
+      createdAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21T00:00:00.000Z",
+    })).resolves.toBeUndefined();
     await expect(updateDoc(doc(owner, "points/pt-store__mostrador"), { name: "Mostrador centro 2" })).resolves.toBeUndefined();
     await expect(deleteDoc(doc(owner, "points/pt-store__mostrador"))).rejects.toThrow();
 

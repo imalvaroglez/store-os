@@ -195,3 +195,49 @@ describe("Puntos de venta (#524 primer corte UI)", () => {
     expect(screen.getAllByText(/3 de 5/).length).toBe(2); // una por entrada
   });
 });
+
+describe("#524 review: candidatos con escala, búsqueda y fecha real", () => {
+  function withPoint() {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, createdAt: NOW, updatedAt: NOW },
+    ];
+  }
+
+  it("los pedidos ya convertidos no aparecen como candidatos (el conjunto no crece)", () => {
+    withPoint();
+    state.orders = [orderDoc("order-ok"), orderDoc("order-done", { convertedToPointId: "store_olivia__mostrador" })];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Usar como surtido inicial" }));
+    expect(screen.getByText("1 pedido(s) confirmado(s) abierto(s)")).toBeTruthy();
+    expect(screen.queryByText("Ya convertido")).toBeNull();
+  });
+
+  it("la búsqueda por clienta filtra los candidatos", () => {
+    withPoint();
+    state.orders = [
+      orderDoc("order-a", { customerName: "Lucía", createdAt: "2026-11-20T10:00:00.000Z" }),
+      orderDoc("order-b", { customerName: "María", createdAt: "2026-11-21T10:00:00.000Z" }),
+    ];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Usar como surtido inicial" }));
+    expect(screen.getByText("2 pedido(s) confirmado(s) abierto(s)")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "maría" } });
+    expect(screen.getByText("1 pedido(s) confirmado(s) abierto(s)")).toBeTruthy();
+    expect(screen.getByText(/María/)).toBeTruthy();
+    expect(screen.queryByText(/Lucía/)).toBeNull();
+  });
+
+  it("una fecha física que no es fecha real deshabilita la confirmación", () => {
+    withPoint();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Usar como surtido inicial" }));
+    fireEvent.click(screen.getByText("Listo para surtir"));
+    fireEvent.change(screen.getByLabelText("Fecha física de entrega"), { target: { value: "2026-13-99" } });
+    expect(screen.getByRole("button", { name: /Surtir 5 piezas/ })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Fecha física de entrega"), { target: { value: "2026-11-21" } });
+    expect(screen.getByRole("button", { name: /Surtir 5 piezas/ })).toBeEnabled();
+  });
+});
