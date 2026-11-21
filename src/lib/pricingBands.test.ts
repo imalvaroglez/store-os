@@ -4,7 +4,9 @@
 // of the emitted tables.
 import { describe, expect, it } from "vitest";
 import {
+  bandSplitCut,
   canonicalTiers,
+  evidenceForTable,
   packagingGaps,
   proposeCategoryBands,
   tierEvidence,
@@ -263,5 +265,118 @@ describe("empaques no configurados (regla PO 2026-11-09)", () => {
   it("sin empaques en absoluto, todos los niveles quedan marcados como preliminares", () => {
     const proposal = proposeCategoryBands({ products: multimodalCategory(), categoryId: "cat", tiers: TIERS });
     expect(proposal?.warnings.filter((w) => w.includes("sin configurar")).length).toBe(3);
+  });
+});
+
+describe("evidenceForTable (#531): la evidencia sigue a la tabla real, no a la propuesta", () => {
+  it("miembros, contribución mínima y bajo-costo se computan con los límites y precios del borrador", () => {
+    // Propuesta automática: [0,57.5) con {20×5} y [57.5,∞) con {95×4}.
+    // La operadora QUITA la segunda banda: la banda única [0,∞) tiene 9 piezas
+    // y su contribución mínima usa el precio DEL BORRADOR contra el peor costo
+    // (95): 290 − 95 = 195. Antes: seguía mostrando la banda original (5, $195→ok
+    // aquí coincidente por precio, pero miembro/soporte/bajo-costo venían de la
+    // banda propuesta 0).
+    const products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap())),
+      ...Array.from({ length: 4 }, () => product(95, pricey())),
+    ];
+    const evidence = evidenceForTable(
+      { products, categoryId: "cat", tiers: TIERS },
+      [{ min: 0 }],
+      { t_regular: [290], t_girly: [250], t_iconic: [165] }
+    );
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].members).toHaveLength(9);
+    expect(evidence[0].skuCount).toBe(9);
+    expect(evidence[0].minContribution.t_regular).toBe(195); // 290 − 95
+    expect(evidence[0].minContribution.t_iconic).toBe(70); // 165 − 95
+    // La pieza de costo 95 con precio Iconic 165 NO está bajo costo; la de
+    // costo 20 tampoco: sin piezas bajo costo en esta tabla.
+    expect(evidence[0].belowCost).toHaveLength(0);
+  });
+
+  it("el precio del borrador por debajo del costo marca exactamente esas piezas", () => {
+    const products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap())),
+      ...Array.from({ length: 4 }, () => product(95, pricey())),
+    ];
+    const evidence = evidenceForTable(
+      { products, categoryId: "cat", tiers: TIERS },
+      [{ min: 0 }],
+      { t_regular: [90], t_girly: [80], t_iconic: [50] }
+    );
+    // Iconic 50 y Girly 80 < costo 95; Regular 90 también (−5, visible).
+    const below = evidence[0].belowCost;
+    expect(below).toHaveLength(4);
+    for (const entry of below) {
+      expect(entry.member.cost).toBe(95);
+      expect(entry.tiers.map((t) => t.tierId).sort()).toEqual(["t_girly", "t_iconic", "t_regular"]);
+    }
+    expect(evidence[0].minContribution.t_regular).toBe(-5); // 90 − 95: la pérdida es visible, nunca ocultada
+  });
+
+  it("una banda vacía tras editar no hereda miembros ajenos ni inventa cifras", () => {
+    const products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap())),
+      ...Array.from({ length: 4 }, () => product(95, pricey())),
+    ];
+    const evidence = evidenceForTable(
+      { products, categoryId: "cat", tiers: TIERS },
+      [{ min: 0, max: 10 }, { min: 10 }],
+      { t_regular: [100, 290], t_girly: [80, 250], t_iconic: [50, 165] }
+    );
+    expect(evidence[0].members).toHaveLength(0);
+    expect(evidence[0].minContribution.t_regular).toBeNull();
+    expect(evidence[0].belowCost).toHaveLength(0);
+    expect(evidence[1].members).toHaveLength(9);
+  });
+
+  it("el soporte por nivel se recomputa con los precios reales de ESA banda", () => {
+    // Banda 0: 5 piezas con los tres niveles (sólido). Banda 1: 4 piezas de
+    // las que ninguna tiene precio Iconic → pending exactamente ahí.
+    const products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap())),
+      ...Array.from({ length: 4 }, () => product(95, { t_regular: 290, t_girly: 250 })),
+    ];
+    const evidence = evidenceForTable(
+      { products, categoryId: "cat", tiers: TIERS },
+      [{ min: 0, max: 57.5 }, { min: 57.5 }],
+      { t_regular: [100, 290], t_girly: [80, 250], t_iconic: [50, null] }
+    );
+    expect(evidence[0].priceSupport.t_iconic).toBe("strong");
+    expect(evidence[1].priceSupport.t_iconic).toBe("pending");
+  });
+
+  it("una pieza que cuesta exactamente el tope pertenece a la banda siguiente [min, max)", () => {
+    const products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap())),
+      ...Array.from({ length: 4 }, () => product(50, pricey())),
+    ];
+    const evidence = evidenceForTable(
+      { products, categoryId: "cat", tiers: TIERS },
+      [{ min: 0, max: 50 }, { min: 50 }],
+      { t_regular: [100, 290], t_girly: [80, 250], t_iconic: [50, 165] }
+    );
+    expect(evidence[0].members).toHaveLength(5);
+    expect(evidence[1].members).toHaveLength(4);
+  });
+});
+
+describe("bandSplitCut (#531): feedback cuando dividir no tiene corte posible", () => {
+  it("devuelve el punto medio de los costos de la banda cuando es un corte válido", () => {
+    expect(bandSplitCut({ min: 0, max: 57.5 }, [20, 20, 22, 22])).toBe(21);
+    expect(bandSplitCut({ min: 0 }, [20, 95])).toBe(57.5);
+  });
+
+  it("devuelve null cuando el único costo coincide con el inicio de la banda", () => {
+    // El caso real de la misión UX: banda 420–535 cuyas piezas comparten costo:
+    // el punto medio cae FUERA de (min, max) y dividir no puede hacer nada.
+    expect(bandSplitCut({ min: 420, max: 535 }, [420, 420])).toBeNull();
+    expect(bandSplitCut({ min: 22, max: 57.5 }, [22, 22, 22])).toBeNull();
+  });
+
+  it("banda vacía: propone +50 sobre el inicio, como hacía el editor", () => {
+    expect(bandSplitCut({ min: 100, max: 300 }, [])).toBe(150);
+    expect(bandSplitCut({ min: 100, max: 120 }, [])).toBeNull(); // 150 no cabe: sin corte
   });
 });

@@ -165,7 +165,17 @@ export function ContributionSimulatorScreen() {
       <ScreenHeader
         title="Simulador de contribución"
         subtitle="Álgebra exacta con supuestos visibles — escenario, no pronóstico"
-        action={<Button variant="ghost" size="sm" onClick={() => navigate("/productos/estrategia")}>Volver a Estrategia</Button>}
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            // #531: keep the category Fer came from — the round-trip must not
+            // make her re-choose what the simulator already knows.
+            onClick={() => navigate(categoryId ? `/productos/estrategia?categoria=${encodeURIComponent(categoryId)}` : "/productos/estrategia")}
+          >
+            Volver a Estrategia
+          </Button>
+        }
       />
       <div className="mx-auto max-w-5xl space-y-4">
         <Card>

@@ -498,6 +498,113 @@ function membersOfGroups(withCost: Array<BandProduct & { cost: number }>, candid
     .map((p) => ({ id: p.id, name: p.name, cost: p.cost, inStock: (p.quantityOnHand ?? 0) > 0, currentPrices: p.prices ?? {} }));
 }
 
+/**
+ * #531: per-band evidence for the table the operator ACTUALLY has in front of
+ * them — the draft's limits and prices — recomputed from the same primitives
+ * proposeCategoryBands uses (members by cost range, packaging-inclusive base
+ * cost, per-tier price support). The auto proposal's bands are only a STARTING
+ * POINT: pairing them positionally with an edited/saved table showed members,
+ * contributions and below-cost lists of the WRONG band, and the stale figures
+ * survived the save. Prices here are the DRAFT's own (what Fer typed), so
+ * contributions and below-cost reflect the decision being made; a missing
+ * price keeps its tier pending instead of inventing a median.
+ */
+export function evidenceForTable(
+  input: { products: BandProduct[]; categoryId: string; tiers: BandTier[]; packaging?: StorePackaging },
+  limits: Array<{ min: number; max?: number }>,
+  prices: Record<string, Array<number | null>>
+): BandProposal[] {
+  const { products, categoryId, tiers, packaging } = input;
+  const withCost = products.filter(
+    (p): p is BandProduct & { cost: number } =>
+      p.categoryIds?.[0] === categoryId && typeof p.cost === "number" && p.cost > 0
+  );
+
+  // Same category-level outlier exclusion the proposal applies, so one stray
+  // price never flips a band's support either.
+  const outlierPricesByTier = new Map<string, Set<number>>();
+  for (const tier of tiers) {
+    const values = withCost
+      .map((p) => p.prices?.[tier.id])
+      .filter((v): v is number => typeof v === "number" && v > 0)
+      .map(toCents)
+      .sort((a, b) => a - b);
+    outlierPricesByTier.set(tier.id, new Set(iqrOutliersCents(values)));
+  }
+
+  return limits.map((limit, index) => {
+    const minCents = toCents(limit.min);
+    const maxCents = limit.max === undefined ? undefined : toCents(limit.max);
+    const members = withCost
+      .filter((p) => {
+        const cents = toCents(p.cost);
+        return cents >= minCents && (maxCents === undefined || cents < maxCents);
+      })
+      .map((p) => ({ id: p.id, name: p.name, cost: p.cost, inStock: (p.quantityOnHand ?? 0) > 0, currentPrices: p.prices ?? {} }))
+      .sort((a, b) => a.cost - b.cost || a.name.localeCompare(b.name));
+
+    const bandPrices: Record<string, number | null> = {};
+    const priceSupport: Record<string, PriceSupport> = {};
+    const minContribution: Record<string, number | null> = {};
+    for (const tier of tiers) {
+      const draftPrice = prices[tier.id]?.[index] ?? null;
+      bandPrices[tier.id] = draftPrice;
+      const outliers = outlierPricesByTier.get(tier.id) ?? new Set<number>();
+      const evidenceCount = members
+        .map((m) => m.currentPrices[tier.id])
+        .filter((v): v is number => typeof v === "number" && v > 0)
+        .map(toCents)
+        .filter((cents) => !outliers.has(cents)).length;
+      priceSupport[tier.id] = evidenceCount === 0 ? "pending" : evidenceCount >= BANDS_PARAMS.strongPriceEvidence ? "strong" : "weak";
+      // Worst case inside THIS band: the most expensive member's full base cost.
+      const worstBase = members.length > 0 ? Math.max(...members.map((m) => baseCostForTier({ cost: m.cost }, tier.id, packaging) ?? 0)) : 0;
+      minContribution[tier.id] = draftPrice === null || members.length === 0 ? null : toPesos(toCents(draftPrice) - toCents(worstBase));
+    }
+    const belowCost = members
+      .map((member) => {
+        const tiersBelow = tiers
+          .map((tier) => {
+            const price = bandPrices[tier.id];
+            if (price === null) return null;
+            const base = baseCostForTier({ cost: member.cost }, tier.id, packaging);
+            if (base === undefined || !(price < base)) return null;
+            return { tierId: tier.id, price, baseCost: base };
+          })
+          .filter((entry): entry is { tierId: string; price: number; baseCost: number } => entry !== null);
+        return { member, tiers: tiersBelow };
+      })
+      .filter((entry) => entry.tiers.length > 0);
+    return {
+      min: limit.min,
+      max: limit.max,
+      skuCount: members.length,
+      members,
+      prices: bandPrices,
+      priceSupport,
+      minContribution,
+      belowCost,
+    };
+  });
+}
+
+/**
+ * #531: the data-driven cut «Dividir» would apply to a band — midpoint of the
+ * member costs inside (min, max), or +50 over the start for an empty band.
+ * Returns null when NO valid cut exists (e.g. every piece shares the band's
+ * own start cost): the editor disables the button and says why instead of
+ * silently doing nothing.
+ */
+export function bandSplitCut(band: { min: number; max?: number }, memberCosts: number[]): number | null {
+  const inBand = memberCosts.filter((c) => c > 0 && c >= band.min && (band.max === undefined || c < band.max));
+  const cut =
+    inBand.length > 0
+      ? Math.round(((Math.min(...inBand) + Math.max(...inBand)) / 2) * 100) / 100
+      : Math.round((band.min + 50) * 100) / 100;
+  if (!(cut > band.min)) return null;
+  if (band.max !== undefined && !(cut < band.max)) return null;
+  return cut;
+}
+
 function buildBand(
   min: number,
   max: number | undefined,

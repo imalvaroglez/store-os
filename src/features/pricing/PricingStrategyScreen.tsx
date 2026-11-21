@@ -25,6 +25,8 @@ import { parseAmount, sanitizeMoneyInput } from "../../lib/money";
 import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, rulesSignature } from "../../lib/pricingRules";
 import {
   analyzeCategory,
+  bandSplitCut,
+  evidenceForTable,
   packagingConfigured,
   packagingGaps,
   proposeCategoryBands,
@@ -65,7 +67,12 @@ function joinSpanish(items: string[]): string {
 export function PricingStrategyScreen() {
   const { state, activeStore, saveCategoryPricingRules } = useStore();
   const toast = useToast();
-  const [categoryId, setCategoryId] = useState<string>("");
+  // #531: the chosen category survives leaving the screen (Inicio, simulator)
+  // the same way Reglas preserves it (?categoria=) — nobody re-chooses what
+  // the system already knows.
+  const [categoryId, setCategoryId] = useState<string>(
+    () => new URLSearchParams(window.location.search).get("categoria") ?? ""
+  );
   const [draft, setDraft] = useState<TableDraft | null>(null);
   const [draftBase, setDraftBase] = useState<string>("");
   const [busy, setBusy] = useState(false);
@@ -93,6 +100,26 @@ export function PricingStrategyScreen() {
         ? proposeCategoryBands({ products, categoryId, tiers, packaging: activeStore?.packaging })
         : null,
     [products, categoryId, tiers, activeStore?.packaging]
+  );
+
+  // #531: per-band evidence follows the table Fer actually has in front of
+  // her — the DRAFT's limits and prices, recomputed from the same primitives
+  // as the proposal. Positional pairing with the auto proposal's bands showed
+  // members/contributions of the WRONG band after Dividir/Quitar, and the
+  // stale figures even survived the save.
+  const bandEvidence = useMemo(
+    () =>
+      categoryId && draft
+        ? evidenceForTable({ products, categoryId, tiers, packaging: activeStore?.packaging }, draft.limits, draft.prices)
+        : null,
+    [products, categoryId, tiers, activeStore?.packaging, draft]
+  );
+
+  // #531: every member cost in the category feeds bandSplitCut — the cut is
+  // data-driven per band, and «Dividir» needs a real answer when no cut exists.
+  const memberCosts = useMemo(
+    () => (proposal?.bands ?? []).flatMap((b) => b.members.map((m) => m.cost)),
+    [proposal]
   );
 
   // Existing saved rules for the category — compatible when every visible tier
@@ -162,6 +189,13 @@ export function PricingStrategyScreen() {
     // Draft re-adoption on category switch is driven by the effect below.
     setDraft(null);
     setDraftBase("");
+    // #531: keep the chosen category in the URL (replace, not push — the
+    // choice is state, not a page) so Inicio/simulator round-trips restore it.
+    window.history.replaceState(
+      {},
+      "",
+      categoryIdNext ? `/productos/estrategia?categoria=${encodeURIComponent(categoryIdNext)}` : "/productos/estrategia"
+    );
     if (categoryIdNext) requestAnimationFrame(() => proposalRef.current?.scrollIntoView?.({ behavior: "smooth" }));
   }
 
@@ -322,18 +356,14 @@ export function PricingStrategyScreen() {
     // Data-driven cut: the midpoint of this band's member costs (defaults to
     // +50% of min for an empty band) — Fer adjusts before saving. Members are
     // matched by COST RANGE, not by proposal index: removeBand/addBand shift
-    // indices and would otherwise pick the wrong band's pieces.
+    // indices and would otherwise pick the wrong band's pieces. #531: the
+    // button is disabled with its reason when bandSplitCut finds no cut, so
+    // this path only runs with a valid one.
     patchDraft((next) => {
       const band = next.limits[index];
       if (!band) return;
-      const inBand = (proposal?.bands ?? []).flatMap((b) => b.members.map((m) => m.cost)).filter(
-        (c) => c > 0 && c >= band.min && (band.max === undefined || c < band.max)
-      );
-      const cut =
-        inBand.length > 0
-          ? Math.round(((Math.min(...inBand) + Math.max(...inBand)) / 2) * 100) / 100
-          : Math.round((band.min + 50) * 100) / 100;
-      if (!(cut > band.min) || (band.max !== undefined && !(cut < band.max))) return;
+      const cut = bandSplitCut(band, memberCosts);
+      if (cut === null) return;
       const nextBand = { min: cut, ...(band.max !== undefined ? { max: band.max } : {}) };
       band.max = cut;
       next.limits.splice(index + 1, 0, nextBand);
@@ -616,7 +646,22 @@ export function PricingStrategyScreen() {
                         they wrap together instead of stranding Dividir on the
                         fields' line; on desktop they align to the right edge. */}
                     <div className="flex flex-wrap gap-2 sm:ml-auto">
-                      <Button size="sm" variant="ghost" onClick={() => splitBand(index)}>Dividir</Button>
+                      {/* #531: when no data-driven cut exists (the band's pieces
+                          share its own start cost), say so instead of a dead
+                          button that looks broken. */}
+                      {bandSplitCut(limit, memberCosts) === null ? (
+                        <span className="self-center text-xs text-on-surface-soft">
+                          Dividir no disponible: las piezas de esta banda comparten el mismo punto de costo.
+                        </span>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={bandSplitCut(limit, memberCosts) === null}
+                        onClick={() => splitBand(index)}
+                      >
+                        Dividir
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => removeBand(index)}>Quitar</Button>
                       {/* #336: simulate THIS band in the contribution simulator without retyping it. */}
                       <Button
@@ -637,7 +682,7 @@ export function PricingStrategyScreen() {
                   <div className="grid gap-2 sm:grid-cols-3">
                     {tiers.map((tier) => {
                       const value = draft.prices[tier.id]?.[index];
-                      const support = proposal?.bands?.[index]?.priceSupport[tier.id];
+                      const support = bandEvidence?.[index]?.priceSupport[tier.id];
                       // #529: the healthy state (sólido) is the default and used
                       // to repeat under EVERY price of EVERY band (12+); only the
                       // exceptional supports (weak/pending) carry a hint now,
@@ -659,12 +704,12 @@ export function PricingStrategyScreen() {
                       );
                     })}
                   </div>
-                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && (
+                  {bandEvidence?.[index] && (
                     <p className="text-xs text-on-surface-soft">
                       Contribución mínima en la banda (con la pieza más cara, empaque individual incluido):{" "}
                       {tiers
                         .map((t) => {
-                          const contribution = proposal.bands![index].minContribution[t.id];
+                          const contribution = bandEvidence![index].minContribution[t.id];
                           const preliminary =
                             packagingGaps(activeStore?.packaging, t.id).length > 0 ||
                             !packagingConfigured(activeStore?.packaging, t.id);
@@ -674,13 +719,13 @@ export function PricingStrategyScreen() {
                         .join(" · ")}
                     </p>
                   )}
-                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && proposal.bands[index].belowCost.length ? (
+                  {bandEvidence?.[index] && bandEvidence[index].belowCost.length ? (
                     <div className="rounded-lg border border-danger bg-surface px-3 py-2 text-xs">
                       <p className="font-semibold text-danger">
-                        {proposal.bands[index].belowCost.length} pieza(s) quedarían con precio sugerido bajo su costo base:
+                        {bandEvidence![index].belowCost.length} pieza(s) quedarían con precio sugerido bajo su costo base:
                       </p>
                       <ul className="list-disc pl-5 text-on-surface-soft">
-                        {proposal.bands[index].belowCost.map(({ member, tiers: below }) => (
+                        {bandEvidence![index].belowCost.map(({ member, tiers: below }) => (
                           <li key={member.id}>
                             {member.name} — costo <Money amount={member.cost} /> · {member.inStock ? "con existencia" : "agotada"} ·{" "}
                             {below.map((b) => `${tiers.find((t) => t.id === b.tierId)?.label ?? b.tierId} $${b.price}`).join(", ")}
@@ -695,8 +740,8 @@ export function PricingStrategyScreen() {
                       </p>
                     </div>
                   ) : null}
-                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && (
-                    <BandMembers band={proposal.bands[index]} tiers={tiers} serialized={serialized} packaging={activeStore?.packaging} />
+                  {bandEvidence?.[index] && (
+                    <BandMembers band={bandEvidence[index]} tiers={tiers} serialized={serialized} packaging={activeStore?.packaging} />
                   )}
                 </div>
               ))}

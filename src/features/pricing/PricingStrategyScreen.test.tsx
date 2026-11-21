@@ -104,6 +104,9 @@ function selectCategory() {
 }
 
 beforeEach(() => {
+  // #531: the screen seeds its category from the URL — keep every test on a
+  // clean address so ?categoria= never leaks across cases.
+  window.history.replaceState({}, "", "/productos/estrategia");
   state = fixtureState();
   mocks.state = state;
   state.stores[0] = oliviaStore();
@@ -451,3 +454,61 @@ describe("#529 hints de mediana en Tabla de bandas", () => {
   });
 });
 
+
+describe("#531 evidencia por banda con la tabla real", () => {
+  it("tras quitar una banda, piezas y contribución mínima reflejan la estructura editada", async () => {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // Propuesta: 2 bandas [0,~57.5) con 5 piezas y [57.5,∞) con 4.
+    expect(screen.getByText(/Piezas en esta banda \(5\)/)).toBeTruthy();
+    // Quitar la ÚLTIMA banda: la primera absorbe el rango y queda abierta.
+    const quitar = screen.getAllByRole("button", { name: "Quitar" });
+    fireEvent.click(quitar[quitar.length - 1]);
+    // La evidencia ahora pertenece a la banda vigente: 9 piezas y la
+    // contribución usa el precio del borrador contra el peor costo (95).
+    expect(screen.getByText(/Piezas en esta banda \(9\)/)).toBeTruthy();
+    expect(screen.getByText(/Contribución mínima/).textContent).toMatch(/Regular \$195/);
+  });
+
+  it("«Dividir» sin corte posible queda deshabilitado con su motivo visible", async () => {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // La banda alta abre en ~57.5 y sus piezas cuestan 95: el punto medio
+    // ({95}) cae dentro de (57.5,∞) → botón habilitado. Editamos «Desde» a
+    // exactamente 95: el único costo coincide con el inicio y ya no hay corte.
+    const dividir = screen.getAllByRole("button", { name: "Dividir" });
+    expect(dividir[1]).toBeEnabled();
+    fireEvent.change(screen.getAllByLabelText("Desde $")[1], { target: { value: "95" } });
+    expect(screen.getAllByRole("button", { name: "Dividir" })[1]).toBeDisabled();
+    expect(screen.getByText(/Dividir no disponible/)).toBeTruthy();
+  });
+
+  it("la categoría elegida sobrevive vía ?categoria= al volver de Inicio o del simulador", async () => {
+    const second: Category = { ...categoryFixture(), id: "store_olivia__aros", slug: "aros" };
+    state.categories = [categoryFixture(), second];
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    // Sin re-elegir: la propuesta de la categoría aparece directamente.
+    await screen.findByText("Propuesta");
+
+    // Elegir otra categoría actualiza el parámetro en la URL.
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: second.id } });
+    expect(window.location.search).toContain(`categoria=${encodeURIComponent(second.id)}`);
+  });
+});
