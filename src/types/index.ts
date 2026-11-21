@@ -437,6 +437,13 @@ export type Order = {
    * profit, never its sale total or the clienta's balance. */
   saleExpenses?: OrderSaleExpense[];
 
+  /** #524: set when the operator used this confirmed order as the FIRST
+   * surtido of a point of sale ("Usar como surtido inicial"). The order keeps
+   * its reference and content as history; from that moment it stops counting
+   * as committed and "Falta cobrar", and its commercial actions are closed.
+   * Conversion happens exactly once (the rules reject a second attempt). */
+  convertedToPointId?: string;
+
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
   productId?: string;
@@ -446,6 +453,53 @@ export type Order = {
   price?: number;
   priceTier?: string;
   status?: LegacyOrderStatus;
+};
+
+// #524 — physical points of sale. First verifiable cut: the model and the
+// rules of the first surtido. Point money is ALWAYS integer cents (marked
+// price, unit cost, commission); physical dates are day-granularity.
+
+/** A physical point where the store exhibits merchandise (showcase, desk).
+ * Merchandise stays the store's own until it sells at the point. */
+export type PointOfSale = {
+  id: string;
+  storeId: string;
+  name: string;
+  /** Label price level used when stocking the point (pilot: Regular). */
+  priceTierId?: string;
+  /** Suggested commission fraction (0–1) confirmed per corte; pilot: 20%. */
+  commissionRate?: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** One merchandise entry at a point: physical date, quantity, marked price
+ * and the KNOWN unit cost (absent = valuation pending). Units leave in FIFO
+ * order (oldest entry first); `consumedQty` accumulates sold + written-off. */
+export type PointEntry = {
+  id: string;
+  storeId: string;
+  pointId: string;
+  productId: string;
+  variantId?: string;
+  /** Snapshots keep point history readable after renames (OrderItem idiom). */
+  productName: string;
+  variantColor?: string;
+  /** Physical entry date (YYYY-MM-DD). */
+  entryDate: string;
+  /** Pieces that entered on this entry. */
+  quantity: number;
+  /** Pieces already sold or written off from THIS entry. */
+  consumedQty: number;
+  /** Label price of this entry's pieces, cents. */
+  markedPriceCents: number;
+  /** Known unit cost, cents; absent = pending cost valuation. */
+  unitCostCents?: number;
+  /** Set when the entry came from "Usar como surtido inicial" (converted order). */
+  originOrderId?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 /** How money was received. "unknown" is ONLY for the inherited legacy deposit
