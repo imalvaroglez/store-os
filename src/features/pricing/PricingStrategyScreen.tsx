@@ -54,12 +54,12 @@ const SUPPORT_HINT: Record<PriceSupport, string> = {
   pending: "pendiente: sin evidencia",
 };
 
-/** #526: «A, B y C» with Spanish conjunction («e» before i/hi sounds). */
+/** #526: «A, B y C» with Spanish conjunction («e» before i-/hi- sounds). */
 function joinSpanish(items: string[]): string {
   if (items.length <= 1) return items.join("");
   const head = items.slice(0, -1).join(", ");
   const last = items[items.length - 1];
-  return `${head} ${/^[iI]/.test(last) ? "e" : "y"} ${last}`;
+  return `${head} ${/^[iIhH]/.test(last) ? "e" : "y"} ${last}`;
 }
 
 export function PricingStrategyScreen() {

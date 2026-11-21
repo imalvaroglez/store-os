@@ -433,18 +433,20 @@ describe("#529 hints de mediana en Tabla de bandas", () => {
   });
 
   it("un nivel poco respaldado o sin evidencia conserva su advertencia exactamente en su banda", async () => {
-    // Banda baja: 5 piezas con precio Iconic (sólido). Banda alta: 4 piezas SIN
-    // precio Iconic → «pendiente: sin evidencia» debe verse una vez, sólo ahí.
+    // Banda baja: 5 piezas con los tres precios (sólido). Banda alta: 4 piezas —
+    // sólo 2 con precio Girly (weak: <3 evidencias) y NINGUNA con Iconic
+    // (pending) → cada advertencia aparece UNA vez, en la banda alta.
     state.products = [
       ...Array.from({ length: 5 }, () => product(20, cheap)),
-      ...Array.from({ length: 4 }, () => product(95, { t_retail: pricey.t_retail, t_girly: pricey.t_girly })),
+      ...Array.from({ length: 2 }, () => product(95, { t_retail: pricey.t_retail, t_girly: pricey.t_girly })),
+      ...Array.from({ length: 2 }, () => product(95, { t_retail: pricey.t_retail })),
     ];
     mount();
     selectCategory();
     await screen.findByText("Propuesta");
     fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
-    const pending = screen.getAllByText(/pendiente: sin evidencia/);
-    expect(pending.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/poco respaldado/).length).toBe(1);
+    expect(screen.getAllByText(/pendiente: sin evidencia/).length).toBe(1);
     expect(screen.queryByText(/Mediana actual, sólido/)).toBeNull();
   });
 });
