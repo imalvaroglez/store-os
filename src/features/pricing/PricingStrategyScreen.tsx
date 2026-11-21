@@ -64,20 +64,24 @@ function joinSpanish(items: string[]): string {
   return `${head} ${/^[iIhH]/.test(last) ? "e" : "y"} ${last}`;
 }
 
-// #531: the last category chosen THIS session. Menu/shortcut re-entries come
-// with a clean URL, and nobody re-chooses what the session already knows.
+// #531: the last category chosen THIS session, scoped to its store (a
+// category id from store A must never preselect inside store B). Menu/
+// shortcut re-entries come with a clean URL, and nobody re-chooses what the
+// session already knows.
 let lastChosenCategory = "";
+let lastChosenStore = "";
 
 /**
  * #531: the in-progress draft of the simulator round-trip. «Simular banda»
  * stashes the current table so «Volver a Estrategia» lands back on the SAME
  * editing session instead of silently discarding it (UX misión 3).
  */
-let simulatorRoundTripDraft: { categoryId: string; draft: TableDraft; draftBase: string } | null = null;
+let simulatorRoundTripDraft: { storeId: string; categoryId: string; draft: TableDraft; draftBase: string } | null = null;
 
 /** Test-only: isolate the session-level category between cases. */
 export function resetPricingStrategyCategoryForTests(): void {
   lastChosenCategory = "";
+  lastChosenStore = "";
   simulatorRoundTripDraft = null;
 }
 
@@ -87,9 +91,12 @@ export function PricingStrategyScreen() {
   // #531: the chosen category survives leaving the screen (Inicio, simulator,
   // menu) the same way Reglas preserves it (?categoria=) — nobody re-chooses
   // what the system already knows.
-  const [categoryId, setCategoryId] = useState<string>(
-    () => new URLSearchParams(window.location.search).get("categoria") ?? lastChosenCategory
-  );
+  const [categoryId, setCategoryId] = useState<string>(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("categoria");
+    if (fromUrl) return fromUrl;
+    // Same-store session memory only — another store's category is an orphan.
+    return activeStore?.id === lastChosenStore ? lastChosenCategory : "";
+  });
   const [draft, setDraft] = useState<TableDraft | null>(null);
   const [draftBase, setDraftBase] = useState<string>("");
   const [busy, setBusy] = useState(false);
@@ -206,6 +213,7 @@ export function PricingStrategyScreen() {
   function adopt(categoryIdNext: string) {
     setCategoryId(categoryIdNext);
     lastChosenCategory = categoryIdNext;
+    lastChosenStore = activeStore?.id ?? "";
     setReplaceExisting(false);
     // Draft re-adoption on category switch is driven by the effect below.
     setDraft(null);
@@ -225,15 +233,23 @@ export function PricingStrategyScreen() {
   // the banner instead (and the transactional save keeps them safe).
   useEffect(() => {
     if (!categoryId) return;
-    // #531: coming back from the simulator, restore the SAME editing session
-    // (only when the saved table did not change underneath it).
-    if (simulatorRoundTripDraft && simulatorRoundTripDraft.categoryId === categoryId) {
-      if (simulatorRoundTripDraft.draftBase === savedSignature) {
-        setDraft(simulatorRoundTripDraft.draft);
-        setDraftBase(savedSignature);
-      }
+    // #531: coming back from the simulator, restore the SAME editing session.
+    // Review rule: a concurrent save must SURFACE (the existing banner) and
+    // never silently discard the in-progress table — the transactional save
+    // still rejects stale writes. A CLEAN stale stash (nothing in progress)
+    // yields to the fresh saved table instead of showing it outdated.
+    if (
+      simulatorRoundTripDraft &&
+      simulatorRoundTripDraft.categoryId === categoryId &&
+      simulatorRoundTripDraft.storeId === (activeStore?.id ?? "")
+    ) {
+      const stash = simulatorRoundTripDraft;
       simulatorRoundTripDraft = null;
-      return;
+      if (stash.draft.dirty || stash.draftBase === savedSignature) {
+        setDraft(stash.draft);
+        setDraftBase(stash.draftBase);
+        return;
+      }
     }
     if (draft?.dirty) return;
     if (existing?.compatible) setDraft(existing.draft);
@@ -702,7 +718,7 @@ export function PricingStrategyScreen() {
                         onClick={() => {
                           if (draft) {
                             // #531: keep the editing session for the round-trip.
-                            simulatorRoundTripDraft = { categoryId, draft, draftBase };
+                            simulatorRoundTripDraft = { storeId: activeStore?.id ?? "", categoryId, draft, draftBase };
                           }
                           setBandSimulatorPrefill({
                             categoryId,

@@ -554,3 +554,73 @@ describe("#531 re-entrada y formato de dinero negativo", () => {
     expect(line).not.toMatch(/\$-/);
   });
 });
+
+describe("#531 ida y vuelta al simulador con concurrencia y entre tiendas", () => {
+  function products526() {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+  }
+
+  it("«Simular banda» conserva el borrador sucio al volver (mismo guardado)", async () => {
+    products526();
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "300" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Simular banda" })[0]);
+    view.unmount();
+    // Regresa desde el simulador con ?categoria= (el botón real la lleva).
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    expect((screen.getAllByLabelText(/Regular \(pesos\)/)[0] as HTMLInputElement).value).toBe("300");
+  });
+
+  it("si la tabla guardada cambió durante el ida y vuelta, el borrador vuelve Y el banner de concurrencia habla (no se pierde en silencio)", async () => {
+    products526();
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "300" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Simular banda" })[0]);
+    view.unmount();
+    // Otra sesión guardó una tabla distinta mientras tanto.
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 60, price: 290 }, { min: 60, price: 310 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 60, price: 230 }, { min: 60, price: 260 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 60, price: 160 }, { min: 60, price: 170 }], rounding: "none" },
+        },
+      },
+    };
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    // El borrador sigue ahí (no se pierde en silencio)…
+    expect((screen.getAllByLabelText(/Regular \(pesos\)/)[0] as HTMLInputElement).value).toBe("300");
+    // …y la pantalla avisa el cambio concurrente en lugar de callar.
+    expect(await screen.findByText(/cambió mientras editabas|otra sesión/i)).toBeTruthy();
+  });
+
+  it("la última categoría NO filtra a otra tienda (select sin valor huérfano)", async () => {
+    products526();
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    // Cambia de tienda y re-entra por menú (URL limpia).
+    const otra = fixtureState();
+    otra.stores[0] = oliviaStore();
+    mocks.state = otra;
+    state = otra;
+    view.unmount();
+    window.history.replaceState({}, "", "/productos/estrategia");
+    mount();
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe("");
+    // Sin valor huérfano NI análisis fantasma de la categoría ajena.
+    expect(screen.queryByText(/piezas en la categoría/)).toBeNull();
+  });
+});
