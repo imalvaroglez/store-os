@@ -1,6 +1,6 @@
 # Changelog
 
-> **Histórico hasta 0.5.0 (2026-08-11).** Desde 1.0, las notas de versión vivas viven en
+> **Histórico hasta 0.5.0 (2026-08-11).** Desde 1.5.0, las notas de versión vivas viven en
 > `src/releases/releases.json` (fuente del pie de página de la app y del control de versión
 > en CI) y el mensaje copiable para Fer en `docs/releases/notas-para-fer.md`. Este archivo
 > se conserva como registro de la era inicial; ya no se actualiza.
