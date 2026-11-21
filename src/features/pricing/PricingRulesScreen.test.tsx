@@ -283,4 +283,18 @@ describe("#219 — contratos de captura de Reglas (auditoría)", () => {
     expect(await screen.findAllByText(/pesos con centavos \(máximo dos decimales\)/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Guardar reglas/ })).toBeDisabled();
   });
+
+  // Revisora #219 (dictamen PR #517, MENOR): removing a rule must also drop
+  // its rejected raw capture — the ghost error no longer blocks «Guardar reglas».
+  it("«Quitar regla» elimina también la captura inválida del nivel: sin error fantasma bloqueando guardar", async () => {
+    render(<ToastProvider><PricingRulesScreen /></ToastProvider>);
+    const percent = screen.getAllByLabelText(/Porcentaje sobre el costo/)[0] as HTMLInputElement;
+    fireEvent.change(percent, { target: { value: "12" } }); // valid first: the rule exists
+    fireEvent.change(percent, { target: { value: "12.3.4" } }); // rejected capture
+    expect(await screen.findAllByText(/Escribe el porcentaje con un solo punto decimal/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar reglas/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Quitar regla de Iconic/ }));
+    expect(screen.queryByText(/Escribe el porcentaje con un solo punto decimal/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /Guardar reglas/ })).toBeEnabled();
+  });
 });

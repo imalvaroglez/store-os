@@ -32,6 +32,7 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
 });
 
 const CAT = "store_olivia__relojes";
+const CAT2 = "store_olivia__perfumes";
 
 function oliviaStore(): Store {
   const store = { ...mocks.state!.stores[0] } as Store;
@@ -58,14 +59,14 @@ function categoryFixture(): Category {
 }
 
 let counter = 0;
-function product(cost: number, prices: Partial<Record<string, number>>, quantityOnHand = 1): Product {
+function product(cost: number, prices: Partial<Record<string, number>>, quantityOnHand = 1, cat: string = CAT): Product {
   counter += 1;
   return {
     id: `p${counter}`,
     storeId: "store_olivia",
     name: `Reloj ${counter}`,
     category: "other",
-    categoryIds: [CAT],
+    categoryIds: [cat],
     isPublic: true,
     status: "published",
     cost,
@@ -451,5 +452,84 @@ describe("#219 — contratos de captura de Estrategia (auditoría)", () => {
     expect(await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.")).toBeTruthy();
     const [, rules] = mocks.saveCategoryPricingRules.mock.calls[0];
     expect((rules as Record<string, { bands: Array<{ price: number }> }>).t_iconic.bands[0].price).toBe(131072.02);
+  });
+
+  // Revisora #219 (dictamen PR #517, MAYOR): rawCaptures must not leak across
+  // category contexts — a rejected capture typed in one category must never
+  // surface as a ghost value/error in another category's editor.
+  it("cambiar de categoría no arrastra la captura rechazada de la categoría anterior (repro de la Revisora)", async () => {
+    state.categories.push({ ...categoryFixture(), id: CAT2, name: "Perfumes", slug: "perfumes" });
+    state.products.push(...Array.from({ length: 6 }, () => product(30, { t_retail: 190, t_girly: 150, t_iconic: 120 }, 1, CAT2)));
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } }); // dirty first
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "999.005" } });
+    expect(await screen.findByText(/máximo dos decimales/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Guardar tabla/ })).toBeDisabled();
+    // Switch context: the new category's editor starts clean.
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: CAT2 } });
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    const iconic = screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement;
+    expect(iconic.value).not.toBe("999.005");
+    expect(screen.queryByText(/máximo dos decimales/i)).toBeNull();
+    // The editor is fully usable: a valid edit enables the save.
+    fireEvent.change(iconic, { target: { value: "125" } });
+    expect(screen.getByRole("button", { name: /Guardar tabla/ })).toBeEnabled();
+  });
+
+  it("«Restaurar propuesta» reemplaza la tabla y no conserva la captura inválida previa", async () => {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "999.005" } });
+    expect(await screen.findByText(/máximo dos decimales/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    expect(screen.queryByText(/máximo dos decimales/i)).toBeNull();
+    // A follow-up valid edit proves the editor is not dead-ended by a ghost.
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    expect(screen.getByRole("button", { name: /Guardar tabla/ })).toBeEnabled();
+  });
+
+  it("«Descartar mis cambios y recargar» (banner de concurrencia) no conserva la captura inválida del draft", async () => {
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 60, price: 290 }, { min: 60, price: 310 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 60, price: 230 }, { min: 60, price: 260 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 60, price: 160 }, { min: 60, price: 170 }], rounding: "none" },
+        },
+      },
+    };
+    const view = mount();
+    selectCategory();
+    // A valid edit makes the draft dirty (banner precondition)…
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    // …then the rejected capture leaves the ghost the discard must clear.
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "999.005" } });
+    expect(await screen.findByText(/máximo dos decimales/i)).toBeTruthy();
+    // Another session saves a different table under our feet → banner.
+    const other = fixtureState();
+    other.stores[0] = oliviaStore();
+    other.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 50, price: 280 }, { min: 50, price: 300 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 50, price: 220 }, { min: 50, price: 250 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 50, price: 150 }, { min: 50, price: 160 }], rounding: "none" },
+        },
+      },
+    };
+    mocks.state = other;
+    view.rerender(
+      <ToastProvider>
+        <PricingStrategyScreen />
+      </ToastProvider>
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Descartar mis cambios y recargar/ }));
+    expect(screen.queryByText(/máximo dos decimales/i)).toBeNull();
+    expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("150");
   });
 });

@@ -133,6 +133,10 @@ export function PricingStrategyScreen() {
   const concurrentChange = !!draft?.dirty && savedSignature !== draftBase;
 
   function loadFromProposal(bands: BandProposal[] | null) {
+    // #219 (dictamen #517): a fresh table must not inherit raw captures —
+    // a rejected text from the previous context would surface as a ghost
+    // value/error and block the save.
+    setRawCaptures({});
     if (!bands || bands.length === 0) {
       setDraft(null);
       return;
@@ -153,6 +157,9 @@ export function PricingStrategyScreen() {
     // Draft re-adoption on category switch is driven by the effect below.
     setDraft(null);
     setDraftBase("");
+    // #219 (dictamen #517): raw captures belong to the previous category's
+    // fields — the new context starts clean.
+    setRawCaptures({});
     if (categoryIdNext) requestAnimationFrame(() => proposalRef.current?.scrollIntoView?.({ behavior: "smooth" }));
   }
 
@@ -576,6 +583,9 @@ export function PricingStrategyScreen() {
                 // draft null would dead-end the editor.
                 setDraft(existing?.compatible ? existing.draft : null);
                 setDraftBase(savedSignature);
+                // #219 (dictamen #517): the discarded draft's rejected raw
+                // captures must go with it.
+                setRawCaptures({});
               }}
             >
               Descartar mis cambios y recargar

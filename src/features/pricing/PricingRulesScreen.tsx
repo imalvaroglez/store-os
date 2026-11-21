@@ -805,7 +805,16 @@ function RuleCard({
         </div>
       )}
       {rule && (
-        <Button size="sm" variant="ghost" onClick={() => onChange(null)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            // #219 (dictamen #517, MENOR): the removed rule's rejected raw
+            // capture must go with it — no ghost error blocking the save.
+            setRawCaptures({});
+            onChange(null);
+          }}
+        >
           Quitar regla de {label}
         </Button>
       )}
