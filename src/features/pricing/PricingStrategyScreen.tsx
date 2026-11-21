@@ -64,14 +64,23 @@ function joinSpanish(items: string[]): string {
   return `${head} ${/^[iIhH]/.test(last) ? "e" : "y"} ${last}`;
 }
 
+// #531: the last category chosen THIS session. Menu/shortcut re-entries come
+// with a clean URL, and nobody re-chooses what the session already knows.
+let lastChosenCategory = "";
+
+/** Test-only: isolate the session-level category between cases. */
+export function resetPricingStrategyCategoryForTests(): void {
+  lastChosenCategory = "";
+}
+
 export function PricingStrategyScreen() {
   const { state, activeStore, saveCategoryPricingRules } = useStore();
   const toast = useToast();
-  // #531: the chosen category survives leaving the screen (Inicio, simulator)
-  // the same way Reglas preserves it (?categoria=) — nobody re-chooses what
-  // the system already knows.
+  // #531: the chosen category survives leaving the screen (Inicio, simulator,
+  // menu) the same way Reglas preserves it (?categoria=) — nobody re-chooses
+  // what the system already knows.
   const [categoryId, setCategoryId] = useState<string>(
-    () => new URLSearchParams(window.location.search).get("categoria") ?? ""
+    () => new URLSearchParams(window.location.search).get("categoria") ?? lastChosenCategory
   );
   const [draft, setDraft] = useState<TableDraft | null>(null);
   const [draftBase, setDraftBase] = useState<string>("");
@@ -185,6 +194,7 @@ export function PricingStrategyScreen() {
   const proposalRef = useRef<HTMLDivElement>(null);
   function adopt(categoryIdNext: string) {
     setCategoryId(categoryIdNext);
+    lastChosenCategory = categoryIdNext;
     setReplaceExisting(false);
     // Draft re-adoption on category switch is driven by the effect below.
     setDraft(null);
@@ -713,7 +723,12 @@ export function PricingStrategyScreen() {
                           const preliminary =
                             packagingGaps(activeStore?.packaging, t.id).length > 0 ||
                             !packagingConfigured(activeStore?.packaging, t.id);
-                          const value = contribution === null || contribution === undefined ? "—" : `$${contribution}`;
+                          const value =
+                            contribution === null || contribution === undefined
+                              ? "—"
+                              : contribution < 0
+                                ? `-$${Math.abs(contribution)}`
+                                : `$${contribution}`;
                           return `${t.label} ${value}${preliminary ? " (preliminar: falta costo de empaque)" : ""}`;
                         })
                         .join(" · ")}

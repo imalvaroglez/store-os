@@ -6,7 +6,7 @@
 // saved table surfaces a banner instead of clobbering the draft.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { PricingStrategyScreen } from "./PricingStrategyScreen";
+import { PricingStrategyScreen, resetPricingStrategyCategoryForTests } from "./PricingStrategyScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
 import { CategoryRulesConflictError } from "../../app/StoreProvider";
@@ -104,8 +104,9 @@ function selectCategory() {
 }
 
 beforeEach(() => {
-  // #531: the screen seeds its category from the URL — keep every test on a
-  // clean address so ?categoria= never leaks across cases.
+  // #531: the screen seeds its category from the URL and the session's last
+  // choice — keep every test on a clean address and an empty session.
+  resetPricingStrategyCategoryForTests();
   window.history.replaceState({}, "", "/productos/estrategia");
   state = fixtureState();
   mocks.state = state;
@@ -510,5 +511,42 @@ describe("#531 evidencia por banda con la tabla real", () => {
     // Elegir otra categoría actualiza el parámetro en la URL.
     fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: second.id } });
     expect(window.location.search).toContain(`categoria=${encodeURIComponent(second.id)}`);
+  });
+});
+
+describe("#531 re-entrada y formato de dinero negativo", () => {
+  it("re-entrar por menú (URL limpia) conserva la última categoría de la sesión", async () => {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    // Salió por el menú: URL limpia, misma sesión (remonte del componente).
+    view.unmount();
+    window.history.replaceState({}, "", "/productos/estrategia");
+    mount();
+    await screen.findByText("Propuesta");
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
+  });
+
+  it("una contribución negativa se muestra como -$N (convención #327), nunca $-N", async () => {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // Precio Regular de la banda fusionada bajo el peor costo (95):
+    // 90 − 95 = −5 → «Regular -$5».
+    const quitar = screen.getAllByRole("button", { name: "Quitar" });
+    fireEvent.click(quitar[quitar.length - 1]);
+    fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "90" } });
+    const line = screen.getByText(/Contribución mínima/).textContent ?? "";
+    expect(line).toMatch(/Regular -\$5/);
+    expect(line).not.toMatch(/\$-/);
   });
 });
