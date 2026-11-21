@@ -30,6 +30,7 @@ FIRESTORE_FILES=(
   src/app/firebase/priceEvents.emulator.test.ts
   src/app/firebase/profitDistribution.emulator.test.ts
   src/app/firebase/installmentsMarkerRules.emulator.test.ts
+  src/app/firebase/pointsOfSale.emulator.test.ts
 )
 # #380: the saldo-a-favor suites drive the TRUSTED applyCredit/releaseCredit
 # callables (rules deny every client write to the credit fields), so they need
