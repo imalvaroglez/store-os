@@ -390,3 +390,100 @@ describe("#489 legacy cover republish (PO decision, 18-nov)", () => {
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
   });
 });
+
+// #461 corte 2 (PO 22-nov, opción A/B): sizes per color in the editor —
+// suggested/editable clave, CONFIRMED cost required (zero valid, suggestion
+// never counts as confirmation), per-combination count with derived color
+// stock, and Disponible/Comprometido/Físico per combination.
+describe("ProductForm #461 — tallas por color (corte 2)", () => {
+  const photo = { id: "f1", url: "https://x.test/f1.jpg", storagePath: "p/f1", order: 0, isPrimary: true };
+  function variantDesign(): Product {
+    return {
+      ...design,
+      cost: 100,
+      categoryIds: ["c1"],
+      prices: { t_retail: 300 },
+      imageUrl: photo.url,
+      variants: [
+        { id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, photos: [photo], quantityOnHand: 3, createdAt: "", updatedAt: "" },
+      ],
+    } as Product;
+  }
+
+  function abrirConTalla(label = "6") {
+    render(<ProductForm product={variantDesign()} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "+ Talla" }));
+    fireEvent.change(screen.getByLabelText(/^Talla$/), { target: { value: label } });
+  }
+
+  it("agregar talla: clave sugerida (SOL-D-6) editable y costo VACÍO con el costo del color como sugerencia visible", () => {
+    abrirConTalla("6");
+    expect((screen.getByLabelText(/Clave de la talla \(SOL-D-/) as HTMLInputElement).value).toBe("6");
+    const costo = screen.getByLabelText(/Costo de la talla/) as HTMLInputElement;
+    expect(costo.value).toBe(""); // la sugerencia nunca cuenta como confirmación
+    expect(costo.placeholder).toBe("100");
+  });
+
+  it("cada talla muestra Disponible y Comprometido junto a su Físico editable", () => {
+    abrirConTalla("6");
+    fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "5" } });
+    expect(screen.getByText(/Disponible 5 · Comprometido 0/)).toBeTruthy();
+  });
+
+  it("con tallas, la existencia del color se deriva (deshabilitada) y el guardado materializa clave y cantidades por combinación", async () => {
+    abrirConTalla("6");
+    fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Talla" }));
+    const tallas = screen.getAllByLabelText(/^Talla$/);
+    fireEvent.change(tallas[1], { target: { value: "7" } });
+    const fisicos = screen.getAllByLabelText(/Físico de la talla/);
+    fireEvent.change(fisicos[1], { target: { value: "2" } });
+    // Costo confirmado por combinación (la sugerencia nunca cuenta como tal).
+    const costos = screen.getAllByLabelText(/Costo de la talla/);
+    fireEvent.change(costos[0], { target: { value: "100" } });
+    fireEvent.change(costos[1], { target: { value: "100" } });
+    // El color ya no acepta existencia propia: muestra la suma derivada.
+    const existencia = screen.getByLabelText(/^En existencia del color/) as HTMLInputElement;
+    expect(existencia.disabled).toBe(true);
+    expect(existencia.value).toBe("7");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    const saved = mocks.upsertProduct.mock.calls[0][0] as Product;
+    const gold = saved.variants!.find((v) => v.id === "v_gold")!;
+    expect(gold.quantityOnHand).toBeUndefined(); // el nivel del color nunca se escribe
+    expect(gold.sizes!.map((s) => [s.size, s.sku, s.quantityOnHand, s.cost])).toEqual(
+      expect.arrayContaining([["6", "SOL-D-6", 5, 100], ["7", "SOL-D-7", 2, 100]])
+    );
+  });
+
+  it("guardar exige costo confirmado por combinación: vacío bloquea y nombra la talla; cero confirmado pasa", async () => {
+    abrirConTalla("6");
+    fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    expect(await screen.findByText(/Confirma el costo de la talla 6/i)).toBeTruthy();
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    const saved = mocks.upsertProduct.mock.calls[0][0] as Product;
+    expect(saved.variants![0].sizes![0].cost).toBe(0); // cero confirmado es válido
+  });
+
+  it("tallas repetidas en el color bloquean el guardado", async () => {
+    abrirConTalla("6");
+    fireEvent.click(screen.getByRole("button", { name: "+ Talla" }));
+    fireEvent.change(screen.getAllByLabelText(/^Talla$/)[1], { target: { value: "6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+    expect(await screen.findByText(/Dorado tiene una talla repetida/i)).toBeTruthy();
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+
+  it("quitar talla la elimina del color y el color vuelve a existencia directa", () => {
+    abrirConTalla("6");
+    fireEvent.click(screen.getByRole("button", { name: /Quitar talla 6/i }));
+    expect(screen.queryByLabelText(/^Talla$/)).toBeNull();
+    // El color vuelve a existencia directa: el único campo con 3 habilitado.
+    const existencia = screen.getByDisplayValue("3") as HTMLInputElement;
+    expect(existencia.disabled).toBe(false);
+  });
+});

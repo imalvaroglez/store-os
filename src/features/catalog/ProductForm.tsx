@@ -27,8 +27,19 @@ import {
   type Product,
   type ProductImage as ProductImageType,
   type ProductVariant,
+  type VariantSize,
 } from "../../types";
-import { suggestSkuSuffix, variantPublishError, variantSku as buildVariantSku } from "../../lib/variants";
+import {
+  combinationPublishError,
+  combinationSaveError,
+  combinationSku,
+  suggestSizeSkuSuffix,
+  suggestSkuSuffix,
+  variantHasSizes,
+  variantPublishError,
+  variantSku as buildVariantSku,
+  variantStock,
+} from "../../lib/variants";
 
 // Staged gallery image: a resized Blob chosen but not yet uploaded. Upload
 // happens on submit so cancelling leaves no orphan in Storage.
@@ -209,6 +220,41 @@ export function ProductForm({
     setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...patch, updatedAt: new Date().toISOString() } : v)));
   }
 
+  // #461 corte 2: sizes under a color. Stock lives PER COMBINATION — the
+  // color's own shelf becomes derived (never written) while sizes exist.
+  function addSize(variantId: string) {
+    const now = new Date().toISOString();
+    patchVariant(variantId, {
+      sizes: [
+        ...(variants.find((v) => v.id === variantId)?.sizes ?? []),
+        // Cost stays EMPTY on purpose (PO 22-nov, opción A): the color's cost
+        // is only a SUGGESTION shown as placeholder — confirmation is Fer
+        // typing it; a missing datum never becomes zero.
+        { id: uid("talla"), size: "", skuSuffix: "", quantityOnHand: undefined, createdAt: now, updatedAt: now },
+      ],
+    });
+  }
+  function patchSize(variantId: string, sizeId: string, patch: Partial<VariantSize>) {
+    const variant = variants.find((v) => v.id === variantId);
+    if (!variant?.sizes) return;
+    patchVariant(variantId, {
+      sizes: variant.sizes.map((s) => (s.id === sizeId ? { ...s, ...patch, updatedAt: new Date().toISOString() } : s)),
+    });
+  }
+  /** Same auto-suffix rule as colors: the suggested key follows the label
+   * while untouched; an edited key is respected as-is. */
+  function renameSize(variantId: string, sizeId: string, size: string) {
+    const current = variants.find((v) => v.id === variantId)?.sizes?.find((s) => s.id === sizeId);
+    if (!current) return;
+    const wasAuto = !current.skuSuffix || current.skuSuffix === suggestSizeSkuSuffix(current.size);
+    patchSize(variantId, sizeId, { size, ...(wasAuto ? { skuSuffix: size ? suggestSizeSkuSuffix(size) : "" } : {}) });
+  }
+  function removeSize(variantId: string, sizeId: string) {
+    const variant = variants.find((v) => v.id === variantId);
+    if (!variant?.sizes) return;
+    patchVariant(variantId, { sizes: variant.sizes.filter((s) => s.id !== sizeId) });
+  }
+
   /** Color rename keeps the clave suffix in sync while it still looks
    * auto-suggested (empty or the previous color's letter) — always editable. */
   function renameColor(variant: ProductVariant, color: string) {
@@ -383,6 +429,22 @@ export function ProductForm({
     if (variantsEnabled && variants.length === 0) {
       return fail("Agrega al menos un color o desactiva «Se vende por color».");
     }
+    // #461 corte 2 (PO 22-nov, opción A): per-combination gates run on EVERY
+    // save, not just publish — each color×size needs its clave and a
+    // CONFIRMED acquisition cost (the color's cost is only a suggestion; a
+    // confirmed zero is valid, undefined never becomes zero).
+    if (variantsEnabled) {
+      // Structural first (duplicate sizes, clave clashes), then the
+      // per-combination data gate (confirmed cost).
+      const sizesError = combinationPublishError({ sku: draft.sku, variants: finalVariants });
+      if (sizesError) return fail(sizesError);
+      for (const variant of variants) {
+        for (const size of variant.sizes ?? []) {
+          const combinationError = combinationSaveError(variant.color.trim() || "color", variant, size, draft.sku);
+          if (combinationError) return fail(combinationError);
+        }
+      }
+    }
 
     // Assign a stable slug if missing (survives renames thereafter).
     const slug = draft.slug
@@ -404,11 +466,28 @@ export function ProductForm({
     }
 
     if (variantsEnabled) {
-      finalVariants = finalVariants.map((v) => ({ ...v, color: v.color.trim(), sku: buildVariantSku(sku, v) ?? v.sku }));
-      // #124/M4: claves únicas — entre colores del diseño y contra el resto
-      // de la tienda (las claves viajan en compras, tickets y devoluciones).
-      const claves = finalVariants.map((v) => (v.sku ?? "").toUpperCase());
-      if (new Set(claves).size !== claves.length) return fail("Dos colores comparten la misma clave; dale a cada color su sufijo.");
+      finalVariants = finalVariants.map((v) => ({
+        ...v,
+        color: v.color.trim(),
+        sku: buildVariantSku(sku, v) ?? v.sku,
+        // #461: materialize each combination's full clave like colors do,
+        // and drop the color-level shelf — with sizes it is derived, and a
+        // stale number there would be a second, lying source of truth.
+        ...(v.sizes?.length
+          ? {
+              sizes: v.sizes.map((s) => ({ ...s, size: s.size.trim(), sku: combinationSku(sku, v, s) ?? s.sku })),
+              quantityOnHand: undefined,
+            }
+          : {}),
+      }));
+      // #124/M4 + #461: claves únicas — entre colores y tallas del diseño y
+      // contra el resto de la tienda (las claves viajan en compras, tickets
+      // y devoluciones).
+      const claves = finalVariants.flatMap((v) => [
+        (v.sku ?? "").toUpperCase(),
+        ...(v.sizes ?? []).map((s) => (s.sku ?? "").toUpperCase()),
+      ]);
+      if (new Set(claves).size !== claves.length) return fail("Dos colores o tallas comparten la misma clave; dale a cada uno su sufijo.");
       const clash = claves.find((clave) =>
         clave && state.products.some((p) => p.id !== product.id && p.storeId === store.id && (p.sku ?? "").toUpperCase() === clave)
       );
@@ -712,17 +791,87 @@ export function ProductForm({
                         onChange={(e) => patchVariant(variant.id, { cost: parseAmount(e.target.value) })}
                         hint="Hereda el costo del diseño; ajústalo si tu proveedor cobra distinto."
                       />
-                      <TextField
-                        label="En existencia"
-                        inputMode="numeric"
-                        placeholder="0"
-                        value={variant.quantityOnHand?.toString() ?? ""}
-                        onChange={(e) => {
-                          const parsed = parseAmount(e.target.value);
-                          patchVariant(variant.id, { quantityOnHand: parsed == null ? undefined : Math.round(parsed) });
-                        }}
-                      />
+                      {variantHasSizes(variant) ? (
+                        // #461: with sizes, the color's shelf is DERIVED from
+                        // its combinations — read-only, never written.
+                        <TextField
+                          label="En existencia del color"
+                          value={(variantStock(variant) ?? "").toString()}
+                          disabled
+                          hint="Suma de las tallas; se calcula sola."
+                        />
+                      ) : (
+                        <TextField
+                          label="En existencia"
+                          inputMode="numeric"
+                          placeholder="0"
+                          value={variant.quantityOnHand?.toString() ?? ""}
+                          onChange={(e) => {
+                            const parsed = parseAmount(e.target.value);
+                            patchVariant(variant.id, { quantityOnHand: parsed == null ? undefined : Math.round(parsed) });
+                          }}
+                        />
+                      )}
                     </div>
+                    {/* #461 corte 2: sizes of this color. One row per sellable
+                        combination — clave suggested/editable, CONFIRMED cost
+                        (suggestion as placeholder, never pre-filled), and the
+                        per-combination count with its derived figures. */}
+                    {variant.sizes?.map((size) => {
+                      const colorClave = buildVariantSku(draft.sku, variant) ?? draft.sku ?? "CLAVE";
+                      // Comprometido per combination is 0 until order lines
+                      // carry the size reference (corte 3) — a color-level
+                      // line never pins THIS combination.
+                      const committed = 0;
+                      const physical = typeof size.quantityOnHand === "number" ? size.quantityOnHand : null;
+                      return (
+                        <div key={size.id} className="space-y-1.5 rounded-lg border border-edge bg-surface px-3 py-2">
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <TextField
+                              label="Talla"
+                              placeholder="p. ej. 6"
+                              value={size.size}
+                              onChange={(e) => renameSize(variant.id, size.id, e.target.value)}
+                            />
+                            <TextField
+                              label={`Clave de la talla (${colorClave}-${size.skuSuffix || "sufijo"})`}
+                              placeholder="6"
+                              value={size.skuSuffix ?? ""}
+                              onChange={(e) => patchSize(variant.id, size.id, { skuSuffix: e.target.value.toUpperCase().slice(0, 8) })}
+                            />
+                            <TextField
+                              label="Costo de la talla"
+                              inputMode="decimal"
+                              placeholder={variant.cost != null ? String(Math.round(variant.cost * 100) / 100) : cost || "0"}
+                              value={size.cost != null ? String(Math.round(size.cost * 100) / 100) : ""}
+                              onChange={(e) => patchSize(variant.id, size.id, { cost: parseAmount(e.target.value) ?? undefined })}
+                              hint="Sugerencia del color; confírmalo o ajústalo para guardar."
+                            />
+                            <TextField
+                              label="Físico de la talla"
+                              inputMode="numeric"
+                              placeholder="0"
+                              value={size.quantityOnHand?.toString() ?? ""}
+                              onChange={(e) => {
+                                const parsed = parseAmount(e.target.value);
+                                patchSize(variant.id, size.id, { quantityOnHand: parsed == null ? undefined : Math.round(parsed) });
+                              }}
+                            />
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-xs text-on-surface-soft">
+                              Disponible {physical == null ? "—" : physical - committed} · Comprometido {committed}
+                            </p>
+                            <Button size="sm" variant="ghost" onClick={() => removeSize(variant.id, size.id)}>
+                              Quitar talla {size.size || "(sin talla)"}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <Button size="sm" variant="secondary" onClick={() => addSize(variant.id)}>
+                      + Talla
+                    </Button>
                     {cloud ? (
                       <MultiPhotoPicker
                         tiles={variantTiles(variant.id)}
