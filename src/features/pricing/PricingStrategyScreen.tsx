@@ -19,11 +19,14 @@ import {
   useToast,
 } from "../../design-system";
 import { navigate } from "../../lib/router";
+import { setBandSimulatorPrefill } from "../../lib/bandSimulatorPrefill";
 import { tiersForStore } from "../../lib/pricing";
 import { parseAmount, sanitizeMoneyInput } from "../../lib/money";
 import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, rulesSignature, moneyCaptureInvalid, MONEY_CAPTURE_ERROR } from "../../lib/pricingRules";
 import {
   analyzeCategory,
+  bandSplitCut,
+  evidenceForTable,
   packagingConfigured,
   packagingGaps,
   proposeCategoryBands,
@@ -53,10 +56,47 @@ const SUPPORT_HINT: Record<PriceSupport, string> = {
   pending: "pendiente: sin evidencia",
 };
 
+/** #526: «A, B y C» with Spanish conjunction («e» before i-/hi- sounds). */
+function joinSpanish(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  const head = items.slice(0, -1).join(", ");
+  const last = items[items.length - 1];
+  return `${head} ${/^[iIhH]/.test(last) ? "e" : "y"} ${last}`;
+}
+
+// #531: the last category chosen THIS session, scoped to its store (a
+// category id from store A must never preselect inside store B). Menu/
+// shortcut re-entries come with a clean URL, and nobody re-chooses what the
+// session already knows.
+let lastChosenCategory = "";
+let lastChosenStore = "";
+
+/**
+ * #531: the in-progress draft of the simulator round-trip. «Simular banda»
+ * stashes the current table so «Volver a Estrategia» lands back on the SAME
+ * editing session instead of silently discarding it (UX misión 3).
+ */
+let simulatorRoundTripDraft: { storeId: string; categoryId: string; draft: TableDraft; draftBase: string } | null = null;
+
+/** Test-only: isolate the session-level category between cases. */
+export function resetPricingStrategyCategoryForTests(): void {
+  lastChosenCategory = "";
+  lastChosenStore = "";
+  simulatorRoundTripDraft = null;
+}
+
 export function PricingStrategyScreen() {
   const { state, activeStore, saveCategoryPricingRules } = useStore();
   const toast = useToast();
-  const [categoryId, setCategoryId] = useState<string>("");
+  // #531: the chosen category survives leaving the screen (Inicio, simulator,
+  // menu) the same way Reglas preserves it (?categoria=) — nobody re-chooses
+  // what the system already knows.
+  const [categoryId, setCategoryId] = useState<string>(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("categoria");
+    if (fromUrl) return fromUrl;
+    // Same-store session memory only — another store's category is an orphan.
+    return activeStore?.id === lastChosenStore ? lastChosenCategory : "";
+  });
   const [draft, setDraft] = useState<TableDraft | null>(null);
   const [draftBase, setDraftBase] = useState<string>("");
   const [busy, setBusy] = useState(false);
@@ -84,6 +124,26 @@ export function PricingStrategyScreen() {
         ? proposeCategoryBands({ products, categoryId, tiers, packaging: activeStore?.packaging })
         : null,
     [products, categoryId, tiers, activeStore?.packaging]
+  );
+
+  // #531: per-band evidence follows the table Fer actually has in front of
+  // her — the DRAFT's limits and prices, recomputed from the same primitives
+  // as the proposal. Positional pairing with the auto proposal's bands showed
+  // members/contributions of the WRONG band after Dividir/Quitar, and the
+  // stale figures even survived the save.
+  const bandEvidence = useMemo(
+    () =>
+      categoryId && draft
+        ? evidenceForTable({ products, categoryId, tiers, packaging: activeStore?.packaging }, draft.limits, draft.prices)
+        : null,
+    [products, categoryId, tiers, activeStore?.packaging, draft]
+  );
+
+  // #531: every member cost in the category feeds bandSplitCut — the cut is
+  // data-driven per band, and «Dividir» needs a real answer when no cut exists.
+  const memberCosts = useMemo(
+    () => (proposal?.bands ?? []).flatMap((b) => b.members.map((m) => m.cost)),
+    [proposal]
   );
 
   // Existing saved rules for the category — compatible when every visible tier
@@ -144,7 +204,10 @@ export function PricingStrategyScreen() {
     setDraft({
       limits: bands.map((b) => ({ min: b.min, max: b.max })),
       prices: Object.fromEntries(tiers.map((t) => [t.id, bands.map((b) => b.prices[t.id] ?? null)])),
-      dirty: false,
+      // #531 (UX misión 3): adopting/restoring the proposal IS a change from
+      // what is saved — the table must be saveable as-is, and the «Sin
+      // cambios» badge must not lie.
+      dirty: true,
     });
   }
 
@@ -153,6 +216,8 @@ export function PricingStrategyScreen() {
   const proposalRef = useRef<HTMLDivElement>(null);
   function adopt(categoryIdNext: string) {
     setCategoryId(categoryIdNext);
+    lastChosenCategory = categoryIdNext;
+    lastChosenStore = activeStore?.id ?? "";
     setReplaceExisting(false);
     // Draft re-adoption on category switch is driven by the effect below.
     setDraft(null);
@@ -160,6 +225,13 @@ export function PricingStrategyScreen() {
     // #219 (dictamen #517): raw captures belong to the previous category's
     // fields — the new context starts clean.
     setRawCaptures({});
+    // #531: keep the chosen category in the URL (replace, not push — the
+    // choice is state, not a page) so Inicio/simulator round-trips restore it.
+    window.history.replaceState(
+      {},
+      "",
+      categoryIdNext ? `/productos/estrategia?categoria=${encodeURIComponent(categoryIdNext)}` : "/productos/estrategia"
+    );
     if (categoryIdNext) requestAnimationFrame(() => proposalRef.current?.scrollIntoView?.({ behavior: "smooth" }));
   }
 
@@ -168,6 +240,24 @@ export function PricingStrategyScreen() {
   // the banner instead (and the transactional save keeps them safe).
   useEffect(() => {
     if (!categoryId) return;
+    // #531: coming back from the simulator, restore the SAME editing session.
+    // Review rule: a concurrent save must SURFACE (the existing banner) and
+    // never silently discard the in-progress table — the transactional save
+    // still rejects stale writes. A CLEAN stale stash (nothing in progress)
+    // yields to the fresh saved table instead of showing it outdated.
+    if (
+      simulatorRoundTripDraft &&
+      simulatorRoundTripDraft.categoryId === categoryId &&
+      simulatorRoundTripDraft.storeId === (activeStore?.id ?? "")
+    ) {
+      const stash = simulatorRoundTripDraft;
+      simulatorRoundTripDraft = null;
+      if (stash.draft.dirty || stash.draftBase === savedSignature) {
+        setDraft(stash.draft);
+        setDraftBase(stash.draftBase);
+        return;
+      }
+    }
     if (draft?.dirty) return;
     if (existing?.compatible) setDraft(existing.draft);
     setDraftBase(savedSignature);
@@ -338,18 +428,14 @@ export function PricingStrategyScreen() {
     // Data-driven cut: the midpoint of this band's member costs (defaults to
     // +50% of min for an empty band) — Fer adjusts before saving. Members are
     // matched by COST RANGE, not by proposal index: removeBand/addBand shift
-    // indices and would otherwise pick the wrong band's pieces.
+    // indices and would otherwise pick the wrong band's pieces. #531: the
+    // button is disabled with its reason when bandSplitCut finds no cut, so
+    // this path only runs with a valid one.
     patchDraft((next) => {
       const band = next.limits[index];
       if (!band) return;
-      const inBand = (proposal?.bands ?? []).flatMap((b) => b.members.map((m) => m.cost)).filter(
-        (c) => c > 0 && c >= band.min && (band.max === undefined || c < band.max)
-      );
-      const cut =
-        inBand.length > 0
-          ? Math.round(((Math.min(...inBand) + Math.max(...inBand)) / 2) * 100) / 100
-          : Math.round((band.min + 50) * 100) / 100;
-      if (!(cut > band.min) || (band.max !== undefined && !(cut < band.max))) return;
+      const cut = bandSplitCut(band, memberCosts);
+      if (cut === null) return;
       const nextBand = { min: cut, ...(band.max !== undefined ? { max: band.max } : {}) };
       band.max = cut;
       next.limits.splice(index + 1, 0, nextBand);
@@ -420,9 +506,16 @@ export function PricingStrategyScreen() {
     <Screen>
       <ScreenHeader
         title="Estrategia de precios"
-        subtitle="Tablas por categoría: rangos de costo con precios Iconic, Girly y Regular"
+        // #526: the subtitle names THIS store's real tiers — labels are
+        // per-store config, so a hardcoded tier list described another
+        // store's vocabulary (Joyería saw «Iconic, Girly y Regular» while
+        // editing Menudeo/Mayoreo/Emprendedora prices).
+        subtitle={`Tablas por categoría: rangos de costo con precios ${joinSpanish(tiers.map((tier) => tier.label))}`}
         action={
-          <Button variant="ghost" size="sm" onClick={() => navigate("/productos/diagnostico")}>Diagnóstico</Button>
+          <div className="flex flex-wrap items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/productos/simulador-contribucion")}>Simulador</Button>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/productos/diagnostico")}>Diagnóstico</Button>
+          </div>
         }
       />
       <div className="space-y-4">
@@ -610,11 +703,12 @@ export function PricingStrategyScreen() {
                 <div key={index} className="space-y-2 rounded-lg border border-edge bg-surface px-3 py-2">
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="w-24">
+                      {/* #526: the first band's 0 stays, disabled — the old hint
+                          repeated the visible value and unbalanced the row. */}
                       <TextField
                         label="Desde $"
                         inputMode="decimal"
                         disabled={index === 0}
-                        hint={index === 0 ? "la primera banda abre en $0" : undefined}
                         error={index === 0 ? undefined : captureError(`min-${index}`)}
                         value={index === 0 ? "0" : rawValue(`min-${index}`, String(limit.min))}
                         onChange={(e) => setLimit(index, "min", e.target.value)}
@@ -630,48 +724,99 @@ export function PricingStrategyScreen() {
                         onChange={(e) => setLimit(index, "max", e.target.value)}
                       />
                     </div>
-                    <Button size="sm" variant="ghost" onClick={() => splitBand(index)}>Dividir</Button>
-                    <Button size="sm" variant="ghost" onClick={() => removeBand(index)}>Quitar</Button>
+                    {/* #526: the three band actions travel as ONE group — at 390px
+                        they wrap together instead of stranding Dividir on the
+                        fields' line; on desktop they align to the right edge. */}
+                    <div className="flex flex-wrap gap-2 sm:ml-auto">
+                      {/* #531: when no data-driven cut exists (the band's pieces
+                          share its own start cost), say so instead of a dead
+                          button that looks broken. */}
+                      {bandSplitCut(limit, memberCosts) === null ? (
+                        <span className="self-center text-xs text-on-surface-soft">
+                          Dividir no disponible: el corte dejaría una banda sin piezas.
+                        </span>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={bandSplitCut(limit, memberCosts) === null}
+                        onClick={() => splitBand(index)}
+                      >
+                        Dividir
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => removeBand(index)}>Quitar</Button>
+                      {/* #336: simulate THIS band in the contribution simulator without retyping it. */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Simular esta banda en el simulador de contribución"
+                        onClick={() => {
+                          if (draft) {
+                            // #531: keep the editing session for the round-trip.
+                            simulatorRoundTripDraft = { storeId: activeStore?.id ?? "", categoryId, draft, draftBase };
+                          }
+                          setBandSimulatorPrefill({
+                            categoryId,
+                            min: limit.min,
+                            max: limit.max ?? null,
+                          });
+                          navigate("/productos/simulador-contribucion");
+                        }}
+                      >Simular banda</Button>
+                    </div>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-3">
                     {tiers.map((tier) => {
                       const value = draft.prices[tier.id]?.[index];
-                      const support = proposal?.bands?.[index]?.priceSupport[tier.id];
+                      const support = bandEvidence?.[index]?.priceSupport[tier.id];
+                      // #529: the healthy state (sólido) is the default and used
+                      // to repeat under EVERY price of EVERY band (12+); only the
+                      // exceptional supports (weak/pending) carry a hint now,
+                      // right where the price needs attention.
+                      const supportHint =
+                        support && support !== "strong"
+                          ? `Mediana actual, ${SUPPORT_HINT[support]} · ${tier.label}: ${EVIDENCE_LABEL[tierEvidence(tier.label)]}`
+                          : undefined;
                       return (
                         <TextField
                           key={tier.id}
                           label={`${tier.label} (pesos)`}
                           inputMode="decimal"
                           error={captureError(`price-${tier.id}-${index}`) ?? (value === null || value === undefined || !(value > 0) ? "Precio pendiente" : undefined)}
-                          hint={support ? `Mediana actual, ${SUPPORT_HINT[support]} · ${tier.label}: ${EVIDENCE_LABEL[tierEvidence(tier.label)]}` : undefined}
+                          hint={supportHint}
                           value={rawValue(`price-${tier.id}-${index}`, value === null || value === undefined ? "" : String(value))}
                           onChange={(e) => setPrice(tier.id, index, e.target.value)}
                         />
                       );
                     })}
                   </div>
-                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && (
+                  {bandEvidence?.[index] && (
                     <p className="text-xs text-on-surface-soft">
                       Contribución mínima en la banda (con la pieza más cara, empaque individual incluido):{" "}
                       {tiers
                         .map((t) => {
-                          const contribution = proposal.bands![index].minContribution[t.id];
+                          const contribution = bandEvidence![index].minContribution[t.id];
                           const preliminary =
                             packagingGaps(activeStore?.packaging, t.id).length > 0 ||
                             !packagingConfigured(activeStore?.packaging, t.id);
-                          const value = contribution === null || contribution === undefined ? "—" : `$${contribution}`;
+                          const value =
+                            contribution === null || contribution === undefined
+                              ? "—"
+                              : contribution < 0
+                                ? `-$${Math.abs(contribution)}`
+                                : `$${contribution}`;
                           return `${t.label} ${value}${preliminary ? " (preliminar: falta costo de empaque)" : ""}`;
                         })
                         .join(" · ")}
                     </p>
                   )}
-                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && proposal.bands[index].belowCost.length ? (
+                  {bandEvidence?.[index] && bandEvidence[index].belowCost.length ? (
                     <div className="rounded-lg border border-danger bg-surface px-3 py-2 text-xs">
                       <p className="font-semibold text-danger">
-                        {proposal.bands[index].belowCost.length} pieza(s) quedarían con precio sugerido bajo su costo base:
+                        {bandEvidence![index].belowCost.length} pieza(s) quedarían con precio sugerido bajo su costo base:
                       </p>
                       <ul className="list-disc pl-5 text-on-surface-soft">
-                        {proposal.bands[index].belowCost.map(({ member, tiers: below }) => (
+                        {bandEvidence![index].belowCost.map(({ member, tiers: below }) => (
                           <li key={member.id}>
                             {member.name} — costo <Money amount={member.cost} /> · {member.inStock ? "con existencia" : "agotada"} ·{" "}
                             {below.map((b) => `${tiers.find((t) => t.id === b.tierId)?.label ?? b.tierId} $${b.price}`).join(", ")}
@@ -686,8 +831,8 @@ export function PricingStrategyScreen() {
                       </p>
                     </div>
                   ) : null}
-                  {proposal?.bands?.[index] && draft.limits.length === proposal.bands.length && (
-                    <BandMembers band={proposal.bands[index]} tiers={tiers} serialized={serialized} packaging={activeStore?.packaging} />
+                  {bandEvidence?.[index] && (
+                    <BandMembers band={bandEvidence[index]} tiers={tiers} serialized={serialized} packaging={activeStore?.packaging} />
                   )}
                 </div>
               ))}

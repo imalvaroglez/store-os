@@ -6,7 +6,7 @@
 // saved table surfaces a banner instead of clobbering the draft.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { PricingStrategyScreen } from "./PricingStrategyScreen";
+import { PricingStrategyScreen, resetPricingStrategyCategoryForTests } from "./PricingStrategyScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
 import { CategoryRulesConflictError } from "../../app/StoreProvider";
@@ -105,6 +105,10 @@ function selectCategory() {
 }
 
 beforeEach(() => {
+  // #531: the screen seeds its category from the URL and the session's last
+  // choice — keep every test on a clean address and an empty session.
+  resetPricingStrategyCategoryForTests();
+  window.history.replaceState({}, "", "/productos/estrategia");
   state = fixtureState();
   mocks.state = state;
   state.stores[0] = oliviaStore();
@@ -531,5 +535,273 @@ describe("#219 — contratos de captura de Estrategia (auditoría)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Descartar mis cambios y recargar/ }));
     expect(screen.queryByText(/máximo dos decimales/i)).toBeNull();
     expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("150");
+  });
+});
+
+describe("#526 Tabla de bandas — etiquetas que guían la tarea", () => {
+  it("el subtítulo nombra los niveles REALES de la tienda (fixture: Regular, Girly, Iconic)", () => {
+    mount();
+    expect(screen.getByText(/rangos de costo con precios Regular, Girly e Iconic/)).toBeTruthy();
+  });
+
+  it("una tienda con Menudeo/Mayoreo/Emprendedora ve SUS nombres — nunca los de otra tienda", () => {
+    const store = oliviaStore();
+    store.priceTiers = [
+      { id: "t_retail", label: "Menudeo", order: 1 },
+      { id: "t_girly", label: "Mayoreo", order: 2 },
+      { id: "t_iconic", label: "Emprendedora", order: 3 },
+    ];
+    state.stores[0] = store;
+    mount();
+    expect(screen.getByText(/rangos de costo con precios Menudeo, Mayoreo y Emprendedora/)).toBeTruthy();
+    expect(screen.queryByText(/Iconic, Girly y Regular/)).toBeNull();
+  });
+
+  it("primera banda: conserva el 0 deshabilitado y SIN la nota «la primera banda abre en $0»", async () => {
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    const desde = screen.getAllByLabelText("Desde $")[0] as HTMLInputElement;
+    expect(desde.value).toBe("0");
+    expect(desde.disabled).toBe(true);
+    expect(screen.queryByText(/la primera banda abre en \$0/)).toBeNull();
+  });
+});
+
+describe("#529 hints de mediana en Tabla de bandas", () => {
+  it("soporte sólido: el hint «Mediana actual, sólido…» NO se repite bajo cada precio de cada banda", async () => {
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // 4 bandas × 3 niveles con soporte sólido = hasta 12 repeticiones antes;
+    // ahora el estado sano no necesita aclaración bajo cada campo.
+    expect(screen.queryByText(/Mediana actual/)).toBeNull();
+  });
+
+  it("un nivel poco respaldado o sin evidencia conserva su advertencia exactamente en su banda", async () => {
+    // Banda baja: 5 piezas con los tres precios (sólido). Banda alta: 4 piezas —
+    // sólo 2 con precio Girly (weak: <3 evidencias) y NINGUNA con Iconic
+    // (pending) → cada advertencia aparece UNA vez, en la banda alta.
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 2 }, () => product(95, { t_retail: pricey.t_retail, t_girly: pricey.t_girly })),
+      ...Array.from({ length: 2 }, () => product(95, { t_retail: pricey.t_retail })),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    expect(screen.getAllByText(/poco respaldado/).length).toBe(1);
+    expect(screen.getAllByText(/pendiente: sin evidencia/).length).toBe(1);
+    expect(screen.queryByText(/Mediana actual, sólido/)).toBeNull();
+  });
+});
+
+
+describe("#531 evidencia por banda con la tabla real", () => {
+  it("tras quitar una banda, piezas y contribución mínima reflejan la estructura editada", async () => {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // Propuesta: 2 bandas [0,~57.5) con 5 piezas y [57.5,∞) con 4.
+    expect(screen.getByText(/Piezas en esta banda \(5\)/)).toBeTruthy();
+    // Quitar la ÚLTIMA banda: la primera absorbe el rango y queda abierta.
+    const quitar = screen.getAllByRole("button", { name: "Quitar" });
+    fireEvent.click(quitar[quitar.length - 1]);
+    // La evidencia ahora pertenece a la banda vigente: 9 piezas y la
+    // contribución usa el precio del borrador contra el peor costo (95).
+    expect(screen.getByText(/Piezas en esta banda \(9\)/)).toBeTruthy();
+    expect(screen.getByText(/Contribución mínima/).textContent).toMatch(/Regular \$195/);
+  });
+
+  it("«Dividir» sin corte posible queda deshabilitado con su motivo visible", async () => {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // Cada banda de la propuesta tiene un solo costo: ningún corte válido
+    // (una mitad quedaría vacía) → deshabilitado con motivo.
+    expect(screen.getAllByRole("button", { name: "Dividir" })[0]).toBeDisabled();
+    expect(screen.getAllByText(/Dividir no disponible/).length).toBeGreaterThan(0);
+    // Al fusionar (quitar la banda alta) la banda única mezcla costos
+    // {20,95}: el punto medio 57.5 parte piezas en ambos lados → habilitado.
+    const quitar = screen.getAllByRole("button", { name: "Quitar" });
+    fireEvent.click(quitar[quitar.length - 1]);
+    expect(screen.getAllByRole("button", { name: "Dividir" })[0]).toBeEnabled();
+    // Estrechar «Hasta» a 20 deja fuera todos los costos: sin corte posible.
+    fireEvent.change(screen.getAllByLabelText("Hasta $")[0], { target: { value: "20" } });
+    expect(screen.getAllByRole("button", { name: "Dividir" })[0]).toBeDisabled();
+  });
+
+  it("la categoría elegida sobrevive vía ?categoria= al volver de Inicio o del simulador", async () => {
+    const second: Category = { ...categoryFixture(), id: "store_olivia__aros", slug: "aros" };
+    state.categories = [categoryFixture(), second];
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    // Sin re-elegir: la propuesta de la categoría aparece directamente.
+    await screen.findByText("Propuesta");
+
+    // Elegir otra categoría actualiza el parámetro en la URL.
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: second.id } });
+    expect(window.location.search).toContain(`categoria=${encodeURIComponent(second.id)}`);
+  });
+});
+
+describe("#531 re-entrada y formato de dinero negativo", () => {
+  it("re-entrar por menú (URL limpia) conserva la última categoría de la sesión", async () => {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    // Salió por el menú: URL limpia, misma sesión (remonte del componente).
+    view.unmount();
+    window.history.replaceState({}, "", "/productos/estrategia");
+    mount();
+    await screen.findByText("Propuesta");
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
+  });
+
+  it("una contribución negativa se muestra como -$N (convención #327), nunca $-N", async () => {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // Precio Regular de la banda fusionada bajo el peor costo (95):
+    // 90 − 95 = −5 → «Regular -$5».
+    const quitar = screen.getAllByRole("button", { name: "Quitar" });
+    fireEvent.click(quitar[quitar.length - 1]);
+    fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "90" } });
+    const line = screen.getByText(/Contribución mínima/).textContent ?? "";
+    expect(line).toMatch(/Regular -\$5/);
+    expect(line).not.toMatch(/\$-/);
+  });
+});
+
+describe("#531 ida y vuelta al simulador con concurrencia y entre tiendas", () => {
+  function products526() {
+    state.products = [
+      ...Array.from({ length: 5 }, () => product(20, cheap)),
+      ...Array.from({ length: 4 }, () => product(95, pricey)),
+    ];
+  }
+
+  it("«Simular banda» conserva el borrador sucio al volver (mismo guardado)", async () => {
+    products526();
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "300" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Simular banda" })[0]);
+    view.unmount();
+    // Regresa desde el simulador con ?categoria= (el botón real la lleva).
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    expect((screen.getAllByLabelText(/Regular \(pesos\)/)[0] as HTMLInputElement).value).toBe("300");
+  });
+
+  it("si la tabla guardada cambió durante el ida y vuelta, el borrador vuelve Y el banner de concurrencia habla (no se pierde en silencio)", async () => {
+    products526();
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "300" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Simular banda" })[0]);
+    view.unmount();
+    // Otra sesión guardó una tabla distinta mientras tanto.
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 60, price: 290 }, { min: 60, price: 310 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 60, price: 230 }, { min: 60, price: 260 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 60, price: 160 }, { min: 60, price: 170 }], rounding: "none" },
+        },
+      },
+    };
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    // El borrador sigue ahí (no se pierde en silencio)…
+    expect((screen.getAllByLabelText(/Regular \(pesos\)/)[0] as HTMLInputElement).value).toBe("300");
+    // …y la pantalla avisa el cambio concurrente en lugar de callar.
+    expect(await screen.findByText(/cambió mientras editabas|otra sesión/i)).toBeTruthy();
+  });
+
+  it("la última categoría NO filtra a otra tienda (select sin valor huérfano ni análisis fantasma)", async () => {
+    products526();
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    // Cambia a OTRA tienda (id distinto) y re-entra por menú (URL limpia):
+    // el guard por tienda debe rechazar la memoria de la categoría ajena.
+    const otra = fixtureState();
+    otra.stores[0] = oliviaStore();
+    otra.activeStoreId = otra.stores[2].id; // Joyería: otra tienda real (id distinto)
+    mocks.state = otra;
+    view.unmount();
+    window.history.replaceState({}, "", "/productos/estrategia");
+    mount();
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe("");
+    // Matcher que atraviesa nodos anidados: sin análisis «0 piezas» fantasma.
+    const phantom = screen.queryByText((_, el) => !!el?.textContent?.includes("piezas en la categoría"));
+    expect(phantom).toBeNull();
+  });
+
+  it("un stash LIMPIO vencido cede ante la tabla guardada fresca (sin banner)", async () => {
+    products526();
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 60, price: 290 }, { min: 60, price: 310 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 60, price: 230 }, { min: 60, price: 260 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 60, price: 160 }, { min: 60, price: 170 }], rounding: "none" },
+        },
+      },
+    };
+    const view = mount();
+    selectCategory();
+    await screen.findAllByLabelText("Hasta $"); // tabla guardada adoptada (limpia)
+    fireEvent.click(screen.getAllByRole("button", { name: "Simular banda" })[0]);
+    view.unmount();
+    // Otra sesión guarda una tabla DISTINTA mientras tanto.
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [{ min: 0, max: 80, price: 290 }, { min: 80, price: 310 }], rounding: "none" },
+          t_girly: { kind: "bands", bands: [{ min: 0, max: 80, price: 230 }, { min: 80, price: 260 }], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [{ min: 0, max: 80, price: 160 }, { min: 80, price: 170 }], rounding: "none" },
+        },
+      },
+    };
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    // El stash limpio cede: la tabla FRESCA (Hasta 80) se adopta, sin banner.
+    expect((screen.getAllByLabelText("Hasta $")[0] as HTMLInputElement).value).toBe("80");
+    expect(screen.queryByText(/cambiaron en otra sesión/i)).toBeNull();
   });
 });

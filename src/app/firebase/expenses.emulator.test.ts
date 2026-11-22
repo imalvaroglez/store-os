@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import type { ExpenseAssignment, LooseExpense } from "../../types";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
-import { assignExpenseTx, consumeSupplyTx } from "./firestoreData";
+import { assignExpenseTx, consumeSupplyTx , saveEntity } from "./firestoreData";
 
 let env: RulesTestEnvironment;
 
@@ -169,5 +169,73 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("loose expense transaction
     await expect(
       assignExpenseTx({ expenseId: "exp2-1", storeId: "foreign-store", assignment: assignment("asgX", 100, { kind: "order", orderId: "exp2-order" }) })
     ).rejects.toThrow(/otra tienda/i);
+  });
+});
+
+// #279 QA (MAYOR-2/3): the payment method is the classification an
+// unclassified output can still receive — rules must allow exactly that.
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#279 — clasificación de forma de pago por edición", () => {
+  let env2: RulesTestEnvironment;
+  beforeAll(async () => {
+    env2 = await initializeTestEnvironment({
+      projectId: "store-os-dev",
+      firestore: { rules: readFileSync("firestore.rules", "utf8") },
+    });
+    await env2.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users/cls-user"), { role: "member" });
+      await setDoc(doc(ctx.firestore(), "adminStores/cls-store"), { ownerUid: "cls-user", memberUids: ["cls-user"] });
+      await setDoc(doc(ctx.firestore(), "expenses/cls-exp"), {
+        id: "cls-exp", storeId: "cls-store", amount: 15, date: "2026-11-06", category: "operation",
+        createdAt: "2026-11-06T10:00:00Z", updatedAt: "2026-11-06T10:00:00Z",
+      });
+      await setDoc(doc(ctx.firestore(), "purchases/cls-received"), {
+        id: "cls-received", storeId: "cls-store", name: "Compra recibida", date: "2026-11-06", status: "received",
+        lines: [], totalConfirmed: 10, createdAt: "2026-11-06T10:00:00Z", updatedAt: "2026-11-06T10:00:00Z",
+      });
+    });
+    holder.db = env2.authenticatedContext("cls-user").firestore();
+  });
+  afterAll(async () => { await env2?.cleanup(); });
+
+  it("un gasto SIN clasificar se clasifica editando sólo su forma de pago", async () => {
+    await updateDoc(doc(holder.db, "expenses/cls-exp"), { paymentMethod: "cash", updatedAt: "2026-11-07T10:00:00Z" });
+    const saved = (await getDoc(doc(holder.db, "expenses/cls-exp"))).data();
+    expect(saved?.paymentMethod).toBe("cash");
+  });
+
+  it("una compra RECIBIDA se clasifica tocando sólo paymentMethod y updatedAt", async () => {
+    await updateDoc(doc(holder.db, "purchases/cls-received"), { paymentMethod: "credit_card", updatedAt: "2026-11-07T10:00:00Z" });
+    const saved = (await getDoc(doc(holder.db, "purchases/cls-received"))).data();
+    expect(saved?.paymentMethod).toBe("credit_card");
+    // Anything beyond classification keeps dying on received evidence.
+    await expect(
+      updateDoc(doc(holder.db, "purchases/cls-received"), { totalConfirmed: 99, paymentMethod: "cash", updatedAt: "2026-11-07T10:01:00Z" })
+    ).rejects.toThrow(/PERMISSION/i);
+  });
+});
+
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("declassify payment method persists (#279 r2 M1)", () => {
+  // Own environment: the sibling suite's afterAll already cleaned the shared
+  // one, terminating its client before this block runs.
+  let env279: RulesTestEnvironment;
+  beforeAll(async () => {
+    env279 = await initializeTestEnvironment({
+      projectId: "store-os-dev",
+      firestore: { rules: readFileSync("firestore.rules", "utf8") },
+    });
+    await env279.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users/exp279-user"), { role: "member" });
+      await setDoc(doc(ctx.firestore(), "adminStores/exp279-store"), { ownerUid: "exp279-user", memberUids: ["exp279-user"] });
+    });
+    holder.db = env279.authenticatedContext("exp279-user").firestore();
+  });
+  afterAll(async () => { await env279?.cleanup(); });
+  it("an expense edited to \"Sin clasificar\" REMOVES the stored paymentMethod", async () => {
+    await setDoc(doc(holder.db, "expenses/exp279-m1"), { ...expense("exp279-m1"), id: "exp279-m1", storeId: "exp279-store", paymentMethod: "cash" });
+    await saveEntity({ uid: "exp279-user" } as never, "expenses", {
+      id: "exp279-m1", storeId: "exp279-store", paymentMethod: undefined, note: "desclasificado",
+    });
+    const after = (await getDoc(doc(holder.db, "expenses/exp279-m1"))).data()!;
+    expect("paymentMethod" in after).toBe(false); // gone, not stale cash
   });
 });

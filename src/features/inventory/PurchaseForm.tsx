@@ -17,6 +17,8 @@ import {
 } from "../../design-system";
 import { suppliersForStore, productsForStore } from "../../lib/selectors";
 import { todayIso, nowIso, parseSpanishDate, formatDate } from "../../lib/dates";
+import { lastPaymentMethodUsed, PURCHASE_PAYMENT_METHOD_LABEL } from "../financial/position";
+import type { PurchasePaymentMethod } from "../../types";
 import { formatMoney, formatMoneyExact, parseAmount, sanitizeDecimalInput } from "../../lib/money";
 import { tiersForStore } from "../../lib/pricing";
 import { slugify, suggestSkuBase, uniqueProductSku, uniqueProductSlug } from "../../lib/catalog";
@@ -82,7 +84,10 @@ const EXPENSE_CATEGORY_OPTIONS = Object.entries(PURCHASE_EXPENSE_CATEGORY_LABEL)
 type Filter = "all" | PurchaseLineStatus;
 
 export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone: () => void }) {
-  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, adjustReceivedPurchase, confirmSupplierLink, revokeSupplierLink, cloud } = useStore();
+  const { state, activeStore, upsertPurchase, upsertProduct, createDraftProductsForPurchase, receivePurchase, adjustReceivedPurchase, confirmSupplierLink, revokeSupplierLink, classifyPurchasePayment, cloud } = useStore();
+  // #279: captured once with the purchase; default = the store's most
+  // recent classified record.
+  const defaultMethod = lastPaymentMethodUsed({ purchases: state.purchases, expenses: state.expenses });
   const toast = useToast();
   // #373: the revision this form is editing against — advanced on every save
   // so the in-place draft loop stays fresh, rejected when another tab moved on.
@@ -98,6 +103,9 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     return {
       ...purchase,
       ...(editable ? { tickets, costingMethod: "latest_purchase" as const } : {}),
+      // #279 QA (MAYOR-2): the contextual default is SELECTED — what the
+      // form displays is what it saves (an untouched capture classifies).
+      ...(editable && !purchase.paymentMethod && defaultMethod ? { paymentMethod: defaultMethod } : {}),
       lines: purchase.lines.map((line) => ({ ...line, lineId: line.lineId ?? uid("pl"), ...(editable ? { ticketId: line.ticketId ?? tickets[0].id } : {}) })),
     };
   });
@@ -880,6 +888,39 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           />
           {draft.dateInferred && <p className="text-xs text-on-surface-soft mt-1">Año sugerido según el documento — edítalo si no es correcto.</p>}
         </div>
+        <div>
+          <SelectField
+            label="Forma de pago"
+            value={draft.paymentMethod ?? ""}
+            onChange={(value) => setDraft({ ...draft, ...(value ? { paymentMethod: value as PurchasePaymentMethod } : { paymentMethod: undefined }) })}
+            hint={editDisabled ? "Clasificar la compra mueve el dinero entre caja y adeudo de tarjeta; el inventario no cambia." : undefined}
+            options={[
+              { value: "", label: "Sin clasificar" },
+              ...PAYMENT_METHOD_OPTIONS.map((option) => (
+                option.value === defaultMethod && !purchase.paymentMethod
+                  ? { ...option, label: `${option.label} (última)` }
+                  : option
+              )),
+            ]}
+          />
+          {editDisabled && draft.paymentMethod !== purchase.paymentMethod && (
+            <Button
+              className="mt-2"
+              size="sm"
+              variant="secondary"
+              disabled={savingLate}
+              onClick={() => {
+                setSavingLate(true);
+                classifyPurchasePayment(purchase, draft.paymentMethod)
+                  .then(() => toast.success("Forma de pago guardada."))
+                  .catch(() => toast.error("No se pudo guardar la forma de pago. Inténtalo de nuevo."))
+                  .finally(() => setSavingLate(false));
+              }}
+            >
+              Guardar forma de pago
+            </Button>
+          )}
+        </div>
         <div className="space-y-1">
           <TextField
             label="Folio del ticket"
@@ -1414,3 +1455,6 @@ function ProductMiniForm({
     </div>
   );
 }
+
+const PAYMENT_METHOD_OPTIONS = (Object.keys(PURCHASE_PAYMENT_METHOD_LABEL) as PurchasePaymentMethod[])
+  .map((method) => ({ value: method, label: PURCHASE_PAYMENT_METHOD_LABEL[method] }));

@@ -2,7 +2,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StoreProvider, useStore } from "./StoreProvider";
-import type { AppState, Store } from "../types";
+import type { AppState, Store, Product } from "../types";
 import { SyncErrorNoticeView } from "./App";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 
@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
   subscribeCloudState: vi.fn(),
   deleteEntity: vi.fn(),
   unprojectPublicForStore: vi.fn(),
+  retainStoreEvidence: vi.fn(async () => {}),
   reload: vi.fn(),
+  saveProduct: vi.fn(),
+  upsertPublicProduct: vi.fn(),
 }));
 
 vi.mock("./firebase/AuthProvider", () => ({
@@ -33,6 +36,9 @@ vi.mock("./firebase/firestoreData", async (importOriginal) => {
     subscribeCloudState: mocks.subscribeCloudState,
     deleteEntity: mocks.deleteEntity,
     unprojectPublicForStore: mocks.unprojectPublicForStore,
+    retainStoreEvidence: mocks.retainStoreEvidence,
+    saveProductPreservingConcurrentTx: mocks.saveProduct,
+    upsertPublicProduct: mocks.upsertPublicProduct,
   };
 });
 vi.mock("../lib/storage", async (importOriginal) => {
@@ -87,7 +93,9 @@ describe("StoreProvider background save errors", () => {
   afterEach(() => cleanup());
 
   it("shows a rejected background write and clears it after a successful retry", async () => {
-    mocks.deleteEntity.mockRejectedValueOnce(new Error("permission-denied"));
+    // #375: entity deletes are allSettled (a denial must not abort the chain),
+    // so the honest-error vehicle is the AWAITED retention step.
+    mocks.retainStoreEvidence.mockReset().mockRejectedValueOnce(new Error("permission-denied")).mockResolvedValue(undefined);
     const { result } = renderHook(() => useStore(), { wrapper: Wrapper });
     await waitForCloudHydration();
 
@@ -106,31 +114,31 @@ describe("StoreProvider background save errors", () => {
     expect(screen.getByRole("alert").textContent).toContain("No se pudo eliminar la tienda.");
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
 
-    await waitFor(() => expect(mocks.deleteEntity).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.retainStoreEvidence).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(result.current.syncError).toBeNull());
     notice.unmount();
   });
 
   it("ignores a failed write from a previous UID and prevents its retry under the new UID", async () => {
     let rejectOldWrite!: (error: Error) => void;
-    mocks.deleteEntity.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+    mocks.retainStoreEvidence.mockReset().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
       rejectOldWrite = reject;
     }));
     const { result, rerender } = renderHook(() => useStore(), { wrapper: Wrapper });
     await waitForCloudHydration();
 
     act(() => result.current.deleteStore(store.id));
-    await waitFor(() => expect(mocks.deleteEntity).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.retainStoreEvidence).toHaveBeenCalledTimes(1));
     mocks.user = { uid: "uid-b", email: "b@example.com", role: "member" };
     rerender();
     await waitFor(() => expect(mocks.loadCloudState).toHaveBeenCalledTimes(2));
     await act(async () => rejectOldWrite(new Error("permission-denied")));
     await waitFor(() => expect(result.current.syncError).toBeNull());
-    expect(mocks.deleteEntity).toHaveBeenCalledTimes(1);
+    expect(mocks.retainStoreEvidence).toHaveBeenCalledTimes(1);
   });
 
   it("does not let a retry from the old UID write after the account changes", async () => {
-    mocks.deleteEntity.mockRejectedValueOnce(new Error("permission-denied"));
+    mocks.retainStoreEvidence.mockReset().mockRejectedValueOnce(new Error("permission-denied")).mockResolvedValue(undefined);
     const { result, rerender } = renderHook(() => useStore(), { wrapper: Wrapper });
     await waitForCloudHydration();
 
@@ -143,7 +151,7 @@ describe("StoreProvider background save errors", () => {
     await waitFor(() => expect(result.current.syncError).toBeNull());
     await act(async () => staleRetry());
 
-    expect(mocks.deleteEntity).toHaveBeenCalledTimes(1);
+    expect(mocks.retainStoreEvidence).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -205,6 +213,62 @@ describe("StoreProvider cloud hydration races", () => {
     await act(async () => rejectOldLoad(new Error("permission-denied")));
     expect(result.current.stateError).toBeNull();
     expect(result.current.stateStatus).not.toBe("error");
+    expect(result.current.syncError).toBeNull();
+  });
+});
+
+
+describe("#489 product save vs public projection failure", () => {
+  afterEach(() => cleanup());
+
+  it("rejects a failed canonical write without dispatching stock or starting publication", async () => {
+    const baseline = { id: "watch", storeId: store.id, name: "Reloj prueba", category: "other", quantityOnHand: 0, createdAt: store.createdAt, updatedAt: store.updatedAt } as Product;
+    mocks.user = { uid: "uid-a", email: "a@example.com", role: "super_admin" };
+    mocks.loadCloudState.mockReset().mockResolvedValue({ ...testState, products: [baseline] });
+    mocks.subscribeCloudState.mockReturnValue(() => {});
+    mocks.saveProduct.mockReset().mockRejectedValueOnce(new Error("permission-denied"));
+    mocks.upsertPublicProduct.mockReset();
+    const { result } = renderHook(() => useStore(), { wrapper: Wrapper });
+    await waitFor(() => expect(result.current.state.products).toHaveLength(1));
+    await act(async () => {
+      await expect(result.current.upsertProduct({ ...baseline, quantityOnHand: 1 }, baseline)).rejects.toThrow("permission-denied");
+    });
+    expect(result.current.state.products[0].quantityOnHand).toBe(0);
+    expect(mocks.upsertPublicProduct).not.toHaveBeenCalled();
+    expect(result.current.syncError).toBeNull();
+  });
+
+  it("commits stock once and retries ONLY the failed public projection", async () => {
+    const baseline = { id: "watch", storeId: store.id, name: "Reloj prueba", category: "other", quantityOnHand: 0, createdAt: store.createdAt, updatedAt: store.updatedAt } as Product;
+    let shelf = 0;
+    mocks.user = { uid: "uid-a", email: "a@example.com", role: "super_admin" };
+    mocks.loadCloudState.mockReset().mockResolvedValue({ ...testState, products: [baseline] });
+    mocks.subscribeCloudState.mockReturnValue(() => {});
+    mocks.saveProduct.mockReset().mockImplementation(async (base: Product, next: Product) => {
+      // Same delta contract as the real transaction; replay would inflate 1→2.
+      shelf += (next.quantityOnHand ?? 0) - (base.quantityOnHand ?? 0);
+      return { ...next, quantityOnHand: shelf };
+    });
+    mocks.upsertPublicProduct.mockReset().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValue(undefined);
+    const { result } = renderHook(() => useStore(), { wrapper: Wrapper });
+    await waitFor(() => expect(result.current.state.products).toHaveLength(1));
+    await act(async () => {
+      await expect(result.current.upsertProduct({ ...baseline, quantityOnHand: 1 }, baseline)).resolves.toMatchObject({ quantityOnHand: 1 });
+    });
+    await waitFor(() => expect(result.current.syncError?.label).toBe("actualizar el catálogo público del producto guardado"));
+    expect(shelf).toBe(1);
+    expect(result.current.state.products[0].quantityOnHand).toBe(1);
+    const retry = result.current.syncError!.retry;
+    // Another session publishes a second product before this failure is retried.
+    const added = { ...baseline, id: "watch-b", name: "Otra pieza" };
+    const publish = mocks.subscribeCloudState.mock.calls[mocks.subscribeCloudState.mock.calls.length - 1][1];
+    await act(async () => publish({ ...testState, products: [{ ...baseline, quantityOnHand: 1 }, added] }));
+    await waitFor(() => expect(result.current.state.products).toHaveLength(2));
+    await act(async () => retry());
+    expect(mocks.upsertPublicProduct.mock.calls[1][2].map((p: Product) => p.id)).toContain("watch-b");
+    expect(mocks.saveProduct).toHaveBeenCalledTimes(1);
+    expect(mocks.upsertPublicProduct).toHaveBeenCalledTimes(2);
+    expect(shelf).toBe(1);
     expect(result.current.syncError).toBeNull();
   });
 });
