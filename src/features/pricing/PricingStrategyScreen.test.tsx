@@ -605,6 +605,62 @@ describe("#531 ida y vuelta al simulador con concurrencia y entre tiendas", () =
     expect((screen.getAllByLabelText(/Regular \(pesos\)/)[0] as HTMLInputElement).value).toBe("300");
   });
 
+  it("criterio QA con CINCO bandas: explicación general UNA vez y marcas puntuales en cada banda afectada (dictamen #529)", async () => {
+    // A SAVED 5-band table (the criterion's measurement shape) over products
+    // whose evidence leaves several bands weak/pending:
+    // banda 2 Girly débil (2 evidencias) · banda 3 Girly débil + Iconic pendiente · banda 4 Iconic pendiente.
+    state.products = [
+      ...Array.from({ length: 4 }, () => product(20, cheap)), // banda 1 sólida
+      ...Array.from({ length: 2 }, () => product(60, cheap)),
+      ...Array.from({ length: 2 }, () => product(65, { t_retail: 290, t_iconic: 160 })), // banda 2: Girly 2/4
+      ...Array.from({ length: 2 }, () => product(120, { t_retail: 300, t_girly: 240 })),
+      ...Array.from({ length: 2 }, () => product(130, { t_retail: 300 })), // banda 3: Girly 2/4, Iconic 0/4
+      ...Array.from({ length: 4 }, () => product(250, { t_retail: 310, t_girly: 260 })), // banda 4: Iconic 0/4
+      ...Array.from({ length: 4 }, () => product(500, pricey)), // banda 5 sólida
+    ];
+    state.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: {
+        [CAT]: {
+          t_retail: { kind: "bands", bands: [
+            { min: 0, max: 50, price: 290 }, { min: 50, max: 100, price: 295 },
+            { min: 100, max: 200, price: 300 }, { min: 200, max: 400, price: 310 },
+            { min: 400, price: 320 },
+          ], rounding: "none" },
+          t_girly: { kind: "bands", bands: [
+            { min: 0, max: 50, price: 230 }, { min: 50, max: 100, price: 235 },
+            { min: 100, max: 200, price: 240 }, { min: 200, max: 400, price: 250 },
+            { min: 400, price: 260 },
+          ], rounding: "none" },
+          t_iconic: { kind: "bands", bands: [
+            { min: 0, max: 50, price: 160 }, { min: 50, max: 100, price: 165 },
+            { min: 100, max: 200, price: 170 }, { min: 200, max: 400, price: 175 },
+            { min: 400, price: 180 },
+          ], rounding: "none" },
+        },
+      },
+    };
+    mount();
+    selectCategory();
+    // A compatible SAVED table is adopted directly (no proposal step needed).
+    await screen.findAllByLabelText("Hasta $");
+    // The general explanation appears EXACTLY once — the per-category legend.
+    const legends = screen.getAllByText(/Mediana actual/);
+    expect(legends.length).toBe(1);
+    const legendText = legends[0].textContent ?? "";
+    expect(legendText).toMatch(/banda 2/);
+    expect(legendText).toMatch(/banda 3/);
+    expect(legendText).toMatch(/banda 4/);
+    expect(legendText).not.toMatch(/banda 1/);
+    expect(legendText).not.toMatch(/banda 5/);
+    // Point marks stay visible in their exact fields: banda2 Girly + banda3
+    // Girly + banda3 Iconic + banda4 Iconic = 4 marks.
+    expect(screen.getAllByText(/^poco respaldado$/).length).toBe(2);
+    expect(screen.getAllByText(/^pendiente: sin evidencia$/).length).toBe(2);
+    // Zero per-field long text (the reincidence QA measured with 5 bands).
+    expect(screen.queryByText(/Mediana actual, \w+/)).toBeNull();
+  });
+
   it("entrar por la PESTAÑA «Simulador» también conserva el borrador sucio al volver (dictamen QA #531)", async () => {
     products526();
     const view = mount();
@@ -617,7 +673,9 @@ describe("#531 ida y vuelta al simulador con concurrencia y entre tiendas", () =
     view.unmount();
     window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
     mount();
+    // BOTH the unsaved draft AND the category survive the tab round-trip.
     expect((screen.getAllByLabelText(/Regular \(pesos\)/)[0] as HTMLInputElement).value).toBe("300");
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
   });
 
   it("si la tabla guardada cambió durante el ida y vuelta, el borrador vuelve Y el banner de concurrencia habla (no se pierde en silencio)", async () => {
