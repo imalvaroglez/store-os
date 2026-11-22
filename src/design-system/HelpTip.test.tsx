@@ -80,6 +80,26 @@ describe("HelpTip · ayuda contextual accesible (#530)", () => {
     expect(screen.queryByText(/guardar como pdf/i)).toBeNull();
   });
 
+  it("gesto Chrome/Firefox: el click inmediatamente después del foco NO vuelve a cerrar (dictamen QA #530)", () => {
+    render(
+      <HelpTip label="Ayuda: imprimir y guardar PDF">
+        En el diálogo de impresión, elige «Guardar como PDF» como destino.
+      </HelpTip>
+    );
+    const trigger = screen.getByRole("button", { name: /imprimir y guardar pdf/i });
+    // Real event order on tap/click in Chrome/Firefox: pointerdown → focus → click.
+    fireEvent.pointerDown(trigger);
+    fireEvent.focus(trigger);
+    expect(screen.getByText(/guardar como pdf/i)).toBeTruthy();
+    fireEvent.click(trigger); // the click of the SAME gesture — consumed, stays open
+    expect(screen.getByText(/guardar como pdf/i)).toBeTruthy();
+    // A SECOND tap re-presses the already focused trigger: no new focus event,
+    // so the click toggles and closes.
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    expect(screen.queryByText(/guardar como pdf/i)).toBeNull();
+  });
+
   it("blur cierra la aclaración y aria-expanded/describedby reflejan el estado", () => {
     render(
       <HelpTip label="Ayuda: imprimir y guardar PDF">
@@ -88,9 +108,11 @@ describe("HelpTip · ayuda contextual accesible (#530)", () => {
     );
     const trigger = screen.getByRole("button", { name: /imprimir y guardar pdf/i }) as HTMLButtonElement;
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    expect(trigger.getAttribute("aria-describedby")).toBeTruthy();
+    // QA #530 (menor): describedby only while the panel exists in the DOM.
+    expect(trigger.getAttribute("aria-describedby")).toBeNull();
     fireEvent.focus(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.getAttribute("aria-describedby")).toBeTruthy();
     fireEvent.blur(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(/guardar como pdf/i)).toBeNull();
