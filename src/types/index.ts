@@ -352,6 +352,12 @@ export type OrderItem = {
   variantId?: string;
   variantColor?: string;
   variantSku?: string;
+  /** #461: the exact color×size combination this line sold/reserves. The
+   * snapshot keeps tickets and history readable even if the size is later
+   * edited or removed; the id drives per-combination stock. */
+  variantSizeId?: string;
+  variantSize?: string;
+  variantSizeSku?: string;
   productName: string;
   quantity: number;
   priceTier?: string;
@@ -492,6 +498,9 @@ export type OrderDepositCorrection = {
 export type OrderDeliveryLine = {
   productId: string;
   variantId?: string;
+  /** #461: the delivered combination — a partial delivery discounts its OWN
+   * size dimension, never a sibling's. */
+  variantSizeId?: string;
   /** Integer pieces delivered in THIS event; strictly positive. */
   quantity: number;
 };

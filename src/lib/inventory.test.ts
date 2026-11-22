@@ -4,6 +4,7 @@ import {
   applyPurchaseLines,
   committedForProduct,
   committedBreakdownForProduct,
+  stockDimensionKey,
   reservationDeltas,
   reservationDeltasForOrderChange,
   DEFAULT_LOW_STOCK_AT,
@@ -611,5 +612,57 @@ describe("projectedShortageByDimension / attributeProjectedShortageToLines (#325
     // Another order oversold p1 by 2 (stock −2); this draft adds 1 more piece.
     const perLine = attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 1 }], undefined, true, [product("p1", -2)]);
     expect(perLine.get("l1")).toBe(3);
+  });
+});
+
+// #461 corte 3: per-combination committed — lines carrying variantSizeId
+// break down by their exact combination and partial deliveries discount
+// THEIR size, never a sibling's.
+describe("committedBreakdownForProduct por combinación (#461)", () => {
+  const line = (overrides: Partial<OrderItem> = {}): OrderItem =>
+    ({ lineId: "l", productId: "p1", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100, variantId: "v_gold", variantColor: "Dorado", ...overrides }) as OrderItem;
+  const order = (o: Partial<Order> = {}): Order =>
+    ({
+      id: "ord-aaa111", storeId: "s1", customerId: "c1", deposit: 0,
+      items: [line()], orderStatus: "confirmed", paymentStatus: "unpaid",
+      createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z", ...o,
+    }) as Order;
+
+  it("líneas con talla desglosan el comprometido por combinación exacta", () => {
+    const orders = [order({
+      items: [
+        line({ variantSizeId: "s6", variantSize: "6", quantity: 3 }),
+        line({ variantSizeId: "s5", variantSize: "5", quantity: 2 }),
+        line({ variantId: "v_silver", variantColor: "Plateado", quantity: 1 }),
+      ],
+    })];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    expect(breakdown.total).toBe(6);
+    const lines = breakdown.rows[0].lines;
+    expect(lines).toHaveLength(3);
+    const s6 = lines.find((l) => l.variantSizeId === "s6");
+    const s5 = lines.find((l) => l.variantSizeId === "s5");
+    const silver = lines.find((l) => l.variantId === "v_silver");
+    expect(s6).toMatchObject({ variantId: "v_gold", variantSizeId: "s6", variantSize: "6", quantity: 3 });
+    expect(s5).toMatchObject({ quantity: 2 });
+    expect(silver?.variantSizeId).toBeUndefined();
+  });
+
+  it("la entrega parcial descuenta SU combinación: 1 entregada de la 6 deja 6·2 y 5·2 intactas", () => {
+    const orders = [order({
+      items: [line({ variantSizeId: "s6", variantSize: "6", quantity: 3 }), line({ variantSizeId: "s5", variantSize: "5", quantity: 2 })],
+      deliveries: [{ id: "d1", at: "", by: "", lines: [{ productId: "p1", variantId: "v_gold", variantSizeId: "s6", quantity: 1 }] } as never],
+    })];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    const lines = breakdown.rows[0].lines;
+    expect(lines.find((l) => l.variantSizeId === "s6")?.quantity).toBe(2);
+    expect(lines.find((l) => l.variantSizeId === "s5")?.quantity).toBe(2);
+    expect(breakdown.total).toBe(4);
+  });
+
+  it("stockDimensionKey distingue la talla: la misma línea con y sin talla son dimensiones distintas", () => {
+    expect(stockDimensionKey("p1", "v_gold", "s6")).toBe("p1:v_gold:s6");
+    expect(stockDimensionKey("p1", "v_gold")).toBe("p1:v_gold");
+    expect(stockDimensionKey("p1")).toBe("p1");
   });
 });

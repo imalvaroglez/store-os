@@ -25,8 +25,12 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
-import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
+import {
+  combinationReservationDeltasForOrderChange,
+  reservationDeltasForOrderChange,
+  variantReservationDeltasForOrderChange,
+} from "../../lib/inventory";
+import { applyCombinationDelta, applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
 import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
@@ -1050,6 +1054,9 @@ export async function saveOrderWithStockTx(
     // delta model). Fail-closed on a missing color: stock never lands on the
     // design level by accident.
     const variantDeltas = variantReservationDeltasForOrderChange(previous, next);
+    // #461: size lines move their EXACT color×size shelf in the same
+    // transaction — never the color's, never the design's.
+    const combinationDeltas = combinationReservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
     const shortages: { productId: string; missing: number }[] = [];
     for (const [productId, delta] of deltas) {
@@ -1119,6 +1126,36 @@ export async function saveOrderWithStockTx(
       const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);
       if (!nextVariants) throw new Error("El color elegido ya no existe en este diseño.");
       variantWrites.set(vDelta.productId, nextVariants);
+    }
+    // #461: combination writes share the same doc-level accumulation as color
+    // writes. A take of a vanished combination fails closed; a release of a
+    // vanished combination returns the real pieces to the visible design
+    // shelf (same rule as vanished colors, M3).
+    for (const cDelta of combinationDeltas.values()) {
+      const product = await tx.get(doc(db, "products", cDelta.productId));
+      if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
+      if (!product.exists() && cDelta.delta > 0) continue;
+      const data = product.exists() ? product.data() as Record<string, unknown> : {};
+      const variants = data.variants as Product["variants"];
+      const variant = variants?.find((v) => v.id === cDelta.variantId);
+      const size = variant?.sizes?.find((sz) => sz.id === cDelta.sizeId);
+      if (!isVariantProduct({ variants }) || !variant || !size) {
+        if (cDelta.delta > 0) {
+          releases.set(cDelta.productId, (releases.get(cDelta.productId) ?? 0) + cDelta.delta);
+          continue;
+        }
+        throw new Error("La talla elegida ya no existe en este diseño.");
+      }
+      if (next.installmentsReservedAt && cDelta.delta < 0) {
+        const current = typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0;
+        if (current + cDelta.delta < 0) {
+          throw new InsufficientStockError([{ productId: cDelta.productId, missing: -(current + cDelta.delta) }]);
+        }
+      }
+      const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];
+      const nextSizes = applyCombinationDelta({ variants: working }, cDelta.variantId, cDelta.sizeId, cDelta.delta, at);
+      if (!nextSizes) throw new Error("La talla elegida ya no existe en este diseño.");
+      variantWrites.set(cDelta.productId, nextSizes);
     }
     const saved = { ...next, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
     // Merge vanished-color releases into the same product-level updates (or
@@ -1579,6 +1616,9 @@ export async function deleteOrderWithStockTx(
     // #124: deleting releases COLOR shelves too — the same delta model, or
     // the exact-color pieces would never return to their shelf.
     const variantDeltas = variantReservationDeltasForOrderChange(previous, cancelled);
+    // #461: cancelling returns each combination's still-pending pieces to
+    // THEIR exact shelf.
+    const combinationDeltas = combinationReservationDeltasForOrderChange(previous, cancelled);
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
       const product = await tx.get(doc(db, "products", productId));
@@ -1604,6 +1644,23 @@ export async function deleteOrderWithStockTx(
       const working = (variantWrites.get(vDelta.productId) ?? variants!) as ProductVariant[];
       const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);
       if (nextVariants) variantWrites.set(vDelta.productId, nextVariants);
+    }
+    for (const cDelta of combinationDeltas.values()) {
+      const product = await tx.get(doc(db, "products", cDelta.productId));
+      if (!product.exists()) continue;
+      const data = product.data();
+      if (data.storeId !== previous.storeId) throw new Error("El producto pertenece a otra tienda.");
+      const variants = data.variants as Product["variants"];
+      const variant = variants?.find((v) => v.id === cDelta.variantId);
+      const size = variant?.sizes?.find((sz) => sz.id === cDelta.sizeId);
+      if (!variant || !size) {
+        // Vanished combination: the real pieces return to the design shelf.
+        releases.set(cDelta.productId, (releases.get(cDelta.productId) ?? 0) + cDelta.delta);
+        continue;
+      }
+      const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];
+      const nextSizes = applyCombinationDelta({ variants: working }, cDelta.variantId, cDelta.sizeId, cDelta.delta, at);
+      if (nextSizes) variantWrites.set(cDelta.productId, nextSizes);
     }
     const finalUpdates = [...updates];
     for (const [productId, release] of releases) {

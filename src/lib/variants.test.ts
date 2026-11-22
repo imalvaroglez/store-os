@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OrderItem, Product, ProductVariant, VariantSize } from "../types";
 import {
   applyCombinationDelta,
+  combinationReservationDeltas,
   applyVariantDelta,
   combinationPublishError,
   combinationSaveError,
@@ -258,5 +259,42 @@ describe("#461 combinaciones color × talla", () => {
     delete legacy.variants![1].sizes;
     expect(variantStock(legacy.variants![1])).toBe(3);
     expect(combinationPublishError(legacy)).toBeNull();
+  });
+});
+
+describe("#461 corte 3 — líneas con talla y deltas por combinación", () => {
+  const talla = (id: string, label: string, qty: number): VariantSize =>
+    ({ id, size: label, sku: `SOL-D-${label}`, cost: 100, quantityOnHand: qty, createdAt: "", updatedAt: "" });
+  const line = (sizeId: string | undefined, quantity: number, variantId = "v_gold"): OrderItem =>
+    ({ productId: "p1", productName: "Anillo Sol", quantity, unitPrice: 100, subtotal: 100 * quantity, variantId, variantColor: "Dorado", ...(sizeId ? { variantSizeId: sizeId, variantSize: "6" } : {}) }) as OrderItem;
+
+  it("dos líneas de la MISMA combinación acumulan un solo delta; tallas distintas son dimensiones distintas", () => {
+    const deltas = combinationReservationDeltas([], [line("s6", 2), line("s6", 1), line("s5", 3)]);
+    expect(deltas.get("p1:v_gold:s6")?.delta).toBe(-3);
+    expect(deltas.get("p1:v_gold:s5")?.delta).toBe(-3);
+    expect(deltas.size).toBe(2);
+  });
+
+  it("una línea con talla NO mueve el color: variantReservationDeltas la ignora", () => {
+    const variantDeltas = variantReservationDeltas([], [line("s6", 2)]);
+    expect(variantDeltas.size).toBe(0);
+    // La misma línea SIN talla sí es asunto del color (modalidad actual).
+    expect(variantReservationDeltas([], [line(undefined, 2)]).get("p1:v_gold")?.delta).toBe(-2);
+  });
+
+  it("la cancelación devuelve la pieza a SU combinación: delta positivo por combinación exacta", () => {
+    const deltas = combinationReservationDeltas([line("s6", 2)], []);
+    expect(deltas.get("p1:v_gold:s6")?.delta).toBe(2);
+    expect(deltas.size).toBe(1);
+  });
+
+  it("applyCombinationDelta aterriza el delta de reserva SOLO en su talla", () => {
+    const product = design({
+      variants: [variant({ id: "v_gold", color: "Dorado", skuSuffix: "D", quantityOnHand: undefined, sizes: [talla("s5", "5", 2), talla("s6", "6", 5)] })],
+    });
+    const next = applyCombinationDelta(product, "v_gold", "s6", -1);
+    const gold = next!.find((v) => v.id === "v_gold")!;
+    expect(gold.sizes!.find((s) => s.id === "s6")!.quantityOnHand).toBe(4);
+    expect(gold.sizes!.find((s) => s.id === "s5")!.quantityOnHand).toBe(2);
   });
 });

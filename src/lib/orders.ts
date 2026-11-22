@@ -36,6 +36,11 @@ export function orderItems(order: Partial<Order> & Record<string, unknown>): Ord
         ...(typeof item.variantId === "string" && item.variantId ? { variantId: item.variantId } : {}),
         ...(typeof item.variantColor === "string" && item.variantColor ? { variantColor: item.variantColor } : {}),
         ...(typeof item.variantSku === "string" && item.variantSku ? { variantSku: item.variantSku } : {}),
+        // #461: the exact color×size combination survives every read model,
+        // exactly like the color fields above.
+        ...(typeof item.variantSizeId === "string" && item.variantSizeId ? { variantSizeId: item.variantSizeId } : {}),
+        ...(typeof item.variantSize === "string" && item.variantSize ? { variantSize: item.variantSize } : {}),
+        ...(typeof item.variantSizeSku === "string" && item.variantSizeSku ? { variantSizeSku: item.variantSizeSku } : {}),
         productName: String(item.productName ?? item.name ?? "Producto").trim() || "Producto",
         quantity,
         ...(tierId(item.priceTier) ? { priceTier: tierId(item.priceTier) } : {}),

@@ -70,13 +70,41 @@ export type VariantStockDelta = { productId: string; variantId: string; delta: n
 export function variantReservationDeltas(oldItems: OrderItem[], newItems: OrderItem[]): Map<string, VariantStockDelta> {
   const deltas = new Map<string, VariantStockDelta>();
   const add = (item: OrderItem, sign: number) => {
-    if (!item.productId || !item.variantId) return;
+    // #461: a line with a size moves its COMBINATION, never the color shelf.
+    if (!item.productId || !item.variantId || item.variantSizeId) return;
     const key = `${item.productId}:${item.variantId}`;
     const current = deltas.get(key);
     const delta = sign * item.quantity;
     deltas.set(key, {
       productId: item.productId,
       variantId: item.variantId,
+      delta: (current?.delta ?? 0) + delta,
+    });
+  };
+  for (const item of oldItems) add(item, 1);
+  for (const item of newItems) add(item, -1);
+  return new Map([...deltas].filter(([, d]) => d.delta !== 0));
+}
+
+export type CombinationStockDelta = { productId: string; variantId: string; sizeId: string; delta: number };
+
+/**
+ * #461: per-combination reservation deltas — the size-level companion of
+ * `variantReservationDeltas`. A line carrying variantSizeId moves EXACTLY
+ * its combination (color × size); lines without it are not combination
+ * business (the color/product functions own them).
+ */
+export function combinationReservationDeltas(oldItems: OrderItem[], newItems: OrderItem[]): Map<string, CombinationStockDelta> {
+  const deltas = new Map<string, CombinationStockDelta>();
+  const add = (item: OrderItem, sign: number) => {
+    if (!item.productId || !item.variantId || !item.variantSizeId) return;
+    const key = `${item.productId}:${item.variantId}:${item.variantSizeId}`;
+    const current = deltas.get(key);
+    const delta = sign * item.quantity;
+    deltas.set(key, {
+      productId: item.productId,
+      variantId: item.variantId,
+      sizeId: item.variantSizeId,
       delta: (current?.delta ?? 0) + delta,
     });
   };

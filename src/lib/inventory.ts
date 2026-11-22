@@ -1,5 +1,11 @@
 import type { Product, PurchaseLine, Order, OrderItem } from "../types";
-import { totalStock, variantReservationDeltas, type VariantStockDelta } from "./variants";
+import {
+  combinationReservationDeltas,
+  totalStock,
+  variantReservationDeltas,
+  type CombinationStockDelta,
+  type VariantStockDelta,
+} from "./variants";
 import { effectiveOrderStatus, orderItems, orderReference, orderStatusIsOpen } from "./orders";
 
 // Inventory math — pure functions used by the StoreProvider (to apply purchases
@@ -115,6 +121,10 @@ export function applyPurchaseLines(
 export type CommittedLine = {
   variantId?: string;
   variantColor?: string;
+  /** #461: the exact combination this pending line holds, when the line
+   * carries a size. */
+  variantSizeId?: string;
+  variantSize?: string;
   quantity: number;
 };
 
@@ -162,16 +172,23 @@ export function committedBreakdownForProduct(
     let orderTotal = 0;
     for (const item of orderItems(order)) {
       if (item.productId !== productId) continue;
-      const key = stockDimensionKey(item.productId, item.variantId);
+      const key = stockDimensionKey(item.productId, item.variantId, item.variantSizeId);
       const left = Math.max(0, delivered.get(key) ?? 0);
       const take = Math.min(item.quantity, left);
       delivered.set(key, left - take);
       const pending = item.quantity - take;
       if (pending <= 0) continue;
-      const variantKey = item.variantId ?? "";
+      // #461: a line with a size is its OWN dimension (color × size); lines
+      // of the same color without sizes keep sharing the color dimension.
+      const variantKey = item.variantId && item.variantSizeId ? `${item.variantId}:${item.variantSizeId}` : (item.variantId ?? "");
       const existing = byVariant.get(variantKey);
       if (existing) existing.quantity += pending;
-      else byVariant.set(variantKey, { ...(item.variantId ? { variantId: item.variantId } : {}), ...(item.variantColor ? { variantColor: item.variantColor } : {}), quantity: pending });
+      else byVariant.set(variantKey, {
+        ...(item.variantId ? { variantId: item.variantId } : {}),
+        ...(item.variantColor ? { variantColor: item.variantColor } : {}),
+        ...(item.variantSizeId ? { variantSizeId: item.variantSizeId, ...(item.variantSize ? { variantSize: item.variantSize } : {}) } : {}),
+        quantity: pending,
+      });
       orderTotal += pending;
     }
     if (orderTotal <= 0) continue;
@@ -231,6 +248,16 @@ export function variantReservationDeltasForOrderChange(
   return variantReservationDeltas(heldOrderItems(previous), heldOrderItems(next));
 }
 
+/** #461: per-combination reservation deltas for a lifecycle change — the
+ * size-level mirror of variantReservationDeltasForOrderChange (same
+ * holdsPieces truth, same partial-delivery cap). */
+export function combinationReservationDeltasForOrderChange(
+  previous: Order | undefined,
+  next: Order
+): Map<string, CombinationStockDelta> {
+  return combinationReservationDeltas(heldOrderItems(previous), heldOrderItems(next));
+}
+
 /**
  * Does this order currently hold pieces out of the shelf (reserved or
  * consumed)? The ONE truth shared by the reservation model and the
@@ -251,7 +278,7 @@ export function deliveredByDimension(order: Order): Map<string, number> {
   for (const event of order.deliveries ?? []) {
     for (const line of event.lines) {
       if (!Number.isInteger(line.quantity) || line.quantity <= 0) continue;
-      const key = stockDimensionKey(line.productId, line.variantId);
+      const key = stockDimensionKey(line.productId, line.variantId, line.variantSizeId);
       delivered.set(key, (delivered.get(key) ?? 0) + line.quantity);
     }
   }
@@ -293,7 +320,7 @@ function heldOrderItems(order: Order | undefined): OrderItem[] {
       const remaining = new Map(deliveredByDimension(order));
       return items.map((item) => {
         if (!item.productId) return { ...item, quantity: 0 };
-        const key = stockDimensionKey(item.productId, item.variantId);
+        const key = stockDimensionKey(item.productId, item.variantId, item.variantSizeId);
         const left = Math.max(0, remaining.get(key) ?? 0);
         const take = Math.min(item.quantity, left);
         remaining.set(key, left - take);
@@ -309,7 +336,8 @@ function heldOrderItems(order: Order | undefined): OrderItem[] {
 /** The stock dimension an order line moves — variant stock for variant lines,
  * product stock otherwise (#124: variant stock never lands on the design
  * level). Keyed exactly like variantReservationDeltas. */
-export function stockDimensionKey(productId: string, variantId?: string): string {
+export function stockDimensionKey(productId: string, variantId?: string, sizeId?: string): string {
+  if (sizeId) return `${productId}:${variantId}:${sizeId}`;
   return variantId ? `${productId}:${variantId}` : productId;
 }
 
@@ -327,20 +355,24 @@ type ShortageProduct = Pick<Product, "id" | "quantityOnHand" | "variants">;
  * editor and the category review ALL share this function so they can never
  * disagree (#309). Pure — never mutates stock or orders. */
 export function shortageByDimension(
-  items: ReadonlyArray<Pick<OrderItem, "productId" | "variantId">>,
+  items: ReadonlyArray<Pick<OrderItem, "productId" | "variantId" | "variantSizeId">>,
   products: ReadonlyArray<ShortageProduct>
 ): Map<string, DimensionShortage> {
   const byId = new Map(products.map((product) => [product.id, product]));
   const result = new Map<string, DimensionShortage>();
   for (const item of items) {
     if (!item.productId) continue;
-    const key = stockDimensionKey(item.productId, item.variantId);
+    const key = stockDimensionKey(item.productId, item.variantId, item.variantSizeId);
     if (result.has(key)) continue;
     const product = byId.get(item.productId);
     if (!product) continue;
-    const stock = item.variantId
-      ? product.variants?.find((variant) => variant.id === item.variantId)?.quantityOnHand
-      : product.quantityOnHand;
+    // #461: a size line reads its COMBINATION's shelf; a color line without
+    // size keeps reading the color's (current modality).
+    const stock = item.variantSizeId
+      ? product.variants?.find((variant) => variant.id === item.variantId)?.sizes?.find((sz) => sz.id === item.variantSizeId)?.quantityOnHand
+      : item.variantId
+        ? product.variants?.find((variant) => variant.id === item.variantId)?.quantityOnHand
+        : product.quantityOnHand;
     if (typeof stock === "number" && stock < 0) {
       result.set(key, {
         key,
@@ -396,7 +428,7 @@ function attributeShortageMap<T extends { key: string; productId?: string; varia
  * Post-save, the card badge (negative stock from the reservation deltas)
  * shows the same number, so the two can never disagree. Pure — never mutates
  * stock or orders. */
-export function projectedShortageByDimension<T extends { productId?: string; variantId?: string; quantity: number }>(
+export function projectedShortageByDimension<T extends { productId?: string; variantId?: string; variantSizeId?: string; quantity: number }>(
   draftLines: ReadonlyArray<T>,
   savedOrder: Order | undefined,
   draftWillHold: boolean,
@@ -406,7 +438,7 @@ export function projectedShortageByDimension<T extends { productId?: string; var
   if (savedOrder && holdsPieces(savedOrder)) {
     for (const item of orderItems(savedOrder)) {
       if (!item.productId) continue;
-      const key = stockDimensionKey(item.productId, item.variantId);
+      const key = stockDimensionKey(item.productId, item.variantId, item.variantSizeId);
       held.set(key, (held.get(key) ?? 0) + item.quantity);
     }
   }
@@ -414,7 +446,7 @@ export function projectedShortageByDimension<T extends { productId?: string; var
   const draftQty = new Map<string, DraftTotal>();
   for (const line of draftLines) {
     if (!line.productId) continue;
-    const key = stockDimensionKey(line.productId, line.variantId);
+    const key = stockDimensionKey(line.productId, line.variantId, line.variantSizeId);
     const current = draftQty.get(key);
     const add = Math.max(0, line.quantity);
     if (current) current.quantity += add;
