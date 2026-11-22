@@ -5,7 +5,7 @@
 // panel never shifts surrounding fields or buttons.
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { HelpTip } from "./HelpTip";
+import { HelpTip, shouldFlipUp } from "./HelpTip";
 
 describe("HelpTip · ayuda contextual accesible (#530)", () => {
   it("el disparador tiene nombre accesible y la aclaración nace oculta", () => {
@@ -123,5 +123,86 @@ describe("HelpTip · ayuda contextual accesible (#530)", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+});
+
+// --- Dictamen QA r2 (22-nov): the three Chromium-touch blockers ----------
+describe("HelpTip · vía táctil Chromium (dictamen QA r2)", () => {
+  const TIP = "En el diálogo de impresión, elige «Guardar como PDF» como destino.";
+  function tip() {
+    render(<HelpTip label="Ayuda: imprimir y guardar PDF">{TIP}</HelpTip>);
+    return screen.getByRole("button", { name: /imprimir y guardar pdf/i });
+  }
+  // The REAL Chromium tap sequence. `withFocus` models that a re-press of an
+  // already-focused trigger fires NO new focus event (second tap).
+  const tap = (el: HTMLElement, withFocus = true) => {
+    fireEvent.pointerDown(el, { pointerType: "touch" });
+    fireEvent.pointerUp(el, { pointerType: "touch" });
+    if (withFocus) fireEvent.focus(el);
+    fireEvent.click(el);
+  };
+
+  it("traza real del tap de Chromium: el mouseleave SINTÉTICO tras el clic no cierra la aclaración", () => {
+    const trigger = tip();
+    tap(trigger);
+    expect(screen.getByText(/guardar como pdf/i)).toBeTruthy();
+    // Chromium emits synthetic mouseout/mouseleave right after the tap's
+    // click — the QA trace's TOOLTIP REMOVE @44ms. Touch input ignores them.
+    fireEvent.mouseOut(trigger, { bubbles: true });
+    fireEvent.mouseLeave(trigger);
+    expect(screen.getByText(/guardar como pdf/i)).toBeTruthy();
+    // The SECOND tap re-presses the focused trigger: no focus event, closes.
+    tap(trigger, false);
+    expect(screen.queryByText(/guardar como pdf/i)).toBeNull();
+  });
+
+  it("presión mantenida ~700 ms: el foco llega al LEVANTAR — la aclaración queda visible", () => {
+    vi.useFakeTimers();
+    try {
+      const trigger = tip();
+      fireEvent.pointerDown(trigger, { pointerType: "touch" });
+      act(() => {
+        vi.advanceTimersByTime(700);
+      });
+      fireEvent.pointerUp(trigger, { pointerType: "touch" });
+      fireEvent.focus(trigger); // touch focus fires on release
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      expect(screen.getByText(/guardar como pdf/i)).toBeTruthy();
+      fireEvent.click(trigger);
+      expect(screen.getByText(/guardar como pdf/i)).toBeTruthy(); // consumed, stays open
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("mouse REAL conserva su semántica: enter abre tras la pausa y leave cierra", () => {
+    vi.useFakeTimers();
+    try {
+      const trigger = tip();
+      fireEvent.pointerDown(trigger, { pointerType: "mouse" });
+      fireEvent.pointerUp(trigger, { pointerType: "mouse" });
+      fireEvent.mouseEnter(trigger);
+      act(() => {
+        vi.advanceTimersByTime(450);
+      });
+      expect(screen.getByText(/guardar como pdf/i)).toBeTruthy();
+      fireEvent.mouseLeave(trigger);
+      expect(screen.queryByText(/guardar como pdf/i)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Placement (dictamen r2, tercer mayor): the balloon flips UP when there is
+// no room below the trigger — pure, layout-independent decision.
+describe("shouldFlipUp · colocación del globo (dictamen QA r2)", () => {
+  it("con espacio abajo no voltea; pegado al borde inferior voltea; sin espacio arriba tampoco", () => {
+    expect(shouldFlipUp(620, 660, 844)).toBe(false); // 184px below: room
+    expect(shouldFlipUp(700, 740, 844)).toBe(true); // 104px below: less than the panel needs
+    expect(shouldFlipUp(800, 840, 844)).toBe(true); // 4px below: flip up (top 800 ≥ min)
+    expect(shouldFlipUp(40, 80, 844)).toBe(false); // near bottom BUT no room above either
   });
 });

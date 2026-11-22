@@ -7,6 +7,16 @@ import { IconButton } from "./Button";
 // focus, and toggled by touch without running any other action. The panel is
 // absolutely positioned so opening it never shifts fields or buttons.
 const SHOW_DELAY_MS = 400;
+// #530 QA r2 (mayor 3): the balloon needs its own height free beside the
+// trigger; otherwise it flips UP (Dropdown/Sheet rule).
+const MIN_PANEL_SPACE = 150;
+
+/** #530 QA r2: flip the balloon up when there is no room below the trigger —
+ * pure so the decision is unit-testable (jsdom has no layout). */
+export function shouldFlipUp(triggerTop: number, triggerBottom: number, viewportHeight: number, minSpace = MIN_PANEL_SPACE): boolean {
+  const below = viewportHeight - triggerBottom;
+  return below < minSpace && triggerTop >= minSpace;
+}
 
 type Props = {
   /** Accessible name of the help trigger, e.g. "Ayuda: imprimir y guardar PDF". */
@@ -17,15 +27,18 @@ type Props = {
 
 export function HelpTip({ label, children }: Props) {
   const [open, setOpen] = useState(false);
+  const [flipUp, setFlipUp] = useState(false);
   const panelId = useId();
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
   const showTimer = useRef<number | null>(null);
-  // QA #530 dictamen (Mayor): Chrome/Firefox fire mousedown → focus → click on
-  // a tap, so the focus OPENED the panel and the click of the SAME gesture
-  // immediately closed it — the clarification was never visible. A focus that
-  // directly follows a pointerdown marks the gesture; its ensuing click is
-  // the intent to OPEN and is consumed. A second tap re-presses the already
-  // focused trigger (no new focus event) and toggles normally.
-  const pointerGestureAt = useRef(0);
+  // #530 QA r2 (mayores 1–2): the touch pipeline differs from the mouse one.
+  // Chromium emits a SYNTHETIC mouseout/mouseleave right after a tap's click
+  // (the QA trace's TOOLTIP REMOVE @44ms) — mouse enter/leave must be ignored
+  // while the last pointer was touch. And on touch the FOCUS arrives when the
+  // finger lifts, so the gesture is stamped on pointerdown AND pointerup (a
+  // >500ms hold must not turn the release click into a close).
+  const lastPointerType = useRef("");
+  const gestureAt = useRef(0);
   const openedByPointerGesture = useRef(false);
   const POINTER_FOCUS_WINDOW_MS = 500;
 
@@ -37,12 +50,20 @@ export function HelpTip({ label, children }: Props) {
   };
   useEffect(() => clearTimer, []);
 
+  const stampPointer = (pointerType: string) => {
+    lastPointerType.current = pointerType;
+    gestureAt.current = Date.now();
+  };
+  const isTouch = () => lastPointerType.current === "touch";
+
   const show = () => {
     clearTimer();
+    const rect = wrapRef.current?.getBoundingClientRect();
+    setFlipUp(rect ? shouldFlipUp(rect.top, rect.bottom, window.innerHeight) : false);
     setOpen(true);
   };
   const showByFocus = () => {
-    if (Date.now() - pointerGestureAt.current < POINTER_FOCUS_WINDOW_MS) openedByPointerGesture.current = true;
+    if (Date.now() - gestureAt.current < POINTER_FOCUS_WINDOW_MS) openedByPointerGesture.current = true;
     show();
   };
   const hide = () => {
@@ -62,7 +83,7 @@ export function HelpTip({ label, children }: Props) {
   };
 
   return (
-    <span className="relative inline-flex">
+    <span ref={wrapRef} className="relative inline-flex">
       <IconButton
         variant="ghost"
         aria-label={label}
@@ -70,11 +91,21 @@ export function HelpTip({ label, children }: Props) {
         aria-describedby={open ? panelId : undefined}
         onFocus={showByFocus}
         onBlur={hide}
-        onPointerDown={() => {
-          pointerGestureAt.current = Date.now();
+        onPointerDown={(event) => {
+          stampPointer(event.pointerType);
+          // A new press resets the gesture mark: the second tap's click must
+          // toggle (no focus event refires on an already-focused trigger).
+          openedByPointerGesture.current = false;
         }}
-        onMouseEnter={scheduleShow}
-        onMouseLeave={hide}
+        onPointerUp={(event) => stampPointer(event.pointerType)}
+        onMouseEnter={() => {
+          if (isTouch()) return; // synthetic after a tap — not a real hover
+          scheduleShow();
+        }}
+        onMouseLeave={() => {
+          if (isTouch()) return;
+          hide();
+        }}
         onClick={toggle}
         onKeyDown={(event) => {
           if (event.key !== "Escape" || !open) return;
@@ -91,7 +122,9 @@ export function HelpTip({ label, children }: Props) {
         <span
           id={panelId}
           role="tooltip"
-          className="absolute right-0 top-full z-30 mt-1 block w-64 rounded-xl border border-edge bg-surface p-3 text-left text-sm font-normal normal-case tracking-normal text-on-surface shadow-lift"
+          className={`absolute right-0 z-30 block w-64 rounded-xl border border-edge bg-surface p-3 text-left text-sm font-normal normal-case tracking-normal text-on-surface shadow-lift ${
+            flipUp ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
         >
           {children}
         </span>
