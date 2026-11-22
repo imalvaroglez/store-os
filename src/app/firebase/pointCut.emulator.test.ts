@@ -44,6 +44,10 @@ async function callCut(app: FirebaseApp, name: string, data: Record<string, unkn
   return httpsCallable(fns, name)(data);
 }
 
+function resData(res: { data: unknown }) {
+  return res.data as Record<string, unknown>;
+}
+
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 cortes, cobro y anulación (callables)", () => {
   let operator: { app: FirebaseApp; uid: string };
   let outsider: { app: FirebaseApp; uid: string };
@@ -218,6 +222,67 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 cortes, cobro y anul
     const op = (await getDoc(doc(holder.db, "pointOperations/corte_cut-sealed"))).data()!;
     expect(op.status).toBe("pendiente_de_cobro");
     expect((await getDoc(doc(holder.db, "pointOperations/anul_annul-sealed"))).exists()).toBe(false);
+  });
+
+
+  // M1 (dictamen r2): idempotency runs BEFORE the sealed-month guard — a
+  // retry of the SAME intent after the month got sealed returns the
+  // idempotent result, not a rejection.
+  it("M1: reintentar el MISMO corte tras sellarse su mes responde idempotente, no rechazo", async () => {
+    // A fresh OPEN month (2026-11 is sealed by the test above).
+    await callCut(operator.app, "registerPointCut", {
+      storeId: "pt-store", pointId: PT, intentId: "cut-m1", effectiveDate: "2027-02-10",
+      commissionRate: 0.2,
+      lines: [{ productId: "p1", markedPriceCents: 10000, soldQty: 1 }],
+    });
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "closes/close-m1-2027-02"), {
+        id: "close-m1-2027-02", storeId: "pt-store", period: "2027-02",
+        status: "authorized", createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    const retry = await callCut(operator.app, "registerPointCut", {
+      storeId: "pt-store", pointId: PT, intentId: "cut-m1", effectiveDate: "2027-02-10",
+      commissionRate: 0.2,
+      lines: [{ productId: "p1", markedPriceCents: 10000, soldQty: 1 }],
+    });
+    expect(resData(retry)).toMatchObject({ registered: false, alreadyRegistered: true });
+  });
+
+  it("M1: reintentar el MISMO cobro tras sellarse su mes responde idempotente, no rechazo", async () => {
+    await callCut(operator.app, "registerPointCut", {
+      storeId: "pt-store", pointId: PT, intentId: "cut-m1b", effectiveDate: "2026-10-15",
+      commissionRate: 0,
+      lines: [{ productId: "p1", markedPriceCents: 10000, soldQty: 1 }],
+    });
+    // The payment lands while October is still open...
+    await callCut(operator.app, "registerPointCutPayment", {
+      storeId: "pt-store", pointId: PT, corteId: "corte_cut-m1b", intentId: "pay-m1b", date: "2026-10-16", method: "cash",
+    });
+    // ...then October gets authorized — the retry of the SAME intent must
+    // answer idempotently, not with the sealed-month rejection.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "closes/close-m1-2026-10"), {
+        id: "close-m1-2026-10", storeId: "pt-store", period: "2026-10",
+        status: "authorized", createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    const retry = await callCut(operator.app, "registerPointCutPayment", {
+      storeId: "pt-store", pointId: PT, corteId: "corte_cut-m1b", intentId: "pay-m1b", date: "2026-10-16", method: "cash",
+    });
+    expect(resData(retry)).toMatchObject({ registered: false });
+  });
+
+  // M2 (dictamen r2): positive control — a cut FROM a sealed month collected
+  // with a payment date in an OPEN month is accepted (the close fixed the
+  // month's money; collecting later is the normal flow).
+  it("M2: cobro de un corte de mes sellado con fecha en mes ABIERTO se acepta", async () => {
+    const pay = await callCut(operator.app, "registerPointCutPayment", {
+      storeId: "pt-store", pointId: PT, corteId: "corte_cut-sealed", intentId: "pay-sealed-open", date: "2026-12-03", method: "cash",
+    });
+    expect(resData(pay)).toMatchObject({ registered: true });
+    const corte = (await getDoc(doc(holder.db, "pointOperations/corte_cut-sealed"))).data()!;
+    expect(corte.status).toBe("cobrado");
   });
 
   it("registerPointCut con effectiveDate de un mes sellado se rechaza en el servidor", async () => {

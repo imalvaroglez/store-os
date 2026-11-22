@@ -325,6 +325,18 @@ export const withdrawFromPoint = onCall(
         if (variants.length > 0 && !variants.some((v) => v?.id === line.variantId)) {
           throw new HttpsError("failed-precondition", "La línea no indica un color existente del diseño.");
         }
+        // #524 QA r2 (mayor): a variant entry whose design NO LONGER sells per
+        // color cannot return to the shelf automatically — restoring to the
+        // design level would move pieces across dimensions silently (the
+        // accumulator regression even dropped them: increment(0)). Fail closed
+        // with the incompatibility named; the whole transaction aborts.
+        if (variants.length === 0 && line.variantId) {
+          const name = snap.get("name") ?? "Una pieza";
+          throw new HttpsError(
+            "failed-precondition",
+            `${name} dejó de venderse por color y la entrada del punto es de una variante. Aclara la ficha (reactiva el color o ajusta la existencia) antes de reingresar estas piezas.`
+          );
+        }
         // #524 QA (crítico): ACCUMULATE the warehouse restores per dimension —
         // the per-line variants rebuild used the ORIGINAL snapshot and the
         // second line of the same design erased the first's restore.

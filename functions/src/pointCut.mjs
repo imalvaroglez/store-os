@@ -124,17 +124,17 @@ export const registerPointCut = onCall(
 
     const opId = `corte_${intentId}`;
     return db.runTransaction(async (tx) => {
-      // #524 QA dictamen (mayor): sealed months are enforced by the SERVER —
-      // a backdated cut of an authorized month never lands, with no partial
-      // writes (the transaction aborts whole).
-      const sealed = await sealedPeriods(tx, db, storeId);
-      assertOpenPeriod(sealed, effectiveDate, "registrar un corte de un mes cerrado");
       // Idempotency first: this exact intent already landed → nothing to do.
       const opRef = db.collection("pointOperations").doc(opId);
       const saved = await tx.get(opRef);
       if (saved.exists) {
         return { registered: false, alreadyRegistered: true, corteId: opId, totals: saved.get("totals") };
       }
+      // #524 QA r2/M1: idempotency runs BEFORE the sealed-month guard — a
+      // retry of the SAME intent after the month got sealed answers
+      // idempotently, never with the sealed rejection.
+      const sealed = await sealedPeriods(tx, db, storeId);
+      assertOpenPeriod(sealed, effectiveDate, "registrar un corte de un mes cerrado");
       await readPoint(tx, db, storeId, pointId);
 
       // Fresh evidence — the plan is re-derived server-side, never trusted.
@@ -208,15 +208,14 @@ export const registerPointCutPayment = onCall(
 
     const paymentOpId = `cobro_${intentId}`;
     return db.runTransaction(async (tx) => {
-      // #524 QA (mayor): the payment's OWN date cannot belong to a sealed
-      // month — the authorized close already fixed that month's money.
-      const sealed = await sealedPeriods(tx, db, storeId);
-      assertOpenPeriod(sealed, date, "registrar un cobro de un mes cerrado");
       const paymentRef = db.collection("pointOperations").doc(paymentOpId);
       const savedPayment = await tx.get(paymentRef);
       if (savedPayment.exists) {
         return { registered: false, alreadyRegistered: true, amountCents: savedPayment.get("amountCents") };
       }
+      // #524 QA r2/M1: idempotency first; the sealed guard follows.
+      const sealed = await sealedPeriods(tx, db, storeId);
+      assertOpenPeriod(sealed, date, "registrar un cobro de un mes cerrado");
       await readPoint(tx, db, storeId, pointId);
 
       const corteRef = db.collection("pointOperations").doc(corteId);

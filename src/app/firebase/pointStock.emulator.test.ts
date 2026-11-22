@@ -229,6 +229,87 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 surtir del almacén 
     expect(p3.variants.find((v: { id: string }) => v.id === "v-negra").quantityOnHand).toBe(4); // 3 + 1
   });
 
+  // --- Dictamen QA r2 (22-nov) — Mayor: withdrawing entries of a variant
+  // whose design NO LONGER sells per color must FAIL CLOSED (the accumulator
+  // regression restored increment(0) and the pieces vanished silently).
+  it("retirar piezas de un diseño convertido a simple se rechaza: nada cambia (repro QA r2)", async () => {
+    await callStock(operator.app, "stockPointFromWarehouse", {
+      storeId: "pt-store", pointId: PT, intentId: "sur-conv", physicalDate: "2026-11-22",
+      lines: [{ productId: "p2", variantId: "v-cafe", qty: 3, markedPriceCents: 68000 }],
+    });
+    // Fer disables «Se vende por color» in Productos — the design goes simple.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/p2"), {
+        storeId: "pt-store", name: "Cartera", sku: "P2", category: "other", isPublic: true,
+        cost: 300, prices: { t_retail: 680 }, quantityOnHand: 2,
+        createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    await expect(callStock(operator.app, "withdrawFromPoint", {
+      storeId: "pt-store", pointId: PT, intentId: "wd-conv", physicalDate: "2026-11-22",
+      lines: [{ productId: "p2", variantId: "v-cafe", qty: 3 }],
+    })).rejects.toThrow(/dej[oó] de venderse por color|variante/i);
+    // NOTHING changed: the shelf stays as the conversion left it, the point
+    // entry is intact and no operation was registered.
+    const product = (await getDoc(doc(holder.db, "products/p2"))).data()!;
+    expect(product.quantityOnHand).toBe(2);
+    expect(product.variants).toBeUndefined();
+    const entry = (await getDoc(doc(holder.db, "pointEntries/pe_sur-conv_0"))).data()!;
+    expect(entry.consumedQty).toBe(0);
+    expect((await getDoc(doc(holder.db, "pointOperations/wd_wd-conv"))).exists()).toBe(false);
+  });
+
+  it("retiro con una línea válida y otra incompatible: TODA la operación se rechaza sin cambios parciales", async () => {
+    // p1 (plain) has a valid pending entry; p2's variant entry is now
+    // incompatible after the conversion above.
+    // Snapshot BEFORE: whatever earlier tests left on the valid dimension.
+    const beforeEntry = (await getDoc(doc(holder.db, "pointEntries/pe-prev"))).data()!;
+    const beforeShelf = (await getDoc(doc(holder.db, "products/p1"))).data()!;
+    await expect(callStock(operator.app, "withdrawFromPoint", {
+      storeId: "pt-store", pointId: PT, intentId: "wd-mixed", physicalDate: "2026-11-22",
+      lines: [
+        { productId: "p1", qty: 1 }, // válida: consume de pe-prev
+        { productId: "p2", variantId: "v-cafe", qty: 1 }, // incompatible
+      ],
+    })).rejects.toThrow(/dej[oó] de venderse por color|variante/i);
+    // The VALID line was not applied either: entry, shelf and op unchanged.
+    const prev = (await getDoc(doc(holder.db, "pointEntries/pe-prev"))).data()!;
+    expect(prev.consumedQty).toBe(beforeEntry.consumedQty);
+    const perfume = (await getDoc(doc(holder.db, "products/p1"))).data()!;
+    expect(perfume.quantityOnHand).toBe(beforeShelf.quantityOnHand);
+    expect((await getDoc(doc(holder.db, "pointOperations/wd_wd-mixed"))).exists()).toBe(false);
+  });
+
+  // M2 (dictamen r2): two withdrawal lines of the SAME variant accumulate.
+  it("M2: retirar dos líneas de la MISMA variante devuelve el total a su estante exacto", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const fs = ctx.firestore();
+      await setDoc(doc(fs, "products/p4"), {
+        storeId: "pt-store", name: "Bufanda", sku: "P4", category: "other", isPublic: true,
+        variants: [{ id: "v-roja", color: "Roja", quantityOnHand: 0, cost: 150, createdAt: NOW, updatedAt: NOW }],
+        createdAt: NOW, updatedAt: NOW,
+      });
+      await setDoc(doc(fs, "pointEntries/pe-m2"), {
+        id: "pe-m2", storeId: "pt-store", pointId: PT, productId: "p4", productName: "Bufanda",
+        variantId: "v-roja", variantColor: "Roja",
+        entryDate: "2026-11-22", quantity: 5, consumedQty: 0, markedPriceCents: 40000,
+        unitCostCents: 15000, createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    const res = await callStock(operator.app, "withdrawFromPoint", {
+      storeId: "pt-store", pointId: PT, intentId: "wd-samevar", physicalDate: "2026-11-22",
+      lines: [
+        { productId: "p4", variantId: "v-roja", qty: 2 },
+        { productId: "p4", variantId: "v-roja", qty: 3 },
+      ],
+    });
+    expect(res.data).toMatchObject({ withdrawn: true, units: 5 });
+    const p4 = (await getDoc(doc(holder.db, "products/p4"))).data()!;
+    expect(p4.variants.find((v: { id: string }) => v.id === "v-roja").quantityOnHand).toBe(5);
+    const entry = (await getDoc(doc(holder.db, "pointEntries/pe-m2"))).data()!;
+    expect(entry.consumedQty).toBe(5);
+  });
+
   it("una operadora ajena a la tienda no puede mover mercancía", async () => {
     await expect(callStock(outsider.app, "stockPointFromWarehouse", {
       storeId: "pt-store", pointId: PT, intentId: "sur-x", physicalDate: "2026-11-22",
