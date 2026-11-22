@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
-import type { OrderItem, Product, ProductVariant } from "../types";
+import type { OrderItem, Product, ProductVariant, VariantSize } from "../types";
 import {
+  applyCombinationDelta,
   applyVariantDelta,
+  combinationPublishError,
+  combinationSaveError,
+  combinationSku,
+  findCombination,
   isVariantProduct,
   lineVariant,
+  suggestSizeSkuSuffix,
   suggestSkuSuffix,
   totalStock,
   variantPublishError,
   variantReservationDeltas,
   variantSku,
+  variantStock,
 } from "./variants";
 
 const photo = (id: string) => ({ id, url: `https://x.test/${id}.jpg`, storagePath: `p/${id}`, order: 0, isPrimary: true });
@@ -150,5 +157,106 @@ describe("#124 hallazgos de revisión", () => {
     const deltas = variantReservationDeltas([], [a, b] as never);
     expect(deltas.get("p1:v_gold")?.delta).toBe(-3);
     expect(deltas.size).toBe(1);
+  });
+});
+
+// #461 (PO 22-nov): sizes under a color — stock PER COMBINATION, derived
+// color/design totals, clave + confirmed cost per combination, and the
+// "Plateado · 6 never exists" rule.
+describe("#461 combinaciones color × talla", () => {
+  function size(id: string, sizeLabel: string, overrides: Partial<VariantSize> = {}): VariantSize {
+    return { id, size: sizeLabel, sku: `MOV-014-D-${sizeLabel}`, cost: 100, quantityOnHand: 1, createdAt: "", updatedAt: "", ...overrides };
+  }
+  function ring(): Product {
+    return design({
+      variants: [
+        variant({
+          id: "v_gold", color: "Dorado", skuSuffix: "D", quantityOnHand: undefined,
+          sizes: [size("s4", "4", { quantityOnHand: 2 }), size("s5", "5", { quantityOnHand: 0 }), size("s6", "6", { quantityOnHand: 5 })],
+        }),
+        variant({
+          id: "v_silver", color: "Plateado", skuSuffix: "P", quantityOnHand: 3,
+          sizes: [size("s8", "8", { sku: "MOV-014-P-8", quantityOnHand: 4 }), size("s9", "9", { sku: "MOV-014-P-9", quantityOnHand: 1 })],
+        }),
+      ],
+    });
+  }
+
+  it("sufijo sugerido de talla: el propio valor, ASCII-safe y sin espacios", () => {
+    expect(suggestSizeSkuSuffix("6")).toBe("6");
+    expect(suggestSizeSkuSuffix("chica")).toBe("CHICA");
+    expect(suggestSizeSkuSuffix("Única")).toBe("UNICA");
+    expect(suggestSizeSkuSuffix("media larga")).toBe("MEDIALARGA");
+  });
+
+  it("clave de la combinación = clave del color + talla; la clave explícita gana", () => {
+    expect(combinationSku("MOV-014", { sku: "MOV-014-D" } as ProductVariant, { size: "6" } as VariantSize)).toBe("MOV-014-D-6");
+    expect(combinationSku("MOV-014", { skuSuffix: "D" } as ProductVariant, { sku: "EXACTA" } as VariantSize)).toBe("EXACTA");
+    expect(combinationSku(undefined, { skuSuffix: "D" } as ProductVariant, { size: "6" } as VariantSize)).toBeUndefined();
+  });
+
+  it("existencia por combinación y totales derivados: Dorado 2+0+5=7, Plateado 4+1=5, diseño 12", () => {
+    const product = ring();
+    expect(variantStock(product.variants![0])).toBe(7);
+    expect(variantStock(product.variants![1])).toBe(5);
+    expect(totalStock(product)).toBe(12);
+  });
+
+  it("tallas sin rastrear no se leen como cero: todas sin dato = null; mezcla suma sólo las rastreadas", () => {
+    const allUntracked = ring();
+    allUntracked.variants![0].sizes = [size("s4", "4", { quantityOnHand: undefined }), size("s5", "5", { quantityOnHand: undefined })];
+    expect(variantStock(allUntracked.variants![0])).toBeNull();
+    const mixed = ring();
+    mixed.variants![0].sizes = [size("s4", "4", { quantityOnHand: undefined }), size("s6", "6", { quantityOnHand: 5 })];
+    expect(variantStock(mixed.variants![0])).toBe(5);
+  });
+
+  it("«Plateado · 6» nunca existe: findCombination distingue la combinación exacta", () => {
+    const product = ring();
+    expect(findCombination(product, "v_gold", "s6")?.size).toBe("6");
+    expect(findCombination(product, "v_silver", "s6")).toBeUndefined();
+    expect(findCombination(product, "v_silver", "s8")?.size).toBe("8");
+  });
+
+  it("guardar exige clave y costo confirmado por combinación: cero confirmado es válido", () => {
+    const noClave = {} as ProductVariant; // sin clave de color: la combinación no puede derivar la suya
+    expect(combinationSaveError("Dorado", noClave, { size: "6" } as VariantSize)).toMatch(/necesita su clave/i);
+    const v = { sku: "MOV-014-D" } as ProductVariant;
+    expect(combinationSaveError("Dorado", v, { size: "6" } as VariantSize)).toMatch(/costo/i);
+    expect(combinationSaveError("Dorado", v, { size: "6", sku: "MOV-014-D-6", cost: 0 } as VariantSize)).toBeNull();
+    expect(combinationSaveError("Dorado", v, { size: "6", sku: "MOV-014-D-6", cost: 120 } as VariantSize)).toBeNull();
+  });
+
+  it("publicación: tallas duplicadas en un color bloquean; la misma talla en colores distintos sí se admite", () => {
+    const dup = ring();
+    dup.variants![0].sizes!.push(size("s6b", "6", { sku: "MOV-014-D-6B" }));
+    expect(combinationPublishError(dup)).toMatch(/talla.*repetida|repetida.*talla|Dorado/i);
+    expect(combinationPublishError(ring())).toBeNull();
+  });
+
+  it("publicación exige clave única por combinación", () => {
+    const clash = ring();
+    clash.variants![0].sizes = [size("s4", "4"), size("s5", "5", { sku: "MOV-014-D-4" })];
+    expect(combinationPublishError(clash)).toMatch(/clave/i);
+  });
+
+  it("un delta mueve SOLO su combinación; el color hereda por derivación y una combinación inexistente no aterriza en otra parte", () => {
+    const product = ring();
+    const next = applyCombinationDelta(product, "v_gold", "s6", -1);
+    expect(next).not.toBeNull();
+    const gold = next!.find((v) => v.id === "v_gold")!;
+    expect(gold.sizes!.find((s) => s.id === "s6")!.quantityOnHand).toBe(4);
+    expect(gold.sizes!.find((s) => s.id === "s4")!.quantityOnHand).toBe(2);
+    expect(gold.quantityOnHand).toBeUndefined(); // color stays derived, never double-written
+    expect(variantStock(gold)).toBe(6);
+    expect(applyCombinationDelta(product, "v_gold", "s9", -1)).toBeNull(); // s9 belongs to Plateado
+    expect(applyCombinationDelta(product, "v_ghost", "s6", -1)).toBeNull();
+  });
+
+  it("una variante sin tallas conserva la modalidad actual (color directo)", () => {
+    const legacy = ring();
+    delete legacy.variants![1].sizes;
+    expect(variantStock(legacy.variants![1])).toBe(3);
+    expect(combinationPublishError(legacy)).toBeNull();
   });
 });

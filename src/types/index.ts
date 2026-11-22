@@ -220,6 +220,29 @@ export type ProductVariant = {
   lowStockAt?: number;
   createdAt: string;
   updatedAt: string;
+  /** #461 (PO 22-nov): optional sizes under this color. When present, stock
+   * lives PER COMBINATION here and the color's own quantityOnHand is ignored
+   * (derived via lib/variants.variantStock) — never double-written. */
+  sizes?: VariantSize[];
+};
+
+/** #461 (PO 22-nov, opción A): one sellable combination (color × size) with
+ * its own identity, clave and CONFIRMED acquisition cost. Untracked stock
+ * (undefined) stays distinct from zero — a missing datum never reads as 0. */
+export type VariantSize = {
+  /** Stable identity of the combination; order lines keep this exact id. */
+  id: string;
+  /** Size shown to clients ("4"…"10", "Chica") — distinct within its color. */
+  size: string;
+  /** Editable key suffix for the combination's clave. */
+  skuSuffix?: string;
+  /** Materialized full clave of the combination. */
+  sku?: string;
+  /** Confirmed acquisition cost; a color's known cost is only a suggestion. */
+  cost?: number;
+  quantityOnHand?: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ProductStatus = "draft" | "published" | "archived";
