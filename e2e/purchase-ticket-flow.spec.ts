@@ -108,6 +108,17 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   }
   await page.screenshot({ path: `test-results/ticket-capture-${testInfo.project.name}.png` });
 
+  // #488 write-side probe log (console from the app under test). Attached
+  // BEFORE «Recibir mercancía» — the action that triggers the background
+  // projection write — so a flake occurrence captures start/ok/threw from
+  // the very first flight instead of joining mid-run (the 22-nov occurrence
+  // printed EMPTY with the listener attached after the click).
+  const writeProbeLog: string[] = [];
+  page.on("console", (msg) => {
+    const text = msg.text();
+    if (text.includes("#488-PROJ-WRITE")) writeProbeLog.push(text.slice(0, 140));
+  });
+
   await page.getByRole("button", { name: "Recibir mercancía", exact: true }).click();
   await expect(page.getByText("Compra recibida: el inventario se actualizó.")).toBeVisible({ timeout: 30_000 });
   // #386: a failed background projection surfaces HERE (sync banner with
@@ -132,12 +143,6 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   // diff tells absent (404), denied (403), server error (5xx) or a thrown
   // fetch apart — the deciding evidence for the flake's root cause.
   const pollProbe = { status: 0, checks: 0 };
-  // #488 write-side probe log (console from the app under test).
-  const writeProbeLog: string[] = [];
-  page.on("console", (msg) => {
-    const text = msg.text();
-    if (text.includes("#488-PROJ-WRITE")) writeProbeLog.push(text.slice(0, 140));
-  });
   try {
     await expect.poll(async () => {
     pollProbe.checks += 1;
