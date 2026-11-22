@@ -513,7 +513,19 @@ export function PricingStrategyScreen() {
         subtitle={`Tablas por categoría: rangos de costo con precios ${joinSpanish(tiers.map((tier) => tier.label))}`}
         action={
           <div className="flex flex-wrap items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/productos/simulador-contribucion")}>Simulador</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                // #531 (QA): the TAB is as much a round-trip as «Simular banda» —
+                // leaving through it must keep the editing session, not discard
+                // the unsaved draft without a word.
+                if (draft) {
+                  simulatorRoundTripDraft = { storeId: activeStore?.id ?? "", categoryId, draft, draftBase };
+                }
+                navigate("/productos/simulador-contribucion");
+              }}
+            >Simulador</Button>
             <Button variant="ghost" size="sm" onClick={() => navigate("/productos/diagnostico")}>Diagnóstico</Button>
           </div>
         }
@@ -698,6 +710,32 @@ export function PricingStrategyScreen() {
               </div>
             </div>
             {limitError && <p className="text-sm text-danger">{limitError}</p>}
+            {/* #529 (QA): ONE per-category legend concentrates every weak/pending
+                level with its affected bands — the long explanation appears a
+                single time instead of under each price field. */}
+            {tiers.some((tier) =>
+              draft.limits.some((_, index) => {
+                const support = bandEvidence?.[index]?.priceSupport[tier.id];
+                return support != null && support !== "strong";
+              })
+            ) && (
+              <p className="text-xs text-on-surface-soft">
+                Mediana actual —{" "}
+                {tiers
+                  .map((tier) => {
+                    const bands = draft.limits
+                      .map((_, index) => ({ index, support: bandEvidence?.[index]?.priceSupport[tier.id] }))
+                      .filter((band): band is { index: number; support: "weak" | "pending" } =>
+                        band.support != null && band.support !== "strong");
+                    if (bands.length === 0) return null;
+                    return `${tier.label} (${EVIDENCE_LABEL[tierEvidence(tier.label)]}): ${joinSpanish(
+                      bands.map((band) => `banda ${band.index + 1} «${SUPPORT_HINT[band.support]}»`)
+                    )}`;
+                  })
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
             <div className="space-y-3">
               {draft.limits.map((limit, index) => (
                 <div key={index} className="space-y-2 rounded-lg border border-edge bg-surface px-3 py-2">
@@ -769,14 +807,10 @@ export function PricingStrategyScreen() {
                     {tiers.map((tier) => {
                       const value = draft.prices[tier.id]?.[index];
                       const support = bandEvidence?.[index]?.priceSupport[tier.id];
-                      // #529: the healthy state (sólido) is the default and used
-                      // to repeat under EVERY price of EVERY band (12+); only the
-                      // exceptional supports (weak/pending) carry a hint now,
-                      // right where the price needs attention.
-                      const supportHint =
-                        support && support !== "strong"
-                          ? `Mediana actual, ${SUPPORT_HINT[support]} · ${tier.label}: ${EVIDENCE_LABEL[tierEvidence(tier.label)]}`
-                          : undefined;
+                      // #529 (QA reincidencia): the field carries ONLY the short
+                      // mark; the long explanation lives ONCE in the per-category
+                      // legend above the table — never repeated under each price.
+                      const supportHint = support && support !== "strong" ? SUPPORT_HINT[support] : undefined;
                       return (
                         <TextField
                           key={tier.id}
