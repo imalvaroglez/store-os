@@ -87,6 +87,20 @@ function validateLines(lines, writeOffs) {
  *         lines: [{productId, variantId?, markedPriceCents, soldQty}],
  *         writeOffs: [{productId, variantId?, qty, reason}] }
  */
+// #524 QA dictamen (mayor): the store's AUTHORIZED monthly closes — read
+// INSIDE each transaction so a close that lands mid-flight is honored.
+async function sealedPeriods(tx, db, storeId) {
+  const snap = await tx.get(db.collection("closes").where("storeId", "==", storeId));
+  return new Set(snap.docs.map((doc) => doc.get("period")).filter(Boolean));
+}
+
+function assertOpenPeriod(sealed, isoDate, message) {
+  const period = String(isoDate ?? "").slice(0, 7);
+  if (period && sealed.has(period)) {
+    throw new HttpsError("failed-precondition", `Ese mes ya está cerrado y autorizado; no se puede ${message}.`);
+  }
+}
+
 export const registerPointCut = onCall(
   { region: "us-east1", maxInstances: 3, retry: false, memory: "256MiB", timeoutSeconds: 30, minInstances: 0 },
   async (req) => {
@@ -110,6 +124,11 @@ export const registerPointCut = onCall(
 
     const opId = `corte_${intentId}`;
     return db.runTransaction(async (tx) => {
+      // #524 QA dictamen (mayor): sealed months are enforced by the SERVER —
+      // a backdated cut of an authorized month never lands, with no partial
+      // writes (the transaction aborts whole).
+      const sealed = await sealedPeriods(tx, db, storeId);
+      assertOpenPeriod(sealed, effectiveDate, "registrar un corte de un mes cerrado");
       // Idempotency first: this exact intent already landed → nothing to do.
       const opRef = db.collection("pointOperations").doc(opId);
       const saved = await tx.get(opRef);
@@ -189,6 +208,10 @@ export const registerPointCutPayment = onCall(
 
     const paymentOpId = `cobro_${intentId}`;
     return db.runTransaction(async (tx) => {
+      // #524 QA (mayor): the payment's OWN date cannot belong to a sealed
+      // month — the authorized close already fixed that month's money.
+      const sealed = await sealedPeriods(tx, db, storeId);
+      assertOpenPeriod(sealed, date, "registrar un cobro de un mes cerrado");
       const paymentRef = db.collection("pointOperations").doc(paymentOpId);
       const savedPayment = await tx.get(paymentRef);
       if (savedPayment.exists) {
@@ -256,6 +279,10 @@ export const annulPointCut = onCall(
 
     const annulmentOpId = `anul_${intentId}`;
     return db.runTransaction(async (tx) => {
+      // #524 QA (mayor): an authorized close fixed this month's money — its
+      // cuts cannot be annulled; the recomposition would stop reconciling
+      // with the close and its profit distribution.
+      const sealed = await sealedPeriods(tx, db, storeId);
       const annulRef = db.collection("pointOperations").doc(annulmentOpId);
       const savedAnnul = await tx.get(annulRef);
       if (savedAnnul.exists) {
@@ -274,6 +301,7 @@ export const annulPointCut = onCall(
       if (corteSnap.get("status") === "anulado") {
         throw new HttpsError("failed-precondition", "Este corte ya está anulado.");
       }
+      assertOpenPeriod(sealed, corteSnap.get("effectiveDate"), "anular un corte de un mes cerrado");
       const corteAt = corteSnap.get("confirmedAt") ?? "";
 
       // Only the LATEST corte, and no later operations touching the point —

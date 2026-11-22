@@ -158,6 +158,77 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 surtir del almacén 
     expect(cartera.variants[0].quantityOnHand).toBe(3);
   });
 
+
+  // --- Dictamen QA #524 (22-nov) — Crítico 1: multi-line moves of the SAME
+  // design must accumulate; each line rebuilt the variants array from the
+  // ORIGINAL snapshot, so the second write erased the first (silent drift).
+  it("surtir dos colores del mismo diseño en UN diálogo descuenta AMBAS variantes (repro QA)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const fs = ctx.firestore();
+      await setDoc(doc(fs, "products/p3"), {
+        storeId: "pt-store", name: "Cinturón", sku: "P3", category: "other", isPublic: true,
+        variants: [
+          { id: "v-cafe", color: "Café", quantityOnHand: 4, cost: 300, createdAt: NOW, updatedAt: NOW },
+          { id: "v-negra", color: "Negra", quantityOnHand: 5, cost: 300, createdAt: NOW, updatedAt: NOW },
+        ],
+        createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    const res = await callStock(operator.app, "stockPointFromWarehouse", {
+      storeId: "pt-store", pointId: PT, intentId: "sur-multi", physicalDate: "2026-11-22",
+      lines: [
+        { productId: "p3", variantId: "v-cafe", qty: 3, markedPriceCents: 68000 },
+        { productId: "p3", variantId: "v-negra", qty: 2, markedPriceCents: 68000 },
+      ],
+    });
+    expect(res.data).toMatchObject({ stocked: true, entryCount: 2, units: 5 });
+    const p3 = (await getDoc(doc(holder.db, "products/p3"))).data()!;
+    expect(p3.variants.find((v: { id: string; quantityOnHand?: number }) => v.id === "v-cafe").quantityOnHand).toBe(1); // 4 − 3
+    expect(p3.variants.find((v: { id: string; quantityOnHand?: number }) => v.id === "v-negra").quantityOnHand).toBe(3); // 5 − 2
+  });
+
+  it("líneas duplicadas de la MISMA variante acumulan el guard: rechazo sin existencias negativas ni deriva", async () => {
+    // v-cafe only has 1 left after the previous test: 1 + 1 must NOT fit.
+    await expect(callStock(operator.app, "stockPointFromWarehouse", {
+      storeId: "pt-store", pointId: PT, intentId: "sur-dup", physicalDate: "2026-11-22",
+      lines: [
+        { productId: "p3", variantId: "v-cafe", qty: 1, markedPriceCents: 68000 },
+        { productId: "p3", variantId: "v-cafe", qty: 1, markedPriceCents: 68000 },
+      ],
+    })).rejects.toThrow(/almac[eé]n/i);
+    const p3 = (await getDoc(doc(holder.db, "products/p3"))).data()!;
+    expect(p3.variants.find((v: { id: string; quantityOnHand?: number }) => v.id === "v-cafe").quantityOnHand).toBe(1); // intact
+    expect((await getDoc(doc(holder.db, "pointOperations/surt_sur-dup"))).exists()).toBe(false);
+  });
+
+  it("producto simple: líneas duplicadas acumulan el guard del estante (sin negativos vía increment)", async () => {
+    // p1 is back at 6 here (the earlier retiro returned its 2 pieces): each
+    // line fits alone (4 ≤ 6, 3 ≤ 6) but 4 + 3 must NOT.
+    await expect(callStock(operator.app, "stockPointFromWarehouse", {
+      storeId: "pt-store", pointId: PT, intentId: "sur-dup-plain", physicalDate: "2026-11-22",
+      lines: [
+        { productId: "p1", qty: 4, markedPriceCents: 95000 },
+        { productId: "p1", qty: 3, markedPriceCents: 95000 },
+      ],
+    })).rejects.toThrow(/almac[eé]n/i);
+    const perfume = (await getDoc(doc(holder.db, "products/p1"))).data()!;
+    expect(perfume.quantityOnHand).toBe(6); // intact — no negative drift
+  });
+
+  it("retirar dos colores del mismo diseño en UN diálogo devuelve AMBAS variante exactas", async () => {
+    const res = await callStock(operator.app, "withdrawFromPoint", {
+      storeId: "pt-store", pointId: PT, intentId: "wd-multi", physicalDate: "2026-11-22",
+      lines: [
+        { productId: "p3", variantId: "v-cafe", qty: 1 },
+        { productId: "p3", variantId: "v-negra", qty: 1 },
+      ],
+    });
+    expect(res.data).toMatchObject({ withdrawn: true, units: 2 });
+    const p3 = (await getDoc(doc(holder.db, "products/p3"))).data()!;
+    expect(p3.variants.find((v: { id: string; quantityOnHand?: number }) => v.id === "v-cafe").quantityOnHand).toBe(2); // 1 + 1
+    expect(p3.variants.find((v: { id: string }) => v.id === "v-negra").quantityOnHand).toBe(4); // 3 + 1
+  });
+
   it("una operadora ajena a la tienda no puede mover mercancía", async () => {
     await expect(callStock(outsider.app, "stockPointFromWarehouse", {
       storeId: "pt-store", pointId: PT, intentId: "sur-x", physicalDate: "2026-11-22",

@@ -132,34 +132,55 @@ export const stockPointFromWarehouse = onCall(
         }
         productSnaps.set(line.productId, snap);
       }
-      // WRITE PHASE.
+      // WRITE PHASE. #524 QA dictamen (crítico): ACCUMULATE every line per
+      // stock dimension BEFORE writing — each line used to rebuild the
+      // variants array from the ORIGINAL snapshot, so the second line of the
+      // same design erased the first's discount (silent +N drift), and
+      // duplicate lines of the same dimension passed the per-line guard and
+      // could drive the shelf negative.
+      const surTotals = new Map(); // productId → { plain, byVariant: Map }
+      for (const line of lines) {
+        const total = surTotals.get(line.productId) ?? { plain: 0, byVariant: new Map() };
+        if (line.variantId) total.byVariant.set(line.variantId, (total.byVariant.get(line.variantId) ?? 0) + line.qty);
+        else total.plain += line.qty;
+        surTotals.set(line.productId, total);
+      }
+      for (const [productId, total] of surTotals) {
+        const snap = productSnaps.get(productId);
+        if (total.plain > 0) {
+          const available = shelfOf(snap.data(), undefined).available;
+          if (available < total.plain) {
+            throw new HttpsError(
+              "failed-precondition",
+              `No hay suficientes piezas en el almacén para surtir ${total.plain}: hay ${Math.max(0, available)}.`
+            );
+          }
+        }
+        for (const [variantId, qty] of total.byVariant) {
+          const available = shelfOf(snap.data(), variantId).available;
+          if (available < qty) {
+            throw new HttpsError(
+              "failed-precondition",
+              `No hay suficientes piezas en el almacén para surtir ${qty}: hay ${Math.max(0, available)}.`
+            );
+          }
+        }
+        // ONE write per product doc with the accumulated deltas.
+        const patch = { updatedAt: at };
+        if (total.byVariant.size > 0) {
+          patch.variants = snap.data().variants.map((v) =>
+            total.byVariant.has(v.id)
+              ? { ...v, quantityOnHand: (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0) - total.byVariant.get(v.id), updatedAt: at }
+              : v
+          );
+        } else {
+          patch.quantityOnHand = FieldValue.increment(-total.plain);
+        }
+        tx.update(snap.ref, patch);
+      }
       for (const line of lines) {
         const snap = productSnaps.get(line.productId);
         const shelf = shelfOf(snap.data(), line.variantId);
-        if (shelf.available < line.qty) {
-          throw new HttpsError(
-            "failed-precondition",
-            `No hay suficientes piezas en el almacén para surtir ${line.qty}: hay ${Math.max(0, shelf.available)}.`
-          );
-        }
-        shelf.available -= line.qty;
-        // Warehouse decrement (the reservation model already keeps
-        // quantityOnHand as the sellable shelf).
-        if (shelf.kind === "variant") {
-          tx.update(snap.ref, {
-            variants: snap.data().variants.map((v) =>
-              v.id === line.variantId
-                ? { ...v, quantityOnHand: (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0) - line.qty, updatedAt: at }
-                : v
-            ),
-            updatedAt: at,
-          });
-        } else {
-          tx.update(snap.ref, {
-            quantityOnHand: FieldValue.increment(-line.qty),
-            updatedAt: at,
-          });
-        }
         // Point entry: physical date, confirmed label price, known cost.
         tx.set(db.collection("pointEntries").doc(`pe_${intentId}_${index}`), {
           id: `pe_${intentId}_${index}`,
@@ -275,6 +296,7 @@ export const withdrawFromPoint = onCall(
       const at = isoNow();
       const by = req.auth.uid;
       const consumption = new Map();
+      const restores = new Map();
       let units = 0;
       // READ PHASE — allocation math is local; products load before writes.
       const productSnaps = new Map();
@@ -303,22 +325,31 @@ export const withdrawFromPoint = onCall(
         if (variants.length > 0 && !variants.some((v) => v?.id === line.variantId)) {
           throw new HttpsError("failed-precondition", "La línea no indica un color existente del diseño.");
         }
-        if (variants.length > 0) {
-          tx.update(snap.ref, {
-            variants: variants.map((v) =>
-              v.id === line.variantId
-                ? { ...v, quantityOnHand: (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0) + line.qty, updatedAt: at }
-                : v
-            ),
-            updatedAt: at,
-          });
-        } else {
-          tx.update(snap.ref, {
-            quantityOnHand: FieldValue.increment(line.qty),
-            updatedAt: at,
-          });
-        }
+        // #524 QA (crítico): ACCUMULATE the warehouse restores per dimension —
+        // the per-line variants rebuild used the ORIGINAL snapshot and the
+        // second line of the same design erased the first's restore.
+        const restoreKey = `${line.productId}:${line.variantId ?? ""}`;
+        restores.set(restoreKey, (restores.get(restoreKey) ?? 0) + line.qty);
         units += line.qty;
+      }
+      const restoredDocs = new Set();
+      for (const [restoreKey] of restores) {
+        const [productId, variantId] = restoreKey.split(":");
+        if (restoredDocs.has(productId)) continue; // one write per doc below
+        restoredDocs.add(productId);
+        const snap = productSnaps.get(productId);
+        const variants = Array.isArray(snap.get("variants")) ? snap.get("variants") : [];
+        const patch = { updatedAt: at };
+        if (variants.length > 0) {
+          patch.variants = variants.map((v) =>
+            restores.has(`${productId}:${v.id}`)
+              ? { ...v, quantityOnHand: (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0) + restores.get(`${productId}:${v.id}`), updatedAt: at }
+              : v
+          );
+        } else {
+          patch.quantityOnHand = FieldValue.increment(restores.get(`${productId}:`) ?? 0);
+        }
+        tx.update(snap.ref, patch);
       }
       for (const [entryId, quantity] of consumption) {
         const entry = entries.find((candidate) => candidate.id === entryId);

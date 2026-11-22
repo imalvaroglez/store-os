@@ -195,4 +195,45 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 cortes, cobro y anul
       commissionRate: 0.2, lines: [{ productId: "p1", markedPriceCents: 10000, soldQty: 1 }],
     })).rejects.toThrow();
   });
+
+  // --- Dictamen QA #524 (22-nov) — Mayor 2: sealed months are enforced by the
+  // SERVER, not the UI: an annulment/backdated cut/payment of a closed month
+  // is rejected inside the transaction with no partial writes.
+  it("un corte de un mes SELLADO no se puede anular: rechazo de servidor sin escrituras (repro QA)", async () => {
+    await callCut(operator.app, "registerPointCut", {
+      storeId: "pt-store", pointId: PT, intentId: "cut-sealed", effectiveDate: "2026-11-20",
+      commissionRate: 0.2,
+      lines: [{ productId: "p1", markedPriceCents: 10000, soldQty: 1 }],
+    });
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "closes/close-2026-11"), {
+        id: "close-2026-11", storeId: "pt-store", period: "2026-11",
+        status: "authorized", createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    await expect(callCut(operator.app, "annulPointCut", {
+      storeId: "pt-store", pointId: PT, corteId: "corte_cut-sealed", intentId: "annul-sealed", motive: "Prueba del guard",
+    })).rejects.toThrow(/mes cerrado|sellado|cerrado/i);
+    // No partial writes: the corte keeps its status and NO anulación exists.
+    const op = (await getDoc(doc(holder.db, "pointOperations/corte_cut-sealed"))).data()!;
+    expect(op.status).toBe("pendiente_de_cobro");
+    expect((await getDoc(doc(holder.db, "pointOperations/anul_annul-sealed"))).exists()).toBe(false);
+  });
+
+  it("registerPointCut con effectiveDate de un mes sellado se rechaza en el servidor", async () => {
+    await expect(callCut(operator.app, "registerPointCut", {
+      storeId: "pt-store", pointId: PT, intentId: "cut-backdate", effectiveDate: "2026-11-05",
+      commissionRate: 0.2,
+      lines: [{ productId: "p1", markedPriceCents: 10000, soldQty: 1 }],
+    })).rejects.toThrow(/mes cerrado|sellado|cerrado/i);
+    expect((await getDoc(doc(holder.db, "pointOperations/corte_cut-backdate"))).exists()).toBe(false);
+  });
+
+  it("registerPointCutPayment con fecha de un mes sellado se rechaza en el servidor", async () => {
+    await expect(callCut(operator.app, "registerPointCutPayment", {
+      storeId: "pt-store", pointId: PT, corteId: "corte_cut-sealed", intentId: "pay-sealed",
+      date: "2026-11-15", method: "cash",
+    })).rejects.toThrow(/mes cerrado|sellado|cerrado/i);
+    expect((await getDoc(doc(holder.db, "pointOperations/cobro_pay-sealed"))).exists()).toBe(false);
+  });
 });
