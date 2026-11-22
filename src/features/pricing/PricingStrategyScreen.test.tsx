@@ -436,7 +436,7 @@ describe("#529 hints de mediana en Tabla de bandas", () => {
     expect(screen.queryByText(/Mediana actual/)).toBeNull();
   });
 
-  it("un nivel poco respaldado o sin evidencia conserva su advertencia exactamente en su banda", async () => {
+  it("un nivel poco respaldado o sin evidencia: marca corta en su campo y el texto largo UNA sola vez en la leyenda (dictamen QA #529)", async () => {
     // Banda baja: 5 piezas con los tres precios (sólido). Banda alta: 4 piezas —
     // sólo 2 con precio Girly (weak: <3 evidencias) y NINGUNA con Iconic
     // (pending) → cada advertencia aparece UNA vez, en la banda alta.
@@ -449,9 +449,36 @@ describe("#529 hints de mediana en Tabla de bandas", () => {
     selectCategory();
     await screen.findByText("Propuesta");
     fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
-    expect(screen.getAllByText(/poco respaldado/).length).toBe(1);
-    expect(screen.getAllByText(/pendiente: sin evidencia/).length).toBe(1);
+    // Short mark on each affected field (exactly the two of the fixture).
+    expect(screen.getAllByText(/^poco respaldado$/).length).toBe(1);
+    expect(screen.getAllByText(/^pendiente: sin evidencia$/).length).toBe(1);
+    // The LONG text lives ONCE, in the per-category legend — never per field.
+    expect(screen.getAllByText(/Mediana actual/).length).toBe(1);
     expect(screen.queryByText(/Mediana actual, sólido/)).toBeNull();
+  });
+
+  it("varias bandas débiles: cada campo lleva su marca corta y la leyenda nombra todas las bandas afectadas (QA #529 reincidencia)", async () => {
+    // Two high bands, each with only 2 Girly evidences (weak in BOTH).
+    state.products = [
+      ...Array.from({ length: 4 }, () => product(20, cheap)),
+      ...Array.from({ length: 2 }, () => product(60, { t_retail: 240, t_girly: 190 })),
+      ...Array.from({ length: 2 }, () => product(95, { t_retail: pricey.t_retail, t_girly: pricey.t_girly })),
+    ];
+    mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    // Short marks on every affected field (Regular + Girly weak, Iconic pending).
+    expect(screen.getAllByText(/^poco respaldado$/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/^pendiente: sin evidencia$/).length).toBeGreaterThanOrEqual(1);
+    // ONE legend naming EVERY affected level with its band.
+    const legends = screen.getAllByText(/Mediana actual/);
+    expect(legends.length).toBe(1);
+    const legendText = legends[0].textContent ?? "";
+    expect(legendText).toMatch(/banda 2/);
+    for (const tier of ["Regular", "Girly", "Iconic"]) expect(legendText).toContain(tier);
+    // No per-field long text anywhere (the reincidence QA measured).
+    expect(screen.queryByText(/Mediana actual, \w+/)).toBeNull();
   });
 });
 
@@ -573,6 +600,21 @@ describe("#531 ida y vuelta al simulador con concurrencia y entre tiendas", () =
     fireEvent.click(screen.getAllByRole("button", { name: "Simular banda" })[0]);
     view.unmount();
     // Regresa desde el simulador con ?categoria= (el botón real la lleva).
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
+    mount();
+    expect((screen.getAllByLabelText(/Regular \(pesos\)/)[0] as HTMLInputElement).value).toBe("300");
+  });
+
+  it("entrar por la PESTAÑA «Simulador» también conserva el borrador sucio al volver (dictamen QA #531)", async () => {
+    products526();
+    const view = mount();
+    selectCategory();
+    await screen.findByText("Propuesta");
+    fireEvent.click(screen.getByRole("button", { name: "Editar esta propuesta" }));
+    fireEvent.change(screen.getAllByLabelText(/Regular \(pesos\)/)[0], { target: { value: "300" } });
+    // The header TAB (not «Simular banda») is the door QA found open.
+    fireEvent.click(screen.getByRole("button", { name: /^Simulador$/ }));
+    view.unmount();
     window.history.replaceState({}, "", `/productos/estrategia?categoria=${CAT}`);
     mount();
     expect((screen.getAllByLabelText(/Regular \(pesos\)/)[0] as HTMLInputElement).value).toBe("300");
