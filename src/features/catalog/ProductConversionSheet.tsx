@@ -43,6 +43,7 @@ export function ProductConversionSheet({ open, onClose }: Props) {
     color: d.color,
     size: d.size,
   }));
+  const levelLabels = Object.fromEntries((activeStore?.priceTiers ?? []).map((tier) => [tier.id, tier.label]));
   const preview = useMemo(
     () =>
       main
@@ -50,7 +51,7 @@ export function ProductConversionSheet({ open, onClose }: Props) {
             main,
             drafts.map((d) => storeProducts.find((p) => p.id === d.productId)!).filter(Boolean),
             mappings,
-            { orders: state.orders, purchases: state.purchases, incidents }
+            { orders: state.orders, purchases: state.purchases, incidents, levelLabels }
           )
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -69,8 +70,12 @@ export function ProductConversionSheet({ open, onClose }: Props) {
   function addOrigin(productId: string) {
     if (!productId || chosenIds.has(productId)) return;
     const product = storeProducts.find((p) => p.id === productId);
-    const firstColor = main?.variants?.[0]?.color ?? "";
-    setDrafts((current) => [...current, { productId, color: firstColor, size: product?.name.match(/\b(\d{2}|\d)\b/)?.[1] ?? "", customColor: false }]);
+    // #461 (dictamen QA): nothing is deduced from the name. Fer types the
+    // talla; the color is chosen — proposed only when the origin's own finish
+    // names an existing color of the design, and always reviewable.
+    const finish = product?.finish?.trim().toLocaleLowerCase("es-MX") ?? "";
+    const proposed = main?.variants?.find((v) => v.color.trim().toLocaleLowerCase("es-MX") === finish)?.color ?? "";
+    setDrafts((current) => [...current, { productId, color: proposed, size: "", customColor: false }]);
   }
 
   async function confirm() {
@@ -166,6 +171,7 @@ export function ProductConversionSheet({ open, onClose }: Props) {
                           )
                         }
                         options={[
+                          { value: "", label: "Elige el color…" },
                           ...(main.variants ?? []).map((v) => ({ value: v.color, label: v.color })),
                           { value: NEW_COLOR, label: "＋ Color nuevo…" },
                         ]}
@@ -185,13 +191,22 @@ export function ProductConversionSheet({ open, onClose }: Props) {
                       <div><dt className="text-xs text-on-surface-soft">Disponible antes</dt><dd>{row.availableBefore ?? "sin rastrear"}</dd></div>
                       <div><dt className="text-xs text-on-surface-soft">En la combinación</dt><dd>{row.combinationAfter ?? "sin rastrear"}</dd></div>
                       {row.priceDifferences.map((d) => (
-                        <div key={d.level} className="col-span-2 sm:col-span-4"><dt className="text-xs text-on-surface-soft">Precio distinto ({d.level})</dt><dd>origen {formatMoney(d.origin)} · diseño {formatMoney(d.main)}</dd></div>
+                        <div key={d.level} className="col-span-2 sm:col-span-4">
+                          <dt className="text-xs text-on-surface-soft">Precio distinto</dt>
+                          <dd>origen {d.origin === undefined ? "sin precio" : formatMoney(d.origin)} · en el diseño {d.main === undefined ? "sin precio" : formatMoney(d.main)}</dd>
+                        </div>
                       ))}
                     </dl>
                   )}
                 </div>
               );
             })}
+            {preview && preview.rows.length > 0 && (
+              <p className="text-sm">
+                <span className="font-semibold">Físico del diseño unificado:</span> antes {preview.mainPhysical.before ?? "sin rastrear"} → después{" "}
+                {preview.mainPhysical.after ?? "sin rastrear"}
+              </p>
+            )}
             {preview && preview.blockers.length > 0 && (
               <div className="rounded-xl border border-danger/40 bg-danger/5 p-3">
                 <p className="text-sm font-semibold text-danger">Resuelve esto antes de unificar</p>

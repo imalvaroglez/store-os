@@ -2,7 +2,9 @@ import type { Order, OrderIncident, Product, ProductVariant, Purchase, VariantSi
 import { effectivePurchaseStatus } from "../types";
 import { uid } from "./ids";
 import { committedBreakdownForProduct } from "./inventory";
-import { combinationSku, suggestSizeSkuSuffix, suggestSkuSuffix, variantSku } from "./variants";
+import { formatMoneyPlain } from "./money";
+import { combinationSku, suggestSizeSkuSuffix, suggestSkuSuffix, totalStock, variantHasSizes, variantSku } from "./variants";
+import { variantEffectivePrice } from "./variantPrice";
 
 // #461 — assisted conversion of already-separated fichas into one design sold
 // by exact color×size. Pure planning/preview + pure application: the
@@ -68,15 +70,22 @@ export type ConversionRow = {
   quarantineBefore: number;
   /** Shelf landing on the combination; undefined keeps untracked stock. */
   combinationAfter?: number;
-  /** Informational: the origin's public prices vs the main design's. */
-  priceDifferences: Array<{ level: string; origin: number; main: number }>;
+  /** The origin's public prices against the color it joins (the design's
+   * prices when the color is new). A side without a price for a level is
+   * `undefined` — «sin precio», never the other side's figure. */
+  priceDifferences: PriceDifference[];
 };
+
+type PriceDifference = { level: string; origin?: number; main?: number };
 
 export type ConversionPreview = {
   rows: ConversionRow[];
   pending: ConversionPending[];
   blockers: string[];
   canConvert: boolean;
+  /** #461: the unified design's whole shelf before and after — the preview
+   * never hides a lost piece. Null = nothing tracked. */
+  mainPhysical: { before: number | null; after: number | null };
 };
 
 /** The whole plan on the table BEFORE anything moves: per origin antes/después
@@ -86,9 +95,11 @@ export function buildConversionPreview(
   mainProduct: Product,
   sources: Product[],
   mappings: ConversionMapping[],
-  context: { orders: Order[]; purchases: Purchase[]; incidents: OrderIncident[] }
+  context: { orders: Order[]; purchases: Purchase[]; incidents: OrderIncident[]; levelLabels?: Record<string, string> }
 ): ConversionPreview {
   const blockers: string[] = [];
+  const levelName = (level: string) => context.levelLabels?.[level] ?? level;
+  const money = (amount: number | undefined) => (amount === undefined ? "sin precio" : formatMoneyPlain(amount));
   if (!mainProduct.variants?.length) {
     blockers.push("La ficha principal necesita colores activos antes de unificar (actívalos en su editor).");
   }
@@ -127,6 +138,34 @@ export function buildConversionPreview(
       continue;
     }
     seen.set(key, source.id);
+    // #461: the color of the unified design this origin joins, if it exists.
+    const existing = mainProduct.variants?.find(
+      (v) => v.color.trim().toLocaleLowerCase("es-MX") === color.toLocaleLowerCase("es-MX")
+    );
+    const differences = priceDifferences(source, mainProduct, existing);
+    // Dictamen QA 23-nov (mayor): joining an EXISTING color keeps that color's
+    // tariffs — a difference is Fer's call, never overwritten by inference. A
+    // new color keeps the origin's own prices (#467), so the same difference
+    // is fine there. In a single-price store no color can keep its own price.
+    const singlePrice = !source.prices && !mainProduct.prices;
+    if ((existing || singlePrice) && differences.length > 0) {
+      const detail = differences
+        .map((d) => `${levelName(d.level)}: origen ${money(d.origin)} · ${existing ? `color ${existing.color}` : "diseño"} ${money(d.main)}`)
+        .join("; ");
+      blockers.push(
+        singlePrice
+          ? `${source.name} tiene un precio distinto al del diseño (${detail}). En esta tienda el precio se comparte entre colores: ajusta una de las dos fichas antes de unificar.`
+          : `${source.name} tiene precios distintos a los del diseño (${detail}). Fer decide cuál conservar: ajusta una de las dos fichas antes de unificar.`
+      );
+    }
+    // Dictamen QA 23-nov (crítico 3): pieces the existing color counts WITHOUT
+    // a talla have no unambiguous combination — stop and say what to do.
+    if (existing && !variantHasSizes(existing) && typeof existing.quantityOnHand === "number" && existing.quantityOnHand !== 0) {
+      const pieces = existing.quantityOnHand;
+      blockers.push(
+        `El color ${existing.color} de la ficha principal tiene ${pieces} ${pieces === 1 ? "pieza contada" : "piezas contadas"} sin talla. Para unificar con tallas, abre la ficha principal, agrega sus tallas y reparte esas piezas; después vuelve a unificar.`
+      );
+    }
     if ((source.quantityQuarantined ?? 0) > 0) {
       blockers.push(`${source.name} tiene ${source.quantityQuarantined} pieza(s) en cuarentena: resuélvela antes de unificar.`);
     }
@@ -144,7 +183,7 @@ export function buildConversionPreview(
       physicalBefore: physical,
       quarantineBefore: source.quantityQuarantined ?? 0,
       combinationAfter: physical,
-      priceDifferences: priceDifferences(source, mainProduct),
+      priceDifferences: differences,
     });
   }
   const pending = pendingMovementsForSources(
@@ -156,16 +195,43 @@ export function buildConversionPreview(
   for (const movement of pending) {
     blockers.push(`${movement.label} — resuélvelo antes de unificar.`);
   }
-  return { rows, pending, blockers, canConvert: blockers.length === 0 && rows.length > 0 };
+  // Every origin shelf lands on its combination (blockers stop any other
+  // outcome), so the unified design holds exactly what both sides held.
+  const whole = (values: Array<number | null | undefined>) => {
+    const tracked = values.filter((value): value is number => typeof value === "number");
+    return tracked.length === 0 ? null : tracked.reduce((sum, value) => sum + value, 0);
+  };
+  const mainStock = totalStock(mainProduct);
+  return {
+    rows,
+    pending,
+    blockers,
+    canConvert: blockers.length === 0 && rows.length > 0,
+    mainPhysical: {
+      before: whole([mainStock, ...rows.map((row) => row.physicalBefore)]),
+      after: whole([mainStock, ...rows.map((row) => row.combinationAfter)]),
+    },
+  };
 }
 
-function priceDifferences(source: Product, mainProduct: Product): Array<{ level: string; origin: number; main: number }> {
-  const out: Array<{ level: string; origin: number; main: number }> = [];
-  const levels = new Set([...Object.keys(source.prices ?? {}), ...Object.keys(mainProduct.prices ?? {})]);
+/** The origin's prices against the color it joins — that color's EFFECTIVE
+ * prices when it exists (#467: its own map or the design's shared one). A
+ * level priced on only one side is a difference too: merging would change
+ * what is sellable. */
+function priceDifferences(source: Product, mainProduct: Product, existing?: ProductVariant): PriceDifference[] {
+  const out: PriceDifference[] = [];
+  const tiered = !!source.prices || !!mainProduct.prices || !!existing?.prices;
+  if (!tiered) {
+    if (source.price !== mainProduct.price) out.push({ level: "precio", origin: source.price, main: mainProduct.price });
+    return out;
+  }
+  const reference = existing ? (existing.prices ?? mainProduct.prices ?? {}) : (mainProduct.prices ?? {});
+  const levels = new Set([...Object.keys(source.prices ?? {}), ...Object.keys(reference)]);
   for (const level of levels) {
-    const a = source.prices?.[level];
-    const b = mainProduct.prices?.[level];
-    if (typeof a === "number" && typeof b === "number" && a !== b) out.push({ level, origin: a, main: b });
+    const originPrice = source.prices?.[level];
+    const mainPrice = existing ? variantEffectivePrice(existing, level, mainProduct) : mainProduct.prices?.[level];
+    if (originPrice === mainPrice) continue;
+    out.push({ level, origin: originPrice, main: mainPrice });
   }
   return out;
 }

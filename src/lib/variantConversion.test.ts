@@ -57,17 +57,83 @@ describe("#461 conversión asistida — movimientos pendientes por origen", () =
 });
 
 describe("#461 conversión asistida — vista previa", () => {
-  it("muestra antes/después por origen con clave, costo y diferencia de precio; convertible sin pendientes", () => {
-    const o1 = origin("o1", { quantityOnHand: 3 });
+  it("muestra antes/después por origen con clave y costo; convertible sin pendientes ni diferencias", () => {
+    const o1 = origin("o1", { quantityOnHand: 3, prices: { t_retail: 1400 } });
     const preview = buildConversionPreview(main(), [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending);
     expect(preview.canConvert).toBe(true);
+    expect(preview.blockers).toEqual([]);
     expect(preview.pending).toEqual([]);
     const row = preview.rows[0];
     expect(row).toMatchObject({
       productId: "o1", color: "Dorado", size: "7", sku: "SOL-X-o1", cost: 105,
       availableBefore: 3, committedBefore: 0, physicalBefore: 3, combinationAfter: 3,
     });
-    expect(row.priceDifferences).toEqual([{ level: "t_retail", origin: 1350, main: 1400 }]);
+    expect(row.priceDifferences).toEqual([]);
+  });
+
+  // ── Dictamen QA 23-nov ──
+  it("mayor: precio distinto al unificar con un color EXISTENTE detiene la conversión y nombra ambas cifras", () => {
+    const o1 = origin("o1", { quantityOnHand: 3 }); // $1,350 contra $1,400 del color Dorado
+    const preview = buildConversionPreview(main(), [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending);
+    expect(preview.canConvert).toBe(false);
+    expect(preview.blockers.join(" ")).toMatch(/Anillo Sol o1 tiene precios distintos.*origen \$1,350 · color Dorado \$1,400/);
+    expect(preview.blockers.join(" ")).toMatch(/Fer decide cu[aá]l conservar/i);
+    expect(preview.rows[0].priceDifferences).toEqual([{ level: "t_retail", origin: 1350, main: 1400 }]);
+  });
+
+  it("un nivel que sólo tiene el origen (o sólo el color) también detiene: no se cambia qué es vendible por inferencia", () => {
+    const o1 = origin("o1", { prices: { t_retail: 1400, t_mayoreo: 900 } });
+    const preview = buildConversionPreview(main(), [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending);
+    expect(preview.canConvert).toBe(false);
+    expect(preview.blockers.join(" ")).toMatch(/t_mayoreo/);
+    expect(preview.rows[0].priceDifferences).toContainEqual({ level: "t_mayoreo", origin: 900, main: undefined });
+  });
+
+  it("la comparación es contra los precios PROPIOS del color existente (#467), no contra el diseño", () => {
+    const mainWithOwnPrices = main();
+    mainWithOwnPrices.variants![0].prices = { t_retail: 1350 };
+    const o1 = origin("o1", { prices: { t_retail: 1350 } }); // igual al color, distinto al diseño (1400)
+    const preview = buildConversionPreview(mainWithOwnPrices, [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending);
+    expect(preview.canConvert).toBe(true);
+    expect(preview.rows[0].priceDifferences).toEqual([]);
+  });
+
+  it("un color NUEVO conserva los precios del origen (#467): la misma diferencia no detiene", () => {
+    const o1 = origin("o1", { prices: { t_retail: 1350 } });
+    const preview = buildConversionPreview(main(), [o1], [{ productId: "o1", color: "Rosa", size: "6" }], noPending);
+    expect(preview.canConvert).toBe(true);
+    expect(preview.blockers).toEqual([]);
+  });
+
+  it("tienda de precio único: precio distinto detiene siempre (no hay precios por color que conservar)", () => {
+    const simpleMain = main({ prices: undefined, price: 400, variants: main().variants!.map((v) => ({ ...v, prices: undefined })) });
+    const o1 = origin("o1", { prices: undefined, price: 450 });
+    expect(buildConversionPreview(simpleMain, [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending).canConvert).toBe(false);
+    expect(buildConversionPreview(simpleMain, [o1], [{ productId: "o1", color: "Rosa", size: "6" }], noPending).blockers.join(" ")).toMatch(/450.*400/);
+    const same = origin("o1", { prices: undefined, price: 400 });
+    expect(buildConversionPreview(simpleMain, [same], [{ productId: "o1", color: "Rosa", size: "6" }], noPending).canConvert).toBe(true);
+  });
+
+  it("crítico 3: el color existente tiene piezas contadas sin talla (5) — detener y explicar, en vez de volverlas 3", () => {
+    const colorOnly = main({ variants: [{ id: "v_dorado", color: "Dorado", skuSuffix: "D", sku: "SOL-D", photos: [], quantityOnHand: 5, createdAt: "", updatedAt: "" }] });
+    const o1 = origin("o1", { quantityOnHand: 3, prices: { t_retail: 1400 } });
+    const preview = buildConversionPreview(colorOnly, [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending);
+    expect(preview.canConvert).toBe(false);
+    expect(preview.blockers.join(" ")).toMatch(/color Dorado de la ficha principal tiene 5 piezas contadas sin talla/);
+    expect(preview.blockers.join(" ")).toMatch(/reparte esas piezas/);
+    // Un color sin existencia rastreada sí puede recibir su primera talla.
+    const untracked = main({ variants: [{ ...colorOnly.variants![0], quantityOnHand: undefined }] });
+    expect(buildConversionPreview(untracked, [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending).canConvert).toBe(true);
+  });
+
+  it("la vista previa muestra el Físico del diseño antes y después: nunca baja", () => {
+    const o1 = origin("o1", { quantityOnHand: 3, prices: { t_retail: 1400 } });
+    const o2 = origin("o2", { quantityOnHand: 4, prices: { t_retail: 1400 } });
+    const preview = buildConversionPreview(main(), [o1, o2], [
+      { productId: "o1", color: "Dorado", size: "7" },
+      { productId: "o2", color: "Plateado", size: "9" },
+    ], noPending);
+    expect(preview.mainPhysical).toEqual({ before: 9, after: 9 }); // 2 del diseño + 3 + 4
   });
 
   it("el comprometido vivo se muestra Y bloquea (con su referencia)", () => {
@@ -88,7 +154,7 @@ describe("#461 conversión asistida — vista previa", () => {
       { productId: "o2", color: "Dorado", size: "7" },
     ], noPending);
     expect(preview.canConvert).toBe(false);
-    expect(preview.blockers[0]).toMatch(/misma combinación/);
+    expect(preview.blockers.some((reason) => /misma combinación/.test(reason))).toBe(true);
   });
 
   it("un origen con colores propios bloquea (una ficha origen = una combinación); cuarentena bloquea", () => {
@@ -96,7 +162,7 @@ describe("#461 conversión asistida — vista previa", () => {
     const quarantined = origin("oq", { quantityQuarantined: 1 });
     const p1 = buildConversionPreview(main(), [variantOrigin], [{ productId: "ov", color: "Dorado", size: "7" }], noPending);
     expect(p1.canConvert).toBe(false);
-    expect(p1.blockers[0]).toMatch(/se vende por color/);
+    expect(p1.blockers.some((reason) => /se vende por color/.test(reason))).toBe(true);
     const p2 = buildConversionPreview(main(), [quarantined], [{ productId: "oq", color: "Dorado", size: "7" }], noPending);
     expect(p2.canConvert).toBe(false);
     expect(p2.blockers.join(" ")).toMatch(/cuarentena/);
@@ -153,6 +219,6 @@ describe("#461 conversión asistida — aplicación pura", () => {
     const merged = origin("om", { mergedInto: { productId: "p_main", variantId: "v_dorado", sizeId: "x", at: now }, status: "archived" } as Partial<Product>);
     const preview = buildConversionPreview(main(), [merged], [{ productId: "om", color: "Dorado", size: "7" }], noPending);
     expect(preview.canConvert).toBe(false);
-    expect(preview.blockers[0]).toMatch(/ya fue fusionada/);
+    expect(preview.blockers.some((reason) => /ya fue fusionada/.test(reason))).toBe(true);
   });
 });

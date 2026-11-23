@@ -137,7 +137,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("assisted conversion of se
       variants: [{ id: "v_dorado", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 110,
         sizes: [{ id: "s6", size: "6", sku: "SOL-D-6", cost: 110, quantityOnHand: 5, createdAt: "", updatedAt: "" }],
         createdAt: "", updatedAt: "" }] },
-    o1: { id: "p-conv-o1", storeId: STORE, name: "Anillo Sol Dorado 7", sku: "SOL-X-7", category: "other", status: "published", cost: 105, prices: { t_retail: 1350 }, quantityOnHand: 3, createdAt: "", updatedAt: "" },
+    o1: { id: "p-conv-o1", storeId: STORE, name: "Anillo Sol Dorado 7", sku: "SOL-X-7", category: "other", status: "published", cost: 105, prices: { t_retail: 1400 }, quantityOnHand: 3, createdAt: "", updatedAt: "" },
     o2: { id: "p-conv-o2", storeId: STORE, name: "Anillo Sol Plateado 9", sku: "SOL-X-9", category: "other", status: "published", cost: 100, quantityOnHand: 4, createdAt: "", updatedAt: "" },
   };
 
@@ -217,6 +217,42 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("assisted conversion of se
     const shelf = await doradoShelf();
     expect(shelf.s7).toBeUndefined();
     expect((await readProduct("p-conv-o1")).status).toBe("published");
+  });
+
+  it("dictamen QA (mayor): precio distinto al unificar con un color EXISTENTE bloquea la transacción, sin cambios parciales", async () => {
+    await seed();
+    await envConv.withSecurityRulesDisabled((ctx) =>
+      setDoc(doc(ctx.firestore(), "products/p-conv-o1"), { prices: { t_retail: 1350 } }, { merge: true })
+    );
+    const { convertProductVariantsTx } = await import("./firestoreData");
+    await expect(convertProductVariantsTx({
+      storeId: STORE, mainId: "p-conv-main",
+      mappings: [{ productId: "p-conv-o1", color: "Dorado", size: "7" }],
+      expected: { "p-conv-o1": { physical: 3, quarantine: 0 } },
+    })).rejects.toThrow(/precios distintos.*1,350.*1,400.*Fer decide cu[aá]l conservar/i);
+    expect((await doradoShelf()).s7).toBeUndefined(); // nada se movió
+    expect((await readProduct("p-conv-o1")).status).toBe("published");
+    expect((await readProduct("p-conv-o1")).quantityOnHand).toBe(3);
+  });
+
+  it("dictamen QA (crítico 3): el color del diseño tiene 5 piezas sin talla — bloquea en vez de volverlas 3", async () => {
+    await seed();
+    // La ficha principal vende Dorado sin tallas, con 5 piezas contadas (la repro: 8 antes → 3 después).
+    await envConv.withSecurityRulesDisabled((ctx) =>
+      setDoc(doc(ctx.firestore(), "products/p-conv-main"), {
+        variants: [{ id: "v_dorado", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 110, quantityOnHand: 5, createdAt: "", updatedAt: "" }],
+      }, { merge: true })
+    );
+    const { convertProductVariantsTx } = await import("./firestoreData");
+    await expect(convertProductVariantsTx({
+      storeId: STORE, mainId: "p-conv-main",
+      mappings: [{ productId: "p-conv-o1", color: "Dorado", size: "7" }],
+      expected: { "p-conv-o1": { physical: 3, quarantine: 0 } },
+    })).rejects.toThrow(/color Dorado de la ficha principal tiene 5 piezas contadas sin talla/);
+    const main = await readProduct("p-conv-main");
+    expect(main.variants[0].quantityOnHand).toBe(5); // las 5 siguen donde estaban
+    expect(main.variants[0].sizes).toBeUndefined();
+    expect((await readProduct("p-conv-o1")).quantityOnHand).toBe(3);
   });
 
   it("existencia distinta a la de la vista previa: STALE sin mover nada", async () => {
