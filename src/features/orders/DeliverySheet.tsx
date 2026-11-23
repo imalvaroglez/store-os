@@ -3,7 +3,9 @@ import type { Order, OrderDeliveryLine } from "../../types";
 import { Badge, Button, Dialog, Money, Sheet, StatRow, TextField, useToast } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
 import { pendingDeliveries, pendingDeliveryPieces, deliveryValidationError } from "../../lib/deliveries";
+import { stockDimensionKey } from "../../lib/inventory";
 import { orderItems, orderTotals } from "../../lib/orders";
+import { variantHasSizes } from "../../lib/variants";
 import { todayIso, formatDate } from "../../lib/dates";
 import { uid } from "../../lib/ids";
 import { sanitizeIntegerInput } from "../../lib/money";
@@ -44,10 +46,23 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
   }, [open]);
   const quantityFor = (key: string, remaining: number) => quantityText[key] ?? String(remaining);
 
-  const nameFor = (productId: string, variantId?: string): string => {
+  // #461: the piece exactly as sold — the line's own snapshots first (color
+  // and talla stay readable even after the ficha changes), the catalog after.
+  const snapshots = new Map(
+    orderItems(order).map((item) => [stockDimensionKey(item.productId ?? "", item.variantId, item.variantSizeId), item])
+  );
+  const nameFor = (productId: string, variantId?: string, variantSizeId?: string): string => {
     const product = state.products.find((candidate) => candidate.id === productId);
     const variant = variantId ? product?.variants?.find((candidate) => candidate.id === variantId) : undefined;
-    return [product?.name ?? "Pieza", variant?.color].filter(Boolean).join(" · ");
+    const snapshot = snapshots.get(stockDimensionKey(productId, variantId, variantSizeId));
+    const color = snapshot?.variantColor ?? variant?.color;
+    const size = variantSizeId
+      ? snapshot?.variantSize ?? variant?.sizes?.find((candidate) => candidate.id === variantSizeId)?.size
+      : undefined;
+    const name = [product?.name ?? snapshot?.productName ?? "Pieza", color, size].filter(Boolean).join(" · ");
+    // A piece sold without talla on a color that now sells by size is
+    // delivered as it was sold — said out loud, never re-assigned here.
+    return variant && variantHasSizes(variant) && !variantSizeId ? `${name} (vendida sin talla)` : name;
   };
 
   async function submit(confirmDeliveredWithBalance = false) {
@@ -59,6 +74,8 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
       .map((line) => ({
         productId: line.productId,
         ...(line.variantId ? { variantId: line.variantId } : {}),
+        // #461: the exact talla — a partial delivery discounts ITS combination.
+        ...(line.variantSizeId ? { variantSizeId: line.variantSizeId } : {}),
         quantity: Math.max(0, Math.round(Number(quantityFor(line.key, line.quantity)) || 0)),
       }))
       .filter((line) => line.quantity > 0);
@@ -70,7 +87,7 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
     setSaving(true);
     try {
       await registerDelivery(order, { id: attemptIdRef.current, lines, deliveredAt: date }, { confirmDeliveredWithBalance });
-      const entered = new Map(lines.map((line) => [`${line.productId}${line.variantId ? `:${line.variantId}` : ""}`, line.quantity]));
+      const entered = new Map(lines.map((line) => [stockDimensionKey(line.productId, line.variantId, line.variantSizeId), line.quantity]));
       const completes = pending.every((line) => entered.get(line.key) === line.quantity);
       toast.success(completes ? "Entrega registrada. Pedido entregado por completo." : "Entrega parcial registrada.");
       // A NEW attempt gets a NEW id: the next delivery from this card must be
@@ -109,7 +126,7 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
                 <div className="min-w-0">
                   <p className="text-sm text-on-surface">{formatDate(event.deliveredAt)}</p>
                   <p className="text-xs text-on-surface-soft">
-                    {event.lines.map((line) => `${line.quantity} × ${nameFor(line.productId, line.variantId)}`).join(", ")}
+                    {event.lines.map((line) => `${line.quantity} × ${nameFor(line.productId, line.variantId, line.variantSizeId)}`).join(", ")}
                   </p>
                 </div>
                 <Badge tone="neutral">registrada el {formatDate(event.recordedAt.slice(0, 10))}</Badge>
@@ -121,7 +138,7 @@ export function DeliverySheet({ order, open, onClose }: { order: Order; open: bo
           {pending.map((line) => (
             <div key={line.key} className="flex items-end justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm text-on-surface wrap-break-word">{nameFor(line.productId, line.variantId)}</p>
+                <p className="text-sm text-on-surface wrap-break-word">{nameFor(line.productId, line.variantId, line.variantSizeId)}</p>
                 <p className="text-xs text-on-surface-soft">Pendientes: {line.quantity}</p>
               </div>
               <div className="w-28 shrink-0">
