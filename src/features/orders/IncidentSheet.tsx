@@ -2,7 +2,7 @@
 // order that sold the piece. Facts are registered as they happen (PO design:
 // acciones directas, no cadena de estados obligatoria). Mobile-first, every
 // action one tap away, errors explain themselves in Spanish.
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   Badge,
@@ -21,7 +21,7 @@ import { orderItems } from "../../lib/orders";
 import { uid } from "../../lib/ids";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { combinationSku, totalStock, variantHasSizes, variantSku, variantStock } from "../../lib/variants";
-import { incidentState, type IncidentPieceLocation } from "./incidents";
+import { agreedSolutionStuckReason, incidentState, type IncidentPieceLocation } from "./incidents";
 import { pendingRestitutionCents, reconcileIncidentMoney } from "./incidentMoney";
 import type { IncidentResolutionKind, Order, OrderIncident, ProductVariant } from "../../types";
 
@@ -185,6 +185,14 @@ function IncidentCard({
   // self-heal key); a fresh confirmation after success gets a new one.
   const confirmEventIdRef = useRef<string | null>(null);
   const info = incidentState(incident);
+  // #461 (review 23-nov): the agreed solution may have become impossible after
+  // the fact — its color now sells by talla without one, or the talla/color
+  // vanished. Say so and let Fer agree again; it is never confirmed as is.
+  const stuckReason = info.resolution && !info.confirmed ? agreedSolutionStuckReason(incident, products) : null;
+  const [reagree, setReagree] = useState(false);
+  useEffect(() => {
+    if (!stuckReason) setReagree(false);
+  }, [stuckReason]);
   // #380 QA r2: a confirmed incident with credit that did NOT make it back to
   // the clienta's saldo a favor stays visible and retryable — the pending
   // figure is the SAME arithmetic the data layer uses to self-heal.
@@ -370,7 +378,17 @@ function IncidentCard({
         </p>
       )}
 
-      {!info.resolution && (
+      {stuckReason && !reagree && (
+        <div className="space-y-2 rounded-xl bg-danger/5 p-3 ring-1 ring-danger/20">
+          <p className="text-sm" role="alert">
+            {stuckReason}. No se puede confirmar esta solución tal como quedó acordada.
+          </p>
+          <Button size="sm" variant="secondary" onClick={() => setReagree(true)}>
+            Volver a acordar la solución
+          </Button>
+        </div>
+      )}
+      {(!info.resolution || reagree) && (
         <div className="space-y-3 border-t border-edge pt-3">
           <SelectField
             label="Solución acordada con la clienta"
@@ -521,7 +539,7 @@ function IncidentCard({
         </div>
       )}
 
-      {info.resolution && !info.confirmed && (
+      {info.resolution && !info.confirmed && !stuckReason && (
         <div className="space-y-2 border-t border-edge pt-3">
           <Button full variant="secondary" disabled={confirming} onClick={() => setDialog("confirm")}>
             Confirmar recepción de la pieza + entrega

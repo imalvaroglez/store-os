@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  agreedSolutionStuckReason,
   incidentEvidenceError,
   incidentState,
   incidentsRefundPendingCents,
   incidentsSaleAdjustmentCents,
 } from "./incidents";
-import type { OrderIncident } from "../../types";
+import type { OrderIncident, Product } from "../../types";
 
 const ev = (kind: OrderIncident["events"][number]["kind"], id: string, detail?: Record<string, string | number>) => ({
   id, kind, at: `2026-11-0${id.length}T10:00:00Z`, by: "fer", ...(detail ? { detail } : {}),
@@ -188,5 +189,37 @@ describe("incidentEvidenceError por talla (#461)", () => {
 
   it("la línea intacta (misma talla) no restringe la edición", () => {
     expect(incidentEvidenceError(withIncident, prevItems)).toBeNull();
+  });
+});
+
+// #461 (revisión de código 23-nov): la pieza que una solución ACORDADA iba a
+// entregar puede volverse imposible si la ficha cambia después del acuerdo.
+// El sistema debe decirlo y dejar acordar de nuevo, nunca confirmar a ciegas.
+describe("agreedSolutionStuckReason (#461)", () => {
+  const design = {
+    id: "p-sol", storeId: "s1",
+    variants: [{ id: "v_gold", color: "Dorado", createdAt: "", updatedAt: "", sizes: [{ id: "d6", size: "6", createdAt: "", updatedAt: "" }] }],
+  } as never as Product;
+  const agreedIncident = (resolution: OrderIncident["resolution"], replacement?: OrderIncident["replacement"]): OrderIncident =>
+    base({ productId: "p-sol", variantId: "v_gold", variantColor: "Dorado", resolution, ...(replacement ? { replacement } : {}) }) as OrderIncident;
+  const replacement = { productId: "p-sol", productName: "Anillo Sol", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false, variantId: "v_gold", variantColor: "Dorado" };
+
+  it("acordada sin talla y el color ahora se vende por talla: lo dice", () => {
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, replacement), [design])).toBe(
+      "La solución se acordó sin talla y el color Dorado ahora se vende por talla."
+    );
+    // Con la talla en la resolución sigue siendo entregable.
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, { ...replacement, variantSizeId: "d6" }), [design])).toBeNull();
+  });
+
+  it("ficha, color o talla desaparecidos: lo dice; un reembolso no entrega pieza y nunca se atasca", () => {
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, replacement), [])).toMatch(/ya no existe/);
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, { ...replacement, variantId: "v_gone" }), [design])).toMatch(/El color Dorado ya no existe/);
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, { ...replacement, variantSizeId: "d9" }), [design])).toMatch(/talla .* ya no existe/);
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "refund", destination: "refund_pending" }), [design])).toBeNull();
+  });
+
+  it("esperar reposición entrega la misma pieza: también se atasca si esa pieza ya no se puede nombrar", () => {
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "wait_restock" }), [design])).toMatch(/se acordó sin talla/);
   });
 });

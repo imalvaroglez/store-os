@@ -568,4 +568,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("posventa por combinación
     expect(shelves.goldColorLevel).toBe(1); // a la vista para repartir desde la ficha
     expect(shelves.quarantined).toBe(0);
   });
+
+  it("revisión 23-nov: una solución acordada SIN talla puede acordarse de nuevo cuando el color ya vende por talla; una válida no", async () => {
+    await seed();
+    const withoutSize = { productId: PRODUCT, productName: "Anillo Sol", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false, variantId: "v_gold", variantColor: "Dorado" };
+    await agree("ord-sz-repl", "sz-8", "sz8", { kind: "replacement_equivalent" }, withoutSize);
+    await expect(
+      applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-8", event: event("sz8-e2", "confirmed") })
+    ).rejects.toThrow(/se acordó sin talla.*Vuelve a acordar/);
+    // Se acuerda de nuevo, ahora con la talla que se entregará.
+    await applyIncidentEventTx({
+      orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-8", event: event("sz8-e3", "resolution_agreed"),
+      resolution: { kind: "replacement_equivalent" },
+      replacement: { ...withoutSize, variantSizeId: "d5", variantSize: "5" },
+    });
+    await applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-8", event: event("sz8-e4", "confirmed") });
+    expect((await readShelves()).d5).toBe(1);
+    // Una solución que sí se puede entregar no se vuelve a acordar (append-only como siempre).
+    await expect(
+      applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-8", event: event("sz8-e5", "resolution_agreed"), resolution: { kind: "refund", destination: "refund_pending" } })
+    ).rejects.toThrow(/ya tiene una resolución acordada|ya tiene|confirmad/i);
+  });
 });

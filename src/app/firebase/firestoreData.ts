@@ -65,7 +65,7 @@ import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmoun
 import { normalizeEmail, type AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, VariantSize, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
-import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
+import { IncidentEvidenceError, agreedSolutionStuckReason, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
@@ -2869,7 +2869,22 @@ export async function applyIncidentEventTx(params: {
     // ── Validity from derived state (fail closed on nonsense sequences). ──
     const kind = event.kind;
     if (kind === "resolution_agreed" && (state.resolution || !state.opened)) {
-      throw new Error("Esta incidencia ya tiene una resolución acordada.");
+      // #461 (review 23-nov): a solution that can no longer be handed over —
+      // the ficha changed after it was agreed — may be agreed again, read from
+      // the FRESH product doc. A solution that can is append-only, as always.
+      let stuck = false;
+      if (state.opened && state.resolution && !state.confirmed) {
+        const target = incident.resolution?.kind === "wait_restock"
+          ? { productId: incident.productId }
+          : { productId: incident.replacement?.productId };
+        if (target?.productId) {
+          const targetSnap = await tx.get(doc(db, "products", target.productId));
+          stuck = agreedSolutionStuckReason(incident, targetSnap.exists() ? [{ ...targetSnap.data(), id: targetSnap.id } as Product] : []) !== null;
+        } else {
+          stuck = agreedSolutionStuckReason(incident, []) !== null;
+        }
+      }
+      if (!state.opened || !stuck) throw new Error("Esta incidencia ya tiene una resolución acordada.");
     }
     // #203 r2: the AUTHORITATIVE money reconciliation happens HERE, against
     // the fresh order doc — the UI's numbers are only an estimate. The stored
@@ -3005,7 +3020,9 @@ export async function applyIncidentEventTx(params: {
           const sizeId = effectiveTarget.variantSizeId ?? (agreed?.kind === "wait_restock" ? incident.variantSizeId : undefined);
           const sellsBySize = variantHasSizes(variant);
           if (sellsBySize && !sizeId) {
-            throw new Error(`El reemplazo se vende por talla (${variant.color}) y esta resolución no dice cuál. Elige la talla que entregas.`);
+            throw new Error(
+              `Esta solución se acordó sin talla y el color ${variant.color} ahora se vende por talla: no se puede confirmar así. Vuelve a acordar la solución eligiendo la talla que entregas.`
+            );
           }
           if (!sellsBySize && sizeId) {
             throw new Error("Esa talla ya no se vende en ese color; revisa la incidencia.");

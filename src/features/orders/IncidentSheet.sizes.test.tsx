@@ -140,4 +140,26 @@ describe("IncidentSheet por talla (#461 — dictamen QA)", () => {
     renderSheet(orderWith([agreed]));
     expect(screen.getByText(/Anillo Sol \(Dorado · 5\)/)).toBeTruthy();
   });
+
+  it("una solución acordada sin talla sobre un color que hoy se vende por talla: lo explica y deja volver a acordar (antes: sin salida)", async () => {
+    const agreed = openedIncident();
+    agreed.events = [...agreed.events, { id: "iev-2", at: NOW, by: "u1", kind: "resolution_agreed" }];
+    agreed.resolution = { kind: "replacement_equivalent" };
+    agreed.replacement = { productId: "p-sol", productName: "Anillo Sol", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false, variantId: "v_gold", variantColor: "Dorado" };
+    renderSheet(orderWith([agreed]));
+    expect(screen.getByText(/La solución se acordó sin talla y el color Dorado ahora se vende por talla/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Confirmar recepción de la pieza/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Volver a acordar la solución" }));
+    expect(screen.getByRole("combobox", { name: "Pieza alternativa" })).toBeTruthy();
+  });
+
+  it("una solución acordada que sigue entregable no ofrece volver a acordar", () => {
+    const agreed = openedIncident();
+    agreed.events = [...agreed.events, { id: "iev-2", at: NOW, by: "u1", kind: "resolution_agreed" }];
+    agreed.resolution = { kind: "replacement_equivalent" };
+    agreed.replacement = { productId: "p-sol", productName: "Anillo Sol", unitPriceCents: 40000, unitCostCents: 16000, chargeDifference: false, variantId: "v_gold", variantColor: "Dorado", variantSizeId: "d5", variantSize: "5" };
+    renderSheet(orderWith([agreed]));
+    expect(screen.queryByRole("button", { name: "Volver a acordar la solución" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Confirmar recepción de la pieza/ })).toBeTruthy();
+  });
 });

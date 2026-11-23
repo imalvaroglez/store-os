@@ -12,9 +12,10 @@
 //   provider replaces it. Every step is an append-only event; all state here
 //   is DERIVED, never stored twice.
 // Money flows through customerCredit (#189) — there is no second balance.
-import type { Order, OrderIncident, OrderItem } from "../../types";
+import type { Order, OrderIncident, OrderItem, Product } from "../../types";
 import { orderItems } from "../../lib/orders";
 import { orderAmountCents } from "../../lib/orderMoney";
+import { isVariantProduct, variantHasSizes } from "../../lib/variants";
 
 function eventsOf(incident: OrderIncident): OrderIncident["events"] {
   return Array.isArray(incident.events) ? incident.events : [];
@@ -121,6 +122,38 @@ export function incidentEvidenceError(
     if (orderAmountCents(nextLine.unitPrice) !== orderAmountCents(prevLine.unitPrice)) {
       return `«${where}» tiene una incidencia registrada: el precio de esa línea sostiene la solución registrada y no se puede cambiar en el editor.`;
     }
+  }
+  return null;
+}
+
+/**
+ * #461 (review 23-nov): why the piece an AGREED solution hands over can no
+ * longer be delivered as agreed — the ficha changed after the agreement (its
+ * color now sells by talla without one, the talla or the color vanished). The
+ * incident then lets Fer agree again; confirming an impossible replacement is
+ * never the way out. Null when the solution can still be handed over.
+ */
+export function agreedSolutionStuckReason(
+  incident: OrderIncident,
+  products: ReadonlyArray<Pick<Product, "id" | "variants">>
+): string | null {
+  const agreed = incident.resolution;
+  if (!agreed || agreed.kind === "refund") return null; // a refund hands over no piece
+  const target = agreed.kind === "wait_restock"
+    ? { productId: incident.productId, variantId: incident.variantId, variantColor: incident.variantColor, variantSizeId: incident.variantSizeId }
+    : incident.replacement;
+  if (!target?.productId) return "La solución acordada no indica qué pieza entregar.";
+  const color = target.variantColor ?? "elegido";
+  const product = products.find((candidate) => candidate.id === target.productId);
+  if (!product) return "La ficha de la pieza que se iba a entregar ya no existe.";
+  if (target.variantId && !isVariantProduct(product)) return `La pieza que se iba a entregar ya no se vende por color (${color}).`;
+  const variant = target.variantId ? product.variants?.find((candidate) => candidate.id === target.variantId) : undefined;
+  if (target.variantId && !variant) return `El color ${color} ya no existe en la pieza que se iba a entregar.`;
+  if (variant && variantHasSizes(variant) && !target.variantSizeId) {
+    return `La solución se acordó sin talla y el color ${color} ahora se vende por talla.`;
+  }
+  if (variant && target.variantSizeId && !variant.sizes?.some((size) => size.id === target.variantSizeId)) {
+    return "La talla que se iba a entregar ya no existe en ese color.";
   }
   return null;
 }
