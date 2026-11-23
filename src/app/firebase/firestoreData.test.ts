@@ -516,3 +516,25 @@ describe("applyRelativeDeltas — reservas relativas al stock canónico (E1)", (
     expect(result.updates).toEqual([{ productId: "a", quantityOnHand: 5 }, { productId: "b", quantityOnHand: 0 }]);
   });
 });
+
+describe("#489 inventory publication", () => {
+  it("normalizes legacy manual marks in summary and detail, preserving on-demand manual state", () => {
+    const p = baseProduct({ quantityOnHand: 5, availability: "sold_out" });
+    const inventory = { ...store, type: "inventory_tiered" as const };
+    expect(projectPublicProductSummary(p, "santi", inventory).availability).toBe("available");
+    expect(projectPublicProductDetail(p, "santi", [], inventory).availability).toBe("available");
+    expect(projectPublicProductSummary(p, "santi", store).availability).toBe("sold_out");
+    expect(projectPublicProductSummary({ ...p, quantityOnHand: -1, availability: "available" }, "santi", inventory).availability).toBe("sold_out");
+    expect(projectPublicProductSummary({ ...p, quantityOnHand: undefined, variants: [{ id: "silver", color: "Plata", quantityOnHand: 2, createdAt: "", updatedAt: "" }] }, "santi", inventory).availability).toBe("available");
+  });
+});
+
+it("#489 public availability never subtracts a different color's shortage from sellable pieces", () => {
+  const inventory = { ...store, type: "inventory_tiered" as const };
+  const p = baseProduct({ availability: "sold_out", variants: [
+    { id: "silver", color: "Plateado", quantityOnHand: 1, createdAt: "", updatedAt: "" },
+    { id: "gold", color: "Dorado", quantityOnHand: -1, createdAt: "", updatedAt: "" },
+  ] });
+  expect(projectPublicProductSummary(p, "santi", inventory)).toMatchObject({ availability: "available", stockSignal: "disponible" });
+  expect(p.variants?.map((v) => v.quantityOnHand)).toEqual([1, -1]);
+});

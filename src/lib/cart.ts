@@ -1,3 +1,6 @@
+import type { StoreType } from "../types";
+import { publicAvailabilitySignal } from "./publicAvailability";
+
 // Public cart (storefront). Persisted per store slug in localStorage — a
 // visitor accumulates pieces across reloads without any backend. Lines carry
 // only public data, including the public tier prices needed for an estimated
@@ -26,6 +29,8 @@ export type PublicCartItemSource = {
   prices?: Record<string, number>;
   stockSignal?: string;
   inquire?: boolean;
+  availability?: string | null;
+  variants?: { id: string; color: string; imageUrl?: string | null; stockSignal: string }[];
 };
 
 /** Normalize summary/detail projections into the shared cart shape. */
@@ -39,6 +44,20 @@ export function cartItemFromPublicProduct(product: PublicCartItemSource): Omit<C
     ...(typeof product.price === "number" ? { unitPrice: product.price } : {}),
     inquire: product.inquire ?? product.stockSignal === "agotado",
   };
+}
+
+/** Refresh every exact color key too, including carts saved before a restock.
+ * Metadata and inquiry intent follow current public signals; quantities stay. */
+export function cartItemsForPublicProduct(product: PublicCartItemSource, storeType?: StoreType): Omit<CartLine, "qty">[] {
+  const signal = publicAvailabilitySignal(product, storeType);
+  const base = cartItemFromPublicProduct({ ...product, inquire: signal === "agotado" });
+  return [base, ...(product.variants ?? []).map((variant) => ({
+    ...base,
+    productSlug: `${product.productSlug}~${variant.id}`,
+    name: `${product.name} · ${variant.color}`,
+    image: variant.imageUrl ?? base.image,
+    inquire: (storeType !== "inventory_tiered" && signal === "agotado") || variant.stockSignal === "agotado",
+  }))];
 }
 
 const SCHEMA_VERSION = 1;

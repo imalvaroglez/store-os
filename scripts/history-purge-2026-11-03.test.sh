@@ -167,4 +167,17 @@ if purge_assert_same_ref_snapshot "$TMP_ROOT/pull-before.tsv" "$TMP_ROOT/pull-af
   echo "expected changed internal ref SHA rejection" >&2
   exit 1
 fi
+
+# Public repositories cannot turn off fork creation; zero forks plus ref freezes is the supported guard.
+purge_assert_fork_policy public true 0 snapshot >"$TMP_ROOT/public-fork-policy.log"
+grep -Fq "no permite deshabilitar" "$TMP_ROOT/public-fork-policy.log"
+purge_assert_fork_policy private false 0 snapshot
+if purge_assert_fork_policy private true 0 snapshot >"$TMP_ROOT/private-fork-policy.log" 2>&1; then
+  echo "expected private repository fork policy rejection" >&2
+  exit 1
+fi
+if purge_assert_fork_policy public true 1 push >"$TMP_ROOT/public-fork-count.log" 2>&1; then
+  echo "expected nonzero public fork count rejection" >&2
+  exit 1
+fi
 printf 'history purge ref rewrite tests passed\n'
