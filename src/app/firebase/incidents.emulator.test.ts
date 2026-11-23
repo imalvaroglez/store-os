@@ -403,3 +403,169 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("after-sales incident tran
     expect(blue.quantityOnHand).toBe(1);
   });
 });
+
+// #461 (dictamen QA 23-nov, crítico 4): la posventa también razona por la
+// COMBINACIÓN exacta. El reemplazo exige la talla cuando el color se vende
+// por talla y descuenta su combinación; la pieza devuelta vuelve a SU talla;
+// una talla que ya no existe o una talla faltante fallan cerrado.
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("posventa por combinación color × talla (#461 — dictamen QA)", () => {
+  let envSizes: RulesTestEnvironment;
+  const STORE = "inc461-store";
+  const PRODUCT = "inc461-design";
+  const sizeLine = (quantity = 1, withSize = true) => ({
+    lineId: "l6", productId: PRODUCT, productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado",
+    ...(withSize ? { variantSizeId: "d6", variantSize: "6" } : {}),
+    quantity, unitPrice: 400, subtotal: 400 * quantity,
+  });
+  const orderDoc = (withSize = true) => ({
+    storeId: STORE, customerId: "clienta",
+    items: [sizeLine(1, withSize)],
+    deposit: 0, orderStatus: "confirmed", paymentsReceivedCents: 40000, inheritedDepositMaterialized: true,
+    createdAt: "2026-11-23T10:00:00Z", updatedAt: "2026-11-23T10:00:00Z",
+  });
+  const sizedIncident = (id: string, extra: Partial<OrderIncident> = {}): OrderIncident => ({
+    id, lineId: "l6", productId: PRODUCT, productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", variantSizeId: "d6", variantSize: "6",
+    quantity: 1, reason: "Piedra fallada", originalUnitPriceCents: 40000,
+    events: [event("open-" + id, "opened")], ...extra,
+  });
+
+  async function seed() {
+    await envSizes.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "users/inc461-user"), { role: "member" });
+      await setDoc(doc(db, "adminStores/" + STORE), { ownerUid: "inc461-user", memberUids: ["inc461-user"] });
+      await setDoc(doc(db, "products/" + PRODUCT), {
+        storeId: STORE, name: "Anillo Sol", sku: "SOL", category: "jewelry", price: 400, cost: 100, status: "draft", createdAt: "", updatedAt: "",
+        variants: [
+          { id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, createdAt: "", updatedAt: "",
+            sizes: [
+              { id: "d6", size: "6", sku: "SOL-D-6", cost: 100, quantityOnHand: 3, createdAt: "", updatedAt: "" },
+              { id: "d5", size: "5", sku: "SOL-D-5", cost: 100, quantityOnHand: 2, createdAt: "", updatedAt: "" },
+            ] },
+          { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "SOL-P", cost: 90, quantityOnHand: 4, createdAt: "", updatedAt: "" },
+        ],
+      });
+      await setDoc(doc(db, "orders/ord-sz-repl"), orderDoc());
+      await setDoc(doc(db, "orders/ord-sz-return"), orderDoc());
+      await setDoc(doc(db, "orders/ord-sz-legacy"), orderDoc(false));
+    });
+    holder.db = envSizes.authenticatedContext("inc461-user").firestore();
+  }
+
+  beforeAll(async () => {
+    envSizes = await initializeTestEnvironment({
+      projectId: "store-os-dev",
+      firestore: { rules: readFileSync("firestore.rules", "utf8") },
+    });
+  });
+  afterAll(async () => { await envSizes.cleanup(); });
+
+  const readShelves = async () => {
+    const data = (await getDoc(doc(holder.db, "products/" + PRODUCT))).data()! as { quantityOnHand?: number; quantityQuarantined?: number; variants: any[] };
+    const gold = data.variants.find((v) => v.id === "v_gold");
+    return {
+      d6: gold.sizes.find((s: any) => s.id === "d6")?.quantityOnHand as number | undefined,
+      d5: gold.sizes.find((s: any) => s.id === "d5")?.quantityOnHand as number | undefined,
+      goldColorLevel: gold.quantityOnHand as number | undefined,
+      silver: data.variants.find((v) => v.id === "v_silver").quantityOnHand as number,
+      designLevel: data.quantityOnHand as number | undefined,
+      quarantined: data.quantityQuarantined as number | undefined,
+    };
+  };
+  const agree = async (orderId: string, incidentId: string, idPrefix: string, resolution: OrderIncident["resolution"], replacement?: OrderIncident["replacement"]) => {
+    await openIncidentTx({ orderId, storeId: STORE, incident: sizedIncident(incidentId, orderId === "ord-sz-legacy" ? { variantSizeId: undefined, variantSize: undefined } : {}) });
+    await applyIncidentEventTx({ orderId, storeId: STORE, incidentId, event: event(idPrefix + "-e1", "resolution_agreed"), resolution, replacement });
+  };
+
+  it("confirmar un reemplazo sin talla en un color que se vende por talla: error accionable, sin mover nada", async () => {
+    await seed();
+    await agree("ord-sz-repl", "sz-1", "sz1", { kind: "replacement_equivalent" }, { productId: PRODUCT, productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false });
+    await expect(
+      applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-1", event: event("sz1-e2", "confirmed") })
+    ).rejects.toThrow(/talla/i);
+    const shelves = await readShelves();
+    expect(shelves.d6).toBe(3);
+    expect(shelves.d5).toBe(2);
+    expect(shelves.quarantined ?? 0).toBe(0);
+  });
+
+  it("confirmar el reemplazo con talla descuenta ESA combinación; su hermana, el otro color y el diseño quedan intactos", async () => {
+    await seed();
+    await agree("ord-sz-repl", "sz-2", "sz2", { kind: "replacement_equivalent" }, { productId: PRODUCT, productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", variantSizeId: "d5", variantSize: "5", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false });
+    const confirmed = await applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-2", event: event("sz2-e2", "confirmed") });
+    expect(confirmed.changedProductIds).toContain(PRODUCT);
+    const shelves = await readShelves();
+    expect(shelves.d5).toBe(1); // la talla entregada salió de SU estante
+    expect(shelves.d6).toBe(3); // la talla devuelta no se descuenta dos veces
+    expect(shelves.silver).toBe(4);
+    expect(shelves.goldColorLevel).toBeUndefined();
+    expect(shelves.designLevel).toBeUndefined();
+    expect(shelves.quarantined).toBe(1);
+  });
+
+  it("la existencia del reemplazo se mide por combinación: la 6 con 3 no presta piezas a la 5 con 2", async () => {
+    await seed();
+    await agree("ord-sz-repl", "sz-3", "sz3", { kind: "replacement_with_difference" }, { productId: PRODUCT, productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", variantSizeId: "d5", variantSize: "5", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false });
+    // Se necesitan 3 de la talla 5 y sólo hay 2.
+    const order = (await getDoc(doc(holder.db, "orders/ord-sz-repl"))).data()!;
+    const incidents = order.incidents as OrderIncident[];
+    incidents.find((i) => i.id === "sz-3")!.quantity = 3;
+    await envSizes.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), "orders/ord-sz-repl"), { incidents }, { merge: true }));
+    await expect(
+      applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-3", event: event("sz3-e2", "confirmed") })
+    ).rejects.toThrow(/disponible|talla 5/i);
+    expect((await readShelves()).d5).toBe(2);
+  });
+
+  it("esperar reposición entrega la MISMA combinación de la incidencia", async () => {
+    await seed();
+    await agree("ord-sz-repl", "sz-4", "sz4", { kind: "wait_restock", waitUntil: "2026-12-01" });
+    await applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-4", event: event("sz4-e2", "confirmed") });
+    const shelves = await readShelves();
+    expect(shelves.d6).toBe(2);
+    expect(shelves.d5).toBe(2);
+    expect(shelves.goldColorLevel).toBeUndefined();
+  });
+
+  it("volver a venta devuelve la pieza a SU talla, no a la hermana ni al campo del color", async () => {
+    await seed();
+    await agree("ord-sz-return", "sz-5", "sz5", { kind: "refund", destination: "refund_pending" });
+    await applyIncidentEventTx({ orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-5", event: event("sz5-e2", "confirmed") });
+    const released = await applyIncidentEventTx({ orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-5", event: event("sz5-e3", "returned_to_sale") });
+    expect(released.changedProductIds).toContain(PRODUCT);
+    const shelves = await readShelves();
+    expect(shelves.d6).toBe(4);
+    expect(shelves.d5).toBe(2);
+    expect(shelves.goldColorLevel).toBeUndefined();
+    expect(shelves.quarantined).toBe(0);
+  });
+
+  it("la talla de la incidencia ya no existe: error accionable, sin inventar otra talla ni mover existencias", async () => {
+    await seed();
+    await agree("ord-sz-return", "sz-6", "sz6", { kind: "refund", destination: "refund_pending" }, undefined);
+    await applyIncidentEventTx({ orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-6", event: event("sz6-e2", "confirmed") });
+    // La ficha quitó la talla 6 después de la devolución.
+    const data = (await getDoc(doc(holder.db, "products/" + PRODUCT))).data()! as { variants: any[] };
+    const variants = data.variants.map((v) => (v.id === "v_gold" ? { ...v, sizes: v.sizes.filter((s: any) => s.id !== "d6") } : v));
+    await envSizes.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), "products/" + PRODUCT), { variants }, { merge: true }));
+    await expect(
+      applyIncidentEventTx({ orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-6", event: event("sz6-e3", "returned_to_sale") })
+    ).rejects.toThrow(/talla.*ya no existe|no se puede devolver/i);
+    const after = await readShelves();
+    expect(after.d5).toBe(2);
+    expect(after.goldColorLevel).toBeUndefined(); // nada cayó en el campo del color
+    expect(after.quarantined).toBe(1); // sigue retenida: nada se alteró
+  });
+
+  it("pieza vendida sin talla en un color que ya se vende por talla: al volver a venta queda «sin talla» en el color, sin inventar la talla", async () => {
+    await seed();
+    await agree("ord-sz-legacy", "sz-7", "sz7", { kind: "refund", destination: "refund_pending" });
+    await applyIncidentEventTx({ orderId: "ord-sz-legacy", storeId: STORE, incidentId: "sz-7", event: event("sz7-e2", "confirmed") });
+    await applyIncidentEventTx({ orderId: "ord-sz-legacy", storeId: STORE, incidentId: "sz-7", event: event("sz7-e3", "returned_to_sale") });
+    const shelves = await readShelves();
+    expect(shelves.d6).toBe(3);
+    expect(shelves.d5).toBe(2);
+    expect(shelves.goldColorLevel).toBe(1); // a la vista para repartir desde la ficha
+    expect(shelves.quarantined).toBe(0);
+  });
+});

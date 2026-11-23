@@ -20,7 +20,7 @@ import {
 import { orderItems } from "../../lib/orders";
 import { uid } from "../../lib/ids";
 import { orderAmountCents } from "../../lib/orderMoney";
-import { totalStock, variantSku } from "../../lib/variants";
+import { combinationSku, totalStock, variantHasSizes, variantSku, variantStock } from "../../lib/variants";
 import { incidentState, type IncidentPieceLocation } from "./incidents";
 import { pendingRestitutionCents, reconcileIncidentMoney } from "./incidentMoney";
 import type { IncidentResolutionKind, Order, OrderIncident, ProductVariant } from "../../types";
@@ -93,6 +93,10 @@ export function IncidentSheet({ order, open, onClose }: { order: Order; open: bo
         productId: item.productId,
         // #124/#203: the incident conserves the line's exact color.
         ...(item.variantId ? { variantId: item.variantId, variantColor: item.variantColor, variantSku: item.variantSku } : {}),
+        // #461: …and its exact talla — the piece is color × talla.
+        ...(item.variantSizeId
+          ? { variantSizeId: item.variantSizeId, variantSize: item.variantSize, variantSizeSku: item.variantSizeSku }
+          : {}),
         productName: item.productName,
         quantity,
         reason: reason.trim(),
@@ -137,7 +141,10 @@ export function IncidentSheet({ order, open, onClose }: { order: Order; open: bo
             onChange={setLineId}
             options={items.map((item) => ({
               value: item.lineId ?? "",
-              label: `${item.quantity} × ${item.productName}`,
+              // #461: two tallas of one color are two different pieces.
+              label: `${item.quantity} × ${item.productName}${item.variantColor ? ` · ${item.variantColor}` : ""}${
+                item.variantSize ? ` · ${item.variantSize}` : ""
+              }`,
             }))}
           />
           <div className="grid grid-cols-2 gap-3">
@@ -204,6 +211,20 @@ function IncidentCard({
   // #364: the exact color handed over — required when the replacement design
   // sells per color (its shelf moves; the transaction fails closed without it).
   const [replacementVariantId, setReplacementVariantId] = useState("");
+  // #461: the exact talla handed over — required when the replacement's color
+  // sells by size (its combination moves; the transaction fails closed without it).
+  const [replacementSizeId, setReplacementSizeId] = useState("");
+  const pickedVariant = replacementPick?.variants?.find((v) => v.id === replacementVariantId);
+  const pickedSize = pickedVariant?.sizes?.find((s) => s.id === replacementSizeId);
+  const replacementNeedsSize = !!pickedVariant && variantHasSizes(pickedVariant) && replacementSizeId === "";
+  /** Same piece and color as the incident → its own talla is the natural
+   * equivalent replacement. Proposed only while it still has pieces; always
+   * reviewable before agreeing. */
+  function proposeSize(variantId: string): string {
+    if (replacementPick?.id !== incident.productId || variantId !== incident.variantId || !incident.variantSizeId) return "";
+    const size = replacementPick?.variants?.find((v) => v.id === variantId)?.sizes?.find((s) => s.id === incident.variantSizeId);
+    return size && (typeof size.quantityOnHand !== "number" || size.quantityOnHand > 0) ? size.id : "";
+  }
   const [chargeDifference, setChargeDifference] = useState(true);
   const [waitUntil, setWaitUntil] = useState("");
   const [dialog, setDialog] = useState<"confirm" | "none">("none");
@@ -223,7 +244,7 @@ function IncidentCard({
         ...incident,
         resolution: { kind },
         ...(replacementPick && kind === "replacement_with_difference"
-          ? { replacement: { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: orderAmountCents(replacementPick.variants?.find((v) => v.id === replacementVariantId)?.cost ?? replacementPick.cost), chargeDifference } }
+          ? { replacement: { productId: replacementPick.id, productName: replacementPick.name, unitPriceCents: replacementPick.priceCents, unitCostCents: orderAmountCents(pickedSize?.cost ?? pickedVariant?.cost ?? replacementPick.cost), chargeDifference, ...(pickedVariant ? { variantId: pickedVariant.id, ...(pickedSize ? { variantSizeId: pickedSize.id } : {}) } : {}) } }
           : {}),
       })
     : null;
@@ -234,23 +255,31 @@ function IncidentCard({
     // its real stored cost — no invented figures, no stock-less defaults.
     // #364: a design sold per color names its COLOR too — the confirm
     // transaction moves that color's shelf and fails closed without it.
-    const pickedVariant = replacementPick?.variants?.find((v) => v.id === replacementVariantId);
+    // #461: a color that sells by size names its TALLA too.
     const replacement = kind === "replacement_equivalent" || kind === "replacement_with_difference"
       ? (replacementPick
         ? {
             productId: replacementPick.id,
             productName: replacementPick.name,
             unitPriceCents: replacementPick.priceCents,
-            unitCostCents: orderAmountCents(pickedVariant?.cost ?? replacementPick.cost),
+            // #461: the cost of the exact combination handed over.
+            unitCostCents: orderAmountCents(pickedSize?.cost ?? pickedVariant?.cost ?? replacementPick.cost),
             chargeDifference: kind === "replacement_with_difference" && chargeDifference,
             ...(pickedVariant
               ? { variantId: pickedVariant.id, variantColor: pickedVariant.color, variantSku: variantSku(replacementPick.sku, pickedVariant) }
+              : {}),
+            ...(pickedSize
+              ? {
+                  variantSizeId: pickedSize.id,
+                  variantSize: pickedSize.size,
+                  variantSizeSku: pickedSize.sku ?? combinationSku(replacementPick.sku, pickedVariant!, pickedSize),
+                }
               : {}),
           }
         : undefined)
       : undefined;
     if ((kind === "replacement_equivalent" || kind === "replacement_with_difference")
-      && (!replacement || (replacementPick?.variants?.length && !replacementVariantId))) {
+      && (!replacement || replacementNeedsSize || (replacementPick?.variants?.length && !replacementVariantId))) {
       onAgreeing(null);
       return; // the button is disabled; this guards programmatic calls
     }
@@ -319,6 +348,8 @@ function IncidentCard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-semibold text-ink">
           {incident.quantity} × {incident.productName}
+          {incident.variantColor ? ` · ${incident.variantColor}` : ""}
+          {incident.variantSize ? ` · ${incident.variantSize}` : ""}
         </h3>
         <Badge tone={info.pieceLocation === "quarantined" ? "warning" : info.pieceLocation === "written_off" ? "neutral" : "info"}>
           {PIECE_LABEL[info.pieceLocation]}
@@ -329,7 +360,10 @@ function IncidentCard({
         <p className="text-sm">
           {RESOLUTION_LABEL[info.resolution.kind]}
           {(info.resolution.kind === "replacement_with_difference" || info.resolution.kind === "replacement_equivalent") && incident.replacement && (
-            <>: {incident.replacement.productName}{incident.replacement.variantColor ? ` (${incident.replacement.variantColor})` : ""} (<Money exact amount={incident.replacement.unitPriceCents / 100} />
+            <>: {incident.replacement.productName}
+              {([incident.replacement.variantColor, incident.replacement.variantSize].filter(Boolean) as string[]).length > 0
+                ? ` (${[incident.replacement.variantColor, incident.replacement.variantSize].filter(Boolean).join(" · ")})`
+                : ""} (<Money exact amount={incident.replacement.unitPriceCents / 100} />
             {incident.replacement.chargeDifference ? " · diferencia por cobrar" : " · diferencia absorbida"})</>
           )}
           {info.resolution.waitUntil && <> · acordado para {info.resolution.waitUntil}</>}
@@ -349,7 +383,7 @@ function IncidentCard({
               <SearchSelect
                 label="Pieza alternativa"
                 value={replacementQuery}
-                onChange={(value) => { setReplacementQuery(value); setReplacementPick(null); setReplacementVariantId(""); }}
+                onChange={(value) => { setReplacementQuery(value); setReplacementPick(null); setReplacementVariantId(""); setReplacementSizeId(""); }}
                 onSelect={(option) => {
                   const product = products.find((candidate) => candidate.id === option.value);
                   setReplacementQuery(option.label);
@@ -362,6 +396,7 @@ function IncidentCard({
                     variants: product?.variants,
                   });
                   setReplacementVariantId("");
+                  setReplacementSizeId("");
                 }}
                 options={products.map((product) => ({
                   value: product.id,
@@ -384,17 +419,45 @@ function IncidentCard({
                   <SelectField
                     label="Color del reemplazo"
                     value={replacementVariantId}
-                    onChange={setReplacementVariantId}
+                    onChange={(value) => { setReplacementVariantId(value); setReplacementSizeId(proposeSize(value)); }}
                     options={[
                       { value: "", label: "Elige el color…" },
-                      ...replacementPick.variants.map((v) => ({
-                        value: v.id,
-                        label: typeof v.quantityOnHand === "number"
-                          ? `${v.color} — ${v.quantityOnHand <= 0 ? "agotado" : v.quantityOnHand === 1 ? "queda 1" : `quedan ${v.quantityOnHand}`}`
-                          : `${v.color} — sin rastreo`,
-                      })),
+                      ...replacementPick.variants.map((v) => {
+                        // #461: a color that sells by size shows its combinations' sum.
+                        const stock = variantHasSizes(v) ? variantStock(v) : v.quantityOnHand;
+                        return {
+                          value: v.id,
+                          label: typeof stock === "number"
+                            ? `${v.color} — ${stock <= 0 ? "agotado" : stock === 1 ? "queda 1" : `quedan ${stock}`}`
+                            : `${v.color} — sin rastreo`,
+                        };
+                      }),
                     ]}
                   />
+                  {pickedVariant && variantHasSizes(pickedVariant) && (
+                    <SelectField
+                      label="Talla del reemplazo"
+                      aria-required="true"
+                      value={replacementSizeId}
+                      onChange={setReplacementSizeId}
+                      hint={pickedSize?.sku ? `Clave: ${pickedSize.sku}.` : undefined}
+                      options={[
+                        { value: "", label: "Elige la talla…" },
+                        ...pickedVariant.sizes!.map((size) => ({
+                          value: size.id,
+                          label: `${size.size} (${
+                            typeof size.quantityOnHand !== "number"
+                              ? "sin rastreo"
+                              : size.quantityOnHand <= 0
+                                ? "agotada"
+                                : size.quantityOnHand === 1
+                                  ? "queda 1"
+                                  : `quedan ${size.quantityOnHand}`
+                          })`,
+                        })),
+                      ]}
+                    />
+                  )}
                   <p className="text-xs text-on-surface-soft">Elige el color que entregas: sale del estante de ese color.</p>
                 </div>
               ) : null}
@@ -446,7 +509,7 @@ function IncidentCard({
             full
             disabled={agreeing
               || ((kind === "replacement_equivalent" || kind === "replacement_with_difference")
-                && (!replacementPick || (!!replacementPick.variants?.length && replacementVariantId === "")))
+                && (!replacementPick || (!!replacementPick.variants?.length && replacementVariantId === "") || replacementNeedsSize))
               || (needsDestination && destination === "")}
             onClick={() => void agree()}
           >

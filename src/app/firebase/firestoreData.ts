@@ -2941,8 +2941,14 @@ export async function applyIncidentEventTx(params: {
       // #212 F4: wait_restock hands the restocked piece over at confirm — the
       // SAME piece leaves stock at its real stored cost, shortage included.
       // #364: the SAME COLOR when the incident is on a color line.
+      // #461: the restocked piece is the incident's exact combination.
       const effectiveTarget = agreed?.kind === "wait_restock"
-        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false, ...(incident.variantId ? { variantId: incident.variantId } : {}) })
+        ? (target ?? {
+            productId: incident.productId, productName: incident.productName,
+            unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false,
+            ...(incident.variantId ? { variantId: incident.variantId } : {}),
+            ...(incident.variantSizeId ? { variantSizeId: incident.variantSizeId } : {}),
+          })
         : target;
       if (quarantineProduct) {
         const productSnap = await tx.get(quarantineProduct);
@@ -2967,9 +2973,30 @@ export async function applyIncidentEventTx(params: {
             // actionable error, no movement, never another color.
             throw new Error("El reemplazo se vende por color y esta resolución no dice cuál. Ajusta la existencia del color desde el catálogo y registra esta entrega manualmente.");
           }
-          const onHand = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
-          if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del color ${variant.color}.`);
-          const nextVariants = applyVariantDelta({ variants }, variant.id, -quantity, event.at);
+          // #461: a color that sells by size hands over ONE combination — the
+          // talla is required (never guessed) and the shelf it leaves is its own.
+          const sizeId = effectiveTarget.variantSizeId ?? (agreed?.kind === "wait_restock" ? incident.variantSizeId : undefined);
+          const sellsBySize = variantHasSizes(variant);
+          if (sellsBySize && !sizeId) {
+            throw new Error(`El reemplazo se vende por talla (${variant.color}) y esta resolución no dice cuál. Elige la talla que entregas.`);
+          }
+          if (!sellsBySize && sizeId) {
+            throw new Error("Esa talla ya no se vende en ese color; revisa la incidencia.");
+          }
+          let nextVariants: Product["variants"] | null;
+          if (sizeId) {
+            const size = variant.sizes?.find((candidate) => candidate.id === sizeId);
+            if (!size) throw new Error(`La talla elegida ya no existe en el color ${variant.color}.`);
+            const onHand = typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0;
+            if (onHand < quantity) {
+              throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) de la talla ${size.size} del color ${variant.color}.`);
+            }
+            nextVariants = applyCombinationDelta({ variants }, variant.id, sizeId, -quantity, event.at);
+          } else {
+            const onHand = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
+            if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del color ${variant.color}.`);
+            nextVariants = applyVariantDelta({ variants }, variant.id, -quantity, event.at);
+          }
           if (!nextVariants) throw new Error("El color del reemplazo ya no existe en este diseño.");
           replacementVariants = nextVariants;
         } else {
@@ -2999,12 +3026,21 @@ export async function applyIncidentEventTx(params: {
       const productSnap = await tx.get(quarantineProduct);
       const data = (productSnap.exists() ? productSnap.data() : {}) as Record<string, unknown>;
       const variants = data.variants as Product["variants"];
-      const nextVariants = incident.variantId
-        ? applyVariantDelta({ variants }, incident.variantId, quantity, event.at)
-        : null;
+      // #461: a piece sold with talla returns to ITS combination; one sold
+      // without talla on a color that now sells by size returns «sin talla» to
+      // the color (the ficha asks to distribute it) — never an invented talla.
+      const nextVariants = incident.variantSizeId
+        ? applyCombinationDelta({ variants }, incident.variantId!, incident.variantSizeId, quantity, event.at)
+        : incident.variantId
+          ? applyVariantDelta({ variants }, incident.variantId, quantity, event.at)
+          : null;
       if (incident.variantId || isVariantProduct({ variants })) {
         if (!nextVariants) {
-          throw new Error(`El diseño se vende por color y ${incident.variantId ? `el color ${incident.variantColor ?? "registrado"} ya no existe` : "esta incidencia no tiene color"}. No se puede devolver la pieza a la venta automáticamente: ajusta la existencia del color desde el catálogo y da de baja la pieza aquí.`);
+          throw new Error(
+            incident.variantSizeId
+              ? `La talla ${incident.variantSize ?? "registrada"} del color ${incident.variantColor ?? "registrado"} ya no existe en este diseño. No se puede devolver la pieza a la venta automáticamente: ajusta la existencia de la talla desde el catálogo y da de baja la pieza aquí.`
+              : `El diseño se vende por color y ${incident.variantId ? `el color ${incident.variantColor ?? "registrado"} ya no existe` : "esta incidencia no tiene color"}. No se puede devolver la pieza a la venta automáticamente: ajusta la existencia del color desde el catálogo y da de baja la pieza aquí.`
+          );
         }
         tx.update(quarantineProduct, { variants: nextVariants, quantityQuarantined: increment(-quantity), updatedAt: event.at });
       } else {
