@@ -135,6 +135,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("deliveredWithBalance seal
     expect(order.deliveredWithBalanceCents).toBe(70000);
   });
 
+  it("#176 doble envío de la MISMA entrega: el evento aterriza UNA sola vez", async () => {
+    // Fresh, fully-paid order so the balance gate stays out of the way: the
+    // scenario under test is the double-tap racing two identical delivery
+    // intents (both fly before either commit lands).
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/inv383-dup"), orderDoc({ paymentsReceivedCents: 100000, revision: 1 }));
+    });
+    const dup = { ...delivery("dup-delivery"), orderId: "inv383-dup" };
+    const [first, second] = await Promise.all([
+      registerDeliveryTx({ orderId: "inv383-dup", storeId: "inv383-store", delivery: dup }),
+      registerDeliveryTx({ orderId: "inv383-dup", storeId: "inv383-store", delivery: dup }),
+    ]);
+    expect(first.orderStatus).toBe("delivered");
+    expect(second.orderStatus).toBe("delivered");
+    const docData = (await getDoc(doc(holder.db, "orders/inv383-dup"))).data()!;
+    expect((docData.deliveries as OrderDelivery[]).filter((d) => d.id === "dup-delivery")).toHaveLength(1);
+    expect(docData.orderStatus).toBe("delivered");
+  });
+
   it("historical delivered orders without a seal keep editing normally (#370 compat)", async () => {
     const saved = await saveOrderWithStockTx(
       { uid: "inv383-user" } as never,
