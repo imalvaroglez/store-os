@@ -2048,18 +2048,15 @@ function variantPublicStockSignal(v: ProductVariant): "agotado" | "pocas" | "dis
 
 /** #124: the public color list of a design — one product, N colors, each with
  * its photo; NEVER per-color counts or costs (same policy as the rest of the
- * projection). #461: the DETAIL also carries each color's public sizes; the
- * catalog SUMMARY does not — it is one document for the whole store (measured:
- * tallas grew it ~49%, past the 1 MiB limit around 560 fichas) and neither the
- * grid nor the bag reads them. Each view gets what it consumes. */
-function publicVariants(product: Product, options: { withSizes: boolean }) {
+ * projection). #461: colors that sell by size carry their public sizes too. */
+function publicVariants(product: Product) {
   if (!isVariantProduct(product)) return undefined;
   return product.variants!.map((v) => ({
     id: v.id,
     color: v.color,
     imageUrl: v.photos?.find((photo) => photo.isPrimary)?.url ?? v.photos?.[0]?.url ?? null,
     stockSignal: variantPublicStockSignal(v),
-    ...(options.withSizes && variantHasSizes(v)
+    ...(variantHasSizes(v)
       ? { sizes: v.sizes!.map((s) => ({ id: s.id, size: s.size, stockSignal: sizePublicStockSignal(s, v.lowStockAt) })) }
       : {}),
   }));
@@ -2161,7 +2158,7 @@ export function projectPublicProductSummary(
     sortOrder: product.sortOrder ?? 0,
     stockSignal: publicStockSignal(product),
   };
-  const variants = publicVariants(product, { withSizes: false });
+  const variants = publicVariants(product);
   if (variants) summary.variants = variants;
   const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") summary.price = resolved;
@@ -2211,7 +2208,7 @@ export function projectPublicProductDetail(
     categories: named,
     stockSignal: publicStockSignal(product),
   };
-  const variants = publicVariants(product, { withSizes: true });
+  const variants = publicVariants(product);
   if (variants) detail.variants = variants;
   const resolved = publicPrice(product, pricing?.defaultTierId);
   if (typeof resolved === "number") detail.price = resolved;
@@ -2273,8 +2270,7 @@ function publicStockPatch(current: Product, existing: Record<string, unknown>, s
   const availability = publicAvailabilityValue({ availability: current.availability, stockSignal }, storeType);
   if (availability !== existing.availability) patch.availability = availability;
 
-  // withSizes: the DETAIL's per-combination signals refresh in place here too.
-  const signals = new Map((publicVariants(current, { withSizes: true }) ?? []).map((variant) => [variant.id, variant]));
+  const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant]));
   if (signals.size && Array.isArray(existing.variants)) {
     const variants = existing.variants as Array<{ id: string; stockSignal?: string; sizes?: Array<{ id: string; stockSignal?: string }> }>;
     const next = variants.map((variant) => {

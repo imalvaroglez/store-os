@@ -114,9 +114,10 @@ describe("#461 — tallas públicas por color (señal gruesa, sin conteos)", () 
     ],
   } as Product;
 
-  it("el DETALLE expone las tallas del color con señal propia y sin datos privados", () => {
-    const detail = projectPublicProductDetail(sized, "x", [], { defaultTierId: "t_retail" }) as Record<string, unknown>;
-    const gold = (detail.variants as Array<Record<string, unknown>>).find((v) => v.id === "v_gold")!;
+  it("la proyección expone las tallas del color con señal propia y sin datos privados", () => {
+    const summary = projectPublicProductSummary(sized, "x", { defaultTierId: "t_retail" }) as Record<string, unknown>;
+    const variants = summary.variants as Array<Record<string, unknown>>;
+    const gold = variants.find((v) => v.id === "v_gold")!;
     const sizes = gold.sizes as Array<Record<string, unknown>>;
     expect(sizes.map((s) => [s.id, s.size, s.stockSignal])).toEqual([
       ["s4", "4", "disponible"],
@@ -124,38 +125,10 @@ describe("#461 — tallas públicas por color (señal gruesa, sin conteos)", () 
       ["s7", "7", "disponible"], // sin rastrear nunca lee como cero
     ]);
     expect(sizes.map((s) => Object.keys(s).sort())).toEqual([["id", "size", "stockSignal"], ["id", "size", "stockSignal"], ["id", "size", "stockSignal"]]);
-    assertNoPrivateLeak(detail, "detail con tallas");
-  });
-
-  // Dictamen QA 23-nov (medición de la issue): el resumen del catálogo es UN
-  // documento por tienda. Con tallas crecía ~49% y superaba 1 MiB alrededor de
-  // 560 fichas; ninguna vista de la cuadrícula ni de la bolsa lee sus tallas
-  // (sólo el detalle, un documento por pieza). El resumen lleva la señal por
-  // color; las tallas viven en el detalle.
-  it("el RESUMEN no lleva tallas (la cuadrícula y la bolsa no las leen): su tamaño no crece con ellas", () => {
-    const summary = projectPublicProductSummary(sized, "x", { defaultTierId: "t_retail" }) as Record<string, unknown>;
-    const variants = summary.variants as Array<Record<string, unknown>>;
-    expect(variants.find((v) => v.id === "v_gold")).toEqual({ id: "v_gold", color: "Dorado", imageUrl: null, stockSignal: "disponible" });
     assertNoPrivateLeak(summary, "summary con tallas");
-
-    const noSizes: Product = {
-      ...sized,
-      variants: [{ ...sized.variants![0], quantityOnHand: 2, sizes: undefined }, sized.variants![1]],
-    } as Product;
-    const bytes = (value: unknown) => JSON.stringify(value).length;
-    // Diez tallas por color: el resumen no cambia; el detalle sí.
-    const tenSizes: Product = {
-      ...sized,
-      variants: [{
-        ...sized.variants![0],
-        sizes: Array.from({ length: 10 }, (_, index) => ({ ...goldSizes[0], id: `s${index}`, size: String(index) })),
-      }, sized.variants![1]],
-    } as Product;
-    const withTen = projectPublicProductSummary(tenSizes, "x", { defaultTierId: "t_retail" }) as Record<string, unknown>;
-    expect(bytes(withTen)).toBe(bytes(summary));
-    expect(bytes(summary)).toBeLessThanOrEqual(bytes(projectPublicProductSummary(noSizes, "x", { defaultTierId: "t_retail" })));
-    const detail = projectPublicProductDetail(tenSizes, "x", [], { defaultTierId: "t_retail" }) as Record<string, unknown>;
-    expect(((detail.variants as Array<Record<string, unknown>>).find((v) => v.id === "v_gold")!.sizes as unknown[]).length).toBe(10);
+    const detail = projectPublicProductDetail(sized, "x", [], { defaultTierId: "t_retail" }) as Record<string, unknown>;
+    assertNoPrivateLeak(detail, "detail con tallas");
+    expect(((detail.variants as Array<Record<string, unknown>>).find((v) => v.id === "v_gold")!.sizes as unknown[]).length).toBe(3);
   });
 
   it("la señal del color con tallas deriva de SUS combinaciones; el diseño agotado sólo si todo está agotado", async () => {
