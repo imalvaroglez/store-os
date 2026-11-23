@@ -295,7 +295,7 @@ export function sizeShelfError(args: {
   const residual = before ? before.quantityOnHand : after.quantityOnHand;
   if (typeof residual !== "number" || !Number.isFinite(residual) || residual === 0) return null;
   if (!beforeSized && residual < 0) {
-    return `El color ${color} tiene existencias en negativo (faltan ${-residual}). Corrige el conteo del color antes de activar tallas.`;
+    return `El color ${color} tiene existencias en negativo (${residual === -1 ? "falta 1" : `faltan ${-residual}`}). Corrige el conteo del color antes de activar tallas.`;
   }
   // What the tallas gain or lose in this edit, against the pieces awaiting one.
   const sum = (sizes: VariantSize[]) => sizes.reduce((total, size) => total + (typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0), 0);
@@ -303,8 +303,12 @@ export function sizeShelfError(args: {
   const moved = sum(afterSizes) - sum(beforeSizes);
   if (captured.length === afterSizes.length && moved === residual) return null;
   const origin = beforeSized
-    ? `El color ${color} tiene ${residual} piezas sin talla (por ejemplo, devueltas por un pedido vendido sin talla). Repártelas capturando su cantidad en cada talla`
-    : `El color ${color} tenía ${residual} piezas contadas sin talla. Repártelas entre sus tallas`;
+    ? residual === 1
+      ? `El color ${color} tiene 1 pieza sin talla (por ejemplo, devuelta por un pedido vendido sin talla). Repártela capturando su cantidad en una talla`
+      : `El color ${color} tiene ${residual} piezas sin talla (por ejemplo, devueltas por un pedido vendido sin talla). Repártelas capturando su cantidad en cada talla`
+    : residual === 1
+      ? `El color ${color} tenía 1 pieza contada sin talla. Repártela entre sus tallas`
+      : `El color ${color} tenía ${residual} piezas contadas sin talla. Repártelas entre sus tallas`;
   return `${origin} para guardar (llevas ${moved} de ${residual}).${captured.length < afterSizes.length ? " Revisa las tallas sin cantidad." : ""}`;
 }
 

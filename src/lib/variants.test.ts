@@ -339,6 +339,14 @@ describe("sizeShelfError — conservación al activar, repartir y quitar tallas 
     expect(check(before, { sizes: [size("d6", "6", 5), size("d5", "5", 2)] })).toMatch(/llevas 3 de 2/);
   });
 
+  it("una sola pieza se nombra en singular (hallado en el recorrido real: «1 piezas sin talla»)", () => {
+    expect(check({ sizes: [size("d6", "6", 3), size("d5", "5", 1)], quantityOnHand: 1 }, { sizes: [size("d6", "6", 3), size("d5", "5", 1)], quantityOnHand: 1 })).toBe(
+      "El color Dorado tiene 1 pieza sin talla (por ejemplo, devuelta por un pedido vendido sin talla). Repártela capturando su cantidad en una talla para guardar (llevas 0 de 1)."
+    );
+    expect(check({ quantityOnHand: 1 }, { sizes: [size("d6", "6", 0)] })).toMatch(/tenía 1 pieza contada sin talla\. Repártela entre sus tallas para guardar \(llevas 0 de 1\)/);
+    expect(check({ quantityOnHand: -1 }, { sizes: [size("d6", "6", 0)] })).toMatch(/negativo \(falta 1\)/);
+  });
+
   it("un color ya con tallas y sin piezas sueltas ajusta sus tallas libremente", () => {
     const before = { sizes: [size("d6", "6", 3), size("d5", "5", 1)], quantityOnHand: 0 };
     expect(check(before, { sizes: [size("d6", "6", 7), size("d5", "5")] })).toBeNull();
