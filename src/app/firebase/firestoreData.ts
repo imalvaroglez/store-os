@@ -33,6 +33,7 @@ import {
 import { applyCombinationDelta, applyVariantDelta, isVariantProduct, totalStock, variantHasSizes, variantStock } from "../../lib/variants";
 import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
+import { applyConversion, buildConversionPreview, type ConversionMapping, type ConversionResult } from "../../lib/variantConversion";
 import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { todayIso } from "../../lib/dates";
@@ -2565,6 +2566,139 @@ export async function rebuildPublicCatalog(
       });
     tx.set(catalogRef, { storeId, storeSlug, products: next }, { merge: true });
   });
+}
+
+// --- #461: assisted conversion of separated fichas into one design ----------
+
+/** The shelf moved or the ficha vanished since the preview — nothing was
+ * written; re-open the conversion on fresh data. */
+export class ConversionStaleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConversionStaleError";
+  }
+}
+
+/** Pending movements or structural problems — the conversion stops WHOLE and
+ * names what to resolve. */
+export class ConversionBlockedError extends Error {
+  constructor(readonly reasons: string[]) {
+    super(reasons.join(" "));
+    this.name = "ConversionBlockedError";
+  }
+}
+
+/**
+ * #461: one transaction moves every origin's shelf onto its exact combination
+ * in the main design and retires the origins from sale (archived + fusion
+ * note). Blockers and freshness are re-verified against the FRESH store data
+ * inside the transaction — a stale preview can never move pieces. Reads: main
+ * + origins + the store's orders/purchases (incidents ride inside orders);
+ * writes: those product docs only. The public side (origin links withdrawn,
+ * unified ficha republished) is finished by convertProductVariants —
+ * idempotently, so a retry after a failed publish never re-moves stock.
+ */
+export async function convertProductVariantsTx(params: {
+  storeId: string;
+  mainId: string;
+  mappings: ConversionMapping[];
+  expected: Record<string, { physical?: number; quarantine: number }>;
+}): Promise<ConversionResult> {
+  const { db } = getFirebase();
+  return runTransaction(db, async (tx) => {
+    const mainSnap = await tx.get(doc(db, "products", params.mainId));
+    if (!mainSnap.exists()) throw new ConversionStaleError("La ficha principal ya no existe; vuelve a abrir la conversión.");
+    const freshMain = { ...mainSnap.data(), id: mainSnap.id } as Product;
+    const freshSources: Product[] = [];
+    for (const mapping of params.mappings) {
+      const snap = await tx.get(doc(db, "products", mapping.productId));
+      if (!snap.exists()) throw new ConversionStaleError("Una ficha origen ya no existe; vuelve a abrir la conversión.");
+      freshSources.push({ ...snap.data(), id: snap.id } as Product);
+    }
+    // Freshness: the existence the preview showed must still be the existence now.
+    for (const source of freshSources) {
+      const seen = params.expected[source.id];
+      if (!seen) continue;
+      const physical = typeof source.quantityOnHand === "number" ? source.quantityOnHand : undefined;
+      if (physical !== seen.physical || (source.quantityQuarantined ?? 0) !== seen.quarantine) {
+        throw new ConversionStaleError(`${source.name} cambió de existencia desde la vista previa; revisa la conversión de nuevo.`);
+      }
+    }
+    // Blockers on FRESH store data — committed pieces, unreceived purchases
+    // and open incidents (they live inside the order docs). Plain reads run
+    // INSIDE the closure so every transaction retry re-runs them; this SDK's
+    // transactions cannot query, and the concurrent movements that matter all
+    // write the origin docs read above (freshness check) — Firestore retries
+    // the whole closure on that contention.
+    const ordersSnap = await getDocs(query(collection(db, "orders"), where("storeId", "==", params.storeId)));
+    const purchasesSnap = await getDocs(query(collection(db, "purchases"), where("storeId", "==", params.storeId)));
+    const orders = ordersSnap.docs.map((d) => ({ ...d.data(), id: d.id })) as Order[];
+    const incidents = orders.flatMap((order) => order.incidents ?? []);
+    const purchases = purchasesSnap.docs.map((d) => ({ ...d.data(), id: d.id })) as Purchase[];
+    const preview = buildConversionPreview(freshMain, freshSources, params.mappings, { orders, purchases, incidents });
+    if (!preview.canConvert) throw new ConversionBlockedError(preview.blockers);
+
+    const result = applyConversion(freshMain, freshSources, params.mappings);
+    const { id: mainId, ...mainData } = result.main;
+    tx.set(doc(db, "products", mainId), stripUndefined(mainData) as Record<string, unknown>, { merge: true });
+    for (const source of result.sources) {
+      const { id, ...data } = source;
+      const clean = stripUndefined(data) as Record<string, unknown>;
+      // The tracked shelf moved to the unified ficha — none stays here (an
+      // untracked origin keeps its untracked state, never zero).
+      clean.quantityOnHand = typeof source.quantityOnHand === "number" ? 0 : deleteField();
+      tx.set(doc(db, "products", id), clean, { merge: true });
+    }
+    return result;
+  });
+}
+
+/**
+ * #461 wrapper: transaction + public side. The public withdrawal of the
+ * absorbed fichas' links and the republication of the unified one are
+ * idempotent — after a failed publish, RETRYING finishes them without
+ * re-running the stock transaction (already-merged origins are detected and
+ * skipped). No silent partial states: a failure here leaves the inventory
+ * correct and names exactly what remains to finish.
+ */
+export async function convertProductVariants(params: {
+  store: Pick<Store, "id" | "slug"> & PublicPricingSource;
+  categories: Category[];
+  allStoreProducts: Product[];
+  mainId: string;
+  mappings: ConversionMapping[];
+  expected: Record<string, { physical?: number; quarantine: number }>;
+}): Promise<ConversionResult> {
+  const { db } = getFirebase();
+  // Retry detection: read the origins fresh.
+  const originSnaps = await Promise.all(params.mappings.map((m) => getDoc(doc(db, "products", m.productId))));
+  const origins = originSnaps.map((snap) => (snap.exists() ? ({ ...snap.data(), id: snap.id } as Product) : null));
+  const allMerged = origins.every((o) => o?.mergedInto);
+  let result: ConversionResult;
+  let freshMain: Product;
+  if (allMerged) {
+    // Stock already moved (a previous run committed the transaction): finish
+    // the public side only — never move pieces twice.
+    const mainSnap = await getDoc(doc(db, "products", params.mainId));
+    if (!mainSnap.exists()) throw new ConversionStaleError("La ficha principal ya no existe.");
+    freshMain = { ...mainSnap.data(), id: mainSnap.id } as Product;
+    result = { main: freshMain, sources: origins.filter((o): o is Product => !!o) };
+  } else {
+    if (origins.some((o) => o?.mergedInto)) {
+      throw new ConversionStaleError("La conversión quedó a medias (algunas fichas ya están fusionadas). Vuelve a abrir la conversión desde la ficha principal.");
+    }
+    result = await convertProductVariantsTx({ storeId: params.store.id, mainId: params.mainId, mappings: params.mappings, expected: params.expected });
+    const mainSnap = await getDoc(doc(db, "products", params.mainId));
+    freshMain = mainSnap.exists() ? ({ ...mainSnap.data(), id: mainSnap.id } as Product) : result.main;
+  }
+  // Public side — idempotent: delete is a no-op when the doc is gone.
+  const mergedById = new Map(result.sources.map((s) => [s.id, s]));
+  const nextProducts = params.allStoreProducts.map((p) => (p.id === freshMain.id ? freshMain : mergedById.get(p.id) ?? p));
+  for (const source of result.sources) {
+    if (source.slug) await removePublicProductDoc(source.storeId, source.slug);
+  }
+  await upsertPublicProduct(freshMain, params.store.slug, nextProducts, params.categories, params.store);
+  return { ...result, main: freshMain };
 }
 
 /**

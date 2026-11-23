@@ -20,6 +20,7 @@ import {
   useToast,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
+import { MergedIntoLink, ProductConversionSheet } from "./ProductConversionSheet";
 import { productCreationDefaults } from "./productDefaults";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
@@ -101,6 +102,7 @@ function ProductCard({
   onEdit,
   onDelete,
   onAdjust,
+  mergedInto,
 }: {
   product: Product;
   isTiered: boolean;
@@ -111,6 +113,8 @@ function ProductCard({
   onEdit: () => void;
   onDelete: () => void;
   onAdjust: (delta: number) => void;
+  /** #461: fusion note of an absorbed ficha (Archivados view). */
+  mergedInto?: React.ReactNode;
 }) {
   const [menu, setMenu] = useState(false);
   // Stable callback so the Dropdown effect (which depends on `onClose`) does not
@@ -136,6 +140,7 @@ function ProductCard({
                 <Badge tone={statusTone(product)}>{statusLabel(product)}</Badge>
                 {product.isFeatured && <Badge tone="accent">★</Badge>}
                 {product.isNew && <Badge tone="info">Nuevo</Badge>}
+                {mergedInto}
               </div>
             </div>
             {/* Stop propagation so opening the menu / picking an item does not
@@ -307,6 +312,8 @@ export function CatalogScreen() {
   const toast = useToast();
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
+  // #461: assisted conversion of separated fichas into one color×size design.
+  const [converting, setConverting] = useState(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
   // #463: the product whose committed pieces are being reconciled.
   const [committedFor, setCommittedFor] = useState<Product | null>(null);
@@ -395,6 +402,16 @@ export function CatalogScreen() {
         }
       />
 
+      {/* #461: one entry, one design at a time — the sheet previews everything
+          before any move. */}
+      {products.some((p) => p.variants?.length) && (
+        <div className="mb-4">
+          <Button variant="ghost" size="sm" onClick={() => setConverting(true)}>
+            Unificar fichas en un diseño
+          </Button>
+        </div>
+      )}
+
       {products.length > 0 && (
         <div className="flex items-end gap-2 overflow-x-auto pb-1 mb-5">
           <div className="w-36 shrink-0">
@@ -465,6 +482,7 @@ export function CatalogScreen() {
               onCommitted={() => setCommittedFor(p)}
               onEdit={() => setEditing(p)}
               onDelete={() => setDeleting(p)}
+              mergedInto={p.mergedInto ? <MergedIntoLink product={p} onOpen={(mainId) => setEditing(products.find((x) => x.id === mainId) ?? null)} /> : undefined}
               onAdjust={(delta) => {
                 // Physical-count corrections floor at 0 (same rule the old
                 // InventoryScreen ± buttons had).
@@ -508,6 +526,8 @@ export function CatalogScreen() {
           <ProductForm product={editing} onDone={() => setEditing(null)} />
         </Sheet>
       )}
+
+      <ProductConversionSheet open={converting} onClose={() => setConverting(false)} />
 
       <Dialog
         open={deleting !== null}

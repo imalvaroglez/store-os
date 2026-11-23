@@ -304,6 +304,11 @@ export type Product = {
   // Schema version for the idempotent migration. Absent = not yet migrated.
   schemaVersion?: number;
 
+  /** #461: this ficha was absorbed by the assisted conversion — it retired
+   * from sale (status "archived", public routes withdrawn) keeping identity
+   * and history; the note links internally to the unified design. */
+  mergedInto?: { productId: string; variantId: string; sizeId: string; at: string };
+
   createdAt: string;
   updatedAt: string;
 };
