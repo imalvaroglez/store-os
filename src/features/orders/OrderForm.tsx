@@ -18,7 +18,8 @@ import {
 } from "../../design-system";
 import { customersForStore } from "../../lib/selectors";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
-import { isVariantProduct } from "../../lib/variants";
+import { combinationSku, isVariantProduct, variantHasSizes, variantStock } from "../../lib/variants";
+import { lineNeedsSize, lineSoldWithoutSize } from "../../lib/inventory";
 import { variantEffectivePrice } from "../../lib/variantPrice";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
@@ -68,6 +69,9 @@ function lineFromItem(item?: OrderItem): DraftLine {
     variantId: item?.variantId,
     variantColor: item?.variantColor,
     variantSku: item?.variantSku,
+    variantSizeId: item?.variantSizeId,
+    variantSize: item?.variantSize,
+    variantSizeSku: item?.variantSizeSku,
     productName: item?.productName ?? "",
     productQuery: item?.productName ?? "",
     quantity,
@@ -78,6 +82,22 @@ function lineFromItem(item?: OrderItem): DraftLine {
     subtotal: quantity * unitPrice,
     cost: item?.cost,
     costText: item?.cost == null ? "" : String(item.cost),
+  };
+}
+
+/** #461: the exact color and talla a draft line names — ONE builder for the
+ * totals, the profit estimate and the saved item, so they can never disagree. */
+function lineDimensionFields(
+  line: Pick<DraftLine, "variantId" | "variantColor" | "variantSku" | "variantSizeId" | "variantSize" | "variantSizeSku">
+): Pick<OrderItem, "variantId" | "variantColor" | "variantSku" | "variantSizeId" | "variantSize" | "variantSizeSku"> {
+  if (!line.variantId) return {};
+  return {
+    variantId: line.variantId,
+    variantColor: line.variantColor,
+    variantSku: line.variantSku,
+    ...(line.variantSizeId
+      ? { variantSizeId: line.variantSizeId, variantSize: line.variantSize, variantSizeSku: line.variantSizeSku }
+      : {}),
   };
 }
 
@@ -342,7 +362,7 @@ export function OrderForm({
         ...order,
         items: lines.map((line) => ({
           productId: line.productId,
-          ...(line.variantId ? { variantId: line.variantId, variantColor: line.variantColor, variantSku: line.variantSku } : {}),
+          ...lineDimensionFields(line),
           productName: line.productName,
           quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
           priceTier: line.priceTier,
@@ -386,6 +406,7 @@ export function OrderForm({
           key: line.key,
           ...(line.productId ? { productId: line.productId } : {}),
           ...(line.variantId ? { variantId: line.variantId } : {}),
+          ...(line.variantSizeId ? { variantSizeId: line.variantSizeId } : {}),
           quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
         })),
         order,
@@ -429,7 +450,7 @@ export function OrderForm({
           .filter((line) => line.productId || line.productName.trim())
           .map((line) => ({
             ...(line.productId ? { productId: line.productId } : {}),
-            ...(line.variantId ? { variantId: line.variantId, variantColor: line.variantColor, variantSku: line.variantSku } : {}),
+            ...lineDimensionFields(line),
             productName: line.productName,
             quantity: Math.max(0, Math.round(numberFromText(line.quantityText))),
             unitPrice: numberFromText(line.unitPriceText),
@@ -516,9 +537,13 @@ export function OrderForm({
       priceSource: manualTier || (firstLink && currentPrice > 0) ? "manual" : "automatic",
       // #124: the color choice belongs to the new product; a design sold by
       // color starts unchosen (mandatory) and per-color cost lands on pick.
+      // #461: so does the talla — the exact combination is chosen per product.
       variantId: undefined,
       variantColor: undefined,
       variantSku: undefined,
+      variantSizeId: undefined,
+      variantSize: undefined,
+      variantSizeSku: undefined,
       categorySnapshot,
       productName: product.name,
       productQuery: product.name,
@@ -537,7 +562,7 @@ export function OrderForm({
     if (!product) return;
     const variant = product.variants?.find((v) => v.id === variantId);
     if (!variant) {
-      updateLine(line.key, { variantId: undefined, variantColor: undefined, variantSku: undefined });
+      updateLine(line.key, { variantId: undefined, variantColor: undefined, variantSku: undefined, variantSizeId: undefined, variantSize: undefined, variantSizeSku: undefined });
       return;
     }
     // #467: selecting a color re-prices the AUTOMATIC line with the color's
@@ -559,8 +584,31 @@ export function OrderForm({
       variantId: variant.id,
       variantColor: variant.color,
       variantSku: variant.sku ?? (variant.skuSuffix ? `${product.sku ?? ""}-${variant.skuSuffix}` : undefined),
+      // #461: a talla belongs to ITS color — changing the color never carries
+      // the previous talla over (Plateado · 6 may not exist).
+      variantSizeId: undefined,
+      variantSize: undefined,
+      variantSizeSku: undefined,
       ...(variant.cost != null ? { cost: variant.cost, costText: String(variant.cost) } : {}),
       ...reprice,
+    });
+  }
+
+  /** #461: choosing the exact talla — snapshots talla and clave and adopts
+   * the combination's OWN confirmed cost (it may differ from the color's). */
+  function selectSize(line: DraftLine, sizeId: string) {
+    const product = products.find((item) => item.id === line.productId);
+    const variant = product?.variants?.find((v) => v.id === line.variantId);
+    const size = variant?.sizes?.find((s) => s.id === sizeId);
+    if (!product || !variant || !size) {
+      updateLine(line.key, { variantSizeId: undefined, variantSize: undefined, variantSizeSku: undefined });
+      return;
+    }
+    updateLine(line.key, {
+      variantSizeId: size.id,
+      variantSize: size.size,
+      variantSizeSku: size.sku ?? combinationSku(product.sku, variant, size),
+      ...(size.cost != null ? { cost: size.cost, costText: String(size.cost) } : {}),
     });
   }
 
@@ -585,6 +633,9 @@ export function OrderForm({
       variantId: undefined,
       variantColor: undefined,
       variantSku: undefined,
+      variantSizeId: undefined,
+      variantSize: undefined,
+      variantSizeSku: undefined,
       ...(line.productId ? { priceSource: "automatic", priceTier: undefined, unitPriceText: "", cost: undefined, costText: "" } : {}),
     });
   }
@@ -634,6 +685,14 @@ export function OrderForm({
         toast.error(`Elige el color del artículo ${index + 1} (${product.name}).`);
         return;
       }
+      // #461 (decisión: la pieza se identifica por color y talla): a color that
+      // sells by size needs its exact talla — without it no combination is
+      // reserved and the sale could not discount the right shelf.
+      if (product && lineNeedsSize(order, line, product)) {
+        const variant = product.variants?.find((v) => v.id === line.variantId);
+        toast.error(`Elige la talla del artículo ${index + 1} (${variant?.color ?? product.name}).`);
+        return;
+      }
     }
     const normalizedItems: OrderItem[] = [];
     for (const line of lines) {
@@ -657,7 +716,7 @@ export function OrderForm({
         // line keeps the lineId it was loaded with.
         lineId: line.lineId ?? line.key,
         ...(line.productId ? { productId: line.productId } : {}),
-        ...(line.variantId ? { variantId: line.variantId, variantColor: line.variantColor, variantSku: line.variantSku } : {}),
+        ...lineDimensionFields(line),
         priceSource: line.productId ? (line.priceSource ?? "manual") : "manual",
         ...(line.categorySnapshot ? { categorySnapshot: line.categorySnapshot } : {}),
         productName,
@@ -901,7 +960,7 @@ export function OrderForm({
                   <div key={line.key} className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2.5">
                       <OrderLinePhoto products={products} productId={line.productId} variantId={line.variantId} className="h-10 w-10 shrink-0" />
-                      <span className="min-w-0 wrap-break-word">{line.quantityText} × {line.productName || "Producto sin nombre"}{line.variantColor ? ` · ${line.variantColor}` : ""}</span>
+                      <span className="min-w-0 wrap-break-word">{line.quantityText} × {line.productName || "Producto sin nombre"}{line.variantColor ? ` · ${line.variantColor}` : ""}{line.variantSize ? ` · ${line.variantSize}` : ""}</span>
                     </span>
                     <span className="ml-auto hidden items-baseline gap-2 text-sm text-ink-soft md:flex tabular-nums">
                       {unitPrice > 0 && <>{formatOrderUnitPrice(unitPrice)} × {reviewQty} =</>}
@@ -1000,23 +1059,50 @@ export function OrderForm({
                 const product = products.find((item) => item.id === line.productId);
                 if (!product || !isVariantProduct(product)) return null;
                 const selected = product.variants!.find((v) => v.id === line.variantId);
+                const existence = (stock: number | null, soldOut: "agotado" | "agotada" = "agotado") =>
+                  stock == null ? " (sin rastreo)" : stock <= 0 ? ` — ${soldOut}` : ` (existencia ${stock})`;
+                // #461: a color that sells by size asks for the exact talla.
+                const chosenSize = selected?.sizes?.find((s) => s.id === line.variantSizeId);
+                const soldWithoutSize = lineSoldWithoutSize(order, line);
                 return (
-                  <SelectField
-                    label="Color"
-                    aria-required="true"
-                    value={line.variantId ?? ""}
-                    onChange={(value) => selectVariant(line, value)}
-                    hint={selected?.sku ? `Clave: ${selected.sku}.` : undefined}
-                    options={[
-                      { value: "", label: "Elige el color de este producto" },
-                      ...product.variants!.map((variant) => ({
-                        value: variant.id,
-                        label:
-                          variant.color +
-                          (typeof variant.quantityOnHand === "number" ? ` (existencia ${variant.quantityOnHand})` : ""),
-                      })),
-                    ]}
-                  />
+                  <>
+                    <SelectField
+                      label="Color"
+                      aria-required="true"
+                      value={line.variantId ?? ""}
+                      onChange={(value) => selectVariant(line, value)}
+                      hint={selected?.sku ? `Clave: ${selected.sku}.` : undefined}
+                      options={[
+                        { value: "", label: "Elige el color de este producto" },
+                        ...product.variants!.map((variant) => ({
+                          value: variant.id,
+                          // With tallas the color's shelf is the sum of its combinations.
+                          label: variant.color + existence(variantHasSizes(variant) ? variantStock(variant) : (variant.quantityOnHand ?? null)),
+                        })),
+                      ]}
+                    />
+                    {selected && variantHasSizes(selected) && !soldWithoutSize && (
+                      <SelectField
+                        label="Talla"
+                        aria-required="true"
+                        value={line.variantSizeId ?? ""}
+                        onChange={(value) => selectSize(line, value)}
+                        hint={chosenSize?.sku ? `Clave: ${chosenSize.sku}.` : undefined}
+                        options={[
+                          { value: "", label: "Elige la talla de este producto" },
+                          ...selected.sizes!.map((size) => ({
+                            value: size.id,
+                            label: size.size + existence(typeof size.quantityOnHand === "number" ? size.quantityOnHand : null, "agotada"),
+                          })),
+                        ]}
+                      />
+                    )}
+                    {selected && variantHasSizes(selected) && soldWithoutSize && (
+                      <p className="text-xs text-on-surface-soft">
+                        Vendida sin talla: la entrega registrada de este artículo se hizo sin talla y se conserva así.
+                      </p>
+                    )}
+                  </>
                 );
               })()}
               {/* #467: the badge marks a price Fer actually TYPED — a manual

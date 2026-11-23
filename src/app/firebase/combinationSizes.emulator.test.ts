@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
 import type { Order } from "../../types";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
-vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
+// registerDeliveryTx stamps the signed-in uid on the event.
+vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db, auth: { currentUser: { uid: "qa461-user" } } }) }));
 import { saveOrderWithStockTx } from "./firestoreData";
 
 let env: RulesTestEnvironment;
@@ -251,5 +252,173 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("assisted conversion of se
     const afterRetry = await doradoShelf();
     expect(afterRetry.s7.quantityOnHand).toBe(3);
     expect(afterRetry.s6).toBe(5);
+  });
+});
+
+// #461 — devolución de QA (23-nov): los críticos de inventario reproducidos
+// contra las transacciones reales. La venta descuenta SU combinación, una
+// línea sin talla en un color que ya se vende por talla no aparta nada, la
+// entrega lleva la talla y cancelar el remanente devuelve solo lo pendiente.
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("pedido, entrega y cancelación por combinación (#461 — dictamen QA)", () => {
+  let envQa: RulesTestEnvironment;
+  const STORE = "qa461-store";
+  const PRODUCT = "p-qa461";
+
+  async function seed() {
+    await envQa.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "users/qa461-user"), { role: "member" });
+      await setDoc(doc(db, "adminStores/" + STORE), { ownerUid: "qa461-user", memberUids: ["qa461-user"] });
+      // One order id for every test: each test starts from a clean slate.
+      await deleteDoc(doc(db, "orders/ord-qa461")).catch(() => undefined);
+      await setDoc(doc(db, "products/" + PRODUCT), {
+        storeId: STORE, name: "Anillo Sol", sku: "SOL", category: "other", status: "published",
+        variants: [
+          { id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, createdAt: "", updatedAt: "",
+            sizes: [
+              { id: "d6", size: "6", sku: "SOL-D-6", cost: 100, quantityOnHand: 4, createdAt: "", updatedAt: "" },
+              { id: "d5", size: "5", sku: "SOL-D-5", cost: 100, quantityOnHand: 3, createdAt: "", updatedAt: "" },
+            ] },
+        ],
+      });
+    });
+    holder.db = envQa.authenticatedContext("qa461-user").firestore();
+  }
+
+  beforeAll(async () => {
+    envQa = await initializeTestEnvironment({
+      projectId: "store-os-dev",
+      firestore: { rules: readFileSync("firestore.rules", "utf8") },
+    });
+  });
+  afterAll(async () => { await envQa.cleanup(); });
+
+  const line = (sizeId: "d6" | "d5", quantity: number, lineId: string) => ({
+    lineId, productId: PRODUCT, productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado",
+    variantSizeId: sizeId, variantSize: sizeId === "d6" ? "6" : "5", quantity, unitPrice: 400, subtotal: 400 * quantity,
+  });
+  const orderOf = (items: unknown[], orderStatus: "ready" | "cancelled" = "ready"): Order =>
+    ({
+      id: "ord-qa461", storeId: STORE, customerId: "ana", items, deposit: 0, orderStatus, paymentStatus: "unpaid",
+      createdAt: "2026-11-23T00:00:00.000Z", updatedAt: "2026-11-23T00:00:00.000Z",
+    }) as unknown as Order;
+  const shelves = async () => {
+    const snap = await getDoc(doc(holder.db, "products", PRODUCT));
+    const data = snap.data() as { quantityOnHand?: number; variants: Array<{ quantityOnHand?: number; sizes: Array<{ id: string; quantityOnHand?: number }> }> };
+    const gold = data.variants[0];
+    return {
+      d6: gold.sizes.find((s) => s.id === "d6")?.quantityOnHand,
+      d5: gold.sizes.find((s) => s.id === "d5")?.quantityOnHand,
+      colorLevel: gold.quantityOnHand,
+      designLevel: data.quantityOnHand,
+    };
+  };
+  const freshOrder = async (): Promise<Order> => {
+    const snap = await getDoc(doc(holder.db, "orders", "ord-qa461"));
+    return { ...snap.data(), id: "ord-qa461" } as unknown as Order;
+  };
+
+  it("crítico 1 — vender Dorado·6 ×1 descuenta SOLO esa combinación (d6 4→3); d5, el color y el diseño quedan intactos", async () => {
+    await seed();
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([line("d6", 1, "l1")]), null, "mut-qa461-a");
+    expect(await shelves()).toEqual({ d6: 3, d5: 3, colorLevel: undefined, designLevel: undefined });
+  });
+
+  it("crítico 1 (falla cerrado) — una línea del color SIN talla no aparta nada y dice qué elegir", async () => {
+    await seed();
+    const colorless = { ...line("d6", 1, "l1"), variantSizeId: undefined, variantSize: undefined };
+    await expect(
+      saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([colorless]), null, "mut-qa461-b")
+    ).rejects.toThrow(/se vende por talla/i);
+    expect(await shelves()).toEqual({ d6: 4, d5: 3, colorLevel: undefined, designLevel: undefined });
+    expect((await getDoc(doc(holder.db, "orders", "ord-qa461"))).exists()).toBe(false);
+  });
+
+  it("crítico 2 — entrega parcial por talla y cancelación del remanente: vuelve SOLO lo pendiente de cada combinación (d6→3, d5→3), nunca piezas entregadas", async () => {
+    await seed();
+    const { registerDeliveryTx } = await import("./firestoreData");
+    // Pedido listo con Dorado·6 ×2 + Dorado·5 ×1 → d6 4→2, d5 3→2
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([line("d6", 2, "l1"), line("d5", 1, "l2")]), null, "mut-qa461-c");
+    expect(await shelves()).toEqual({ d6: 2, d5: 2, colorLevel: undefined, designLevel: undefined });
+    // Se entrega 1 pieza de la talla 6 (la hoja registra SU talla)
+    const beforeDelivery = await freshOrder();
+    await registerDeliveryTx({
+      orderId: "ord-qa461", storeId: STORE,
+      delivery: {
+        id: "dev-qa461", orderId: "ord-qa461", storeId: STORE, deliveredAt: "2026-11-23",
+        recordedAt: "2026-11-23T10:00:00.000Z", by: "qa461-user",
+        lines: [{ productId: PRODUCT, variantId: "v_gold", variantSizeId: "d6", quantity: 1 }],
+      },
+    });
+    const delivered = await freshOrder();
+    expect(delivered.deliveries?.[0].lines).toEqual([{ productId: PRODUCT, variantId: "v_gold", variantSizeId: "d6", quantity: 1 }]);
+    expect(delivered.revision).toBe((beforeDelivery.revision ?? 0) + 1);
+    // Cancelación del remanente: 1 de la 6 y 1 de la 5 pendientes; la entregada queda consumida
+    const beforeCancel = await shelves();
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, { ...delivered, orderStatus: "cancelled" } as Order, delivered.revision ?? null, "mut-qa461-d");
+    expect(await shelves()).toEqual({ d6: 3, d5: 3, colorLevel: undefined, designLevel: undefined });
+    expect(beforeCancel).toEqual({ d6: 2, d5: 2, colorLevel: undefined, designLevel: undefined });
+  });
+
+  it("línea vendida sin talla: cancelar deja esas piezas «sin talla» en el color (la ficha pide repartirlas) y no las pierde", async () => {
+    await seed();
+    // El pedido se vendió cuando Dorado aún no tenía tallas
+    await envQa.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/" + PRODUCT), {
+        storeId: STORE, name: "Anillo Sol", sku: "SOL", category: "other", status: "published",
+        variants: [{ id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, quantityOnHand: 4, createdAt: "", updatedAt: "" }],
+      });
+    });
+    const soldWithoutSize = { ...line("d6", 2, "l1"), variantSizeId: undefined, variantSize: undefined };
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([soldWithoutSize]), null, "mut-qa461-e");
+    // Dorado pasa a venderse por talla con sus 4 piezas libres repartidas 3 / 1
+    await envQa.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/" + PRODUCT), {
+        storeId: STORE, name: "Anillo Sol", sku: "SOL", category: "other", status: "published",
+        variants: [{ id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, createdAt: "", updatedAt: "",
+          sizes: [
+            { id: "d6", size: "6", sku: "SOL-D-6", cost: 100, quantityOnHand: 3, createdAt: "", updatedAt: "" },
+            { id: "d5", size: "5", sku: "SOL-D-5", cost: 100, quantityOnHand: 1, createdAt: "", updatedAt: "" },
+          ] }],
+      }, { merge: true });
+    });
+    const sold = await freshOrder();
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, { ...sold, orderStatus: "cancelled" } as Order, sold.revision ?? null, "mut-qa461-f");
+    const after = await shelves();
+    expect(after.d6).toBe(3); // sin inventar la talla de las piezas
+    expect(after.d5).toBe(1);
+    expect(after.colorLevel).toBe(2); // las 2 piezas del pedido quedan a la vista, sin talla
+    expect(after.designLevel).toBeUndefined();
+  });
+
+  it("línea vendida sin talla: asignar la talla en el mismo cambio manda las piezas a ESA combinación (sin pasar por «sin talla»)", async () => {
+    await seed();
+    await envQa.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/" + PRODUCT), {
+        storeId: STORE, name: "Anillo Sol", sku: "SOL", category: "other", status: "published",
+        variants: [{ id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, quantityOnHand: 4, createdAt: "", updatedAt: "" }],
+      });
+    });
+    const soldWithoutSize = { ...line("d6", 2, "l1"), variantSizeId: undefined, variantSize: undefined };
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([soldWithoutSize]), null, "mut-qa461-g");
+    await envQa.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/" + PRODUCT), {
+        storeId: STORE, name: "Anillo Sol", sku: "SOL", category: "other", status: "published",
+        variants: [{ id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, createdAt: "", updatedAt: "",
+          sizes: [
+            { id: "d6", size: "6", sku: "SOL-D-6", cost: 100, quantityOnHand: 3, createdAt: "", updatedAt: "" },
+            { id: "d5", size: "5", sku: "SOL-D-5", cost: 100, quantityOnHand: 1, createdAt: "", updatedAt: "" },
+          ] }],
+      }, { merge: true });
+    });
+    const sold = await freshOrder();
+    // Fer edita el pedido y elige la talla 6 para la línea: nada se mueve (misma reserva, ahora con talla)
+    const mapped = { ...sold, items: [line("d6", 2, "l1")] } as Order;
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, mapped, sold.revision ?? null, "mut-qa461-h");
+    expect(await shelves()).toEqual({ d6: 3, d5: 1, colorLevel: undefined, designLevel: undefined });
+    // Y al cancelar, las 2 piezas vuelven a la talla 6 — no al limbo
+    const mappedSaved = await freshOrder();
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, { ...mappedSaved, orderStatus: "cancelled" } as Order, mappedSaved.revision ?? null, "mut-qa461-i");
+    expect(await shelves()).toEqual({ d6: 5, d5: 1, colorLevel: undefined, designLevel: undefined });
   });
 });

@@ -26,11 +26,21 @@ import {
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import {
+  colorLevelLineMoves,
   combinationReservationDeltasForOrderChange,
   reservationDeltasForOrderChange,
   variantReservationDeltasForOrderChange,
 } from "../../lib/inventory";
-import { applyCombinationDelta, applyVariantDelta, isVariantProduct, totalStock, variantHasSizes, variantStock } from "../../lib/variants";
+import {
+  applyCombinationDelta,
+  applyVariantDelta,
+  isVariantProduct,
+  totalStock,
+  variantHasSizes,
+  variantStock,
+  type CombinationStockDelta,
+  type VariantStockDelta,
+} from "../../lib/variants";
 import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { applyConversion, buildConversionPreview, type ConversionMapping, type ConversionResult } from "../../lib/variantConversion";
@@ -865,6 +875,49 @@ export function creditEditCoverageError(docData: Record<string, unknown> | undef
 export class CreditCoverageError extends Error {}
 export class CreditCustomerChangeError extends Error {}
 
+/**
+ * #461: a color-level delta on a color that NOW sells by size. That color has
+ * no sellable color-level shelf, so a reservation sold without talla has no
+ * obvious home:
+ * - Taking pieces without a talla fails closed (the person chooses the talla).
+ * - Lines re-assigned to a talla in this same change send their pieces to
+ *   THAT combination (routed into `combinationDeltas`).
+ * - The rest returns «sin talla» to the color's own field — the ficha shows
+ *   those pieces and asks to distribute them; nothing is ever dropped.
+ * Returns the delta that still belongs to the color's own field.
+ */
+function routeColorLevelDelta(params: {
+  previous: Order | undefined;
+  next: Order;
+  vDelta: VariantStockDelta;
+  combinationDeltas: Map<string, CombinationStockDelta>;
+  productName: string;
+}): number {
+  const { previous, next, vDelta, combinationDeltas, productName } = params;
+  const moves = colorLevelLineMoves(previous, next, vDelta.productId, vDelta.variantId);
+  if (moves.some((move) => move.remapBlocked)) {
+    throw new Error("Este pedido tiene una entrega registrada sin talla. Para asignar la talla, ajusta la existencia de esa talla desde la ficha del producto; el pedido conserva su registro de entrega.");
+  }
+  let toCombinations = 0;
+  for (const move of moves) {
+    if (!move.nextSizeId) continue;
+    toCombinations += move.previousHeld;
+    const key = `${move.productId}:${move.variantId}:${move.nextSizeId}`;
+    const existing = combinationDeltas.get(key);
+    combinationDeltas.set(key, {
+      productId: move.productId,
+      variantId: move.variantId,
+      sizeId: move.nextSizeId,
+      delta: (existing?.delta ?? 0) + move.previousHeld,
+    });
+  }
+  const residual = vDelta.delta - toCombinations;
+  if (residual < 0) {
+    throw new Error(`${productName} se vende por talla: elige la talla en el artículo del pedido.`);
+  }
+  return residual;
+}
+
 export async function saveOrderWithStockTx(
   user: AppUser,
   order: Order,
@@ -1114,6 +1167,14 @@ export async function saveOrderWithStockTx(
         throw new Error(isVariantProduct({ variants })
           ? "El color elegido ya no existe en este diseño."
           : "Esa pieza ya no se vende por color; revisa el pedido.");
+      }
+      // #461: a color that sells by size has no sellable color-level shelf.
+      if (variantHasSizes(variant)) {
+        vDelta.delta = routeColorLevelDelta({
+          previous, next, vDelta, combinationDeltas,
+          productName: (product.data()?.name as string | undefined) ?? "Esta pieza",
+        });
+        if (vDelta.delta === 0) continue;
       }
       if (next.installmentsReservedAt && vDelta.delta < 0) {
         const current = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
@@ -1641,6 +1702,14 @@ export async function deleteOrderWithStockTx(
         // Vanished color: return the real pieces to the design-level shelf.
         releases.set(vDelta.productId, (releases.get(vDelta.productId) ?? 0) + vDelta.delta);
         continue;
+      }
+      // #461: a color that sells by size has no sellable color-level shelf.
+      if (variantHasSizes(variant)) {
+        vDelta.delta = routeColorLevelDelta({
+          previous, next: cancelled, vDelta, combinationDeltas,
+          productName: (data.name as string | undefined) ?? "Esta pieza",
+        });
+        if (vDelta.delta === 0) continue;
       }
       const working = (variantWrites.get(vDelta.productId) ?? variants!) as ProductVariant[];
       const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);

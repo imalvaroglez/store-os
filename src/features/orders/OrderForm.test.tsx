@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../design-system";
 import { OrderForm } from "./OrderForm";
@@ -1325,3 +1325,149 @@ describe("densidad en Revisar por categoría (#345)", () => {
   });
 });
 
+
+// #461 (dictamen QA 23-nov, crítico 1): el formulario de pedido no ofrecía
+// talla; la línea guardaba solo el color y la venta descontaba un estante que
+// el propio modelo ignora. La venta identifica la COMBINACIÓN exacta.
+describe("OrderForm #461 — venta por color y talla exactos", () => {
+  const sizedProduct = () => ({
+    ...state.products[0],
+    id: "design_sizes",
+    name: "Anillo Sol",
+    sku: "SOL",
+    prices: { t_retail: 400 },
+    categoryIds: ["c1"],
+    quantityOnHand: undefined,
+    variants: [
+      {
+        id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 150, createdAt: "", updatedAt: "",
+        sizes: [
+          { id: "d6", size: "6", sku: "SOL-D-6", cost: 180, quantityOnHand: 4, createdAt: "", updatedAt: "" },
+          { id: "d5", size: "5", sku: "SOL-D-5", cost: 160, quantityOnHand: 0, createdAt: "", updatedAt: "" },
+        ],
+      },
+      { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "SOL-P", cost: 90, quantityOnHand: 2, createdAt: "", updatedAt: "" },
+    ],
+  } as unknown as typeof state.products[number]);
+  const newOrder = () =>
+    ({ id: "sizes-order", storeId: "store_olivia", customerId: "customer_1", items: [], deposit: 0, orderStatus: "asked" as const, paymentStatus: "unpaid" as const, schemaVersion: 2, createdAt: "", updatedAt: "" }) as Order;
+
+  beforeEach(() => {
+    localStorage.clear();
+    mockUpsertOrder.mockClear();
+    mockUpsertOrder.mockResolvedValue({});
+    state.products = [sizedProduct()];
+    state.categories = [{ id: "c1", storeId: "store_olivia", name: "Anillos", active: true, createdAt: "", updatedAt: "" }] as unknown as typeof state.categories;
+    state.customers = [{ id: "customer_1", storeId: "store_olivia", name: "Cliente Olivia", createdAt: "", updatedAt: "" }] as unknown as typeof state.customers;
+  });
+
+  function pickDesign() {
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Anillo Sol" } });
+    fireEvent.click(screen.getByRole("option", { name: /Anillo Sol/ }));
+  }
+
+  it("el color con tallas pide la talla: sin elegirla no guarda y dice cuál artículo", async () => {
+    render(<ToastProvider><OrderForm order={newOrder()} isNew onDone={() => {}} /></ToastProvider>);
+    pickDesign();
+    fireEvent.change(await screen.findByLabelText("Color"), { target: { value: "v_gold" } });
+    expect(await screen.findByLabelText("Talla")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    expect(await screen.findByText(/Elige la talla del artículo 1/)).toBeTruthy();
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("las tallas ofrecidas son SOLO las del color, con su existencia: la 6 con 4, la 5 agotada; Plateado·6 nunca aparece", async () => {
+    render(<ToastProvider><OrderForm order={newOrder()} isNew onDone={() => {}} /></ToastProvider>);
+    pickDesign();
+    // La existencia del color con tallas es la suma de SUS tallas (4 + 0), no su campo muerto.
+    const colorSelect = await screen.findByLabelText("Color");
+    expect(screen.getByRole("option", { name: /Dorado \(existencia 4\)/ })).toBeTruthy();
+    fireEvent.change(colorSelect, { target: { value: "v_gold" } });
+    const talla = await screen.findByLabelText("Talla");
+    const labels = within(talla as HTMLElement).getAllByRole("option").map((option) => option.textContent);
+    expect(labels).toEqual(["Elige la talla de este producto", "6 (existencia 4)", "5 — agotada"]);
+    // El color sin tallas no pide talla
+    fireEvent.change(colorSelect, { target: { value: "v_silver" } });
+    expect(screen.queryByLabelText("Talla")).toBeNull();
+  });
+
+  it("con talla guarda la combinación exacta: talla, su clave y SU costo (180, no el 150 del color)", async () => {
+    render(<ToastProvider><OrderForm order={newOrder()} isNew onDone={() => {}} /></ToastProvider>);
+    pickDesign();
+    fireEvent.change(await screen.findByLabelText("Color"), { target: { value: "v_gold" } });
+    fireEvent.change(await screen.findByLabelText("Talla"), { target: { value: "d6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0] as { items: Array<Record<string, unknown>> };
+    expect(saved.items[0]).toMatchObject({
+      productId: "design_sizes", variantId: "v_gold", variantColor: "Dorado",
+      variantSizeId: "d6", variantSize: "6", variantSizeSku: "SOL-D-6", cost: 180,
+    });
+  });
+
+  it("cambiar de color limpia la talla elegida: nunca viaja una talla de otro color", async () => {
+    render(<ToastProvider><OrderForm order={newOrder()} isNew onDone={() => {}} /></ToastProvider>);
+    pickDesign();
+    fireEvent.change(await screen.findByLabelText("Color"), { target: { value: "v_gold" } });
+    fireEvent.change(await screen.findByLabelText("Talla"), { target: { value: "d6" } });
+    fireEvent.change(screen.getByLabelText(/^Color/), { target: { value: "v_silver" } });
+    expect(screen.queryByLabelText(/^Talla/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0] as { items: Array<Record<string, unknown>> };
+    expect(saved.items[0]).toMatchObject({ variantId: "v_silver", variantColor: "Plateado" });
+    expect(saved.items[0].variantSizeId).toBeUndefined();
+  });
+
+  it("dos tallas del mismo color van como líneas separadas y la revisión nombra cada talla", async () => {
+    render(<ToastProvider><OrderForm order={newOrder()} isNew onDone={() => {}} /></ToastProvider>);
+    pickDesign();
+    fireEvent.change(await screen.findByLabelText("Color"), { target: { value: "v_gold" } });
+    fireEvent.change(await screen.findByLabelText("Talla"), { target: { value: "d6" } });
+    fireEvent.click(screen.getByRole("button", { name: /Agregar línea/ }));
+    const products = screen.getAllByLabelText("Producto");
+    fireEvent.change(products[0], { target: { value: "Anillo Sol" } });
+    fireEvent.click(screen.getAllByRole("option", { name: /Anillo Sol/ })[0]);
+    const colors = await screen.findAllByLabelText("Color");
+    fireEvent.change(colors[0], { target: { value: "v_gold" } });
+    await screen.findAllByLabelText("Talla");
+    fireEvent.change(screen.getAllByLabelText("Talla")[0], { target: { value: "d5" } });
+    fireEvent.change(screen.getAllByLabelText("Cantidad")[0], { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Revisar por categoría" }));
+    expect(screen.getByText(/Anillo Sol · Dorado · 6/)).toBeVisible();
+    expect(screen.getByText(/2 × Anillo Sol · Dorado · 5/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0] as { items: Array<Record<string, unknown>> };
+    expect(saved.items).toHaveLength(2);
+    expect(saved.items.map((item) => item.variantSizeId).sort()).toEqual(["d5", "d6"]);
+  });
+
+  it("una línea vendida SIN talla en un color que ya se vende por talla pide la talla al editar", async () => {
+    const order = {
+      ...newOrder(), orderStatus: "confirmed" as const,
+      items: [{ lineId: "l1", productId: "design_sizes", productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", quantity: 1, unitPrice: 400, subtotal: 400 }],
+    } as Order;
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    expect(await screen.findByLabelText("Talla")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    expect(await screen.findByText(/Elige la talla del artículo 1/)).toBeTruthy();
+    expect(mockUpsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("con una entrega registrada SIN talla la línea se conserva sin talla y el pedido se puede guardar", async () => {
+    const order = {
+      ...newOrder(), orderStatus: "confirmed" as const,
+      items: [{ lineId: "l1", productId: "design_sizes", productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", quantity: 2, unitPrice: 400, subtotal: 800 }],
+      deliveries: [{ id: "d1", orderId: "sizes-order", storeId: "store_olivia", deliveredAt: "2026-11-22", recordedAt: "2026-11-22T10:00:00.000Z", by: "fer", lines: [{ productId: "design_sizes", variantId: "v_gold", quantity: 1 }] }],
+    } as unknown as Order;
+    render(<ToastProvider><OrderForm order={order} onDone={() => {}} /></ToastProvider>);
+    expect(await screen.findByText(/Vendida sin talla/)).toBeVisible();
+    expect(screen.queryByLabelText(/^Talla/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar pedido" }));
+    await waitFor(() => expect(mockUpsertOrder).toHaveBeenCalledTimes(1));
+    const saved = mockUpsertOrder.mock.calls[0][0] as { items: Array<Record<string, unknown>> };
+    expect(saved.items[0]).toMatchObject({ variantId: "v_gold" });
+    expect(saved.items[0].variantSizeId).toBeUndefined();
+  });
+});
