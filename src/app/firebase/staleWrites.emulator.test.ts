@@ -13,6 +13,7 @@ const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
 import {
   applyMembershipChangeTx,
+  PurchaseAlreadyReceived,
   receivePurchaseTx,
   saveProductPreservingConcurrentTx,
   savePurchaseTx,
@@ -288,5 +289,53 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#373 stale full-doc write
       savePurchaseTx({ ...basePurchase, id: "sw-pur3" } as unknown as Purchase, 4)
     ).rejects.toBeInstanceOf(StalePurchaseError);
     expect((await getDoc(doc(holder.db, "purchases/sw-pur3"))).exists()).toBe(false);
+  });
+
+  // ── #176 Dinero y existencias: la recepción repetida no duplica stock ──
+
+  it("#176 recepción repetida SECUENCIAL: «ya recibida», existencias y costo aplicados una sola vez", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/sw-dup-p1"), {
+        storeId: "sw-store", name: "Pieza dup", quantityOnHand: 0, cost: 0, createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    const purchase = {
+      ...basePurchase, id: "sw-pur-dup176", status: "draft" as const,
+      lines: [{ lineId: "l1", productId: "sw-dup-p1", name: "Pieza dup", quantity: 4, unitCost: 120 }],
+      subtotal: 480, totalConfirmed: 480,
+    };
+    await savePurchaseTx(purchase as unknown as Purchase, null);
+    await receivePurchaseTx("sw-pur-dup176");
+    // The retry (another tab, a re-tap after a lost response) must fail loudly
+    // WITHOUT touching stock or cost a second time.
+    await expect(receivePurchaseTx("sw-pur-dup176")).rejects.toBeInstanceOf(PurchaseAlreadyReceived);
+    const product = (await getDoc(doc(holder.db, "products/sw-dup-p1"))).data()!;
+    expect(product.quantityOnHand).toBe(4);
+    expect(product.cost).toBe(120);
+    const docData = (await getDoc(doc(holder.db, "purchases/sw-pur-dup176"))).data()!;
+    expect(docData.status).toBe("received");
+  });
+
+  it("#176 recepción repetida CONCURRENTE: dos pestañas reciben a la vez — una gana, el stock aterriza una vez", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/sw-dup-p2"), {
+        storeId: "sw-store", name: "Pieza dup B", quantityOnHand: 0, cost: 0, createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    const purchase = {
+      ...basePurchase, id: "sw-pur-dup176b", status: "draft" as const,
+      lines: [{ lineId: "l1", productId: "sw-dup-p2", name: "Pieza dup B", quantity: 3, unitCost: 200 }],
+      subtotal: 600, totalConfirmed: 600,
+    };
+    await savePurchaseTx(purchase as unknown as Purchase, null);
+    // Both tabs pre-validate against the still-draft doc and enter their
+    // transactions; the loser retries, re-reads receivedAt and aborts. One
+    // reception's math is all that can land.
+    await Promise.allSettled([receivePurchaseTx("sw-pur-dup176b"), receivePurchaseTx("sw-pur-dup176b")]);
+    const docData = (await getDoc(doc(holder.db, "purchases/sw-pur-dup176b"))).data()!;
+    expect(docData.status).toBe("received");
+    const product = (await getDoc(doc(holder.db, "products/sw-dup-p2"))).data()!;
+    expect(product.quantityOnHand).toBe(3); // never 6
+    expect(product.cost).toBe(200);
   });
 });

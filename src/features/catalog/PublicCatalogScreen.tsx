@@ -199,7 +199,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                           aria-pressed={pressed}
                           title={variant.stockSignal === "agotado" ? `${variant.color} (agotado)` : variant.color}
                           onClick={() => setChosenVariants((current) => ({ ...current, [product.productSlug]: variant.id }))}
-                          className={`!min-h-[40px] !min-w-[44px] ${variant.stockSignal === "agotado" ? "line-through opacity-60" : ""}`}
+                          className={`min-h-[40px]! min-w-[44px]! ${variant.stockSignal === "agotado" ? "line-through opacity-60" : ""}`}
                         >
                           {variant.color}
                         </Button>

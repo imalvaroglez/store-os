@@ -89,7 +89,7 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-[75] flex items-start justify-center pt-[12vh] p-4"
+      className="fixed inset-0 z-75 flex items-start justify-center pt-[12vh] p-4"
       style={{ animation: "dialogIn var(--motion-fast) var(--ease-smooth)" }}
     >
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]" onClick={onClose} aria-hidden />
@@ -109,7 +109,7 @@ export function CommandPalette({
             setActive(0);
           }}
           placeholder="Buscar…"
-          className="w-full px-4 py-3 text-base bg-transparent border-b border-rule text-ink outline-none"
+          className="w-full px-4 py-3 text-base bg-transparent border-b border-rule text-ink outline-hidden"
         />
         <div className="max-h-[50vh] overflow-y-auto py-2">
           {filtered.length === 0 && (
