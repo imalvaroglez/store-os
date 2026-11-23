@@ -420,3 +420,64 @@ describe("#270 subtract cap bound", () => {
     expect(maxAdjustmentSubtractCents({ paymentsReceivedCents: "20000" as unknown as number })).toBe(0);
   });
 });
+
+describe("#455/#458 r4 — materializar el anticipo ES el cobro (una sola entrada)", () => {
+  it("pedido con deposit 1500: registrar un cobro de 1500 cuenta UNA vez (marcador evita el doble conteo)", () => {
+    // After the tx: one record of $1,500 (the caller's, now the deposit's
+    // materialization) + inheritedDepositMaterialized=true → docReceivedCents
+    // must NOT add the deposit again.
+    const after = order({
+      deposit: 1500,
+      paymentsReceivedCents: 150000,
+      inheritedDepositMaterialized: true,
+    });
+    expect(docReceivedCents(after)).toBe(150000);
+  });
+
+  it("sin el marcador, el depósito sigue sumándose (comportamiento legado intacto)", () => {
+    const legacy = order({ deposit: 1500, paymentsReceivedCents: 0 });
+    expect(docReceivedCents(legacy)).toBe(150000);
+  });
+
+  it("orderMoneyAfterPayments marca materializado cuando la llamada lo dice", () => {
+    const money = orderMoneyAfterPayments(order({ deposit: 1500, paymentsReceivedCents: 0 }), 150000, true);
+    expect(money.paymentsReceivedCents).toBe(150000);
+    expect(money.inheritedDepositMaterialized).toBe(true);
+  });
+});
+
+describe("#219 Cobros — contratos de captura (auditoría del flujo)", () => {
+  const FUTURE = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+
+  it("rechaza una fecha de recepción futura (el dinero ya fue recibido)", () => {
+    expect(() =>
+      buildPaymentRecord(order(), { kind: "payment", id: "pay_f", method: "cash", date: FUTURE, amountText: "100" }, "u1")
+    ).toThrow(/futura/);
+  });
+
+  it("acecha la fecha de HOY sin ambigüedad (borde exacto)", () => {
+    const now = new Date().toISOString();
+    const record = buildPaymentRecord(order(), { kind: "payment", id: "pay_h", method: "cash", date: now.slice(0, 10), amountText: "100" }, "u1", now);
+    expect(record.date).toBe(now.slice(0, 10));
+  });
+
+  it("acepta montos grandes VÁLIDOS de dos decimales (regresión H1 del dictamen: 131072.02 / 262144.10)", () => {
+    for (const amountText of ["131072.02", "262144.10", "1000000.99"]) {
+      expect(() =>
+        buildPaymentRecord(order(), { kind: "payment", id: `pay_big_${amountText}`, method: "cash", amountText }, "u1")
+      ).not.toThrow();
+    }
+    expect(() =>
+      buildAdjustmentRecord(order(), { kind: "adjustment", id: "adj_big", direction: "subtract", amountText: "131072.02", note: "x" }, "u1")
+    ).not.toThrow();
+  });
+
+  it("rechaza precisión menor al centavo (0.001) con mensaje claro, también en ajustes", () => {
+    expect(() =>
+      buildPaymentRecord(order(), { kind: "payment", id: "pay_p", method: "cash", amountText: "0.001" }, "u1")
+    ).toThrow(/centavos|decimales/);
+    expect(() =>
+      buildAdjustmentRecord(order(), { kind: "adjustment", id: "adj_p", direction: "subtract", amountText: "0.001", note: "x" }, "u1")
+    ).toThrow(/centavos|decimales/);
+  });
+});

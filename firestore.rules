@@ -123,6 +123,26 @@ service cloud.firestore {
         && !request.resource.data.pendingInvites.hasAny([canonicalEmail()]);
     }
 
+    // #375 (PO decision, 18-nov): the retention seal. Deleting a store expels
+    // every member: the ONLY accepted empty-membership update is the seal
+    // itself (retainedAt added, ownership unchanged, nothing else touched).
+    function retentionSeal(storeId) {
+      return (isSuperAdmin() || isOwner(storeId))
+        && request.resource.data.memberUids.size() == 0
+        // .get with default: dot access on a MISSING key is an evaluation
+        // ERROR in CEL — it poisoned the whole || chain (invitee joins died).
+        && request.resource.data.get('retainedAt', null) is string
+        && request.resource.data.ownerUid == adminStore(storeId).ownerUid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['memberUids', 'retainedAt', 'pendingInvites', 'updatedAt']);
+    }
+    // #375 H2: once sealed, the doc is frozen for the normal update path —
+    // the ONLY way back is platform acting directly (documented, auditable).
+    function notSealed() {
+      // .get with default: same CEL-safety as the seal (missing key ≠ error).
+      return resource.data.get('retainedAt', null) == null;
+    }
+
     match /adminStores/{storeId} {
       allow get: if isSuperAdmin() || isMember(storeId);
       allow list: if isSuperAdmin();
@@ -130,8 +150,10 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids.hasAny([request.auth.uid]);
       allow update: if ((isSuperAdmin() || isOwner(storeId))
+          && notSealed()
           && request.resource.data.memberUids.hasAny([request.resource.data.ownerUid]))
-        || inviteeJoinOk();
+        || (inviteeJoinOk() && notSealed())
+        || retentionSeal(storeId);
       allow delete: if false;
     }
 
@@ -234,6 +256,21 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // #459: authorized profit distributions — money authorizations. Owner
+    // (Fer) creates them against a CLOSED period; append-only like closes:
+    // an authorized history is never edited, corrections come as new docs.
+    match /profitDistributions/{id} {
+      // #459 r6: the retry contract reads the deterministic doc id directly;
+      // a not-yet-existing doc must read cleanly for signed-in operators
+      // (same null-safe pattern as orders/products).
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create: if isOwner(request.resource.data.storeId)
+        && request.resource.data.id == id
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     // #202: post-close adjustments — linked to their origin close, applied in
     // an OPEN period or PENDING. Owner creates; saved entries are immutable.
     match /closeAdjustments/{id} {
@@ -315,7 +352,10 @@ service cloud.firestore {
           // status as received) — so absent means RECEIVED evidence, immutable
           // like any other (#373 review: '' reopened legacy mutation by SDK).
           resource.data.get('status', 'received') != 'received'
-          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'updatedAt'])
+          // #279 QA (MAYOR-3): the payment method is the classification a
+          // received purchase can still receive — classification corrects
+          // where the money came from; inventory evidence stays identical.
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'paymentMethod', 'updatedAt'])
         );
       allow delete: if canOperateStore(resource.data.storeId)
         && resource.data.status != 'received';
@@ -343,13 +383,29 @@ service cloud.firestore {
       let magnitude = int(prefix) + (next >= '5' ? 1 : 0);
       return amount < 0 ? -magnitude : magnitude;
     }
-    function validReceipt(data, orderId, paymentId) {
+    /** #474 (QA 18-nov): on a CANCELLED order, a refund (negative adjustment)
+     * is the owner's call alone (super_admin may too, by platform policy).
+     * Anything else — positive adjustments, non-cancelled orders — is
+     * unaffected. Single let-bound get: the CEL expression budget is tight. */
+    function ownerOnlyRefundOk(orderId, data) {
+      let order = get(/databases/$(database)/documents/orders/$(orderId)).data;
+      return data.kind != 'adjustment'
+        || data.amount > 0
+        || order.get('orderStatus', order.get('status', '')) != 'cancelled'
+        || isOwner(order.storeId)
+        || isSuperAdmin();
+    }
+        function validReceipt(data, orderId, paymentId) {
       return data.id == paymentId && data.orderId == orderId
         && data.createdBy == request.auth.uid
         // #369: no new cobros on a CANCELLED order — the money has no exit
         // path (compensations exclude cancelled, incidents reject them).
         // Signed adjustments stay valid evidence for the PO's future exit.
         && (data.kind != 'payment'
+            // #455 r5 (merge review): dating the legacy anticipo is EVIDENCE
+            // of money received BEFORE the cancellation, not a new cobro —
+            // the close still counts that cash, so it stays fechable.
+            || paymentId == 'inherited_deposit'
             || get(/databases/$(database)/documents/orders/$(orderId)).data.get('orderStatus', get(/databases/$(database)/documents/orders/$(orderId)).data.get('status', '')) != 'cancelled')
         && data.createdAt is string && data.createdAt.size() > 0
         && data.amount is number && data.amount != 0
@@ -359,6 +415,10 @@ service cloud.firestore {
         && data.kind in ['payment', 'adjustment']
         && (data.kind == 'adjustment' || data.amount > 0)
         && (data.kind != 'adjustment' || (data.note is string && data.note.trim().size() > 0))
+        // #474 (QA 18-nov): a refund (negative adjustment) on a CANCELLED
+        // order is the OWNER's call alone — members never register the exit.
+        // One let-bound parent read keeps this far under the CEL budget.
+        && ownerOnlyRefundOk(orderId, data)
         && ((paymentId == 'inherited_deposit' && data.kind == 'payment'
               && data.method in ['cash', 'transfer']
               && data.date is string && data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}'))
@@ -381,7 +441,25 @@ service cloud.firestore {
       let path = /databases/$(database)/documents/orders/$(orderId)/payments/$(paymentId);
       let receipt = getAfter(path).data;
       let inheritedChanged = before.get('inheritedDepositMaterialized', false) != after.get('inheritedDepositMaterialized', false);
-      return paymentId is string && paymentId.size() > 0 && paymentId != 'inherited_deposit'
+      // #455 r5: DATING-ONLY materialization of the legacy deposit — the
+      // TOTAL anticipo captured at creation has no new cobro to ride, so the
+      // inherited receipt itself is the movement's evidence: no receipt id in
+      // lastPaymentId, no cobro. Narrow by construction: only an order with
+      // NO accumulator yet, deposit untouched, lastPaymentId untouched, the
+      // accumulator born EXACTLY from the inherited receipt's amount, one
+      // revision bump. Anything else keeps demanding a real cobro.
+      let inheritedOnly = inheritedChanged
+        && before.get('inheritedDepositMaterialized', false) == false
+        && !('paymentsReceivedCents' in before)
+        && after.get('lastPaymentId', '') == before.get('lastPaymentId', '')
+        && after.get('deposit', 0) == before.get('deposit', 0)
+        && validInheritedReceipt(orderId, before, after)
+        && after.paymentsReceivedCents is int
+        && after.paymentsReceivedCents == getAfter(/databases/$(database)/documents/orders/$(orderId)/payments/inherited_deposit).data.amountCents
+        && after.get('paymentsRevision', 0) is int
+        && after.get('paymentsRevision', 0) == before.get('paymentsRevision', 0) + 1;
+      return inheritedOnly
+        || (paymentId is string && paymentId.size() > 0 && paymentId != 'inherited_deposit'
         && paymentId != before.get('lastPaymentId', '') && !exists(path)
         && receipt.orderId == orderId && receipt.storeId == before.storeId
         && before.get('paymentsRevision', 0) is int && before.get('paymentsRevision', 0) >= 0
@@ -399,19 +477,23 @@ service cloud.firestore {
         && (!inheritedChanged || validInheritedReceipt(orderId, before, after))
         && after.paymentsReceivedCents == before.get('paymentsReceivedCents', 0) + receipt.amountCents
           + (inheritedChanged
-            ? getAfter(/databases/$(database)/documents/orders/$(orderId)/payments/inherited_deposit).data.amountCents : 0);
+            ? getAfter(/databases/$(database)/documents/orders/$(orderId)/payments/inherited_deposit).data.amountCents : 0));
     }
     function receiptUpdatesParent(orderId, paymentId, receipt) {
       let path = /databases/$(database)/documents/orders/$(orderId);
       let before = get(path).data;
       let after = getAfter(path).data;
+      // #455 r5: the inherited receipt may arrive ALONE (dating-only
+      // materialization — no cobro to name in lastPaymentId) or riding a real
+      // cobro (which then owns lastPaymentId). A real cobro ALWAYS names
+      // itself and only itself.
       return receipt.storeId == before.storeId
-        && after.get('lastPaymentId', '') != before.get('lastPaymentId', '')
         && (paymentId == 'inherited_deposit'
           ? (before.get('inheritedDepositMaterialized', false) == false
               && after.get('inheritedDepositMaterialized', false) == true
-              && after.lastPaymentId != 'inherited_deposit' && receipt.amount == before.get('deposit', 0))
-          : after.lastPaymentId == paymentId);
+              && receipt.amount == before.get('deposit', 0))
+          : (after.get('lastPaymentId', '') != before.get('lastPaymentId', '')
+              && after.get('lastPaymentId', '') == paymentId));
     }
     // #271 (PO 2026-11-09): a deposit LOWERING on an order with an accumulator
     // and no materialization is valid ONLY as a signed correction. The trail
@@ -476,14 +558,57 @@ service cloud.firestore {
         && int(entry.get('deliveredAt', '0000')[0:4]) >= 2020
         && int(entry.get('deliveredAt', '0000')[0:4]) <= 2035;
     }
+    // #383: the "entregado con saldo" authorization is money evidence — a
+    // direct SDK write must not forge, erase, or retouch it. A COMPLETE,
+    // self-attributed stamp may only be born riding the legitimate
+    // transition INTO delivered (the #165/#168 gate the client transaction
+    // enforces with the operator's explicit confirmation); anything else
+    // must carry the seal VERBATIM (never rewritten, never erased — the
+    // same doctrine as depositCorrections/deliveries). Historical delivered
+    // orders without a seal (#370) are unaffected: absent == absent.
+    function validDeliveredBalanceSeal(before, after) {
+      let beforeStatus = before.get('orderStatus', before.get('status', ''));
+      let afterStatus = after.get('orderStatus', after.get('status', ''));
+      let afterComplete = 'deliveredWithBalanceCents' in after
+        && 'deliveredWithBalanceConfirmedAt' in after
+        && 'deliveredWithBalanceConfirmedBy' in after
+        && after.deliveredWithBalanceCents is int
+        && after.deliveredWithBalanceCents >= 0
+        && after.deliveredWithBalanceCents <= 100000000000
+        && after.deliveredWithBalanceConfirmedAt is string
+        && after.deliveredWithBalanceConfirmedAt.size() > 0
+        && after.deliveredWithBalanceConfirmedBy == request.auth.uid;
+      return (afterComplete
+          && afterStatus == 'delivered'
+          && beforeStatus != 'delivered')
+        || (!afterComplete
+          && after.get('deliveredWithBalanceCents', -1) == before.get('deliveredWithBalanceCents', -1)
+          && after.get('deliveredWithBalanceConfirmedAt', '') == before.get('deliveredWithBalanceConfirmedAt', '')
+          && after.get('deliveredWithBalanceConfirmedBy', '') == before.get('deliveredWithBalanceConfirmedBy', '')
+          && ('deliveredWithBalanceCents' in after) == ('deliveredWithBalanceCents' in before)
+          && ('deliveredWithBalanceConfirmedAt' in after) == ('deliveredWithBalanceConfirmedAt' in before)
+          && ('deliveredWithBalanceConfirmedBy' in after) == ('deliveredWithBalanceConfirmedBy' in before));
+    }
     match /orders/{id} {
       allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
       allow list: if canOperateStore(resource.data.storeId);
       allow create: if canOperateStore(request.resource.data.storeId)
-        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries']);
+        && !request.resource.data.keys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision', 'depositCorrections', 'deliveries'])
+        // #380 (revisión r2, CRÍTICO): a fabricated create must not arrive
+        // with credit either — cancellation would launder it into real,
+        // spendable saldo a favor. Same deny-list discipline as money.
+        && !request.resource.data.keys().hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger']);
       allow update: if canOperateStore(resource.data.storeId)
         && canOperateStore(request.resource.data.storeId)
         && resource.data.storeId == request.resource.data.storeId
+        // #380 prototype: saldo a favor moves ONLY through the trusted
+        // applyCredit/releaseCredit callables. The Admin SDK bypasses rules
+        // (IAM), so the FINAL protection is this total client-side lock:
+        // any CHANGE to the credit fields from a client SDK is denied.
+        // Verbatim carries (unchanged keys) are unaffected — ordinary
+        // saves keep working.
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['creditAppliedCents', 'creditConsumedCents', 'creditLedger'])
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['paymentsReceivedCents', 'inheritedDepositMaterialized', 'lastPaymentId', 'paymentsRevision'])
             || validMoneyUpdate(id, resource.data, request.resource.data))
         // #218: legacy deposit cannot rise after receipts, and is frozen once
@@ -515,6 +640,12 @@ service cloud.firestore {
             || request.resource.data.get('deliveries', [])
                 == resource.data.get('deliveries', [])
             || validDeliveryAppend(id, resource.data, request.resource.data))
+        // #383: the delivered-with-balance seal only moves with the
+        // legitimate transition (see validDeliveredBalanceSeal); the diff
+        // short-circuit keeps ordinary edits cheap.
+        && (!request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['deliveredWithBalanceCents', 'deliveredWithBalanceConfirmedAt', 'deliveredWithBalanceConfirmedBy'])
+            || validDeliveredBalanceSeal(resource.data, request.resource.data))
         // #478: the installment reservation marker never changes once
         // present, and may only be BORN on money it can point to: a doc
         // that ALREADY carries received money (the legitimate edit path
@@ -597,6 +728,33 @@ service cloud.firestore {
     // slugs/{slug} — global slug reservation. Doc existence IS the lock. `get` is
     // allowed for signed-in clients (the claim transaction reads-then-creates to
     // enforce atomic uniqueness); `list` is always denied (no enumeration).
+    // ── #279: financial position from activation ─────────────────────────
+    // T0 marker: members create it idempotently; `activatedAt` is immutable
+    // once set (the cut must never move).
+    match /storeFinancials/{storeId} {
+      allow get: if canOperateStore(storeId);
+      allow create: if canOperateStore(storeId)
+        && request.resource.data.storeId == storeId
+        && request.resource.data.activatedAt is string;
+      allow update: if canOperateStore(storeId)
+        && resource.data.activatedAt == request.resource.data.activatedAt;
+      allow delete: if false;
+    }
+
+    // Card payments: append-only money evidence (same doctrine as order
+    // payments) — they reduce cash and debt, never duplicate an expense.
+    match /cardPayments/{id} {
+      allow get, list: if canOperateStore(resource.data.storeId);
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && request.resource.data.amountCents is int
+        && request.resource.data.amountCents > 0
+        && request.resource.data.amountCents < 9007199254740991
+        && request.resource.data.date is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /slugs/{slug} {
       allow get: if isSignedIn();
       allow list: if false;

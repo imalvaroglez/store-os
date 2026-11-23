@@ -3,6 +3,7 @@ import {
   weightedAverageCost,
   applyPurchaseLines,
   committedForProduct,
+  committedBreakdownForProduct,
   reservationDeltas,
   reservationDeltasForOrderChange,
   DEFAULT_LOW_STOCK_AT,
@@ -14,7 +15,7 @@ import {
   attributeProjectedShortageToLines,
   stockAlertText,
 } from "./inventory";
-import type { Product, PurchaseLine, Order } from "../types";
+import type { Product, PurchaseLine, Order, OrderItem } from "../types";
 
 describe("weightedAverageCost", () => {
   it("returns the new unit cost when there is no existing stock", () => {
@@ -146,6 +147,111 @@ describe("committedForProduct", () => {
     });
     expect(committedForProduct([backed("cancelled")], "s1", "p1")).toBe(2); // dinero las sostiene
     expect(committedForProduct([backed("delivered")], "s1", "p1")).toBe(0); // ya consumidas
+  });
+});
+
+describe("committedBreakdownForProduct (#463)", () => {
+  const line = (overrides: Partial<OrderItem> = {}): OrderItem =>
+    ({ lineId: "l", productId: "p1", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100, ...overrides }) as OrderItem;
+  const order = (o: Partial<Order> = {}): Order =>
+    ({
+      id: "ord-abc123", storeId: "s1", customerId: "c1", deposit: 0,
+      items: [line()], orderStatus: "confirmed", paymentStatus: "unpaid",
+      createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z", ...o,
+    }) as Order;
+
+  it("desglosa un renglón por pedido con referencia y clienta; el total coincide con Comprometido", () => {
+    const orders = [
+      order({ id: "ord-aaa111", customerId: "lucia", items: [line({ quantity: 3 })] }),
+      order({ id: "ord-bbb222", customerId: "maria", items: [line({ quantity: 1 })] }),
+    ];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    expect(breakdown.total).toBe(4);
+    expect(breakdown.rows).toHaveLength(2);
+    expect(breakdown.rows[0]).toMatchObject({ orderId: "ord-aaa111", reference: "AAA111", customerId: "lucia", cancelled: false, total: 3 });
+    expect(breakdown.rows[1]).toMatchObject({ orderId: "ord-bbb222", reference: "BBB222", total: 1 });
+    // Same single derivation feeds the card figure (AC: nunca divergen).
+    expect(committedForProduct(orders, "s1", "p1")).toBe(breakdown.total);
+  });
+
+  it("resta la entrega parcial por dimensión — el ejemplo de la issue: A·2 y B·1 con Comprometido 3", () => {
+    const orders = [
+      order({
+        id: "ord-aaa111", items: [line({ quantity: 3 })],
+        deliveries: [{ id: "d1", at: "", by: "", lines: [{ productId: "p1", quantity: 1 }] } as never],
+      }),
+      order({ id: "ord-bbb222", items: [line({ quantity: 1 })] }),
+    ];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    expect(breakdown.rows[0].total).toBe(2);
+    expect(breakdown.rows[1].total).toBe(1);
+    expect(breakdown.total).toBe(3);
+    expect(committedForProduct(orders, "s1", "p1")).toBe(3);
+  });
+
+  it("unifica renglones del mismo producto en un pedido y conserva el desglose por color", () => {
+    const orders = [
+      order({
+        items: [
+          line({ variantId: "v-rojo", variantColor: "Rojo", quantity: 2 }),
+          line({ variantId: "v-rojo", variantColor: "Rojo", quantity: 1 }),
+          line({ variantId: "v-azul", variantColor: "Azul", quantity: 1 }),
+          line({ productId: "p2", quantity: 5 }),
+        ],
+      }),
+    ];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    expect(breakdown.total).toBe(4);
+    expect(breakdown.rows).toHaveLength(1);
+    expect(breakdown.rows[0].lines).toEqual([
+      { variantId: "v-rojo", variantColor: "Rojo", quantity: 3 },
+      { variantId: "v-azul", variantColor: "Azul", quantity: 1 },
+    ]);
+  });
+
+  it("la entrega parcial descuenta del color correcto, no de otro color", () => {
+    const orders = [
+      order({
+        items: [
+          line({ variantId: "v-rojo", variantColor: "Rojo", quantity: 2 }),
+          line({ variantId: "v-azul", variantColor: "Azul", quantity: 2 }),
+        ],
+        deliveries: [{ id: "d1", at: "", by: "", lines: [{ productId: "p1", variantId: "v-rojo", quantity: 1 }] } as never],
+      }),
+    ];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    expect(breakdown.total).toBe(3);
+    expect(breakdown.rows[0].lines).toEqual([
+      { variantId: "v-rojo", variantColor: "Rojo", quantity: 1 },
+      { variantId: "v-azul", variantColor: "Azul", quantity: 2 },
+    ]);
+  });
+
+  it("una cancelación que liberó las piezas sale del desglose; la respaldada por dinero queda marcada", () => {
+    const freed = order({ id: "ord-ccc333", orderStatus: "cancelled", items: [line({ quantity: 2 })] });
+    const backed = order({
+      id: "ord-ddd444", orderStatus: "cancelled", items: [line({ quantity: 2 })],
+      installments: { count: 2, frequency: "monthly", firstDueDate: "2026-11-15", agreedAt: "", agreedBy: "u" },
+      installmentsReservedAt: "2026-11-02T10:00:00.000Z",
+    });
+    const breakdown = committedBreakdownForProduct([freed, backed], "s1", "p1");
+    expect(breakdown.rows).toHaveLength(1);
+    expect(breakdown.rows[0]).toMatchObject({ orderId: "ord-ddd444", cancelled: true, total: 2 });
+    expect(breakdown.total).toBe(2);
+  });
+
+  it("no asocia por nombre ni cruza tiendas; un renglón sin productId no suma (#421)", () => {
+    const ghost = order({ items: [line({ productId: undefined, productName: "Pieza", quantity: 4 })] });
+    const foreign = order({ storeId: "s2", items: [line({ quantity: 6 })] });
+    const breakdown = committedBreakdownForProduct([ghost, foreign], "s1", "p1");
+    expect(breakdown.total).toBe(0);
+    expect(breakdown.rows).toHaveLength(0);
+  });
+
+  it("cero comprometidas → total 0 sin filas; sin eventos de entrega el renglón completo cuenta", () => {
+    expect(committedBreakdownForProduct([], "s1", "p1").total).toBe(0);
+    const legacy = order({ items: [line({ quantity: 7 })] }); // sin deliveries
+    expect(committedBreakdownForProduct([legacy], "s1", "p1").rows[0].total).toBe(7);
   });
 });
 

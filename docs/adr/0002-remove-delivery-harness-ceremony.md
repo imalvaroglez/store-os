@@ -17,7 +17,7 @@ Remove the harness as a gate for code changes. The flow is:
 
 **one branch from `main` → tests first (red → green) → `typecheck && test && build` green → one draft PR (spec inside the same PR when one is written) → CI + Preview → human merges.**
 
-Deleted: `.delivery/` (queue, bootstrap, completed markers, runs), `scripts/delivery-harness.cjs`, `scripts/delivery-hook.cjs`, the `store-os-delivery` skills (Claude + Codex), the SubagentStop hook wiring, `npm run delivery`, and the CI `delivery-config` job. The queue survives as inert data at `docs/backlog.json`; the ADR-0001 autonomy limits survive in `LOOPS.md`.
+Deleted: `.delivery/` (queue, bootstrap, completed markers, runs), `scripts/delivery-harness.cjs`, `scripts/delivery-hook.cjs`, the `store-os-delivery` skills (Claude + Codex), the SubagentStop hook wiring, `npm run delivery`, and the CI `delivery-config` job. The queue lived on as inert data at `docs/backlog.json` (since migrated to the GitHub Projects board and removed); the ADR-0001 autonomy limits survive in `LOOPS.md`.
 
 ## Consequences
 

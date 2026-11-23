@@ -8,15 +8,18 @@ import type { Purchase } from "../../types";
 import { PurchaseForm } from "./PurchaseForm";
 import { StalePurchaseError } from "../../app/firebase/firestoreData";
 
-const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, pdfPayloads, activeStore, state, createDraftProductsForPurchase } = vi.hoisted(() => ({
+const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, classifyPurchasePayment, pdfPayloads, activeStore, state, createDraftProductsForPurchase } = vi.hoisted(() => ({
   upsertPurchase: vi.fn().mockResolvedValue(undefined),
   createDraftProductsForPurchase: vi.fn().mockResolvedValue(undefined),
   upsertProduct: vi.fn().mockResolvedValue(undefined),
   receivePurchase: vi.fn().mockResolvedValue("received"),
   adjustReceivedPurchase: vi.fn(),
+  classifyPurchasePayment: vi.fn().mockResolvedValue(undefined),
   pdfPayloads: [] as PdfApplyPayload[],
   activeStore: { id: "olivia", name: "Olivia", type: "inventory_tiered" as const },
   state: {
+    purchases: [] as Purchase[],
+    expenses: [],
     suppliers: [],
     products: [{
       id: "ring", storeId: "olivia", name: "Anillo", cost: 99,
@@ -30,7 +33,7 @@ const { upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, 
 
 vi.mock("../../app/StoreProvider", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../app/StoreProvider")>(),
-  useStore: () => ({ state, activeStore, upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, createDraftProductsForPurchase, cloud: true }),
+  useStore: () => ({ state, activeStore, upsertPurchase, upsertProduct, receivePurchase, adjustReceivedPurchase, classifyPurchasePayment, createDraftProductsForPurchase, cloud: true }),
 }));
 vi.mock("./PurchasePdfImport", () => ({
   PurchasePdfImport: ({ onApply }: { onApply: (payload: PdfApplyPayload) => void }) => <Button onClick={() => onApply(pdfPayloads.shift()!)}>Importar PDF de prueba</Button>,
@@ -557,5 +560,40 @@ describe("#373 r2 — baseline avanza con cada guardado (no duplica gastos)", ()
     const baseline2 = upsertPurchase.mock.calls[1][2];
     // El baseline avanzó: el gasto guardado ya es «conocido», no concurrente.
     expect(baseline2).toMatchObject({ sourcingExpenses: [e1] });
+  });
+});
+
+
+describe("#279 QA (MAYOR-2/3) — forma de pago honesta y clasificable", () => {
+  function receivedPurchase(): Purchase {
+    return {
+      ...purchase(),
+      status: "received",
+      receivedAt: "2026-11-01T12:00:00Z",
+      costingMethod: "latest_purchase",
+      tickets: [{ id: "ticket:purchase", totalConfirmed: 65.8 }],
+      lines: [{ lineId: "line", ticketId: "ticket:purchase", productId: "ring", name: "Pieza del ticket", quantity: 4, unitCost: 16.45 }],
+      costAllocations: [{ lineId: "line", merchandiseCents: 6580, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, saleExpenseCents: 0, totalCents: 6580 }],
+    };
+  }
+
+  it("al crear, el default contextual queda seleccionado (lo mostrado se guarda)", () => {
+    state.purchases = [{ ...purchase(), id: "prev", paymentMethod: "cash", date: "2026-11-10" } as Purchase];
+    open();
+    const select = screen.getByLabelText("Forma de pago") as HTMLSelectElement;
+    expect(select.value).toBe("cash");
+    state.purchases = [];
+  });
+
+  it("una compra RECIBIDA sin clasificar se clasifica desde su ficha", async () => {
+    classifyPurchasePayment.mockClear();
+    open(receivedPurchase());
+    const select = screen.getByLabelText(/Forma de pago/) as HTMLSelectElement;
+    expect(select.value).toBe("");
+    fireEvent.change(select, { target: { value: "credit_card" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar forma de pago" }));
+    await waitFor(() => expect(classifyPurchasePayment).toHaveBeenCalledTimes(1));
+    expect(classifyPurchasePayment.mock.calls[0][1]).toBe("credit_card");
+    expect(await screen.findByText("Forma de pago guardada.")).toBeTruthy();
   });
 });

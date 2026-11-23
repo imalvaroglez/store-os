@@ -552,7 +552,7 @@ export function StoreSettingsScreen({
           </>
         }
       >
-        ¿Eliminar <span className="font-semibold text-ink">{store!.name}</span> y todos sus datos? Esta acción no se puede deshacer.
+        ¿Eliminar <span className="font-semibold text-ink">{store!.name}</span>? Se retiran su catálogo público y sus datos operativos, y se revocan todos los accesos de inmediato. <span className="font-semibold text-ink">La evidencia de dinero queda congelada</span> (pedidos cobrados con sus pagos): solo la administración de plataforma puede consultarla y podrás solicitar una exportación. Esta acción no se puede deshacer.
       </Dialog>
       <Dialog
         open={confirmTransfer}

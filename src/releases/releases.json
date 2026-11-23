@@ -1,5 +1,32 @@
 [
   {
+    "version": "1.21.0",
+    "date": "2026.11.19",
+    "title": "Cierre de mes, reparto del dinero y tienda protegida",
+    "notes": [
+      "Llega el Cierre mensual: un panel explica el dinero del mes y cada cifra abre su detalle para revisarla. El cierre oficial lo autoriza sólo la dueña y queda guardado con su historial.",
+      "El Reparto de utilidades tiene vista propia con su Simulador: define cómo repartir el dinero del mes, autorízalo con confirmación y quédate tranquila, sólo puede aplicarse una vez.",
+      "En la ficha de cada producto ves en qué pedidos están comprometidas sus piezas: toca la cifra y te lleva a ellos.",
+      "Compras y Gastos registran la forma de pago; lo pagado con tarjeta se separa del dinero en caja desde que activas la tienda.",
+      "Editar un pedido o cambiar de clienta ya no rompe el saldo a favor: el sistema lo bloquea a tiempo y te explica cómo corregirlo.",
+      "Si un pedido cancelado ya tenía dinero recibido, la dueña puede registrar la devolución con confirmación explícita en dos pasos; queda como evidencia en el pedido.",
+      "Eliminar una tienda conserva su historial y su dinero como evidencia, y la retira del catálogo público.",
+      "En tiendas con inventario, la disponibilidad de cada pieza la deciden ahora sus existencias reales: una marca vieja ya no deja agotada una pieza con stock ni muestra como disponible lo que ya no hay. El catálogo, la ficha y los mensajes de WhatsApp usan esa misma señal.",
+      "Nuevo simulador de contribución y punto de equilibrio junto a Estrategia de precios. Correcciones internas: respaldos y reglas más estables."
+    ]
+  },
+  {
+    "version": "1.20.0",
+    "date": "2026.11.17",
+    "title": "Entrar con Google desde el iPhone y saldo a favor blindado",
+    "notes": [
+      "«Continuar con Google» ya funciona en Safari del iPhone: se actualiza el motor de acceso con los arreglos de Safari y cualquier fallo se explica en español, con reintento.",
+      "El saldo a favor de tus clientas sólo se mueve por operaciones firmadas y verificadas contra el servidor. Si al confirmar una devolución el movimiento no se completa, la ficha te avisa con la cifra exacta y un botón para reintentarlo; el dinero nunca se restituye dos veces.",
+      "Convertir un pedido a pagos por partes capturando el anticipo en el mismo guardado vuelve a funcionar, y el apartado de piezas por dinero queda blindado contra escrituras directas.",
+      "Seguridad: reglas de datos endurecidas para el crédito y el apartado por cuotas."
+    ]
+  },
+  {
     "version": "1.19.0",
     "date": "2026.11.17",
     "title": "Un pedido cancelado ya no admite cobros",

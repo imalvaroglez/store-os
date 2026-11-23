@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   user: { uid: "uid_test", email: "test@store-os.mx", role: "super_admin" as const },
   state: null as AppState | null,
   loadCloudState: vi.fn(),
+  saveProduct: vi.fn(),
 }));
 
 vi.mock("../../app/firebase/AuthProvider", () => ({
@@ -28,8 +29,9 @@ vi.mock("../../app/firebase/firestoreData", async (importOriginal) => {
     saveEntity: vi.fn(async () => {}),
     // #373: product saves persist through the concurrent-preserving tx; in
     // unit tests it behaves as a passthrough of the incoming product.
-    saveProductPreservingConcurrentTx: vi.fn(async (_baseline: unknown, next: import("../../types").Product) => next),
+    saveProductPreservingConcurrentTx: mocks.saveProduct,
     projectPublicForStore: vi.fn(async () => {}),
+    upsertPublicProduct: vi.fn(async () => {}),
   };
 });
 
@@ -120,6 +122,7 @@ function lastByLabel(label: string) {
 }
 
 beforeEach(() => {
+  mocks.saveProduct.mockReset().mockImplementation(async (_baseline: unknown, next: Product) => next);
   resetListRestoreForTests(); // #233: la caché de lista es de sesión; cada prueba parte de defaults
   localStorage.clear();
 });
@@ -151,6 +154,86 @@ describe("CatalogScreen filtro por categoría real", () => {
     fireEvent.click(screen.getByText("Limpiar"));
     await waitFor(() => expect(names()).toEqual(["Aretes Luna", "anillo perla", "Anillo Blossom"]));
     expect(screen.queryByText("Limpiar")).toBeNull();
+  });
+
+  it("#463: el desglose de comprometidas abre desde la ficha, muestra los pedidos y navega al exacto", async () => {
+    const state = sortFilterState();
+    // Order A: 3 pieces, 1 delivered → 2 pending; order B: 1 pending.
+    state.customers = [
+      { id: "cust_lucia", storeId: OLIVIA, name: "Lucía", createdAt: "", updatedAt: "" },
+      { id: "cust_maria", storeId: OLIVIA, name: "María", createdAt: "", updatedAt: "" },
+    ] as never;
+    const now = "2026-11-10T10:00:00.000Z";
+    const orderDoc = (id: string, customerId: string, quantity: number, deliveries?: unknown[]) => ({
+      id, storeId: OLIVIA, customerId,
+      items: [{ lineId: `${id}_L0`, productId: "p1", productName: "Anillo Blossom", quantity, unitPrice: 300, subtotal: 300 * quantity }],
+      deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid", schemaVersion: 2,
+      createdAt: now, updatedAt: now, ...(deliveries ? { deliveries } : {}),
+    });
+    state.orders = [
+      orderDoc("order_aaa111", "cust_lucia", 3, [{ id: "d1", at: now, by: "uid_test", lines: [{ productId: "p1", quantity: 1 }] }]),
+      orderDoc("order_bbb222", "cust_maria", 1),
+    ] as never;
+    const view = await renderCatalog(state);
+
+    // The committed CELL on p1's card is the drill-down control (2 + 1 = 3)
+    // — the whole StatRow is one tap target (#463 r2).
+    const trigger = view.container.querySelector('button[title="Ver pedidos con piezas comprometidas (3)"]')!;
+    expect(trigger).toBeTruthy();
+    fireEvent.click(trigger);
+
+    const sheet = await screen.findByRole("dialog", { name: /Piezas comprometidas/ });
+    // The card itself opens the editor on click — the drill-down trigger must
+    // not bubble into it (found in the live Preview pass).
+    expect(screen.queryByRole("dialog", { name: "Editar producto" })).toBeNull();
+    const summary = within(sheet).getAllByText((_, element) =>
+      element?.tagName === "P" && element.textContent === "3 piezas apartadas en 2 pedidos. Toca un pedido para abrirlo."
+    );
+    expect(summary).toHaveLength(1);
+    expect(within(sheet).getByText(/#AAA111/)).toBeTruthy();
+    expect(within(sheet).getByText(/Lucía/)).toBeTruthy();
+    expect(within(sheet).getByText(/María/)).toBeTruthy();
+
+    // Tapping the exact order closes the sheet and routes to its admin page.
+    const paths: string[] = [];
+    const onPop = () => paths.push(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    fireEvent.click(within(sheet).getByRole("button", { name: /Abrir pedido BBB222/ }));
+    window.removeEventListener("popstate", onPop);
+    expect(paths).toContain("/pedidos/order_bbb222");
+    expect(screen.queryByRole("dialog", { name: /Piezas comprometidas/ })).toBeNull();
+  });
+
+  it("#463: con cero comprometidas la cifra queda como número plano, sin control", async () => {
+    const view = await renderCatalog(sortFilterState());
+    expect(view.container.querySelector('button[title^="Ver pedidos con piezas comprometidas"]')).toBeNull();
+  });
+
+  it("#463 r2: la celda completa abre el desglose por teclado y no abre el editor", async () => {
+    const state = sortFilterState();
+    const now = "2026-11-10T10:00:00.000Z";
+    state.customers = [
+      { id: "cust_lucia", storeId: OLIVIA, name: "Lucía", createdAt: "", updatedAt: "" },
+    ] as never;
+    state.orders = [
+      {
+        id: "order_kkk333", storeId: OLIVIA, customerId: "cust_lucia",
+        items: [{ lineId: "k_L0", productId: "p1", productName: "Anillo Blossom", quantity: 2, unitPrice: 300, subtotal: 600 }],
+        deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid", schemaVersion: 2, createdAt: now, updatedAt: now,
+      },
+    ] as never;
+    const view = await renderCatalog(state);
+    const cell = view.container.querySelector('button[title^="Ver pedidos con piezas comprometidas"]') as HTMLButtonElement;
+    expect(cell).toBeTruthy();
+    cell.focus();
+    // A native button element activates on Enter in real browsers; jsdom does not
+    // synthesize that click, so the test drives the same activation.
+    fireEvent.keyDown(cell, { key: "Enter" });
+    fireEvent.click(cell);
+    const sheet = await screen.findByRole("dialog", { name: /Piezas comprometidas/ });
+    expect(sheet).toBeTruthy();
+    // El foco en la celda no abrió el editor del producto (burbuja controlada).
+    expect(screen.queryByRole("dialog", { name: "Editar producto" })).toBeNull();
   });
 
   it("muestra solo productos por surtir según el umbral o si están agotados", async () => {
@@ -478,5 +561,19 @@ describe("CatalogScreen en tienda on_demand", () => {
 
     changeSelect("Ordenar por", "price");
     expect(cardNames()).toEqual(["Perfume Beta", "Perfume Alfa"]);
+  });
+});
+
+
+describe("#489 rejected quick stock correction", () => {
+  it("shows the failure and keeps the saved quantity when the minus button is rejected", async () => {
+    const state = sortFilterState();
+    state.products = [tieredProduct({ id: "watch-audit", name: "Reloj prueba", quantityOnHand: 5 })];
+    mocks.saveProduct.mockRejectedValueOnce(new Error("permission-denied"));
+    await renderCatalog(state);
+    fireEvent.click(screen.getByRole("button", { name: "Restar uno" }));
+    await screen.findByText("No se pudo actualizar la existencia. Revisa tu conexión e intenta de nuevo.");
+    expect(mocks.saveProduct).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Existencia: 5")).toBeTruthy();
   });
 });

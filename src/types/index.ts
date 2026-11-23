@@ -210,6 +210,12 @@ export type ProductVariant = {
   photos?: ProductImage[];
   /** Per-color acquisition cost; starts from the design's cost (decision 2). */
   cost?: number;
+  /** #467 (PO 15-nov): the color's OWN sale prices per level. Absent = the
+   * variant shares the design's map (legacy fichas keep their effective
+   * prices); present = only these levels are sellable for this color — a
+   * missing level is sin precio, never the design's or another level's.
+   * Resolved ONLY through lib/variantPrice. */
+  prices?: Record<string, number>;
   quantityOnHand?: number;
   lowStockAt?: number;
   createdAt: string;
@@ -757,6 +763,32 @@ export type PurchaseExpenseAdjustment = {
  * lot or order attached (Decisión B ampliada, PO 2026-11-05). Classification
  * decides its treatment; assignments are explicit and traceable; the pending
  * balance (importe − Σ asignaciones) is DERIVED, never stored. */
+/** #279: how a purchase or an expense was actually paid — captured ONCE on
+ * the document. Feeds the from-activation financial position. */
+export type PurchasePaymentMethod = "credit_card" | "account" | "cash" | "third_party_advance";
+
+/** #279: one REAL card payment — reduces registered cash AND card debt; it is
+ * never a second expense (the purchase cost lives in inventory). Append-only
+ * money evidence, same doctrine as order payments. */
+export type CardPayment = {
+  id: string;
+  storeId: string;
+  /** Real payment date (YYYY-MM-DD). */
+  date: string;
+  amountCents: number;
+  note?: string;
+  createdAt: string;
+  createdBy: string;
+};
+
+/** #279: per-store T0 — the day the financial module activated. Records
+ * before this instant belong to the pre-module world and never enter the
+ * from-activation position. */
+export type StoreFinancials = {
+  storeId: string;
+  activatedAt: string;
+};
+
 export type LooseExpenseCategory =
   /** Mercancía y costos de adquisición → assign to an OPEN purchase (native
    * sourcing-expense path); transporte para surtir distributes across pieces. */
@@ -822,6 +854,8 @@ export type LooseExpense = {
   /** Criterio 6: simplified treatment — recognized as period expense; the
    * amount never re-enters real costs when selling. */
   simplifiedOperation?: boolean;
+  /** #279: captured once when the expense is recorded. */
+  paymentMethod?: PurchasePaymentMethod;
   createdAt: string;
   updatedAt: string;
 };
@@ -876,6 +910,9 @@ export type Purchase = {
   sourcingExpenses?: PurchaseExpense[];
   // Expenses appended after reception (FER-02); never mutated once written.
   saleCostAdjustments?: PurchaseExpenseAdjustment[];
+  /** #279: how this purchase was paid — captured once, feeds the
+   * from-activation position (card debt / own-money outflow). */
+  paymentMethod?: PurchasePaymentMethod;
   createdAt: string;
   updatedAt: string;
 };

@@ -11,6 +11,19 @@ export const VERIFICATION_EMULATORS = {
   FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:19099',
   FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:19199',
 };
+export function verificationReceiptFailure(result, expected) {
+  if (result.version !== VERIFICATION_VERSION) return 'VERIFICATION_VERSION_MISMATCH';
+  if (result.archiveSha256 !== expected.archiveSha256) return 'VERIFICATION_ARCHIVE_HASH_MISMATCH';
+  if (result.restoreVerified !== true) return 'VERIFICATION_RESTORE_MISSING';
+  if (result.encryptedArchiveVerified !== true) return 'VERIFICATION_ENCRYPTED_ARCHIVE_MISSING';
+  if (result.sourceSnapshotVerified !== Boolean(expected.sourceDirectory)) return 'VERIFICATION_SNAPSHOT_MISSING';
+  if (!Number.isFinite(Date.parse(result.verifiedAt))) return 'VERIFICATION_TIME_INVALID';
+  if (result.sourceManifestSha256 !== expected.sourceManifestSha256) return 'VERIFICATION_MANIFEST_MISMATCH';
+  if (expected.sourceProjectId && result.sourceProjectId !== expected.sourceProjectId) return 'VERIFICATION_PROJECT_MISMATCH';
+  if (result.sourceProjectId === PROD && result.authPasswordHashesVerified !== true) return 'VERIFICATION_AUTH_HASHES_MISSING';
+  if (expected.sourceCounts && JSON.stringify(result.counts) !== JSON.stringify(expected.sourceCounts)) return 'VERIFICATION_COUNTS_MISMATCH';
+  return null;
+}
 const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
 export function verificationEnvironment(env = process.env) {
   const allowed = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'JAVA_HOME', 'JAVA_TOOL_OPTIONS', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'XDG_CACHE_HOME'];
@@ -81,7 +94,11 @@ export async function verifyCandidate(config, archive, identity, workspace, sour
   }
   let result;
   try { result = await readJson(resultFile); } catch { throw new Error('VERIFICATION_RECEIPT_REQUIRED'); }
-  if (result.version !== VERIFICATION_VERSION || result.archiveSha256 !== archiveSha256 || result.restoreVerified !== true || result.encryptedArchiveVerified !== true || result.sourceSnapshotVerified !== Boolean(sourceDirectory) || !Number.isFinite(Date.parse(result.verifiedAt)) || result.sourceManifestSha256 !== sourceManifestSha256 || (source && result.sourceProjectId !== source.projectId) || (result.sourceProjectId === PROD && result.authPasswordHashesVerified !== true) || (source && JSON.stringify(result.counts) !== JSON.stringify(source.counts))) throw new Error('VERIFICATION_FAILED');
+  const failure = verificationReceiptFailure(result, {
+    archiveSha256, sourceManifestSha256, sourceDirectory: Boolean(sourceDirectory),
+    sourceProjectId: source?.projectId, sourceCounts: source?.counts,
+  });
+  if (failure) throw new Error(failure);
   if (await fileHash(archive) !== archiveSha256) throw new Error('VERIFICATION_ARCHIVE_CHANGED');
   return result;
 }

@@ -100,3 +100,81 @@ export function proposeDistribution(input: DistributionInput): DistributionPropo
     liquidityStatus,
   };
 }
+
+// ─── #459: the OPERATIONAL authorization over a CLOSED period ───────────────
+
+export type ProfitDistributionDoc = {
+  id: string;
+  intentId: string;
+  storeId: string;
+  period: string;
+  closeId: string;
+  authorizedAmountCents: number;
+  split: DistributionSplit;
+  status: "authorized";
+  authorizedByUid: string;
+  authorizedAt: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+/** Deterministic id: the same authorization INTENT (store + period + the UI's
+ * intentId) lands on the same doc — a retry after a lost response is
+ * idempotent whatever its clock. Two LEGITIMATE authorizations (even of the
+ * SAME amount) are different intents and must never collapse into one:
+ * identifying by amount silently absorbed the second one (#459 r6). */
+export function profitDistributionDocId(storeId: string, period: string, intentId: string): string {
+  return `${storeId}__${period}__${intentId}`;
+}
+
+/** The doc for an OWNER-authorized distribution (rules demand id==body.id,
+ * createdBy==uid — the #459 profitDistributions contract). */
+export function buildProfitDistributionDoc(input: {
+  storeId: string;
+  period: string;
+  closeId: string;
+  authorizedAmountCents: number;
+  split: DistributionSplit;
+  uid: string;
+  now: string;
+  /** Stable per user attempt — the retry key (#459 r6). */
+  intentId: string;
+}): ProfitDistributionDoc {
+  return {
+    id: profitDistributionDocId(input.storeId, input.period, input.intentId),
+    intentId: input.intentId,
+    storeId: input.storeId,
+    period: input.period,
+    closeId: input.closeId,
+    authorizedAmountCents: input.authorizedAmountCents,
+    split: input.split,
+    status: "authorized",
+    authorizedByUid: input.uid,
+    authorizedAt: input.now,
+    createdBy: input.uid,
+    createdAt: input.now,
+  };
+}
+
+/** The LATEST authorized version per period (v2 supersedes v1 — #202): the
+ * loss history and the picker must never double-count a period. */
+export function latestClosePerPeriod<T extends { period: string; version: number }>(closes: T[]): T[] {
+  const best = new Map<string, T>();
+  for (const close of closes) {
+    const current = best.get(close.period);
+    if (!current || close.version > current.version) best.set(close.period, close);
+  }
+  return [...best.values()].sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : 0));
+}
+
+/** Accumulated operating losses BEFORE a period, from prior CLOSED snapshots
+ * (only closed periods count — a preview is not a loss). POSITIVE magnitude
+ * in exact cents — the shape proposeDistribution compensates. */
+export function accumulatedLossBefore(
+  closes: Array<{ period: string; totals: { operatingResultCents?: number } }>,
+  period: string
+): number {
+  return latestClosePerPeriod(closes as Array<{ period: string; version: number; totals: { operatingResultCents?: number } }>)
+    .filter((close) => close.period < period)
+    .reduce((sum, close) => sum + Math.max(0, -(close.totals.operatingResultCents ?? 0)), 0);
+}
