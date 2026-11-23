@@ -1201,12 +1201,23 @@ export async function saveOrderWithStockTx(
       const variants = data.variants as Product["variants"];
       const variant = variants?.find((v) => v.id === cDelta.variantId);
       const size = variant?.sizes?.find((sz) => sz.id === cDelta.sizeId);
-      if (!isVariantProduct({ variants }) || !variant || !size) {
+      if (!isVariantProduct({ variants }) || !variant) {
         if (cDelta.delta > 0) {
           releases.set(cDelta.productId, (releases.get(cDelta.productId) ?? 0) + cDelta.delta);
           continue;
         }
         throw new Error("La talla elegida ya no existe en este diseño.");
+      }
+      if (!size) {
+        if (cDelta.delta < 0) throw new Error("La talla elegida ya no existe en este diseño.");
+        // The talla is gone but its color remains: the real pieces return to
+        // the color «sin talla» — visible on the card, distributed from the
+        // ficha — never to the design shelf the app ignores for color designs.
+        const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];
+        const nextVariants = applyVariantDelta({ variants: working }, cDelta.variantId, cDelta.delta, at);
+        if (!nextVariants) throw new Error("El color elegido ya no existe en este diseño.");
+        variantWrites.set(cDelta.productId, nextVariants);
+        continue;
       }
       if (next.installmentsReservedAt && cDelta.delta < 0) {
         const current = typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0;
@@ -1723,9 +1734,16 @@ export async function deleteOrderWithStockTx(
       const variants = data.variants as Product["variants"];
       const variant = variants?.find((v) => v.id === cDelta.variantId);
       const size = variant?.sizes?.find((sz) => sz.id === cDelta.sizeId);
-      if (!variant || !size) {
-        // Vanished combination: the real pieces return to the design shelf.
+      if (!variant) {
+        // Vanished color: the real pieces return to the design shelf.
         releases.set(cDelta.productId, (releases.get(cDelta.productId) ?? 0) + cDelta.delta);
+        continue;
+      }
+      if (!size) {
+        // Vanished talla, color still there: back to the color «sin talla» (visible).
+        const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];
+        const nextVariants = applyVariantDelta({ variants: working }, cDelta.variantId, cDelta.delta, at);
+        if (nextVariants) variantWrites.set(cDelta.productId, nextVariants);
         continue;
       }
       const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];

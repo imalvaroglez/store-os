@@ -138,7 +138,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("assisted conversion of se
         sizes: [{ id: "s6", size: "6", sku: "SOL-D-6", cost: 110, quantityOnHand: 5, createdAt: "", updatedAt: "" }],
         createdAt: "", updatedAt: "" }] },
     o1: { id: "p-conv-o1", storeId: STORE, name: "Anillo Sol Dorado 7", sku: "SOL-X-7", category: "other", status: "published", cost: 105, prices: { t_retail: 1400 }, quantityOnHand: 3, createdAt: "", updatedAt: "" },
-    o2: { id: "p-conv-o2", storeId: STORE, name: "Anillo Sol Plateado 9", sku: "SOL-X-9", category: "other", status: "published", cost: 100, quantityOnHand: 4, createdAt: "", updatedAt: "" },
+    o2: { id: "p-conv-o2", storeId: STORE, name: "Anillo Sol Plateado 9", sku: "SOL-X-9", category: "other", status: "published", cost: 100, prices: { t_retail: 1400 }, quantityOnHand: 4, createdAt: "", updatedAt: "" },
   };
 
   async function seed() {
@@ -349,6 +349,20 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("pedido, entrega y cancela
       designLevel: data.quantityOnHand,
     };
   };
+  /** The same design once its color sells by talla (free pieces split 3 / 1 on top of the color's shelf). */
+  async function seedProductWithSizes(colorLevel = 0) {
+    await envQa.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/" + PRODUCT), {
+        storeId: STORE, name: "Anillo Sol", sku: "SOL", category: "other", status: "published",
+        variants: [{ id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, quantityOnHand: colorLevel, createdAt: "", updatedAt: "",
+          sizes: [
+            { id: "d6", size: "6", sku: "SOL-D-6", cost: 100, quantityOnHand: 3, createdAt: "", updatedAt: "" },
+            { id: "d5", size: "5", sku: "SOL-D-5", cost: 100, quantityOnHand: 1, createdAt: "", updatedAt: "" },
+          ] }],
+      });
+    });
+  }
+
   const freshOrder = async (): Promise<Order> => {
     const snap = await getDoc(doc(holder.db, "orders", "ord-qa461"));
     return { ...snap.data(), id: "ord-qa461" } as unknown as Order;
@@ -457,4 +471,56 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("pedido, entrega y cancela
     await saveOrderWithStockTx({ uid: "qa461-user" } as never, { ...mappedSaved, orderStatus: "cancelled" } as Order, mappedSaved.revision ?? null, "mut-qa461-i");
     expect(await shelves()).toEqual({ d6: 5, d5: 1, colorLevel: undefined, designLevel: undefined });
   });
+  // ── Revisión de código independiente, 23-nov: protecciones que no tenían prueba ──
+  it("borrar un pedido devuelve cada pieza a SU talla (d6 2→3, d5 2→3) y nada al color ni al diseño", async () => {
+    await seed();
+    const { deleteOrderWithStockTx } = await import("./firestoreData");
+    const saved = await saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([line("d6", 2, "l1"), line("d5", 1, "l2")]), null, "mut-qa461-j");
+    expect(await shelves()).toEqual({ d6: 2, d5: 2, colorLevel: undefined, designLevel: undefined });
+    await deleteOrderWithStockTx({ uid: "qa461-user" } as never, saved.order.id, saved.order.revision ?? 1);
+    expect(await shelves()).toEqual({ d6: 4, d5: 3, colorLevel: undefined, designLevel: undefined });
+    expect((await getDoc(doc(holder.db, "orders", "ord-qa461"))).exists()).toBe(false);
+  });
+
+  it("asignar la talla a una línea con entrega ya registrada SIN talla falla cerrado, sin mover nada", async () => {
+    await seed();
+    // Se vendió y se entregó cuando Dorado aún no tenía tallas; después el color pasó a venderse por talla.
+    await envQa.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "products/" + PRODUCT), {
+        storeId: STORE, name: "Anillo Sol", sku: "SOL", category: "other", status: "published",
+        variants: [{ id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 100, quantityOnHand: 1, createdAt: "", updatedAt: "" }],
+      });
+    });
+    const soldWithoutSize = { ...line("d6", 3, "l1"), variantSizeId: undefined, variantSize: undefined };
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([soldWithoutSize]), null, "mut-qa461-k");
+    const { registerDeliveryTx } = await import("./firestoreData");
+    await registerDeliveryTx({
+      orderId: "ord-qa461", storeId: STORE,
+      delivery: { id: "dev-qa461-k", orderId: "ord-qa461", storeId: STORE, deliveredAt: "2026-11-23", recordedAt: "2026-11-23T10:00:00.000Z", by: "qa461-user",
+        lines: [{ productId: PRODUCT, variantId: "v_gold", quantity: 1 }] },
+    });
+    await seedProductWithSizes();
+    const before = await shelves();
+    const delivered = await freshOrder();
+    await expect(
+      saveOrderWithStockTx({ uid: "qa461-user" } as never, { ...delivered, items: [line("d6", 3, "l1")] } as Order, delivered.revision ?? null, "mut-qa461-l")
+    ).rejects.toThrow(/entrega registrada sin talla/);
+    expect(await shelves()).toEqual(before);
+  });
+
+  it("la talla ya no existe pero el color sí: cancelar devuelve las piezas al color «sin talla» (visibles), no al campo del diseño", async () => {
+    await seed();
+    const saved = await saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([line("d6", 1, "l1")]), null, "mut-qa461-m");
+    // La ficha quitó la talla 6 después de la venta (sus piezas libres se fueron a la 5).
+    const data = (await getDoc(doc(holder.db, "products", PRODUCT))).data() as { variants: any[] };
+    const variants = data.variants.map((v) => (v.id === "v_gold" ? { ...v, sizes: v.sizes.filter((s: any) => s.id !== "d6") } : v));
+    await envQa.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), "products/" + PRODUCT), { variants }, { merge: true }));
+    await saveOrderWithStockTx({ uid: "qa461-user" } as never, { ...saved.order, orderStatus: "cancelled" } as Order, saved.order.revision ?? null, "mut-qa461-n");
+    const after = await shelves();
+    expect(after.d6).toBeUndefined();
+    expect(after.d5).toBe(3); // la talla hermana no recibe piezas ajenas
+    expect(after.colorLevel).toBe(1); // a la vista «sin talla», para repartir desde la ficha
+    expect(after.designLevel).toBeUndefined(); // nunca al estante que la app ignora
+  });
+
 });
