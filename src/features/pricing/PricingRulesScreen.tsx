@@ -24,7 +24,7 @@ import {
 } from "../../design-system";
 import { tiersForStore } from "../../lib/pricing";
 import { sanitizeMoneyInput } from "../../lib/money";
-import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, hasRules } from "../../lib/pricingRules";
+import { resolveRule, suggestedPriceFor, baseCostForTier, validateBands, hasRules, moneyCaptureInvalid, MONEY_CAPTURE_ERROR } from "../../lib/pricingRules";
 import { navigate } from "../../lib/router";
 import type { Category, PricingRule, PricingRulesConfig, PriceRounding, Product } from "../../types";
 
@@ -71,6 +71,10 @@ export function PricingRulesScreen() {
   const [busy, setBusy] = useState(false);
   const [applying, setApplying] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // #219 (Reglas audit): per-tier money/percent captures rejected at the field
+  // block the save — the parent aggregates what each RuleCard reports.
+  const [captureInvalidByTier, setCaptureInvalidByTier] = useState<Record<string, boolean>>({});
+  const captureInvalid = useMemo(() => Object.values(captureInvalidByTier).some(Boolean), [captureInvalidByTier]);
   // #289: Estrategia de precios bridges here with ?categoria=<id> — keep the
   // context so Fer reviews exactly the category she just configured.
   const [categoryFilter, setCategoryFilter] = useState<string>(
@@ -127,6 +131,10 @@ export function PricingRulesScreen() {
   }
 
   async function save() {
+    if (captureInvalid) {
+      toast.error(MONEY_CAPTURE_ERROR);
+      return;
+    }
     // Adversarial H1: nonsensical increments are refused before persisting.
     for (const [tierId, rule] of Object.entries(draft.config.byTier ?? {})) {
       const label = tiers.find((t) => t.id === tierId)?.label ?? tierId;
@@ -365,7 +373,11 @@ export function PricingRulesScreen() {
           <RuleCard
             key={tier.id}
             label={tier.label}
+            tierId={tier.id}
             disabled={busy}
+            onCaptureInvalid={(invalid) =>
+              setCaptureInvalidByTier((prev) => (prev[tier.id] === invalid ? prev : { ...prev, [tier.id]: invalid }))
+            }
             rule={draft.config.byTier?.[tier.id]}
             onChange={(rule) =>
               patchConfig((config) => {
@@ -377,7 +389,7 @@ export function PricingRulesScreen() {
         ))}
 
         <div className="space-y-2 pb-6">
-          <Button full disabled={!draft.dirty || busy} onClick={() => void save()}>
+          <Button full disabled={!draft.dirty || busy || captureInvalid} onClick={() => void save()}>
             {busy ? "Guardando…" : draft.dirty ? "Guardar reglas" : "Sin cambios"}
           </Button>
           <p className="text-xs text-on-surface-soft">
@@ -591,13 +603,17 @@ export function PricingRulesScreen() {
 
 function RuleCard({
   label,
+  tierId,
   rule,
   onChange,
+  onCaptureInvalid,
   disabled = false,
 }: {
   label: string;
+  tierId: string;
   rule: PricingRule | undefined;
   onChange: (rule: PricingRule | null) => void;
+  onCaptureInvalid: (invalid: boolean) => void;
   disabled?: boolean;
 }) {
   const kind = rule?.kind ?? "markup";
@@ -605,8 +621,26 @@ function RuleCard({
   // Adversarial H2: remember each method's last values so switching methods
   // never silently restores defaults.
   const [last, setLast] = useState<{ percent: number; amount: number }>({ percent: 100, amount: 50 });
+  // #219 (Reglas audit): keep RAW captures so an incomplete "12." survives the
+  // round trip; text that breaks the contract stays visible with an error and
+  // never silently becomes a different number (the old `|| 0` path).
+  const [rawCaptures, setRawCaptures] = useState<Record<string, string>>({});
+  const PERCENT_CAPTURE_ERROR = "Escribe el porcentaje con un solo punto decimal.";
+  const percentInvalid = (raw: string | undefined) => raw !== undefined && !/^\d*(\.\d*)?$/.test(raw.trim());
+  const cardInvalid =
+    Object.entries(rawCaptures).some(([key, raw]) => (key === "percent" ? percentInvalid(raw) : moneyCaptureInvalid(raw)));
+  useEffect(() => {
+    onCaptureInvalid(cardInvalid);
+  }, [cardInvalid, onCaptureInvalid, tierId]);
+  const captureError = (key: string) => {
+    const raw = rawCaptures[key];
+    if (raw === undefined) return undefined;
+    return key === "percent" ? (percentInvalid(raw) ? PERCENT_CAPTURE_ERROR : undefined) : moneyCaptureInvalid(raw) ? MONEY_CAPTURE_ERROR : undefined;
+  };
+  const rawValue = (key: string, derived: string) => (rawCaptures[key] !== undefined ? rawCaptures[key] : derived);
 
   function patchRule(patch: Partial<PricingRule> & { kind?: PricingRule["kind"] }) {
+    setRawCaptures({}); // method switch: raw texts no longer map to fields
     const nextKind = patch.kind ?? kind;
     setLast((current) => ({
       percent: kind === "markup" ? (rule as { percent?: number } | undefined)?.percent ?? current.percent : current.percent,
@@ -662,9 +696,13 @@ function RuleCard({
           inputMode="decimal"
           placeholder="p. ej. 200"
           hint="Ojo: +200% sobre un costo de $100 da un precio de $300 — una ganancia de 66.7% sobre la venta, no 200%."
-          value={String((rule as { percent?: number } | undefined)?.percent ?? "")}
+          error={captureError("percent")}
+          value={rawValue("percent", String((rule as { percent?: number } | undefined)?.percent ?? ""))}
           onChange={(e) => {
-            const value = e.target.value.replace(/[^\d.]/g, "");
+            const raw = e.target.value;
+            setRawCaptures((prev) => ({ ...prev, percent: raw }));
+            if (percentInvalid(raw)) return; // rejected: the rule keeps its previous percent
+            const value = raw.trim() === "" ? 0 : Number(raw.replace(/[^\d.]/g, ""));
             onChange({ kind: "markup", percent: Number(value) || 0, rounding } as PricingRule);
           }}
         />
@@ -675,9 +713,13 @@ function RuleCard({
           disabled={disabled}
           inputMode="decimal"
           placeholder="p. ej. 50"
-          value={String((rule as { amount?: number } | undefined)?.amount ?? "")}
+          error={captureError("fixed")}
+          value={rawValue("fixed", String((rule as { amount?: number } | undefined)?.amount ?? ""))}
           onChange={(e) => {
-            const value = sanitizeMoneyInput(e.target.value);
+            const raw = e.target.value;
+            setRawCaptures((prev) => ({ ...prev, fixed: raw }));
+            if (moneyCaptureInvalid(raw)) return; // rejected: the rule keeps its previous amount
+            const value = sanitizeMoneyInput(raw);
             onChange({ kind: "fixed", amount: Number(value) || 0, rounding } as PricingRule);
           }}
         />
@@ -691,10 +733,14 @@ function RuleCard({
                   <TextField
                     label="Desde $"
                     inputMode="decimal"
-                    value={String(band.min)}
+                    error={captureError(`band-min-${index}`)}
+                    value={rawValue(`band-min-${index}`, String(band.min))}
                     onChange={(e) => {
+                      const raw = e.target.value;
+                      setRawCaptures((prev) => ({ ...prev, [`band-min-${index}`]: raw }));
+                      if (moneyCaptureInvalid(raw)) return;
                       const bands = [...rule.bands];
-                      bands[index] = { ...band, min: Number(sanitizeMoneyInput(e.target.value)) || 0 };
+                      bands[index] = { ...band, min: Number(sanitizeMoneyInput(raw)) || 0 };
                       onChange({ kind: "bands", bands, rounding });
                     }}
                   />
@@ -704,10 +750,14 @@ function RuleCard({
                     label="Hasta $"
                     inputMode="decimal"
                     placeholder="sin tope"
-                    value={band.max !== undefined ? String(band.max) : ""}
+                    error={captureError(`band-max-${index}`)}
+                    value={rawValue(`band-max-${index}`, band.max !== undefined ? String(band.max) : "")}
                     onChange={(e) => {
+                      const raw = e.target.value;
+                      setRawCaptures((prev) => ({ ...prev, [`band-max-${index}`]: raw }));
+                      if (moneyCaptureInvalid(raw)) return;
                       const bands = [...rule.bands];
-                      const max = e.target.value.trim() === "" ? undefined : Number(sanitizeMoneyInput(e.target.value)) || 0;
+                      const max = raw.trim() === "" ? undefined : Number(sanitizeMoneyInput(raw)) || 0;
                       bands[index] = { ...band, ...(max !== undefined ? { max } : {}) };
                       onChange({ kind: "bands", bands, rounding });
                     }}
@@ -717,10 +767,14 @@ function RuleCard({
                   <TextField
                     label={`Precio ${label}`}
                     inputMode="decimal"
-                    value={String(band.price)}
+                    error={captureError(`band-price-${index}`)}
+                    value={rawValue(`band-price-${index}`, String(band.price))}
                     onChange={(e) => {
+                      const raw = e.target.value;
+                      setRawCaptures((prev) => ({ ...prev, [`band-price-${index}`]: raw }));
+                      if (moneyCaptureInvalid(raw)) return;
                       const bands = [...rule.bands];
-                      bands[index] = { ...band, price: Number(sanitizeMoneyInput(e.target.value)) || 0 };
+                      bands[index] = { ...band, price: Number(sanitizeMoneyInput(raw)) || 0 };
                       onChange({ kind: "bands", bands, rounding });
                     }}
                   />
@@ -728,6 +782,7 @@ function RuleCard({
                 <Button
                   variant="ghost"
                   onClick={() => {
+                    setRawCaptures({}); // band indexes shift
                     const bands = rule.bands.filter((_, i) => i !== index);
                     onChange({ kind: "bands", bands, rounding });
                   }}
@@ -742,6 +797,7 @@ function RuleCard({
               size="sm"
               variant="ghost"
               onClick={() => {
+                setRawCaptures({}); // band indexes shift
                 const last = rule.bands[rule.bands.length - 1];
                 const bands = [...rule.bands, { min: last?.max ?? 0, price: 0 }];
                 onChange({ kind: "bands", bands, rounding });
@@ -760,7 +816,16 @@ function RuleCard({
         </div>
       )}
       {rule && (
-        <Button size="sm" variant="ghost" onClick={() => onChange(null)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            // #219 (dictamen #517, MENOR): the removed rule's rejected raw
+            // capture must go with it — no ghost error blocking the save.
+            setRawCaptures({});
+            onChange(null);
+          }}
+        >
           Quitar regla de {label}
         </Button>
       )}
