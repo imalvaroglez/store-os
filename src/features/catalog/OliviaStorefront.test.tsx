@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, within, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { OliviaStorefront } from "./OliviaStorefront";
@@ -970,5 +971,79 @@ describe("carrito — filas por tarifa (#442, revisión)", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Ayuda sobre Girly" })).toBeTruthy());
     expect(screen.getByRole("button", { name: "Ayuda sobre Girly" }).getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(/Agrega \d piezas más/)).toBeNull();
+  });
+});
+
+describe("#489 legacy sold_out cannot override inventory", () => {
+  it("shows the stocked piece in the hidden-sold-out grid and offers a normal purchase in its detail", async () => {
+    const stocked = { ...catalog.products[0], availability: "sold_out", stockSignal: "disponible" as const };
+    mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, storefront: { showSoldOut: false } }, catalog: { ...catalog, products: [stocked] } });
+    const view = await renderStore();
+    expect(screen.getByRole("article", { name: stocked.name })).toBeTruthy();
+    mocks.loadPublicProduct.mockResolvedValue({ store, product: { ...detail, ...stocked, images: [], categories: [] } });
+    view.rerender(<OliviaStorefront route={productRoute} />);
+    await screen.findByRole("heading", { name: stocked.name, level: 1 });
+    expect(screen.queryByText("Agotado")).toBeNull();
+    expect(screen.getByRole("link", { name: /Comprar por WhatsApp/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
+    expect(screen.getByRole("group", { name: `Cantidad de ${stocked.name}` })).toHaveTextContent("1");
+  });
+});
+
+it("#489 preserves the chosen color in quantity, saved cart and WhatsApp", async () => {
+  const design = { ...detail, stockSignal: "disponible" as const, availability: "sold_out", canInquire: true, variants: [
+    { id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" as const },
+    { id: "gold", color: "Dorado", imageUrl: null, stockSignal: "agotado" as const },
+  ] };
+  localStorage.setItem(cartKey, JSON.stringify({ v: 1, lines: [{ productSlug: `${detail.productSlug}~silver`, name: `${detail.name} · Plateado`, sku: detail.sku, qty: 2, inquire: true }] }));
+  mocks.loadPublicCatalog.mockResolvedValue({ store, catalog: { ...catalog, products: [design] } });
+  mocks.loadPublicProduct.mockResolvedValue({ store, product: design });
+  render(<OliviaStorefront route={productRoute} />);
+  await screen.findByRole("heading", { name: detail.name, level: 1 });
+  expect(screen.getByRole("combobox", { name: "Color" })).toBeTruthy();
+  expect(screen.getByRole("group", { name: `Cantidad de ${detail.name} · Plateado` })).toHaveTextContent("2");
+  expect(decodeURIComponent(screen.getByRole("link", { name: /Comprar por WhatsApp/ }).getAttribute("href")!)).toContain("Plateado");
+  fireEvent.change(screen.getByRole("combobox", { name: "Color" }), { target: { value: "gold" } });
+  expect(screen.getByText("Agotado")).toBeTruthy();
+  expect(screen.getByRole("link", { name: /Preguntar por esta pieza/ })).toBeTruthy();
+});
+describe("#219 — contratos de captura del catálogo público (auditoría)", () => {
+  async function openNamedDrawer() {
+    const view = await renderStore();
+    await addFromDetail(view, 0);
+    await openDrawer();
+    const dialog = screen.getByRole("dialog", { name: "Tu pedido" });
+    const field = within(dialog).getByLabelText("Tu nombre") as HTMLInputElement;
+    return { field };
+  }
+
+  it("«Tu nombre»: el pegado con saltos de línea queda en una sola línea; el mensaje usa el nombre limpio", async () => {
+    const { field } = await openNamedDrawer();
+    // The single-line input itself drops the pasted newline (DOM value
+    // sanitization); our handler turns the tab into a space. Either way the
+    // capture can never hold a control character.
+    fireEvent.change(field, { target: { value: "Ana\nPaola\tGarcía" } });
+    expect(field.value).not.toMatch(/[\r\n\t]/);
+    expect(field.value).toContain("Paola García");
+    fireEvent.change(field, { target: { value: "Ana Paola García" } });
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("soy Ana Paola García,");
+  });
+
+  it("«Tu nombre» declara tope de 60 y la captura nunca lo excede", async () => {
+    const { field } = await openNamedDrawer();
+    expect(field).toHaveAttribute("maxlength", "60");
+    fireEvent.change(field, { target: { value: "x".repeat(80) } });
+    expect(field.value).toBe("x".repeat(60));
+  });
+
+  it("el nombre con marcas de WhatsApp llega escapado y sin espacios de más (regresión de uso)", async () => {
+    const { field } = await openNamedDrawer();
+    fireEvent.change(field, { target: { value: "  Ana *Lux*  " } });
+    const send = screen.getByRole("link", { name: "Enviar solicitud por WhatsApp" }) as HTMLAnchorElement;
+    const text = decodeURIComponent(send.href.split("text=")[1]);
+    expect(text).toContain("soy Ana \\*Lux\\*,");
+    expect(text).not.toMatch(/soy {2,}/);
   });
 });

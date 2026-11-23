@@ -1,139 +1,41 @@
-# Runbook — Purge del historial contaminado (2026-11-03)
+# Runbook — purge del historial contaminado (2026-11-03)
 
-Herramienta: [`scripts/history-purge-2026-11-03.sh`](../scripts/history-purge-2026-11-03.sh).
-Contexto y decisiones: [`docs/superpowers/plans/2026-11-03-cero-pinzas.md`](superpowers/plans/2026-11-03-cero-pinzas.md).
+Herramienta: [`scripts/history-purge-2026-11-03.sh`](../scripts/history-purge-2026-11-03.sh). Los manifiestos adjuntos (`refs.tsv`, `pull-refs.tsv`, `main-tree.txt`) son snapshots históricos para revisión; no autorizan una ejecución.
 
-**Qué elimina (y nada más):** toda traza histórica de `.local/` (28 archivos con
-datos reales de clientas) y de los 11 duplicados de sincronización macOS
-(`" N.ext"`). La punta del árbol de `main` NO cambia ni un byte: los archivos ya
-salieron del árbol en `34f4fd2` (PR #178); solo se limpia el historial.
+## Objetivo y alcance
 
-**Quién lo ejecuta:** exclusivamente el PO, desde su terminal, con ningún agente
-corriendo. El modo `verify` es seguro (clona a un directorio temporal y no empuja
-nada); el modo `push` REESCRIBE `origin/main` con force y es decisión humana.
+Eliminar del historial alcanzable únicamente `.local/` y los 11 archivos duplicados de sincronización macOS listados por la herramienta. El árbol de `main` debe conservar exactamente el tree `bbcf44a4114c31062c7917c956c1cdcd7c8ce42f`.
 
-## Prerequisitos
+El snapshot verificado el 2026-11-18 encontró 36 ramas, 11 tags y 333 refs internas `refs/pull/*` antes de crear el PR #507. Ese snapshot ya es histórico: los PRs de la herramienta y de esta corrección cambian el inventario; el snapshot final se debe regenerar después de integrar todos los cambios de la herramienta. La ejecución debe leer el inventario vigente, no estas cifras. La verificación recorre cada fila de `commit-map` y solo permite diferencias de árbol dentro de las rutas aprobadas. Los tags conservan sus nombres y apuntan a commits reescritos. Las refs `refs/pull/*` son administradas por GitHub y no se empujan directamente; se requiere verificación con GitHub Support.
 
-1. `brew install git-filter-repo` (verificado con 2.47.0).
-2. Ningún agente empujando ramas mientras se ejecuta.
-3. **Precondición de portadores (hallazgo 2026-11-03, corregido tras auditoría):**
-   el script aborta si alguna rama remota distinta de `main` desciende del merge
-   contaminado `ab4f51d`. Hoy hay exactamente **dos** portadores y ambos deben
-   resolverse antes del `push`:
-   - `docs/cero-pinzas-plan` (la de este mismo cambio): fusionar su PR y borrar
-     la rama en GitHub.
-   - `chore/eradicate-local-mode` (PR #111): se volvió portadora al integrar
-     `main` en ella. Hay que **fusionar el PR #111** (o cerrarlo y borrar la
-     rama — con el costo de re-aplicar el trabajo). El orden natural es:
-     PR de purge-tools → PR #111 → purge.
-   El guard es intencional: mientras una rama viva apunte al historial viejo,
-   los objetos contaminados siguen alcanzables en GitHub.
-4. Verificar que no hay forks (si hubiera, avisar a los forks antes de reescribir):
-   `gh api repos/imalvaroglez/store-os --jq .forks_count` → debe ser `0`.
+El snapshot histórico registró `visibility=public`, `allow_forking=true`, `forks_count=0`. Los manifiestos contienen SHAs exactos observados. Si se mueve cualquier SHA o cambia la lista de refs, la herramienta aborta. Después de integrar la herramienta, generar y revisar snapshots nuevos: cada PR de la herramienta también altera el inventario.
 
-## Pasos
+## Preservación local previa
 
-### 1. Verify (seguro, no empuja nada)
+Antes de la ejecución, generar un manifiesto **privado y externo al repo** con fecha, ruta, rama (o `detached`), HEAD, refs locales, archivos modificados y archivos sin seguimiento de cada checkout/worktree, incluido el principal. El inventario del 2026-11-18 después de integrar #507 encontró 79 worktrees, 17 con cambios, 1,251 archivos sin seguimiento y 49 worktrees detached; volver a contarlos justo antes de operar. Para cada checkout, guardar por separado `git diff --cached --binary` y `git diff --binary`, la salida de `git ls-files --stage`, copiar los untracked de trabajo conservando rutas y guardar `git bundle --all` para ramas/tags locales. Para cada worktree detached, crear además una ref temporal que apunte a su `HEAD` y generar/verificar un bundle que la incluya; `git bundle --all` por sí solo no conserva esos commits. Registrar la ref temporal en el manifiesto y no borrarla hasta verificar el bundle en un clon temporal. Verificar tamaño y SHA-256 de cada artefacto, y ensayar `git apply --check` de ambos diffs en una copia temporal. Guardar todo fuera de los clones, en carpeta privada con permisos `0700`. No copiar caches/perfiles de navegador ni archivos con credenciales como respaldo indiscriminado: dejarlos intactos y fuera del purge local hasta confirmar con su responsable si son reproducibles. No resetear, limpiar, podar ni retirar ningún worktree hasta verificar sus respaldos y registrar para cada uno su destino. No leer ni copiar datos productivos.
 
-Correrlo SIEMPRE desde fuera del repo y de `/private/tmp/store-os-*` (el script
-lo exige y aborta):
+## Requisitos y guardas
 
-```bash
-cd "$HOME"
-bash /Users/imalvaroglez/Documents/GitHub/store-os/scripts/history-purge-2026-11-03.sh verify
-```
+- Ejecutar desde un checkout temporal independiente, no desde el repo principal ni un worktree. El mirror se crea con permisos `0700`, se elimina al salir y nunca imprime contenido de archivos sensibles.
+- Requiere `git-filter-repo` con `--sensitive-data-removal` y `gh` autenticado. El repo actual es público y personal: GitHub rechazó cambiar `allow_forking` (HTTP 422) y su [documentación de forks](https://docs.github.com/en/pull-requests/reference/forks) confirma que cualquier repo público puede recibir forks; la opción para impedirlos solo se ofrece en repos privados de organizaciones. No cambiar la visibilidad para sortearlo. Registrar la política original y exigir `forks_count=0` al generar snapshot, justo antes del push y después. Congelar creación/actualización/borrado de ramas y tags con reglasets temporales que solo permitan bypass a la cuenta operadora. El modo `push` aborta si el conteo deja de ser cero o cambia la política registrada; si aparece un fork durante/después del push, no declarar éxito ni abrir el caso con Support hasta inventariar y coordinar la limpieza de ese fork.
+- El snapshot adjunto describe el inventario anterior a los PRs recientes y ya no autoriza una ejecución. Después de integrar todas las correcciones de la herramienta, generar un snapshot nuevo; revisar el número y los SHA de todas las ramas, tags y refs internas de PR, además de `repo-policy.tsv` (visibilidad, tipo de cuenta, `allow_forking`, `forks_count`). Si algo cambia durante el preflight, la herramienta aborta.
+- `--invert-paths` es obligatorio; omitirlo interpretaría la lista como rutas que se conservan.
+- El push actualiza solo las ramas y tags enumerados en el snapshot con refspecs explícitos, `--atomic` y `--force-with-lease` por cada SHA observado. Compara la lista pública completa justo antes y después; si aparece o cambia una ref inesperada, falla y exige investigar antes de seguir. Congelar escrituras de ramas/tags para que solo la persona operadora del purge pueda escribir durante la ventana. Nunca empujar `refs/pull/*`; GitHub Support atiende esas refs y sus vistas cacheadas.
+- La validación recorre cada fila de `commit-map`, incluidos commits podados, y falla si alguna diferencia histórica de árbol queda fuera de las rutas aprobadas. `verify` conserva metadatos SHA-only (commit-map, changed-refs, first-changed-commits y snapshots de refs) en una carpeta temporal privada que imprime al final. Ese directorio no contiene el mirror ni los archivos borrados; conservarlo hasta terminar la revisión y el trámite con Support. `run.log` registra el flujo. Si falla una verificación posterior al push, retener el log y los snapshots que existan (`all-refs-before-push.tsv`, `public-before-push.tsv`, `public-after-push.tsv`, `pull-refs-after-attempt.tsv`); los snapshots posteriores pueden no existir si la operación no llegó a esa etapa. Volver a consultar refs desde una copia remota nueva y guardar esa salida en el mismo directorio privado. No retroceder refs ni volver a publicar commits antiguos. Después de reconciliar y confirmar Support, eliminarlos de forma segura.
+- Para el preflight final, copiar el script/lib a una carpeta temporal privada e independiente. Ejecutar `bash history-purge-2026-11-03.sh snapshot /ruta/nueva/snapshot-aprobado`; inspeccionar todos los SHA, la política de forks y el tree de main. Copiar los cuatro manifiestos resultantes junto al script y correr `verify`. El modo `snapshot` elimina su mirror al salir y conserva solo los SHA y la política del repositorio.
+- Push exige el argumento explícito `push --po-approved`. El PO autorizó el alcance ampliado de todas las ramas públicas, tags y refs internas de PR; los números SHA concretos deben corresponder al snapshot final revisado justo antes de ejecutar.
 
-Salida esperada (evidencia de la ejecución del 2026-11-03, réplica con la
-precondición 3 satisfecha; nota de auditoría: este bloque es una
-reconstrucción legible, no salida literal — las cifras sí son exactas, y con
-los portadores activos el script imprime `ABORT` en vez de continuar):
+## Ejecución
 
-```
-== tip actual de main: 09f50c5f932002050450ca401d498f8f24ca65a5 (523 commits)
-== portadores de la contaminación (debe ser SOLO origin/main):
-refs/remotes/origin/main
-== STRAYS: (vacío, OK)
-== .local eliminado del historial: OK
-== 11 duplicados eliminados del historial: OK
-== purge OK: tip 09f50c5f... -> 404517ad...; árbol idéntico: de767a17...
-== commits: 523 -> 523
-== MODO VERIFY: nada se empujó.
-```
+1. Antes de iniciar el purge, confirmar en la issue #180 que la compuerta de producción indicada en su cuerpo sigue satisfecha: verificar que la versión requerida (1.13.0 o una posterior) está efectivamente en producción; una etiqueta o release de GitHub por sí sola no basta. Revisar el estado actual de las ramas portadoras/PRs señalado en el último comentario de la issue. La autorización ampliada vigente del PO decide preservar y reescribir todas las refs; por eso sustituye la instrucción histórica de cerrar los PRs portadores antes del purge. Si aparece una decisión posterior incompatible o no se acredita la compuerta de producción, no ejecutar el push.
+2. Desde una copia aislada de la herramienta, generar el snapshot final con el modo `snapshot`; revisar nombres, conteos y SHA de todas las refs y el tree de main. Copiar los manifiestos a esa copia y correr `verify`.
+3. Inspeccionar metadatos: `changed-refs` debe coincidir exactamente con todos los nombres del snapshot. `first-changed-commits` y `commit-map` documentan el impacto. Verificar el árbol de `main`, ausencia de rutas sensibles y todas las filas de `commit-map`; registrar cuántos PRs abiertos y ramas portadoras hay en el snapshot actual.
+4. Respaldar y documentar todo el WIP local. Guardar la política original del repo. Congelar creación/actualización/borrado de ramas y tags con reglasets temporales, guardando sus IDs y la configuración original de `main`. En este repo público, mantener `allow_forking=true` porque GitHub no permite bloquear forks públicos; verificar `forks_count=0`. Volver a generar el snapshot de ramas, tags, refs de PR y política justo antes del push; inspeccionar nuevamente nombres, conteos, SHAs y tree de `main`; copiar los cuatro manifiestos nuevos a la copia aislada y ejecutar `verify` otra vez con esos mismos archivos. Si cualquier SHA/ref/política difiere o falla una validación antes del push, no se reescribió nada: detenerse, registrar la diferencia, retirar los bloqueos temporales y empezar un preflight nuevo cuando se resuelva. No usar `--po-approved` con un snapshot distinto al que se revisó.
+5. Con la autorización explícita del PO para todas las ramas, tags y refs internas de PR, revisiones independientes aprobadas, WIP respaldado, escrituras congeladas y `forks_count=0`, ejecutar `bash scripts/history-purge-2026-11-03.sh push --po-approved` con el snapshot final revisado. El script vuelve a comprobar todas las refs y la política antes del push, verifica los SHA exactos de ramas/tags y `refs/pull/*` después, y exige que `forks_count` siga en cero. Si aparece un fork o una comprobación posterior al push falla, preservar `run.log` y los snapshots, mantener bloqueadas las escrituras, no restaurar SHAs anteriores y coordinar la limpieza antes de Support. Consultar desde un clon nuevo las refs actuales y rehacer snapshot+filter completo antes de otro intento. Reportar el estado real; no declarar el purge completo.
+6. Consultar CI para `main` y todos los PRs abiertos del snapshot actual. Si quedan refs/pull con SHA anterior o inesperado, coordinar su dereferencia/purge con GitHub Support antes de desbloquear ramas y tags.
+7. Contactar [GitHub Support](https://support.github.com/contact) para purgar vistas cacheadas y objetos inalcanzables, citando el commit contaminado, número de PRs afectados y SHA de `first-changed-commits`.
+8. Repetir preflight de refs/forks y comprobar que ya no quedan rutas en el historial accesible. Solo después de completar Support y confirmar que no quedan refs viejas, retirar los rulesets temporales y restaurar la configuración original de `main`; `allow_forking` queda como estaba porque no se pudo cambiar en este repo público. Sincronizar cada clone/worktree solo después de verificar el respaldo y reaplicar/rebasar su WIP. Retirar worktrees únicamente cuando sus commits y archivos estén a salvo.
 
-Si aparece `ABORT: otra rama remota porta la contaminación`: revisar la lista
-que imprime, fusionar/borrar esas ramas en GitHub y repetir. No editar el
-script para saltarse el guard.
+## Verificación técnica del filtro
 
-### 2. Push (reescribe `origin/main`; decisión humana)
-
-```bash
-cd "$HOME"
-bash /Users/imalvaroglez/Documents/GitHub/store-os/scripts/history-purge-2026-11-03.sh push
-```
-
-El empuje usa `--force-with-lease` anclado al SHA previo: si alguien movió
-`main` entre el verify y el push, el push se rehúsa. Solo toca `refs/heads/main`.
-
-### 3. Vigilar CI
-
-El force-push dispara CI (`.github/workflows/ci.yml`), que valida y publica
-**solo al Preview de dev**. Producción NO se despliega sola: es
-`workflow_dispatch` con input `release_production` (decisión aparte).
-
-```bash
-gh run watch   # elegir el run de la rama main
-```
-
-### 4. Resincronizar el repo local
-
-Tras la reescritura, el `main` local viejo ya no sirve:
-
-```bash
-cd /Users/imalvaroglez/Documents/GitHub/store-os
-git fetch origin --prune
-git switch main
-git reset --hard origin/main
-```
-
-Cualquier worktree con ramas antiguas al historial contaminado debe re-basarse
-o descartarse; los PRs abiertos cuyo base quedó reescrito se revisan con:
-
-```bash
-gh pr list --json number,mergeable
-```
-
-(Los PRs abiertos cuyos commits son previos a la contaminación conservan sus
-SHA. El plan lo verificó originalmente como "ninguna rama de PR abierto
-desciende de `ab4f51d`", pero la auditoría corrigió ese dato: **el PR #111 sí
-desciende** (por la integración de `main` del 2026-11-03) — por eso es
-precondición del purge. Los demás 16 PRs abiertos no descienden y no requieren
-rebase.)
-
-### 5. Purga de vistas cacheadas en GitHub (OBLIGATORIO)
-
-La reescritura deja los objetos contaminados inalcanzables, pero GitHub puede
-seguir sirviendo vistas cacheadas de los commits colgantes (por SHA o desde
-PRs antiguos). Al tratarse de **datos reales de clientas**, hay que pedir a
-GitHub Support que purge esas vistas y ejecute `gc` sobre el repositorio:
-
-- https://support.github.com/contact → solicitar remoción de contenido /
-  cached views de commits inalcanzables, citando los SHA reescritos
-  (`ab4f51d...` y los posteriores a él en el historial viejo).
-
-### 6. Cierre
-
-- Confirmar `gh api repos/imalvaroglez/store-os --jq .forks_count` → `0`.
-- Registrar la liberación del purge como evidencia en la issue de seguimiento
-  del plan cero-pinzas.
-
-## Nota de desviación respecto al plan (2026-11-03)
-
-El script del plan (paso 2.1 de `2026-11-03-cero-pinzas.md`) omitía
-`--invert-paths` en el `git filter-repo`. Verificado en clon de prueba: sin esa
-bandera, `--paths-from-file` se interpreta como *conservar solo esos paths* y el
-árbol de `main` quedaba **vacío** (con `.local` aún presente en el historial);
-el propio check de "árbol idéntico" jamás habría pasado. La corrección es una
-bandera en una línea, marcada con comentario en el script, y la mecánica
-completa se re-verificó en modo réplica (evidencia arriba). El PO puede vetar la
-desviación al revisar este PR: en tal caso, el script debe corregirse antes de
-cualquier `push`.
+La prueba sintética de `scripts/history-purge-2026-11-03.test.sh` verifica conservación de los árboles y de cada commit reescrito, eliminación de rutas, rechazo de cambios históricos fuera del alcance aunque el árbol final coincida, detección de carreras de refs y SHAs internos, y push atómico en un remoto temporal. Nunca usa datos reales.

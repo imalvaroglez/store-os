@@ -1,26 +1,28 @@
+import { publicAvailabilitySignal, publicAvailabilityValue } from "../../lib/publicAvailability";
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
+  deleteDoc,
+  deleteField,
   doc,
+  documentId,
   getDoc,
   getDocFromServer,
   getDocs,
   getDocsFromServer,
-  setDoc,
-  deleteDoc,
-  deleteField,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-  limit,
-  documentId,
-  runTransaction,
   increment,
-  arrayUnion,
-  arrayRemove,
-  writeBatch,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+  setDoc,
   type Transaction,
   type Unsubscribe,
+  updateDoc,
+  where,
+  writeBatch,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
 import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
@@ -29,7 +31,8 @@ import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
-import { effectiveOrderStatus, migrateOrder, orderItems, paymentStatusForOrder } from "../../lib/orders";
+import { todayIso } from "../../lib/dates";
+import { creditFieldCents, effectiveOrderStatus, migrateOrder, orderItems, orderTotals, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
 import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
@@ -45,7 +48,7 @@ import {
 } from "../../features/orders/payments";
 import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 import { normalizeEmail, type AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery } from "../../types";
+import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
@@ -287,6 +290,13 @@ export async function saveEntity(
   // keep the stored true and strand the supply stash as "Reconocido".
   if (name === "expenses" && Object.prototype.hasOwnProperty.call(data, "simplifiedOperation") && data.simplifiedOperation === undefined) {
     clean.simplifiedOperation = deleteField();
+  }
+  // #279 r2 (M1): declassifying a payment method ("Sin clasificar") must
+  // REMOVE the stored field — stripping undefined alone kept the previous
+  // method counting in the caja/adeudo figures forever.
+  if ((name === "expenses" || name === "purchases")
+    && Object.prototype.hasOwnProperty.call(data, "paymentMethod") && data.paymentMethod === undefined) {
+    clean.paymentMethod = deleteField();
   }
   // #355: a "se vende por color" transition must actually swap the shelf
   // canonically. Enabling colors discards the design-level stock (each color
@@ -589,6 +599,41 @@ export async function authorizeMonthlyClose(
 /** #335 (M2): the "Decisiones" history reads the store's OWN events on demand —
  * one bounded query (composite index storeId+recordedAt, deployed with the
  * release), no listener. The rules' list guard keeps foreign stores out. */
+// ── #279: financial position from activation ────────────────────────────────
+
+/**
+ * T0, idempotent: returns the store's activation marker, creating it on
+ * first use (the cut is IMMUTABLE afterwards — the rules enforce it).
+ */
+export async function ensureStoreFinancials(storeId: string): Promise<StoreFinancials> {
+  const { db } = getFirebase();
+  const ref = doc(db, "storeFinancials", storeId);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return { storeId, activatedAt: snap.data().activatedAt as string };
+  // The cut is the OPERATOR's calendar day (es-MX), not a UTC instant: a
+  // payment captured "today" must never fall before the activation. Same
+  // YYYY-MM-DD shape the app's money dates use.
+  const activatedAt = todayIso();
+  await setDoc(ref, { storeId, activatedAt }, { merge: true });
+  const fresh = await getDoc(ref);
+  return { storeId, activatedAt: (fresh.data()?.activatedAt as string) ?? activatedAt };
+}
+
+/** Bounded, on-demand load (no listener): the store's card payments. */
+export async function loadCardPayments(storeId: string): Promise<CardPayment[]> {
+  const { db } = getFirebase();
+  const snap = await getDocs(query(collection(db, "cardPayments"), where("storeId", "==", storeId)));
+  return snap.docs
+    .map((d) => ({ ...(d.data() as CardPayment), id: d.id }))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+/** One REAL card payment — append-only money evidence. */
+export async function saveCardPayment(payment: CardPayment): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, "cardPayments", payment.id), payment);
+}
+
 export async function loadPriceEvents(
   storeId: string,
   limitCount = 50
@@ -693,6 +738,24 @@ export async function deleteEntity(
   await deleteDoc(doc(db, name, id));
 }
 
+/**
+ * #375 (PO decision, 18-nov): retention with expulsion. Deleting a store
+ * expels every member (memberUids emptied) and seals the control doc with
+ * retainedAt. The doc SURVIVES as the retention seal — money evidence (paid
+ * orders, payments, priceEvents) stays readable only by platform, because
+ * isMember no longer matches anyone. The seal is one-way: rules only accept
+ * the empty-membership update together with retainedAt.
+ */
+export async function retainStoreEvidence(_user: AppUser, storeId: string): Promise<void> {
+  const { db } = getFirebase();
+  await updateDoc(doc(db, "adminStores", storeId), {
+    memberUids: [],
+    // H3: a pending invite must never join a deleted store.
+    pendingInvites: [],
+    retainedAt: new Date().toISOString(),
+  });
+}
+
 /** The order changed on another device after this editor loaded it. */
 export class StaleOrderError extends Error {
   constructor() {
@@ -772,6 +835,31 @@ export class InsufficientStockError extends Error {
  * still-unmaterialized legacy deposit are the truth of received money, so a
  * fresh session with no payment records loaded can no longer undercount them.
  */
+/** #366: an edit must never break the coverage of money that already moved
+ * as saldo a favor. Returns the actionable reason to BLOCK the change, or
+ * null when the edit is safe (or the order never touched credit). Deliberate
+ * scope: explicit blocking + explanation — never auto-restitution. */
+export function creditEditCoverageError(docData: Record<string, unknown> | undefined, next: Order): string | null {
+  const consumed = creditFieldCents(docData ?? {}, "creditConsumedCents");
+  const applied = creditFieldCents(docData ?? {}, "creditAppliedCents");
+  if (consumed <= 0 && applied <= 0) return null; // pre-ledger document: nothing to protect
+  // #366 H2 (review): the REAL received money includes the legacy
+  // un-materialized deposit (#168 F2) — accumulator-only misses pre-payments
+  // model docs and blocks legitimate edits with a misleading reason.
+  const received = docReceivedCents((docData ?? {}) as Partial<Order> & Record<string, unknown>);
+  const total = Math.round(orderTotals(next).estimatedTotal * 100);
+  if (consumed > 0 && consumed > Math.max(0, received - total)) {
+    return `Este pedido sostiene ${formatMoneyExact(consumed / 100)} de saldo a favor ya usados en otros pedidos y el cambio dejaría ese dinero sin respaldo. Restituye ese saldo (o quita su uso) antes de guardar este cambio.`;
+  }
+  if (applied > 0 && received + applied > total) {
+    return `Este pedido tiene ${formatMoneyExact(applied / 100)} de saldo a favor aplicado; bajando el total quedaría ${formatMoneyExact((received + applied - total) / 100)} sin destino (no vuelve solo al pedido origen). Restituye el saldo que ya no necesita antes de guardar.`;
+  }
+  return null;
+}
+
+export class CreditCoverageError extends Error {}
+export class CreditCustomerChangeError extends Error {}
+
 export async function saveOrderWithStockTx(
   user: AppUser,
   order: Order,
@@ -802,6 +890,28 @@ export async function saveOrderWithStockTx(
     // can never wipe a concurrent abono's accumulator (Firestore retries this
     // transaction whenever the doc changed after this read).
     const docData = snap.data() as Record<string, unknown> | undefined;
+    // #366: an edit that would strand or under-cover money already moved as
+    // saldo a favor is blocked with the explanation BEFORE any money/stock
+    // math runs (same fail-closed discipline as the incident evidence above).
+    const coverageError = previous ? creditEditCoverageError(docData, order) : null;
+    if (coverageError) throw new CreditCoverageError(coverageError);
+    // #367: changing the clienta of an order that MOVED credit transfers that
+    // money between people (Ana would see María's saldo; María's views lose
+    // it). Block until the credit is settled — restituted or fully consumed.
+    if (previous && previous.customerId !== order.customerId) {
+      // Only the accumulators carry LIVE credit. The ledger is append-only
+      // evidence — releaseCredit adds positive release entries and never
+      // zeroes the originals — so judging raw entries would block a settled
+      // credit forever. Same criterion as the delete guard (#363) and the
+      // credit read models (net by accumulators, never raw entries).
+      const movedCredit = creditFieldCents(docData ?? {}, "creditAppliedCents") > 0
+        || creditFieldCents(docData ?? {}, "creditConsumedCents") > 0;
+      if (movedCredit) {
+        throw new CreditCustomerChangeError(
+          "Este pedido tiene saldo a favor aplicado o generado; cambiar la clienta movería ese dinero a otra persona. Restituye el saldo (o termina su uso) antes de cambiar la clienta."
+        );
+      }
+    }
     // #218: full saves cannot invent legacy money after payment evidence.
     // Use the RAW deposit: migration can inflate it for legacy paid orders.
     const rawDeposit = typeof docData?.deposit === "number" && Number.isFinite(docData.deposit) ? docData.deposit : 0;
@@ -907,7 +1017,7 @@ export async function saveOrderWithStockTx(
         const refundCommittedCents = incidentsRefundCommittedCents(next.incidents);
         const surplusAfter = Math.max(0, receivedCents - Math.max(0, itemsCents + adjustmentsCents) - refundCommittedCents);
         if (surplusAfter < consumedNow) {
-          throw new Error(
+          throw new CreditCoverageError(
             `Este pedido respalda ${consumedNow / 100} pesos de saldo a favor que otra venta ya usa; la edición dejaría ese saldo sin respaldo (${surplusAfter / 100} disponibles tras el cambio). Devuelve el saldo primero o corrige la edición.`
           );
         }
@@ -1119,6 +1229,21 @@ export async function registerOrderPaymentTx(
     if (payment.kind === "payment" && effectiveOrderStatus(order) === "cancelled") {
       throw new Error("Este pedido está cancelado: no se pueden registrar cobros.");
     }
+    // #474 (QA 18-nov): on a CANCELLED order, a refund (negative adjustment) is
+    // the OWNER's call alone. The UI hides the form for members; this is the
+    // authoritative guard for any other client (rules repeat it server-side).
+    if (payment.kind === "adjustment" && payment.amount < 0 && effectiveOrderStatus(order) === "cancelled") {
+      const adminStoreSnap = await tx.get(doc(db, "adminStores", order.storeId));
+      const ownerUid = adminStoreSnap.get("ownerUid") as string | undefined;
+      let superAdmin = false;
+      if (ownerUid !== payment.createdBy) {
+        const actorSnap = await tx.get(doc(db, "users", payment.createdBy));
+        superAdmin = actorSnap.get("role") === "super_admin";
+      }
+      if (ownerUid !== payment.createdBy && !superAdmin) {
+        throw new Error("Solo la dueña de la tienda puede registrar la devolución de un pedido cancelado.");
+      }
+    }
     // Inherited deposit materialization (#123, PO 2026-11-03): only a real
     // payment carries it, and the operator-supplied date/method is required.
     const inheritedInput = payment.kind === "payment" ? inherited : undefined;
@@ -1177,6 +1302,29 @@ export async function registerOrderPaymentTx(
         throw new Error(
           `El ajuste excede lo recibido en este pedido. Puedes restar hasta ${formatMoneyExact(Math.max(0, current) / 100)}.`
         );
+      }
+      // #366 (criterio 2, review H1): money already consumed as saldo a favor
+      // by sister orders cannot leave through the adjustment door. The real
+      // invariant (same one creditMath/orderTotals enforce) is
+      //   received − effectiveTotal − refundCommitted ≥ consumed
+      // so the ceiling SUBTRACTS the order's effective total — an
+      // accumulator-only ceiling left a breach exactly equal to the total.
+      const sustainedCredit = typeof orderSnap.data().creditConsumedCents === "number"
+        && Number.isSafeInteger(orderSnap.data().creditConsumedCents)
+        ? Math.max(0, orderSnap.data().creditConsumedCents as number) : 0;
+      if (sustainedCredit > 0) {
+        const fresh = { ...order, ...orderSnap.data() } as Partial<Order> & Record<string, unknown>;
+        const receivedCents = Math.max(docReceivedCents(fresh), docReceivedCents(order));
+        const itemsCents = orderItems(fresh as Order).reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+        const effectiveCents = Math.max(0, itemsCents + incidentsSaleAdjustmentCents((fresh as Order).incidents));
+        const refundCommitted = incidentsRefundCommittedCents((fresh as Order).incidents);
+        const ceiling = Math.max(0, receivedCents - effectiveCents - refundCommitted - sustainedCredit);
+        const subtractCents = -savedCents;
+        if (subtractCents > ceiling) {
+          throw new Error(
+            `Este pedido sostiene ${formatMoneyExact(sustainedCredit / 100)} de saldo a favor ya usados en otros pedidos y ya no tiene excedente libre. Puedes restar hasta ${formatMoneyExact(ceiling / 100)}.`
+          );
+        }
       }
     }
     const money = orderMoneyAfterPayments(orderSnap.data(), savedCents, !!inheritedRecord);
@@ -1767,11 +1915,16 @@ function publicVariants(product: Product) {
 }
 
 export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible" {
-  // #124: a design sold by color signals over the SUM of its colors.
-  const qty = isVariantProduct(p) ? totalStock(p) : p.quantityOnHand;
+  // Each color is a separate shelf: a shortage cannot consume sellable
+  // pieces of another color. Only this PUBLIC coarse signal uses the positive
+  // shelves; canonical quantities and private shortage math stay untouched.
+  const colors = isVariantProduct(p) ? p.variants! : undefined;
+  if (colors?.some((v) => typeof v.quantityOnHand !== "number")) return "disponible";
+  const qty = colors ? colors.reduce((sum, v) => sum + Math.max(0, v.quantityOnHand ?? 0), 0) : p.quantityOnHand;
   if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
   if (qty <= 0) return "agotado";
   if (typeof p.lowStockAt === "number" && qty <= p.lowStockAt) return "pocas";
+  if (colors && colors.filter((v) => (v.quantityOnHand ?? 0) > 0).every((v) => variantPublicStockSignal(v) === "pocas")) return "pocas";
   return "disponible";
 }
 
@@ -1792,7 +1945,7 @@ function publicPricesByTier(
   return Object.keys(prices).length ? prices : undefined;
 }
 
-type PublicPricingSource = Pick<Store, "priceTiers" | "defaultTierId">;
+type PublicPricingSource = Pick<Store, "priceTiers" | "defaultTierId"> & Partial<Pick<Store, "type">>;
 
 /** Public storefront projection: identity + storefront content + contact + tiers. */
 export function projectPublicStore(store: Store) {
@@ -1846,7 +1999,7 @@ export function projectPublicProductSummary(
       .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.order - b.order)
       .slice(0, 5)
       .map(({ url, alt, width, height }) => ({ url, alt: alt ?? null, width: width ?? null, height: height ?? null })),
-    availability: product.availability ?? "available",
+    availability: publicAvailabilityValue({ availability: product.availability, stockSignal: publicStockSignal(product) }, pricing?.type),
     finish: product.finish ?? null,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
@@ -1898,7 +2051,7 @@ export function projectPublicProductDetail(
     finish: product.finish ?? null,
     dimensions: product.dimensions ?? null,
     care: product.care ?? null,
-    availability: product.availability ?? "available",
+    availability: publicAvailabilityValue({ availability: product.availability, stockSignal: publicStockSignal(product) }, pricing?.type),
     canInquire: product.canInquire ?? false,
     isFeatured: product.isFeatured ?? false,
     isNew: product.isNew ?? false,
@@ -1958,17 +2111,14 @@ export function buildPublicCatalogDoc(
 }
 
 /** Refresh a published document's availability without replacing its other fields. */
-function publicStockPatch(current: Product, existing: Record<string, unknown>): Record<string, unknown> {
+function publicStockPatch(current: Product, existing: Record<string, unknown>, storeType: Store["type"]): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   const stockSignal = publicStockSignal(current);
   if (stockSignal !== existing.stockSignal) patch.stockSignal = stockSignal;
-  // #353 (UX review): the public page reads availability OR stockSignal; a
-  // stale manual «sold_out» must travel with the stock sync when canonical
-  // carries an explicit value (a restock clears it in the same reception
-  // commit). Undefined stays untouched — nothing to say.
-  if (current.availability !== undefined && current.availability !== existing.availability) {
-    patch.availability = current.availability;
-  }
+  // #489: the public state follows stock in inventory stores; manual
+  // availability remains authoritative only for on-demand stores.
+  const availability = publicAvailabilityValue({ availability: current.availability, stockSignal }, storeType);
+  if (availability !== existing.availability) patch.availability = availability;
 
   const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant.stockSignal]));
   if (signals.size && Array.isArray(existing.variants)) {
@@ -1990,7 +2140,8 @@ function publicStockPatch(current: Product, existing: Record<string, unknown>): 
  */
 function preservePublicAvailability(
   next: Record<string, unknown>,
-  prior: Record<string, unknown>
+  prior: Record<string, unknown>,
+  storeType?: Store["type"]
 ): Record<string, unknown> {
   const merged = { ...next };
   if (typeof prior.stockSignal === "string" && prior.stockSignal !== next.stockSignal) {
@@ -2008,6 +2159,19 @@ function preservePublicAvailability(
         : variant
     );
     if (variants.some((variant, index) => variant !== (next.variants as unknown[])[index])) merged.variants = variants;
+  }
+  // A legacy summary without a signal has no evidence that the caller's
+  // stale quantity is current. Keep its manual fallback until a canonical read.
+  if (storeType === "inventory_tiered" && typeof prior.stockSignal !== "string") {
+    delete merged.stockSignal;
+    merged.availability = prior.availability ?? "available";
+    return merged;
+  }
+  // Normalize AFTER preserving the fresh signal, not from the stale input.
+  if (storeType === "inventory_tiered" && typeof merged.stockSignal === "string") {
+    const signal = publicAvailabilitySignal({ stockSignal: merged.stockSignal, variants: Array.isArray(merged.variants) ? merged.variants : undefined }, storeType);
+    merged.stockSignal = signal;
+    merged.availability = publicAvailabilityValue({ stockSignal: signal }, storeType);
   }
   return merged;
 }
@@ -2060,7 +2224,7 @@ export async function republishStockSignals(
         const activeStore = await currentStore(tx);
         if (activeStore) tx.set(detailRef, projectPublicProductDetail(current, activeStore.slug, categories, activeStore));
       } else {
-        const patch = publicStockPatch(current, detail.data());
+        const patch = publicStockPatch(current, detail.data(), store.type);
         if (Object.keys(patch).length) tx.update(detailRef, patch);
       }
     })
@@ -2088,7 +2252,7 @@ export async function republishStockSignals(
     const next = summaries.map((summary) => {
       const product = typeof summary.productSlug === "string" ? currentBySlug.get(summary.productSlug) : undefined;
       if (!product) return summary;
-      const patch = publicStockPatch(product, summary);
+      const patch = publicStockPatch(product, summary, store.type);
       return Object.keys(patch).length ? { ...summary, ...patch } : summary;
     });
     current.forEach((product, index) => {
@@ -2183,11 +2347,13 @@ export async function projectPublicForStore(
 export async function unprojectPublicForStore(store: Store): Promise<void> {
   const { db } = getFirebase();
   const writes: Promise<unknown>[] = [];
-  writes.push(deleteDoc(doc(db, "publicStores", store.slug)));
-  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)));
+  // #375: swallowing already-deleted docs keeps the store-deletion retry
+  // convergent (rules deny re-deleting a missing doc; the seal must still run).
+  writes.push(deleteDoc(doc(db, "publicStores", store.slug)).catch(() => {}));
+  writes.push(deleteDoc(doc(db, "publicCatalogs", store.slug)).catch(() => {}));
   writes.push(releaseSlug(store.slug));
   const snap = await getDocs(query(collection(db, "publicProducts"), where("storeSlug", "==", store.slug)));
-  for (const d of snap.docs) writes.push(deleteDoc(d.ref));
+  for (const d of snap.docs) writes.push(deleteDoc(d.ref).catch(() => {}));
   await Promise.all(writes);
 }
 
@@ -2283,7 +2449,7 @@ export async function rebuildPublicCatalog(
         if (touched.has(p.id)) return projectPublicProductSummary(canonical.get(p.id)!, storeSlug, pricing);
         const summary = projectPublicProductSummary(p, storeSlug, pricing) as Record<string, unknown>;
         const existing = prior.get(p.slug!);
-        return existing ? preservePublicAvailability(summary, existing) : summary;
+        return existing ? preservePublicAvailability(summary, existing, pricing?.type) : summary;
       });
     tx.set(catalogRef, { storeId, storeSlug, products: next }, { merge: true });
   });

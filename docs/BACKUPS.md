@@ -262,6 +262,26 @@ reintentos hasta que una persona genere y apruebe un nuevo preflight. Al agotars
 el presupuesto diario se omiten intentos hasta el siguiente día. Volver a
 preflight, revisar consumo y aprobar límites. No aumentar automáticamente.
 
+## Suspensión por fallo de verificación
+
+Si la fase de verificación de una captura falla (el comprobante de restauración no
+coincide con lo capturado), el run registra un código seguro y específico —p. ej.
+`VERIFICATION_COUNTS_MISMATCH`, `VERIFICATION_MANIFEST_MISMATCH`,
+`VERIFICATION_RECEIPT_REQUIRED`— sin datos personales, rutas ni contenido de
+Firestore, y suspende las capturas programadas. Sin esa suspensión, cada ciclo de
+15 minutos repetiría la captura completa y agotaría el presupuesto diario de
+lecturas. `status` lo expone como `suspended: true`, `verificationSuspended: true`
+y `verificationFailure` con el código; la copia verificada anterior sigue siendo
+válida mientras no venza.
+
+Para reanudar: revisar el código en `status`, repetir `preflight` y aprobar de nuevo
+los límites (con nuevo `reviewedPreflightSha256`), o ejecutar una captura manual
+explícita (`run --manual`). El tope de lecturas por día también aplica al modo
+manual; una recuperación manual exitosa limpia la suspensión (`suspended: false`)
+y una fallida la conserva hasta revisión. Los avisos de macOS —respaldo vencido y
+presupuesto agotado— se envían como máximo una vez cada 24 horas por tipo de aviso,
+aunque alternen.
+
 ## Recuperación comprobable
 
 1. Descargar un archivo `.age` desde iCloud web o un segundo dispositivo; no usar

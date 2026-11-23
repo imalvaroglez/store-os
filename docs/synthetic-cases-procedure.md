@@ -24,4 +24,4 @@
 ## Siguientes casos
 
 - Volumen: compra de varios tickets con recepción parcial (#206/#207).
-- Crédito aplicado entre pedidos hermanos (cuando #380 resuelva el contrato).
+- Crédito aplicado entre pedidos hermanos (#380 ya resuelto: callables firmados).

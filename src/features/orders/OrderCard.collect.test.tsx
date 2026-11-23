@@ -26,6 +26,8 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
       loadOrderPayments: vi.fn(async () => {}),
       consumeSupply: vi.fn(),
       registerIncidentEvent: vi.fn(),
+      payments: [],
+      draftOwnerId: "qa-user",
     }),
   };
 });
@@ -79,7 +81,7 @@ describe("OrderCard · Cobrar de un toque (#267 / #455-458 r4)", () => {
     expect(mocks.upsertOrder).not.toHaveBeenCalled();
   });
 
-  it("con reembolso por incidencia cobra el total EFECTIVO", async () => {
+  it("con reembolso por incidencia prellena el total EFECTIVO", async () => {
     const withRefund = order({
       incidents: [{ id: "inc_1", productName: "Pieza", quantity: 1, reason: "Defecto", originalUnitPriceCents: 20000, resolution: { kind: "refund" as const, saleAdjustmentUnitCents: 20000 }, events: [] }],
     });
