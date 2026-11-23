@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Button, IconButton, SelectField, Sheet, TextField, useToast } from "../../design-system";
+import { Badge, Button, IconButton, SelectField, Sheet, TextField, useToast } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
 import { buildConversionPreview, type ConversionMapping } from "../../lib/variantConversion";
 import { formatMoney } from "../../lib/money";
@@ -225,8 +225,11 @@ export function ProductConversionSheet({ open, onClose }: Props) {
 export function MergedIntoLink({ product, onOpen }: { product: Product; onOpen: (mainId: string) => void }) {
   if (!product.mergedInto) return null;
   return (
-    <Button variant="ghost" size="sm" className="!px-2" onClick={() => onOpen(product.mergedInto!.productId)}>
-      Ver diseño unificado
-    </Button>
+    <>
+      <Badge tone="neutral">Fusionada</Badge>
+      <Button variant="ghost" size="sm" className="!px-2" onClick={() => onOpen(product.mergedInto!.productId)}>
+        Ver diseño unificado
+      </Button>
+    </>
   );
 }
