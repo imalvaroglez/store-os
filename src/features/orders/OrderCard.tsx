@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  HelpTip,
   Money,
   PAYMENT_STATUS_TONE,
   ORDER_STATUS_TONE,
@@ -338,7 +339,16 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
             <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-on-surface-soft">Recibo</span>
             <OrderReceipt data={orderTicketData(order, activeStore?.name ?? "Tienda", customer?.name)} />
           </div>
-          <Button full className="mt-auto" onClick={printReceipt}>Imprimir / Guardar PDF</Button>
+          {/* #530: optional print clarification travels in the design-system
+              help tip BESIDE the action — never a fixed paragraph under it
+              (#405). The button keeps its label and behavior; the tip only
+              narrows it by its own 40px trigger, at the same height. */}
+          <div className="mt-auto flex items-center gap-2">
+            <Button className="min-w-0 flex-1" onClick={printReceipt}>Imprimir / Guardar PDF</Button>
+            <HelpTip label="Ayuda: imprimir y guardar PDF">
+              En el diálogo de impresión, elige «Guardar como PDF» como destino para guardar el recibo como archivo.
+            </HelpTip>
+          </div>
         </div>
       </div>
     </Sheet>

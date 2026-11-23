@@ -53,7 +53,7 @@ npm run test           # vitest (unit + design-system gate)
 npm run test:rules     # pruebas de reglas Firebase contra el emulador
 npm run e2e            # playwright frontend (smoke + responsive + theme, móvil + escritorio)
 npm run e2e:firebase   # pruebas contra el emulador Firebase (requiere `npm run emulators`)
-npm run emulators      # Firebase Auth + Firestore emuladores en localhost
+npm run emulators      # Auth + Firestore + Storage + Functions emuladores en localhost
 npm run preview        # build de producción
 ```
 
@@ -83,12 +83,12 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Si Firebase no está configurado o falla, mostrar un error explícito y no aparentar éxito ni cambiar a otro almacenamiento.
 - Se conservan el carrito público, preferencias de tienda y tema, borradores de pedido asociados al UID y la infraestructura PWA. El storefront público sigue siendo anónimo y lee las proyecciones públicas Firebase.
 - El panel administrativo requiere una sesión de Firebase Auth y guarda sus datos en Firestore. Si Auth o Firebase fallan, se muestra un error; nunca se abre un almacén local.
-- La Fase B de erradicación de persistencia administrativa local se implementa en `chore/eradicate-local-mode`; su spec y criterios viven en `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`.
+- La erradicación de la persistencia administrativa local (Fase B) ya está integrada (PR #111); su spec y criterios viven en `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`.
 
 ## Arquitectura (lo esencial)
 
 - **Auth + roles:** `src/app/firebase/`. Email/password + Google; `super_admin` solo por los correos de plataforma (`admin@store.os`, `imalvaroglez@gmail.com`); los demás `member`. Las rutas administrativas requieren sesión; las rutas públicas del catálogo no.
-- **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules`: `super_admin` puede operar cualquier tienda; los miembros sólo sus tiendas. El adaptador `firestoreData.ts` carga todos los datos operativos para `super_admin` y acota los de miembros.
+- **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`, además de compras, gastos, cierres y proyecciones públicas — ver `firestore.rules`; las reglas de venta viven como campos de tienda y categoría) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules`: `super_admin` puede operar cualquier tienda; los miembros sólo sus tiendas. El adaptador `firestoreData.ts` carga todos los datos operativos para `super_admin` y acota los de miembros.
 - **Estado:** `StoreProvider` mantiene el estado administrativo en memoria y lo sincroniza con Firestore. `localStorage` conserva únicamente preferencias, carrito público y borradores asociados a una persona autenticada.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
 - **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Gate de cumplimiento: falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos (excepción: `ErrorBoundary`).

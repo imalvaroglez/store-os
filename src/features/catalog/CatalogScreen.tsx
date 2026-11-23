@@ -217,7 +217,7 @@ function ProductCard({
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="!px-1.5 !py-0 -my-0.5 text-on-surface-soft underline decoration-dotted underline-offset-2"
+                          className="px-1.5! py-0! -my-0.5 text-on-surface-soft underline decoration-dotted underline-offset-2"
                           aria-label={`Ver pedidos con piezas comprometidas (${committed})`}
                           onClick={(e) => {
                             e.stopPropagation(); // same as the ± controls
@@ -600,7 +600,7 @@ function CommittedSheet({
                 <Button
                   variant="secondary"
                   full
-                  className="!justify-between gap-3 text-left"
+                  className="justify-between! gap-3 text-left"
                   aria-label={`Abrir pedido ${row.reference}, ${row.total} ${row.total === 1 ? "pieza" : "piezas"}`}
                   onClick={() => {
                     onClose();

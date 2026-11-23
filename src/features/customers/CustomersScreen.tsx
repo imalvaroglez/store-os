@@ -81,7 +81,7 @@ export function CustomersScreen() {
       />
 
       {renewalAlerts.length > 0 && (
-        <Card className="mb-5 !bg-terracotta-soft/60 ring-terracotta/20">
+        <Card className="mb-5 bg-terracotta-soft/60! ring-terracotta/20">
           <h3 className="font-semibold text-terracotta text-sm">⏳ Renovación próxima de Iconic</h3>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {renewalAlerts.map(({ customer, status }) => (

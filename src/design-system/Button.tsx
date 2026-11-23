@@ -4,12 +4,12 @@ type Variant = "primary" | "secondary" | "ghost" | "danger" | "success";
 type Size = "sm" | "md" | "lg";
 
 const VARIANTS: Record<Variant, string> = {
-  primary: "bg-ink text-paper hover:brightness-95 active:brightness-90 shadow-sm",
+  primary: "bg-ink text-paper hover:brightness-95 active:brightness-90 shadow-xs",
   secondary:
     "bg-surface text-on-surface ring-1 ring-edge hover:bg-surface-muted active:bg-surface-muted",
   ghost: "bg-transparent text-ink-soft hover:bg-surface-muted active:bg-surface-muted",
-  danger: "bg-[var(--danger)] text-on-accent hover:brightness-95 active:brightness-90 shadow-sm",
-  success: "bg-[var(--success)] text-on-accent hover:brightness-95 active:brightness-90 shadow-sm",
+  danger: "bg-(--danger) text-on-accent hover:brightness-95 active:brightness-90 shadow-xs",
+  success: "bg-(--success) text-on-accent hover:brightness-95 active:brightness-90 shadow-xs",
 };
 
 // sm/md carry a min tap height (~40px) so dense tables stay touch-friendly.

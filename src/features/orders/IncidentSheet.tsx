@@ -129,7 +129,7 @@ export function IncidentSheet({ order, open, onClose }: { order: Order; open: bo
           />
         ))}
 
-        <Card className="space-y-3 !p-3">
+        <Card className="space-y-3 p-3!">
           <h3 className="font-semibold text-ink">Registrar problema</h3>
           <SelectField
             label="Pieza"
@@ -315,7 +315,7 @@ function IncidentCard({
   }
 
   return (
-    <Card className="space-y-3 !p-3">
+    <Card className="space-y-3 p-3!">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-semibold text-ink">
           {incident.quantity} × {incident.productName}

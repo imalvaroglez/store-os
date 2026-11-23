@@ -279,6 +279,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order payments with Fires
   });
 
 
+  it("a double-tap races two IDENTICAL intents — evidence lands once and the accumulator bumps once (#171/#176)", async () => {
+    const orderId = "double-tap-race";
+    await setDoc(doc(holder.db, "orders", orderId), { storeId: "tx-store", deposit: 0, items: [], createdAt: "", updatedAt: "" });
+    const intent = { ...payment("double-tap-pay", 250), orderId };
+    // Both taps fly BEFORE either commit lands (the disabled button can't
+    // help yet): the loser retries on contention, hits the idempotent early
+    // return and surfaces the same canonical balance — never a second
+    // receipt nor a second accumulator bump.
+    const [first, second] = await Promise.all([
+      registerOrderPaymentTx(intent),
+      registerOrderPaymentTx(intent),
+    ]);
+    expect(first.order.paymentsReceivedCents).toBe(25000);
+    expect(second.order.paymentsReceivedCents).toBe(25000);
+    const after = (await getDoc(doc(holder.db, "orders", orderId))).data()!;
+    expect(after.paymentsReceivedCents).toBe(25000); // counted ONCE
+    expect(after.paymentsRevision).toBe(1);
+    expect((await getDocs(collection(holder.db, "orders", orderId, "payments"))).size).toBe(1);
+  });
+
+
   it("propagates a real content rejection without writing a receipt or changing the balance", async () => {
     const parent = doc(holder.db, "orders/pay-order");
     const before = (await getDoc(parent)).data();

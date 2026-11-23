@@ -47,9 +47,11 @@ Firebase emulators. A push to `main` deploys rules only to
 
 Production is a separate, explicit release. In GitHub Actions, run **CI** on
 the `main` branch and set `release_production` to true. The workflow reruns the
-checks using Preview/dev credentials, then deploys rules and the app from that
-same `main` commit to production. Leaving the input false never deploys
-production rules or the production app.
+checks using Preview/dev credentials, then deploys in order: `deploy-functions`
+(callables, and where the release guard — version bumped with notes — now
+lives), `deploy-rules` (rules with parity check) and the app from that same
+`main` commit to production. Leaving the input false never deploys
+production functions, rules or the production app.
 
 **Sev-1 exception:** a declared incident may add `sev1_reuse_ci=true` to skip
 the suites ONLY when `sev1-verify` proves this exact commit (tip of `main`)

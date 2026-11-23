@@ -520,4 +520,69 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit through t
     const dest = (await getDoc(doc(holder.db, "orders/ic-dest-4"))).data()!;
     expect(dest.creditAppliedCents).toBe(10000); // nothing moved
   });
+
+  // #176 (Funciones/importaciones): pin the adversarial-input contract of the
+  // trusted callables. Malformed payloads must die on the invalid-argument
+  // ladder BEFORE any store/order access, and a self-compensation (from==to)
+  // must die on the money invariant — never a partial or creative write.
+  it("#176 malformed payloads are rejected before any access, with zero writes", async () => {
+    // Fresh docs owned by this test: an overpaid origin ($215 received on a
+    // $200 order → $15 surplus) and a destination that still owes $200.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "orders/adv-origin"), orderDoc("adv-origin", { paymentsReceivedCents: 21500 }));
+      await setDoc(doc(ctx.firestore(), "orders/adv-dest"), orderDoc("adv-dest"));
+    });
+    const fns = getFunctions(operator.app, "us-east1");
+    const [fnHost, fnPort] = (process.env.FUNCTIONS_EMULATOR_HOST ?? "127.0.0.1:5001").split(":");
+    connectFunctionsEmulator(fns, fnHost, Number(fnPort));
+    const apply = httpsCallable(fns, "applyCredit");
+    const release = httpsCallable(fns, "releaseCredit");
+    const wellFormed = { storeId: "credit-store", fromOrderId: "adv-origin", toOrderId: "adv-dest", intentId: "adv-x" };
+    const badApply = [
+      { ...wellFormed, amountCents: "1500" },        // string, not a safe integer
+      { ...wellFormed, amountCents: 0 },             // zero
+      { ...wellFormed, amountCents: -100 },          // negative
+      { ...wellFormed, amountCents: 15.5 },          // fractional centavo
+      { ...wellFormed, amountCents: 9000000000001 }, // over the safe-precision bound
+      { ...wellFormed, amountCents: 100, fromOrderId: 42 }, // wrong type
+      { storeId: "credit-store", fromOrderId: "adv-origin", toOrderId: "adv-dest", amountCents: 100 }, // no intentId
+      { fromOrderId: "adv-origin", toOrderId: "adv-dest", amountCents: 100, intentId: "adv-x" },       // no storeId
+    ];
+    for (const payload of badApply) {
+      await expect(apply(payload)).rejects.toThrow(/Falta|El importe no es válido|invalid-argument/i);
+    }
+    await expect(
+      release({ storeId: "credit-store", orderId: "adv-dest", intentId: "adv-r", capCents: 0 })
+    ).rejects.toThrow(/El tope no es válido/i);
+    await expect(
+      release({ storeId: "credit-store", orderId: "adv-dest", intentId: "adv-r", capCents: "500" })
+    ).rejects.toThrow(/El tope no es válido/i);
+    // Zero writes: no ledger entry, no accumulator, no revision bump.
+    const origin = (await getDoc(doc(holder.db, "orders/adv-origin"))).data()!;
+    const advDest = (await getDoc(doc(holder.db, "orders/adv-dest"))).data()!;
+    expect(origin.creditLedger ?? []).toHaveLength(0);
+    expect(origin.creditConsumedCents ?? 0).toBe(0);
+    expect(origin.revision ?? 0).toBe(0);
+    expect(advDest.creditLedger ?? []).toHaveLength(0);
+    expect(advDest.creditAppliedCents ?? 0).toBe(0);
+    expect(advDest.revision ?? 0).toBe(0);
+  });
+
+  it("#176 from==to never self-applies: the money invariant rejects it and nothing moves", async () => {
+    const fns = getFunctions(operator.app, "us-east1");
+    const [fnHost, fnPort] = (process.env.FUNCTIONS_EMULATOR_HOST ?? "127.0.0.1:5001").split(":");
+    connectFunctionsEmulator(fns, fnHost, Number(fnPort));
+    // adv-origin has a $15 surplus → as a destination it owes $0: an order can
+    // never satisfy "surplus ≥ amount" and "owes ≥ amount" at once, so the
+    // self-compensation dies on the precondition, not on luck.
+    await expect(
+      httpsCallable(fns, "applyCredit")({
+        storeId: "credit-store", fromOrderId: "adv-origin", toOrderId: "adv-origin", amountCents: 100, intentId: "adv-self",
+      })
+    ).rejects.toThrow(/solo debe|failed-precondition/i);
+    const origin = (await getDoc(doc(holder.db, "orders/adv-origin"))).data()!;
+    expect(origin.creditLedger ?? []).toHaveLength(0);
+    expect(origin.creditAppliedCents ?? 0).toBe(0);
+    expect(origin.creditConsumedCents ?? 0).toBe(0);
+  });
 });
