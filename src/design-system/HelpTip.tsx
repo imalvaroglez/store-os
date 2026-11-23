@@ -13,9 +13,33 @@ const MIN_PANEL_SPACE = 150;
 
 /** #530 QA r2: flip the balloon up when there is no room below the trigger —
  * pure so the decision is unit-testable (jsdom has no layout). */
-export function shouldFlipUp(triggerTop: number, triggerBottom: number, viewportHeight: number, minSpace = MIN_PANEL_SPACE): boolean {
-  const below = viewportHeight - triggerBottom;
-  return below < minSpace && triggerTop >= minSpace;
+export function shouldFlipUp(
+  triggerTop: number,
+  triggerBottom: number,
+  bounds: { top: number; bottom: number },
+  minSpace = MIN_PANEL_SPACE,
+): boolean {
+  const below = bounds.bottom - triggerBottom;
+  const above = triggerTop - bounds.top;
+  return below < minSpace && above >= minSpace;
+}
+
+/** #530 QA r3 (mayor): the edge that clips the balloon is the nearest
+ * vertical scroll container — a floating Sheet's `overflow-y-auto` panel —
+ * not the viewport. `body`/`html` overflow propagates to the viewport, so the
+ * walk stops there and falls back to the viewport bounds. Pure DOM walk, no
+ * layout of its own. */
+export function clippingBounds(el: HTMLElement | null): { top: number; bottom: number } {
+  let node: HTMLElement | null = el;
+  while (node && node !== document.body && node !== document.documentElement) {
+    const overflowY = window.getComputedStyle(node).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll" || overflowY === "hidden" || overflowY === "clip") {
+      const port = node.getBoundingClientRect();
+      return { top: port.top, bottom: port.bottom };
+    }
+    node = node.parentElement;
+  }
+  return { top: 0, bottom: window.innerHeight };
 }
 
 type Props = {
@@ -49,17 +73,28 @@ export function HelpTip({ label, children }: Props) {
     }
   };
   useEffect(() => clearTimer, []);
+  // #530 QA r3 (menor 4): the flip is geometry, and the geometry changes when
+  // the clipping scrollport scrolls — re-decide while open so the balloon
+  // stays inside it. Capture-phase `scroll` catches any ancestor container.
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("scroll", recomputeFlip, true);
+    return () => window.removeEventListener("scroll", recomputeFlip, true);
+  }, [open]);
 
   const stampPointer = (pointerType: string) => {
     lastPointerType.current = pointerType;
     gestureAt.current = Date.now();
   };
-  const isTouch = () => lastPointerType.current === "touch";
+  const isTouch = () => lastPointerType.current === "touch" || lastPointerType.current === "pen"; // QA r3 menor 1: stylus taps emit the same synthetic mouseout as touch
 
+  const recomputeFlip = () => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    setFlipUp(rect ? shouldFlipUp(rect.top, rect.bottom, clippingBounds(wrapRef.current)) : false);
+  };
   const show = () => {
     clearTimer();
-    const rect = wrapRef.current?.getBoundingClientRect();
-    setFlipUp(rect ? shouldFlipUp(rect.top, rect.bottom, window.innerHeight) : false);
+    recomputeFlip();
     setOpen(true);
   };
   const showByFocus = () => {

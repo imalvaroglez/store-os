@@ -197,12 +197,86 @@ describe("HelpTip · vía táctil Chromium (dictamen QA r2)", () => {
 });
 
 // Placement (dictamen r2, tercer mayor): the balloon flips UP when there is
-// no room below the trigger — pure, layout-independent decision.
-describe("shouldFlipUp · colocación del globo (dictamen QA r2)", () => {
+// no room below the trigger — pure, layout-independent decision. r3 (mayor):
+// "below" is measured against the CLIPPING SCROLLPORT (a floating Sheet's
+// overflow-y-auto panel), not the viewport.
+describe("shouldFlipUp · colocación del globo (dictamen QA r2/r3)", () => {
+  const bounds = (top: number, bottom: number) => ({ top, bottom });
   it("con espacio abajo no voltea; pegado al borde inferior voltea; sin espacio arriba tampoco", () => {
-    expect(shouldFlipUp(620, 660, 844)).toBe(false); // 184px below: room
-    expect(shouldFlipUp(700, 740, 844)).toBe(true); // 104px below: less than the panel needs
-    expect(shouldFlipUp(800, 840, 844)).toBe(true); // 4px below: flip up (top 800 ≥ min)
-    expect(shouldFlipUp(40, 80, 844)).toBe(false); // near bottom BUT no room above either
+    expect(shouldFlipUp(620, 660, bounds(0, 844))).toBe(false); // 184px below: room
+    expect(shouldFlipUp(700, 740, bounds(0, 844))).toBe(true); // 104px below: less than the panel needs
+    expect(shouldFlipUp(800, 840, bounds(0, 844))).toBe(true); // 4px below: flip up (top 800 ≥ min)
+    expect(shouldFlipUp(40, 80, bounds(0, 100))).toBe(false); // 20px below BUT no room above either
+  });
+  it("el borde que manda es el del scrollport contenedor, no el del viewport (r3)", () => {
+    expect(shouldFlipUp(607, 647, bounds(229, 670))).toBe(true); // 23px below inside the sheet
+    expect(shouldFlipUp(607, 647, bounds(0, 900))).toBe(false); // 253px below in the viewport
+  });
+});
+
+// --- Dictamen QA r3 (22-nov), mayor: in «Detalle para compartir» at ~1280px
+// the floating Sheet's scrollport (panel y≈229–670, trigger at its last row)
+// clipped the balloon that `window.innerHeight` (900) said had room. The
+// wiring must decide — and re-decide on scroll (menor 4) — against the
+// clipping ancestor.
+describe("HelpTip · colocación contra el scrollport contenedor (dictamen QA r3)", () => {
+  const TIP = "En el diálogo de impresión, elige «Guardar como PDF» como destino.";
+  const rect = (top: number, bottom: number) =>
+    ({ top, bottom, left: 0, right: 320, width: 320, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+
+  const renderInSheet = () => {
+    render(
+      <div data-testid="sheet" style={{ overflowY: "auto" }}>
+        <HelpTip label="Ayuda: imprimir y guardar PDF">{TIP}</HelpTip>
+      </div>
+    );
+    const trigger = screen.getByRole("button", { name: /imprimir y guardar pdf/i });
+    const wrap = trigger.parentElement as HTMLElement;
+    return { trigger, wrap, sheet: screen.getByTestId("sheet") };
+  };
+
+  it("repro ~1280: disparador en la última fila de una hoja flotante → voltea hacia ARRIBA dentro de la hoja", () => {
+    vi.stubGlobal("innerHeight", 900); // the viewport has plenty of room below…
+    const { trigger, wrap, sheet } = renderInSheet();
+    wrap.getBoundingClientRect = () => rect(607, 647);
+    sheet.getBoundingClientRect = () => rect(229, 670); // …but the sheet clips at 670
+    act(() => trigger.focus());
+    expect(screen.getByText(/guardar como pdf/i).className).toContain("bottom-full");
+  });
+
+  it("con espacio abajo DENTRO de la hoja no voltea", () => {
+    vi.stubGlobal("innerHeight", 900);
+    const { trigger, wrap, sheet } = renderInSheet();
+    wrap.getBoundingClientRect = () => rect(300, 340);
+    sheet.getBoundingClientRect = () => rect(229, 670);
+    act(() => trigger.focus());
+    expect(screen.getByText(/guardar como pdf/i).className).toContain("top-full");
+  });
+
+  it("sin ancestro con scroll sigue decidiendo contra el viewport", () => {
+    vi.stubGlobal("innerHeight", 844);
+    render(<HelpTip label="Ayuda: imprimir y guardar PDF">{TIP}</HelpTip>);
+    const trigger = screen.getByRole("button", { name: /imprimir y guardar pdf/i });
+    (trigger.parentElement as HTMLElement).getBoundingClientRect = () => rect(800, 840);
+    act(() => trigger.focus());
+    expect(screen.getByText(/guardar como pdf/i).className).toContain("bottom-full");
+  });
+
+  it("el scroll de la hoja re-decide la colocación (r3, menor 4)", () => {
+    vi.stubGlobal("innerHeight", 900);
+    const { trigger, wrap, sheet } = renderInSheet();
+    wrap.getBoundingClientRect = () => rect(300, 340);
+    sheet.getBoundingClientRect = () => rect(229, 670);
+    act(() => trigger.focus());
+    expect(screen.getByText(/guardar como pdf/i).className).toContain("top-full");
+    // Scrolling the sheet moves the trigger to its last visible row: the
+    // balloon must flip to stay inside the scrollport.
+    wrap.getBoundingClientRect = () => rect(607, 647);
+    fireEvent.scroll(sheet);
+    expect(screen.getByText(/guardar como pdf/i).className).toContain("bottom-full");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 });
