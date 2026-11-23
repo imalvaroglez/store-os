@@ -35,6 +35,7 @@ import {
   combinationSaveError,
   combinationSku,
   sizeShelfError,
+  storeClaves,
   suggestSizeSkuSuffix,
   suggestSkuSuffix,
   variantHasSizes,
@@ -525,10 +526,12 @@ export function ProductForm({
         ...(v.sizes ?? []).map((s) => (s.sku ?? "").toUpperCase()),
       ]);
       if (new Set(claves).size !== claves.length) return fail("Dos colores o tallas comparten la misma clave; dale a cada uno su sufijo.");
-      const clash = claves.find((clave) =>
-        clave && state.products.some((p) => p.id !== product.id && p.storeId === store.id && (p.sku ?? "").toUpperCase() === clave)
-      );
-      if (clash) return fail(`La clave ${clash} ya la usa otro producto. Elige otra.`);
+      // #461: also against the colors and tallas of every OTHER ficha — a
+      // combination's clave may be a full custom one (it travels in purchases
+      // and tickets), so repeating one already in use is ambiguous.
+      const inUse = storeClaves(state.products, store.id, product.id);
+      const clash = claves.find((clave) => clave && inUse.has(clave));
+      if (clash) return fail(`La clave ${clash} ya la usa otra pieza, color o talla del catálogo. Elige otra.`);
     }
     const next: Product = {
       ...draft,

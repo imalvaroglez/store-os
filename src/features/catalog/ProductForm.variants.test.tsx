@@ -560,6 +560,25 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("existencia del color Dorado cambió en otro dispositivo");
   });
 
+  it("la clave de una talla nueva no puede repetir la de un color o talla de OTRA ficha del catálogo", async () => {
+    // Otra ficha de la tienda ya usa SOL-D-6 como clave de una talla (clave completa editada a mano).
+    mocks.state!.products.push({
+      id: "other", storeId: "store_olivia", name: "Aro Luna", sku: "LUNA", category: "other", isPublic: true, status: "draft",
+      variants: [{ id: "vo", color: "Dorado", sku: "LUNA-D", sizes: [{ id: "zo", size: "6", sku: "sol-d-6", cost: 1, quantityOnHand: 0, createdAt: "", updatedAt: "" }], createdAt: "", updatedAt: "" }],
+      createdAt: "", updatedAt: "",
+    } as unknown as Product);
+    try {
+      abrirConTalla("6"); // clave sugerida SOL-D-6
+      fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "100" } });
+      fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "3" } });
+      fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("La clave SOL-D-6 ya la usa otra pieza, color o talla del catálogo. Elige otra.");
+      expect(mocks.upsertProduct).not.toHaveBeenCalled();
+    } finally {
+      mocks.state!.products.pop();
+    }
+  });
+
   it("Comprometido por talla sale de los pedidos reales (antes siempre 0)", () => {
     mocks.state!.orders = [{
       id: "ord-461-form", storeId: "store_olivia", customerId: "c1", deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid",

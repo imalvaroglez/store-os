@@ -11,6 +11,7 @@ import {
   isVariantProduct,
   lineVariant,
   sizeShelfError,
+  storeClaves,
   suggestSizeSkuSuffix,
   suggestSkuSuffix,
   totalStock,
@@ -359,5 +360,32 @@ describe("sizeShelfError — conservación al activar, repartir y quitar tallas 
   it("una ficha nueva: lo tecleado en «En existencia» antes de agregar tallas también se reparte", () => {
     expect(check(undefined, { quantityOnHand: 5, sizes: [size("d6", "6", 2)] })).toMatch(/5 piezas.*\(llevas 2 de 5\)/);
     expect(check(undefined, { quantityOnHand: 5, sizes: [size("d6", "6", 5)] })).toBeNull();
+  });
+});
+
+// #461 (dictamen QA, menor): la clave de una combinación nueva sólo se
+// comparaba con la clave de diseño de otras fichas; los colores y tallas de
+// todo el catálogo también son claves en uso (viajan en compras y tickets).
+describe("storeClaves — unicidad contra todo lo que ya existe (#461)", () => {
+  it("reúne claves de diseños, colores y tallas de las demás fichas de la misma tienda, en mayúsculas", () => {
+    const products = [
+      {
+        id: "a", storeId: "s1", sku: "sol",
+        variants: [
+          { id: "v", color: "Dorado", sku: "SOL-D", sizes: [{ id: "z", size: "7", sku: "SOL-X-7" }], createdAt: "", updatedAt: "" },
+          { id: "p", color: "Plateado", createdAt: "", updatedAt: "" },
+        ],
+      },
+      { id: "b", storeId: "s1", sku: "ARO-L" },
+      { id: "c", storeId: "s2", sku: "OTRO" },
+    ] as unknown as Product[];
+    // «b» es la ficha que se edita: sus propias claves no cuentan como tomadas.
+    expect([...storeClaves(products, "s1", "b")].sort()).toEqual(["SOL", "SOL-D", "SOL-X-7"]);
+    expect([...storeClaves(products, "s1")].sort()).toEqual(["ARO-L", "SOL", "SOL-D", "SOL-X-7"]);
+  });
+
+  it("sin fichas ni claves devuelve un conjunto vacío", () => {
+    expect(storeClaves([], "s1").size).toBe(0);
+    expect(storeClaves([{ id: "x", storeId: "s1" } as unknown as Product], "s1").size).toBe(0);
   });
 });

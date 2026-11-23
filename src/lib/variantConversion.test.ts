@@ -126,6 +126,18 @@ describe("#461 conversión asistida — vista previa", () => {
     expect(buildConversionPreview(untracked, [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending).canConvert).toBe(true);
   });
 
+  it("la clave que tomaría la combinación nueva ya existe en el diseño: detiene y nombra la clave", () => {
+    // El origen conserva su propia clave al fusionarse (SOL-D-6, ediciones manuales)…
+    const o1 = origin("o1", { sku: "SOL-D-6", quantityOnHand: 3, prices: { t_retail: 1400 } });
+    // …y el diseño ya tiene una talla con esa clave bajo otra etiqueta.
+    const preview = buildConversionPreview(main(), [o1], [{ productId: "o1", color: "Dorado", size: "7" }], noPending);
+    expect(preview.canConvert).toBe(false);
+    expect(preview.blockers.join(" ")).toMatch(/clave SOL-D-6 ya la usa/);
+    // Sin colisión se conserva la clave del origen.
+    const free = buildConversionPreview(main(), [origin("o1", { prices: { t_retail: 1400 } })], [{ productId: "o1", color: "Dorado", size: "7" }], noPending);
+    expect(free.canConvert).toBe(true);
+  });
+
   it("la vista previa muestra el Físico del diseño antes y después: nunca baja", () => {
     const o1 = origin("o1", { quantityOnHand: 3, prices: { t_retail: 1400 } });
     const o2 = origin("o2", { quantityOnHand: 4, prices: { t_retail: 1400 } });

@@ -227,6 +227,26 @@ export function combinationPublishError(product: Pick<Product, "sku" | "variants
   return null;
 }
 
+/** Every clave a store already uses — designs, colors and tallas — upper-
+ * cased, for uniqueness checks of a new combination (#461: claves travel in
+ * purchases, tickets and returns, so a repeated one is ambiguous). */
+export function storeClaves(
+  products: ReadonlyArray<Pick<Product, "id" | "storeId" | "sku" | "variants">>,
+  storeId: string,
+  excludeProductId?: string
+): Set<string> {
+  const claves = new Set<string>();
+  for (const product of products) {
+    if (product.storeId !== storeId || product.id === excludeProductId) continue;
+    if (product.sku) claves.add(product.sku.toUpperCase());
+    for (const variant of product.variants ?? []) {
+      if (variant.sku) claves.add(variant.sku.toUpperCase());
+      for (const size of variant.sizes ?? []) if (size.sku) claves.add(size.sku.toUpperCase());
+    }
+  }
+  return claves;
+}
+
 /** Pieces a color still holds OUTSIDE its tallas — its «sin talla» shelf:
  * counted before the color sold by size, or returned by an order sold
  * without talla. They are real pieces awaiting a talla; never zero-filled. */

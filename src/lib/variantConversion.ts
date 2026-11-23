@@ -158,6 +158,24 @@ export function buildConversionPreview(
           : `${source.name} tiene precios distintos a los del diseño (${detail}). Fer decide cuál conservar: ajusta una de las dos fichas antes de unificar.`
       );
     }
+    // Dictamen QA 23-nov (menor): the clave the new combination would take
+    // (the origin's own, or the suggested one) must be free in that color.
+    if (existing) {
+      const candidate = (
+        source.sku ?? combinationSku(mainProduct.sku, existing, { size, skuSuffix: suggestSizeSkuSuffix(size) }) ?? ""
+      ).toUpperCase();
+      const sizeLabel = size;
+      const taken = new Set(
+        [existing.sku ?? "", ...(existing.sizes ?? []).map((talla) => talla.sku ?? "")]
+          .filter((clave) => clave.toUpperCase() === candidate)
+      );
+      const sameLabel = (existing.sizes ?? []).some(
+        (talla) => talla.size.trim().toLocaleLowerCase("es-MX") === sizeLabel.toLocaleLowerCase("es-MX")
+      );
+      if (candidate && taken.size > 0 && !sameLabel) {
+        blockers.push(`La clave ${candidate} ya la usa el color ${existing.color} del diseño unificado. Cambia la clave de ${source.name} antes de unificar.`);
+      }
+    }
     // Dictamen QA 23-nov (crítico 3): pieces the existing color counts WITHOUT
     // a talla have no unambiguous combination — stop and say what to do.
     if (existing && !variantHasSizes(existing) && typeof existing.quantityOnHand === "number" && existing.quantityOnHand !== 0) {
