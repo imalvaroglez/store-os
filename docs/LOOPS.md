@@ -45,7 +45,7 @@ Extra, used when relevant:
 ```bash
 npm run typecheck        # tsc --noEmit only
 npm run e2e:firebase     # Firebase emulator suite (needs `npm run emulators`)
-npm run emulators        # Auth + Firestore + Storage emulators on localhost
+npm run emulators        # Auth + Firestore + Storage + Functions emulators on localhost
 npm run deploy:rules     # writes only to store-os-dev; production uses the approved CI release
 ```
 
@@ -165,7 +165,7 @@ Agents must **not**:
 - Redesign casually — visual decisions go through design-system tokens.
 - Refactor for taste.
 - Change infra casually (Firebase rules, deployment config, env).
-- **Cause structural drift between environments** — see §4 "Environment synchronization": schema/rules/permissions/structure must flow to dev, preview, AND prod in sync; data stays isolated in dev↔preview; promotion is local→preview→prod with human approval. Structural drift is a release blocker.
+- **Cause structural drift between environments** — see §4 "Environment synchronization": schema/rules/permissions/structure must flow to dev, preview, AND prod in sync; data stays isolated in dev↔preview; promotion is local→preview→prod under the PO's standing authorization (2026-11-08): the agent may merge and release when every gate is green. Structural drift is a release blocker.
 - Weaken or delete tests to make them pass.
 - Disable TypeScript checks (`any` everywhere, `// @ts-ignore` to silence).
 - Make private data public.
