@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   Card,
+  Dialog,
   Money,
   Reveal,
   ScreenHeader,
@@ -38,6 +39,9 @@ export function HomeScreen() {
   const [expressPrefillCents, setExpressPrefillCents] = useState<number | null>(null);
   // #333: delivery-evidence sheet for the "Entregar" rows (same as the card).
   const [deliveryOrderId, setDeliveryOrderId] = useState<string | null>(null);
+  // #539: «Preparar» is the one Home action that CHANGES an order's state on
+  // its own — it confirms first, naming the order and the exact step.
+  const [prepareOrderId, setPrepareOrderId] = useState<string | null>(null);
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const orders = ordersForStore(state.orders, activeStore.id);
@@ -231,22 +235,34 @@ export function HomeScreen() {
               return (
                 <Card key={o.id}>
                   <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-ink text-sm truncate">
-                        {preview || "Sin productos"}
-                      </p>
-                      <p className="text-xs text-ink-soft truncate">
-                        {customer?.name ?? "—"} · {ORDER_STATUS_LABELS[status]}
-                      </p>
-                    </div>
+                    {/* #539: the card itself opens the EXACT order — the route
+                        mental «veo mi pedido → lo toco». It never changes state;
+                        its accessible action is distinct from «Preparar». */}
+                    <Button
+                      variant="ghost"
+                      className="!min-w-0 !flex-1 !justify-start !px-0 !text-left"
+                      onClick={() => navigate(`/pedidos/${o.id}`)}
+                    >
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-ink text-sm truncate">
+                          {preview || "Sin productos"}
+                        </span>
+                        <span className="block text-xs text-ink-soft truncate">
+                          {customer?.name ?? "—"} · {ORDER_STATUS_LABELS[status]}
+                        </span>
+                      </span>
+                    </Button>
                     {verb ? (
                       <Button
                         size="sm"
                         className="shrink-0 whitespace-nowrap"
                         onClick={() => {
+                          // #539: preparing is the money-adjacent step that
+                          // changed an order with one touch — confirm first.
+                          if (verb === "Preparar") setPrepareOrderId(o.id);
                           // #333: delivering registers the evidence (per piece,
                           // effective date) — Home must not bypass the sheet.
-                          if (verb === "Entregar" && pendingDeliveries(o).length > 0) setDeliveryOrderId(o.id);
+                          else if (verb === "Entregar" && pendingDeliveries(o).length > 0) setDeliveryOrderId(o.id);
                           else void advance(o.id);
                         }}
                       >
@@ -307,6 +323,53 @@ export function HomeScreen() {
           <DeliverySheet key={deliveryOrderId} order={deliveryOrder} open onClose={() => setDeliveryOrderId(null)} />
         ) : null;
       })()}
+      {(() => {
+            // #539: the confirmation names the order and the exact step. On
+            // confirm, the CURRENT state decides — an order that changed while
+            // the dialog was open shows its updated status instead of another
+            // advance. Cancelar leaves everything intact.
+            const prepareOrder = prepareOrderId ? orders.find((o) => o.id === prepareOrderId) ?? null : null;
+            if (!prepareOrder) return null;
+            const prepareCustomer = state.customers.find((c) => c.id === prepareOrder.customerId);
+            const preparePreview = orderItems(prepareOrder).slice(0, 2).map((item) => item.productName).join(", ");
+            const prepareStatus = effectiveOrderStatus(prepareOrder);
+            return (
+              <Dialog
+                open
+                title="¿Preparar este pedido?"
+                onClose={() => setPrepareOrderId(null)}
+                footer={
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => setPrepareOrderId(null)}>Cancelar</Button>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        const fresh = orders.find((o) => o.id === prepareOrder.id);
+                        const freshStatus = fresh ? effectiveOrderStatus(fresh) : null;
+                        if (!fresh || freshStatus !== "confirmed") {
+                          setPrepareOrderId(null);
+                          toast.info(`El pedido ya no está Confirmado: ahora está ${ORDER_STATUS_LABELS[freshStatus ?? prepareStatus]}.`);
+                          return;
+                        }
+                        setPrepareOrderId(null);
+                        void advance(fresh.id);
+                      }}
+                    >
+                      Preparar pedido
+                    </Button>
+                  </div>
+                }
+              >
+                <p className="text-sm text-on-surface">
+                  {preparePreview || "Sin productos"} · {prepareCustomer?.name ?? "—"}
+                </p>
+                <p className="text-sm text-on-surface-soft mt-1">
+                  El pedido pasará de Confirmado a Preparando. Ningún otro pedido cambia y puedes cancelar sin dejar
+                  rastro.
+                </p>
+              </Dialog>
+            );
+          })()}
 
     {paymentsOrder && (
       <OrderPaymentsSheet

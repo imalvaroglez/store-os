@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cleanup, render, screen, fireEvent, within } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
@@ -49,9 +49,11 @@ function variant(id: string, color: string, quantityOnHand?: number) {
   return { id, color, quantityOnHand, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" };
 }
 
-/** Alert badge texts in DOM order (each restock badge joins name · label). */
+/** Alert badge texts in DOM order (each restock badge joins name · label).
+ * #539: matches only Badge spans (rounded-full) — order cards also join text
+ * with « · » and must not pollute the alert list. */
 function restockBadges(container: HTMLElement): string[] {
-  return Array.from(container.querySelectorAll("span"))
+  return Array.from(container.querySelectorAll("span.rounded-full"))
     .map((s) => s.textContent ?? "")
     .filter((t) => t.includes(" · "));
 }
@@ -440,5 +442,91 @@ describe("#455 r3 — el cierre visible desde Inicio", () => {
   it("la cabecera de Inicio ofrece «Cierre mensual» y navega a /productos/cierre", () => {
     render(<ToastProvider><HomeScreen /></ToastProvider>);
     expect(screen.getByRole("button", { name: "Cierre mensual" })).toBeTruthy();
+  });
+});
+
+describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () => {
+  const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
+  vi.mock("../../lib/router", async (importOriginal) => ({
+    ...await importOriginal<typeof import("../../lib/router")>(),
+    navigate: navigateMock,
+  }));
+
+  function confirmedOrder(): Order {
+    return {
+      ...(fixtureState().orders[0] as Order),
+      id: "ord-539",
+      orderStatus: "confirmed",
+      installmentsReservedAt: undefined,
+      items: [{ lineId: "l1", productName: "Aro luna", quantity: 2, unitPrice: 500, subtotal: 1000 }],
+    };
+  }
+
+  function mountWith(order: Order) {
+    const state = fixtureState();
+    state.orders = [order];
+    mocks.state = state;
+    render(<ToastProvider><HomeScreen /></ToastProvider>);
+  }
+
+  beforeEach(() => navigateMock.mockClear());
+
+  it("tocar la tarjeta abre el pedido EXACTO sin cambiar su estado", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    const openCard = await screen.findByRole("button", { name: /Aro luna/ });
+    fireEvent.click(openCard);
+    expect(navigateMock).toHaveBeenCalledWith("/pedidos/ord-539");
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("«Preparar» abre confirmación que identifica el pedido y el paso Confirmado → Preparando", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toMatch(/Confirmado/);
+    expect(dialog.textContent).toMatch(/Preparando/);
+    expect(within(dialog).getByText(/Aro luna|ord-539/)).toBeTruthy();
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("Cancelar deja todo intacto", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+    expect((mocks.state!.orders[0] as Order).orderStatus).toBe("confirmed");
+  });
+
+  it("Confirmar cambia ÚNICAMENTE ese pedido a Preparando", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar pedido" }));
+    await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledOnce());
+    const saved = mocks.upsertOrder.mock.calls[0][0] as Order;
+    expect(saved.id).toBe("ord-539");
+    expect(saved.orderStatus).toBe("preparing");
+  });
+
+  it("si el pedido cambió mientras la confirmación estaba abierta, muestra su estado actualizado y NO avanza", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    // otra sesión lo prepara mientras el diálogo está abierto
+    (mocks.state!.orders[0] as Order).orderStatus = "ready";
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar pedido" }));
+    await screen.findByText(/Listo para entrega|ya no está Confirmado/i);
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("«Marcar listo» conserva su avance directo (sin confirmación)", async () => {
+    const order = { ...confirmedOrder(), orderStatus: "preparing" as const };
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Marcar listo" }));
+    await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
