@@ -577,3 +577,42 @@ describe("#461 selección exacta color × talla en el catálogo genérico", () =
     expect(await screen.findByText(/vacío/i)).toBeTruthy();
   });
 });
+
+// Regresión (implementación, 23-nov): el resumen del catálogo (`publicCatalogs`)
+// es la fuente de ESTA cuadrícula — de ahí lee las tallas de cada tarjeta. Un
+// cambio en la proyección que quitara las tallas del resumen pasó todas las
+// pruebas porque los fixtures traían las tallas armadas a mano. Esta prueba
+// parte del resumen que la app publica de verdad.
+describe("#461 el resumen REAL que publica la app alimenta la talla de la cuadrícula", () => {
+  it("la tarjeta ofrece las tallas a partir de projectPublicProductSummary y la línea es la combinación exacta", async () => {
+    const { projectPublicProductSummary } = await import("../../app/firebase/firestoreData");
+    const product = {
+      id: "p_sol", storeId: "store_santi", slug: "anillo", name: "Anillo Sol", sku: "SAN-010", category: "other", isPublic: true, status: "published",
+      prices: { t_retail: 1400 },
+      variants: [
+        {
+          id: "v_dorado", color: "Dorado", skuSuffix: "D", sku: "SAN-010-D", cost: 100, createdAt: "", updatedAt: "",
+          sizes: [
+            { id: "s4", size: "4", sku: "SAN-010-D-4", cost: 100, quantityOnHand: 2, createdAt: "", updatedAt: "" },
+            { id: "s6", size: "6", sku: "SAN-010-D-6", cost: 100, quantityOnHand: 0, createdAt: "", updatedAt: "" },
+          ],
+        },
+        { id: "v_rosa", color: "Rosa", skuSuffix: "R", sku: "SAN-010-R", cost: 100, quantityOnHand: 3, createdAt: "", updatedAt: "" },
+      ],
+      createdAt: "", updatedAt: "",
+    };
+    const summary = projectPublicProductSummary(product as never, "santi", { defaultTierId: "t_retail" });
+    // Lo que la app publica: el resumen lleva las tallas del color con su señal gruesa.
+    expect((summary.variants as Array<{ sizes?: unknown[] }>)[0].sizes).toHaveLength(2);
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, type: "inventory_tiered" },
+      catalog: { categories: [], products: [summary as never] },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    await screen.findByText("Anillo Sol");
+    fireEvent.click(screen.getByRole("button", { name: "4" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Agregar al carrito/i })[0]);
+    const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+    expect(saved.lines[0]).toMatchObject({ productSlug: "anillo~v_dorado~s4", name: "Anillo Sol · Dorado · 4", qty: 1 });
+  });
+});
