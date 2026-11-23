@@ -2,6 +2,7 @@ import type { Product, PurchaseLine, Order, OrderItem } from "../types";
 import {
   combinationReservationDeltas,
   totalStock,
+  variantHasSizes,
   variantReservationDeltas,
   type CombinationStockDelta,
   type VariantStockDelta,
@@ -54,6 +55,35 @@ export function effectiveLowStockAt(p: Pick<Product, "lowStockAt">): number {
   return typeof p.lowStockAt === "number" && Number.isFinite(p.lowStockAt)
     ? p.lowStockAt
     : DEFAULT_LOW_STOCK_AT;
+}
+
+/** #461: a delivery already recorded WITHOUT talla for this line's color.
+ * That evidence keeps its own dimension: the line can no longer be assigned a
+ * talla (the record would stop discounting it). */
+export function lineSoldWithoutSize(
+  order: Pick<Order, "deliveries"> | undefined,
+  item: Pick<OrderItem, "productId" | "variantId" | "variantSizeId">
+): boolean {
+  if (!item.productId || !item.variantId || item.variantSizeId) return false;
+  return (order?.deliveries ?? []).some((event) =>
+    event.lines.some(
+      (line) => line.productId === item.productId && line.variantId === item.variantId && !line.variantSizeId
+    )
+  );
+}
+
+/** #461: the capture must name the talla — the chosen color sells by size and
+ * the line carries none. False when the color sells by color alone, and for a
+ * line whose delivery was already recorded without talla (it stays as sold). */
+export function lineNeedsSize(
+  order: Pick<Order, "deliveries"> | undefined,
+  item: Pick<OrderItem, "productId" | "variantId" | "variantSizeId">,
+  product: Pick<Product, "variants"> | undefined
+): boolean {
+  if (!item.productId || !item.variantId || item.variantSizeId || !product) return false;
+  const variant = product.variants?.find((candidate) => candidate.id === item.variantId);
+  if (!variant || !variantHasSizes(variant)) return false;
+  return !lineSoldWithoutSize(order, item);
 }
 
 export type StockAlertLevel = "out" | "low";
@@ -258,6 +288,70 @@ export function combinationReservationDeltasForOrderChange(
   return combinationReservationDeltas(heldOrderItems(previous), heldOrderItems(next));
 }
 
+/** #461: what a line sold WITHOUT talla still holds across a change, when its
+ * color now sells by size. The old reservation has no shelf of its own: if the
+ * person assigns the talla in this same change (`nextSizeId`), the pieces go
+ * to THAT combination; otherwise they stay «sin talla» on the color. */
+export type ColorLevelLineMove = {
+  lineId: string;
+  productId: string;
+  variantId: string;
+  /** Pieces the line held before the change. */
+  previousHeld: number;
+  /** Pieces it still holds after (0 when released; the consumed pieces when
+   * cancelled after a partial delivery). */
+  nextHeld: number;
+  /** The talla assigned to the line in this change — absent when it keeps no talla. */
+  nextSizeId?: string;
+  /** True when a talla was assigned but a delivery recorded WITHOUT talla
+   * stops it: the save must fail closed (the evidence would no longer
+   * discount the line). */
+  remapBlocked?: boolean;
+};
+
+export function colorLevelLineMoves(
+  previous: Order | undefined,
+  next: Order,
+  productId: string,
+  variantId: string
+): ColorLevelLineMove[] {
+  if (!previous) return [];
+  const isColorLevel = (item: OrderItem) =>
+    item.productId === productId && item.variantId === variantId && !item.variantSizeId;
+  const previousHeld = new Map<string, number>();
+  for (const item of heldOrderItems(previous)) {
+    if (!isColorLevel(item)) continue;
+    const lineId = item.lineId ?? "";
+    previousHeld.set(lineId, (previousHeld.get(lineId) ?? 0) + item.quantity);
+  }
+  if (previousHeld.size === 0) return [];
+  // A delivery already recorded WITHOUT talla keeps its own dimension: the
+  // line cannot be re-assigned (the evidence would stop discounting it).
+  const deliveredWithoutSize = (next.deliveries ?? []).some((event) =>
+    event.lines.some((line) => line.productId === productId && line.variantId === variantId && !line.variantSizeId)
+  );
+  const moves = new Map<string, ColorLevelLineMove>();
+  for (const [lineId, held] of previousHeld) {
+    moves.set(lineId, { lineId, productId, variantId, previousHeld: held, nextHeld: 0 });
+  }
+  // The talla the person assigned — read from the saved lines, held or not
+  // (a cancelled order still names where its pieces came from).
+  for (const item of orderItems(next)) {
+    if (item.productId !== productId || item.variantId !== variantId || !item.variantSizeId) continue;
+    const move = moves.get(item.lineId ?? "");
+    if (!move) continue;
+    if (deliveredWithoutSize) move.remapBlocked = true;
+    else move.nextSizeId = item.variantSizeId;
+  }
+  for (const item of heldOrderItems(next)) {
+    if (item.productId !== productId || item.variantId !== variantId) continue;
+    const move = moves.get(item.lineId ?? "");
+    if (!move) continue; // a line that only appears now is a plain take, not a re-routing
+    move.nextHeld += item.quantity;
+  }
+  return [...moves.values()];
+}
+
 /**
  * Does this order currently hold pieces out of the shelf (reserved or
  * consumed)? The ONE truth shared by the reservation model and the
@@ -345,6 +439,8 @@ export type DimensionShortage = {
   key: string;
   productId: string;
   variantId?: string;
+  /** #461: the exact talla when the shortage is on a combination. */
+  variantSizeId?: string;
   missing: number;
 };
 
@@ -378,6 +474,7 @@ export function shortageByDimension(
         key,
         productId: item.productId,
         ...(item.variantId ? { variantId: item.variantId } : {}),
+        ...(item.variantSizeId ? { variantSizeId: item.variantSizeId } : {}),
         missing: -stock,
       });
     }
@@ -391,7 +488,10 @@ export function shortageByDimension(
  * because the card badge shows the dimension total (a shared deficit across
  * orders reabasts the shelf, not just one line). Line badges therefore sum
  * EXACTLY to the card badge. Lines without pieces never claim. */
-export function attributeShortageToLines<T extends { key: string; productId?: string; variantId?: string; quantity: number }>(
+/** The stock dimension a draft/saved line names — talla included (#461). */
+type LineDimension = { key: string; productId?: string; variantId?: string; variantSizeId?: string; quantity: number };
+
+export function attributeShortageToLines<T extends LineDimension>(
   lines: ReadonlyArray<T>,
   products: ReadonlyArray<ShortageProduct>
 ): Map<string, number> {
@@ -399,7 +499,7 @@ export function attributeShortageToLines<T extends { key: string; productId?: st
 }
 
 /** First-line-wins attribution shared by the saved and the projected paths. */
-function attributeShortageMap<T extends { key: string; productId?: string; variantId?: string; quantity: number }>(
+function attributeShortageMap<T extends LineDimension>(
   lines: ReadonlyArray<T>,
   shortages: Map<string, DimensionShortage>
 ): Map<string, number> {
@@ -409,7 +509,7 @@ function attributeShortageMap<T extends { key: string; productId?: string; varia
       (candidate) =>
         candidate.productId != null &&
         candidate.quantity > 0 &&
-        stockDimensionKey(candidate.productId, candidate.variantId) === shortage.key
+        stockDimensionKey(candidate.productId, candidate.variantId, candidate.variantSizeId) === shortage.key
     );
     if (line) perLine.set(line.key, shortage.missing);
   }
@@ -428,7 +528,7 @@ function attributeShortageMap<T extends { key: string; productId?: string; varia
  * Post-save, the card badge (negative stock from the reservation deltas)
  * shows the same number, so the two can never disagree. Pure — never mutates
  * stock or orders. */
-export function projectedShortageByDimension<T extends { productId?: string; variantId?: string; variantSizeId?: string; quantity: number }>(
+export function projectedShortageByDimension<T extends LineDimension>(
   draftLines: ReadonlyArray<T>,
   savedOrder: Order | undefined,
   draftWillHold: boolean,
@@ -442,7 +542,7 @@ export function projectedShortageByDimension<T extends { productId?: string; var
       held.set(key, (held.get(key) ?? 0) + item.quantity);
     }
   }
-  type DraftTotal = { productId: string; variantId?: string; quantity: number };
+  type DraftTotal = { productId: string; variantId?: string; variantSizeId?: string; quantity: number };
   const draftQty = new Map<string, DraftTotal>();
   for (const line of draftLines) {
     if (!line.productId) continue;
@@ -450,7 +550,14 @@ export function projectedShortageByDimension<T extends { productId?: string; var
     const current = draftQty.get(key);
     const add = Math.max(0, line.quantity);
     if (current) current.quantity += add;
-    else draftQty.set(key, { productId: line.productId, ...(line.variantId ? { variantId: line.variantId } : {}), quantity: add });
+    else {
+      draftQty.set(key, {
+        productId: line.productId,
+        ...(line.variantId ? { variantId: line.variantId } : {}),
+        ...(line.variantSizeId ? { variantSizeId: line.variantSizeId } : {}),
+        quantity: add,
+      });
+    }
   }
   const byId = new Map(products.map((product) => [product.id, product]));
   const result = new Map<string, DimensionShortage>();
@@ -462,9 +569,20 @@ export function projectedShortageByDimension<T extends { productId?: string; var
     if (total.variantId) {
       const variant = product.variants?.find((v) => v.id === total.variantId);
       if (!variant) continue; // stale variant reference — nothing to project against
-      // An untracked COLOR saves from base 0 (applyVariantDelta) — the editor
-      // must estimate from the same base or the card would disagree (#325 review P2).
-      stock = variant.quantityOnHand ?? 0;
+      if (total.variantSizeId) {
+        const size = variant.sizes?.find((candidate) => candidate.id === total.variantSizeId);
+        if (!size) continue; // stale talla reference — nothing to project against
+        // An untracked COMBINATION saves from base 0 (applyCombinationDelta).
+        stock = size.quantityOnHand ?? 0;
+      } else if (variantHasSizes(variant)) {
+        // #461: sold without talla on a color that now sells by size — the
+        // save fails closed (there is no sellable shelf); nothing to project.
+        continue;
+      } else {
+        // An untracked COLOR saves from base 0 (applyVariantDelta) — the editor
+        // must estimate from the same base or the card would disagree (#325 review P2).
+        stock = variant.quantityOnHand ?? 0;
+      }
     } else {
       // An untracked DESIGN is skipped by the save entirely — no estimate.
       if (typeof product.quantityOnHand !== "number" || !Number.isFinite(product.quantityOnHand)) continue;
@@ -479,6 +597,7 @@ export function projectedShortageByDimension<T extends { productId?: string; var
         key,
         productId: total.productId,
         ...(total.variantId ? { variantId: total.variantId } : {}),
+        ...(total.variantSizeId ? { variantSizeId: total.variantSizeId } : {}),
         missing,
       });
     }
@@ -495,7 +614,7 @@ export function orderWillHoldPieces(order: Order): boolean {
 /** #325: per-LINE attribution of the PROJECTED draft shortage (see
  *  projectedShortageByDimension) — same first-line-wins rule so editor badges
  *  sum exactly to the live summary and, after save, to the card badge. */
-export function attributeProjectedShortageToLines<T extends { key: string; productId?: string; variantId?: string; quantity: number }>(
+export function attributeProjectedShortageToLines<T extends LineDimension>(
   lines: ReadonlyArray<T>,
   savedOrder: Order | undefined,
   draftWillHold: boolean,
