@@ -227,6 +227,67 @@ export function combinationPublishError(product: Pick<Product, "sku" | "variants
   return null;
 }
 
+/** Pieces a color still holds OUTSIDE its tallas — its «sin talla» shelf:
+ * counted before the color sold by size, or returned by an order sold
+ * without talla. They are real pieces awaiting a talla; never zero-filled. */
+export function unassignedPieces(variant: Pick<ProductVariant, "quantityOnHand" | "sizes">): number {
+  if (!variantHasSizes(variant)) return 0;
+  const residual = variant.quantityOnHand;
+  return typeof residual === "number" && Number.isFinite(residual) ? residual : 0;
+}
+
+/**
+ * #461 (dictamen QA 23-nov, crítico 3): the shelf rule of ONE color across a
+ * save — checked against the form before anything is written. Every piece of
+ * the color stays accounted for:
+ * - activating tallas on a counted color, or distributing pieces «sin talla»,
+ *   requires an EXACT split (nothing appears, nothing vanishes, no talla is
+ *   deduced); a negative shelf is corrected first;
+ * - a talla with pieces cannot be removed until it is at 0, and never while
+ *   orders hold pieces of it;
+ * - removing the last talla simply returns the pieces to the color.
+ * `before` is the loaded talla (undefined for a color created in this edit —
+ * then whatever was typed as the color's existence is what gets split).
+ * Returns the first blocking message, or null when the save conserves stock.
+ */
+export function sizeShelfError(args: {
+  color: string;
+  before: ProductVariant | undefined;
+  after: ProductVariant;
+  /** Ids of this design's tallas with pieces held by orders. */
+  heldSizeIds: ReadonlySet<string>;
+}): string | null {
+  const { color, before, after, heldSizeIds } = args;
+  const beforeSizes = before?.sizes ?? [];
+  const afterSizes = after.sizes ?? [];
+  const beforeSized = beforeSizes.length > 0;
+  const afterSized = afterSizes.length > 0;
+  for (const size of beforeSizes) {
+    if (afterSizes.some((candidate) => candidate.id === size.id)) continue;
+    if (heldSizeIds.has(size.id)) {
+      return `La talla ${size.size || "(sin nombre)"} del color ${color} tiene piezas apartadas en pedidos. Entrega o cancela esos pedidos antes de quitarla.`;
+    }
+    if (afterSized && typeof size.quantityOnHand === "number" && size.quantityOnHand !== 0) {
+      return `La talla ${size.size} del color ${color} todavía tiene ${size.quantityOnHand} pieza${size.quantityOnHand === 1 ? "" : "s"}. Deja su existencia en 0 antes de quitarla.`;
+    }
+  }
+  if (!afterSized) return null;
+  const residual = before ? before.quantityOnHand : after.quantityOnHand;
+  if (typeof residual !== "number" || !Number.isFinite(residual) || residual === 0) return null;
+  if (!beforeSized && residual < 0) {
+    return `El color ${color} tiene existencias en negativo (faltan ${-residual}). Corrige el conteo del color antes de activar tallas.`;
+  }
+  // What the tallas gain or lose in this edit, against the pieces awaiting one.
+  const sum = (sizes: VariantSize[]) => sizes.reduce((total, size) => total + (typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0), 0);
+  const captured = afterSizes.filter((size) => typeof size.quantityOnHand === "number");
+  const moved = sum(afterSizes) - sum(beforeSizes);
+  if (captured.length === afterSizes.length && moved === residual) return null;
+  const origin = beforeSized
+    ? `El color ${color} tiene ${residual} piezas sin talla (por ejemplo, devueltas por un pedido vendido sin talla). Repártelas capturando su cantidad en cada talla`
+    : `El color ${color} tenía ${residual} piezas contadas sin talla. Repártelas entre sus tallas`;
+  return `${origin} para guardar (llevas ${moved} de ${residual}).${captured.length < afterSizes.length ? " Revisa las tallas sin cantidad." : ""}`;
+}
+
 /** Apply a stock delta to ONE combination (pure): returns the updated
  * variants array, or null when the combination no longer exists — the
  * caller decides; stock never lands on the color or design level. The

@@ -1,4 +1,4 @@
-import type { Product, ProductVariant } from "../types";
+import type { Product, ProductVariant, VariantSize } from "../types";
 
 // #373 (corte Productos): the product editor builds its save from the clone
 // it OPENED with; a full-document write would silently revert concurrent
@@ -13,6 +13,11 @@ import type { Product, ProductVariant } from "../types";
 // - ABSENT from the form (on_demand editor) → untouched (carries fresh).
 // - PRESENT-as-undefined (the #355 color transition tombstones) → the delete
 //   intent is preserved for the caller to map to deleteField().
+/** #461: the save cannot land without losing pieces — a talla or a color
+ * changed existence elsewhere while the operator was distributing it. The
+ * message names what to do; nothing is written. */
+export class StaleProductError extends Error {}
+
 export function mergeProductOperational(
   baseline: Product | undefined,
   next: Product,
@@ -83,9 +88,79 @@ function mergeVariants(
     // clone's cost silently reverted a concurrent re-average.
     const sameCost = JSON.stringify(variant.cost ?? null) === JSON.stringify(base.cost ?? null);
     const cost = sameCost ? current.cost : variant.cost;
-    const sameStock = JSON.stringify(variant.quantityOnHand ?? null) === JSON.stringify(base.quantityOnHand ?? null);
-    if (sameStock) return { ...variant, quantityOnHand: current.quantityOnHand, cost }; // carry the fresh shelf
-    const delta = (variant.quantityOnHand ?? 0) - (base.quantityOnHand ?? 0);
-    return { ...variant, quantityOnHand: Math.max(0, (current.quantityOnHand ?? 0) + delta), cost };
+    return mergeColorShelf(base, variant, current, cost);
   });
+}
+
+/** One color's shelf across a save, tallas included (#461):
+ * - a plain color: untouched carries the fresh shelf, an edit lands as delta;
+ * - a talla follows the same rule on ITS shelf and cost;
+ * - ACTIVATING tallas distributes the color's counted shelf: the fresh color
+ *   must still hold what the operator split, or the save stops;
+ * - pieces «sin talla» the operator distributed leave the color's own field
+ *   (what arrived concurrently stays, visible);
+ * - removing the last talla returns the tallas' fresh pieces to the color. */
+function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: ProductVariant, cost: number | undefined): ProductVariant {
+  const baseSizes = base.sizes ?? [];
+  const nextSizes = next.sizes ?? [];
+  const currentSizes = current.sizes ?? [];
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const residual = (variant: ProductVariant) => (typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0);
+  const sum = (sizes: VariantSize[]) => sizes.reduce((total, size) => total + (typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0), 0);
+
+  if (!nextSizes.length) {
+    if (!currentSizes.length) {
+      // Plain color both sides.
+      if (same(next.quantityOnHand, base.quantityOnHand)) return { ...next, quantityOnHand: current.quantityOnHand, cost };
+      const delta = (next.quantityOnHand ?? 0) - (base.quantityOnHand ?? 0);
+      return { ...next, quantityOnHand: Math.max(0, (current.quantityOnHand ?? 0) + delta), cost };
+    }
+    // The color stops selling by talla: its tallas' fresh pieces come back.
+    const tracked = currentSizes.filter((size) => typeof size.quantityOnHand === "number");
+    return { ...next, quantityOnHand: tracked.length > 0 ? sum(currentSizes) : undefined, cost };
+  }
+
+  if (!currentSizes.length) {
+    // ACTIVATION on a counted color: the split was validated against the
+    // clone — the fresh color must be that same shelf.
+    if (typeof current.quantityOnHand === "number" && !same(current.quantityOnHand, base.quantityOnHand)) {
+      throw new StaleProductError(
+        `La existencia del color ${next.color} cambió en otro dispositivo mientras editabas. Vuelve a abrir la ficha y reparte sus piezas entre las tallas de nuevo.`
+      );
+    }
+  }
+  // A talla the operator removed must still be empty on the fresh doc.
+  for (const size of currentSizes) {
+    if (nextSizes.some((candidate) => candidate.id === size.id)) continue;
+    if (typeof size.quantityOnHand === "number" && size.quantityOnHand !== 0) {
+      throw new StaleProductError(
+        `La talla ${size.size} del color ${next.color} recibió piezas en otro dispositivo mientras editabas. Vuelve a abrir la ficha y revisa sus tallas.`
+      );
+    }
+  }
+  let moved = 0;
+  const sizes: VariantSize[] = nextSizes.map((size) => {
+    const baseSize = baseSizes.find((candidate) => candidate.id === size.id);
+    const currentSize = currentSizes.find((candidate) => candidate.id === size.id);
+    if (baseSize && !currentSize) {
+      throw new StaleProductError(`La talla ${size.size} del color ${next.color} ya no existe en otro dispositivo. Vuelve a abrir la ficha y revisa sus tallas.`);
+    }
+    if (!baseSize || !currentSize) return size; // new talla — captured as is
+    const sizeCost = same(size.cost, baseSize.cost) ? currentSize.cost : size.cost;
+    if (same(size.quantityOnHand, baseSize.quantityOnHand)) {
+      return { ...size, quantityOnHand: currentSize.quantityOnHand, cost: sizeCost }; // carry the fresh shelf
+    }
+    const delta = (size.quantityOnHand ?? 0) - (baseSize.quantityOnHand ?? 0);
+    moved += delta;
+    return { ...size, quantityOnHand: Math.max(0, (currentSize.quantityOnHand ?? 0) + delta), cost: sizeCost };
+  });
+  let quantityOnHand = current.quantityOnHand;
+  if (!currentSizes.length) {
+    quantityOnHand = undefined; // every counted piece now lives in a talla
+  } else if (residual(base) !== 0 && moved === residual(base)) {
+    // The operator distributed the «sin talla» pieces; what arrived meanwhile stays.
+    const left = residual(current) - residual(base);
+    quantityOnHand = left > 0 ? left : undefined;
+  }
+  return { ...next, sizes, quantityOnHand, cost };
 }

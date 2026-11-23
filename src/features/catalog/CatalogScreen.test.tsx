@@ -321,6 +321,23 @@ describe("CatalogScreen filtro por categoría real", () => {
     expect(screen.queryByText(/Anillo Blossom/)).toBeNull();
   });
 
+  it("#461 piezas «sin talla» en un color que ya se vende por talla: la tarjeta las nombra (nunca se pierden a la vista)", async () => {
+    const state = sortFilterState();
+    state.products = [
+      tieredProduct({
+        id: "sol", name: "Anillo Sol", categoryIds: [CAT_ANILLOS], quantityOnHand: undefined,
+        variants: [
+          { id: "vg", color: "Dorado", quantityOnHand: 2, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z",
+            sizes: [{ id: "d6", size: "6", quantityOnHand: 3, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" }] },
+        ],
+      }),
+    ];
+    await renderCatalog(state);
+    // La existencia vendible son las 3 de la talla; las 2 sin talla se dicen aparte.
+    expect(screen.getByText(/Existencia: 3 en 1 color/)).toBeTruthy();
+    expect(screen.getByText("Sin talla: 2")).toBeTruthy();
+  });
+
   it("limpia Por surtir al cambiar de tienda", async () => {
     const state = sortFilterState();
     state.stores.find((store) => store.id === SANTI)!.type = "on_demand";

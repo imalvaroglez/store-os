@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   resizeImageFile,
@@ -15,11 +15,12 @@ import {
   type GalleryTile,
 } from "../../design-system";
 import { parseAmount, formatMoney, sanitizeDecimalInput, sanitizeSignedIntegerInput , sanitizeIntegerInput } from "../../lib/money";
-import { DEFAULT_LOW_STOCK_AT } from "../../lib/inventory";
+import { committedBreakdownForProduct, DEFAULT_LOW_STOCK_AT } from "../../lib/inventory";
 import { defaultTier, suggestedPrice, tiersForStore } from "../../lib/pricing";
 import { baseCostForTier, resolveRule, suggestedPriceFor, hasRules } from "../../lib/pricingRules";
 import { slugify, uniqueProductSlug, suggestSkuBase, uniqueProductSku } from "../../lib/catalog";
 import { uid } from "../../lib/ids";
+import { StaleProductError } from "../../lib/productMerge";
 import { activeCategoriesForStore } from "../../lib/selectors";
 import {
   MAX_PRODUCT_CATEGORIES,
@@ -33,6 +34,7 @@ import {
   combinationPublishError,
   combinationSaveError,
   combinationSku,
+  sizeShelfError,
   suggestSizeSkuSuffix,
   suggestSkuSuffix,
   variantHasSizes,
@@ -94,6 +96,28 @@ export function ProductForm({
   if (!activeStore) return null;
   // Capture the non-null store so async closures (submit/handleAdd) stay narrowed.
   const store = activeStore;
+  // #461: pieces orders still hold of each talla of this design, and the
+  // conservation rule of every color's shelf across this save — the same
+  // derivation feeds the live notice, the save gate and "Comprometido" per talla.
+  const committedLines = useMemo(
+    () => committedBreakdownForProduct(state.orders, store?.id ?? "", product.id).rows.flatMap((row) => row.lines),
+    [state.orders, store?.id, product.id]
+  );
+  const heldSizeIds = useMemo(
+    () => new Set(committedLines.map((line) => line.variantSizeId).filter((id): id is string => !!id)),
+    [committedLines]
+  );
+  const committedFor = (variantId: string, sizeId: string) =>
+    committedLines.filter((line) => line.variantId === variantId && line.variantSizeId === sizeId).reduce((total, line) => total + line.quantity, 0);
+  const shelfNotice = (variant: ProductVariant) =>
+    variant.sizes?.length
+      ? sizeShelfError({
+          color: variant.color.trim() || "color",
+          before: product.variants?.find((loaded) => loaded.id === variant.id),
+          after: variant,
+          heldSizeIds,
+        })
+      : null;
   const tiers = tiersForStore(store);
   const def = defaultTier(store);
   const categories = activeCategoriesForStore(state.categories, store.id);
@@ -444,6 +468,19 @@ export function ProductForm({
           if (combinationError) return fail(combinationError);
         }
       }
+      // #461 (dictamen QA 23-nov, crítico 3): every piece of each color stays
+      // accounted for — activating tallas on a counted color, or distributing
+      // pieces «sin talla», requires the exact split before anything is written.
+      for (const variant of variants) {
+        const shelfError = shelfNotice(variant);
+        if (shelfError) return fail(shelfError);
+      }
+      for (const removed of (product.variants ?? []).filter((loaded) => !variants.some((next) => next.id === loaded.id))) {
+        const held = (removed.sizes ?? []).find((size) => heldSizeIds.has(size.id));
+        if (held) {
+          return fail(`El color ${removed.color} tiene piezas apartadas en pedidos de su talla ${held.size}. Entrega o cancela esos pedidos antes de quitar el color.`);
+        }
+      }
     }
 
     // Assign a stable slug if missing (survives renames thereafter).
@@ -531,8 +568,10 @@ export function ProductForm({
       // stock/cost with the fresh doc instead of replaying this clone.
       await upsertProduct(next, product);
       onDone();
-    } catch {
-      fail("No se pudo guardar. Intenta de nuevo.");
+    } catch (error) {
+      // #461: a talla or color that changed existence elsewhere stops the save
+      // and says so — a generic "try again" would invite replaying the split.
+      fail(error instanceof StaleProductError ? error.message : "No se pudo guardar. Intenta de nuevo.");
     }
   }
 
@@ -813,16 +852,19 @@ export function ProductForm({
                         />
                       )}
                     </div>
+                    {shelfNotice(variant) && (
+                      <p role="status" className="text-xs text-on-surface-soft">
+                        {shelfNotice(variant)}
+                      </p>
+                    )}
                     {/* #461 corte 2: sizes of this color. One row per sellable
                         combination — clave suggested/editable, CONFIRMED cost
                         (suggestion as placeholder, never pre-filled), and the
                         per-combination count with its derived figures. */}
                     {variant.sizes?.map((size) => {
                       const colorClave = buildVariantSku(draft.sku, variant) ?? draft.sku ?? "CLAVE";
-                      // Comprometido per combination is 0 until order lines
-                      // carry the size reference (corte 3) — a color-level
-                      // line never pins THIS combination.
-                      const committed = 0;
+                      // #461: pieces orders still hold of THIS combination.
+                      const committed = committedFor(variant.id, size.id);
                       const physical = typeof size.quantityOnHand === "number" ? size.quantityOnHand : null;
                       return (
                         <div key={size.id} className="space-y-1.5 rounded-lg border border-edge bg-surface px-3 py-2">

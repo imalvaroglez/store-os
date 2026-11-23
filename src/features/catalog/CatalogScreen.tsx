@@ -25,7 +25,7 @@ import { productCreationDefaults } from "./productDefaults";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
 import { committedBreakdownForProduct, committedForProduct, stockAlertLevel, stockAlertText } from "../../lib/inventory";
-import { isVariantProduct, totalStock } from "../../lib/variants";
+import { isVariantProduct, totalStock, unassignedPieces } from "../../lib/variants";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import type { PriceTierDef } from "../../types";
 import { navigate } from "../../lib/router";
@@ -127,6 +127,10 @@ function ProductCard({
   // #124/M5 via #355: "sin dato" is NOT "agotado" — a color design with no
   // captured shelf shows no existence line at all, never a lying 0.
   const variantStock = isVariantProduct(product) ? totalStock(product) : null;
+  // #461: pieces of a color that sells by size but hold no talla yet (sold
+  // without talla before, or returned by such an order). Real pieces waiting
+  // for a talla — said out loud here, distributed from the ficha.
+  const unassigned = (product.variants ?? []).reduce((sum, variant) => sum + unassignedPieces(variant), 0);
 
   return (
     <Card onClick={onEdit} className="p-4 sm:p-5">
@@ -196,7 +200,9 @@ function ProductCard({
                 {/* #294: the default price already rides the tier row above —
                     only the stock context remains here (nothing duplicated). */}
                 {isVariantProduct(product) ? (
-                  variantStock != null ? (
+                  <>
+                  {unassigned > 0 && <Badge tone="warning">Sin talla: {unassigned}</Badge>}
+                  {variantStock != null ? (
                     <>
                       <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
                         Existencia: {variantStock} en {product.variants!.length}{" "}
@@ -228,7 +234,8 @@ function ProductCard({
                         </Button>
                       )}
                     </>
-                  ) : null
+                  ) : null}
+                  </>
                 ) : typeof product.quantityOnHand === "number" ? (
                   <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
                     Existencia: {product.quantityOnHand}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { mergeProductOperational } from "./productMerge";
-import type { Product, ProductVariant } from "../types";
+import { mergeProductOperational, StaleProductError } from "./productMerge";
+import { variantStock } from "./variants";
+import type { Product, ProductVariant, VariantSize } from "../types";
 
 // #373 (corte Productos): the product editor saves a full document built
 // from the clone it OPENED with. These tests pin the merge contract that
@@ -121,5 +122,80 @@ describe("mergeProductOperational (#373 productos)", () => {
     const merged = mergeProductOperational(baseline, next, fresh) as Record<string, unknown>;
     expect(merged).toHaveProperty("quantityOnHand", undefined);
     expect(merged).toHaveProperty("variants", undefined);
+  });
+});
+
+// #461 (dictamen QA 23-nov, crítico 3): las tallas se fusionan con el mismo
+// contrato que los colores — lo no tocado conserva lo fresco, lo editado
+// aterriza como delta — y activar tallas sobre un color con piezas conserva
+// cada pieza: o se reparte, o el guardado se detiene.
+describe("mergeProductOperational con tallas (#461)", () => {
+  const size = (id: string, label: string, quantityOnHand: number | undefined, cost = 10): VariantSize =>
+    ({ id, size: label, cost, ...(quantityOnHand !== undefined ? { quantityOnHand } : {}), createdAt: NOW, updatedAt: NOW });
+  const sized = (color: string, overrides: Partial<ProductVariant>) => ({ ...variant("v_gold", color), ...overrides });
+
+  it("activar tallas sobre un color con 5 piezas repartidas 3/2: las 5 se conservan y el campo del color queda vacío", () => {
+    const baseline = product({ id: "p1", variants: [variant("v_gold", "Dorado", 5)] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 3), size("d5", "5", 2)] })] });
+    const merged = mergeProductOperational(baseline, next, baseline);
+    const gold = merged.variants![0];
+    expect(gold.sizes!.map((s) => s.quantityOnHand)).toEqual([3, 2]);
+    expect(gold.quantityOnHand).toBeUndefined();
+    expect(variantStock(gold)).toBe(5);
+  });
+
+  it("si la existencia del color cambió en otro dispositivo mientras se repartía, el guardado se detiene (nunca inventa piezas)", () => {
+    const baseline = product({ id: "p1", variants: [variant("v_gold", "Dorado", 5)] });
+    const fresh = product({ id: "p1", variants: [variant("v_gold", "Dorado", 4)] }); // una venta concurrente
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 3), size("d5", "5", 2)] })] });
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(StaleProductError);
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(/existencia del color Dorado cambió/);
+  });
+
+  it("talla sin tocar conserva el estante fresco (la venta concurrente sobrevive); la editada aterriza como delta", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 4), size("d5", "5", 2)] })] });
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 1), size("d5", "5", 2, 12)] })] }); // venta −3, compra re-promedió la 5
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 4), size("d5", "5", 5)] })] }); // Fer sube la 5 de 2 a 5 (+3)
+    const gold = mergeProductOperational(baseline, next, fresh).variants![0];
+    expect(gold.sizes!.find((s) => s.id === "d6")!.quantityOnHand).toBe(1); // intacta → fresca
+    expect(gold.sizes!.find((s) => s.id === "d5")!.quantityOnHand).toBe(5); // 2 frescas + 3 de Fer
+    expect(gold.sizes!.find((s) => s.id === "d6")!.cost).toBe(10);
+    expect(gold.sizes!.find((s) => s.id === "d5")!.cost).toBe(12); // el costo sin tocar conserva la recepción
+  });
+
+  it("repartir 2 piezas «sin talla»: la talla sube 2 y el residual queda limpio; lo que llegó en paralelo se conserva", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3), size("d5", "5", 1)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 5), size("d5", "5", 1)] })] });
+    expect(mergeProductOperational(baseline, next, baseline).variants![0].quantityOnHand).toBeUndefined();
+    // Mientras editaba, otro pedido devolvió 1 pieza más sin talla (residual fresco 3).
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 3, sizes: [size("d6", "6", 3), size("d5", "5", 1)] })] });
+    const merged = mergeProductOperational(baseline, next, fresh).variants![0];
+    expect(merged.sizes!.find((s) => s.id === "d6")!.quantityOnHand).toBe(5);
+    expect(merged.quantityOnHand).toBe(1); // la pieza que llegó después sigue a la vista
+  });
+
+  it("quitar la última talla devuelve sus piezas al color (suma de las tallas FRESCAS)", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 4), size("d5", "5", 2)] })] });
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 3), size("d5", "5", 2)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0 })] });
+    expect(mergeProductOperational(baseline, next, fresh).variants![0].quantityOnHand).toBe(5);
+  });
+
+  it("tallas todas sin rastrear: al dejar de venderse por talla el color sigue sin rastrear (nunca 0)", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", undefined), size("d5", "5", undefined)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", {})] });
+    expect(mergeProductOperational(baseline, next, baseline).variants![0].quantityOnHand).toBeUndefined();
+  });
+
+  it("talla quitada que recibió piezas en paralelo: se detiene el guardado", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 4), size("d5", "5", 0)] })] });
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 4), size("d5", "5", 3)] })] }); // llegó una compra de la 5
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 4)] })] });
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(/talla 5/);
+  });
+
+  it("talla nueva llega tal cual; sin baseline (crear) se respeta el formulario", () => {
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 2)] })] });
+    expect(mergeProductOperational(undefined, next, undefined)).toBe(next);
   });
 });

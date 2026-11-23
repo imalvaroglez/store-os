@@ -10,6 +10,7 @@ import {
   findCombination,
   isVariantProduct,
   lineVariant,
+  sizeShelfError,
   suggestSizeSkuSuffix,
   suggestSkuSuffix,
   totalStock,
@@ -296,5 +297,67 @@ describe("#461 corte 3 — líneas con talla y deltas por combinación", () => {
     const gold = next!.find((v) => v.id === "v_gold")!;
     expect(gold.sizes!.find((s) => s.id === "s6")!.quantityOnHand).toBe(4);
     expect(gold.sizes!.find((s) => s.id === "s5")!.quantityOnHand).toBe(2);
+  });
+});
+
+// #461 (dictamen QA 23-nov, crítico 3): al activar tallas, las piezas
+// contadas a nivel color se descartaban en silencio (5 → 3). Regla de
+// conservación: toda pieza del color queda en una talla o a la vista «sin
+// talla»; nada se deduce ni se pierde.
+describe("sizeShelfError — conservación al activar, repartir y quitar tallas (#461)", () => {
+  const size = (id: string, label: string, quantityOnHand?: number) => ({ id, size: label, cost: 10, ...(quantityOnHand !== undefined ? { quantityOnHand } : {}), createdAt: "", updatedAt: "" });
+  const color = (overrides: Partial<ProductVariant>): ProductVariant => ({ id: "v_gold", color: "Dorado", cost: 10, createdAt: "", updatedAt: "", ...overrides }) as ProductVariant;
+  const check = (before: Partial<ProductVariant> | undefined, after: Partial<ProductVariant>, held: string[] = []) =>
+    sizeShelfError({ color: after.color ?? "Dorado", before: before ? color(before) : undefined, after: color(after), heldSizeIds: new Set(held) });
+  const sum = (... quantities: Array<number | undefined>) => quantities.reduce<number>((total, quantity) => total + (quantity ?? 0), 0);
+
+  it("activar tallas sobre un color con 5 piezas exige repartir exactamente 5 (con 2, no guarda y dice cuántas faltan)", () => {
+    expect(check({ quantityOnHand: 5 }, { sizes: [size("d6", "6", 2)] })).toMatch(/5 piezas.*\(llevas 2 de 5\)/);
+    expect(sum(2, 3)).toBe(5);
+    expect(check({ quantityOnHand: 5 }, { sizes: [size("d6", "6", 2), size("d5", "5", 3)] })).toBeNull();
+    // Repartir de más tampoco: las piezas no aparecen de la nada.
+    expect(check({ quantityOnHand: 5 }, { sizes: [size("d6", "6", 2), size("d5", "5", 4)] })).toMatch(/llevas 6 de 5/);
+    // Una talla sin capturar deja la repartición incompleta.
+    expect(check({ quantityOnHand: 5 }, { sizes: [size("d6", "6", 5), size("d5", "5")] })).toMatch(/llevas 5 de 5.*talla sin capturar|Revisa las tallas sin cantidad/);
+  });
+
+  it("un color sin existencia rastreada activa tallas libremente (la primera cuenta por talla es suya)", () => {
+    expect(check({ quantityOnHand: undefined }, { sizes: [size("d6", "6", 3), size("d5", "5")] })).toBeNull();
+    expect(check({ quantityOnHand: 0 }, { sizes: [size("d6", "6", 3)] })).toBeNull();
+  });
+
+  it("existencia en negativo: primero se corrige el conteo del color", () => {
+    expect(check({ quantityOnHand: -2 }, { sizes: [size("d6", "6", 0)] })).toMatch(/negativo.*faltan 2/i);
+  });
+
+  it("piezas «sin talla» devueltas por un pedido: hay que repartirlas antes de guardar cualquier otra cosa", () => {
+    const before = { sizes: [size("d6", "6", 3), size("d5", "5", 1)], quantityOnHand: 2 };
+    expect(check(before, { sizes: [size("d6", "6", 3), size("d5", "5", 1)], quantityOnHand: 2 })).toMatch(/2 piezas sin talla.*llevas 0 de 2/);
+    expect(check(before, { sizes: [size("d6", "6", 4), size("d5", "5", 2)] })).toBeNull();
+    // Repartirlas Y ajustar otra talla a la vez se detecta: sobran piezas (+3 para 2).
+    expect(check(before, { sizes: [size("d6", "6", 5), size("d5", "5", 2)] })).toMatch(/llevas 3 de 2/);
+  });
+
+  it("un color ya con tallas y sin piezas sueltas ajusta sus tallas libremente", () => {
+    const before = { sizes: [size("d6", "6", 3), size("d5", "5", 1)], quantityOnHand: 0 };
+    expect(check(before, { sizes: [size("d6", "6", 7), size("d5", "5")] })).toBeNull();
+  });
+
+  it("quitar una talla con piezas pide dejarla en 0; con piezas apartadas en pedidos pide resolver el pedido", () => {
+    const before = { sizes: [size("d6", "6", 3), size("d5", "5", 1)] };
+    expect(check(before, { sizes: [size("d6", "6", 3)] })).toMatch(/talla 5.*tiene 1 pieza/);
+    expect(check({ sizes: [size("d6", "6", 0), size("d5", "5", 1)] }, { sizes: [size("d5", "5", 1)] }, ["d6"])).toMatch(/talla 6.*apartadas en pedidos/);
+    expect(check({ sizes: [size("d6", "6", 0), size("d5", "5", 1)] }, { sizes: [size("d5", "5", 1)] })).toBeNull();
+  });
+
+  it("quitar la última talla (dejar de venderse por talla) devuelve las piezas al color; con piezas apartadas no se puede", () => {
+    const before = { sizes: [size("d6", "6", 3), size("d5", "5", 1)] };
+    expect(check(before, { quantityOnHand: 4 })).toBeNull();
+    expect(check(before, { quantityOnHand: 4 }, ["d6"])).toMatch(/talla 6.*apartadas en pedidos/);
+  });
+
+  it("una ficha nueva: lo tecleado en «En existencia» antes de agregar tallas también se reparte", () => {
+    expect(check(undefined, { quantityOnHand: 5, sizes: [size("d6", "6", 2)] })).toMatch(/5 piezas.*\(llevas 2 de 5\)/);
+    expect(check(undefined, { quantityOnHand: 5, sizes: [size("d6", "6", 5)] })).toBeNull();
   });
 });
