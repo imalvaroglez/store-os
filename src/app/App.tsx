@@ -145,7 +145,7 @@ export function SyncErrorNoticeView({
 }) {
   if (!syncError) return null;
   return (
-    <div role="alert" className="fixed inset-x-3 top-3 z-[100] mx-auto flex max-w-xl flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/30 bg-surface p-3 text-danger shadow-lg">
+    <div role="alert" className="fixed inset-x-3 top-3 z-100 mx-auto flex max-w-xl flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/30 bg-surface p-3 text-danger shadow-lg">
       <span className="text-sm">No se pudo {syncError.label}.</span>
       <div className="flex gap-2">
         <Button size="sm" variant="secondary" onClick={() => { void syncError.retry().catch(() => {}); }}>Reintentar</Button>

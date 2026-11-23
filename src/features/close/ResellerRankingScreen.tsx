@@ -274,7 +274,7 @@ export function ResellerRankingScreen() {
           </p>
         )}
         <p className="text-xs text-ink-soft px-1">
-          <Button variant="ghost" className="!px-0" onClick={() => navigate("/clientes")}>Ver clientas →</Button>
+          <Button variant="ghost" className="px-0!" onClick={() => navigate("/clientes")}>Ver clientas →</Button>
         </p>
       </div>
     </Screen>

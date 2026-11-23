@@ -630,7 +630,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </div>}
         {visible.length === 0 && <p className="text-sm text-ink-soft">{review ? "No hay productos con este filtro." : "Agrega los productos de este ticket o importa su PDF."}</p>}
         {visible.map(({ line, status: st, idx }) => (
-          <Card key={line.lineId} className="!p-3 !bg-surface-muted space-y-3">
+          <Card key={line.lineId} className="p-3! bg-surface-muted! space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Badge tone={LINE_STATUS_TONE[st]}>{LINE_STATUS_LABEL[st]}</Badge>
               {review && <span className="text-xs text-ink-soft">{ticketLabel(tickets.find((ticket) => ticket.id === line.ticketId) ?? tickets[0], tickets.findIndex((ticket) => ticket.id === line.ticketId))}</span>}
@@ -695,7 +695,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                     {/* #211: a wrong or dead association can be FORGOTTEN here —
                         future captures stop suggesting it; purchases that already
                         used it keep their recorded product and cost. */}
-                    <Button size="sm" variant="ghost" className="!px-0"
+                    <Button size="sm" variant="ghost" className="px-0!"
                       onClick={() => void revokeSupplierLink(activeStore.id, supplierId, captured)
                         .then(() => toast.success("Asociación olvidada: ya no se sugerirá en compras futuras."))
                         // Same catch+toast contract as «Recordar» — a failed
@@ -709,7 +709,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               }
               const linkedName = products.find((p) => p.id === line.productId)?.name ?? "producto";
               return (
-                <Button size="sm" variant="ghost" className="!px-0 mt-2"
+                <Button size="sm" variant="ghost" className="px-0! mt-2"
                   onClick={() => void confirmSupplierLink({
                     storeId: activeStore.id,
                     supplierId,
@@ -779,16 +779,16 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <TextField label="Nombre de la compra" placeholder="Ej. Centro joyero — 30 de octubre" value={draft.name ?? ""} disabled={editDisabled} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-        <Card className="!p-3 !bg-surface-muted text-sm">
+        <Card className="p-3! bg-surface-muted! text-sm">
           Una compra reúne los tickets del mismo viaje o surtido, aunque sean de distintos proveedores.
         </Card>
       </div>
-      <div className="sticky top-[var(--admin-header-height,0px)] z-30 bg-paper border-y border-edge py-2 space-y-2">
+      <div className="sticky top-(--admin-header-height,0px) z-30 bg-paper border-y border-edge py-2 space-y-2">
         <TabList id={tabsId} label="Tickets y revisión" value={tabValue} disabled={pdfBusy || saving || receiving || bulkCreating}
           items={[...tickets.map((ticket, index) => ({ value: ticket.id, label: ticketLabel(ticket, index) })), { value: "review", label: "Revisión general" }]}
           onChange={(value) => value === "review" ? setReview(true) : selectTicket(value)} />
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-semibold text-ink min-w-0 break-words">{review ? "Todos los tickets y gastos de la compra" : ticketLabel(activeTicket, tickets.indexOf(activeTicket))}</p>
+          <p className="text-sm font-semibold text-ink min-w-0 wrap-break-word">{review ? "Todos los tickets y gastos de la compra" : ticketLabel(activeTicket, tickets.indexOf(activeTicket))}</p>
           {!locked && <Button size="sm" variant="secondary" disabled={pdfBusy || editDisabled} onClick={addTicket}>+ Agregar ticket</Button>}
         </div>
       </div>
@@ -801,7 +801,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             const totals = draft.tickets ? purchaseTicketTotals(draft, ticket.id) : purchaseTotals(draft);
             const issues = locked ? [] : reviewIssues.filter((issue) => issue.ticketId === ticket.id);
             return (
-              <Card key={ticket.id} className="space-y-2 !p-3">
+              <Card key={ticket.id} className="space-y-2 p-3!">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-semibold text-ink">{ticketLabel(ticket, index)}</h3>
                   <Badge tone={issues.length ? "warning" : "success"}>{issues.length ? `${issues.length} pendientes` : locked ? "Recibido" : "Completo"}</Badge>
@@ -812,7 +812,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   <div><dt className="text-ink-soft">Diferencia</dt><dd>{formatMoneyExact(Math.abs(totals.calculated - ticket.totalConfirmed))}</dd></div>
                 </dl>
                 {issues.length > 0 && <ul className="space-y-1">{issues.slice(0, 3).map((issue, i) => (
-                  <li key={`${issue.target}:${i}`}><Button variant="ghost" className="text-left !text-danger whitespace-normal" onClick={() => openIssue(issue)}>
+                  <li key={`${issue.target}:${i}`}><Button variant="ghost" className="text-left text-danger! whitespace-normal" onClick={() => openIssue(issue)}>
                     <span className="sr-only">{ticketLabel(ticket, index)}: </span>{issue.message}
                   </Button></li>
                 ))}</ul>}
@@ -857,14 +857,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             <div className="mt-1 text-xs text-on-surface-soft">
               Proveedor detectado: {supplierSuggestion}{" "}
               {matchingSupplier ? (
-                <Button size="sm" variant="ghost" className="!px-1" disabled={editDisabled} onClick={() => updateTicket({ supplierId: matchingSupplier.id })}>
+                <Button size="sm" variant="ghost" className="px-1!" disabled={editDisabled} onClick={() => updateTicket({ supplierId: matchingSupplier.id })}>
                   Usar {matchingSupplier.name}
                 </Button>
               ) : (
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="!px-1"
+                  className="px-1!"
                   disabled={editDisabled}
                   onClick={() => {
                     if (!activeStore) return;
@@ -937,7 +937,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               <Button
                 size="sm"
                 variant="ghost"
-                className="!px-1"
+                className="px-1!"
                 onClick={async () => {
                   try {
                     const url = await openPurchasePdf(activeTicket.documentPath!);
@@ -1097,7 +1097,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             {sourcingExpenses.map((expense) => (
               <Card
                 key={expense.id}
-                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.2fr_0.7fr_1.2fr_auto] gap-3 items-end !p-3"
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.2fr_0.7fr_1.2fr_auto] gap-3 items-end p-3!"
               >
                 <SelectField
                   label="Tipo de gasto"
@@ -1189,7 +1189,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             );
           })}
           {lateExpense && (
-            <Card className="!p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.2fr_0.7fr_1.2fr_auto] gap-3 items-end">
+            <Card className="p-3! grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.2fr_0.7fr_1.2fr_auto] gap-3 items-end">
               <SelectField
                 label="Tipo de gasto"
                 value={lateExpense.category}
@@ -1232,7 +1232,7 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       )}
 
       {draft.costingMethod === "latest_purchase" && (
-        <Card className="!bg-surface-muted space-y-3">
+        <Card className="bg-surface-muted! space-y-3">
           <h3 className="font-semibold text-ink">Costo del inventario de esta compra</h3>
           <p className="text-sm text-ink-soft">Al recibir, se usará el costo completo de la última compra, sin promediar con las piezas que ya tenías. Los centavos del reparto se conservan en el total.</p>
           {hasUnknown ? <p className="text-sm text-ink-soft">Interpreta los importes del PDF para revisar el costo completo.</p> : allocationError ? <p role="alert" className="text-danger">{allocationError}</p> : <>
@@ -1274,14 +1274,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         </p>
       ) : (
         /* Sticky footer: total, diferencia y acciones — nothing else. */
-        <div className="sticky z-30 border-t border-edge bg-surface p-3 shadow-sm bottom-[calc(4.25rem+env(safe-area-inset-bottom))] md:bottom-0 rounded-lg">
+        <div className="sticky z-30 border-t border-edge bg-surface p-3 shadow-xs bottom-[calc(4.25rem+env(safe-area-inset-bottom))] md:bottom-0 rounded-lg">
           <div className="max-w-5xl mx-auto">
             <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
               <span className="text-ink-soft">
                 Compra {formatMoneyExact(calculated + sourcingExpenseTotal)}
                 {!review && mismatch > 0.5 && <span className="text-warning"> · difiere {formatMoneyExact(mismatch)}</span>}
               </span>
-              {blockReason && <Button size="sm" variant="ghost" className="text-xs !text-danger text-left whitespace-normal" onClick={showReview}>{blockReason} · Ver pendientes</Button>}
+              {blockReason && <Button size="sm" variant="ghost" className="text-xs text-danger! text-left whitespace-normal" onClick={showReview}>{blockReason} · Ver pendientes</Button>}
             </div>
             <div className="flex gap-2 mt-1.5">
               <Button variant="secondary" className="flex-1" disabled={saving || receiving || pdfBusy || bulkCreating || incompleteExpenseCount > 0} onClick={() => void saveDraft(false)}>
@@ -1354,7 +1354,7 @@ function FilterChip({ active, onClick, label }: { active: boolean; onClick: () =
     <Button
       size="sm"
       variant={active ? "primary" : "ghost"}
-      className="!rounded-full !px-3 !py-1.5 !text-xs"
+      className="rounded-full! px-3! py-1.5! text-xs!"
       onClick={onClick}
     >
       {label}

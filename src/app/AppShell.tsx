@@ -240,7 +240,7 @@ export function AppShell() {
         {/* Mobile-only top header */}
         <header
           ref={mobileHeaderRef}
-          className="md:hidden sticky top-0 z-20 bg-paper/90 backdrop-blur px-4 py-3 flex items-center justify-between border-b border-rule/60"
+          className="md:hidden sticky top-0 z-20 bg-paper/90 backdrop-blur-sm px-4 py-3 flex items-center justify-between border-b border-rule/60"
           style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
         >
           <StoreSwitcher stores={state.stores} activeStore={activeStore} onSelect={setActiveStore} />

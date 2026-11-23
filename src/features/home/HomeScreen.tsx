@@ -156,7 +156,7 @@ export function HomeScreen() {
       </Reveal>
 
       {iconicRenewals.length > 0 && (
-        <Card className="mb-5 !bg-terracotta-soft/60 ring-terracotta/20">
+        <Card className="mb-5 bg-terracotta-soft/60! ring-terracotta/20">
           <h3 className="font-semibold text-terracotta text-sm">⏳ Iconic por renovar</h3>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {iconicRenewals.map(({ customer, status }) => (
@@ -165,7 +165,7 @@ export function HomeScreen() {
               </Badge>
             ))}
           </div>
-          <Button variant="ghost" className="mt-2 !px-0" onClick={() => navigate("/clientes")}>
+          <Button variant="ghost" className="mt-2 px-0!" onClick={() => navigate("/clientes")}>
             Ver clientas →
           </Button>
         </Card>
