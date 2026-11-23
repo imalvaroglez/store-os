@@ -336,7 +336,18 @@ export function PricingRulesScreen() {
                 definir tus tablas por categoría en Estrategia de precios (usa tus costos y precios reales); las reglas
                 generales de abajo son opcionales y sirven de respaldo para categorías sin tabla.
               </p>
-              <Button size="sm" onClick={() => navigate("/productos/estrategia")}>
+              <Button
+                size="sm"
+                // #531: keep the category Fer is reviewing — the round-trip
+                // must not make her re-choose it.
+                onClick={() =>
+                  navigate(
+                    categoryFilter
+                      ? `/productos/estrategia?categoria=${encodeURIComponent(categoryFilter)}`
+                      : "/productos/estrategia"
+                  )
+                }
+              >
                 Ir a Estrategia de precios
               </Button>
             </Card>
