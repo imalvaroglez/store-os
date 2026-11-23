@@ -131,3 +131,46 @@ describe("useListRestore key change (#233)", () => {
     expect(second.result.current.filters).toEqual({ restockOnly: false, query: "" });
   });
 });
+
+describe("restoreScroll sticks against late resets (#463)", () => {
+  afterEach(() => {
+    resetListRestoreForTests();
+    setScrollY(0);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("re-lands when a late agent zeroes the document after the first landing", async () => {
+    const rafs: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { rafs.push(cb); return rafs.length; });
+    const scrollTo = vi.fn((_opts: ScrollOptions) => {
+      setScrollY(1500); // the landing applies…
+    });
+    Object.defineProperty(window, "scrollTo", { value: scrollTo, configurable: true });
+
+    const first = renderHook(() => useListRestore("orders-sticky", { filter: "all", query: "" }));
+    setScrollY(1500);
+    act(() => window.dispatchEvent(new Event("scroll")));
+    first.unmount();
+
+    const second = renderHook(() => useListRestore("orders-sticky", { filter: "all", query: "" }));
+    let origin = 0;
+    act(() => { origin = second.result.current.restoreScroll(); });
+    expect(origin).toBe(1500);
+
+    // Double rAF → first landing.
+    act(() => { rafs.splice(0).forEach((cb) => cb(0)); });
+    act(() => { rafs.splice(0).forEach((cb) => cb(0)); });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    // A late agent (route reset / focus-return) zeroes the document BEFORE
+    // the verification frame runs.
+    setScrollY(0);
+    act(() => { rafs.splice(0).forEach((cb) => cb(0)); });
+    // Verification sees the loss → re-lands.
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+    // No further interference: the next verify frame confirms the position.
+    act(() => { rafs.splice(0).forEach((cb) => cb(0)); });
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+    expect(window.scrollY).toBe(1500);
+  });
+});
