@@ -104,6 +104,10 @@ function selectCategory() {
 }
 
 beforeEach(() => {
+  // #538: drafts now persist in localStorage — a fresh storage per test,
+  // exactly like a fresh browser tab (otherwise a previous test's draft
+  // adopts into the next one's editor).
+  localStorage.clear();
   state = fixtureState();
   mocks.state = state;
   state.stores[0] = oliviaStore();
@@ -390,3 +394,91 @@ describe("#402 limpieza de ruido en Estrategia de precios", () => {
   });
 });
 
+
+describe("#538 borrador de Estrategia conservado", () => {
+  const { user } = vi.hoisted(() => ({ user: { uid: "u-fer", email: "fer@demo.mx" } }));
+  vi.mock("../../app/firebase/AuthProvider", () => ({ useAuth: () => ({ user }) }));
+
+  const STORE = "store_olivia";
+
+  function editAndDirty() {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+  }
+
+  it("cambiar de categoría y volver conserva las ediciones (la tabla guardada intacta)", () => {
+    editAndDirty();
+    // sale a otra categoría
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "" } });
+    // vuelve
+    selectCategory();
+    expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("165");
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("recargar la misma pestaña recupera el borrador (remount + storage)", () => {
+    const view = render(
+      <ToastProvider>
+        <PricingStrategyScreen />
+      </ToastProvider>
+    );
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: CAT } });
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    view.unmount();
+    // misma pestaña tras F5: mismo localStorage, mismo montaje limpio
+    render(
+      <ToastProvider>
+        <PricingStrategyScreen />
+      </ToastProvider>
+    );
+    selectCategory();
+    expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("165");
+  });
+
+  it("«Restaurar propuesta» con ediciones sin guardar pide confirmación; cancelar conserva", () => {
+    editAndDirty();
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    expect(screen.getByText(/¿Restaurar la propuesta y perder tus cambios\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("165");
+  });
+
+  it("confirmar la restauración sustituye SOLO el borrador y limpia el guardado local", () => {
+    editAndDirty();
+    const key = `store-os:strategy-draft:u-fer:${STORE}:${CAT}`;
+    expect(localStorage.getItem(key)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Restaurar propuesta" }).pop()!);
+    // el editor vuelve a la propuesta (valor distinto de 165 en la primera banda Iconic)
+    expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).not.toBe("165");
+    expect(localStorage.getItem(key)).toBeNull();
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("guardar la tabla limpia el borrador persistido", async () => {
+    editAndDirty();
+    const key = `store-os:strategy-draft:u-fer:${STORE}:${CAT}`;
+    expect(localStorage.getItem(key)).toBeTruthy();
+    mocks.saveCategoryPricingRules.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    expect(localStorage.getItem(key)).toBeNull();
+  });
+
+  it("borrador de OTRA categoría o persona no se mezcla (aislamiento por llave)", () => {
+    localStorage.setItem(`store-os:strategy-draft:u-otra:${STORE}:${CAT}`, JSON.stringify({
+      v: 1, draftBase: "x", savedAt: "",
+      draft: { limits: [{ min: 0 }], prices: { t_iconic: [999] }, dirty: true },
+    }));
+    editAndDirty();
+    // sale a otra categoría y vuelve: el borrador de u-fer es el que importa
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "" } });
+    selectCategory();
+    expect((screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value).toBe("165");
+    expect(localStorage.getItem(`store-os:strategy-draft:u-otra:${STORE}:${CAT}`)).toBeTruthy(); // intacto, aislado
+  });
+});
