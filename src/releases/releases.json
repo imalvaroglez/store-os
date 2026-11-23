@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.21.1",
+    "date": "2026.11.23",
+    "title": "Precios por categoría más claros",
+    "notes": [
+      "En Estrategia, la tabla se acomoda al celular y muestra cuántas piezas entran en cada banda. Las aclaraciones sobre precios con poca evidencia aparecen juntas y señalan las bandas afectadas.",
+      "Al volver del Simulador a Estrategia, sigues en la misma categoría y recuperas tus cambios sin guardar.",
+      "Los centavos se capturan con precisión en compras, cobros, reglas de precios y reparto. Si un importe trae más de dos decimales, puedes corregirlo antes de guardar.",
+      "En el catálogo, el campo «Tu nombre» queda en una sola línea al preparar el mensaje de WhatsApp."
+    ]
+  },
+  {
     "version": "1.21.0",
     "date": "2026.11.19",
     "title": "Cierre de mes, reparto del dinero y tienda protegida",
