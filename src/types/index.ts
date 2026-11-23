@@ -693,6 +693,10 @@ export type PurchaseLine = {
   /** #124 (decisión 2): the exact color this line bought — reception adjusts
    * THAT color's cost and shelf. Absent = whole-product line (legacy). */
   variantId?: string;
+  /** #461: the exact color×talla combination this line bought — reception
+   * adjusts THAT combination's shelf and confirmed cost. Required when the
+   * color sells by size (fail closed like #124/H2). */
+  variantSizeId?: string;
   name: string; // snapshot at purchase time
   quantity: number;
   unitCost: number;

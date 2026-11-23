@@ -382,8 +382,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
         productId,
         name: captured || product.name,
         matchStatus: "matched",
-        // #124: the color belongs to the newly linked product.
+        // #124: the color belongs to the newly linked product; #461: so does
+        // the talla — both reset on relink, never silently reassigned.
         variantId: undefined,
+        variantSizeId: undefined,
       });
     } else {
       // Unlinking clears the association only — the captured ticket text
@@ -735,17 +737,37 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               if (!product || !product.variants?.length) return null;
               const selected = product.variants.find((v) => v.id === line.variantId);
               return (
+                <>
                 <SelectField
                   label="Color comprado"
                   value={line.variantId ?? ""}
                   disabled={editDisabled}
-                  onChange={(value) => updateLine(idx, { variantId: value || undefined })}
+                  onChange={(value) => updateLine(idx, { variantId: value || undefined, variantSizeId: undefined })}
                   hint={`Se vende por color: la compra va a un color concreto.${selected?.sku ? ` Clave: ${selected.sku}.` : ""}`}
                   options={product.variants.map((variant) => ({
                     value: variant.id,
                     label: variant.color || "Color sin nombre",
                   }))}
                 />
+                {/* #461: a color that sells by size receives its EXACT
+                    combination — only its own tallas exist as options and the
+                    clave rides in the hint, never retyped. */}
+                {selected?.sizes?.length ? (
+                  <SelectField
+                    label="Talla comprada"
+                    value={line.variantSizeId ?? ""}
+                    disabled={editDisabled}
+                    onChange={(value) => updateLine(idx, { variantSizeId: value || undefined })}
+                    hint={`Ese color se vende por talla: la compra va a una combinación concreta.${
+                      selected.sizes.find((s) => s.id === line.variantSizeId)?.sku ? ` Clave: ${selected.sizes.find((s) => s.id === line.variantSizeId)!.sku}.` : ""
+                    }`}
+                    options={selected.sizes.map((size) => ({
+                      value: size.id,
+                      label: size.size,
+                    }))}
+                  />
+                ) : null}
+                </>
               );
             })()}
             <div className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_auto] gap-3 items-start">

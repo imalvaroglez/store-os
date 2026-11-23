@@ -9,7 +9,7 @@ import {
   type PurchaseTicket,
 } from "../types";
 import { applyPurchaseLines, weightedAverageCost, type ProductStockUpdate } from "./inventory";
-import { isVariantProduct } from "./variants";
+import { isVariantProduct, variantHasSizes } from "./variants";
 import type { ProductVariant } from "../types";
 
 /** #124: per-color reception result — the variant array replaces the doc's. */
@@ -212,6 +212,14 @@ function splitVariantLines(
     if (product && !line.variantId && isVariantProduct(product)) {
       throw new Error(`Elige el color comprado de ${product.name}: se vende por color y la existencia va por color.`);
     }
+    // #461 (mismo H2, una dimensión abajo): un color que se vende por talla
+    // exige la talla exacta — sin ella la recepción dejaría piezas invisibles.
+    if (product && line.variantId && !line.variantSizeId) {
+      const variant = product.variants?.find((v) => v.id === line.variantId);
+      if (variantHasSizes(variant ?? {})) {
+        throw new Error(`Elige la talla comprada de ${product.name}: ese color se vende por talla y la existencia va por combinación.`);
+      }
+    }
   }
   const hasVariantLine = lines.some((line) => !!line.variantId);
   if (!hasVariantLine) return costAllocations ? { stockUpdates, costAllocations } : { stockUpdates };
@@ -232,7 +240,11 @@ function splitVariantLines(
       perProductNonVariant.set(line.productId, { quantity: current.quantity + line.quantity, cents: current.cents + Math.round(unit * 100) * line.quantity });
       return;
     }
-    const key = `${line.productId}:${line.variantId}`;
+    // #461: the shelf is the exact combination (color × talla) when the
+    // color sells by size; the color alone otherwise.
+    const key = line.variantSizeId
+      ? `${line.productId}:${line.variantId}:${line.variantSizeId}`
+      : `${line.productId}:${line.variantId}`;
     const current = perVariant.get(key) ?? { quantity: 0, cents: 0 };
     perVariant.set(key, { quantity: current.quantity + line.quantity, cents: current.cents + Math.round(unit * 100) * line.quantity });
   });
@@ -248,24 +260,50 @@ function splitVariantLines(
     nextStock.set(productId, { quantityOnHand, cost: value.cents / (value.quantity || 1) / 100 });
   }
   const variantUpdates = new Map<string, VariantReceptionUpdate>();
+  // #461: several lines of the SAME design (two tallas of a color, two
+  // colors) must accumulate — each iteration continues from the working
+  // array, not from the doc's original (the pre-existing overwrite dropped
+  // every line but the last for a repeated product).
+  const working = new Map<string, ProductVariant[]>();
   for (const [key, value] of perVariant) {
-    const [productId, variantId] = key.split(":");
+    const [productId, variantId, sizeId] = key.split(":");
     const product = byId.get(productId);
     if (!product) throw new Error("No se encontró un producto de esta tienda para recibir la compra.");
     if (!isVariantProduct(product)) throw new Error("Esa pieza ya no se vende por color; quita el color de la línea de compra.");
-    const variant = product.variants!.find((v) => v.id === variantId);
-    if (!variant) throw new Error("El color de una línea de compra ya no existe en el diseño.");
+    if (!product.variants!.some((v) => v.id === variantId)) throw new Error("El color de una línea de compra ya no existe en el diseño.");
     const now = new Date().toISOString();
-    const updated = product.variants!.map((v) =>
-      v.id === variantId
-        ? {
-            ...v,
-            quantityOnHand: (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0) + value.quantity,
-            cost: weightedAverageCost(v.cost, v.quantityOnHand, value.quantity, value.cents / (value.quantity || 1) / 100),
-            updatedAt: now,
-          }
-        : v
-    );
+    const unitLanded = value.cents / (value.quantity || 1) / 100;
+    const current = working.get(productId) ?? product.variants!;
+    const updated = current.map((v) => {
+      if (v.id !== variantId) return v;
+      // #461: with sizes the shelf IS the combination — its quantity and its
+      // confirmed cost weigh there; the color's own quantityOnHand stays
+      // derived and is never written by reception.
+      if (!sizeId) {
+        return {
+          ...v,
+          quantityOnHand: (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0) + value.quantity,
+          cost: weightedAverageCost(v.cost, v.quantityOnHand, value.quantity, unitLanded),
+          updatedAt: now,
+        };
+      }
+      const size = v.sizes?.find((s) => s.id === sizeId);
+      if (!size) throw new Error("La talla de una línea de compra ya no existe en el diseño.");
+      return {
+        ...v,
+        sizes: v.sizes!.map((s) =>
+          s.id === sizeId
+            ? {
+                ...s,
+                quantityOnHand: (typeof s.quantityOnHand === "number" ? s.quantityOnHand : 0) + value.quantity,
+                cost: weightedAverageCost(s.cost, s.quantityOnHand, value.quantity, unitLanded),
+                updatedAt: now,
+              }
+            : s
+        ),
+      };
+    });
+    working.set(productId, updated);
     variantUpdates.set(productId, { productId, variants: updated });
   }
   return costAllocations ? { stockUpdates: nextStock, costAllocations, variantUpdates } : { stockUpdates: nextStock, variantUpdates };

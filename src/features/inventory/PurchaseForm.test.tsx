@@ -511,7 +511,9 @@ describe("#373 revisión de compras en el formulario", () => {
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
     await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(2));
     expect(upsertPurchase.mock.calls[1][1]).toBe(1); // la revisión viva del primer guardado
-    expect(await screen.findByText("Borrador guardado.")).toBeVisible();
+    // waitFor (not findByText+toBeVisible): the toast's span can be replaced
+    // between query and assertion — the retry holds the check to the LIVE one.
+    await waitFor(() => expect(screen.getByText("Borrador guardado.")).toBeVisible());
   });
 });
 
@@ -595,5 +597,54 @@ describe("#279 QA (MAYOR-2/3) — forma de pago honesta y clasificable", () => {
     await waitFor(() => expect(classifyPurchasePayment).toHaveBeenCalledTimes(1));
     expect(classifyPurchasePayment.mock.calls[0][1]).toBe("credit_card");
     expect(await screen.findByText("Forma de pago guardada.")).toBeTruthy();
+  });
+});
+
+describe("#461 talla comprada — combinación exacta en compras", () => {
+  const sizedDesign = {
+    id: "sol", storeId: "olivia", name: "Anillo Sol", cost: 100, createdAt: "", updatedAt: "",
+    variants: [
+      {
+        id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", photos: [], createdAt: "", updatedAt: "",
+        sizes: [
+          { id: "s6", size: "6", skuSuffix: "6", sku: "SOL-D-6", cost: 110, quantityOnHand: 2, createdAt: "", updatedAt: "" },
+          { id: "s7", size: "7", skuSuffix: "7", sku: "SOL-D-7", cost: 111, quantityOnHand: 1, createdAt: "", updatedAt: "" },
+        ],
+      },
+      { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "SOL-P", cost: 90, quantityOnHand: 1, photos: [], createdAt: "", updatedAt: "" },
+    ],
+  };
+
+  beforeEach(() => { state.products.push(sizedDesign as never); });
+  afterEach(() => { state.products.splice(state.products.indexOf(sizedDesign as never), 1); });
+
+  const openSized = () => {
+    open({
+      ...purchase(),
+      tickets: [{ id: "a", folio: "A", totalConfirmed: 200 }],
+      lines: [{ lineId: "line", ticketId: "a", productId: "sol", name: "Anillo Sol", quantity: 2, unitCost: 100, matchStatus: "matched" }],
+    });
+  };
+
+  it("elegir el color con tallas ofrece SOLO sus tallas y guarda la combinación exacta", () => {
+    openSized();
+    fireEvent.change(screen.getByLabelText("Color comprado", { exact: false }), { target: { value: "v_gold" } });
+    const talla = screen.getByLabelText("Talla comprada", { exact: false });
+    expect(within(talla as HTMLElement).queryByRole("option", { name: "8" })).toBeNull(); // Plateado · 8 no existe
+    fireEvent.change(talla, { target: { value: "s7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    void waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ variantId: "v_gold", variantSizeId: "s7" });
+  });
+
+  it("cambiar de color limpia la talla (la talla pertenece al color elegido)", () => {
+    openSized();
+    fireEvent.change(screen.getByLabelText("Color comprado", { exact: false }), { target: { value: "v_gold" } });
+    fireEvent.change(screen.getByLabelText("Talla comprada", { exact: false }), { target: { value: "s6" } });
+    fireEvent.change(screen.getByLabelText("Color comprado", { exact: false }), { target: { value: "v_silver" } });
+    expect(screen.queryByLabelText("Talla comprada", { exact: false })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    void waitFor(() => expect(upsertPurchase).toHaveBeenCalledOnce());
+    expect(upsertPurchase.mock.calls[0][0].lines[0]).toMatchObject({ variantId: "v_silver", variantSizeId: undefined });
   });
 });
