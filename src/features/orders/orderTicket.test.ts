@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
+import { orderTicketData, orderTicketText, receiptFileName, orderLineLabel } from "./orderTicket";
 import type { Order } from "../../types";
 
 describe("orderTicketText — Fer's WhatsApp format", () => {
@@ -235,5 +235,27 @@ describe("receiptFileName (#308)", () => {
 describe("receiptFileName · corte limpio (#329 revisión)", () => {
   it("un corte a mitad de separador no termina en guion", () => {
     expect(receiptFileName("o1", "x".repeat(39) + " y")).not.toMatch(/-$/);
+  });
+});
+
+// #461: la pieza se identifica por color y talla desde la captura hasta el
+// ticket — dos tallas del mismo color son piezas distintas para Fer y la clienta.
+describe("talla por línea (#461)", () => {
+  const sized: Order = {
+    id: "order_461", storeId: "s1", customerId: "c1", customerName: "Mar",
+    items: [
+      { lineId: "l1", productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", variantSizeId: "d6", variantSize: "6", quantity: 1, unitPrice: 400, subtotal: 400, categorySnapshot: { id: "rings", name: "Aro" } },
+      { lineId: "l2", productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", variantSizeId: "d5", variantSize: "5", quantity: 2, unitPrice: 400, subtotal: 800, categorySnapshot: { id: "rings", name: "Aro" } },
+    ],
+    deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid",
+    createdAt: "2026-11-23", updatedAt: "",
+  };
+
+  it("WhatsApp, recibo y etiqueta nombran la talla exacta vendida", () => {
+    expect(orderLineLabel(sized.items[0])).toBe("Anillo Sol · Dorado · 6");
+    expect(orderTicketData(sized, "Olivia").lines.map((line) => line.label)).toEqual(["Anillo Sol · Dorado · 6", "2 × Anillo Sol · Dorado · 5"]);
+    const text = orderTicketText(sized, "Olivia");
+    expect(text).toContain("1. Anillo Sol · Dorado · 6 $400");
+    expect(text).toContain("2 × Anillo Sol · Dorado · 5 $800");
   });
 });

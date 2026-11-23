@@ -99,18 +99,20 @@ export function incidentEvidenceError(
   if (!incidents?.length) return null;
   for (const incident of incidents) {
     const prevItems = orderItems(previous!);
-    const prevLine = incident.lineId
-      ? prevItems.find((item) => item.lineId === incident.lineId)
-      : prevItems.find((item) => item.productId === incident.productId && item.variantId === incident.variantId);
+    // #461: without lineId the evidence is the exact combination — two
+    // tallas of one color are two lines.
+    const isEvidence = (item: OrderItem) =>
+      item.productId === incident.productId && item.variantId === incident.variantId && item.variantSizeId === incident.variantSizeId;
+    const prevLine = incident.lineId ? prevItems.find((item) => item.lineId === incident.lineId) : prevItems.find(isEvidence);
     if (!prevLine) continue; // legacy drift: no resolvable evidence line to protect
-    const nextLine = incident.lineId
-      ? nextItems.find((item) => item.lineId === incident.lineId)
-      : nextItems.find((item) => item.productId === incident.productId && item.variantId === incident.variantId);
-    const where = `${incident.productName}${incident.variantColor ? ` · ${incident.variantColor}` : ""}`;
+    const nextLine = incident.lineId ? nextItems.find((item) => item.lineId === incident.lineId) : nextItems.find(isEvidence);
+    const where = `${incident.productName}${incident.variantColor ? ` · ${incident.variantColor}` : ""}${
+      incident.variantSize ? ` · ${incident.variantSize}` : ""
+    }`;
     if (!nextLine) {
       return `«${where}» tiene una incidencia registrada: esa línea es la evidencia de la solución y no se puede quitar del pedido. Los cambios de esa atención se registran desde la incidencia.`;
     }
-    if (nextLine.productId !== prevLine.productId || nextLine.variantId !== prevLine.variantId) {
+    if (nextLine.productId !== prevLine.productId || nextLine.variantId !== prevLine.variantId || nextLine.variantSizeId !== prevLine.variantSizeId) {
       return `«${where}» tiene una incidencia registrada: la pieza de esa línea sostiene la solución y no se puede cambiar por otra.`;
     }
     if ((nextLine.quantity ?? 0) !== (prevLine.quantity ?? 0)) {

@@ -172,3 +172,21 @@ describe("incidentEvidenceError (#368)", () => {
     expect(incidentEvidenceError(legacy, otherColor)).toBeTruthy();
   });
 });
+
+// #461: la evidencia de una incidencia es la COMBINACIÓN exacta (ficha, color
+// y talla) — cambiar la talla de esa línea también la desvirtúa.
+describe("incidentEvidenceError por talla (#461)", () => {
+  const prevItems = [{ lineId: "l1", productId: "p1", variantId: "v_gold", variantSizeId: "d6", productName: "Aro Sol", quantity: 2, unitPrice: 1000, subtotal: 2000 }];
+  const withIncident = {
+    items: prevItems,
+    incidents: [base({ lineId: "l1", quantity: 1, originalUnitPriceCents: 100000, variantId: "v_gold", variantSizeId: "d6" })],
+  } as any;
+
+  it("rechaza cambiar la talla de la línea que sostiene la incidencia (mismo color, otra talla)", () => {
+    expect(incidentEvidenceError(withIncident, [{ ...prevItems[0], variantSizeId: "d5" }])).toMatch(/pieza|ficha|color|talla/);
+  });
+
+  it("la línea intacta (misma talla) no restringe la edición", () => {
+    expect(incidentEvidenceError(withIncident, prevItems)).toBeNull();
+  });
+});

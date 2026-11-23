@@ -599,6 +599,10 @@ export type OrderIncident = {
   variantId?: string;
   variantColor?: string;
   variantSku?: string;
+  /** #461: the exact talla the incident is about (kept from the line). */
+  variantSizeId?: string;
+  variantSize?: string;
+  variantSizeSku?: string;
   productName: string;
   quantity: number;
   reason: string;
@@ -639,6 +643,12 @@ export type OrderIncident = {
     variantId?: string;
     variantColor?: string;
     variantSku?: string;
+    /** #461: the exact talla handed over, REQUIRED when the replacement's
+     * color sells by size — ITS combination moves at confirm. Confirming
+     * without it fails closed instead of guessing a talla. */
+    variantSizeId?: string;
+    variantSize?: string;
+    variantSizeSku?: string;
   };
   /** append-only history; every state is DERIVED from it, never stored twice. */
   events: OrderIncidentEvent[];

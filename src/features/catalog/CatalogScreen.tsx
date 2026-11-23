@@ -616,7 +616,7 @@ function CommittedSheet({
                     {row.lines.some((line) => line.variantId) && (
                       <span className="block text-xs text-on-surface-soft truncate">
                         {row.lines
-                          .map((line) => `${line.variantColor ?? "Color"} ×${line.quantity}`)
+                          .map((line) => `${line.variantColor ?? "Color"}${line.variantSize ? ` · ${line.variantSize}` : ""} ×${line.quantity}`)
                           .join(" · ")}
                       </span>
                     )}
