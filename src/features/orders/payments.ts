@@ -79,6 +79,15 @@ function finiteCents(amount: number): number {
 function normalizeAmount(amountText: string): number {
   const amount = parseAmount(amountText);
   if (amount == null) throw new Error("Captura un monto válido.");
+  // #219 (Cobros audit): money moves in whole centavos — a sub-cent figure
+  // would silently round in the accumulator while the record keeps the
+  // fraction (record ≠ Σ). Fail with a clear capture message instead.
+  // Compare in PESOS after canonical rounding: an absolute epsilon on the
+  // cents product drifts with magnitude and rejected VALID two-decimal
+  // amounts ≥ $131,072.02 (review H1 — 0 false positives swept to $10M).
+  if (Math.abs(amount - Math.round(amount * 100) / 100) > 1e-9) {
+    throw new Error("Captura el monto en pesos con centavos (máximo dos decimales).");
+  }
   return amount;
 }
 
@@ -86,6 +95,9 @@ function normalizeDate(input: PaymentFormInput, now: string): string {
   const date = input.date?.trim();
   if (!date) return now.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("La fecha del cobro no es válida.");
+  // #219 (Cobros audit): a reception is money ALREADY received — a future
+  // date is an impossible capture (today's date is the exact boundary).
+  if (date > now.slice(0, 10)) throw new Error("La fecha de recepción no puede ser futura.");
   return date;
 }
 
