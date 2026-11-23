@@ -2781,10 +2781,19 @@ export async function convertProductVariants(params: {
   // Public side — idempotent: delete is a no-op when the doc is gone.
   const mergedById = new Map(result.sources.map((s) => [s.id, s]));
   const nextProducts = params.allStoreProducts.map((p) => (p.id === freshMain.id ? freshMain : mergedById.get(p.id) ?? p));
-  for (const source of result.sources) {
-    if (source.slug) await removePublicProductDoc(source.storeId, source.slug);
+  try {
+    for (const source of result.sources) {
+      if (source.slug) await removePublicProductDoc(source.storeId, source.slug);
+    }
+    await upsertPublicProduct(freshMain, params.store.slug, nextProducts, params.categories, params.store);
+  } catch {
+    // The inventory side is already committed and stays right. Name the one
+    // step left instead of surfacing a raw error that invites unifying again
+    // (review 23-nov: the sheet no longer offers the merged origins).
+    throw new ConversionStaleError(
+      "Las fichas quedaron unificadas, pero el catálogo público no se actualizó. En Tienda → configuración, pulsa «Republicar catálogo» para terminar; no hace falta volver a unificar estas fichas."
+    );
   }
-  await upsertPublicProduct(freshMain, params.store.slug, nextProducts, params.categories, params.store);
   return { ...result, main: freshMain };
 }
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Badge, Button, IconButton, SelectField, Sheet, TextField, useToast } from "../../design-system";
+import { Badge, Button, IconButton, ProductImage, SelectField, Sheet, TextField, useToast } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
 import { buildConversionPreview, type ConversionMapping } from "../../lib/variantConversion";
 import { formatMoney } from "../../lib/money";
@@ -51,7 +51,7 @@ export function ProductConversionSheet({ open, onClose }: Props) {
             main,
             drafts.map((d) => storeProducts.find((p) => p.id === d.productId)!).filter(Boolean),
             mappings,
-            { orders: state.orders, purchases: state.purchases, incidents, levelLabels }
+            { orders: state.orders, purchases: state.purchases, incidents, levelLabels, products: storeProducts }
           )
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -185,11 +185,30 @@ export function ProductConversionSheet({ open, onClose }: Props) {
                     />
                   </div>
                   {row && (
+                    <>
+                    {/* The issue asks for photos before confirming: the origin's, and
+                        the color's when it already exists (that is the one that stays). */}
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-on-surface-soft">
+                      <figure className="flex items-center gap-2">
+                        <ProductImage src={row.photoUrl ?? undefined} alt={`Foto de ${row.name}`} size="thumb" natural />
+                        <figcaption>Foto del origen{row.colorIsNew ? ` · pasa al color nuevo ${row.color}` : ""}</figcaption>
+                      </figure>
+                      {!row.colorIsNew && (
+                        <figure className="flex items-center gap-2">
+                          <ProductImage src={row.colorPhotoUrl ?? undefined} alt={`Foto del color ${row.color}`} size="thumb" natural />
+                          <figcaption>Foto del color {row.color} · se conserva</figcaption>
+                        </figure>
+                      )}
+                    </div>
                     <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                       <div><dt className="text-xs text-on-surface-soft">Físico antes</dt><dd>{row.physicalBefore ?? "sin rastrear"}</dd></div>
                       <div><dt className="text-xs text-on-surface-soft">Comprometido</dt><dd>{row.committedBefore}</dd></div>
                       <div><dt className="text-xs text-on-surface-soft">Disponible antes</dt><dd>{row.availableBefore ?? "sin rastrear"}</dd></div>
-                      <div><dt className="text-xs text-on-surface-soft">En la combinación</dt><dd>{row.combinationAfter ?? "sin rastrear"}</dd></div>
+                      <div><dt className="text-xs text-on-surface-soft">En la combinación</dt><dd>{row.combinationTotalAfter ?? row.combinationAfter ?? "sin rastrear"}</dd></div>
+                      <div className="col-span-2 sm:col-span-4">
+                        <dt className="text-xs text-on-surface-soft">Costo en la combinación</dt>
+                        <dd>{row.combinationCostAfter === undefined ? "desconocido" : formatMoney(row.combinationCostAfter)}</dd>
+                      </div>
                       {row.priceDifferences.map((d) => (
                         <div key={d.level} className="col-span-2 sm:col-span-4">
                           <dt className="text-xs text-on-surface-soft">Precio distinto</dt>
@@ -197,6 +216,7 @@ export function ProductConversionSheet({ open, onClose }: Props) {
                         </div>
                       ))}
                     </dl>
+                    </>
                   )}
                 </div>
               );
@@ -205,6 +225,7 @@ export function ProductConversionSheet({ open, onClose }: Props) {
               <p className="text-sm">
                 <span className="font-semibold">Físico del diseño unificado:</span> antes {preview.mainPhysical.before ?? "sin rastrear"} → después{" "}
                 {preview.mainPhysical.after ?? "sin rastrear"}
+                {preview.unassignedInMain > 0 && <> · incluye {preview.unassignedInMain} pieza{preview.unassignedInMain === 1 ? "" : "s"} que el diseño ya tiene sin talla (no cambian)</>}
               </p>
             )}
             {preview && preview.blockers.length > 0 && (

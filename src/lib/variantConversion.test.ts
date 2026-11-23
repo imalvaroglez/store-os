@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Order, OrderIncident, Product, Purchase } from "../types";
-import { applyConversion, buildConversionPreview, pendingMovementsForSources } from "./variantConversion";
+import { applyConversion, buildConversionPreview, pendingMovementsForSources, type ConversionPreview } from "./variantConversion";
 
 const now = "2026-11-22T12:00:00.000Z";
 
@@ -154,7 +154,9 @@ describe("#461 conversión asistida — vista previa", () => {
     const preview = buildConversionPreview(main(), [o1], [{ productId: "o1", color: "Dorado", size: "7" }], { ...noPending, orders: [holding] });
     expect(preview.canConvert).toBe(false);
     expect(preview.rows[0].committedBefore).toBe(2);
-    expect(preview.rows[0].availableBefore).toBe(1);
+    // El estante del origen ya es neto de sus reservas: disponible = estante; físico = estante + comprometido.
+    expect(preview.rows[0].availableBefore).toBe(3);
+    expect(preview.rows[0].physicalBefore).toBe(5);
     expect(preview.pending.length).toBe(1);
     expect(preview.pending[0].id).toBe("ord9");
   });
@@ -232,5 +234,79 @@ describe("#461 conversión asistida — aplicación pura", () => {
     const preview = buildConversionPreview(main(), [merged], [{ productId: "om", color: "Dorado", size: "7" }], noPending);
     expect(preview.canConvert).toBe(false);
     expect(preview.blockers.some((reason) => /ya fue fusionada/.test(reason))).toBe(true);
+  });
+});
+
+// ── Revisión de código independiente, 23-nov ────────────────────────────────
+describe("#461 conversión — revisión de código 23-nov", () => {
+  const withTalla7 = (): Product => {
+    const design = main();
+    design.variants![0].sizes = [
+      design.variants![0].sizes![0],
+      { id: "s7", size: "7", skuSuffix: "7", sku: "SOL-D-7", cost: 400, quantityOnHand: 2, createdAt: "", updatedAt: "" },
+    ];
+    return design;
+  };
+  const map = [{ productId: "o1", color: "Dorado", size: "7" }];
+
+  it("unificar sobre una talla EXISTENTE pondera el costo: $400 × 2 + $450 × 3 → $430 con 5 piezas, y la vista previa lo dice", () => {
+    const o1 = origin("o1", { cost: 450, quantityOnHand: 3, prices: { t_retail: 1400 } });
+    const preview: ConversionPreview = buildConversionPreview(withTalla7(), [o1], map, noPending);
+    expect(preview.canConvert).toBe(true);
+    expect(preview.rows[0]).toMatchObject({ combinationAfter: 3, combinationTotalAfter: 5, combinationCostAfter: 430 });
+    const talla7 = applyConversion(withTalla7(), [o1], map, now).main.variants![0].sizes!.find((s) => s.id === "s7")!;
+    expect(talla7.quantityOnHand).toBe(5);
+    expect(talla7.cost).toBeCloseTo(430, 6); // antes: 400, el costo del origen se descartaba en silencio
+  });
+
+  it("si el origen no trae costo, la talla conserva el suyo; si la talla no lo tenía, toma el del origen", () => {
+    const unknownOrigin = applyConversion(withTalla7(), [origin("o1", { cost: undefined, quantityOnHand: 3, prices: { t_retail: 1400 } })], map, now)
+      .main.variants![0].sizes!.find((s) => s.id === "s7")!;
+    expect(unknownOrigin.cost).toBe(400);
+    const blankTalla = withTalla7();
+    blankTalla.variants![0].sizes![1].cost = undefined;
+    const filled = applyConversion(blankTalla, [origin("o1", { cost: 450, quantityOnHand: 3, prices: { t_retail: 1400 } })], map, now)
+      .main.variants![0].sizes!.find((s) => s.id === "s7")!;
+    expect(filled.cost).toBe(450);
+  });
+
+  it("un origen con precio único hacia un diseño que vende por niveles detiene (y al revés): no se inventan ni se pierden tarifas", () => {
+    const singlePriceOrigin = origin("o1", { prices: undefined, price: 450, quantityOnHand: 3 });
+    const toNewColor = buildConversionPreview(main(), [singlePriceOrigin], [{ productId: "o1", color: "Rosa", size: "6" }], noPending);
+    expect(toNewColor.canConvert).toBe(false);
+    expect(toNewColor.blockers.join(" ")).toMatch(/no tiene precios por nivel/);
+    const tieredOrigin = origin("o1", { prices: { t_retail: 450 } });
+    const singlePriceDesign = main({ prices: undefined, price: 1400, variants: main().variants!.map((v) => ({ ...v, prices: undefined })) });
+    const toSingle = buildConversionPreview(singlePriceDesign, [tieredOrigin], [{ productId: "o1", color: "Rosa", size: "6" }], noPending);
+    expect(toSingle.canConvert).toBe(false);
+    expect(toSingle.blockers.join(" ")).toMatch(/precios por nivel/);
+  });
+
+  it("la vista previa lleva la foto (del color existente, o de la ficha origen si el color es nuevo) y cuenta las piezas «sin talla» del diseño", () => {
+    const o1 = origin("o1", { prices: { t_retail: 1400 }, quantityOnHand: 3 });
+    const existing = buildConversionPreview(withTalla7(), [o1], map, noPending);
+    expect(existing.rows[0]).toMatchObject({ photoUrl: "https://x.test/o1.jpg", colorPhotoUrl: null, colorIsNew: false });
+    const newColor = buildConversionPreview(withTalla7(), [o1], [{ productId: "o1", color: "Rosa", size: "6" }], noPending);
+    expect(newColor.rows[0]).toMatchObject({ colorIsNew: true });
+    // El diseño tiene 2 piezas «sin talla» en su color con tallas: no se tocan, pero el antes/después las cuenta.
+    const withLoose = withTalla7();
+    withLoose.variants![0].quantityOnHand = 2;
+    const preview = buildConversionPreview(withLoose, [o1], map, noPending);
+    expect(preview.mainPhysical).toEqual({ before: 9, after: 9 }); // 2 + 2 (talla 7) + 2 sin talla + 3 del origen
+    expect(preview.unassignedInMain).toBe(2);
+  });
+
+  it("la clave del color NUEVO que crearía la conversión no puede repetir una clave del diseño ni de la tienda", () => {
+    // «Plata» sugiere sufijo P: chocaría con la clave SOL-P del color Plateado del diseño.
+    const clash = buildConversionPreview(main(), [origin("o1", { prices: { t_retail: 1400 } })], [{ productId: "o1", color: "Plata", size: "6" }], noPending);
+    expect(clash.canConvert).toBe(false);
+    expect(clash.blockers.join(" ")).toMatch(/SOL-P que tomaría el color nuevo.*ya la usa/);
+    // Libre dentro del diseño pero tomada por otra ficha de la tienda.
+    const context = { ...noPending, products: [
+      { id: "other", storeId: "s1", sku: "OTRO", variants: [{ id: "v", color: "Rosa", sku: "SOL-R", createdAt: "", updatedAt: "" }] },
+    ] as unknown as Product[] };
+    const storeClash = buildConversionPreview(main(), [origin("o1", { prices: { t_retail: 1400 } })], [{ productId: "o1", color: "Rosa", size: "6" }], context);
+    expect(storeClash.canConvert).toBe(false);
+    expect(storeClash.blockers.join(" ")).toMatch(/SOL-R que tomaría el color nuevo.*ya la usa/);
   });
 });

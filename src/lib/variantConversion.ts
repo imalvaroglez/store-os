@@ -3,7 +3,17 @@ import { effectivePurchaseStatus } from "../types";
 import { uid } from "./ids";
 import { committedBreakdownForProduct } from "./inventory";
 import { formatMoneyPlain } from "./money";
-import { combinationSku, suggestSizeSkuSuffix, suggestSkuSuffix, totalStock, variantHasSizes, variantSku } from "./variants";
+import {
+  combinationSku,
+  mergeCombinationCost,
+  storeClaves,
+  suggestSizeSkuSuffix,
+  suggestSkuSuffix,
+  totalStock,
+  unassignedPieces,
+  variantHasSizes,
+  variantSku,
+} from "./variants";
 import { variantEffectivePrice } from "./variantPrice";
 
 // #461 — assisted conversion of already-separated fichas into one design sold
@@ -64,12 +74,25 @@ export type ConversionRow = {
   /** The origin's own clave — the combination's suggested clave, reviewable. */
   sku?: string;
   cost?: number;
+  /** The origin's shelf — already net of what its orders hold. */
   availableBefore?: number;
   committedBefore: number;
+  /** Everything the origin holds: shelf plus the pieces its orders still hold. */
   physicalBefore?: number;
   quarantineBefore: number;
   /** Shelf landing on the combination; undefined keeps untracked stock. */
   combinationAfter?: number;
+  /** Review 23-nov: when the talla already exists, its whole shelf after the
+   * merge (existing + origin) — what the combination will hold. */
+  combinationTotalAfter?: number;
+  /** Review 23-nov: the combination's cost once both shelves merge — weighted
+   * when both are known; a missing cost never erases the known one. */
+  combinationCostAfter?: number;
+  /** The origin's photo — it becomes the color's gallery when the color is new. */
+  photoUrl: string | null;
+  /** The existing color's photo (null when the color is new). */
+  colorPhotoUrl: string | null;
+  colorIsNew: boolean;
   /** The origin's public prices against the color it joins (the design's
    * prices when the color is new). A side without a price for a level is
    * `undefined` — «sin precio», never the other side's figure. */
@@ -86,6 +109,9 @@ export type ConversionPreview = {
   /** #461: the unified design's whole shelf before and after — the preview
    * never hides a lost piece. Null = nothing tracked. */
   mainPhysical: { before: number | null; after: number | null };
+  /** Pieces the unified design already holds «sin talla»; the conversion
+   * leaves them untouched, but the totals count them (review 23-nov). */
+  unassignedInMain: number;
 };
 
 /** The whole plan on the table BEFORE anything moves: per origin antes/después
@@ -95,7 +121,14 @@ export function buildConversionPreview(
   mainProduct: Product,
   sources: Product[],
   mappings: ConversionMapping[],
-  context: { orders: Order[]; purchases: Purchase[]; incidents: OrderIncident[]; levelLabels?: Record<string, string> }
+  context: {
+    orders: Order[];
+    purchases: Purchase[];
+    incidents: OrderIncident[];
+    levelLabels?: Record<string, string>;
+    /** The store's fichas, to check a new color's clave against the catalog. */
+    products?: Product[];
+  }
 ): ConversionPreview {
   const blockers: string[] = [];
   const levelName = (level: string) => context.levelLabels?.[level] ?? level;
@@ -143,6 +176,18 @@ export function buildConversionPreview(
       (v) => v.color.trim().toLocaleLowerCase("es-MX") === color.toLocaleLowerCase("es-MX")
     );
     const differences = priceDifferences(source, mainProduct, existing);
+    // Review 23-nov: an origin and a design must price the same WAY. A
+    // single-price origin would sell at the design's levels (or its level
+    // prices would be dropped in a single-price design) — a tariff change by
+    // inference. Stop and say which side to adjust.
+    if (!!source.prices !== !!mainProduct.prices) {
+      const originLevels = !!source.prices;
+      blockers.push(
+        originLevels
+          ? `${source.name} tiene precios por nivel y el diseño unificado tiene un precio único: al unificar se perderían sus precios. Ajusta una de las dos fichas antes de unificar.`
+          : `${source.name} no tiene precios por nivel y el diseño unificado vende por niveles: al unificar se vendería a los precios del diseño. Ajusta una de las dos fichas antes de unificar.`
+      );
+    }
     // Dictamen QA 23-nov (mayor): joining an EXISTING color keeps that color's
     // tariffs — a difference is Fer's call, never overwritten by inference. A
     // new color keeps the origin's own prices (#467), so the same difference
@@ -176,6 +221,19 @@ export function buildConversionPreview(
         blockers.push(`La clave ${candidate} ya la usa el color ${existing.color} del diseño unificado. Cambia la clave de ${source.name} antes de unificar.`);
       }
     }
+    // Review 23-nov: a NEW color takes the clave its name suggests — it must be
+    // free in the design and in the catalog (colors and tallas of every ficha).
+    if (!existing && mainProduct.variants) {
+      const candidate = (variantSku(mainProduct.sku, { skuSuffix: suggestSkuSuffix(color) }) ?? "").toUpperCase();
+      const designClaves = new Set(
+        mainProduct.variants.flatMap((v) => [(v.sku ?? "").toUpperCase(), ...(v.sizes ?? []).map((talla) => (talla.sku ?? "").toUpperCase())])
+      );
+      if (candidate && designClaves.has(candidate)) {
+        blockers.push(`La clave ${candidate} que tomaría el color nuevo ${color} ya la usa otro color o talla del diseño unificado. Usa otro nombre de color.`);
+      } else if (candidate && context.products && storeClaves(context.products, mainProduct.storeId, mainProduct.id).has(candidate)) {
+        blockers.push(`La clave ${candidate} que tomaría el color nuevo ${color} ya la usa otra ficha del catálogo. Usa otro nombre de color.`);
+      }
+    }
     // Dictamen QA 23-nov (crítico 3): pieces the existing color counts WITHOUT
     // a talla have no unambiguous combination — stop and say what to do.
     if (existing && !variantHasSizes(existing) && typeof existing.quantityOnHand === "number" && existing.quantityOnHand !== 0) {
@@ -188,7 +246,12 @@ export function buildConversionPreview(
       blockers.push(`${source.name} tiene ${source.quantityQuarantined} pieza(s) en cuarentena: resuélvela antes de unificar.`);
     }
     const committed = committedBreakdownForProduct(context.orders, source.storeId, source.id).total;
-    const physical = source.quantityOnHand;
+    // The origin's shelf is already NET of its reservations: it is what is
+    // available; Físico adds the pieces its orders still hold (review 23-nov).
+    const net = source.quantityOnHand;
+    const existingTalla = existing?.sizes?.find(
+      (talla) => talla.size.trim().toLocaleLowerCase("es-MX") === size.toLocaleLowerCase("es-MX")
+    );
     rows.push({
       productId: source.id,
       name: source.name,
@@ -196,11 +259,22 @@ export function buildConversionPreview(
       size,
       sku: source.sku,
       cost: source.cost,
-      availableBefore: typeof physical === "number" ? physical - committed : undefined,
+      availableBefore: net,
       committedBefore: committed,
-      physicalBefore: physical,
+      physicalBefore: typeof net === "number" ? net + committed : undefined,
       quarantineBefore: source.quantityQuarantined ?? 0,
-      combinationAfter: physical,
+      combinationAfter: net,
+      ...(existingTalla && typeof existingTalla.quantityOnHand === "number" && typeof net === "number"
+        ? { combinationTotalAfter: existingTalla.quantityOnHand + net }
+        : {}),
+      combinationCostAfter: existingTalla
+        ? mergeCombinationCost(existingTalla.cost, existingTalla.quantityOnHand, source.cost, net)
+        : source.cost,
+      photoUrl: source.images?.find((image) => image.isPrimary)?.url ?? source.images?.[0]?.url ?? source.imageUrl ?? null,
+      colorPhotoUrl: existing
+        ? existing.photos?.find((photo) => photo.isPrimary)?.url ?? existing.photos?.[0]?.url ?? null
+        : null,
+      colorIsNew: !existing,
       priceDifferences: differences,
     });
   }
@@ -220,15 +294,18 @@ export function buildConversionPreview(
     return tracked.length === 0 ? null : tracked.reduce((sum, value) => sum + value, 0);
   };
   const mainStock = totalStock(mainProduct);
+  const unassignedInMain = (mainProduct.variants ?? []).reduce((sum, variant) => sum + unassignedPieces(variant), 0);
+  const loose = unassignedInMain > 0 ? unassignedInMain : undefined;
   return {
     rows,
     pending,
     blockers,
     canConvert: blockers.length === 0 && rows.length > 0,
     mainPhysical: {
-      before: whole([mainStock, ...rows.map((row) => row.physicalBefore)]),
-      after: whole([mainStock, ...rows.map((row) => row.combinationAfter)]),
+      before: whole([mainStock, loose, ...rows.map((row) => row.availableBefore)]),
+      after: whole([mainStock, loose, ...rows.map((row) => row.combinationAfter)]),
     },
+    unassignedInMain,
   };
 }
 
@@ -268,7 +345,12 @@ export function applyConversion(
   now = new Date().toISOString()
 ): ConversionResult {
   const byId = new Map(sources.map((s) => [s.id, s]));
-  const variants: ProductVariant[] = [...(mainProduct.variants ?? [])];
+  // Work on copies: the caller's product never changes (it may feed a preview
+  // or a retry).
+  const variants: ProductVariant[] = (mainProduct.variants ?? []).map((variant) => ({
+    ...variant,
+    ...(variant.sizes ? { sizes: variant.sizes.map((size) => ({ ...size })) } : {}),
+  }));
   const archived: Product[] = [];
   for (const mapping of mappings) {
     const source = byId.get(mapping.productId);
@@ -290,8 +372,17 @@ export function applyConversion(
       };
       variants.push(variant);
     }
-    let size: VariantSize | undefined = variant.sizes?.find((s) => s.size.trim().toLocaleLowerCase("es-MX") === sizeLabel.toLocaleLowerCase("es-MX"));
-    if (!size) {
+    const existingSize = variant.sizes?.find(
+      (s) => s.size.trim().toLocaleLowerCase("es-MX") === sizeLabel.toLocaleLowerCase("es-MX")
+    );
+    let size: VariantSize;
+    if (existingSize) {
+      size = existingSize;
+      // The talla now holds both shelves: the cost merges the way a reception
+      // would — weighted when both are known, BEFORE the origin's pieces land
+      // (review 23-nov: the origin's cost used to be dropped in silence).
+      size.cost = mergeCombinationCost(size.cost, size.quantityOnHand, source.cost, source.quantityOnHand);
+    } else {
       size = {
         id: uid("z"),
         size: sizeLabel,
