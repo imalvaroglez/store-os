@@ -414,3 +414,80 @@ describe("missing real vs fallo de red (#276)", () => {
     expect(screen.queryByText(/no existe o no está disponible/)).toBeNull();
   });
 });
+
+describe("#489 stock determines inventory availability", () => {
+  it("keeps a stocked legacy sold_out product visible and selectable with sold-out products hidden", async () => {
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, type: "inventory_tiered", storefront: { showSoldOut: false } },
+      catalog: { categories: [], products: [
+        { ...catalog.products[0], name: "Pieza con stock", availability: "sold_out", stockSignal: "disponible" },
+        { ...catalog.products[1], name: "Pieza sin stock", availability: "available", stockSignal: "agotado" },
+      ] },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    await screen.findByText("Pieza con stock");
+    expect(screen.queryByText("Pieza sin stock")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
+    expect(screen.getByRole("group", { name: "Cantidad de Pieza con stock" })).toHaveTextContent("1");
+  });
+});
+
+
+it("#489 a legacy manual mark cannot block an available color or offer an empty one", async () => {
+  mocks.loadPublicCatalog.mockResolvedValue({
+    store: { ...store, type: "inventory_tiered" },
+    catalog: { categories: [], products: [{ ...catalog.products[0], availability: "sold_out", stockSignal: "disponible", variants: [
+      { id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" },
+      { id: "gold", color: "Dorado", imageUrl: null, stockSignal: "agotado" },
+    ] }] },
+  });
+  render(<PublicCatalogScreen slug="santi" />);
+  await screen.findByText("Perfume");
+  expect(screen.getByRole("button", { name: "Agregar al carrito" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Dorado" }));
+  expect(screen.queryByRole("button", { name: "Agregar al carrito" })).toBeNull();
+  expect(screen.getByText("Agotado")).toBeTruthy();
+});
+
+
+it("#489 refreshes a persisted color inquiry before composing WhatsApp", async () => {
+  localStorage.setItem("store-os:cart:santi", JSON.stringify({ v: 1, lines: [{ productSlug: "perfume~silver", name: "Perfume · Plateado", sku: "OLD", qty: 2, inquire: true }] }));
+  mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, type: "inventory_tiered" }, catalog: { categories: [], products: [{
+    ...catalog.products[0], availability: "sold_out", stockSignal: "disponible", variants: [{ id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" }],
+  }] } });
+  render(<PublicCatalogScreen slug="santi" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Abrir pedido/ }));
+  const link = await screen.findByRole("link", { name: "Enviar solicitud por WhatsApp" });
+  await waitFor(() => expect(decodeURIComponent(link.getAttribute("href")!)).not.toContain("sobre pedido"));
+  const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+  expect(saved.lines[0]).toMatchObject({ qty: 2, inquire: false });
+});
+
+
+it("#489 a session-added color line is a firm order despite a stale global sold-out signal", async () => {
+  // Legacy RCA shape: the aggregate stockSignal is an old "agotado" while the
+  // chosen color is available. The new line must not inherit "sobre pedido".
+  mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, type: "inventory_tiered" }, catalog: { categories: [], products: [{
+    ...catalog.products[0], availability: "sold_out", stockSignal: "agotado", variants: [{ id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" }],
+  }] } });
+  render(<PublicCatalogScreen slug="santi" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar al carrito" }));
+  fireEvent.click(screen.getByRole("button", { name: /Abrir pedido/ }));
+  const link = await screen.findByRole("link", { name: "Enviar solicitud por WhatsApp" });
+  expect(decodeURIComponent(link.getAttribute("href")!)).toContain("1× Perfume · Plateado");
+  expect(decodeURIComponent(link.getAttribute("href")!)).not.toContain("sobre pedido");
+  const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+  expect(saved.lines[0]).toMatchObject({ productSlug: "perfume~silver", qty: 1, inquire: false });
+});
+
+it("#489 keeps a sellable color visible despite an old aggregate shortage signal", async () => {
+  mocks.loadPublicCatalog.mockResolvedValue({ store: { ...store, type: "inventory_tiered", storefront: { showSoldOut: false } }, catalog: { categories: [], products: [{
+    ...catalog.products[0], availability: "sold_out", stockSignal: "agotado", variants: [
+      { id: "silver", color: "Plateado", imageUrl: null, stockSignal: "disponible" },
+      { id: "gold", color: "Dorado", imageUrl: null, stockSignal: "agotado" },
+    ],
+  }] } });
+  render(<PublicCatalogScreen slug="santi" />);
+  await screen.findByText("Perfume");
+  expect(screen.getByRole("button", { name: "Agregar al carrito" })).toBeTruthy();
+});

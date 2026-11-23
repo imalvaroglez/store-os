@@ -28,6 +28,14 @@ export function purchaseReviewIssues(purchase: Purchase, drafts: Record<string, 
       if (cost == null || !Number.isFinite(cost) || cost < 0) {
         issues.push({ ticketId: ticket.id, target: costKey, message: `${name}: Costo unitario debe ser un importe válido, positivo o cero.`, input: true });
       }
+      // #219 (Compras audit): money moves in whole centavos — a sub-cent cost
+      // must be rejected, never silently rounded. Compare in PESOS after the
+      // canonical rounding: an absolute epsilon on the cents product drifts
+      // with magnitude and rejected VALID two-decimal amounts ≥ $131,072.02
+      // (review H1 — 0 false positives swept to $10M).
+      if (cost != null && Number.isFinite(cost) && Math.abs(cost - Math.round(cost * 100) / 100) > 1e-9) {
+        issues.push({ ticketId: ticket.id, target: costKey, message: `${name}: escribe el costo en pesos con centavos (máximo dos decimales).`, input: true });
+      }
       if (line.sourceAmountType === "unknown") {
         issues.push({ ticketId: ticket.id, target: `source:${line.lineId}`, message: `${name}: elige si el importe del PDF es unitario o total por línea.` });
       }
@@ -42,6 +50,11 @@ export function purchaseReviewIssues(purchase: Purchase, drafts: Record<string, 
       const amount = raw == null ? ticket[field] ?? 0 : raw.trim() === "" && field !== "totalConfirmed" ? 0 : parseAmount(raw);
       if (amount == null || !Number.isFinite(amount) || amount < 0) {
         issues.push({ ticketId: ticket.id, target: key, message: `${label}: escribe un importe válido, positivo o cero.`, input: true });
+      }
+      // #219 (Compras audit): same whole-centavos contract, same peso-space
+      // comparison (see the cost check above).
+      if (amount != null && Number.isFinite(amount) && Math.abs(amount - Math.round(amount * 100) / 100) > 1e-9) {
+        issues.push({ ticketId: ticket.id, target: key, message: `${label}: escribe el importe en pesos con centavos (máximo dos decimales).`, input: true });
       }
     }
     if (lines.length === 0) {
