@@ -79,6 +79,15 @@ function finiteCents(amount: number): number {
 function normalizeAmount(amountText: string): number {
   const amount = parseAmount(amountText);
   if (amount == null) throw new Error("Captura un monto válido.");
+  // #219 (Cobros audit): money moves in whole centavos — a sub-cent figure
+  // would silently round in the accumulator while the record keeps the
+  // fraction (record ≠ Σ). Fail with a clear capture message instead.
+  // Compare in PESOS after canonical rounding: an absolute epsilon on the
+  // cents product drifts with magnitude and rejected VALID two-decimal
+  // amounts ≥ $131,072.02 (review H1 — 0 false positives swept to $10M).
+  if (Math.abs(amount - Math.round(amount * 100) / 100) > 1e-9) {
+    throw new Error("Captura el monto en pesos con centavos (máximo dos decimales).");
+  }
   return amount;
 }
 
@@ -86,6 +95,9 @@ function normalizeDate(input: PaymentFormInput, now: string): string {
   const date = input.date?.trim();
   if (!date) return now.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("La fecha del cobro no es válida.");
+  // #219 (Cobros audit): a reception is money ALREADY received — a future
+  // date is an impossible capture (today's date is the exact boundary).
+  if (date > now.slice(0, 10)) throw new Error("La fecha de recepción no puede ser futura.");
   return date;
 }
 
@@ -231,7 +243,18 @@ export function orderPaymentsFor(
  */
 export function maxAdjustmentSubtractCents(order: Partial<Order> & Record<string, unknown>): number {
   const acc = order.paymentsReceivedCents;
-  return typeof acc === "number" && Number.isFinite(acc) ? Math.max(0, acc) : 0;
+  const accumulatorCeiling = typeof acc === "number" && Number.isFinite(acc) ? Math.max(0, acc) : 0;
+  // #366 H4 (review): ONLY when this order sustains consumed credit does the
+  // honest ceiling subtract the effective total (same invariant as the
+  // transaction). Credit-free orders keep the #270/#288 ceiling unchanged.
+  const consumed = creditFieldCents(order, "creditConsumedCents");
+  if (consumed <= 0) return accumulatorCeiling;
+  const received = docReceivedCents(order);
+  const items = orderItems(order as Order).reduce((sum, item) => sum + orderAmountCents(item.unitPrice, item.quantity), 0);
+  const effective = Math.max(0, items + incidentsSaleAdjustmentCents((order as Order).incidents));
+  const refundCommitted = incidentsRefundCommittedCents((order as Order).incidents);
+  const coverageCeiling = Math.max(0, received - effective - refundCommitted - consumed);
+  return Math.min(accumulatorCeiling, coverageCeiling);
 }
 
 /** Merge loaded/saved records by id (replace, never duplicate). */

@@ -15,11 +15,12 @@ import { ordersForStore, productsToRestock, customersForStore } from "../../lib/
 import { monthRanking, currentMonth } from "../../lib/resellerRanking";
 import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
-import { effectiveOrderStatus, legacyCollectDeposit, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
+import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { OrderPaymentsSheet } from "../orders/OrderPaymentsSheet";
+import { FinancialPositionCard } from "../financial/FinancialPositionCard";
 import { DeliverySheet } from "../orders/DeliverySheet";
 import { pendingDeliveries } from "../../lib/deliveries";
 import { navigate } from "../../lib/router";
@@ -34,6 +35,7 @@ export function HomeScreen() {
   // sync refreshes what the sheet shows — and the sheet simply closes if the
   // order leaves the current store context (Codex review of #186).
   const [paymentsOrderId, setPaymentsOrderId] = useState<string | null>(null);
+  const [expressPrefillCents, setExpressPrefillCents] = useState<number | null>(null);
   // #333: delivery-evidence sheet for the "Entregar" rows (same as the card).
   const [deliveryOrderId, setDeliveryOrderId] = useState<string | null>(null);
   if (!activeStore) return null;
@@ -100,26 +102,16 @@ export function HomeScreen() {
     }
   }
 
-  /** One-tap collection from the home row: LEGACY deposit-only orders only.
-   * Orders in the payments model (#123+) must register a real receipt — the
-   * button opens the Cobros sheet instead (Codex review 2026-11-04: the old
-   * shortcut announced "Pedido cobrado" while the canonical saldo stood). */
-  async function collect(orderId: string) {
+  /** #279 r4 (UX r3): the home "Cobrar" no longer writes a bare deposit —
+   * same treatment as the order card (#267/#489 evidence rule): open the
+   * Cobros sheet with the NET pending amount prefilled so the receipt feeds
+   * the caja. A deposit without a receipt never did. */
+  function collect(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
     if (!o) return;
-    try {
-      // #362: same rule as the order card (#267) — the NET pending amount,
-      // never the gross historical total (credit applied / incident-adjusted).
-      const saved = await upsertOrder({ ...o, deposit: legacyCollectDeposit(o), updatedAt: new Date().toISOString() });
-      if (orderTotals(saved).balance > 0) {
-        toast.info("Este pedido ya tiene cobros registrados. Regístralos en Cobros.");
-        setPaymentsOrderId(o.id);
-        return;
-      }
-      toast.success("Pedido cobrado");
-    } catch {
-      toast.error("No se pudo registrar el cobro.");
-    }
+    const { balance } = orderTotals(o);
+    setExpressPrefillCents(balance > 0 ? Math.round(balance * 100) : null);
+    setPaymentsOrderId(o.id);
   }
 
   return (
@@ -157,6 +149,10 @@ export function HomeScreen() {
             </StatRow>
           </Card>
         </div>
+      </Reveal>
+
+      <Reveal>
+        <FinancialPositionCard />
       </Reveal>
 
       {iconicRenewals.length > 0 && (
@@ -313,7 +309,12 @@ export function HomeScreen() {
       })()}
 
     {paymentsOrder && (
-      <OrderPaymentsSheet order={paymentsOrder} open onClose={() => setPaymentsOrderId(null)} />
+      <OrderPaymentsSheet
+        order={paymentsOrder}
+        open
+        onClose={() => { setPaymentsOrderId(null); setExpressPrefillCents(null); }}
+        prefillAmountCents={expressPrefillCents}
+      />
     )}
     </>
   );

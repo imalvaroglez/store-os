@@ -1,3 +1,4 @@
+import { publicAvailabilitySignal } from "../../lib/publicAvailability";
 import { useEffect, useState } from "react";
 import { Badge, Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
 import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
@@ -9,7 +10,7 @@ import {
   type PublicStore,
   type PublicStockSignal,
 } from "../../app/firebase/publicCatalog";
-import { cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
+import { cartItemsForPublicProduct, cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 import { useCart } from "./useCart";
 import { useSeo } from "./useSeo";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
@@ -56,7 +57,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   useEffect(() => {
     if (!data) return;
     cart.prune(new Set(data.catalog.products.map((product) => product.productSlug)));
-    cart.refresh(data.catalog.products.map(cartItemFromPublicProduct));
+    cart.refresh(data.catalog.products.flatMap((product) => cartItemsForPublicProduct(product, data.store.type)));
   }, [cart.prune, cart.refresh, data]);
 
   // Same per-route SEO contract as the Olivia storefront: title/canonical/og
@@ -101,11 +102,9 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   }
 
   const { store, catalog } = data;
-  // #371: the SAME truth Olivia's storefront uses — a manual «Agotado» pause
-  // (availability) or a real empty shelf (stockSignal) applies to EVERY
-  // store's public catalog, and «Agotados: Ocultos» hides them from the grid.
-  const isSoldOut = (product: { availability?: string | null; stockSignal?: string | null }) =>
-    product.availability === "sold_out" || product.stockSignal === "agotado";
+  // #489: stock governs inventory; on-demand retains manual availability.
+  const isSoldOut = (product: { availability?: string | null; stockSignal?: string | null; variants?: { stockSignal?: string | null }[] }) =>
+    publicAvailabilitySignal(product, store.type) === "agotado";
   const showSoldOut = store.storefront?.showSoldOut ?? true;
   const soldOutAware = catalog.products; // sold-out keeps its card for encargo (#135)
   const products = showSoldOut ? soldOutAware : soldOutAware.filter((product) => !isSoldOut(product));
@@ -136,7 +135,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   // A paused piece reads as agotado EVERYWHERE — including a cart saved before
   // the pause: the drawer turns that line into "sobre pedido", never a firm order.
   const signalBySlug = products.reduce<Record<string, PublicStockSignal>>((signals, product) => {
-    signals[product.productSlug] = isSoldOut(product) ? "agotado" : (product.stockSignal ?? "disponible");
+    signals[product.productSlug] = isSoldOut(product) ? "agotado" : publicAvailabilitySignal(product, store.type);
     // #137: per-color lines carry `slug~variantId` keys — give each color's
     // line its OWN signal so the drawer explains exactly that color.
     for (const variant of product.variants ?? []) {
@@ -216,7 +215,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                     productSlug={lineSlug}
                     productName={lineName}
                     quantity={quantityBySlug.get(lineSlug) ?? 0}
-                    onAdd={() => cart.add({ ...cartItemFromPublicProduct({ ...product, image: lineImage }), ...(chosen ? { productSlug: lineSlug, name: lineName } : {}) })}
+                    onAdd={() => cart.add({ ...cartItemFromPublicProduct({ ...product, image: lineImage }), ...(chosen ? { productSlug: lineSlug, name: lineName } : {}), inquire: soldOut })}
                     onSetQty={cart.setQty}
                     full
                     className="mt-2"

@@ -49,11 +49,29 @@ export async function loadConfig(file) {
   return config;
 }
 async function stateFor(home) { return await exists(path.join(home, 'state.json')) ? readJson(path.join(home, 'state.json')) : { ownedArchives: [] }; }
+export function notificationDecision(previous, message, now) {
+  const notifications = previous.notifications ?? (previous.message && Number.isFinite(previous.at) ? { [previous.message]: previous.at } : {});
+  const lastSent = notifications[message];
+  if (Number.isFinite(lastSent) && now - lastSent < 86400000) return { shouldNotify: false, state: previous };
+  return { shouldNotify: true, state: { notifications: { ...notifications, [message]: now } } };
+}
+export function verificationRetryBlocked(state, config, manual = false) {
+  return !manual && Boolean(state.suspendedForVerification && state.suspendedForVerification === config.reviewedPreflightSha256);
+}
+export function migrateVerificationFailure(state, config) {
+  if (state.suspendedForVerification || !/^VERIFICATION_/.test(state.lastError ?? '')) return state;
+  return { ...state, suspendedForVerification: config.reviewedPreflightSha256, verificationFailure: state.lastError };
+}
+export function clearVerificationFailure(state) {
+  return { ...state, suspendedForVerification: null, verificationFailure: null };
+}
 async function notify(config, message) {
   if (process.platform === 'darwin' && config.notifications !== false) {
     const noticeFile = path.join(config.home, 'notice.json');
-    if (await exists(noticeFile)) { const last = await readJson(noticeFile); if (last.message === message && Date.now() - last.at < 86400000) return; }
-    await atomicJson(noticeFile, { message, at: Date.now() });
+    const previous = await exists(noticeFile) ? await readJson(noticeFile) : {};
+    const decision = notificationDecision(previous, message, Date.now());
+    if (!decision.shouldNotify) return;
+    await atomicJson(noticeFile, decision.state);
     try { await command('/usr/bin/osascript', ['-e', `display notification "${message}" with title "Respaldos de Store OS"`]); } catch { /* Status remains authoritative when notifications are disabled by macOS. */ }
   }
 }
@@ -83,7 +101,9 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
   let dir; let client; let verificationRoot; let workspace; let supervision;
   try {
     await cleanupStaleWorkspaces(config.home);
-    const state = await stateFor(config.home);
+    let state = await stateFor(config.home);
+    const migratedState = migrateVerificationFailure(state, config);
+    if (migratedState !== state) { state = migratedState; await atomicJson(stateFile, state); }
     // A manual capture never satisfies the nightly cycle. Legacy state without
     // an explicit checkpoint derives it from its last scheduled success only.
     const lastScheduledDate = state.lastScheduledDate ?? (hasVerifiedBackup(state) && state.lastRunKind !== 'manual' ? dueDate(new Date(state.lastSuccess)) : null);
@@ -91,6 +111,7 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
     // must never fall back to the manual lastSuccess and skip tonight.
     if (manual && (!hasVerifiedBackup(state) || !lastScheduledDate)) throw new Error('INITIAL_SCHEDULE_REQUIRED');
     if (!manual && hasVerifiedBackup(state) && lastScheduledDate && dueDate(now) <= lastScheduledDate) return { skipped: true };
+    if (verificationRetryBlocked(state, config, manual)) return { skipped: true, suspended: true, verificationReviewRequired: true };
     validateTarget(config);
     const recoveryProof = await recoveryKeyProof(config);
     if (state.suspendedForApproval && state.suspendedForApproval === config.reviewedPreflightSha256) return { skipped: true, suspended: true };
@@ -134,13 +155,15 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
       const name = `backup-${now.toISOString().replace(/[:.]/g, '-')}.tar.gz.age`;
       const verification = await publish(encrypted, config.destination, name, async candidate => {
         await atomicJson(path.join(workspace, 'pending-publication.json'), { candidate });
-        const receipt = await verifyCandidate(config, candidate, key.identity, path.join(verificationRoot, 'emulators'), dir, supervision);
+        let receipt;
+        try { receipt = await verifyCandidate(config, candidate, key.identity, path.join(verificationRoot, 'emulators'), dir, supervision); }
+        catch (error) { error.verificationFailure = true; throw error; }
         await stopSupervisor(supervision); supervision = undefined; verificationRoot = undefined; workspace = undefined;
         return receipt;
       });
       verification.archive = name;
       verification.recoveryRecipient = recoveryProof.recipient; verification.recoveryRecipientVerified = true;
-      const next = { ...state, lastSuccess: new Date().toISOString(), lastScheduledDate: manual ? lastScheduledDate : dueDate(now), lastRunKind: manual ? 'manual' : 'scheduled', lastArchive: name, bytes: encryptedBytes, sha256: encryptedSha256, cloudAvailability: 'not-verified', verification, ownedArchives: [...new Set([...state.ownedArchives, name])], lastError: null, suspendedForApproval: null };
+      const next = { ...clearVerificationFailure(state), lastSuccess: new Date().toISOString(), lastScheduledDate: manual ? lastScheduledDate : dueDate(now), lastRunKind: manual ? 'manual' : 'scheduled', lastArchive: name, bytes: encryptedBytes, sha256: encryptedSha256, cloudAvailability: 'not-verified', verification, ownedArchives: [...new Set([...state.ownedArchives, name])], lastError: null, suspendedForApproval: null };
       await atomicJson(stateFile, next); // Commit success before retention; failures cannot erase the previous backup.
       const retention = await pruneTolerant(config.destination, next.ownedArchives);
       next.ownedArchives = retention.ownedNames; next.lastRetentionError = retention.retentionError;
@@ -149,7 +172,7 @@ export async function runBackup(config, clientFactory = connect, now = new Date(
     } finally { await trash(encrypted); }
   } catch (error) {
     const state = await stateFor(config.home);
-    await atomicJson(stateFile, { ...state, lastFailure: new Date().toISOString(), lastError: safeCode(error), ...(/^(DOCUMENT_LIMIT_EXCEEDED|FIRESTORE_READ_LIMIT_EXCEEDED|STORAGE_LIMIT_EXCEEDED)$/.test(error.message) ? { suspendedForApproval: config.reviewedPreflightSha256 } : {}) });
+    await atomicJson(stateFile, { ...state, lastFailure: new Date().toISOString(), lastError: safeCode(error), ...(error.verificationFailure ? { suspendedForVerification: config.reviewedPreflightSha256, verificationFailure: safeCode(error) } : {}), ...(/^(DOCUMENT_LIMIT_EXCEEDED|FIRESTORE_READ_LIMIT_EXCEEDED|STORAGE_LIMIT_EXCEEDED)$/.test(error.message) ? { suspendedForApproval: config.reviewedPreflightSha256 } : {}) });
     await notify(config, 'El respaldo falló. Revisa el estado local.');
     throw error;
   } finally {
@@ -183,7 +206,8 @@ export async function status(config, checkIntegrity = true) {
   }
   const overdue = archiveIntegrityVerified === false || ageHours === null || ageHours > 26 || !locallyAvailable;
   if (overdue) await notify(config, 'No hay un respaldo completo disponible de las últimas 26 horas.');
-  return { lastSuccess: functional ? state.lastSuccess : null, verification: functional ? state.verification : null, hasVerifiedBackup: functional && locallyAvailable && archiveIntegrityVerified !== false, archiveIntegrityVerified, ageHours, overdue, locallyAvailable, bytes: state.bytes ?? null, lastError: archiveIntegrityVerified === false ? 'ARCHIVE_INTEGRITY_FAILED' : state.lastError ?? null, retentionError: state.lastRetentionError ?? null, suspended: Boolean(state.suspendedForApproval && state.suspendedForApproval === config.reviewedPreflightSha256), readBudgetDate: state.readBudgetDate ?? null, reservedReads: state.reservedReads ?? 0, cloudAvailability: 'not-verified', locked: await exists(path.join(config.home, 'run.lock')) };
+  const verificationSuspended = Boolean(state.suspendedForVerification && state.suspendedForVerification === config.reviewedPreflightSha256);
+  return { lastSuccess: functional ? state.lastSuccess : null, verification: functional ? state.verification : null, hasVerifiedBackup: functional && locallyAvailable && archiveIntegrityVerified !== false, archiveIntegrityVerified, ageHours, overdue, locallyAvailable, bytes: state.bytes ?? null, lastError: archiveIntegrityVerified === false ? 'ARCHIVE_INTEGRITY_FAILED' : state.lastError ?? null, retentionError: state.lastRetentionError ?? null, suspended: Boolean(state.suspendedForApproval && state.suspendedForApproval === config.reviewedPreflightSha256) || verificationSuspended, verificationSuspended, verificationFailure: verificationSuspended ? state.verificationFailure ?? null : null, readBudgetDate: state.readBudgetDate ?? null, reservedReads: state.reservedReads ?? 0, cloudAvailability: 'not-verified', locked: await exists(path.join(config.home, 'run.lock')) };
 }
 export async function main(args = process.argv.slice(2)) {
   process.umask(0o077);

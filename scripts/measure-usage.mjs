@@ -8,6 +8,8 @@
 //
 // Usage: node scripts/measure-usage.mjs [--base http://localhost:4319] [--out report.md]
 //                                [--email a@b.c --password …]   (admin phases)
+//                                [--emulator http://127.0.0.1:8080]  (classifier origin)
+//                                [--product "Anillo"] [--client "Luc"]  (write-phase fixture)
 // Prereqs: `npm run build && npm run preview` serving the dev-configured build.
 // Anonymous phases (public catalog) run with no credentials. Admin phases need
 // dev credentials via the UI: the Admin SDK cannot mint custom tokens from
@@ -26,6 +28,12 @@ import { writeFileSync } from "node:fs";
 
 const base = argumentValue("--base") ?? "http://localhost:4319";
 const outPath = argumentValue("--out") ?? "measure-usage-report.md";
+// #192 QA: the classifier origin must match the emulator the BUILD points at
+// (parallel emulator instances use other ports) — a wrong origin used to
+// classify EVERYTHING as zero, silently.
+const emulatorOrigin = argumentValue("--emulator") ?? "http://127.0.0.1:8080";
+const fixtureProduct = argumentValue("--product") ?? "Anillo";
+const fixtureClient = argumentValue("--client") ?? "Luc";
 
 function argumentValue(flag) {
   const index = process.argv.indexOf(flag);
@@ -91,11 +99,17 @@ async function main() {
       // REST reads (…/documents:runQuery, :batchGet, plain document GETs).
       const onRequest = (request) => {
         const requestUrl = request.url();
-        if (!requestUrl.includes("firestore.googleapis.com")) return;
+        // Dev-cloud (firestore.googleapis.com) OR the local emulator harness
+        // (#192 fase 2: the same flows measured against 127.0.0.1:8080 — the
+        // request SHAPES are identical, which is what the counters classify).
+        const emulatorHost = new URL(emulatorOrigin).host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (!new RegExp(`firestore\\.googleapis\\.com|${emulatorHost}`).test(requestUrl)) return;
         const grpc = /Firestore\/(Listen|RunQuery|BatchGet|GetDocument|Write|Commit)\b/.exec(requestUrl);
         // REST captures arrive lowercase; the counters speak camelCase (#192 F1).
-        const restRaw = /documents:(runQuery|batchGet)/.exec(requestUrl)?.[1]
-          ?? (/\/databases\/\(default\)\/documents\/[^:]+$/.test(requestUrl) ? "GetDocument" : null);
+        const restRaw = /documents:(runQuery|batchGet|commit)/.exec(requestUrl)?.[1]
+          // #192 QA: plain document GETs may carry query strings — classify on
+          // the path alone instead of anchoring the whole URL.
+          ?? (/\/databases\/\(default\)\/documents\/[^:]+$/.test(requestUrl.split("?")[0]) ? "GetDocument" : null);
         const key = grpc?.[1] ?? (restRaw ? restRaw[0].toUpperCase() + restRaw.slice(1) : null);
         if (key && key in requests) requests[key] += 1;
         else {
@@ -105,7 +119,10 @@ async function main() {
       };
       const onConsole = (message) => {
         const text = message.text();
-        if (/\[firestore\]|Received \d+ (document|results|queries)/.test(text)) lines.push(text);
+        // #192 QA: the pinned SDK (12.15.0) prefixes console lines with the
+        // "@firebase/firestore: Firestore (x.y.z):" banner — the old filter
+        // matched none of it and the raw evidence log came out empty.
+        if (/\[firestore\]|@firebase\/firestore:|Received \d+ (document|results|queries)/.test(text)) lines.push(text);
       };
       page.on("request", onRequest);
       page.on("console", onConsole);
@@ -119,6 +136,14 @@ async function main() {
       try {
         await action(page, `${url}${url.includes("?") ? "&" : "?"}measure=1`);
         await page.waitForTimeout(2500); // settle: in-flight snapshots land.
+        // #192 QA (MAYOR): never report a silent zero row — a phase that ran
+        // to completion but classified ZERO requests means the classifier
+        // origin is wrong (use --emulator) or the page never reached
+        // Firestore. That is a failed measurement, loudly said.
+        const total = Object.values(requests).reduce((sum, n) => sum + n, 0);
+        if (total === 0) {
+          throw new Error(`clasificó 0 peticiones — ¿el build apunta a ${emulatorOrigin}? Ajusta --emulator al host:puerto real del emulador.`);
+        }
         metrics.push({ name, ms: Date.now() - started, ...requests });
       } catch (error) {
         // A failed phase (bad credentials, selector drift) never discards the
@@ -166,6 +191,40 @@ async function main() {
           await page.waitForTimeout(2500);
         });
       }
+
+      // #192 fase 2 — the WRITE phase: what saving an order COSTS (the
+      // contract tx + the reload the store listener triggers), measured from
+      // the guardado click so setup navigation never inflates it.
+      await phase("admin · escritura: guardar pedido", `${base}/pedidos/nuevo`, async (page, url) => {
+        await page.goto(url, { waitUntil: "networkidle" });
+        await signInIn(page);
+        await page.waitForTimeout(2500);
+        // Cliente y producto del fixture (emulador/dev con datos sintéticos).
+        const clientBox = page.getByLabel("Cliente");
+        await clientBox.fill(fixtureClient);
+        await page.waitForTimeout(800);
+        await page.keyboard.press("Enter");
+        await page.waitForTimeout(600);
+        const productBox = page.getByLabel("Producto", { exact: true });
+        await productBox.fill(fixtureProduct);
+        await page.waitForTimeout(900);
+        // #192 QA (MAYOR): a fixture without this product used to "save" an
+        // empty order and report a false zero-cost row — verify the option
+        // really exists (and was picked) before clicking Guardar.
+        if (!await page.getByRole("option", { name: new RegExp(fixtureProduct, "i") }).count()) {
+          throw new Error(`el fixture no tiene el producto "${fixtureProduct}" — pásalo con --product (o siembra el fixture).`);
+        }
+        await page.keyboard.press("Enter");
+        await page.waitForTimeout(800);
+        if (!(await productBox.inputValue())) {
+          throw new Error(`el producto "${fixtureProduct}" no quedó seleccionado; revisa el fixture.`);
+        }
+        // Zero the counters right before the money move: this phase reports
+        // ONLY the write + its reload.
+        page.__measureReset();
+        await page.getByRole("button", { name: "Guardar pedido" }).click();
+        await page.waitForTimeout(4000);
+      });
     }
   } finally {
     await browser.close();
@@ -188,8 +247,8 @@ function reportMarkdown(metrics) {
   return [
     "# Línea base de consumo — Store OS vs store-os-dev",
     "",
-    `Generado: ${new Date().toISOString()} · Fuente: peticiones Firestore por fase + log crudo del SDK.`,
-    "Lecturas facturables ≈ documentos entregados (log crudo por fase); las peticiones clasifican el tipo de consulta.",
+    `Generado: ${new Date().toISOString()} · Emulador clasificador: ${emulatorOrigin} · Fuente: peticiones Firestore por fase + log crudo del SDK.`,
+    "Notas de lectura (#192 QA): las cifras son PETICIONES, no lecturas facturables (un batchGet con documentos `missing` cuenta 1); la columna Listen cuenta flushes del canal WebChannel multiplexado (magnitud estable, no aperturas exactas); las conclusiones sobre ausencia de cuellos de botella cubren los flujos medidos y son inferencia direccional hasta medir multilínea, pagos/compras y catálogos grandes.",
     "",
     `| Fase | ${columns.join(" | ")} | ms |`,
     `|---|${columns.map(() => "---").join("|")}|---|`,

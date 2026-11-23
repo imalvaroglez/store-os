@@ -55,7 +55,7 @@ npm run test           # vitest (unit + design-system gate)
 npm run test:rules     # pruebas de firestore.rules contra el emulador (G-P01/G-P02/G-P05/G-P06)
 npm run e2e            # playwright frontend (smoke + responsive + theme, móvil + escritorio)
 npm run e2e:firebase   # pruebas contra el emulador Firebase (requiere `npm run emulators`)
-npm run emulators      # Firebase Auth + Firestore emuladores en localhost
+npm run emulators      # Auth + Firestore + Storage + Functions emuladores en localhost
 npm run preview        # build de producción
 ```
 
@@ -67,9 +67,9 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 
 ## Promoción de Preview a producción
 
-`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y solo recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. El mismo commit revisado en el PR y la rama `main` es el que se libera; no se copia código manualmente. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
+`store-os-dev` es el único destino para desarrollo, pruebas y Preview. `store-os-f7cf8` es producción y normalmente recibe releases vía CI — ejecutados por una persona o por el agente bajo la autorización permanente del PO (2026-11-08), con CI completo en verde, revisión independiente sin contexto y release guard. En la vía normal se libera el commit revisado e integrado en `main`. Si una validación o reparación actualiza proyecciones públicas en dev, documenta el paso equivalente para la liberación. Nunca copies el seed ni datos sintéticos de dev a producción.
 
-**Excepción Sev-1 (declarada por el PO; ver `docs/runbook-sev1-hotfix.md`):** durante un incidente activo de dinero/datos, el despacho `release_production=true` puede ir acompañado de `sev1_reuse_ci=true`: las suites se reusan solo si `sev1-verify` prueba que el commit exacto despachado (punta de `main`) ya pasó `build-test` y `rules-and-e2e` en su push; falla cerrado en cualquier duda. El release guard de versión+notas, el despliegue de reglas con paridad y la verificación post-release NO se omiten. La vía normal queda intacta.
+**Excepción Sev-1 (declarada por el PO; ver [runbook](docs/runbook-sev1-hotfix.md)):** si el PO autoriza expresamente la vía directa, se puede publicar un parche acotado de la aplicación sobre el commit que sirve producción sin esperar CI global ni merge. Requiere reproducción y prueba enfocada, build, versión y notas, comprobación del despliegue y registro del commit para incorporar el arreglo a `main`. La vía directa es exclusivamente para parches de aplicación: reglas Firestore o índices requieren su ruta separada con CI y paridad, y toda reparación de datos requiere alcance exacto, respaldo verificado y autorización expresa separada. Si el commit exacto de `main` ya pasó ambas suites, también se puede usar `sev1_reuse_ci=true` para evitar repetirlas. La vía normal conserva sus compuertas.
 
 ## Regla de Firebase
 
@@ -77,7 +77,7 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Todo desarrollo conectado, prueba contra emuladores y Preview usa el ID `store-os-dev`.
 - Los emuladores usan ese mismo ID y el bucket de dev, pero todos sus servicios apuntan a `127.0.0.1`; no se crea otro proyecto ni namespace para el trabajo local.
 - `.firebaserc` deja `store-os-dev` como proyecto predeterminado. Todo comando Firebase que permita elegir proyecto debe indicar el destino explícitamente; los comandos de desarrollo apuntan a `store-os-dev`.
-- Producción (`store-os-f7cf8`) solo recibe releases vía CI (persona o agente bajo la autorización permanente del PO, 2026-11-08). El trabajo de desarrollo nunca ejecuta operaciones de datos contra producción.
+- Producción (`store-os-f7cf8`) recibe releases vía CI, salvo la excepción Sev-1 documentada. El trabajo de desarrollo nunca ejecuta operaciones de datos contra producción.
 
 ## Regla permanente de arquitectura administrativa
 
@@ -85,12 +85,12 @@ Para validar la interfaz, las rutas y el flujo público usa el build de producci
 - Si Firebase no está configurado o falla, mostrar un error explícito y no aparentar éxito ni cambiar a otro almacenamiento.
 - Se conservan el carrito público, preferencias de tienda y tema, borradores de pedido asociados al UID y la infraestructura PWA. El storefront público sigue siendo anónimo y lee las proyecciones públicas Firebase.
 - El panel administrativo requiere una sesión de Firebase Auth y guarda sus datos en Firestore. Si Auth o Firebase fallan, se muestra un error; nunca se abre un almacén local.
-- La Fase B de erradicación de persistencia administrativa local se implementa en `chore/eradicate-local-mode`; su spec y criterios viven en `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`.
+- La erradicación de la persistencia administrativa local (Fase B) ya está integrada (PR #111); su spec y criterios viven en `docs/superpowers/specs/2026-10-30-eradicate-local-mode-design.md`.
 
 ## Arquitectura (lo esencial)
 
 - **Auth + roles:** `src/app/firebase/`. Email/password + Google; `super_admin` solo por los correos de plataforma (`admin@store.os`, `imalvaroglez@gmail.com`); los demás `member`. Las rutas administrativas requieren sesión; las rutas públicas del catálogo no.
-- **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules` (super-admin + miembros por tienda). El adaptador `firestoreData.ts` acota lecturas a las tiendas accesibles.
+- **Cloud:** Firestore en colecciones raíz (`users`, `stores`, `products`, `customers`, `orders`, además de compras, gastos, cierres y proyecciones públicas — ver `firestore.rules`; las reglas de venta viven como campos de tienda y categoría) + membresía (`memberUids`, `ownerUid`, `pendingInvites`). Reglas en `firestore.rules` (super-admin + miembros por tienda). El adaptador `firestoreData.ts` acota lecturas a las tiendas accesibles.
 - **Estado:** `StoreProvider` mantiene el estado administrativo en memoria y lo sincroniza con Firestore. `localStorage` conserva únicamente preferencias, carrito público y borradores asociados a una persona autenticada.
 - **Selector de tienda:** "¿Quién opera hoy?" (`StorePickerScreen`) tras iniciar sesión; "Cambiar tienda" regresa a él. Gestión completa (renombrar / cambiar tipo / WhatsApp / miembros / eliminar) en `StoreSettingsScreen`.
 - **Sistema de diseño:** todo en `src/design-system/`, importado desde el barrel `index.ts`. Gate de cumplimiento: falla si `src/features/**` o `src/app/**` usan `<button>`/`<select>`/`<input>` crudos (excepción: `ErrorBoundary`).
@@ -235,7 +235,7 @@ Guía completa en `docs/DEPLOYMENT.md` (Firebase + Vercel + variables de entorno
 
 ### Ambientes y backends (cableado)
 
-Desarrollo y Preview usan `store-os-dev`. Producción usa `store-os-f7cf8` y solo recibe releases vía CI (persona o agente con la autorización permanente del PO, 2026-11-08). El proyecto predeterminado de Firebase es dev. Los emuladores locales usan el mismo ID de dev y servicios en `127.0.0.1`.
+Desarrollo y Preview usan `store-os-dev`. Producción usa `store-os-f7cf8` y recibe releases vía CI, salvo la excepción Sev-1 documentada. El proyecto predeterminado de Firebase es dev. Los emuladores locales usan el mismo ID de dev y servicios en `127.0.0.1`.
 
 | Ambiente | Backend Firebase | Cómo se cablea |
 |---|---|---|

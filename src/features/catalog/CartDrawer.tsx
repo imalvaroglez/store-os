@@ -431,10 +431,17 @@ export function CartDrawer({
               label="Tu nombre"
               labelClassName="sr-only"
               placeholder="Escribe tu nombre para identificarte"
+              maxLength={60}
               value={customerName}
               onChange={(event) => {
-                setCustomerName(event.target.value);
-                saveCartName(store.slug, event.target.value);
+                // #219 (catálogo público audit): a NAME is one line — pasted
+                // newlines/tabs collapse to spaces and the capture never
+                // exceeds 60, so the WhatsApp intro can't grow unbounded.
+                // End spaces stay while typing; use-time trim already lives in
+                // buildCartOrderUrl/saveCartName.
+                const clean = event.target.value.replace(/[\r\n\t]+/g, " ").slice(0, 60);
+                setCustomerName(clean);
+                saveCartName(store.slug, clean);
               }}
             />
             {/* 1.13.1: ONE semantic control — a single link styled as the

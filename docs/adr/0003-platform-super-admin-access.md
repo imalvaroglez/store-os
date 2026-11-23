@@ -39,7 +39,9 @@ pero eso no cambia las allow-lists de `publicStores`, `publicCatalogs` ni
 `publicProducts`.
 
 La cuenta `admin@store.os` verificada es la identidad de plataforma permitida
-para conservar o recuperar el rol `super_admin`. No se agrega un panel nuevo en
+para conservar o recuperar el rol `super_admin`.
+(*Actualización 2026-11-12, #353:* la allowlist tiene ahora dos correos —
+`admin@store.os` y `imalvaroglez@gmail.com`; ver `firestore.rules` y `auth.ts`.) No se agrega un panel nuevo en
 esta decisión: el acceso se ejerce mediante el selector de tiendas y las
 pantallas administrativas existentes.
 
