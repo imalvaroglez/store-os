@@ -24,6 +24,8 @@ import type {
   PricingRulesConfig,
   PricingRule,
   OrderDeliveryLine,
+  CardPayment,
+  PurchasePaymentMethod,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -33,6 +35,7 @@ import { nowIso, todayIso } from "../lib/dates";
 import { reservationDeltasForOrderChange } from "../lib/inventory";
 import { receivedProductsFromStockUpdates } from "../lib/purchases";
 import { ruleChangeEvent } from "../lib/priceDiagnostics";
+import { ensureStoreFinancials, loadCardPayments, saveCardPayment } from "./firebase/firestoreData";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
@@ -71,6 +74,7 @@ import {
   recordRuleChangeEvent,
   projectPublicForStore,
   deleteEntity,
+  retainStoreEvidence,
   claimSlug,
   republishStockSignals,
   unprojectPublicForStore,
@@ -314,6 +318,10 @@ type StoreContextValue = {
   stateStatus: "idle" | "loading" | "ready" | "error";
   stateError: string | null;
   retryStateLoad: () => void;
+  /** #279: from-activation position state + its on-demand actions. */
+  financial: { status: "idle" | "loading" | "ready" | "error"; activatedAt?: string; cardPayments: CardPayment[] };
+  loadFinancialPosition: () => Promise<void>;
+  registerCardPayment: (input: { amountCents: number; date: string; note?: string }) => Promise<void>;
   /**
    * A background WRITE that Firestore rejected (the initial LOAD failure is
    * `stateError` instead). `retry` replays the failed operation — never a page
@@ -322,6 +330,9 @@ type StoreContextValue = {
   syncError: { label: string; retry: () => Promise<void> } | null;
   dismissSyncError: () => void;
   draftOwnerId: string;
+  /** The signed-in operator (uid + role) — screens gate owner-only actions
+   * without every test tree needing an AuthProvider. #474. */
+  authUser: ReturnType<typeof useAuth>["user"];
   addStore: (input: Omit<Store, "id" | "createdAt" | "updatedAt">) => Promise<Store>;
   updateStore: (patch: Partial<Store> & { id: string }) => Promise<void>;
   saveStorefront: (storeId: string, storefront: Storefront) => Promise<void>;
@@ -368,6 +379,10 @@ type StoreContextValue = {
   upsertSupplier: (supplier: Supplier) => Promise<void>;
   deleteSupplier: (supplierId: string) => Promise<void>;
   upsertPurchase: (purchase: Purchase, expectedRevision?: number | null, baseline?: Purchase) => Promise<Purchase>;
+  /** #279 QA (MAYOR-3): classify (or reclassify) a received purchase's
+   * payment method — the only edit received evidence allows besides
+   * saleCostAdjustments (rules-enforced). */
+  classifyPurchasePayment: (purchase: Purchase, paymentMethod: PurchasePaymentMethod | undefined) => Promise<void>;
   /**
    * Bulk-create private draft products and save the purchase that links them
    * in one atomic commit (cloud-only: the PDF import flow requires cloud).
@@ -427,6 +442,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const cloud = !!user;
   const [state, dispatch] = useReducer(reducer, undefined, emptyAppState);
+  // Background retries must use this render's catalog, not their old capture.
+  const latestState = useRef(state);
+  latestState.current = state;
   const [cloudLoad, setCloudLoad] = useState<{
     uid: string | null;
     status: "idle" | "loading" | "ready" | "error";
@@ -437,6 +455,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // failure lives in stateError/stateStatus). Versioned so a retry can't clear
   // a notice a newer failure already replaced.
   const [syncError, setSyncError] = useState<StoreContextValue["syncError"]>(null);
+  // #279: the from-activation financial position state — loaded on demand
+  // (two bounded reads, no listener) and reset when the active store changes.
+  const [financial, setFinancial] = useState<{ status: "idle" | "loading" | "ready" | "error"; activatedAt?: string; cardPayments: CardPayment[] }>({ status: "idle", cardPayments: [] });
+  useEffect(() => {
+    setFinancial({ status: "idle", cardPayments: [] });
+  }, [state.activeStoreId]);
   const syncErrorVersion = useRef(0);
   // Hydration-race guard: auth can change while a load/write/retry is in
   // flight. A previous account's late landing must never reach the provider
@@ -454,7 +478,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * it: the failure raises a retryable Spanish notice (syncError) scoped to
    * the uid that started the write. `retry` replays the operation itself.
    */
-  function persistInBackground(label: string, write: () => Promise<unknown>) {
+  function persistInBackground(
+    label: string,
+    write: () => Promise<unknown>,
+    retryWrite: () => Promise<unknown> = write
+  ) {
     const ownerUid = user?.uid;
     void write().catch((error) => {
       console.error(`[Firestore] No se pudo ${label}:`, error);
@@ -462,7 +490,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const version = ++syncErrorVersion.current;
       setSyncError({ label, retry: async () => {
         if (currentUid.current !== ownerUid) return;
-        await write();
+        await retryWrite();
         if (currentUid.current === ownerUid && syncErrorVersion.current === version) {
           setSyncError(null);
         }
@@ -486,11 +514,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     paymentSession.current.uid = paymentUid;
     paymentSession.current.generation += 1;
   }
-  const [paymentCache, setPaymentCache] = useState({ uid: paymentUid, generation: paymentSession.current.generation, records: [] as OrderPayment[] });
+  // #279 QA (MAYOR-4): payments cache per ORDER, gated by the order's
+  // paymentsRevision — the position sweep only refetches orders whose money
+  // evidence actually changed, so openings stay bounded instead of O(pedidos).
+  // #279 QA (MAYOR-1): entries are keyed per order; consumers filter by store.
+  const [paymentCache, setPaymentCache] = useState({
+    uid: paymentUid,
+    generation: paymentSession.current.generation,
+    byOrder: {} as Record<string, { revision: number; payments: OrderPayment[] }>,
+  });
+  const paymentCacheRef = useRef(paymentCache);
+  paymentCacheRef.current = paymentCache;
   const payments = paymentCache.uid === paymentUid && paymentCache.generation === paymentSession.current.generation
-    ? paymentCache.records : [];
+    ? Object.values(paymentCache.byOrder).flatMap((entry) => entry.payments) : [];
   useEffect(() => {
-    setPaymentCache({ uid: paymentUid, generation: paymentSession.current.generation, records: [] });
+    setPaymentCache({ uid: paymentUid, generation: paymentSession.current.generation, byOrder: {} });
   }, [paymentUid]);
   useEffect(() => {
     paymentSession.current.mounted = true;
@@ -680,9 +718,67 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     stateStatus,
     stateError,
     retryStateLoad: () => setLoadAttempt((attempt) => attempt + 1),
+    financial,
+    loadFinancialPosition: async () => {
+      const storeId = state.activeStoreId;
+      if (!storeId) return;
+      setFinancial((prev) => ({ ...prev, status: "loading" }));
+      try {
+        // #279 QA (MAYOR-4): revision-gated incremental sweep — only orders
+        // whose paymentsRevision moved since the last pass are refetched
+        // (the first open pays the full cost once; openings afterwards read
+        // only what changed). A mid-read revision race leaves the order
+        // stale for the next round instead of failing the whole position.
+        const cachedByOrder = paymentCacheRef.current.uid === paymentUid && paymentCacheRef.current.generation === paymentSession.current.generation
+          ? paymentCacheRef.current.byOrder : {};
+        const storeOrders = state.orders.filter((order) => order.storeId === storeId);
+        const results = await Promise.all(
+          storeOrders.map((order) =>
+            cachedByOrder[order.id]?.revision === (order.paymentsRevision ?? 0)
+              ? Promise.resolve(null)
+              : fetchOrderPayments(order.id).catch(() => null)
+          )
+        );
+        const [marker, cardPayments] = await Promise.all([
+          ensureStoreFinancials(storeId),
+          loadCardPayments(storeId),
+        ]);
+        setPaymentCache((prev) => {
+          const base = prev.uid === paymentUid && prev.generation === paymentSession.current.generation ? { ...prev.byOrder } : {};
+          for (const result of results) {
+            if (result) base[result.order.id] = { revision: result.order.paymentsRevision ?? 0, payments: result.payments };
+          }
+          return { uid: paymentUid, generation: paymentSession.current.generation, byOrder: base };
+        });
+        // The store may have changed while loading — keep the freshest only.
+        setFinancial((prev) => (state.activeStoreId === storeId
+          ? { status: "ready", activatedAt: marker.activatedAt, cardPayments }
+          : prev));
+      } catch (error) {
+        console.error("[Firestore] Error al cargar la posición financiera:", error);
+        setFinancial((prev) => ({ ...prev, status: "error" }));
+      }
+    },
+    registerCardPayment: async (input: { amountCents: number; date: string; note?: string }) => {
+      const currentUser = requireAuthenticatedUser();
+      const storeId = state.activeStoreId;
+      if (!storeId) throw new Error("No hay una tienda activa.");
+      await saveCardPayment({
+        id: uid("cardpay"),
+        storeId,
+        date: input.date,
+        amountCents: input.amountCents,
+        ...(input.note ? { note: input.note } : {}),
+        createdAt: nowIso(),
+        createdBy: currentUser.uid,
+      });
+      const cardPayments = await loadCardPayments(storeId);
+      setFinancial((prev) => ({ ...prev, cardPayments }));
+    },
     syncError,
     dismissSyncError: () => { syncErrorVersion.current += 1; setSyncError(null); },
     draftOwnerId: user?.uid ?? "",
+    authUser: user ?? null,
     payments,
     addStore: async (input) => {
       const currentUser = requireAuthenticatedUser();
@@ -850,28 +946,53 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const store = state.stores.find((s) => s.id === storeId);
       dispatch({ type: "DELETE_STORE", storeId });
       if (store) {
-        persistInBackground("eliminar la tienda", () => deleteEntity(currentUser, "stores", storeId));
-        // Best-effort: delete the store's entities + product photos in the cloud.
-        state.products.filter((p) => p.storeId === storeId).forEach((p) => {
-          persistInBackground("eliminar un producto", () => deleteEntity(currentUser, "products", p.id));
-          persistInBackground("eliminar una foto", () => deleteProductImage(storeId, p.id));
+        // #375 (PO decision, 18-nov): retention with expulsion. Money evidence
+        // (paid orders + payments + priceEvents) stays frozen, readable only by
+        // platform. ONE sequential background job: the seal revokes the
+        // membership, so every membership-gated cleanup write (entities,
+        // Storage files, public projections) MUST land BEFORE it. The previous
+        // fire-and-forget shape raced the seal (H1, code review 4def270).
+        // Parity with the rules' delete guard: the rules judge KEY PRESENCE
+        // ('paymentsReceivedCents' in resource.data — net-zero corrections stay
+        // undeletable by design), and received purchases are NEVER deletable.
+        // Anything the rules retain, the client must not even attempt.
+        const moneyEvidence = (o: Order) => o.paymentsReceivedCents !== undefined
+          || (o.deposit ?? 0) > 0 || o.installmentsReservedAt !== undefined
+          || (o.deliveries?.length ?? 0) > 0 || o.inheritedDepositMaterialized === true
+          || (o.creditAppliedCents ?? 0) > 0 || (o.creditConsumedCents ?? 0) > 0;
+        const purchaseDeletable = (p: Purchase) => effectivePurchaseStatus(p) !== "received";
+        const storeProducts = state.products.filter((p) => p.storeId === storeId);
+        const storeCustomers = state.customers.filter((c) => c.storeId === storeId);
+        const freeOrders = state.orders.filter((o) => o.storeId === storeId && !moneyEvidence(o));
+        const storeSuppliers = state.suppliers.filter((x) => x.storeId === storeId);
+        const storePurchases = state.purchases.filter((p) => p.storeId === storeId && purchaseDeletable(p));
+        // Received purchases (or legacy status-less ones) are RETAINED with the
+        // money evidence — the rules deny their delete to everyone, forever.
+        persistInBackground("eliminar la tienda", async () => {
+          // 1) Operational cleanup while the owner still passes the rules.
+          // allSettled: a residual denial (e.g. a doc already deleted on a
+          // retry) must NOT abort the chain — the seal (privacy: public catalog
+          // off + membership expelled) proceeds; leftovers stay inaccessible
+          // except platform, which is the retention doctrine. Idempotent retry.
+          await Promise.allSettled([
+            deleteEntity(currentUser, "stores", storeId),
+            ...storeProducts.map((p) => deleteEntity(currentUser, "products", p.id)),
+            ...storeCustomers.map((c) => deleteEntity(currentUser, "customers", c.id)),
+            ...freeOrders.map((o) => deleteEntity(currentUser, "orders", o.id)),
+            ...storeSuppliers.map((x) => deleteEntity(currentUser, "suppliers", x.id)),
+            ...storePurchases.map((p) => deleteEntity(currentUser, "purchases", p.id)),
+          ]);
+          // Storage files (photos + supplier PII PDFs): best-effort, but BEFORE
+          // the seal — storage rules also resolve membership from adminStores.
+          await Promise.allSettled([
+            ...storeProducts.map((p) => deleteProductImage(storeId, p.id)),
+            ...storePurchases.filter((p) => p.documentPath).map((p) => deletePurchasePdf(p.documentPath!)),
+          ]);
+          // 2) Public projections off (still membership-gated).
+          await unprojectPublicForStore(store);
+          // 3) The seal LAST: expel every member and freeze pending invites.
+          await retainStoreEvidence(currentUser, storeId);
         });
-        state.customers.filter((c) => c.storeId === storeId).forEach((c) => persistInBackground("eliminar una clienta", () => deleteEntity(currentUser, "customers", c.id)));
-        state.orders.filter((o) => o.storeId === storeId).forEach((o) => persistInBackground("eliminar un pedido", () => deleteEntity(currentUser, "orders", o.id)));
-        state.suppliers.filter((s) => s.storeId === storeId).forEach((s) => persistInBackground("eliminar un proveedor", () => deleteEntity(currentUser, "suppliers", s.id)));
-        state.purchases.filter((p) => p.storeId === storeId).forEach((p) => persistInBackground("eliminar una compra", () => deleteEntity(currentUser, "purchases", p.id)));
-        // Supplier PDFs are PII: delete them along with the store. Best-effort
-        // (consistent with the entity deletes above) — a failure is logged so
-        // orphaned files are traceable, not guaranteed cleanup.
-        state.purchases
-          .filter((p) => p.storeId === storeId && p.documentPath)
-          .forEach((p) =>
-            deletePurchasePdf(p.documentPath!).catch((e) =>
-              console.error(`[Storage] No se pudo borrar el PDF de la compra ${p.id}:`, e)
-            )
-          );
-        // Remove the public catalog projection + release the slug.
-        persistInBackground("retirar el catálogo público", () => unprojectPublicForStore(store));
       }
     },
     inviteMember: async (storeId, email) => {
@@ -963,7 +1084,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const next = state.products.some((p) => p.id === product.id)
             ? state.products.map((p) => (p.id === product.id ? saved : p))
             : [...state.products, saved];
-          await upsertPublicProduct(saved, store.slug, next, state.categories, store);
+          // #489: the canonical adjustment is already committed. A public
+          // projection failure must retry ONLY publication, never invite the
+          // editor to replay its stock delta. Use the existing visible notice.
+          persistInBackground("actualizar el catálogo público del producto guardado", () =>
+            upsertPublicProduct(saved, store.slug, next, state.categories, store),
+            async () => {
+              const current = latestState.current;
+              const currentStore = current.stores.find((s) => s.id === saved.storeId);
+              const currentProduct = current.products.find((p) => p.id === saved.id && p.storeId === saved.storeId);
+              if (!currentStore || !currentProduct) return;
+              await upsertPublicProduct(currentProduct, currentStore.slug, current.products, current.categories, currentStore);
+            }
+          );
         }
       }
       return saved;
@@ -1039,6 +1172,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const currentUser = requireAuthenticatedUser();
       dispatch({ type: "DELETE_SUPPLIER", supplierId });
       await deleteEntity(currentUser, "suppliers", supplierId);
+    },
+    classifyPurchasePayment: async (purchase, paymentMethod) => {
+      await persistEntity("purchases", { ...purchase, paymentMethod, updatedAt: nowIso() } as unknown as { id: string } & Record<string, unknown>);
+      dispatch({ type: "REPLACE_CLOUD_STATE", state: { ...state, purchases: state.purchases.map((existing) => (existing.id === purchase.id ? { ...existing, paymentMethod, updatedAt: nowIso() } : existing)) } });
     },
     upsertPurchase: async (purchase, expectedRevision, baseline) => {
       requireAuthenticatedUser();
@@ -1344,10 +1481,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const generation = paymentSession.current.generation;
       const result = await fetchOrderPayments(orderId);
       if (!paymentSession.current.mounted || paymentSession.current.uid !== user.uid || paymentSession.current.generation !== generation) return;
-      setPaymentCache((prev) => ({
-        uid: user.uid, generation,
-        records: mergePayments(prev.uid === user.uid && prev.generation === generation ? prev.records : [], result.payments),
-      }));
+      setPaymentCache((prev) => {
+        const base = prev.uid === user.uid && prev.generation === generation ? prev.byOrder : {};
+        return {
+          uid: user.uid, generation,
+          byOrder: {
+            ...base,
+            [orderId]: {
+              revision: Math.max(base[orderId]?.revision ?? 0, result.order.paymentsRevision ?? 0),
+              payments: mergePayments(base[orderId]?.payments ?? [], result.payments),
+            },
+          },
+        };
+      });
       dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });
     },
     registerOrderPayment: async (order, input) => {
@@ -1361,10 +1507,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         input.kind === "payment" ? input.inherited : undefined
       );
       if (!paymentSession.current.mounted || paymentSession.current.uid !== user.uid || paymentSession.current.generation !== generation) return;
-      setPaymentCache((prev) => ({
-        uid: user.uid, generation,
-        records: mergePayments(prev.uid === user.uid && prev.generation === generation ? prev.records : [], result.payments),
-      }));
+      setPaymentCache((prev) => {
+        const base = prev.uid === user.uid && prev.generation === generation ? prev.byOrder : {};
+        return {
+          uid: user.uid, generation,
+          byOrder: {
+            ...base,
+            [order.id]: {
+              revision: Math.max(base[order.id]?.revision ?? 0, result.order.paymentsRevision ?? 0),
+              // Per-call receipts MERGE into the order's entry: a late or
+              // out-of-order response still contributes its evidence without
+              // erasing the rest.
+              payments: mergePayments(base[order.id]?.payments ?? [], result.payments),
+            },
+          },
+        };
+      });
       // Canonical amounts replace a versioned snapshot; a retried receipt is
       // never added to the local accumulator and late responses cannot undo it.
       dispatch({ type: "APPLY_ORDER_PAYMENTS", order: result.order });

@@ -73,7 +73,7 @@ Cada tema (`paper`, `maximalist`, `luxury`) es una **personalidad completa**: co
 Router de historia mínimo y sin dependencias (`src/lib/router.ts` + hook `useRoute` en `src/app/router.ts`). `navigate(path)` hace `pushState` + `popstate` sintético.
 
 - `/catalogo/:slug` → catálogo público (vista completa, sin shell, sin datos privados).
-- Cualquier otra ruta → admin shell, donde el primer segmento mapea a un tab (`/`, `/catalogo-admin`, `/pedidos`, `/clientes`, `/inventario`).
+- Cualquier otra ruta → admin shell: navegación de cuatro áreas (#454) — Ventas (`/pedidos`, `/clientes`, `/productos/ranking`), Inventario y catálogo (`/productos`, `/productos/categorias|reglas|estrategia`), Compras y abastecimiento (`/productos/compras`, `/productos/empaques`), Administración (`/productos/gastos`, `/productos/cierre|reparto|simulador`) — más `/usuarios` (solo super_admin) y `/tienda/configuracion`. `/catalogo-admin` y `/inventario` son redirecciones de rutas heredadas.
 - `appType: "spa"` en Vite para fallback a `index.html` en recargas de rutas profundas.
 
 ## Layout responsive (`src/app/AppShell.tsx`)
@@ -92,5 +92,5 @@ Router de historia mínimo y sin dependencias (`src/lib/router.ts` + hook `useRo
 
 - **Autenticación:** `AuthProvider` observa la sesión de Firebase y protege las rutas privadas.
 - **Datos cloud:** `firestoreData.ts` contiene las lecturas y escrituras; las reglas de Firestore aplican el aislamiento por tienda.
-- **Estado de interfaz:** `StoreProvider` coordina los cambios visibles y las operaciones administrativas de Firestore. La ruta heredada de persistencia local sigue pendiente de erradicación como P0; no se debe ampliar.
+- **Estado de interfaz:** `StoreProvider` coordina los cambios visibles y las operaciones administrativas de Firestore. La persistencia administrativa local fue erradicada (spec 2026-10-30-eradicate-local-mode): al arrancar se retira la clave legada `store_os_state_v1` y nunca se vuelve a escribir estado administrativo en el navegador.
 - **Temas:** cada tema es un archivo en `src/design-system/theme/` que implementa el mismo tipo `Theme`.

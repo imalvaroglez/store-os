@@ -151,3 +151,24 @@ describe("#459 r6 — ciclo de vida del intento en la UI", () => {
     expect(mocks.authorizeProfitDistribution.mock.calls[1][0].authorizedAmountCents).toBe(60000);
   });
 });
+
+describe("#219 — contratos de captura del Reparto (auditoría Cierre/Reparto)", () => {
+  it("rechaza un importe a autorizar con fracción menor al centavo — nunca redondeo silencioso en dinero real", async () => {
+    render(<ToastProvider><ProfitDistributionScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText(/Cerrado · v1/i)).toBeTruthy());
+    const field = screen.getByLabelText(/Importe a autorizar/i);
+    fireEvent.change(field, { target: { value: "100.001" } });
+    expect(await screen.findByText(/pesos con centavos \(máximo dos decimales\)/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Revisar y autorizar reparto/i })).toBeDisabled();
+    expect(mocks.authorizeProfitDistribution).not.toHaveBeenCalled();
+  });
+
+  it("un importe grande válido de dos decimales se autoriza sin fricción (regresión de magnitud)", async () => {
+    mocks.loadClosesForStore.mockResolvedValue([closeDoc("2026-11", 30000000)]); // $300,000 disponibles
+    render(<ToastProvider><ProfitDistributionScreen /></ToastProvider>);
+    await waitFor(() => expect(screen.getByText(/Cerrado · v1/i)).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Importe a autorizar/i), { target: { value: "131072.02" } });
+    expect(screen.queryByText(/máximo dos decimales/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /Revisar y autorizar reparto/i })).toBeEnabled();
+  });
+});

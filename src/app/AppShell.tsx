@@ -33,6 +33,7 @@ import { PricingRulesScreen } from "../features/pricing/PricingRulesScreen";
 import { PricingStrategyScreen } from "../features/pricing/PricingStrategyScreen";
 import { ResellerRankingScreen } from "../features/close/ResellerRankingScreen";
 import { PriceDiagnosticsScreen } from "../features/pricing/PriceDiagnosticsScreen";
+import { ContributionSimulatorScreen } from "../features/pricing/ContributionSimulatorScreen";
 import { ProfitDistributionScreen } from "../features/close/ProfitDistributionScreen";
 import { ProfitSimulatorScreen } from "../features/close/ProfitSimulatorScreen";
 import { StoreSettingsScreen } from "../features/stores/StoreSettingsScreen";
@@ -64,7 +65,7 @@ export function AppShell() {
   if (storeSettingsRoute) {
     tab = "tienda";
   } else if (seg === "productos") {
-    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : sub === "reparto" ? "productos_reparto" : sub === "simulador" ? "productos_simulador" : sub === "diagnostico" ? "productos_diagnostico" : sub === "ranking" ? "productos_ranking" : "productos";
+    tab = sub === "categorias" ? "productos_categorias" : sub === "compras" ? "productos_compras" : sub === "gastos" ? "productos_gastos" : sub === "empaques" ? "productos_empaques" : sub === "reglas" ? "productos_reglas" : sub === "estrategia" ? "productos_estrategia" : sub === "cierre" ? "productos_cierre" : sub === "reparto" ? "productos_reparto" : sub === "simulador" ? "productos_simulador" : sub === "simulador-contribucion" ? "productos_simulador_contribucion" : sub === "diagnostico" ? "productos_diagnostico" : sub === "ranking" ? "productos_ranking" : "productos";
   } else {
     tab = TAB_FOR_PATH[seg] ?? "inicio";
   }
@@ -184,6 +185,9 @@ export function AppShell() {
       break;
     case "productos_diagnostico":
       screen = <PriceDiagnosticsScreen key={activeStore?.id ?? "store"} />;
+      break;
+    case "productos_simulador_contribucion":
+      screen = <ContributionSimulatorScreen key={activeStore?.id ?? "store"} />;
       break;
     case "productos_estrategia":
       // key: switching stores must never carry one store's draft into another.
