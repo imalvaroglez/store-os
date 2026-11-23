@@ -10,6 +10,10 @@ import {
   findCombination,
   isVariantProduct,
   lineVariant,
+  colorPieces,
+  mergeCombinationCost,
+  resolveColorClave,
+  resolveCombinationClave,
   sizeShelfError,
   storeClaves,
   suggestSizeSkuSuffix,
@@ -395,5 +399,59 @@ describe("storeClaves — unicidad contra todo lo que ya existe (#461)", () => {
   it("sin fichas ni claves devuelve un conjunto vacío", () => {
     expect(storeClaves([], "s1").size).toBe(0);
     expect(storeClaves([{ id: "x", storeId: "s1" } as unknown as Product], "s1").size).toBe(0);
+  });
+});
+
+// ── Revisión de código independiente, 23-nov ────────────────────────────────
+describe("revision 23-nov — piezas de un color con tallas, claves y costo al unir (#461)", () => {
+  const size = (id: string, label: string, quantityOnHand?: number, cost?: number) => ({ id, size: label, cost, ...(quantityOnHand !== undefined ? { quantityOnHand } : {}), createdAt: "", updatedAt: "" });
+
+  it("colorPieces: lo que un color tiene en tallas más lo «sin talla»; en un color simple, su existencia", () => {
+    expect(colorPieces({ sizes: [size("a", "6", 3), size("b", "5", 1)], quantityOnHand: 2 } as ProductVariant)).toBe(6);
+    expect(colorPieces({ sizes: [size("a", "6", 3), size("b", "5")], quantityOnHand: undefined } as ProductVariant)).toBe(3);
+    expect(colorPieces({ sizes: [size("a", "6"), size("b", "5")] } as ProductVariant)).toBeNull();
+    expect(colorPieces({ quantityOnHand: 4 } as ProductVariant)).toBe(4);
+    expect(colorPieces({} as ProductVariant)).toBeNull();
+  });
+
+  const design = "SOL";
+  const loadedColor = { skuSuffix: "D", sku: "SOL-D" } as ProductVariant;
+  it("la clave de un color: un sufijo editado la re-deriva; sin editar se conserva la clave materializada (aunque sea propia)", () => {
+    expect(resolveColorClave(design, loadedColor, { ...loadedColor, skuSuffix: "DO" })).toBe("SOL-DO");
+    expect(resolveColorClave("LUNA", loadedColor, { ...loadedColor })).toBe("SOL-D"); // personalizada, sufijo intacto
+    expect(resolveColorClave(design, undefined, { skuSuffix: "P" })).toBe("SOL-P"); // color nuevo
+    expect(resolveColorClave(design, undefined, {})).toBeUndefined();
+  });
+
+  it("la clave de una talla: el sufijo editado re-deriva desde la clave FINAL del color; una clave propia intacta se conserva", () => {
+    const loadedSize = { skuSuffix: "6", sku: "SOL-D-6" };
+    expect(resolveCombinationClave(design, loadedColor, loadedSize as VariantSize, { sku: "SOL-D" }, { ...loadedSize, skuSuffix: "SEIS" })).toBe("SOL-D-SEIS");
+    // El color cambió de clave y la talla derivaba de la anterior → se re-deriva con su sufijo
+    expect(resolveCombinationClave(design, loadedColor, loadedSize as VariantSize, { sku: "SOL-DO" }, loadedSize as VariantSize)).toBe("SOL-DO-6");
+    // Clave propia de la talla (p. ej. la de una ficha origen fusionada) sin editar → se conserva
+    const own = { sku: "SOL-X-7", cost: 1 } as VariantSize;
+    expect(resolveCombinationClave(design, loadedColor, own, { sku: "SOL-D" }, own)).toBe("SOL-X-7");
+    expect(resolveCombinationClave(design, loadedColor, undefined, { sku: "SOL-D" }, { skuSuffix: "7" } as VariantSize)).toBe("SOL-D-7");
+    expect(resolveCombinationClave(design, loadedColor, undefined, { sku: "SOL-D" }, {} as VariantSize)).toBeUndefined();
+  });
+
+  it("al unir dos estantes de la misma combinación el costo se pondera; un dato faltante jamás se vuelve cero ni borra el conocido", () => {
+    expect(mergeCombinationCost(400, 2, 450, 3)).toBeCloseTo(430, 6);
+    expect(mergeCombinationCost(undefined, 3, 450, 3)).toBe(450); // desconocido → el que llega (como en una recepción)
+    expect(mergeCombinationCost(400, 2, undefined, 3)).toBe(400); // el que llega no trae costo → se conserva el conocido
+    expect(mergeCombinationCost(undefined, 3, undefined, 3)).toBeUndefined();
+    expect(mergeCombinationCost(0, 4, 200, 2)).toBeCloseTo(200 * 2 / 6, 6); // cero confirmado promedia como cero
+    expect(mergeCombinationCost(undefined, undefined, 450, 3)).toBe(450); // estante sin rastrear
+    expect(mergeCombinationCost(400, undefined, undefined, undefined)).toBe(400);
+  });
+
+  it("storeClaves no reserva las claves de fichas origen ya fusionadas: su clave vive ahora en la combinación", () => {
+    const products = [
+      { id: "main", storeId: "s1", sku: "SOL", variants: [{ id: "v", color: "Dorado", sku: "SOL-D", sizes: [{ id: "z", size: "7", sku: "SOL-X-7" }] }] },
+      { id: "origin", storeId: "s1", sku: "SOL-X-7", status: "archived", mergedInto: { productId: "main", variantId: "v", sizeId: "z", at: "" } },
+      { id: "other", storeId: "s1", sku: "OTRO", status: "archived" },
+    ] as unknown as Product[];
+    expect(storeClaves(products, "s1", "main").has("SOL-X-7")).toBe(false);
+    expect(storeClaves(products, "s1", "main").has("OTRO")).toBe(true); // archivada sin fusionar: sigue reservada
   });
 });

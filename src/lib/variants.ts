@@ -231,13 +231,16 @@ export function combinationPublishError(product: Pick<Product, "sku" | "variants
  * cased, for uniqueness checks of a new combination (#461: claves travel in
  * purchases, tickets and returns, so a repeated one is ambiguous). */
 export function storeClaves(
-  products: ReadonlyArray<Pick<Product, "id" | "storeId" | "sku" | "variants">>,
+  products: ReadonlyArray<Pick<Product, "id" | "storeId" | "sku" | "variants" | "mergedInto">>,
   storeId: string,
   excludeProductId?: string
 ): Set<string> {
   const claves = new Set<string>();
   for (const product of products) {
     if (product.storeId !== storeId || product.id === excludeProductId) continue;
+    // A merged origin retired from sale for good: its clave lives on in the
+    // combination that took it, so it no longer reserves it (review 23-nov).
+    if (product.mergedInto) continue;
     if (product.sku) claves.add(product.sku.toUpperCase());
     for (const variant of product.variants ?? []) {
       if (variant.sku) claves.add(variant.sku.toUpperCase());
@@ -245,6 +248,77 @@ export function storeClaves(
     }
   }
   return claves;
+}
+
+/** Everything a color holds — its tallas plus the pieces still «sin talla».
+ * Null when nothing is tracked: a simple color without a captured shelf, or
+ * tallas all untracked with no loose pieces. */
+export function colorPieces(variant: Pick<ProductVariant, "quantityOnHand" | "sizes">): number | null {
+  if (!variantHasSizes(variant)) {
+    return typeof variant.quantityOnHand === "number" && Number.isFinite(variant.quantityOnHand) ? variant.quantityOnHand : null;
+  }
+  let total = 0;
+  let tracked = false;
+  for (const size of variant.sizes!) {
+    if (typeof size.quantityOnHand !== "number") continue;
+    tracked = true;
+    total += size.quantityOnHand;
+  }
+  const unassigned = unassignedPieces(variant);
+  if (unassigned !== 0) tracked = true;
+  return tracked ? total + unassigned : null;
+}
+
+/** The clave a COLOR takes after a save (review 23-nov): a suffix the operator
+ * edited re-derives the clave; untouched, the materialized clave is kept —
+ * even a custom one — so a clave already in use never changes by inference. */
+export function resolveColorClave(
+  designSku: string,
+  loaded: ProductVariant | undefined,
+  next: Pick<ProductVariant, "skuSuffix" | "sku">
+): string | undefined {
+  const derived = next.skuSuffix ? variantSku(designSku, { skuSuffix: next.skuSuffix }) : undefined;
+  if (!loaded || (next.skuSuffix ?? "") !== (loaded.skuSuffix ?? "")) return derived ?? next.sku;
+  return next.sku ?? derived;
+}
+
+/** The clave a TALLA takes after a save, from the color's FINAL clave: an
+ * edited suffix re-derives it; when the color's clave changed and the talla
+ * derived from the previous one, it follows; an untouched custom clave (e.g.
+ * the one inherited from a merged origin) is kept. */
+export function resolveCombinationClave(
+  designSku: string,
+  loadedColor: ProductVariant | undefined,
+  loadedSize: VariantSize | undefined,
+  nextColor: Pick<ProductVariant, "sku" | "skuSuffix">,
+  nextSize: Pick<VariantSize, "skuSuffix" | "sku">
+): string | undefined {
+  const derive = (suffix?: string) => (suffix ? `${colorClave}-${suffix}` : undefined);
+  const colorClave = nextColor.sku ?? (nextColor.skuSuffix ? variantSku(designSku, { skuSuffix: nextColor.skuSuffix }) : undefined);
+  if (!colorClave) return nextSize.sku;
+  if (!loadedSize || !loadedColor) return nextSize.skuSuffix ? derive(nextSize.skuSuffix) : nextSize.sku; // new talla
+  if ((nextSize.skuSuffix ?? "") !== (loadedSize.skuSuffix ?? "")) return derive(nextSize.skuSuffix) ?? nextSize.sku;
+  const previousColorClave = loadedColor.sku ?? (loadedColor.skuSuffix ? variantSku(designSku, { skuSuffix: loadedColor.skuSuffix }) : undefined);
+  const followedTheColor = previousColorClave && loadedSize.skuSuffix && loadedSize.sku === `${previousColorClave}-${loadedSize.skuSuffix}`;
+  if (colorClave !== previousColorClave && followedTheColor) return derive(loadedSize.skuSuffix);
+  return nextSize.sku ?? derive(nextSize.skuSuffix ?? "");
+}
+
+/** The cost when two shelves of ONE combination merge (a ficha origin joining
+ * the unified design): both known → weighted; only one known → that one. A
+ * missing datum never becomes zero nor erases a known cost. A confirmed zero
+ * averages as zero, exactly like a reception would. */
+export function mergeCombinationCost(
+  existingCost: number | undefined,
+  existingQty: number | undefined,
+  incomingCost: number | undefined,
+  incomingQty: number | undefined
+): number | undefined {
+  if (typeof existingCost !== "number") return typeof incomingCost === "number" ? incomingCost : undefined;
+  if (typeof incomingCost !== "number") return existingCost;
+  if (!(typeof existingQty === "number" && existingQty > 0)) return incomingCost;
+  if (!(typeof incomingQty === "number" && incomingQty > 0)) return existingCost;
+  return (existingQty * existingCost + incomingQty * incomingCost) / (existingQty + incomingQty);
 }
 
 /** Pieces a color still holds OUTSIDE its tallas — its «sin talla» shelf:

@@ -194,6 +194,41 @@ describe("mergeProductOperational con tallas (#461)", () => {
     expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(/talla 5/);
   });
 
+  // ── Revisión independiente 23-nov: huecos de conservación del propio arreglo ──
+  it("repartir 2 piezas «sin talla» en una talla NUEVA las mueve, no las duplica: total 6 y residual limpio", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3), size("d5", "5", 1)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3), size("d5", "5", 1), size("d7", "7", 2)] })] });
+    const gold = mergeProductOperational(baseline, next, baseline).variants![0];
+    expect(gold.sizes!.map((s) => s.quantityOnHand)).toEqual([3, 1, 2]);
+    expect(gold.quantityOnHand).toBeUndefined();
+    expect(gold.sizes!.reduce((total, s) => total + (s.quantityOnHand ?? 0), 0)).toBe(6);
+  });
+
+  it("una talla nueva sobre un color SIN piezas sueltas sigue siendo una primera cuenta (no se toca el residual)", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 3)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 3), size("d7", "7", 4)] })] });
+    const gold = mergeProductOperational(baseline, next, baseline).variants![0];
+    expect(gold.sizes!.map((s) => s.quantityOnHand)).toEqual([3, 4]);
+    expect(gold.quantityOnHand).toBe(0);
+  });
+
+  it("quitar la última talla con 2 piezas «sin talla» las devuelve al color junto con la talla (3 + 2 = 5)", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2 })] });
+    expect(mergeProductOperational(baseline, next, baseline).variants![0].quantityOnHand).toBe(5);
+  });
+
+  it("un editor abierto ANTES de que otra sesión active tallas no las borra al guardar: se detiene", () => {
+    const baseline = product({ id: "p1", variants: [variant("v_gold", "Dorado", 5)] }); // lo que A abrió
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 3), size("d5", "5", 2)] })] }); // B activó tallas
+    const next = product({ id: "p1", variants: [sized("Dorado", { cost: 999, quantityOnHand: 5 })] }); // A sólo corrigió el costo del color
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(StaleProductError);
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(/ahora se vende por talla/);
+    // Si A no tocó nada del color, la ficha fresca (con tallas) se conserva sin más.
+    const untouched = mergeProductOperational(baseline, baseline, fresh);
+    expect(untouched.variants![0].sizes!.map((s) => s.quantityOnHand)).toEqual([3, 2]);
+  });
+
   it("talla nueva llega tal cual; sin baseline (crear) se respeta el formulario", () => {
     const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 2)] })] });
     expect(mergeProductOperational(undefined, next, undefined)).toBe(next);

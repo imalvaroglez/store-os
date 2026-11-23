@@ -31,9 +31,12 @@ import {
   type VariantSize,
 } from "../../types";
 import {
+  colorPieces,
   combinationPublishError,
   combinationSaveError,
   combinationSku,
+  resolveColorClave,
+  resolveCombinationClave,
   sizeShelfError,
   storeClaves,
   suggestSizeSkuSuffix,
@@ -277,7 +280,15 @@ export function ProductForm({
   function removeSize(variantId: string, sizeId: string) {
     const variant = variants.find((v) => v.id === variantId);
     if (!variant?.sizes) return;
-    patchVariant(variantId, { sizes: variant.sizes.filter((s) => s.id !== sizeId) });
+    const sizes = variant.sizes.filter((s) => s.id !== sizeId);
+    if (sizes.length > 0) {
+      patchVariant(variantId, { sizes });
+      return;
+    }
+    // Last talla removed: the color sells by color again and shows right away
+    // what it will hold — its tallas plus any pieces still «sin talla».
+    const pieces = colorPieces(variant);
+    patchVariant(variantId, { sizes, quantityOnHand: pieces === null ? undefined : pieces });
   }
 
   /** Color rename keeps the clave suffix in sync while it still looks
@@ -481,6 +492,15 @@ export function ProductForm({
         if (held) {
           return fail(`El color ${removed.color} tiene piezas apartadas en pedidos de su talla ${held.size}. Entrega o cancela esos pedidos antes de quitar el color.`);
         }
+        // A color with pieces cannot just vanish: they would be lost. Zero it
+        // first, or stop selling by color to return them to the design.
+        const pieces = colorPieces(removed);
+        if (pieces !== null && pieces !== 0) {
+          const count = Math.abs(pieces);
+          return fail(
+            `El color ${removed.color} todavía tiene ${count} pieza${count === 1 ? "" : "s"}. Deja su existencia en 0 antes de quitarlo, o desactiva «Se vende por color» para devolver sus piezas al diseño.`
+          );
+        }
       }
     }
 
@@ -504,20 +524,33 @@ export function ProductForm({
     }
 
     if (variantsEnabled) {
-      finalVariants = finalVariants.map((v) => ({
-        ...v,
-        color: v.color.trim(),
-        sku: buildVariantSku(sku, v) ?? v.sku,
-        // #461: materialize each combination's full clave like colors do,
-        // and drop the color-level shelf — with sizes it is derived, and a
-        // stale number there would be a second, lying source of truth.
-        ...(v.sizes?.length
-          ? {
-              sizes: v.sizes.map((s) => ({ ...s, size: s.size.trim(), sku: combinationSku(sku, v, s) ?? s.sku })),
-              quantityOnHand: undefined,
-            }
-          : {}),
-      }));
+      const loadedVariants = product.variants ?? [];
+      // Pass 1 — each color's clave: a suffix the operator edited re-derives it;
+      // an untouched clave is kept (review 23-nov: an edited suffix used to be
+      // ignored once the clave had been materialized).
+      const withColorClaves = finalVariants.map((v) => {
+        const loaded = loadedVariants.find((candidate) => candidate.id === v.id);
+        return { ...v, color: v.color.trim(), sku: resolveColorClave(sku, loaded, v) ?? buildVariantSku(sku, v) };
+      });
+      // Pass 2 — each combination's clave from its color's FINAL clave; drop the
+      // color-level shelf: with tallas it is derived, and a stale number there
+      // would be a second, lying source of truth.
+      finalVariants = withColorClaves.map((v) => {
+        const loadedColor = loadedVariants.find((candidate) => candidate.id === v.id);
+        if (!v.sizes?.length) return v;
+        return {
+          ...v,
+          quantityOnHand: undefined,
+          sizes: v.sizes.map((s) => {
+            const loadedSize = loadedColor?.sizes?.find((candidate) => candidate.id === s.id);
+            return {
+              ...s,
+              size: s.size.trim(),
+              sku: resolveCombinationClave(sku, loadedColor, loadedSize, v, s) ?? combinationSku(sku, v, s),
+            };
+          }),
+        };
+      });
       // #124/M4 + #461: claves únicas — entre colores y tallas del diseño y
       // contra el resto de la tienda (las claves viajan en compras, tickets
       // y devoluciones).
@@ -779,7 +812,9 @@ export function ProductForm({
               checked={variantsEnabled}
               onChange={(next) => {
                 if (!next) {
-                  if (variants.some((v) => (v.quantityOnHand ?? 0) !== 0)) {
+                  // Pieces in tallas count too (review 23-nov): they used to be
+                  // invisible here, and confirming dropped them to 0.
+                  if (variants.some((v) => (colorPieces(v) ?? 0) !== 0)) {
                     setConfirmDisableVariants(true);
                     return;
                   }
@@ -868,7 +903,10 @@ export function ProductForm({
                       const colorClave = buildVariantSku(draft.sku, variant) ?? draft.sku ?? "CLAVE";
                       // #461: pieces orders still hold of THIS combination.
                       const committed = committedFor(variant.id, size.id);
-                      const physical = typeof size.quantityOnHand === "number" ? size.quantityOnHand : null;
+                      // The shelf is already NET of reservations (a sale lowers it):
+                      // Disponible is the shelf and Físico adds what orders still hold.
+                      const shelf = typeof size.quantityOnHand === "number" ? size.quantityOnHand : null;
+                      const physical = shelf === null ? null : shelf + committed;
                       return (
                         <div key={size.id} className="space-y-1.5 rounded-lg border border-edge bg-surface px-3 py-2">
                           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -882,7 +920,12 @@ export function ProductForm({
                               label={`Clave de la talla (${colorClave}-${size.skuSuffix || "sufijo"})`}
                               placeholder="6"
                               value={size.skuSuffix ?? ""}
-                              onChange={(e) => patchSize(variant.id, size.id, { skuSuffix: e.target.value.toUpperCase().slice(0, 8) })}
+                              onChange={(e) => {
+                                // The clave follows the suffix live, so validation and
+                                // save see the same clave (review 23-nov).
+                                const skuSuffix = e.target.value.toUpperCase().slice(0, 8);
+                                patchSize(variant.id, size.id, { skuSuffix, sku: skuSuffix ? `${colorClave}-${skuSuffix}` : undefined });
+                              }}
                             />
                             <TextField
                               label="Costo de la talla"
@@ -893,7 +936,7 @@ export function ProductForm({
                               hint="Sugerencia del color; confírmalo o ajústalo para guardar."
                             />
                             <TextField
-                              label="Físico de la talla"
+                              label="Existencia de la talla"
                               inputMode="numeric"
                               placeholder="0"
                               value={size.quantityOnHand?.toString() ?? ""}
@@ -905,7 +948,7 @@ export function ProductForm({
                           </div>
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="text-xs text-on-surface-soft">
-                              Disponible {physical == null ? "—" : physical - committed} · Comprometido {committed}
+                              Disponible {shelf ?? "—"} · Comprometido {committed}{physical == null ? "" : ` · Físico ${physical}`}
                             </p>
                             <Button size="sm" variant="ghost" onClick={() => removeSize(variant.id, size.id)}>
                               Quitar talla {size.size || "(sin talla)"}
@@ -1070,8 +1113,9 @@ export function ProductForm({
                 // design-level shelf (reviewable) instead of requiring a full
                 // recapture. Untracked colors contribute 0; the field stays
                 // empty only when NO color has a captured shelf.
-                const tracked = variants.some((v) => typeof v.quantityOnHand === "number");
-                const pieces = variants.reduce((sum, v) => sum + (typeof v.quantityOnHand === "number" ? v.quantityOnHand : 0), 0);
+                const held = variants.map(colorPieces);
+                const tracked = held.some((pieces) => pieces !== null);
+                const pieces = held.reduce<number>((sum, count) => sum + (count ?? 0), 0);
                 setQty(tracked ? String(pieces) : "");
                 setVariants([]);
                 setVariantStaged({});

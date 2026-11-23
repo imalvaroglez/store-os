@@ -115,9 +115,23 @@ function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: Pr
       const delta = (next.quantityOnHand ?? 0) - (base.quantityOnHand ?? 0);
       return { ...next, quantityOnHand: Math.max(0, (current.quantityOnHand ?? 0) + delta), cost };
     }
-    // The color stops selling by talla: its tallas' fresh pieces come back.
+    if (baseSizes.length === 0) {
+      // This editor NEVER saw the tallas — another session activated them after
+      // it opened. Saving would erase them (and strand their reservations).
+      throw new StaleProductError(
+        `El color ${next.color} ahora se vende por talla (cambió en otro dispositivo mientras editabas). Vuelve a abrir la ficha para ver sus tallas.`
+      );
+    }
+    // The color stops selling by talla: its tallas' fresh pieces come back to
+    // the color, together with any pieces still «sin talla» on it.
     const tracked = currentSizes.filter((size) => typeof size.quantityOnHand === "number");
-    return { ...next, quantityOnHand: tracked.length > 0 ? sum(currentSizes) : undefined, cost };
+    const unassigned = residual(current);
+    const tallas = tracked.length > 0 ? sum(currentSizes) : undefined;
+    return {
+      ...next,
+      quantityOnHand: tallas === undefined ? (unassigned > 0 ? unassigned : current.quantityOnHand) : tallas + unassigned,
+      cost,
+    };
   }
 
   if (!currentSizes.length) {
@@ -145,7 +159,12 @@ function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: Pr
     if (baseSize && !currentSize) {
       throw new StaleProductError(`La talla ${size.size} del color ${next.color} ya no existe en otro dispositivo. Vuelve a abrir la ficha y revisa sus tallas.`);
     }
-    if (!baseSize || !currentSize) return size; // new talla — captured as is
+    // New talla — captured as is; its pieces count as moved, because
+    // distributing «sin talla» pieces may land on a talla created in this edit.
+    if (!baseSize || !currentSize) {
+      moved += typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0;
+      return size;
+    }
     const sizeCost = same(size.cost, baseSize.cost) ? currentSize.cost : size.cost;
     if (same(size.quantityOnHand, baseSize.quantityOnHand)) {
       return { ...size, quantityOnHand: currentSize.quantityOnHand, cost: sizeCost }; // carry the fresh shelf

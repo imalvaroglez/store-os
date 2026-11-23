@@ -427,8 +427,8 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
 
   it("cada talla muestra Disponible y Comprometido junto a su Físico editable", () => {
     abrirConTalla("6");
-    fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "5" } });
-    expect(screen.getByText(/Disponible 5 · Comprometido 0/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "5" } });
+    expect(screen.getByText("Disponible 5 · Comprometido 0 · Físico 5")).toBeTruthy();
   });
 
   it("con tallas, la existencia del color se deriva (deshabilitada) y el guardado materializa clave y cantidades por combinación", async () => {
@@ -437,11 +437,11 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     render(<ProductForm product={counted} onDone={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "+ Talla" }));
     fireEvent.change(screen.getByLabelText(/^Talla$/), { target: { value: "6" } });
-    fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "+ Talla" }));
     const tallas = screen.getAllByLabelText(/^Talla$/);
     fireEvent.change(tallas[1], { target: { value: "7" } });
-    const fisicos = screen.getAllByLabelText(/Físico de la talla/);
+    const fisicos = screen.getAllByLabelText(/Existencia de la talla/);
     fireEvent.change(fisicos[1], { target: { value: "2" } });
     // Costo confirmado por combinación (la sugerencia nunca cuenta como tal).
     const costos = screen.getAllByLabelText(/Costo de la talla/);
@@ -469,7 +469,7 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "0" } });
     // La talla recibe las 3 piezas que el color ya contaba.
-    fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
     await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
     const saved = mocks.upsertProduct.mock.calls[0][0] as Product;
@@ -509,7 +509,7 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
       }],
     } as Product;
   }
-  const fisicoDe = (label: string) => screen.getAllByLabelText(/Físico de la talla/)[["6", "5"].indexOf(label)];
+  const fisicoDe = (label: string) => screen.getAllByLabelText(/Existencia de la talla/)[["6", "5"].indexOf(label)];
 
   it("activar tallas sobre un color con 5 piezas: el aviso pide repartirlas y no guarda hasta que las tallas sumen 5", async () => {
     const counted = { ...variantDesign(), variants: [{ ...variantDesign().variants![0], quantityOnHand: 5 }] } as Product;
@@ -518,12 +518,12 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     fireEvent.change(screen.getByLabelText(/^Talla$/), { target: { value: "6" } });
     fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "100" } });
     expect(screen.getByRole("status")).toHaveTextContent("El color Dorado tenía 5 piezas contadas sin talla. Repártelas entre sus tallas para guardar (llevas 0 de 5). Revisa las tallas sin cantidad.");
-    fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "2" } });
     expect(screen.getByRole("status")).toHaveTextContent("(llevas 2 de 5)");
     fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("El color Dorado tenía 5 piezas contadas sin talla");
     expect(mocks.upsertProduct).not.toHaveBeenCalled(); // antes: guardaba y las 5 se volvían 2
-    fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "5" } });
     expect(screen.queryByRole("status")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
     await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
@@ -570,7 +570,7 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     try {
       abrirConTalla("6"); // clave sugerida SOL-D-6
       fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "100" } });
-      fireEvent.change(screen.getByLabelText(/Físico de la talla/), { target: { value: "3" } });
+      fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "3" } });
       fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("La clave SOL-D-6 ya la usa otra pieza, color o talla del catálogo. Elige otra.");
       expect(mocks.upsertProduct).not.toHaveBeenCalled();
@@ -586,7 +586,95 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
       createdAt: "2026-11-23", updatedAt: "2026-11-23",
     }] as unknown as NonNullable<typeof mocks.state>["orders"];
     render(<ProductForm product={sizedDesign()} onDone={() => {}} />);
-    expect(screen.getByText("Disponible 1 · Comprometido 2")).toBeTruthy(); // talla 6: 3 físicas − 2 apartadas
-    expect(screen.getByText("Disponible 1 · Comprometido 0")).toBeTruthy(); // talla 5
+    // El estante de la talla ya es neto de reservas: Disponible = estante; Físico = estante + comprometido.
+    expect(screen.getByText("Disponible 3 · Comprometido 2 · Físico 5")).toBeTruthy(); // talla 6
+    expect(screen.getByText("Disponible 1 · Comprometido 0 · Físico 1")).toBeTruthy(); // talla 5
+  });
+
+  // ── Revisión de código independiente, 23-nov ──────────────────────────────
+  const guardar = () => screen.getByRole("button", { name: "Guardar producto" });
+  const payload = () => mocks.upsertProduct.mock.calls[0][0] as Product;
+
+  it("desactivar «Se vende por color» con tallas que tienen piezas pide confirmación y devuelve TODAS las piezas al diseño (3 + 1)", async () => {
+    render(<ProductForm product={sizedDesign(0)} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Se vende por color/ }));
+    expect(await screen.findByText("¿Dejar de vender por color?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dejar de vender por color" }));
+    fireEvent.click(guardar());
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    expect(payload().variants).toBeUndefined();
+    expect(payload().quantityOnHand).toBe(4); // antes: 0, las 4 piezas desaparecían
+  });
+
+  it("quitar la última talla de un color con piezas «sin talla»: el campo del color muestra el total (1 + 2) y así se guarda", async () => {
+    render(<ProductForm product={sizedDesign(2)} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /Quitar talla 6/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Quitar talla 5/i }));
+    const existencia = screen.getByDisplayValue("3") as HTMLInputElement;
+    expect(existencia.disabled).toBe(false); // antes mostraba 2 y guardaba 1
+    fireEvent.click(guardar());
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    expect(payload().variants![0].sizes ?? []).toEqual([]);
+    expect(payload().variants![0].quantityOnHand).toBe(3);
+  });
+
+  it("repartir piezas «sin talla» en una talla NUEVA las mueve: se guardan 3 + 1 + 2 y el color queda sin piezas sueltas", async () => {
+    render(<ProductForm product={sizedDesign(2)} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "+ Talla" }));
+    const last = (label: RegExp) => screen.getAllByLabelText(label).pop()!;
+    fireEvent.change(last(/^Talla$/), { target: { value: "7" } });
+    fireEvent.change(last(/Costo de la talla/), { target: { value: "100" } });
+    fireEvent.change(last(/Existencia de la talla/), { target: { value: "2" } });
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.click(guardar());
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    const saved = payload().variants![0];
+    expect(saved.sizes!.map((size) => [size.size, size.quantityOnHand])).toEqual([["6", 3], ["5", 1], ["7", 2]]);
+    // Lo que persiste la transacción (misma regla que al guardar): nada duplicado.
+    const { mergeProductOperational } = await import("../../lib/productMerge");
+    const persisted = mergeProductOperational(sizedDesign(2), payload(), sizedDesign(2)).variants![0];
+    expect(persisted.quantityOnHand).toBeUndefined();
+    expect(persisted.sizes!.reduce((total, size) => total + (size.quantityOnHand ?? 0), 0)).toBe(6);
+  });
+
+  it("quitar un color que todavía tiene piezas se detiene y dice cuántas", async () => {
+    const twoColors = sizedDesign(0) as Product;
+    twoColors.variants = [
+      ...twoColors.variants!,
+      { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "SOL-P", cost: 90, photos: [photo], createdAt: "", updatedAt: "" },
+    ];
+    render(<ProductForm product={twoColors} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /Quitar color Dorado/i }));
+    fireEvent.click(guardar());
+    expect(await screen.findByRole("alert")).toHaveTextContent("El color Dorado todavía tiene 4 piezas");
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+
+  it("editar el sufijo de una talla ya guardada cambia su clave al guardar", async () => {
+    render(<ProductForm product={sizedDesign(0)} onDone={() => {}} />);
+    const claves = screen.getAllByLabelText(/Clave de la talla/);
+    fireEvent.change(claves[0], { target: { value: "SEIS" } });
+    fireEvent.click(guardar());
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    expect(payload().variants![0].sizes![0]).toMatchObject({ skuSuffix: "SEIS", sku: "SOL-D-SEIS" }); // antes: sku "SOL-D-6" sin cambiar
+  });
+
+  it("la ficha unificada se guarda: la clave que tomó de su origen fusionado no choca con él", async () => {
+    const unified = sizedDesign(0) as Product;
+    const first = unified.variants![0].sizes![0];
+    unified.variants![0].sizes![0] = { ...first, sku: "SOL-X-7", skuSuffix: undefined };
+    mocks.state!.products.push({
+      id: "origin", storeId: "store_olivia", name: "Anillo Luna Dorado 7", sku: "SOL-X-7", category: "other", isPublic: false, status: "archived",
+      mergedInto: { productId: unified.id, variantId: "v_gold", sizeId: unified.variants![0].sizes![0].id, at: "" },
+      variants: [], createdAt: "", updatedAt: "",
+    } as unknown as Product);
+    try {
+      render(<ProductForm product={unified} onDone={() => {}} />);
+      fireEvent.click(guardar());
+      await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+      expect(payload().variants![0].sizes![0].sku).toBe("SOL-X-7");
+    } finally {
+      mocks.state!.products.pop();
+    }
   });
 });
