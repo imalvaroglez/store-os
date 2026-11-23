@@ -1006,3 +1006,66 @@ it("#489 preserves the chosen color in quantity, saved cart and WhatsApp", async
   expect(screen.getByText("Agotado")).toBeTruthy();
   expect(screen.getByRole("link", { name: /Preguntar por esta pieza/ })).toBeTruthy();
 });
+
+describe("#461 detalle — selección exacta color × talla (Dorado 4–7, Plateado 8–10)", () => {
+  const sizedDetail: PublicProductDetail = {
+    ...detail,
+    variants: [
+      { id: "v_dorado", color: "Dorado", imageUrl: null, stockSignal: "disponible", sizes: [
+        { id: "d4", size: "4", stockSignal: "disponible" },
+        { id: "d5", size: "5", stockSignal: "disponible" },
+        { id: "d6", size: "6", stockSignal: "disponible" },
+        { id: "d7", size: "7", stockSignal: "disponible" },
+      ] },
+      { id: "v_plateado", color: "Plateado", imageUrl: null, stockSignal: "disponible", sizes: [
+        { id: "p8", size: "8", stockSignal: "disponible" },
+        { id: "p9", size: "9", stockSignal: "disponible" },
+        { id: "p10", size: "10", stockSignal: "disponible" },
+      ] },
+    ],
+  };
+
+  async function openDetail(product: PublicProductDetail = sizedDetail) {
+    mocks.loadPublicProduct.mockResolvedValue({ product, store });
+    const view = render(<OliviaStorefront route={productRoute} />);
+    await screen.findByRole("heading", { name: product.name });
+    return view;
+  }
+
+  it("el color ofrece sólo SUS tallas y la línea agregada es la combinación exacta", async () => {
+    await openDetail();
+    const talla = screen.getByRole("combobox", { name: "Talla" });
+    const options = within(talla as HTMLElement).getAllByRole("option").map((o) => o.textContent);
+    expect(options).toEqual(["4", "5", "6", "7"]); // Dorado por defecto; 8–10 no existen aquí
+    fireEvent.change(talla, { target: { value: "d6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
+    const saved = JSON.parse(localStorage.getItem(cartKey)!);
+    expect(saved.lines[0]).toMatchObject({ productSlug: "anillo-blossom~v_dorado~d6", name: "Anillo Blossom · Dorado · 6" });
+  });
+
+  it("cambiar de color conserva la talla sólo si sigue siendo válida y re-verifica su disponibilidad", async () => {
+    await openDetail();
+    fireEvent.change(screen.getByRole("combobox", { name: "Talla" }), { target: { value: "d6" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Color" }), { target: { value: "v_plateado" } });
+    // 6 no existe en Plateado → cae a su primera talla (8), nunca a una inventada
+    expect((screen.getByRole("combobox", { name: "Talla" }) as HTMLSelectElement).value).toBe("p8");
+    // Dorado de nuevo: la etiqueta 6 se recuerda y reaparece
+    fireEvent.change(screen.getByRole("combobox", { name: "Color" }), { target: { value: "v_dorado" } });
+    expect((screen.getByRole("combobox", { name: "Talla" }) as HTMLSelectElement).value).toBe("d6");
+  });
+
+  it("talla agotada marca Agotado y la compra pasa a preguntar", async () => {
+    const agotada: PublicProductDetail = {
+      ...sizedDetail,
+      canInquire: true, // #135: la pieza sigue solicitable por encargo
+      variants: sizedDetail.variants!.map((v) => v.id === "v_dorado" ? { ...v, sizes: v.sizes!.map((s) => s.id === "d6" ? { ...s, stockSignal: "agotado" as const } : s) } : v),
+    };
+    await openDetail(agotada);
+    fireEvent.change(screen.getByRole("combobox", { name: "Talla" }), { target: { value: "d6" } });
+    expect(screen.getByText("Agotado")).toBeTruthy();
+    expect(screen.getByText(/Preguntar por esta pieza/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar al carrito" }));
+    const saved = JSON.parse(localStorage.getItem(cartKey)!);
+    expect(saved.lines[0]).toMatchObject({ productSlug: "anillo-blossom~v_dorado~d6", inquire: true });
+  });
+});

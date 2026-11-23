@@ -30,7 +30,7 @@ import {
   reservationDeltasForOrderChange,
   variantReservationDeltasForOrderChange,
 } from "../../lib/inventory";
-import { applyCombinationDelta, applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
+import { applyCombinationDelta, applyVariantDelta, isVariantProduct, totalStock, variantHasSizes, variantStock } from "../../lib/variants";
 import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
 import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
@@ -52,7 +52,7 @@ import {
 } from "../../features/orders/payments";
 import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 import { normalizeEmail, type AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
+import type { AppState, Store, Storefront, Product, ProductVariant, VariantSize, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
@@ -1948,9 +1948,27 @@ function primaryImage(product: Product): string | null {
 }
 
 /** Coarse stock signal for the public catalog: NEVER an exact count. */
+/** #461: one combination's PUBLIC signal — same coarse rules as a color's,
+ * with the color's lowStockAt as the informative threshold. */
+function sizePublicStockSignal(s: VariantSize, lowStockAt?: number): "agotado" | "pocas" | "disponible" {
+  const qty = s.quantityOnHand;
+  if (typeof qty !== "number") return "disponible";
+  if (qty <= 0) return "agotado";
+  if (typeof lowStockAt === "number" && qty <= lowStockAt) return "pocas";
+  return "disponible";
+}
+
 /** #124: one color's PUBLIC signal — coarse like the design-level one
- * (never a count), derived from the variant's own shelf. */
+ * (never a count), derived from the variant's own shelf. #461: a color that
+ * sells by size derives from ITS combinations (each one its own shelf). */
 function variantPublicStockSignal(v: ProductVariant): "agotado" | "pocas" | "disponible" {
+  if (variantHasSizes(v)) {
+    if (v.sizes!.some((s) => typeof s.quantityOnHand !== "number")) return "disponible"; // untracked ≠ zero
+    const sellable = v.sizes!.filter((s) => (s.quantityOnHand ?? 0) > 0);
+    if (!sellable.length) return "agotado";
+    if (sellable.every((s) => sizePublicStockSignal(s, v.lowStockAt) === "pocas")) return "pocas";
+    return "disponible";
+  }
   const qty = v.quantityOnHand;
   if (typeof qty !== "number") return "disponible";
   if (qty <= 0) return "agotado";
@@ -1960,7 +1978,7 @@ function variantPublicStockSignal(v: ProductVariant): "agotado" | "pocas" | "dis
 
 /** #124: the public color list of a design — one product, N colors, each with
  * its photo; NEVER per-color counts or costs (same policy as the rest of the
- * projection). */
+ * projection). #461: colors that sell by size carry their public sizes too. */
 function publicVariants(product: Product) {
   if (!isVariantProduct(product)) return undefined;
   return product.variants!.map((v) => ({
@@ -1968,6 +1986,9 @@ function publicVariants(product: Product) {
     color: v.color,
     imageUrl: v.photos?.find((photo) => photo.isPrimary)?.url ?? v.photos?.[0]?.url ?? null,
     stockSignal: variantPublicStockSignal(v),
+    ...(variantHasSizes(v)
+      ? { sizes: v.sizes!.map((s) => ({ id: s.id, size: s.size, stockSignal: sizePublicStockSignal(s, v.lowStockAt) })) }
+      : {}),
   }));
 }
 
@@ -1975,13 +1996,15 @@ export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible
   // Each color is a separate shelf: a shortage cannot consume sellable
   // pieces of another color. Only this PUBLIC coarse signal uses the positive
   // shelves; canonical quantities and private shortage math stay untouched.
+  // #461: a color's shelf is the per-combination sum when sizes exist
+  // (variantStock) — the color's own quantityOnHand is derived and absent.
   const colors = isVariantProduct(p) ? p.variants! : undefined;
-  if (colors?.some((v) => typeof v.quantityOnHand !== "number")) return "disponible";
-  const qty = colors ? colors.reduce((sum, v) => sum + Math.max(0, v.quantityOnHand ?? 0), 0) : p.quantityOnHand;
+  if (colors?.some((v) => variantStock(v) === null)) return "disponible";
+  const qty = colors ? colors.reduce((sum, v) => sum + Math.max(0, variantStock(v) ?? 0), 0) : p.quantityOnHand;
   if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
   if (qty <= 0) return "agotado";
   if (typeof p.lowStockAt === "number" && qty <= p.lowStockAt) return "pocas";
-  if (colors && colors.filter((v) => (v.quantityOnHand ?? 0) > 0).every((v) => variantPublicStockSignal(v) === "pocas")) return "pocas";
+  if (colors && colors.filter((v) => (variantStock(v) ?? 0) > 0).every((v) => variantPublicStockSignal(v) === "pocas")) return "pocas";
   return "disponible";
 }
 
@@ -2177,12 +2200,26 @@ function publicStockPatch(current: Product, existing: Record<string, unknown>, s
   const availability = publicAvailabilityValue({ availability: current.availability, stockSignal }, storeType);
   if (availability !== existing.availability) patch.availability = availability;
 
-  const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant.stockSignal]));
+  const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant]));
   if (signals.size && Array.isArray(existing.variants)) {
-    const variants = existing.variants as Array<{ id: string; stockSignal?: string }>;
+    const variants = existing.variants as Array<{ id: string; stockSignal?: string; sizes?: Array<{ id: string; stockSignal?: string }> }>;
     const next = variants.map((variant) => {
-      const signal = signals.get(variant.id);
-      return signal && signal !== variant.stockSignal ? { ...variant, stockSignal: signal } : variant;
+      const fresh = signals.get(variant.id);
+      if (!fresh) return variant;
+      let updated = variant;
+      if (fresh.stockSignal !== variant.stockSignal) updated = { ...updated, stockSignal: fresh.stockSignal };
+      // #461: a reception moves ONE combination's shelf — its public signal
+      // refreshes in place with the same coarse policy (structural size edits
+      // travel through the full republish, not this targeted patch).
+      if (fresh.sizes?.length && Array.isArray(variant.sizes)) {
+        const freshSizes = new Map(fresh.sizes.map((s) => [s.id, s.stockSignal]));
+        const sizes = variant.sizes.map((s) => {
+          const signal = freshSizes.get(s.id);
+          return signal && signal !== s.stockSignal ? { ...s, stockSignal: signal } : s;
+        });
+        if (sizes.some((s, index) => s !== variant.sizes![index])) updated = { ...updated, sizes };
+      }
+      return updated;
     });
     if (next.some((variant, index) => variant !== variants[index])) patch.variants = next;
   }
@@ -2210,11 +2247,29 @@ function preservePublicAvailability(
         .filter((v) => typeof v.id === "string" && typeof v.stockSignal === "string")
         .map((v) => [v.id as string, v.stockSignal as string])
     );
-    const variants = (next.variants as Array<Record<string, unknown>>).map((variant) =>
-      typeof variant.id === "string" && priorSignals.has(variant.id) && priorSignals.get(variant.id) !== variant.stockSignal
-        ? { ...variant, stockSignal: priorSignals.get(variant.id) }
-        : variant
+    // #461: prior per-combination signals are evidence the same way — a stale
+    // snapshot must not regress a freshly published size signal either.
+    const priorSizeSignals = new Map(
+      (prior.variants as Array<{ id?: string; sizes?: Array<{ id?: string; stockSignal?: string }> }>)
+        .filter((v) => typeof v.id === "string")
+        .map((v) => [v.id as string, new Map((v.sizes ?? []).filter((s) => typeof s.id === "string" && typeof s.stockSignal === "string").map((s) => [s.id as string, s.stockSignal as string]))])
     );
+    const variants = (next.variants as Array<Record<string, unknown>>).map((variant) => {
+      if (typeof variant.id !== "string") return variant;
+      let mergedVariant = priorSignals.has(variant.id) && priorSignals.get(variant.id) !== variant.stockSignal
+        ? { ...variant, stockSignal: priorSignals.get(variant.id) }
+        : variant;
+      const priorSizes = priorSizeSignals.get(variant.id);
+      if (priorSizes?.size && Array.isArray(variant.sizes)) {
+        const sizes = (variant.sizes as Array<Record<string, unknown>>).map((size) =>
+          typeof size.id === "string" && priorSizes.has(size.id) && priorSizes.get(size.id) !== size.stockSignal
+            ? { ...size, stockSignal: priorSizes.get(size.id) }
+            : size
+        );
+        if (sizes.some((size, index) => size !== (variant.sizes as unknown[])[index])) mergedVariant = { ...mergedVariant, sizes };
+      }
+      return mergedVariant;
+    });
     if (variants.some((variant, index) => variant !== (next.variants as unknown[])[index])) merged.variants = variants;
   }
   // A legacy summary without a signal has no evidence that the caller's

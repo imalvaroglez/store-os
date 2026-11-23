@@ -24,6 +24,9 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   // #137: chosen color per design (productSlug → variant id), GANNI-style
   // swatches on the card; defaults to the first color.
   const [chosenVariants, setChosenVariants] = useState<Record<string, string>>({});
+  // #461: chosen talla LABEL per design — kept on color change only while the
+  // same talla exists in the new color (effectiveSize falls back to the first).
+  const [chosenSizes, setChosenSizes] = useState<Record<string, string>>({});
   const normalizeFinish = (value: string) =>
     value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-MX");
   // #276: a missing store and a network failure are DIFFERENT things — a
@@ -140,6 +143,11 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
     // line its OWN signal so the drawer explains exactly that color.
     for (const variant of product.variants ?? []) {
       signals[`${product.productSlug}~${variant.id}`] = isSoldOut(product) ? "agotado" : variant.stockSignal;
+      // #461: per-combination lines carry `slug~variantId~sizeId` — each
+      // talla explains itself in the drawer with its own coarse signal.
+      for (const size of variant.sizes ?? []) {
+        signals[`${product.productSlug}~${variant.id}~${size.id}`] = isSoldOut(product) || variant.stockSignal === "agotado" ? "agotado" : size.stockSignal;
+      }
     }
     return signals;
   }, {});
@@ -173,12 +181,19 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
             {visibleProducts.map((product) => {
               const variants = product.variants ?? [];
               const chosen = variants.find((v) => v.id === (chosenVariants[product.productSlug] ?? variants[0]?.id));
+              // #461: the exact talla of the chosen color — the saved talla
+              // survives a color change only while it still exists there.
+              const sizes = chosen?.sizes ?? [];
+              const chosenSize = sizes.find((s) => s.size === chosenSizes[product.productSlug]) ?? sizes[0];
               const variantSoldOut = chosen ? chosen.stockSignal === "agotado" : false;
               const designPaused = isSoldOut(product);
-              const soldOut = variants.length > 0 ? (designPaused || variantSoldOut) : designPaused;
+              const sizeSoldOut = chosenSize ? chosenSize.stockSignal === "agotado" : false;
+              const soldOut = variants.length > 0 ? (designPaused || variantSoldOut || sizeSoldOut) : designPaused;
               const cardImage = chosen?.imageUrl ?? product.imageUrl;
-              const lineName = chosen ? `${product.name} · ${chosen.color}` : product.name;
-              const lineSlug = chosen ? `${product.productSlug}~${chosen.id}` : product.productSlug;
+              const lineName = chosen ? `${product.name} · ${chosen.color}${chosenSize ? ` · ${chosenSize.size}` : ""}` : product.name;
+              const lineSlug = chosen
+                ? `${product.productSlug}~${chosen.id}${chosenSize ? `~${chosenSize.id}` : ""}`
+                : product.productSlug;
               const lineImage = cardImage ?? undefined;
               return <Card key={product.productSlug} className="overflow-hidden p-0">
               <ProductImage src={cardImage ?? undefined} alt={lineName} size="full" />
@@ -207,6 +222,29 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                     })}
                   </div>
                 )}
+                {/* #461: tallas del color elegido — la combinación exacta; una
+                    talla que no existe en este color nunca aparece. */}
+                {sizes.length > 0 && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    <span className="text-xs text-on-surface-soft mr-1">Talla</span>
+                    {sizes.map((size) => {
+                      const pressed = (chosenSize?.id ?? "") === size.id;
+                      return (
+                        <Button
+                          key={size.id}
+                          size="sm"
+                          variant={pressed ? "primary" : "secondary"}
+                          aria-pressed={pressed}
+                          title={size.stockSignal === "agotado" ? `Talla ${size.size} (agotada)` : `Talla ${size.size}`}
+                          onClick={() => setChosenSizes((current) => ({ ...current, [product.productSlug]: size.size }))}
+                          className={`!min-h-[40px] !min-w-[44px] ${size.stockSignal === "agotado" ? "line-through opacity-60" : ""}`}
+                        >
+                          {size.size}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                )}
                 {product.publicDescription && <p className="text-sm text-ink-soft mt-1">{product.publicDescription}</p>}
                 <PublicTierPrices store={store} product={product} />
                 {!soldOut ? (
@@ -221,8 +259,9 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                     className="mt-2"
                   />
                 ) : (
-                  // #135/#137: agotado (el diseño o el color elegido) SIGUE
-                  // solicitable por encargo — línea con el color inequívoco.
+                  // #135/#137: agotado (el diseño, el color o la talla elegida)
+                  // SIGUE solicitable por encargo — línea con la combinación
+                  // inequívoca.
                   <div className="mt-2">
                     <Button
                       variant="secondary"
@@ -232,7 +271,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                       Pedir por encargo
                     </Button>
                     <p className="text-xs text-on-surface-soft mt-1">
-                      Agotado{chosen ? ` (${chosen.color})` : ""} · puedes pedirlo por encargo. Fecha de entrega por confirmar.
+                      Agotado{chosen ? ` (${chosen.color}${chosenSize ? ` · ${chosenSize.size}` : ""})` : ""} · puedes pedirlo por encargo. Fecha de entrega por confirmar.
                     </p>
                   </div>
                 )}
