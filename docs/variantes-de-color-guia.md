@@ -31,8 +31,9 @@ Si tu pieza no tiene colores, captúrala como siempre: nada cambia.
    te decimos cuál.
 
 Para quitar un color, usa «Quitar color» en su tarjeta. Para dejar de vender
-por color (con existencias), te pedimos confirmación: las existencias por
-color se descartan y capturas la existencia total del diseño de nuevo.
+por color (con existencias), te pedimos confirmación: la suma de las piezas
+por color pasa al campo de existencia del diseño, ya puesta para que la
+revises antes de guardar.
 
 ## Vender
 
