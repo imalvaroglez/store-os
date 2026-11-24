@@ -291,6 +291,15 @@ export function PricingStrategyScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId, savedSignature]);
 
+  // #538: a category that came from the session memory travels in the URL
+  // too, like one just chosen — the memory does not survive a reload, so
+  // without it «Inicio → menú → F5» lost the category (and its draft with it).
+  useEffect(() => {
+    if (!categoryId) return;
+    if (new URLSearchParams(window.location.search).get("categoria") === categoryId) return;
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${encodeURIComponent(categoryId)}`);
+  }, [categoryId]);
+
   // #538: persistence follows the draft — dirty edits land in storage; a
   // CLEAN draft (saved, discarded or reloaded from the fresh table) clears
   // it. A null draft is skipped: it is either the instant before adoption

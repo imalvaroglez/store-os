@@ -965,6 +965,22 @@ describe("#538 borrador de Estrategia conservado", () => {
     await screen.findAllByLabelText(/Iconic \(pesos\)/);
     expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
     expect(iconicFirst()).toBe("165");
+    // La categoría recuperada también queda en la URL…
+    expect(window.location.search).toBe(`?categoria=${encodeURIComponent(CAT)}`);
+  });
+
+  it("menú → F5: la recarga conserva la categoría (la memoria de sesión no cruza el documento)", async () => {
+    editAndDirty();
+    cleanup();
+    window.history.replaceState({}, "", "/productos/estrategia");
+    mount(); // re-entrada por el menú
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    cleanup();
+    resetPricingStrategyCategoryForTests(); // un F5 empieza un documento sin memoria
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
+    expect(iconicFirst()).toBe("165");
   });
 
   it("«Restaurar propuesta» con ediciones sin guardar pide confirmación; Cancelar conserva", () => {
