@@ -5,12 +5,14 @@
 // overwritten, pending prices block the save, and a concurrent change to the
 // saved table surfaces a banner instead of clobbering the draft.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { StrictMode } from "react";
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PricingStrategyScreen, resetPricingStrategyCategoryForTests } from "./PricingStrategyScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
+import { rulesSignature } from "../../lib/pricingRules";
 import { CategoryRulesConflictError } from "../../app/StoreProvider";
-import type { Category, PricingRulesConfig, Product, Store, StorePackaging } from "../../types";
+import type { Category, PricingRule, PricingRulesConfig, Product, Store, StorePackaging } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
@@ -1129,5 +1131,153 @@ describe("#538 borrador de Estrategia conservado", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Quitar tabla$/ }));
     await screen.findByText("Tabla eliminada.");
     expect(localStorage.getItem(keyFor())).toBeNull();
+  });
+});
+
+// Segunda revisión de código de #538 (24-nov): menores que rompían la promesa
+// de conservar el borrador. Cada prueba reproduce el escenario del revisor.
+describe("#538 segunda revisión — el borrador se conserva de verdad", () => {
+  const STORE = "store_olivia";
+  const CAT2 = "store_olivia__perfumes";
+  const CAT3 = "store_olivia__minimo";
+  const keyFor = (cat = CAT) => `store-os:strategy-draft:u-fer:${STORE}:${cat}`;
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+  const saveButton = () => screen.getByRole("button", { name: /Guardar tabla|Guardando…|Sin cambios/ });
+  const twoBands = { limits: [{ min: 0, max: 60 }, { min: 60 }], prices: { t_retail: [290, 310], t_girly: [230, 260], t_iconic: [160, 170] }, dirty: true };
+  // The base a real stored draft carries: the signature of what was saved when it was written.
+  const store = (cat: string, iconic: number[], base = rulesSignature(null)) => localStorage.setItem(keyFor(cat), JSON.stringify({ v: 1, draftBase: base, savedAt: "", draft: { ...twoBands, prices: { ...twoBands.prices, t_iconic: iconic } } }));
+  const category = (id: string, name: string, sortOrder: number) => ({ id, storeId: STORE, name, slug: id, sortOrder, active: true, createdAt: "", updatedAt: "" } as Category);
+  const savedTable = (max: number): PricingRulesConfig => {
+    const band = (price: number) => [{ min: 0, max, price }, { min: max, price: price + 10 }];
+    return { byTier: {}, byCategory: { [CAT]: {
+      t_retail: { kind: "bands", bands: band(290), rounding: "none" },
+      t_girly: { kind: "bands", bands: band(230), rounding: "none" },
+      t_iconic: { kind: "bands", bands: band(160), rounding: "none" },
+    } } };
+  };
+  /** El mismo estado con otra tabla guardada: como cuando la sincronización la trae. */
+  const syncSavedTable = (view: ReturnType<typeof mount>, pricingRules: PricingRulesConfig) => {
+    const next = fixtureState();
+    next.stores[0] = oliviaStore();
+    next.categories = state.categories;
+    next.products = state.products;
+    next.stores[0].pricingRules = pricingRules;
+    mocks.state = next;
+    view.rerender(<ToastProvider><PricingStrategyScreen /></ToastProvider>);
+  };
+
+  function editAndDirty(value = "165") {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value } });
+  }
+  function deferredSave() {
+    let resolve!: () => void;
+    mocks.saveCategoryPricingRules.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+    return () => resolve();
+  }
+
+  it("cambiar de categoría mientras guarda no pierde el borrador de la otra", async () => {
+    state.categories = [categoryFixture(), category(CAT2, "Perfumes", 2)];
+    store(CAT2, [180, 170]);
+    editAndDirty();
+    const finish = deferredSave();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    // mientras guarda, Fer se va a otra categoría
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: CAT2 } });
+    await waitFor(() => expect(iconicFirst()).toBe("180"));
+    finish();
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    expect(iconicFirst()).toBe("180");
+    expect(saveButton().textContent).toMatch(/Guardar tabla|Guardando…/); // sigue pendiente: nunca se envió
+    expect(localStorage.getItem(keyFor(CAT2))).not.toBeNull();
+    // ...y su firma base es la suya: el guardado ajeno no la convierte en "cambiada en otra sesión".
+    expect(screen.queryByText(/cambiaron en otra sesión/i)).toBeNull();
+  });
+
+  it("en modo desarrollo (StrictMode) el borrador guardado también se recupera", async () => {
+    store(CAT, [165, 170]);
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${encodeURIComponent(CAT)}`); // ya en la categoría al montar
+    render(<StrictMode><ToastProvider><PricingStrategyScreen /></ToastProvider></StrictMode>);
+    selectCategory();
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(localStorage.getItem(keyFor())).not.toBeNull();
+  });
+
+  it("en modo desarrollo, con tabla guardada, el borrador recuperado no se da por guardado", async () => {
+    state.stores[0].pricingRules = savedTable(60);
+    store(CAT, [165, 170], rulesSignature(savedTable(60).byCategory![CAT]));
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${encodeURIComponent(CAT)}`);
+    render(<StrictMode><ToastProvider><PricingStrategyScreen /></ToastProvider></StrictMode>);
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    expect(localStorage.getItem(keyFor())).not.toBeNull();
+  });
+
+  it("«Reemplazar con la propuesta» también pide confirmación sobre un borrador recuperado", async () => {
+    state.stores[0].pricingRules = { byTier: {}, byCategory: { [CAT]: { t_retail: { kind: "markup", percent: 10 } } } } as unknown as PricingRulesConfig;
+    store(CAT, [165, 170]);
+    mount();
+    selectCategory();
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    fireEvent.click(screen.getByRole("button", { name: /Reemplazar con la propuesta/ }));
+    expect(screen.getByText(/¿Restaurar la propuesta y perder tus cambios\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(iconicFirst()).toBe("165");
+  });
+
+  it("si la pantalla se deja con un guardado en curso, al volver no aparecen avisos falsos ni resucita lo ya guardado", async () => {
+    editAndDirty("165");
+    const finish = deferredSave();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    const rulesSent = mocks.saveCategoryPricingRules.mock.calls[mocks.saveCategoryPricingRules.mock.calls.length - 1][1] as Record<string, PricingRule>;
+    cleanup(); // se va (Diagnóstico) antes de que termine
+    const view = mount(); // y vuelve antes de que termine
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    // el guardado termina: Firestore entrega exactamente lo que se envió
+    syncSavedTable(view, { byTier: {}, byCategory: { [CAT]: rulesSent } });
+    finish();
+    await screen.findByRole("button", { name: "Sin cambios" });
+    expect(screen.queryByText(/cambiaron en otra sesión/i)).toBeNull();
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+    expect(localStorage.getItem(keyFor())).toBeNull();
+  });
+
+  it("el aviso de recuperación no reaparece tras guardar ni sigue tras descartar", async () => {
+    state.stores[0].pricingRules = savedTable(60);
+    mount(); // con tabla guardada el editor abre solo
+    selectCategory();
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    await waitFor(() => expect(localStorage.getItem(keyFor())).not.toBeNull()); // el propio editor lo guardó con su firma base
+    cleanup();
+    mount();
+    selectCategory();
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "175" } });
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull(); // edición nueva: no es una recuperación
+    // y tras descartar explícitamente un borrador recuperado tampoco queda
+    cleanup();
+    const again = mount();
+    selectCategory();
+    await waitFor(() => expect(iconicFirst()).toBe("175"));
+    syncSavedTable(again, savedTable(50));
+    fireEvent.click(screen.getByRole("button", { name: /Descartar mis cambios y recargar/ }));
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+  });
+
+  it("sin propuesta calculada, «Restaurar propuesta» no promete un reemplazo que no existe", async () => {
+    state.categories = [categoryFixture(), category(CAT3, "Mínimo", 2)];
+    state.products = [...clusterProducts(), ...Array.from({ length: 2 }, () => product(50, { t_retail: 180, t_girly: 150, t_iconic: 120 }, 1, CAT3))];
+    store(CAT3, [120, 110]);
+    mount();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: CAT3 } });
+    await waitFor(() => expect(iconicFirst()).toBe("120"));
+    expect(screen.getByRole("button", { name: /Restaurar propuesta/ })).toBeDisabled();
+    expect(localStorage.getItem(keyFor(CAT3))).not.toBeNull();
   });
 });

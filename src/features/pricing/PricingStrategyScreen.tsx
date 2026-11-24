@@ -56,6 +56,37 @@ const SUPPORT_HINT: Record<PriceSupport, string> = {
 };
 
 /** #526: «A, B y C» with Spanish conjunction («e» before i-/hi- sounds). */
+/**
+ * #538: the rules a draft would write — one bands rule per VISIBLE tier, and
+ * the saved rules of HIDDEN tiers riding along untouched. Pure: the screen's
+ * memo and the "this draft is already saved" check share it.
+ */
+export function serializeDraft(
+  draft: StrategyTableDraft,
+  tiers: Array<{ id: string }>,
+  savedByCategory: Record<string, PricingRule> | undefined
+): Record<string, PricingRule> | null {
+  if (draft.limits.length === 0) return null;
+  const rules: Record<string, PricingRule> = {};
+  for (const tier of tiers) {
+    const prices = draft.prices[tier.id] ?? [];
+    rules[tier.id] = {
+      kind: "bands",
+      bands: draft.limits.map((limit, index) => ({
+        min: limit.min,
+        ...(limit.max !== undefined ? { max: limit.max } : {}),
+        price: prices[index] ?? 0,
+      })),
+      rounding: "none",
+    };
+  }
+  const visible = new Set(tiers.map((t) => t.id));
+  for (const [tierId, rule] of Object.entries(savedByCategory ?? {})) {
+    if (!visible.has(tierId)) rules[tierId] = rule;
+  }
+  return rules;
+}
+
 function joinSpanish(items: string[]): string {
   if (items.length <= 1) return items.join("");
   const head = items.slice(0, -1).join(", ");
@@ -97,19 +128,37 @@ export function PricingStrategyScreen() {
     // Same-store session memory only — another store's category is an orphan.
     return activeStore?.id === lastChosenStore ? lastChosenCategory : "";
   });
-  const [draft, setDraft] = useState<TableDraft | null>(null);
-  const [draftBase, setDraftBase] = useState<string>("");
+  // #538: Fer's unsaved edits of a category survive Diagnóstico, Inicio,
+  // another category and a reload of the same tab. The stored draft is read
+  // ONCE per entry — here at mount and in `adopt` at every choice — never from
+  // an effect: that re-read on every saved-signature change (a save's own
+  // update resurrected the draft it had just retired) and, under StrictMode's
+  // double pass, the second read retired the draft (review 24-nov).
+  const tierIdsNow = () => tiersForStore(activeStore).map((t) => t.id);
+  const readStoredDraft = (forCategory: string) =>
+    forCategory && user && activeStore ? loadStrategyDraft(user.uid, activeStore.id, forCategory, tierIdsNow()) : null;
+  const [entry] = useState(() => readStoredDraft(categoryId));
+  const [draft, setDraft] = useState<TableDraft | null>(() => (entry ? { ...entry.draft, dirty: true } : null));
+  const [draftBase, setDraftBase] = useState<string>(entry?.draftBase ?? "");
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [replaceExisting, setReplaceExisting] = useState(false);
   // #538: a draft recovered from storage (it survived Diagnóstico, Inicio,
   // another category or a reload) says so; «Restaurar propuesta» asks before
   // replacing unsaved edits.
-  const [restoredFromDraft, setRestoredFromDraft] = useState(false);
+  const [restoredFromDraft, setRestoredFromDraft] = useState(entry !== null);
   const [confirmRestore, setConfirmRestore] = useState(false);
-  // #538: the stored draft is read when a category is ENTERED (mount or a new
-  // choice) — the last category it was read for.
-  const storageReadFor = useRef("");
+  // #538 (review 24-nov, M3): «Reemplazar con la propuesta» is the same
+  // replacement — when confirmed, it also flags the incompatible rules as replaced.
+  const [restoreReplacesRules, setRestoreReplacesRules] = useState(false);
+  // The category of the render in progress: a save that finishes later must
+  // only settle the session it was sent from (review 24-nov, M1).
+  const categoryIdNow = useRef(categoryId);
+  categoryIdNow.current = categoryId;
+  // What the adoption effect reads when the SAVED table changes: the draft as
+  // of that render, without re-running the effect on every keystroke.
+  const liveDraft = useRef<{ draft: TableDraft | null; draftBase: string }>({ draft, draftBase });
+  liveDraft.current = { draft, draftBase };
 
   const tiers = useMemo(() => tiersForStore(activeStore), [activeStore]);
   const categories = useMemo(
@@ -205,6 +254,9 @@ export function PricingStrategyScreen() {
     // a rejected text from the previous context would surface as a ghost
     // value/error and block the save.
     setRawCaptures({});
+    // #538 (review 24-nov, M5): the proposal replaces the recovered session;
+    // the notice about it must not outlive it.
+    setRestoredFromDraft(false);
     if (!bands || bands.length === 0) {
       // #538: an explicit restore with nothing to restore drops the stored
       // draft too — it must not resurrect on the next visit.
@@ -222,6 +274,17 @@ export function PricingStrategyScreen() {
     });
   }
 
+  /** #538: replacing UNSAVED edits is a loss — ask first, from either entry. */
+  function askToRestore(replacesRules: boolean) {
+    if (draft?.dirty) {
+      setRestoreReplacesRules(replacesRules);
+      setConfirmRestore(true);
+      return;
+    }
+    loadFromProposal(proposal?.bands ?? null);
+    if (replacesRules) setReplaceExisting(true);
+  }
+
   // UX operadora #3: choosing a category is the big decision — take Fer to
   // the analysis/proposal, not the top of the page.
   const proposalRef = useRef<HTMLDivElement>(null);
@@ -233,15 +296,14 @@ export function PricingStrategyScreen() {
 
   function adopt(categoryIdNext: string) {
     setCategoryId(categoryIdNext);
-    // #538: every choice is a new entry — the stored draft is read again for it.
-    storageReadFor.current = "";
     lastChosenCategory = categoryIdNext;
     lastChosenStore = activeStore?.id ?? "";
     setReplaceExisting(false);
-    // Draft re-adoption on category switch is driven by the effect below.
-    setDraft(null);
-    setDraftBase("");
-    setRestoredFromDraft(false);
+    // #538: a new entry reads the chosen category's stored draft.
+    const stored = readStoredDraft(categoryIdNext);
+    setDraft(stored ? { ...stored.draft, dirty: true } : null);
+    setDraftBase(stored?.draftBase ?? "");
+    setRestoredFromDraft(stored !== null);
     // #219 (dictamen #517): raw captures belong to the previous category's
     // fields — the new context starts clean.
     setRawCaptures({});
@@ -260,8 +322,6 @@ export function PricingStrategyScreen() {
   // the banner instead (and the transactional save keeps them safe).
   useEffect(() => {
     if (!categoryId) return;
-    const enteringCategory = storageReadFor.current !== categoryId;
-    storageReadFor.current = categoryId;
     // #531: coming back from the simulator, restore the SAME editing session.
     // Review rule: a concurrent save must SURFACE (the existing banner) and
     // never silently discard the in-progress table — the transactional save
@@ -277,29 +337,26 @@ export function PricingStrategyScreen() {
       if (stash.draft.dirty || stash.draftBase === savedSignature) {
         setDraft(stash.draft);
         setDraftBase(stash.draftBase);
+        setRestoredFromDraft(false); // a round trip, not a recovery
         return;
       }
     }
-    if (draft?.dirty) return;
-    // #538: Fer's unsaved edits of THIS category survive Diagnóstico, Inicio,
-    // another category and a reload of the same tab — the stored draft is
-    // adopted first, with its own base signature (the concurrency check above
-    // keeps working against it). Normalized to the levels visible NOW. Read
-    // on ENTRY only: this effect also runs when the saved table's signature
-    // changes, and a save's own update arriving in the same React batch as
-    // its completion ran it BEFORE the draft was retired from storage — the
-    // draft just saved came back as "recovered" («Sin cambios» never showed;
-    // the CI flake of the first #538 candidate).
-    if (enteringCategory) {
-      const stored = user && activeStore ? loadStrategyDraft(user.uid, activeStore.id, categoryId, tiers.map((t) => t.id)) : null;
-      if (stored) {
-        setDraft({ ...stored.draft, dirty: true });
-        setDraftBase(stored.draftBase);
-        setRestoredFromDraft(true);
-        return;
+    const { draft: current, draftBase: currentBase } = liveDraft.current;
+    if (current?.dirty) {
+      // #538 (review 24-nov, M4): the saved table just became EXACTLY this
+      // draft — a save of ours that completed after the screen was left
+      // mid-save. It is saved now: settle it, or it came back as "changed in
+      // another session" by its own hand.
+      const asRules = serializeDraft(current, tiers, activeStore?.pricingRules?.byCategory?.[categoryId]);
+      if (asRules && savedSignature !== currentBase && rulesSignature(asRules) === savedSignature) {
+        forgetStoredDraft();
+        setDraft({ ...current, dirty: false });
+        setDraftBase(savedSignature);
+        setRestoredFromDraft(false);
       }
-      setRestoredFromDraft(false);
+      return;
     }
+    setRestoredFromDraft(false);
     if (existing?.compatible) setDraft(existing.draft);
     setDraftBase(savedSignature);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -329,28 +386,10 @@ export function PricingStrategyScreen() {
   // The serialized rules this draft will save (also drives the impact preview).
   // Rules for tiers that are currently HIDDEN ride along untouched — hiding a
   // level must not silently delete its saved table.
-  const serialized: Record<string, PricingRule> | null = useMemo(() => {
-    if (!draft || draft.limits.length === 0) return null;
-    const rules: Record<string, PricingRule> = {};
-    for (const tier of tiers) {
-      const prices = draft.prices[tier.id] ?? [];
-      rules[tier.id] = {
-        kind: "bands",
-        bands: draft.limits.map((limit, index) => ({
-          min: limit.min,
-          ...(limit.max !== undefined ? { max: limit.max } : {}),
-          price: prices[index] ?? 0,
-        })),
-        rounding: "none",
-      };
-    }
-    const saved = activeStore?.pricingRules?.byCategory?.[categoryId ?? ""];
-    const visible = new Set(tiers.map((t) => t.id));
-    for (const [tierId, rule] of Object.entries(saved ?? {})) {
-      if (!visible.has(tierId)) rules[tierId] = rule;
-    }
-    return rules;
-  }, [draft, tiers, activeStore?.pricingRules, categoryId]);
+  const serialized: Record<string, PricingRule> | null = useMemo(
+    () => (draft ? serializeDraft(draft, tiers, activeStore?.pricingRules?.byCategory?.[categoryId ?? ""]) : null),
+    [draft, tiers, activeStore?.pricingRules, categoryId]
+  );
 
   const limitError = useMemo(() => {
     if (!draft) return null;
@@ -523,18 +562,27 @@ export function PricingStrategyScreen() {
       toast.error(`Completa los precios pendientes de ${pendingPrices.map((t) => t.label).join(", ")}.`);
       return;
     }
+    const savedCategoryId = categoryId;
+    const draftSent = draft;
+    const savedSignatureNow = rulesSignature(serialized);
     setBusy(true);
     try {
-      await saveCategoryPricingRules(categoryId, serialized, draftBase, {
+      await saveCategoryPricingRules(savedCategoryId, serialized, draftBase, {
         summary: `Tabla de bandas guardada (${categoryName ?? "categoría"}) — sin cambios de precio.`,
       });
       // #538: retire the stored copy BEFORE the draft turns clean — its update
-      // from Firestore can land in the same batch as this completion.
-      forgetStoredDraft();
-      setDraft((current) => (current ? { ...current, dirty: false } : current));
-      setDraftBase(rulesSignature(serialized));
-      setReplaceExisting(false);
-      setRawCaptures({});
+      // from Firestore can land in the same batch as this completion. Only the
+      // category it was sent from: another may have been chosen meanwhile.
+      if (user && activeStore) clearStrategyDraft(user.uid, activeStore.id, savedCategoryId);
+      // ...and only the draft that was sent: a later edit (or another
+      // category's draft) stays pending.
+      setDraft((current) => (current === draftSent ? { ...current, dirty: false } : current));
+      if (categoryIdNow.current === savedCategoryId) {
+        setDraftBase(savedSignatureNow);
+        setReplaceExisting(false);
+        setRawCaptures({});
+        setRestoredFromDraft(false);
+      }
       toast.success("Tabla guardada. Los precios de tus productos no cambiaron.");
     } catch (error) {
       // P0-2: a same-category concurrent edit REFUSES the save (nothing is
@@ -559,6 +607,7 @@ export function PricingStrategyScreen() {
       setDraft(null);
       setDraftBase("");
       forgetStoredDraft(); // #538: the deleted table takes its draft along
+      setRestoredFromDraft(false);
       toast.success("Tabla eliminada.");
     } catch (error) {
       toast.error(error instanceof Error && error.message ? error.message : "No se pudo eliminar la tabla.");
@@ -679,7 +728,7 @@ export function PricingStrategyScreen() {
               <Button size="sm" variant="secondary" onClick={() => navigate("/productos/reglas")}>
                 Ver en Reglas de venta
               </Button>
-              <Button size="sm" onClick={() => { loadFromProposal(proposal?.bands ?? null); setReplaceExisting(true); }}>
+              <Button size="sm" onClick={() => askToRestore(true)}>
                 Reemplazar con la propuesta
               </Button>
             </div>
@@ -768,6 +817,7 @@ export function PricingStrategyScreen() {
                 // the discard is explicit, nothing may resurrect it.
                 setRawCaptures({});
                 forgetStoredDraft();
+                setRestoredFromDraft(false);
               }}
             >
               Descartar mis cambios y recargar
@@ -783,14 +833,15 @@ export function PricingStrategyScreen() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => {
-                    // #538: replacing UNSAVED edits is a loss — ask first.
-                    if (draft?.dirty) setConfirmRestore(true);
-                    else loadFromProposal(proposal?.bands ?? null);
-                  }}
+                  disabled={!(proposal?.bands ?? []).length}
+                  onClick={() => askToRestore(false)}
                 >
                   Restaurar propuesta
                 </Button>
+                {!(proposal?.bands ?? []).length && (
+                  // #538 (review 24-nov, M6): without a proposal there is nothing to restore — say so instead of promising it.
+                  <span className="self-center text-xs text-on-surface-soft">Sin propuesta calculada para esta categoría</span>
+                )}
                 <Button size="sm" variant="ghost" onClick={addBand}>+ Banda</Button>
               </div>
             </div>
@@ -1004,6 +1055,8 @@ export function PricingStrategyScreen() {
               onClick={() => {
                 setConfirmRestore(false);
                 loadFromProposal(proposal?.bands ?? null);
+                if (restoreReplacesRules) setReplaceExisting(true);
+                setRestoreReplacesRules(false);
               }}
             >
               Restaurar propuesta
