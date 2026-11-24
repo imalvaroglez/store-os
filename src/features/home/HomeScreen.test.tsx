@@ -4,11 +4,19 @@ import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-li
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
+import { orderReference } from "../../lib/orders";
+import { resetReturnOriginForTests, takeReturnOrigin } from "../../lib/returnOrigin";
 import type { AppState, Order, Product } from "../../types";
 
 // Direct useStore mock: synchronous mount, no hydration race (#111 removed
 // browser-storage state; the cloud mount is async and these are view tests).
 const mocks = vi.hoisted(() => ({ state: null as null | AppState, stateStatus: "ready", upsertOrder: vi.fn(), loadOrderPayments: vi.fn(async () => {}), registerOrderPayment: vi.fn() }));
+// #539: the Home card navigates to the exact order — assert the destination.
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
+vi.mock("../../lib/router", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../lib/router")>(),
+  navigate: navigateMock,
+}));
 vi.mock("../../app/StoreProvider", () => ({
   useStore: () => ({
     state: mocks.state,
@@ -447,12 +455,6 @@ describe("#455 r3 — el cierre visible desde Inicio", () => {
 });
 
 describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () => {
-  const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
-  vi.mock("../../lib/router", async (importOriginal) => ({
-    ...await importOriginal<typeof import("../../lib/router")>(),
-    navigate: navigateMock,
-  }));
-
   function confirmedOrder(): Order {
     return {
       ...(fixtureState().orders[0] as Order),
@@ -470,15 +472,57 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
     render(<ToastProvider><HomeScreen /></ToastProvider>);
   }
 
-  beforeEach(() => navigateMock.mockClear());
+  beforeEach(() => { navigateMock.mockClear(); resetReturnOriginForTests(); });
 
   it("tocar la tarjeta abre el pedido EXACTO sin cambiar su estado", async () => {
     const order = confirmedOrder();
     mountWith(order);
     const openCard = await screen.findByRole("button", { name: /Aro luna/ });
     fireEvent.click(openCard);
+    expect(navigateMock).toHaveBeenCalledTimes(1);
     expect(navigateMock).toHaveBeenCalledWith("/pedidos/ord-539");
     expect(mocks.upsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("la tarjeta se identifica con su folio #XXXXXX (convención de la app)", async () => {
+    mountWith(confirmedOrder());
+    const openCard = await screen.findByRole("button", { name: /Aro luna/ });
+    expect(openCard.textContent).toContain(`#${orderReference("ord-539")}`);
+  });
+
+  it("la mitad inferior de la tarjeta (Total/Saldo) también abre el pedido, sin cambiar su estado", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    await screen.findByRole("button", { name: /Aro luna/ });
+    // QA minor 2: the money half looked tappable and did nothing.
+    fireEvent.click(screen.getByText("Saldo"));
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith("/pedidos/ord-539");
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("abrir desde Inicio registra el retorno: el editor vuelve a Inicio, no a la lista", async () => {
+    mountWith(confirmedOrder());
+    fireEvent.click(await screen.findByRole("button", { name: /Aro luna/ }));
+    expect(takeReturnOrigin("ord-539")).toBe("/");
+  });
+
+  it("las acciones de la tarjeta no abren el pedido: «Preparar» solo confirma, «Cobrar» abre Cobros", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    // A delivered order with a pending balance offers «Cobrar» instead of a verb.
+    cleanup();
+    const delivered = { ...confirmedOrder(), id: "ord-539-cobrar", orderStatus: "delivered" } as Order;
+    mountWith(delivered);
+    fireEvent.click(await screen.findByRole("button", { name: "Cobrar" }));
+    await waitFor(() => expect(mocks.loadOrderPayments).toHaveBeenCalled());
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 
   it("«Preparar» abre confirmación que identifica el pedido y el paso Confirmado → Preparando", async () => {

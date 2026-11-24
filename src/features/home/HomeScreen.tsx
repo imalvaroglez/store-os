@@ -15,7 +15,8 @@ import { ordersForStore, productsToRestock, customersForStore } from "../../lib/
 import { monthRanking, currentMonth } from "../../lib/resellerRanking";
 import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
-import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
+import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderReference, orderTotals } from "../../lib/orders";
+import { setReturnOrigin } from "../../lib/returnOrigin";
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
@@ -94,6 +95,13 @@ export function HomeScreen() {
         .filter((x) => x.status?.active && x.status.expiringSoon)
         .sort((a, b) => a.status!.until.localeCompare(b.status!.until))
     : [];
+
+  /** Opens the EXACT order and remembers Inicio as the way back: the editor's
+   * back action returns here (#463 origin contract), not to the orders list. */
+  function openOrder(orderId: string) {
+    setReturnOrigin(orderId, "/");
+    navigate(`/pedidos/${orderId}`);
+  }
 
   async function advance(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
@@ -234,22 +242,28 @@ export function HomeScreen() {
               const totals = orderTotals(o);
               const preview = orderItems(o).slice(0, 2).map((item) => item.productName).join(", ");
               return (
-                <Card key={o.id}>
+                <Card
+                  key={o.id}
+                  // #539 (QA minor): the WHOLE card opens the EXACT order — the
+                  // route mental «veo mi pedido → lo toco» — Total/Saldo included.
+                  // It never changes state; the actions below stop the tap.
+                  onClick={() => openOrder(o.id)}
+                >
                   <div className="flex items-center justify-between gap-3">
-                    {/* #539: the card itself opens the EXACT order — the route
-                        mental «veo mi pedido → lo toco». It never changes state;
-                        its accessible action is distinct from «Preparar». */}
+                    {/* The keyboard/assistive entry: same destination as the
+                        card, so a focus + Enter opens the order too. */}
                     <Button
                       variant="ghost"
                       className="!min-w-0 !flex-1 !justify-start !px-0 !text-left"
-                      onClick={() => navigate(`/pedidos/${o.id}`)}
+                      onClick={(event) => { event.stopPropagation(); openOrder(o.id); }}
                     >
                       <span className="min-w-0">
                         <span className="block font-semibold text-ink text-sm truncate">
                           {preview || "Sin productos"}
                         </span>
+                        {/* The folio is the app's order identity (#XXXXXX). */}
                         <span className="block text-xs text-ink-soft truncate">
-                          {customer?.name ?? "—"} · {ORDER_STATUS_LABELS[status]}
+                          #{orderReference(o.id)} · {customer?.name ?? "—"} · {ORDER_STATUS_LABELS[status]}
                         </span>
                       </span>
                     </Button>
@@ -257,7 +271,8 @@ export function HomeScreen() {
                       <Button
                         size="sm"
                         className="shrink-0 whitespace-nowrap"
-                        onClick={() => {
+                        onClick={(event) => {
+                          event.stopPropagation();
                           // #539: preparing is the money-adjacent step that
                           // changed an order with one touch — confirm first.
                           if (verb === "Preparar") setPrepareOrderId(o.id);
@@ -271,7 +286,12 @@ export function HomeScreen() {
                       </Button>
                     ) : o.installments ? (
                       totals.balance > 0 && (
-                        <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => setPaymentsOrderId(o.id)}>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="shrink-0 whitespace-nowrap"
+                          onClick={(event) => { event.stopPropagation(); setPaymentsOrderId(o.id); }}
+                        >
                           Abonar
                         </Button>
                       )
@@ -280,9 +300,11 @@ export function HomeScreen() {
                         size="sm"
                         variant="secondary"
                         className="shrink-0 whitespace-nowrap"
-                        onClick={() =>
-                          typeof o.paymentsReceivedCents === "number" ? setPaymentsOrderId(o.id) : collect(o.id)
-                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (typeof o.paymentsReceivedCents === "number") setPaymentsOrderId(o.id);
+                          else collect(o.id);
+                        }}
                       >
                         Cobrar
                       </Button>
