@@ -5,6 +5,7 @@ import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
 import { orderReference } from "../../lib/orders";
+import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { resetReturnOriginForTests, takeReturnOrigin } from "../../lib/returnOrigin";
 import type { AppState, Order, Product } from "../../types";
 
@@ -469,7 +470,15 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
     const state = fixtureState();
     state.orders = [order];
     mocks.state = state;
-    render(<ToastProvider><HomeScreen /></ToastProvider>);
+    return render(<ToastProvider><HomeScreen /></ToastProvider>);
+  }
+
+  /** La misma pantalla con otro estado: como cuando la sincronización trae el pedido cambiado. */
+  function syncWith(view: ReturnType<typeof mountWith>, order: Order) {
+    const state = fixtureState();
+    state.orders = [order];
+    mocks.state = state;
+    view.rerender(<ToastProvider><HomeScreen /></ToastProvider>);
   }
 
   beforeEach(() => {
@@ -571,10 +580,10 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
 
   it("si el pedido cambió mientras la confirmación estaba abierta, muestra su estado actualizado y NO avanza", async () => {
     const order = confirmedOrder();
-    mountWith(order);
+    const view = mountWith(order);
     fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
-    // otra sesión lo prepara mientras el diálogo está abierto
-    (mocks.state!.orders[0] as Order).orderStatus = "ready";
+    // otra sesión lo prepara mientras el diálogo está abierto: la sincronización lo trae
+    syncWith(view, { ...order, orderStatus: "ready" });
     await settle();
     fireEvent.click(confirmButton());
     expect(screen.getByText(/ya no está Confirmado: ahora está Listo\./)).toBeTruthy();
@@ -602,5 +611,26 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
     expect(screen.queryByRole("dialog")).toBeNull();
     // Misión UX #539: sin aviso no se sabía si había guardado; la lista sí avisaba.
     expect(await screen.findByText(`Pedido #${orderReference("ord-539")} avanzado a «Listo»`)).toBeTruthy();
+  });
+
+  it("un avance directo rechazado porque el pedido cambió en otro dispositivo dice ese motivo", async () => {
+    mountWith({ ...confirmedOrder(), orderStatus: "preparing" });
+    mocks.upsertOrder.mockRejectedValueOnce(new StaleOrderError());
+    fireEvent.click(await screen.findByRole("button", { name: "Marcar listo" }));
+    expect(await screen.findByText("El pedido cambió en otro dispositivo. Vuelve a entrar para ver la versión reciente.")).toBeTruthy();
+  });
+
+  it("si el pedido de la confirmación sale de la tienda mientras el diálogo está abierto, se cierra y no reaparece al volver", async () => {
+    const order = confirmedOrder();
+    const view = mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    // deja el contexto de la tienda (otro la movió) y después regresa
+    syncWith(view, { ...order, storeId: "otra-tienda" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    syncWith(view, order);
+    await screen.findByRole("button", { name: "Preparar" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
   });
 });

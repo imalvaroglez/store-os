@@ -105,6 +105,12 @@ export function HomeScreen() {
     navigate(`/pedidos/${orderId}`);
   }
 
+  // The order the «Preparar» confirmation names. One that left the store
+  // context while its dialog was open closes it for good — otherwise the
+  // dialog would pop up again if the order came back (review note #539).
+  const prepareOrder = prepareOrderId ? orders.find((o) => o.id === prepareOrderId) ?? null : null;
+  if (prepareOrderId && !prepareOrder) setPrepareOrderId(null);
+
   async function advance(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
     if (!o) return;
@@ -355,10 +361,7 @@ export function HomeScreen() {
       })()}
       {/* #539: the confirmation names the order and the exact step; on confirm
           the CURRENT state decides (shared with the Pedidos list). */}
-      <PrepareOrderDialog
-        order={prepareOrderId ? orders.find((o) => o.id === prepareOrderId) ?? null : null}
-        onClose={() => setPrepareOrderId(null)}
-      />
+      <PrepareOrderDialog order={prepareOrder} onClose={() => setPrepareOrderId(null)} />
 
     {paymentsOrder && (
       <OrderPaymentsSheet

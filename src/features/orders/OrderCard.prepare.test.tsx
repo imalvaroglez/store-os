@@ -124,4 +124,23 @@ describe("#539 «Preparar» en la lista de Pedidos confirma antes de avanzar", (
     expect(holder.upsertOrder).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  it("un avance directo rechazado porque el pedido cambió en otro dispositivo dice ese motivo", async () => {
+    holder.upsertOrder.mockRejectedValueOnce(new StaleOrderError());
+    renderCard({ ...confirmed(), orderStatus: "preparing" } as Order);
+    fireEvent.click(screen.getByRole("button", { name: "Marcar listo" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("El pedido cambió en otro dispositivo. Vuelve a entrar para ver la versión reciente."));
+  });
+
+  it("la espera la pone el tema: con un movimiento de entrada de 30 s, «Preparar pedido» sigue deshabilitado un instante después", async () => {
+    document.documentElement.style.setProperty("--motion-base", "30s");
+    try {
+      renderCard(confirmed());
+      fireEvent.click(screen.getByRole("button", { name: "Preparar" }));
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(confirmButton()).toBeDisabled();
+    } finally {
+      document.documentElement.style.removeProperty("--motion-base");
+    }
+  });
 });
