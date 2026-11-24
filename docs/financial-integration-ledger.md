@@ -62,9 +62,12 @@ Documentario: #397/#401 (runbook Sev-1 §6) esperan revisión del PO — sin imp
 
 ## E. Disponibilidad real (qué ve Fer hoy)
 
-- **En main/producción (1.16.3, desde el 2026-11-14 por la tarde — tren #444; antes 1.16.2 vía hotfix #429 el mismo día)**: pedidos/cobros/entregas/incidencias por color (#333/#353/#391/#394/#398/#399/#404/#405/#429), compras por ticket con recepción (#206/#207), precio por clienta (#151), estrategia de precios (#289/#315).
-- **Solo en PR (propuesta)**: todo lo de la sección B — cierre mensual y reparto son **simulaciones de solo lectura**; ninguna cifra se autoriza ni se mueve desde ellas.
-- **Sin implementar**: #202 (correcciones de cierre), #279 (caja/obligaciones), operación de crédito firmada (#380), etapas operativas de #128/#129/#132.
+> Actualizado el 24-nov (#545). Al escribirse esta revisión la versión era
+> 1.16.3 (2026-11-14, tren #444) y todo lo de la sección B estaba sólo en PR.
+
+- **En producción (1.21.1, 2026-11-23)**: pedidos/cobros/entregas/incidencias por color (#333/#353/#391/#394/#398/#399/#404/#405/#429), compras por ticket con recepción (#206/#207), precio por clienta (#151), estrategia de precios (#289/#315).
+- **Cierre mensual y reparto ya no son simulaciones de solo lectura**: `authorizeMonthlyClose` y `authorizeProfitDistribution` (`src/app/firebase/firestoreData.ts`) autorizan y persisten el cierre y el reparto, con reglas que sólo admiten a la dueña; las correcciones de cierre (#202) y las etapas #128/#129/#132 se liberaron en 1.17.0.
+- **Liberado después**: operación de crédito firmada (#380, 1.20.0) y caja/obligaciones desde la activación (#279, 1.21.0).
 
 ## F. Defectos nuevos
 

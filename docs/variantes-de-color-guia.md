@@ -50,8 +50,8 @@ comprado**: la recepción suma la existencia a ese color y actualiza SU costo
 ## Catálogo público
 
 Tus clientas ven **un solo producto con sus colores listados** (los agotados,
-tachados); nunca fichas repetidas. Próximamente podrán elegir el color al
-armar su pedido (#137).
+tachados); nunca fichas repetidas. Ya pueden elegir el color al armar su
+pedido (#137, liberado en 1.17.0).
 
 ## Productos que ya tienes
 
