@@ -1003,6 +1003,38 @@ describe("#538 borrador de Estrategia conservado", () => {
     expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
   });
 
+  it("al guardar, la tabla que entrega Firestore en el mismo instante no resucita el borrador recién guardado", async () => {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    expect(stored(keyFor())).not.toBeNull();
+    const band = (price: number) => [{ min: 0, max: 60, price }, { min: 60, price: price + 10 }];
+    // La escucha de Firestore entrega la tabla guardada antes de que el guardado termine de asentarse.
+    mocks.saveCategoryPricingRules.mockImplementation(async () => {
+      await Promise.resolve();
+      const saved = fixtureState();
+      saved.stores[0] = oliviaStore();
+      saved.categories = state.categories;
+      saved.products = state.products;
+      saved.stores[0].pricingRules = {
+        byTier: {},
+        byCategory: { [CAT]: {
+          t_retail: { kind: "bands", bands: band(290), rounding: "none" },
+          t_girly: { kind: "bands", bands: band(230), rounding: "none" },
+          t_iconic: { kind: "bands", bands: band(165), rounding: "none" },
+        } },
+      };
+      mocks.state = saved;
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    await screen.findByRole("button", { name: "Sin cambios" });
+    expect(iconicFirst()).toBe("165");
+    expect(localStorage.getItem(keyFor())).toBeNull();
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+  });
+
   it("guardar la tabla limpia el borrador guardado", async () => {
     editAndDirty();
     expect(stored(keyFor())).not.toBeNull();

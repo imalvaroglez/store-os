@@ -107,6 +107,9 @@ export function PricingStrategyScreen() {
   // replacing unsaved edits.
   const [restoredFromDraft, setRestoredFromDraft] = useState(false);
   const [confirmRestore, setConfirmRestore] = useState(false);
+  // #538: the stored draft is read when a category is ENTERED (mount or a new
+  // choice) — the last category it was read for.
+  const storageReadFor = useRef("");
 
   const tiers = useMemo(() => tiersForStore(activeStore), [activeStore]);
   const categories = useMemo(
@@ -230,6 +233,8 @@ export function PricingStrategyScreen() {
 
   function adopt(categoryIdNext: string) {
     setCategoryId(categoryIdNext);
+    // #538: every choice is a new entry — the stored draft is read again for it.
+    storageReadFor.current = "";
     lastChosenCategory = categoryIdNext;
     lastChosenStore = activeStore?.id ?? "";
     setReplaceExisting(false);
@@ -255,6 +260,8 @@ export function PricingStrategyScreen() {
   // the banner instead (and the transactional save keeps them safe).
   useEffect(() => {
     if (!categoryId) return;
+    const enteringCategory = storageReadFor.current !== categoryId;
+    storageReadFor.current = categoryId;
     // #531: coming back from the simulator, restore the SAME editing session.
     // Review rule: a concurrent save must SURFACE (the existing banner) and
     // never silently discard the in-progress table — the transactional save
@@ -277,15 +284,22 @@ export function PricingStrategyScreen() {
     // #538: Fer's unsaved edits of THIS category survive Diagnóstico, Inicio,
     // another category and a reload of the same tab — the stored draft is
     // adopted first, with its own base signature (the concurrency check above
-    // keeps working against it). Normalized to the levels visible NOW.
-    const stored = user && activeStore ? loadStrategyDraft(user.uid, activeStore.id, categoryId, tiers.map((t) => t.id)) : null;
-    if (stored) {
-      setDraft({ ...stored.draft, dirty: true });
-      setDraftBase(stored.draftBase);
-      setRestoredFromDraft(true);
-      return;
+    // keeps working against it). Normalized to the levels visible NOW. Read
+    // on ENTRY only: this effect also runs when the saved table's signature
+    // changes, and a save's own update arriving in the same React batch as
+    // its completion ran it BEFORE the draft was retired from storage — the
+    // draft just saved came back as "recovered" («Sin cambios» never showed;
+    // the CI flake of the first #538 candidate).
+    if (enteringCategory) {
+      const stored = user && activeStore ? loadStrategyDraft(user.uid, activeStore.id, categoryId, tiers.map((t) => t.id)) : null;
+      if (stored) {
+        setDraft({ ...stored.draft, dirty: true });
+        setDraftBase(stored.draftBase);
+        setRestoredFromDraft(true);
+        return;
+      }
+      setRestoredFromDraft(false);
     }
-    setRestoredFromDraft(false);
     if (existing?.compatible) setDraft(existing.draft);
     setDraftBase(savedSignature);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -514,6 +528,9 @@ export function PricingStrategyScreen() {
       await saveCategoryPricingRules(categoryId, serialized, draftBase, {
         summary: `Tabla de bandas guardada (${categoryName ?? "categoría"}) — sin cambios de precio.`,
       });
+      // #538: retire the stored copy BEFORE the draft turns clean — its update
+      // from Firestore can land in the same batch as this completion.
+      forgetStoredDraft();
       setDraft((current) => (current ? { ...current, dirty: false } : current));
       setDraftBase(rulesSignature(serialized));
       setReplaceExisting(false);
