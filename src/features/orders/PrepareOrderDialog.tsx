@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Button, Dialog, useToast } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
 import { effectiveOrderStatus, orderItems, orderReference, orderTotals } from "../../lib/orders";
@@ -11,22 +12,34 @@ import type { Order } from "../../types";
 
 type Props = { order: Order | null; onClose: () => void };
 
+// A repeated tap — the one that opened the dialog, or a nervous second one —
+// lands wherever the dialog has just appeared, sometimes on «Preparar pedido»
+// (measured on Inicio: 3 of 36 and 12 of 39 heights with an 80 ms double tap).
+// The confirm action only arms once the dialog has settled: nobody reads
+// "¿Preparar este pedido?" in under this time. Cancelar and Escape work at once.
+export const CONFIRM_ARM_MS = 400;
+
 export function PrepareOrderDialog({ order, onClose }: Props) {
+  if (!order) return null;
+  // Mounted per opening, so «when did this dialog open» is simply its mount.
+  return <PrepareConfirmation order={order} onClose={onClose} />;
+}
+
+function PrepareConfirmation({ order, onClose }: { order: Order; onClose: () => void }) {
   const { state, upsertOrder } = useStore();
   const toast = useToast();
-  if (!order) return null;
+  const openedAt = useRef(Date.now());
   const customer = state.customers.find((c) => c.id === order.customerId && c.storeId === order.storeId);
   const items = orderItems(order);
   const preview = items.slice(0, 2).map((item) => item.productName).join(", ");
   const pieces = orderTotals(order).pieces;
-  // The non-null order for the handler below (narrowing does not cross into it).
-  const current = order;
 
   function confirm() {
+    if (Date.now() - openedAt.current < CONFIRM_ARM_MS) return;
     // The CURRENT state decides: an order that changed while this dialog was
     // open shows its updated status instead of another advance. Looked up at
     // click time, never from a render that could predate the change.
-    const fresh = state.orders.find((o) => o.id === current.id) ?? current;
+    const fresh = state.orders.find((o) => o.id === order.id) ?? order;
     const status = effectiveOrderStatus(fresh);
     if (status !== "confirmed") {
       onClose();

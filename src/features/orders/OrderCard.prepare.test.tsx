@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OrderCard } from "./OrderCard";
 import { orderReference } from "../../lib/orders";
 import type { Order } from "../../types";
@@ -34,7 +34,16 @@ const confirmed = (id = "ord-539-list"): Order => ({
 const renderCard = (order: Order) => render(<OrderCard order={order} onEdit={() => {}} />);
 
 describe("#539 «Preparar» en la lista de Pedidos confirma antes de avanzar", () => {
-  beforeEach(() => { holder.upsertOrder.mockReset().mockResolvedValue({}); toast.info.mockClear(); });
+  // The dialog's confirm action only arms once it has settled — time is ours.
+  let now = 1_700_000_000_000;
+  const settle = () => { now += 1_000; };
+  beforeEach(() => {
+    now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    holder.upsertOrder.mockReset().mockResolvedValue({});
+    toast.info.mockClear();
+  });
+  afterEach(() => vi.restoreAllMocks());
 
   it("un toque en «Preparar» NO avanza el pedido: abre la confirmación con folio, piezas y clienta", () => {
     renderCard(confirmed());
@@ -56,6 +65,7 @@ describe("#539 «Preparar» en la lista de Pedidos confirma antes de avanzar", (
     expect(holder.upsertOrder).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Preparar" }));
+    settle();
     fireEvent.click(screen.getByRole("button", { name: "Preparar pedido" }));
     await waitFor(() => expect(holder.upsertOrder).toHaveBeenCalledTimes(1));
     const saved = holder.upsertOrder.mock.calls[0][0] as Order;
@@ -68,10 +78,23 @@ describe("#539 «Preparar» en la lista de Pedidos confirma antes de avanzar", (
     fireEvent.click(screen.getByRole("button", { name: "Preparar" }));
     // Otra sesión lo preparó mientras tanto.
     rendered.rerender(<OrderCard order={{ ...confirmed(), orderStatus: "preparing" } as Order} onEdit={() => {}} />);
+    settle();
     fireEvent.click(screen.getByRole("button", { name: "Preparar pedido" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(holder.upsertOrder).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith("El pedido ya no está Confirmado: ahora está Preparando.");
+  });
+
+  it("un doble toque sobre «Preparar» no confirma: el diálogo ignora el toque que cae sobre «Preparar pedido» al abrirse", () => {
+    renderCard(confirmed());
+    fireEvent.click(screen.getByRole("button", { name: "Preparar" }));
+    // El segundo toque de un doble toque cae donde acaba de aparecer «Preparar pedido».
+    fireEvent.click(screen.getByRole("button", { name: "Preparar pedido" }));
+    expect(holder.upsertOrder).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy(); // sigue abierto: nada se confirma sin leerlo
+    settle();
+    fireEvent.click(screen.getByRole("button", { name: "Preparar pedido" }));
+    expect(holder.upsertOrder).toHaveBeenCalledTimes(1); // ya asentado, el mismo toque sí confirma
   });
 
   it("las demás acciones conservan su toque directo: «Marcar listo» no pide confirmación", async () => {
