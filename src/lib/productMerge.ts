@@ -39,6 +39,16 @@ export function mergeProductOperational(
   }
   if (has("variants")) {
     if (next.variants === undefined) {
+      // This editor never saw tallas that another session activated on one of
+      // its colors: disabling colors would drop them (and their reservations).
+      for (const baseVariant of baseline.variants ?? []) {
+        const freshVariant = fresh.variants?.find((v) => v.id === baseVariant.id);
+        if (freshVariant?.sizes?.length && !baseVariant.sizes?.length) {
+          throw new StaleProductError(
+            `El color ${freshVariant.color} ahora se vende por talla (cambió en otro dispositivo mientras editabas). Vuelve a abrir la ficha.`
+          );
+        }
+      }
       merged.variants = undefined; // #355 disable-colors tombstone
     } else if (same(next.variants, baseline.variants)) {
       merged.variants = fresh.variants; // untouched color capture → fresh shelves
@@ -110,6 +120,13 @@ function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: Pr
 
   if (!nextSizes.length) {
     if (!currentSizes.length) {
+      if (baseSizes.length > 0) {
+        // Another session already removed these tallas: this editor's view of
+        // the color is stale — saving would put back pieces it no longer holds.
+        throw new StaleProductError(
+          `El color ${next.color} ya no se vende por talla (cambió en otro dispositivo mientras editabas). Vuelve a abrir la ficha.`
+        );
+      }
       // Plain color both sides.
       if (same(next.quantityOnHand, base.quantityOnHand)) return { ...next, quantityOnHand: current.quantityOnHand, cost };
       const delta = (next.quantityOnHand ?? 0) - (base.quantityOnHand ?? 0);
@@ -127,11 +144,16 @@ function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: Pr
     const tracked = currentSizes.filter((size) => typeof size.quantityOnHand === "number");
     const unassigned = residual(current);
     const tallas = tracked.length > 0 ? sum(currentSizes) : undefined;
-    return {
-      ...next,
-      quantityOnHand: tallas === undefined ? (unassigned > 0 ? unassigned : current.quantityOnHand) : tallas + unassigned,
-      cost,
-    };
+    // When the last talla left, the form showed what it had started with
+    // (base tallas + base residual). A different number is a correction the
+    // operator typed on purpose: it lands as a difference on the FRESH figures.
+    const shownByForm = sum(baseSizes) + residual(base);
+    const typedValue = typeof next.quantityOnHand === "number" ? next.quantityOnHand : undefined;
+    const correction = (typedValue ?? shownByForm) - shownByForm;
+    const quantityOnHand = tallas === undefined
+      ? typedValue !== undefined && correction !== 0 ? typedValue : unassigned > 0 ? unassigned : current.quantityOnHand
+      : tallas + unassigned + correction;
+    return { ...next, quantityOnHand, cost };
   }
 
   if (!currentSizes.length) {
@@ -177,9 +199,15 @@ function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: Pr
   if (!currentSizes.length) {
     quantityOnHand = undefined; // every counted piece now lives in a talla
   } else if (residual(base) !== 0 && moved === residual(base)) {
-    // The operator distributed the «sin talla» pieces; what arrived meanwhile stays.
-    const left = residual(current) - residual(base);
-    quantityOnHand = left > 0 ? left : undefined;
+    // The operator distributed the «sin talla» pieces she saw. Distributing
+    // them requires that exact shelf: if another session touched this color
+    // meanwhile (distributed too, sold, returned pieces), this view is stale.
+    if (residual(current) !== residual(base) || !same(current.sizes ?? [], base.sizes ?? [])) {
+      throw new StaleProductError(
+        `Las piezas sin talla del color ${next.color} cambiaron en otro dispositivo mientras las repartías. Vuelve a abrir la ficha y repártelas de nuevo.`
+      );
+    }
+    quantityOnHand = undefined;
   }
   return { ...next, sizes, quantityOnHand, cost };
 }

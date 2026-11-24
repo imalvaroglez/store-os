@@ -163,21 +163,27 @@ describe("mergeProductOperational con tallas (#461)", () => {
     expect(gold.sizes!.find((s) => s.id === "d5")!.cost).toBe(12); // el costo sin tocar conserva la recepción
   });
 
-  it("repartir 2 piezas «sin talla»: la talla sube 2 y el residual queda limpio; lo que llegó en paralelo se conserva", () => {
+  it("repartir 2 piezas «sin talla»: la talla sube 2 y el residual queda limpio", () => {
     const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3), size("d5", "5", 1)] })] });
-    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 5), size("d5", "5", 1)] })] });
-    expect(mergeProductOperational(baseline, next, baseline).variants![0].quantityOnHand).toBeUndefined();
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 5), size("d5", "5", 1)] })] });
+    const merged = mergeProductOperational(baseline, next, baseline).variants![0];
+    expect(merged.sizes!.find((s) => s.id === "d6")!.quantityOnHand).toBe(5);
+    expect(merged.quantityOnHand).toBeUndefined();
+  });
+
+  it("repartir exige el estante exacto que vio la operadora: si otra sesión tocó ese color, el guardado se detiene", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3), size("d5", "5", 1)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 5), size("d5", "5", 1)] })] });
     // Mientras editaba, otro pedido devolvió 1 pieza más sin talla (residual fresco 3).
     const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 3, sizes: [size("d6", "6", 3), size("d5", "5", 1)] })] });
-    const merged = mergeProductOperational(baseline, next, fresh).variants![0];
-    expect(merged.sizes!.find((s) => s.id === "d6")!.quantityOnHand).toBe(5);
-    expect(merged.quantityOnHand).toBe(1); // la pieza que llegó después sigue a la vista
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(StaleProductError);
   });
 
   it("quitar la última talla devuelve sus piezas al color (suma de las tallas FRESCAS)", () => {
     const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 4), size("d5", "5", 2)] })] });
     const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 3), size("d5", "5", 2)] })] });
-    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0 })] });
+    // El formulario muestra lo que vio (4 + 2); la otra sesión vendió 1 entre tanto.
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 6 })] });
     expect(mergeProductOperational(baseline, next, fresh).variants![0].quantityOnHand).toBe(5);
   });
 
@@ -214,7 +220,8 @@ describe("mergeProductOperational con tallas (#461)", () => {
 
   it("quitar la última talla con 2 piezas «sin talla» las devuelve al color junto con la talla (3 + 2 = 5)", () => {
     const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3)] })] });
-    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2 })] });
+    // El formulario deja en el campo lo que quedará (3 + 2), como hace hoy al quitar la última talla.
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 5 })] });
     expect(mergeProductOperational(baseline, next, baseline).variants![0].quantityOnHand).toBe(5);
   });
 
@@ -232,5 +239,51 @@ describe("mergeProductOperational con tallas (#461)", () => {
   it("talla nueva llega tal cual; sin baseline (crear) se respeta el formulario", () => {
     const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 2)] })] });
     expect(mergeProductOperational(undefined, next, undefined)).toBe(next);
+  });
+});
+
+// ── Re-revisión 23-nov (menores N4, N5, N9) ────────────────────────────────
+describe("mergeProductOperational — carreras de dos sesiones y corrección al quitar la última talla", () => {
+  const size = (id: string, label: string, quantityOnHand: number | undefined, cost = 10): VariantSize =>
+    ({ id, size: label, cost, ...(quantityOnHand !== undefined ? { quantityOnHand } : {}), createdAt: NOW, updatedAt: NOW });
+  const sized = (color: string, overrides: Partial<ProductVariant>) => ({ ...variant("v_gold", color), ...overrides });
+
+  it("N4a: dos sesiones reparten el mismo residual en tallas distintas → la segunda se detiene (no se duplican piezas)", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3), size("d5", "5", 1)] })] });
+    // La sesión A ya repartió las 2 piezas en la talla 5 (1 → 3) y limpió el residual.
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 0, sizes: [size("d6", "6", 3), size("d5", "5", 3)] })] });
+    // La sesión B, abierta antes, reparte las mismas 2 en una talla nueva.
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3), size("d5", "5", 1), size("d7", "7", 2)] })] });
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(StaleProductError);
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(/piezas sin talla del color Dorado cambiaron en otro dispositivo/);
+  });
+
+  it("N4b: dos sesiones quitan la misma última talla → la segunda se detiene", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3)] })] });
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 5 })] }); // A ya la quitó: 3 + 2 en el color
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 5 })] }); // B también la quita
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(StaleProductError);
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(/ya no se vende por talla/);
+  });
+
+  it("N5: al quitar la última talla, una corrección de existencia escrita en el mismo guardado SÍ se aplica", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3)] })] });
+    // El formulario muestra 5 (3 + 2); Fer lo corrige a 4 antes de guardar.
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 4 })] });
+    expect(mergeProductOperational(baseline, next, baseline).variants![0].quantityOnHand).toBe(4);
+  });
+
+  it("N5: sin corrección, vale lo que diga la ficha fresca (concurrente), no lo que vio el formulario", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3)] })] });
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 1, sizes: [size("d6", "6", 2)] })] }); // otra sesión vendió 1 y devolvió 1 «sin talla»
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 5 })] }); // 5 = lo que el formulario calculó con lo que vio
+    expect(mergeProductOperational(baseline, next, fresh).variants![0].quantityOnHand).toBe(3);
+  });
+
+  it("N9: desactivar colores desde un editor abierto ANTES de que otra sesión activara tallas se detiene", () => {
+    const baseline = product({ id: "p1", quantityOnHand: undefined, variants: [variant("v_gold", "Dorado", 5)] });
+    const fresh = product({ id: "p1", quantityOnHand: undefined, variants: [sized("Dorado", { quantityOnHand: undefined, sizes: [size("d6", "6", 3), size("d5", "5", 2)] })] });
+    const next = product({ id: "p1", quantityOnHand: 5, variants: undefined });
+    expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(StaleProductError);
   });
 });

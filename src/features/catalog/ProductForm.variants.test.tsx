@@ -677,4 +677,40 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
       mocks.state!.products.pop();
     }
   });
+
+  // ── Re-revisión 23-nov (menores N1, N8, N10) ──────────────────────────────
+  it("N1: no se puede quitar la última talla si tiene piezas apartadas en pedidos", async () => {
+    mocks.state!.orders = [{
+      id: "ord-461-hold", storeId: "store_olivia", customerId: "c1", deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid",
+      items: [{ lineId: "l1", productId: "design_1", productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", variantSizeId: "d6", variantSize: "6", quantity: 1, unitPrice: 300, subtotal: 300 }],
+      createdAt: "2026-11-23", updatedAt: "2026-11-23",
+    }] as unknown as NonNullable<typeof mocks.state>["orders"];
+    const oneTalla = { ...sizedDesign(0), variants: [{ ...sizedDesign(0).variants![0], sizes: [sizedDesign(0).variants![0].sizes![0]] }] } as Product;
+    render(<ProductForm product={oneTalla} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /Quitar talla 6/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Guardar producto/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("La talla 6 del color Dorado tiene piezas apartadas en pedidos");
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+
+  it("N8: una ficha origen ya fusionada no se puede volver a publicar", async () => {
+    const merged = { ...variantDesign(), status: "draft" as const, mergedInto: { productId: "main", variantId: "v", sizeId: "z", at: "" } } as Product;
+    render(<ProductForm product={merged} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText(/Estado de publicación/), { target: { value: "published" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar producto/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Esta ficha está fusionada en otra");
+    expect(mocks.upsertProduct).not.toHaveBeenCalled();
+  });
+
+  it("N10: renombrar la etiqueta de una talla con clave heredada (de una ficha fusionada) no le inventa sufijo ni cambia su clave", async () => {
+    const inherited = sizedDesign(0) as Product;
+    const first = inherited.variants![0].sizes![0];
+    inherited.variants![0].sizes![0] = { ...first, sku: "SOL-X-6", skuSuffix: undefined };
+    render(<ProductForm product={inherited} onDone={() => {}} />);
+    fireEvent.change(screen.getAllByLabelText(/^Talla$/)[0], { target: { value: "6.5" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar producto/ }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    expect(payload().variants![0].sizes![0]).toMatchObject({ size: "6.5", sku: "SOL-X-6" });
+    expect(payload().variants![0].sizes![0].skuSuffix).toBeUndefined();
+  });
 });

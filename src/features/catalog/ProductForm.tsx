@@ -113,15 +113,19 @@ export function ProductForm({
   );
   const committedFor = (variantId: string, sizeId: string) =>
     committedLines.filter((line) => line.variantId === variantId && line.variantSizeId === sizeId).reduce((total, line) => total + line.quantity, 0);
-  const shelfNotice = (variant: ProductVariant) =>
-    variant.sizes?.length
+  const shelfNotice = (variant: ProductVariant) => {
+    // Evaluated while the color has tallas AND when it just lost the last one:
+    // a talla with pieces held by orders cannot be removed either way.
+    const loaded = product.variants?.find((candidate) => candidate.id === variant.id);
+    return variant.sizes?.length || loaded?.sizes?.length
       ? sizeShelfError({
           color: variant.color.trim() || "color",
-          before: product.variants?.find((loaded) => loaded.id === variant.id),
+          before: loaded,
           after: variant,
           heldSizeIds,
         })
       : null;
+  };
   const tiers = tiersForStore(store);
   const def = defaultTier(store);
   const categories = activeCategoriesForStore(state.categories, store.id);
@@ -274,7 +278,9 @@ export function ProductForm({
   function renameSize(variantId: string, sizeId: string, size: string) {
     const current = variants.find((v) => v.id === variantId)?.sizes?.find((s) => s.id === sizeId);
     if (!current) return;
-    const wasAuto = !current.skuSuffix || current.skuSuffix === suggestSizeSkuSuffix(current.size);
+    // The suffix follows the label only while it looks auto-suggested. A talla
+    // with its own clave and no suffix (inherited from a merged origin) keeps it.
+    const wasAuto = !current.sku && (!current.skuSuffix || current.skuSuffix === suggestSizeSkuSuffix(current.size));
     patchSize(variantId, sizeId, { size, ...(wasAuto ? { skuSuffix: size ? suggestSizeSkuSuffix(size) : "" } : {}) });
   }
   function removeSize(variantId: string, sizeId: string) {
@@ -441,6 +447,11 @@ export function ProductForm({
     // placeholder, and blocking save entirely fights the natural "add now,
     // photograph later" flow.
     const willPublish = (draft.status ?? "published") === "published";
+    // A ficha absorbed by the assisted conversion stays out of sale for good:
+    // republishing it would sell the same pieces (and clave) twice.
+    if (willPublish && draft.mergedInto) {
+      return fail("Esta ficha está fusionada en otra: sus piezas ya se venden desde la ficha unificada. Déjala en Borrador o Archivada.");
+    }
     if (willPublish) {
       if (!draft.sku?.trim()) return fail("Para publicar, agrega una clave.");
       const def = defaultTier(activeStore);
