@@ -1,4 +1,4 @@
-# Variantes de color — guía para Fer (#124)
+# Variantes de color — guía para Fer
 
 Cómo crear y vender diseños que llegan en varios colores, sin repetir captura
 y sin perder el control de qué color sale.
@@ -49,12 +49,16 @@ comprado**: la recepción suma la existencia a ese color y actualiza SU costo
 
 ## Catálogo público
 
-Tus clientas ven **un solo producto con sus colores listados** (los agotados,
-tachados); nunca fichas repetidas. Ya pueden elegir el color al armar su
-pedido (#137, liberado en 1.17.0).
+Tus clientas ven **un solo producto con sus colores**; nunca fichas repetidas.
+En el catálogo general los colores aparecen listados y los agotados, tachados;
+en la vitrina de Olivia los eligen en la lista «Color» y los agotados lo dicen.
+Al armar su pedido eligen el color.
 
 ## Productos que ya tienes
 
-No cambian: siguen funcionando igual. Si algún día quieres convertir uno en
-diseño con colores, escríbelo con tu asesor: la unión caso por caso se hace
-manualmente, pieza por pieza (ver `docs/analisis-migracion-variantes.md`).
+No cambian: siguen funcionando igual. Para convertir una ficha en un diseño
+con colores, ábrela y activa «Se vende por color»: el acabado actual pasa como
+primer color, con sus piezas, su costo y sus fotos, y lo revisas antes de
+guardar (si la ficha ya tenía piezas capturadas, te pide confirmar). Unir
+varias fichas en un solo diseño sí se hace caso por caso con tu
+asesor, pieza por pieza.

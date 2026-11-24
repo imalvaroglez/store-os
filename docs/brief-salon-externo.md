@@ -7,8 +7,8 @@
 - **Catálogo público** por tienda con solicitud manual por WhatsApp (#305, Hecho): la clienta arma su pedido y Fer confirma beneficio, disponibilidad, total y entrega. **Sin checkout, sin pagos en línea, sin reservas desde el acceso público.**
 - **Inventario y precios por nivel** (Regular/Girly/Iconic) con membrecía por tienda; toda operación administrativa requiere sesión (`firestore.rules`). No hay cuentas para terceros fuera de la membresía de tienda.
 - **Pedidos con entregas datadas** (#333, Hecho): qué pieza salió, cuándo y a qué precio. **Incidencias de posventa** (#203, Hecho): devolución, reemplazo y compensación auditadas. **Compras por ticket** con recepción (#206/#207, Hecho).
-- **Liberados** (actualizado el 24-nov, #545): subtotales por nivel en el carrito (#442, 1.16.3), corrección del estimado Iconic (#437, 1.17.0), encargo y selector de color (#135/#137, 1.17.0), diagnóstico de precios (#335, 1.17.0) y desglose de consumo por tienda (#204, 1.17.0).
-- **Brechas**: sin multi-ubicación de inventario (una tienda = un estante); sin cuentas con permisos de solo lectura; sin facturación/CFDI; sin reporte por punto de venta.
+- **Liberados** (actualizado el 24-nov, #545): subtotales por nivel en el carrito (#442, 1.16.3), corrección del estimado Iconic (#437, 1.17.0), encargo (#135, 1.17.0), selector de color (#137: catálogo genérico en 1.17.0 y vitrina de Olivia en 1.21.0) y diagnóstico de precios (#335, 1.17.0).
+- **Brechas**: sin multi-ubicación de inventario (una tienda = un estante); sin cuentas con permisos de solo lectura; sin desglose de consumo por tienda (#204 fue un análisis interno: sin una métrica nueva el consumo no es atribuible por tienda); sin facturación/CFDI; sin reporte por punto de venta.
 
 ## 2. Opciones (comparación, no selección)
 

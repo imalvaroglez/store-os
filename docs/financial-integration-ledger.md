@@ -2,6 +2,13 @@
 
 > #171 — Vista actual y comprobable de qué cambios financieros están listos para integrarse, qué depende de una decisión de negocio y cuál es el orden seguro de revisión. **Documento de coordinación**: no implementa nada; cada cambio conserva su issue/PR y compuertas. **Corte: 2026-11-14 23:25 UTC** (día y hora exactos: este tablero se mueve por horas — refrescar esta sección contra el tablero/PRs inmediatamente antes de cualquier merge que la use); el estado de verdad vive en las issues enlazadas.
 
+> **Estado al 24-nov (#545).** Este ledger se escribió el 2026-11-14 como
+> fotografía de ese día. Las secciones A a D describen lo que era cierto
+> entonces y varias filas ya no aplican: el cierre oficial y el reparto se
+> autorizan y persisten desde 1.21.0 (#458/#459), la operación de crédito
+> firmada (#380) se liberó en 1.20.0 y las correcciones de cierre (#202) en
+> 1.17.0. Lo vigente hoy es la sección E.
+
 ## A. Decisiones confirmadas (fuente y efecto)
 
 | Decisión | Fuente | Efecto |
@@ -66,7 +73,7 @@ Documentario: #397/#401 (runbook Sev-1 §6) esperan revisión del PO — sin imp
 > 1.16.3 (2026-11-14, tren #444) y todo lo de la sección B estaba sólo en PR.
 
 - **En producción (1.21.1, 2026-11-23)**: pedidos/cobros/entregas/incidencias por color (#333/#353/#391/#394/#398/#399/#404/#405/#429), compras por ticket con recepción (#206/#207), precio por clienta (#151), estrategia de precios (#289/#315).
-- **Cierre mensual y reparto ya no son simulaciones de solo lectura**: `authorizeMonthlyClose` y `authorizeProfitDistribution` (`src/app/firebase/firestoreData.ts`) autorizan y persisten el cierre y el reparto, con reglas que sólo admiten a la dueña; las correcciones de cierre (#202) y las etapas #128/#129/#132 se liberaron en 1.17.0.
+- **Cierre mensual y reparto ya no son simulaciones de solo lectura**: desde 1.21.0 `authorizeMonthlyClose` y `authorizeProfitDistribution` (`src/app/firebase/firestoreData.ts`) autorizan y persisten el cierre y el reparto, con reglas que sólo admiten a la dueña (#458/#459). Antes: las vistas de cierre, el reparto como simulación y el top de emprendedoras (#128/#129/#132) y las correcciones de cierre (#202) en 1.17.0.
 - **Liberado después**: operación de crédito firmada (#380, 1.20.0) y caja/obligaciones desde la activación (#279, 1.21.0).
 
 ## F. Defectos nuevos
