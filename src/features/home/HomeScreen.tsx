@@ -5,7 +5,6 @@ import {
   Badge,
   Button,
   Card,
-  Dialog,
   Money,
   Reveal,
   ScreenHeader,
@@ -24,6 +23,7 @@ import { OrderPaymentsSheet } from "../orders/OrderPaymentsSheet";
 import { FinancialPositionCard } from "../financial/FinancialPositionCard";
 import { DeliverySheet } from "../orders/DeliverySheet";
 import { pendingDeliveries } from "../../lib/deliveries";
+import { PrepareOrderDialog } from "../orders/PrepareOrderDialog";
 import { navigate } from "../../lib/router";
 import { useToast } from "../../design-system";
 
@@ -40,7 +40,8 @@ export function HomeScreen() {
   // #333: delivery-evidence sheet for the "Entregar" rows (same as the card).
   const [deliveryOrderId, setDeliveryOrderId] = useState<string | null>(null);
   // #539: «Preparar» is the one Home action that CHANGES an order's state on
-  // its own — it confirms first, naming the order and the exact step.
+  // its own — it confirms first, naming the order and the exact step. The
+  // dialog is shared with the Pedidos list (QA verdict: one contract).
   const [prepareOrderId, setPrepareOrderId] = useState<string | null>(null);
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
@@ -323,53 +324,12 @@ export function HomeScreen() {
           <DeliverySheet key={deliveryOrderId} order={deliveryOrder} open onClose={() => setDeliveryOrderId(null)} />
         ) : null;
       })()}
-      {(() => {
-            // #539: the confirmation names the order and the exact step. On
-            // confirm, the CURRENT state decides — an order that changed while
-            // the dialog was open shows its updated status instead of another
-            // advance. Cancelar leaves everything intact.
-            const prepareOrder = prepareOrderId ? orders.find((o) => o.id === prepareOrderId) ?? null : null;
-            if (!prepareOrder) return null;
-            const prepareCustomer = state.customers.find((c) => c.id === prepareOrder.customerId);
-            const preparePreview = orderItems(prepareOrder).slice(0, 2).map((item) => item.productName).join(", ");
-            const prepareStatus = effectiveOrderStatus(prepareOrder);
-            return (
-              <Dialog
-                open
-                title="¿Preparar este pedido?"
-                onClose={() => setPrepareOrderId(null)}
-                footer={
-                  <div className="flex justify-end gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => setPrepareOrderId(null)}>Cancelar</Button>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        const fresh = orders.find((o) => o.id === prepareOrder.id);
-                        const freshStatus = fresh ? effectiveOrderStatus(fresh) : null;
-                        if (!fresh || freshStatus !== "confirmed") {
-                          setPrepareOrderId(null);
-                          toast.info(`El pedido ya no está Confirmado: ahora está ${ORDER_STATUS_LABELS[freshStatus ?? prepareStatus]}.`);
-                          return;
-                        }
-                        setPrepareOrderId(null);
-                        void advance(fresh.id);
-                      }}
-                    >
-                      Preparar pedido
-                    </Button>
-                  </div>
-                }
-              >
-                <p className="text-sm text-on-surface">
-                  {preparePreview || "Sin productos"} · {prepareCustomer?.name ?? "—"}
-                </p>
-                <p className="text-sm text-on-surface-soft mt-1">
-                  El pedido pasará de Confirmado a Preparando. Ningún otro pedido cambia y puedes cancelar sin dejar
-                  rastro.
-                </p>
-              </Dialog>
-            );
-          })()}
+      {/* #539: the confirmation names the order and the exact step; on confirm
+          the CURRENT state decides (shared with the Pedidos list). */}
+      <PrepareOrderDialog
+        order={prepareOrderId ? orders.find((o) => o.id === prepareOrderId) ?? null : null}
+        onClose={() => setPrepareOrderId(null)}
+      />
 
     {paymentsOrder && (
       <OrderPaymentsSheet
