@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import {
   resizeImageFile,
@@ -54,9 +54,13 @@ type StagedImage = { id: string; blob: Blob; width: number; height: number; prev
 export function ProductForm({
   product,
   onDone,
+  onFirstCapture,
 }: {
   product: Product;
   onDone: () => void;
+  /** #461 (UX misión): fired once when the operator captures anything, so the
+   * host sheet can ask before discarding the editor's work. */
+  onFirstCapture?: () => void;
 }) {
   const { state, upsertProduct, activeStore, cloud } = useStore();
   const isTiered = activeStore?.type === "inventory_tiered";
@@ -625,8 +629,21 @@ export function ProductForm({
     }
   }
 
+  const capturedRef = useRef(false);
+  /** Any capture (typing, picking, toggling) marks the editor as work in progress. */
+  function markCaptured() {
+    if (capturedRef.current) return;
+    capturedRef.current = true;
+    onFirstCapture?.();
+  }
+
   return (
-    <div className="space-y-4">
+    <div
+      className="space-y-4"
+      onInputCapture={markCaptured}
+      onChangeCapture={markCaptured}
+      onClickCapture={(event) => { if ((event.target as HTMLElement).closest("button, input[type=file], label")) markCaptured(); }}
+    >
       <TextField
         label="Nombre"
         placeholder="Ej. Anillo de plata 925"
@@ -958,6 +975,9 @@ export function ProductForm({
                                 const parsed = parseAmount(e.target.value);
                                 patchSize(variant.id, size.id, { quantityOnHand: parsed == null ? undefined : Math.round(parsed) });
                               }}
+                              // UX misión #461: a count counts PHYSICAL pieces; this
+                              // field is the sellable shelf. Say which is which.
+                              hint="Piezas libres para vender. ¿Contaste físicas? Resta las comprometidas que ves abajo."
                             />
                           </div>
                           <div className="flex flex-wrap items-center justify-between gap-2">

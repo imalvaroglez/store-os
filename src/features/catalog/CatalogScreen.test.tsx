@@ -594,3 +594,40 @@ describe("#489 rejected quick stock correction", () => {
     expect(screen.getByText("Existencia: 5")).toBeTruthy();
   });
 });
+
+
+// #461 (UX misión, bloqueo 1): cerrar el editor con trabajo sin guardar ya no
+// lo descarta en silencio.
+describe("CatalogScreen · no perder el editor por un cierre (#461)", () => {
+  async function openEditor() {
+    await renderCatalog(sortFilterState());
+    // La tarjeta abre el editor desde su menú «Acciones».
+    fireEvent.click((await screen.findAllByRole("button", { name: "Acciones" }))[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Editar" }));
+    return await screen.findByLabelText(/Nombre/);
+  }
+
+  it("cerrar con cambios capturados pregunta; «Seguir editando» conserva la ficha abierta", async () => {
+    const name = await openEditor();
+    fireEvent.change(name, { target: { value: "Anillo conteo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(screen.getByText(/¿Descartar los cambios sin guardar\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Seguir editando/ }));
+    expect((screen.getByLabelText(/Nombre/) as HTMLInputElement).value).toBe("Anillo conteo");
+  });
+
+  it("«Descartar cambios» cierra la ficha", async () => {
+    const name = await openEditor();
+    fireEvent.change(name, { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    fireEvent.click(screen.getByRole("button", { name: /Descartar cambios/ }));
+    await waitFor(() => expect(screen.queryByLabelText(/Nombre/)).toBeNull());
+  });
+
+  it("sin capturas, cerrar no pregunta", async () => {
+    await openEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(screen.queryByText(/¿Descartar los cambios/)).toBeNull();
+    await waitFor(() => expect(screen.queryByLabelText(/Nombre/)).toBeNull());
+  });
+});

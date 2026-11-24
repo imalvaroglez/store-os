@@ -103,7 +103,7 @@ export async function uploadProductImage(
 ): Promise<string> {
   const s = getStorageInstance();
   const r = ref(s, `products/${storeId}/${productId}.jpg`);
-  await uploadBytes(r, blob, { contentType: "image/jpeg" });
+  await uploadBytesBounded(r, blob, "image/jpeg");
   return getDownloadURL(r);
 }
 
@@ -118,6 +118,29 @@ export async function deletePurchasePdf(storagePath: string): Promise<void> {
  * return its public URL + storage path. Accepts up to 10 MB at the edge (the
  * caller should resize first); stored optimized JPEG only.
  */
+/**
+ * uploadBytes with a BOUND: on network errors the Storage SDK retries with
+ * backoff for up to its default 10 minutes — a bad connection left the product
+ * editor stuck on «Guardando…» for that long with no error and no way out but
+ * losing the capture (UX misión #461). One bounded attempt; the caller's catch
+ * shows the message and keeps everything staged for a retry.
+ */
+const UPLOAD_TIMEOUT_MS = 60_000;
+
+async function uploadBytesBounded(r: ReturnType<typeof ref>, blob: Blob, contentType: string): Promise<void> {
+  let timer = 0;
+  try {
+    await Promise.race([
+      uploadBytes(r, blob, { contentType }),
+      new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error("timeout")), UPLOAD_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export async function uploadGalleryImage(
   storeId: string,
   productId: string,
@@ -127,7 +150,7 @@ export async function uploadGalleryImage(
   const s = getStorageInstance();
   const storagePath = `products/${storeId}/${productId}/${imgId}.jpg`;
   const r = ref(s, storagePath);
-  await uploadBytes(r, blob, { contentType: "image/jpeg" });
+  await uploadBytesBounded(r, blob, "image/jpeg");
   const url = await getDownloadURL(r);
   return { url, storagePath };
 }

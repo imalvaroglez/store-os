@@ -319,6 +319,9 @@ export function CatalogScreen() {
   const toast = useToast();
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
+  // #461 (UX misión): the editor captured something — ask before discarding.
+  const [formTouched, setFormTouched] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   // #461: assisted conversion of separated fichas into one color×size design.
   const [converting, setConverting] = useState(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
@@ -404,7 +407,7 @@ export function CatalogScreen() {
             >
               <Button variant="secondary" size="sm">Ver público</Button>
             </a>
-            <Button onClick={() => setCreating(true)}>+ Agregar</Button>
+            <Button onClick={() => { setFormTouched(false); setCreating(true); }}>+ Agregar</Button>
           </div>
         }
       />
@@ -487,7 +490,7 @@ export function CatalogScreen() {
               tiers={tiersForStore(activeStore)}
               committed={committedForProduct(state.orders, activeStore.id, p.id)}
               onCommitted={() => setCommittedFor(p)}
-              onEdit={() => setEditing(p)}
+              onEdit={() => { setFormTouched(false); setEditing(p); }}
               onDelete={() => setDeleting(p)}
               mergedInto={p.mergedInto ? <MergedIntoLink product={p} onOpen={(mainId) => setEditing(products.find((x) => x.id === mainId) ?? null)} /> : undefined}
               onAdjust={(delta) => {
@@ -517,22 +520,42 @@ export function CatalogScreen() {
           onClose={() => setCommittedFor(null)}
         />
       )}
+      {/* #461 (UX misión): closing the editor with unsaved work used to
+          discard it silently — a whole count could vanish with the X. */}
       <Sheet
         open={creating}
-        onClose={() => setCreating(false)}
+        onClose={() => (formTouched ? setConfirmDiscard(true) : setCreating(false))}
         title="Agregar producto"
       >
         <ProductForm
+          key="creating"
           product={productCreationDefaults(newProduct(activeStore.id), activeStore.slug)}
           onDone={() => setCreating(false)}
+          onFirstCapture={() => setFormTouched(true)}
         />
       </Sheet>
 
       {editing && (
-        <Sheet open onClose={() => setEditing(null)} title="Editar producto">
-          <ProductForm product={editing} onDone={() => setEditing(null)} />
+        <Sheet open onClose={() => (formTouched ? setConfirmDiscard(true) : setEditing(null))} title="Editar producto">
+          <ProductForm product={editing} onDone={() => setEditing(null)} onFirstCapture={() => setFormTouched(true)} />
         </Sheet>
       )}
+
+      <Dialog
+        open={confirmDiscard}
+        title="¿Descartar los cambios sin guardar?"
+        onClose={() => setConfirmDiscard(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setConfirmDiscard(false)}>Seguir editando</Button>
+            <Button size="sm" variant="danger" onClick={() => { setConfirmDiscard(false); setCreating(false); setEditing(null); }}>Descartar cambios</Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Lo capturado en esta ficha todavía no se guarda y se perderá: conteos, precios, colores, tallas y fotos.
+        </p>
+      </Dialog>
 
       <ProductConversionSheet open={converting} onClose={() => setConverting(false)} />
 
