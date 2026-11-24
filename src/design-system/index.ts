@@ -34,3 +34,4 @@ export { ProductGallery } from "./ProductGallery";
 
 export { TabList } from "./TabList";
 export { Disclosure } from "./Disclosure";
+export { HelpTip } from "./HelpTip";

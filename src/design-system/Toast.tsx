@@ -65,7 +65,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={api}>
       {children}
-      <div className="fixed inset-x-0 bottom-0 z-[60] flex flex-col items-center gap-2 p-4 md:items-end pointer-events-none">
+      <div className="fixed inset-x-0 bottom-0 z-60 flex flex-col items-center gap-2 p-4 md:items-end pointer-events-none">
         {toasts.map((t) => (
           <Toast key={t.id} item={t} onClose={() => remove(t.id)} />
         ))}

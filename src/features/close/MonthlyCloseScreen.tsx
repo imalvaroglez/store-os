@@ -63,7 +63,7 @@ function FormulaRow({
       variant="ghost"
       onClick={onOpen}
       aria-label={openLabel ?? `Ver de dónde salen estos ${text}`}
-      className={`!px-1 !py-1 !min-h-0 w-full flex !justify-between gap-3 !rounded text-left !tracking-normal ${strong ? "!font-semibold !border-t !border-rule" : "!font-normal"}`}
+      className={`px-1! py-1! min-h-0! w-full flex justify-between! gap-3 rounded! text-left tracking-normal! ${strong ? "font-semibold! border-t! border-rule!" : "font-normal!"}`}
     >
       {body}
     </Button>
@@ -123,7 +123,7 @@ function FigureDetailSheet({
             <div className="flex items-baseline gap-2 shrink-0">
               <span className="tnum">{signedMoney(row.amountCents)}</span>
               {row.orderId && (
-                <Button size="sm" variant="ghost" className="!px-2 !py-0 !min-h-0 !text-xs" onClick={() => navigate("/pedidos")}>
+                <Button size="sm" variant="ghost" className="px-2! py-0! min-h-0! text-xs!" onClick={() => navigate("/pedidos")}>
                   Ver
                 </Button>
               )}
@@ -457,7 +457,7 @@ export function MonthlyCloseScreen() {
             an extra profit line inside the formula. */}
         <Card>
           <div className="flex items-baseline justify-between gap-3">
-            <Button variant="ghost" onClick={() => setDetail("collections")} className="!px-0 !py-0 !min-h-0 text-left !text-sm !font-semibold text-ink hover:!underline">
+            <Button variant="ghost" onClick={() => setDetail("collections")} className="px-0! py-0! min-h-0! text-left text-sm! font-semibold! text-ink hover:underline!">
               Dinero recibido durante {MONTH_NAMES[month.month - 1]}
             </Button>
             <span className="text-xs rounded-full border border-edge px-2 py-0.5 text-on-surface-soft">Por fecha de cobro</span>
@@ -490,7 +490,7 @@ export function MonthlyCloseScreen() {
         </Card>
 
         {paymentsFailed && (
-          <Card className="!bg-terracotta-soft/60 ring-terracotta/20">
+          <Card className="bg-terracotta-soft/60! ring-terracotta/20">
             <p className="text-sm font-semibold text-terracotta">No se pudieron cargar los cobros.</p>
             <p className="text-xs text-on-surface-soft">
               Ventas y gastos no dependen de ellos; los cobros de este mes quedan como no disponibles.
@@ -582,7 +582,7 @@ export function MonthlyCloseScreen() {
                   <div key={impediment.reason} className="flex flex-wrap items-baseline justify-between gap-2">
                     <p className="text-sm text-on-surface">· {impediment.reason}</p>
                     {impediment.queue && (
-                      <Button size="sm" variant="ghost" className="!px-0" onClick={() => setQueue(impediment.queue!)}>
+                      <Button size="sm" variant="ghost" className="px-0!" onClick={() => setQueue(impediment.queue!)}>
                         Revisar {impediment.queue === "pedidos" ? "pedidos" : impediment.queue === "cobros" ? "cobros" : "costo"}
                       </Button>
                     )}

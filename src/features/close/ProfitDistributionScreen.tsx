@@ -29,6 +29,14 @@ const cents = (text: string): number => {
   return parsed == null ? 0 : Math.round(parsed * 100);
 };
 
+// #219 (Cierre/Reparto audit): a REAL money authorization never rounds a
+// sub-cent fraction silently — the operator must see the rejection. Compare
+// in PESOS after canonical rounding (same contract as Cobros/Compras).
+const hasSubCentFraction = (text: string): boolean => {
+  const parsed = parseAmount(text);
+  return parsed != null && Math.abs(parsed - Math.round(parsed * 100) / 100) > 1e-9;
+};
+
 const money = (value: number) =>
   `${value < 0 ? "−" : ""}$${(Math.abs(value) / 100).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -200,12 +208,15 @@ export function ProfitDistributionScreen() {
                   </div>
                 </div>
               )}
-              {cents(amountText) > maxPending && (
+              {cents(amountText) > maxPending && !hasSubCentFraction(amountText) && (
                 <p className="mt-2 text-xs text-danger">El importe supera el máximo por resultados pendiente.</p>
+              )}
+              {hasSubCentFraction(amountText) && (
+                <p className="mt-2 text-xs text-danger">Escribe el importe en pesos con centavos (máximo dos decimales).</p>
               )}
               <Button
                 className="mt-3"
-                disabled={authorizing || cents(amountText) <= 0 || cents(amountText) > maxPending || !close}
+                disabled={authorizing || hasSubCentFraction(amountText) || cents(amountText) <= 0 || cents(amountText) > maxPending || !close}
                 onClick={() => {
                   if (!close) return;
                   const amount = cents(amountText);

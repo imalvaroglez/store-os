@@ -108,7 +108,7 @@ export function PublicTierPrices({
   if (tiers.length === 0 || (tiers.length === 1 && mode === "card")) {
     const amount = publicPrice(product, store.defaultTierId ?? undefined);
     return (
-      <p className={`olv-price-single ${mode === "detail" ? "text-2xl" : "text-xl"} font-semibold text-[var(--olv-accent,var(--terracotta))] mt-2`}>
+      <p className={`olv-price-single ${mode === "detail" ? "text-2xl" : "text-xl"} font-semibold text-(--olv-accent,var(--terracotta)) mt-2`}>
         {amount == null || !Number.isFinite(amount) ? "Consultar precio" : formatMoney(amount)}
       </p>
     );
@@ -158,10 +158,10 @@ export function PublicTierPrices({
     <div className="olv-price-block olv-price-card mt-2">
       <div className="olv-price-card-main">
         <div className="olv-price-card-primary">
-          <span className="olv-price-card-amount text-2xl font-extrabold text-[var(--olv-accent,var(--terracotta))]">
+          <span className="olv-price-card-amount text-2xl font-extrabold text-(--olv-accent,var(--terracotta))">
             {formatMoney(product.prices?.[aspirational.id])}
           </span>
-          <span className="olv-price-card-tier font-semibold text-[var(--olv-ink,var(--ink))]">{aspirational.label}</span>
+          <span className="olv-price-card-tier font-semibold text-(--olv-ink,var(--ink))">{aspirational.label}</span>
         </div>
         <PriceRequirement tier={aspirational} />
       </div>
@@ -172,9 +172,9 @@ export function PublicTierPrices({
         {tiers.slice(0, -1).map((tier) => {
           const minimum = tierRequirement(tier);
           return (
-            <span key={tier.id} className="olv-price-compare-item text-[var(--olv-ink-soft,var(--ink-soft))]">
+            <span key={tier.id} className="olv-price-compare-item text-(--olv-ink-soft,var(--ink-soft))">
               <span className="olv-price-compare-detail">
-                <span className="olv-price-compare-label font-semibold text-[var(--olv-ink,var(--ink))]">{tier.label}</span>
+                <span className="olv-price-compare-label font-semibold text-(--olv-ink,var(--ink))">{tier.label}</span>
                 <span className="olv-price-compare-amount">{formatMoney(product.prices?.[tier.id])}</span>
               </span>
               {minimum && <PriceRequirement tier={tier} />}
@@ -215,7 +215,7 @@ export function CartProductControl({
 
   return (
     <div
-      className={`flex items-center justify-between gap-2 rounded-xl ring-2 ring-[var(--olv-accent,var(--terracotta))] px-1 py-1 ${className}`}
+      className={`flex items-center justify-between gap-2 rounded-xl ring-2 ring-(--olv-accent,var(--terracotta)) px-1 py-1 ${className}`}
       style={{ animation: "dialogPop var(--motion-base) var(--ease-spring)" }}
       role="group"
       aria-label={`Cantidad de ${productName}`}
@@ -313,7 +313,7 @@ export function CartDrawer({
         />
       ) : (
         <div className="olv-cart-layout grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
-          <ul className="min-w-0 divide-y divide-[var(--olv-rule,var(--rule))] md:pr-2">
+          <ul className="min-w-0 divide-y divide-(--olv-rule,var(--rule)) md:pr-2">
             {shown.map((l, index) => {
               const signal = signalBySlug?.[l.productSlug];
               const legend = signal ? STOCK_LEGENDS[signal] : null;
@@ -329,10 +329,10 @@ export function CartDrawer({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-semibold text-[var(--olv-ink,var(--ink))] break-words">{l.name}</p>
+                        <p className="font-semibold text-(--olv-ink,var(--ink)) wrap-break-word">{l.name}</p>
                       </div>
                     </div>
-                    {legend && <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-1">{legend}</p>}
+                    {legend && <p className="text-xs text-(--olv-ink-soft,var(--ink-soft)) mt-1">{legend}</p>}
                     <div className="olv-cart-line-summary">
                       <div className="olv-cart-line-quantity">
                         <div className="flex items-center gap-2">
@@ -343,7 +343,7 @@ export function CartDrawer({
                           >
                             −
                           </IconButton>
-                          <span className="w-8 text-center font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums" aria-live="polite">{l.qty}</span>
+                          <span className="w-8 text-center font-extrabold text-(--olv-ink,var(--ink)) tabular-nums" aria-live="polite">{l.qty}</span>
                           <IconButton
                             variant="secondary"
                             aria-label={`Sumar una pieza de ${l.name}`}
@@ -372,11 +372,11 @@ export function CartDrawer({
 
           <div className="olv-cart-summary flex flex-col gap-3">
             {request ? (
-              <div className="rounded-xl bg-[var(--olv-accent-soft,var(--paper-2))] ring-1 ring-[var(--olv-rule,var(--rule))] p-4">
-                <p className="font-semibold text-[var(--olv-ink,var(--ink))]">
+              <div className="rounded-xl bg-(--olv-accent-soft,var(--paper-2)) ring-1 ring-(--olv-rule,var(--rule)) p-4">
+                <p className="font-semibold text-(--olv-ink,var(--ink))">
                   {summaryMode === "tiers" ? "Piezas totales" : `Tu solicitud a ${store.name}`}
                 </p>
-                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-0.5">
+                <p className="text-xs text-(--olv-ink-soft,var(--ink-soft)) mt-0.5">
                   {request.totalQuantity} {request.totalQuantity === 1 ? "pieza" : "piezas"}
                 </p>
                 {summaryMode === "tiers" ? (
@@ -391,17 +391,17 @@ export function CartDrawer({
                 ) : (
                   <dl className="mt-3 space-y-1.5">
                     <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-sm text-[var(--olv-ink,var(--ink))]">Subtotal estimado - precio {request.activeTier.label}</dt>
-                      <dd className="text-xl font-extrabold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
+                      <dt className="text-sm text-(--olv-ink,var(--ink))">Subtotal estimado - precio {request.activeTier.label}</dt>
+                      <dd className="text-xl font-extrabold text-(--olv-ink,var(--ink)) tabular-nums text-right">
                         {formatMoneyExact(request.estimatedSubtotal)} MXN
                       </dd>
                     </div>
                     {request.showIdentityHint && request.identityTier && request.identityTier.id !== request.activeTier.id && (
                       <div className="flex items-baseline justify-between gap-3">
-                        <dt className="text-sm text-[var(--olv-ink-soft,var(--ink-soft))]">
+                        <dt className="text-sm text-(--olv-ink-soft,var(--ink-soft))">
                           ¿Eres {request.identityTier.label}? Subtotal estimado
                         </dt>
-                        <dd className="text-sm font-semibold text-[var(--olv-ink,var(--ink))] tabular-nums text-right">
+                        <dd className="text-sm font-semibold text-(--olv-ink,var(--ink)) tabular-nums text-right">
                           {request.identitySubtotal != null ? `${formatMoneyExact(request.identitySubtotal)} MXN` : "Por confirmar"}
                         </dd>
                       </div>
@@ -409,21 +409,21 @@ export function CartDrawer({
                   </dl>
                 )}
                 {summaryMode === "estimate" && request.showIdentityHint && request.identityTier && request.identityAmountRemaining != null && (
-                  <p className="text-sm text-[var(--olv-ink,var(--ink))] mt-2" aria-live="polite">
+                  <p className="text-sm text-(--olv-ink,var(--ink)) mt-2" aria-live="polite">
                     Te faltan {formatMoneyExact(request.identityAmountRemaining)} a precio {request.identityTier.label} para llegar a {formatMoneyExact(request.identityTier.minAmount)}.
                   </p>
                 )}
-                <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))] mt-3">{ESTIMATE_NOTICE}</p>
+                <p className="text-xs text-(--olv-ink-soft,var(--ink-soft)) mt-3">{ESTIMATE_NOTICE}</p>
               </div>
             ) : pricing ? (
-              <div className="rounded-lg bg-white/60 ring-1 ring-[var(--olv-rule,var(--rule))] px-3 py-2 text-sm">
-                <p className="text-[var(--olv-ink-soft,var(--ink-soft))]">{ESTIMATE_NOTICE}</p>
+              <div className="rounded-lg bg-white/60 ring-1 ring-(--olv-rule,var(--rule)) px-3 py-2 text-sm">
+                <p className="text-(--olv-ink-soft,var(--ink-soft))">{ESTIMATE_NOTICE}</p>
               </div>
             ) : (
               // Legacy single-price stores keep the same single notice — the
               // WhatsApp confirmation, shipping and no-reservation terms apply
               // to their requests too.
-              <p className="text-xs text-[var(--olv-ink-soft,var(--ink-soft))]">{ESTIMATE_NOTICE}</p>
+              <p className="text-xs text-(--olv-ink-soft,var(--ink-soft))">{ESTIMATE_NOTICE}</p>
             )}
             {/* 1.13.1: visual label retired — placeholder carries the hint, the
                 accessible name stays "Tu nombre". */}
@@ -431,10 +431,17 @@ export function CartDrawer({
               label="Tu nombre"
               labelClassName="sr-only"
               placeholder="Escribe tu nombre para identificarte"
+              maxLength={60}
               value={customerName}
               onChange={(event) => {
-                setCustomerName(event.target.value);
-                saveCartName(store.slug, event.target.value);
+                // #219 (catálogo público audit): a NAME is one line — pasted
+                // newlines/tabs collapse to spaces and the capture never
+                // exceeds 60, so the WhatsApp intro can't grow unbounded.
+                // End spaces stay while typing; use-time trim already lives in
+                // buildCartOrderUrl/saveCartName.
+                const clean = event.target.value.replace(/[\r\n\t]+/g, " ").slice(0, 60);
+                setCustomerName(clean);
+                saveCartName(store.slug, clean);
               }}
             />
             {/* 1.13.1: ONE semantic control — a single link styled as the
@@ -444,7 +451,7 @@ export function CartDrawer({
               href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex w-full items-center justify-center rounded-xl px-5 py-3.5 text-base font-semibold tracking-tight shadow-sm transition-all active:translate-y-px active:scale-[0.98] bg-[var(--olv-accent,var(--terracotta))] text-on-accent hover:opacity-90"
+              className="inline-flex w-full items-center justify-center rounded-xl px-5 py-3.5 text-base font-semibold tracking-tight shadow-xs transition-all active:translate-y-px active:scale-[0.98] bg-(--olv-accent,var(--terracotta)) text-on-accent hover:opacity-90"
             >
               Enviar solicitud por WhatsApp
             </a>
@@ -490,7 +497,7 @@ function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTi
         return (
           <div key={row.tier.id} className={isActive ? "olv-tier-active rounded-lg px-2 py-1.5" : "px-2 py-1.5"}>
             <div className="flex items-baseline justify-between gap-2">
-              <span className={`text-sm ${isActive ? "font-semibold" : "text-[var(--olv-ink-soft,var(--ink-soft))]"}`}>
+              <span className={`text-sm ${isActive ? "font-semibold" : "text-(--olv-ink-soft,var(--ink-soft))"}`}>
                 <span className="whitespace-nowrap">Subtotal {row.tier.label}</span>
                 {helpComputable && (
                   <IconButton
@@ -505,7 +512,7 @@ function TierSubtotalRows({ tiers, lines, activeTierId }: { tiers: PublicPriceTi
                 )}
               </span>
               <span
-                className={`text-sm tabular-nums text-right ${isActive ? "font-extrabold" : "text-[var(--olv-ink,var(--ink))]"}`}
+                className={`text-sm tabular-nums text-right ${isActive ? "font-extrabold" : "text-(--olv-ink,var(--ink))"}`}
                 style={isBeforeActive ? { textDecoration: "line-through" } : undefined}
               >
                 {row.subtotal != null ? `${formatMoneyExact(row.subtotal)} MXN` : "Por confirmar"}

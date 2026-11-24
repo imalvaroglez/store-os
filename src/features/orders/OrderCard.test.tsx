@@ -44,15 +44,42 @@ describe("sharing a saved order", () => {
   });
 
   // #405 — la etiqueta del botón comunica la acción: sin párrafo fijo de ayuda
-  // bajo «Imprimir / Guardar PDF», y ambas acciones equivalentes comparten variante.
-  it("la hoja de detalle va sin ayuda fija de impresión y con acciones del mismo estilo (#405)", () => {
+  // bajo «Imprimir / Guardar PDF», y ambas acciones equivalentes comparten
+  // variante y altura. #530: la aclaración opcional vive en la ayuda contextual
+  // junto al botón, que solo se estrecha por su propio disparador de 40px.
+  it("la hoja de detalle va sin ayuda fija de impresión y con acciones del mismo estilo (#405/#530)", () => {
     const rendered = render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Ver detalle para compartir" }));
     expect(screen.queryByText(/Al imprimir elige/)).toBeNull();
     expect(screen.queryByText(/Pedidos por WhatsApp/)).toBeNull();
     const copy = screen.getByRole("button", { name: "Copiar detalle" });
     const print = screen.getByRole("button", { name: "Imprimir / Guardar PDF" });
-    expect(copy.className).toBe(print.className);
+    // Same variant family (primary ink) and the same ~40px tap height.
+    expect(print.className).toContain("bg-ink");
+    expect(copy.className).toContain("bg-ink");
+    expect(print.className).toContain("min-h-10");
+    expect(copy.className).toContain("min-h-10");
+    rendered.unmount();
+  });
+
+  // #530 — pilot of the design-system help tip beside «Imprimir / Guardar PDF»:
+  // touching the trigger explains the PDF step WITHOUT printing, Esc closes the
+  // clarification without closing the sheet, and the action keeps its label.
+  it("la ayuda contextual de impresión explica sin imprimir y Esc no cierra la hoja (#530)", () => {
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    const rendered = render(<ToastProvider><OrderCard order={order} onEdit={() => {}} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalle para compartir" }));
+    const help = screen.getByRole("button", { name: /ayuda: imprimir y guardar pdf/i });
+    expect(screen.queryByText(/Guardar como PDF» como destino/)).toBeNull();
+    fireEvent.click(help);
+    expect(screen.getByText(/Guardar como PDF» como destino/)).toBeTruthy();
+    expect(printSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Imprimir / Guardar PDF" })).toBeTruthy();
+    // Esc closes the INNERMOST control only: clarification gone, sheet stays.
+    fireEvent.keyDown(help, { key: "Escape" });
+    expect(screen.queryByText(/Guardar como PDF» como destino/)).toBeNull();
+    expect(screen.getByText("Detalle para compartir")).toBeTruthy();
+    printSpy.mockRestore();
     rendered.unmount();
   });
 

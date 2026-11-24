@@ -50,7 +50,7 @@ export function SaleExpenseSummary() {
           >
             ‹
           </IconButton>
-          <span className="text-sm text-on-surface-soft min-w-[7.5rem] text-center capitalize">
+          <span className="text-sm text-on-surface-soft min-w-30 text-center capitalize">
             {MONTHS[period.month - 1]} {period.year}
           </span>
           <IconButton
