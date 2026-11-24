@@ -373,6 +373,34 @@ describe("#524 surtir del almacén y retirar en la ficha", () => {
     expect(mocks.stockPoint.mock.calls[0][0].physicalDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it("regresión multilínea: una confirmación guarda todas las líneas de búsquedas sucesivas aunque la última siga activa", async () => {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [];
+    mocks.stockPoint.mockResolvedValue({ stocked: true, entryCount: 2, units: 3 });
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
+    // Búsqueda 1: el perfume; captura 2 piezas.
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "Perfume" } });
+    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "2" } });
+    // Búsqueda 2: la cartera; captura 1 pieza. La búsqueda anterior sigue
+    // filtrando lo visible, pero la captura ya hecha no se pierde.
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "Cartera" } });
+    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    await screen.findByText(/Surtido: 3 piezas/i);
+    expect(mocks.stockPoint).toHaveBeenCalledTimes(1);
+    expect(mocks.stockPoint.mock.calls[0][0].lines).toHaveLength(2);
+    expect(mocks.stockPoint.mock.calls[0][0].lines).toEqual(
+      expect.arrayContaining([
+        { productId: "p1", qty: 2, markedPriceCents: 95000 },
+        { productId: "p2", variantId: "v-cafe", qty: 1, markedPriceCents: 95000 },
+      ])
+    );
+  });
+
   it("retirar agrupa por producto y color del punto y devuelve al almacén", async () => {
     state.points = [
       { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },

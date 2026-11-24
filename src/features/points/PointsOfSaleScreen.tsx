@@ -177,8 +177,13 @@ export function PointsOfSaleScreen() {
 
   // Warehouse rows for «Surtir del almacén»: sellable shelf per product or
   // color, with the point's tier price proposed (pilot: Regular).
+  // #524 multilínea: allWarehouseRows is the FULL shelf; the search narrows
+  // what the operator SEES, never what a confirmation saves. Quantities
+  // captured under earlier searches stay keyed in stockQty, so confirmStock
+  // walks the full set and one confirmation saves every captured line even
+  // while the last search is still active.
   const tierId = openPoint?.priceTierId ?? activeStore?.defaultTierId ?? "t_retail";
-  const warehouseRows = useMemo(() => {
+  const allWarehouseRows = useMemo(() => {
     if (!stocking) return [];
     const rows: Array<{ key: string; productId: string; variantId?: string; label: string; available: number; suggestedPrice: number; cost?: number }> = [];
     for (const product of state.products.filter((p) => p.storeId === storeId)) {
@@ -210,9 +215,18 @@ export function PointsOfSaleScreen() {
         });
       }
     }
+    return rows;
+  }, [stocking, state.products, storeId, tierId]);
+  const warehouseRows = useMemo(() => {
     const needle = stockQuery.trim().toLowerCase();
-    return needle === "" ? rows : rows.filter((row) => row.label.toLowerCase().includes(needle));
-  }, [stocking, state.products, storeId, tierId, stockQuery]);
+    return needle === "" ? allWarehouseRows : allWarehouseRows.filter((row) => row.label.toLowerCase().includes(needle));
+  }, [allWarehouseRows, stockQuery]);
+  // Captured lines the active search hides: the confirmation will save them
+  // too, so the count keeps that proposal reviewable (density: one line,
+  // only while it applies).
+  const capturedLineCount = allWarehouseRows.filter((row) => Number(stockQty[row.key] ?? "") > 0).length;
+  const hiddenCapturedLineCount =
+    capturedLineCount - warehouseRows.filter((row) => Number(stockQty[row.key] ?? "") > 0).length;
 
   // Point rows for «Retirar»: per product + color (any price), pieces left.
   const withdrawRows = useMemo(() => {
@@ -463,7 +477,9 @@ export function PointsOfSaleScreen() {
 
   async function confirmStock() {
     if (!openPoint) return;
-    const lines = warehouseRows
+    // Full shelf, not the search-filtered view: lines captured under earlier
+    // searches must survive the confirmation (#524 multilínea).
+    const lines = allWarehouseRows
       .map((row) => ({ row, qty: Number(stockQty[row.key] ?? "") }))
       .filter((item) => Number.isFinite(item.qty) && item.qty > 0 && item.qty <= item.row.available)
       .map((item) => {
@@ -1011,9 +1027,17 @@ export function PointsOfSaleScreen() {
           value={stockQuery}
           onChange={(e) => setStockQuery(e.target.value)}
         />
+        {hiddenCapturedLineCount > 0 ? (
+          <p className="text-xs text-on-surface-soft">
+            Se surtirán {capturedLineCount} {capturedLineCount === 1 ? "línea" : "líneas"} en total; {hiddenCapturedLineCount}{" "}
+            {hiddenCapturedLineCount === 1 ? "queda fuera" : "quedan fuera"} de esta búsqueda y también se guarda{hiddenCapturedLineCount === 1 ? "" : "n"} al confirmar.
+          </p>
+        ) : null}
         <div className="max-h-80 space-y-1 overflow-y-auto">
-          {warehouseRows.length === 0 ? (
+          {allWarehouseRows.length === 0 ? (
             <p className="text-sm text-on-surface-soft">No hay piezas disponibles en el almacén.</p>
+          ) : warehouseRows.length === 0 ? (
+            <p className="text-sm text-on-surface-soft">Sin resultados para esta búsqueda.</p>
           ) : (
             warehouseRows.map((row) => (
               <div key={row.key} className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-1 last:border-0">
