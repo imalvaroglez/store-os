@@ -198,7 +198,9 @@ function ProductCard({
                   );
                 })}
               </div>
-              <div className="flex gap-3 mt-1 text-xs">
+              {/* UX misión #461: at 1280px this single line overflowed the page
+                  («Comprometidas» pushed past the grid). Wrap like a sentence. */}
+              <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs">
                 {/* #294: the default price already rides the tier row above —
                     only the stock context remains here (nothing duplicated). */}
                 {isVariantProduct(product) ? (
