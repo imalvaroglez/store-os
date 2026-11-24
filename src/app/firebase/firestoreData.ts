@@ -2791,7 +2791,7 @@ export async function convertProductVariants(params: {
     // step left instead of surfacing a raw error that invites unifying again
     // (review 23-nov: the sheet no longer offers the merged origins).
     throw new ConversionStaleError(
-      "Las fichas quedaron unificadas, pero el catálogo público no se actualizó. En Tienda → configuración, pulsa «Republicar catálogo» para terminar; no hace falta volver a unificar estas fichas."
+      "Las fichas quedaron unificadas, pero el catálogo público no se actualizó. En Tienda → configuración, «Republicar catálogo» termina el paso (solo la dueña o la administración pueden hacerlo); no hace falta volver a unificar estas fichas."
     );
   }
   return { ...result, main: freshMain };
@@ -2868,6 +2868,23 @@ export async function applyIncidentEventTx(params: {
     const quantity = Math.max(1, Math.round(incident.quantity || 1));
     // ── Validity from derived state (fail closed on nonsense sequences). ──
     const kind = event.kind;
+    if (kind === "resolution_agreed" && state.resolution && !state.confirmed) {
+      // Review 23-nov: an agreement that gets superseded leaves the terms it
+      // replaced on the new event — the history keeps what was agreed before.
+      const superseded = incident.replacement;
+      event.detail = {
+        ...(event.detail ?? {}),
+        supersededResolution: state.resolution.kind,
+        ...(superseded
+          ? {
+              supersededReplacementPriceCents: superseded.unitPriceCents,
+              ...(superseded.productId ? { supersededReplacementProductId: superseded.productId } : {}),
+              ...(superseded.variantId ? { supersededReplacementColorId: superseded.variantId } : {}),
+              ...(superseded.variantSizeId ? { supersededReplacementSizeId: superseded.variantSizeId } : {}),
+            }
+          : {}),
+      };
+    }
     if (kind === "resolution_agreed" && (state.resolution || !state.opened)) {
       // #461 (review 23-nov): a solution that can no longer be handed over —
       // the ficha changed after it was agreed — may be agreed again, read from
@@ -3126,10 +3143,15 @@ export async function applyIncidentEventTx(params: {
     }
 
     // ── Order doc: append the event (and the agreed resolution, once). ──
+    // Review 23-nov: a new agreement that hands over no replacement piece
+    // (refund, wait for restock) drops the stored one — keeping it left the
+    // incident pointing at a piece that can no longer be delivered.
+    const replacesAgreement = kind === "resolution_agreed" && !!resolution;
     const updated: OrderIncident = {
       ...incident,
-      ...(kind === "resolution_agreed" && resolution ? { resolution } : {}),
-      ...(kind === "resolution_agreed" && replacement ? { replacement } : {}),
+      ...(replacesAgreement ? { resolution } : {}),
+      ...(replacesAgreement && replacement ? { replacement } : {}),
+      ...(replacesAgreement && !replacement ? { replacement: undefined } : {}),
       events: [...(incident.events ?? []), event],
     };
     const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));

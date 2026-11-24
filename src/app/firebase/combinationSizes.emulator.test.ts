@@ -523,4 +523,18 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("pedido, entrega y cancela
     expect(after.designLevel).toBeUndefined(); // nunca al estante que la app ignora
   });
 
+  it("borrar un pedido cuya talla ya no existe también devuelve las piezas al color «sin talla» (rama sin prueba, re-revisión 23-nov)", async () => {
+    await seed();
+    const { deleteOrderWithStockTx } = await import("./firestoreData");
+    const saved = await saveOrderWithStockTx({ uid: "qa461-user" } as never, orderOf([line("d6", 1, "l1")]), null, "mut-qa461-o");
+    const data = (await getDoc(doc(holder.db, "products", PRODUCT))).data() as { variants: any[] };
+    const variants = data.variants.map((v) => (v.id === "v_gold" ? { ...v, sizes: v.sizes.filter((s: any) => s.id !== "d6") } : v));
+    await envQa.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), "products/" + PRODUCT), { variants }, { merge: true }));
+    await deleteOrderWithStockTx({ uid: "qa461-user" } as never, saved.order.id, saved.order.revision ?? 1);
+    const after = await shelves();
+    expect(after.colorLevel).toBe(1); // a la vista «sin talla»
+    expect(after.d5).toBe(3); // la talla hermana no recibe piezas ajenas
+    expect(after.designLevel).toBeUndefined(); // nunca al campo que la app ignora
+  });
+
 });

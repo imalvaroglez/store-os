@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
-import type { OrderIncident, OrderIncidentEvent } from "../../types";
+import type { Order, OrderIncident, OrderIncidentEvent } from "../../types";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ getFirebase: () => ({ db: holder.db }) }));
@@ -460,6 +460,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("posventa por combinación
   });
   afterAll(async () => { await envSizes.cleanup(); });
 
+  const orderOf = async (id: string) => ((await getDoc(doc(holder.db, "orders", id))).data()) as Order & { incidents: OrderIncident[] };
   const readShelves = async () => {
     const data = (await getDoc(doc(holder.db, "products/" + PRODUCT))).data()! as { quantityOnHand?: number; quantityQuarantined?: number; variants: any[] };
     const gold = data.variants.find((v) => v.id === "v_gold");
@@ -588,5 +589,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("posventa por combinación
     await expect(
       applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-8", event: event("sz8-e5", "resolution_agreed"), resolution: { kind: "refund", destination: "refund_pending" } })
     ).rejects.toThrow(/ya tiene una resolución acordada|ya tiene|confirmad/i);
+  });
+
+  it("re-revisión 23-nov (N2, N3): volver a acordar con «esperar reposición» deja la incidencia con salida y guarda rastro del acuerdo sustituido", async () => {
+    await seed();
+    const withoutSize = { productId: PRODUCT, productName: "Anillo Sol", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false, variantId: "v_gold", variantColor: "Dorado" };
+    await agree("ord-sz-return", "sz-9", "sz9", { kind: "replacement_with_difference" }, { ...withoutSize, unitPriceCents: 20000 });
+    // Antes: el nuevo acuerdo conservaba el reemplazo atascado y confirmar fallaba para siempre.
+    await applyIncidentEventTx({
+      orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-9", event: event("sz9-e3", "resolution_agreed"),
+      resolution: { kind: "wait_restock", waitUntil: "2026-12-10" },
+    });
+    const agreed = (await orderOf("ord-sz-return")).incidents.find((incident: OrderIncident) => incident.id === "sz-9")!;
+    expect(agreed.replacement).toBeUndefined();
+    expect(agreed.events[agreed.events.length - 1]!.detail).toMatchObject({ supersededResolution: "replacement_with_difference", supersededReplacementPriceCents: 20000 });
+    // La salida existe: confirmar entrega la reposición de la MISMA combinación de la incidencia.
+    await applyIncidentEventTx({ orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-9", event: event("sz9-e4", "confirmed") });
+    expect((await readShelves()).d6).toBe(2); // 3 − 1: la reposición sale de la combinación de la incidencia
+    expect((await readShelves()).d5).toBe(2); // la talla hermana no se toca
+    expect((await readShelves()).quarantined).toBe(1);
   });
 });
