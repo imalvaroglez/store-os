@@ -629,21 +629,26 @@ export function ProductForm({
     }
   }
 
+  // #461 (UX misión): report the FIRST divergence from the mounted state — no
+  // event interception. A capture-phase listener that setState'd between a
+  // checkbox's click and its change event reset the DOM and swallowed the
+  // toggle (and Playwright's fill on controlled inputs); comparing state is
+  // immune to both and catches every kind of capture.
   const capturedRef = useRef(false);
-  /** Any capture (typing, picking, toggling) marks the editor as work in progress. */
-  function markCaptured() {
-    if (capturedRef.current) return;
-    capturedRef.current = true;
-    onFirstCapture?.();
+  const baselineRef = useRef<string | null>(null);
+  if (baselineRef.current === null) {
+    baselineRef.current = JSON.stringify({ draft, variants, staged, variantStaged, qty });
   }
+  useEffect(() => {
+    if (capturedRef.current) return;
+    if (JSON.stringify({ draft, variants, staged, variantStaged, qty }) !== baselineRef.current) {
+      capturedRef.current = true;
+      onFirstCapture?.();
+    }
+  }, [draft, variants, staged, variantStaged, qty]);
 
   return (
-    <div
-      className="space-y-4"
-      onInputCapture={markCaptured}
-      onChangeCapture={markCaptured}
-      onClickCapture={(event) => { if ((event.target as HTMLElement).closest("button, input[type=file], label")) markCaptured(); }}
-    >
+    <div className="space-y-4">
       <TextField
         label="Nombre"
         placeholder="Ej. Anillo de plata 925"
