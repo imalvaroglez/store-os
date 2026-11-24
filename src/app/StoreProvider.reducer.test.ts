@@ -149,9 +149,23 @@ describe("reducer: REPLACE_STATE preserves the active store on late syncs", () =
     expect(next.activeStoreId).toBe("a");
   });
 
-  it("accepts the synced selection when nothing was active", () => {
-    const next = reducer(state(""), { type: "REPLACE_STATE", state: { ...emptyAppState(), stores: [storeA, storeB], activeStoreId: "b" } as AppState });
+  it("accepts the synced selection on the first load (no stores yet, nothing active)", () => {
+    const next = reducer(emptyAppState(), { type: "REPLACE_STATE", state: { ...emptyAppState(), stores: [storeA, storeB], activeStoreId: "b" } as AppState });
     expect(next.activeStoreId).toBe("b");
+  });
+
+  // #543 (reproducido en navegador): «Cambiar tienda» vacía la selección con las
+  // tiendas ya cargadas. Una sincronización que llegara en ese instante cerraba
+  // el selector «¿Quién opera hoy?» y ponía a la persona en una tienda que no
+  // eligió.
+  it("keeps the chooser open when a sync lands while the person is choosing a store", () => {
+    const choosing = reducer(state("a"), { type: "SET_ACTIVE_STORE", storeId: "" });
+    expect(choosing.activeStoreId).toBeNull();
+    for (const type of ["REPLACE_CLOUD_STATE", "REPLACE_STATE"] as const) {
+      const next = reducer(choosing, { type, state: { ...emptyAppState(), stores: [storeA, storeB], activeStoreId: "b" } as AppState });
+      expect(next.activeStoreId).toBeNull();
+      expect(next.stores).toHaveLength(2); // el resto de la sincronización sí entra
+    }
   });
 });
 
