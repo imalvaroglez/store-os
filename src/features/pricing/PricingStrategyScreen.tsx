@@ -5,6 +5,7 @@
 // prices to products stays in Reglas de venta; this screen never edits prices.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore, CategoryRulesConflictError } from "../../app/StoreProvider";
+import { useAuth } from "../../app/firebase/AuthProvider";
 import {
   Badge,
   Button,
@@ -35,14 +36,12 @@ import {
   type PriceSupport,
 } from "../../lib/pricingBands";
 import type { PricingRule, Product } from "../../types";
+import { clearStrategyDraft, loadStrategyDraft, saveStrategyDraft, type StrategyTableDraft } from "./strategyDraft";
 
 // The editor's model: ONE table per category with SHARED limits and one price
-// column per level — serialized into three `bands` rules on save.
-type TableDraft = {
-  limits: Array<{ min: number; max?: number }>;
-  prices: Record<string, Array<number | null>>; // tierId -> price per band
-  dirty: boolean;
-};
+// column per level — serialized into three `bands` rules on save. The same
+// shape persists as the per-person draft (#538).
+type TableDraft = StrategyTableDraft;
 
 const SUPPORT_LABEL: Record<string, string> = { high: "soporte alto", medium: "soporte medio", low: "soporte bajo" };
 const EVIDENCE_LABEL = {
@@ -87,6 +86,7 @@ export function resetPricingStrategyCategoryForTests(): void {
 
 export function PricingStrategyScreen() {
   const { state, activeStore, saveCategoryPricingRules } = useStore();
+  const { user } = useAuth();
   const toast = useToast();
   // #531: the chosen category survives leaving the screen (Inicio, simulator,
   // menu) the same way Reglas preserves it (?categoria=) — nobody re-chooses
@@ -102,6 +102,11 @@ export function PricingStrategyScreen() {
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [replaceExisting, setReplaceExisting] = useState(false);
+  // #538: a draft recovered from storage (it survived Diagnóstico, Inicio,
+  // another category or a reload) says so; «Restaurar propuesta» asks before
+  // replacing unsaved edits.
+  const [restoredFromDraft, setRestoredFromDraft] = useState(false);
+  const [confirmRestore, setConfirmRestore] = useState(false);
 
   const tiers = useMemo(() => tiersForStore(activeStore), [activeStore]);
   const categories = useMemo(
@@ -198,7 +203,10 @@ export function PricingStrategyScreen() {
     // value/error and block the save.
     setRawCaptures({});
     if (!bands || bands.length === 0) {
+      // #538: an explicit restore with nothing to restore drops the stored
+      // draft too — it must not resurrect on the next visit.
       setDraft(null);
+      forgetStoredDraft();
       return;
     }
     setDraft({
@@ -214,6 +222,12 @@ export function PricingStrategyScreen() {
   // UX operadora #3: choosing a category is the big decision — take Fer to
   // the analysis/proposal, not the top of the page.
   const proposalRef = useRef<HTMLDivElement>(null);
+  /** #538: drops the stored draft of the current category (explicit discard,
+      delete, or a restore that leaves nothing). */
+  function forgetStoredDraft() {
+    if (user && activeStore && categoryId) clearStrategyDraft(user.uid, activeStore.id, categoryId);
+  }
+
   function adopt(categoryIdNext: string) {
     setCategoryId(categoryIdNext);
     lastChosenCategory = categoryIdNext;
@@ -222,6 +236,7 @@ export function PricingStrategyScreen() {
     // Draft re-adoption on category switch is driven by the effect below.
     setDraft(null);
     setDraftBase("");
+    setRestoredFromDraft(false);
     // #219 (dictamen #517): raw captures belong to the previous category's
     // fields — the new context starts clean.
     setRawCaptures({});
@@ -259,10 +274,34 @@ export function PricingStrategyScreen() {
       }
     }
     if (draft?.dirty) return;
+    // #538: Fer's unsaved edits of THIS category survive Diagnóstico, Inicio,
+    // another category and a reload of the same tab — the stored draft is
+    // adopted first, with its own base signature (the concurrency check above
+    // keeps working against it). Normalized to the levels visible NOW.
+    const stored = user && activeStore ? loadStrategyDraft(user.uid, activeStore.id, categoryId, tiers.map((t) => t.id)) : null;
+    if (stored) {
+      setDraft({ ...stored.draft, dirty: true });
+      setDraftBase(stored.draftBase);
+      setRestoredFromDraft(true);
+      return;
+    }
+    setRestoredFromDraft(false);
     if (existing?.compatible) setDraft(existing.draft);
     setDraftBase(savedSignature);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId, savedSignature]);
+
+  // #538: persistence follows the draft — dirty edits land in storage; a
+  // CLEAN draft (saved, discarded or reloaded from the fresh table) clears
+  // it. A null draft is skipped: it is either the instant before adoption
+  // (the stored draft has not been read yet) or a category with no table.
+  // Best effort only; memory stays the truth while mounted.
+  useEffect(() => {
+    if (!categoryId || !user || !activeStore || !draft) return;
+    if (draft.dirty) saveStrategyDraft(user.uid, activeStore.id, categoryId, draft, draftBase);
+    else clearStrategyDraft(user.uid, activeStore.id, categoryId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, categoryId]);
 
   // The serialized rules this draft will save (also drives the impact preview).
   // Rules for tiers that are currently HIDDEN ride along untouched — hiding a
@@ -493,6 +532,7 @@ export function PricingStrategyScreen() {
       });
       setDraft(null);
       setDraftBase("");
+      forgetStoredDraft(); // #538: the deleted table takes its draft along
       toast.success("Tabla eliminada.");
     } catch (error) {
       toast.error(error instanceof Error && error.message ? error.message : "No se pudo eliminar la tabla.");
@@ -673,6 +713,15 @@ export function PricingStrategyScreen() {
           </Card>
         )}
 
+        {restoredFromDraft && draft?.dirty && (
+          <Card className="space-y-1 border border-terracotta">
+            <p className="text-sm text-on-surface">
+              Recuperamos tus cambios sin guardar de esta categoría. La tabla guardada sigue intacta hasta que pulses
+              «Guardar tabla».
+            </p>
+          </Card>
+        )}
+
         {concurrentChange && (
           <Card className="space-y-2 border border-warning">
             <p className="text-sm text-on-surface">
@@ -689,8 +738,10 @@ export function PricingStrategyScreen() {
                 setDraft(existing?.compatible ? existing.draft : null);
                 setDraftBase(savedSignature);
                 // #219 (dictamen #517): the discarded draft's rejected raw
-                // captures must go with it.
+                // captures must go with it. #538: so does its stored copy —
+                // the discard is explicit, nothing may resurrect it.
                 setRawCaptures({});
+                forgetStoredDraft();
               }}
             >
               Descartar mis cambios y recargar
@@ -703,7 +754,15 @@ export function PricingStrategyScreen() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="font-semibold text-ink">Tabla de bandas</h3>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="ghost" onClick={() => loadFromProposal(proposal?.bands ?? null)}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    // #538: replacing UNSAVED edits is a loss — ask first.
+                    if (draft?.dirty) setConfirmRestore(true);
+                    else loadFromProposal(proposal?.bands ?? null);
+                  }}
+                >
                   Restaurar propuesta
                 </Button>
                 <Button size="sm" variant="ghost" onClick={addBand}>+ Banda</Button>
@@ -906,6 +965,31 @@ export function PricingStrategyScreen() {
             without them there is nothing to say (no redundant instructions
             before or after saving). */}
       </div>
+
+      <Dialog
+        open={confirmRestore}
+        title="¿Restaurar la propuesta y perder tus cambios?"
+        onClose={() => setConfirmRestore(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setConfirmRestore(false)}>Cancelar</Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setConfirmRestore(false);
+                loadFromProposal(proposal?.bands ?? null);
+              }}
+            >
+              Restaurar propuesta
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Vas a sustituir tus ediciones sin guardar por la propuesta calculada. La tabla guardada no cambia; si
+          prefieres conservar tus ediciones, cancela.
+        </p>
+      </Dialog>
 
       <Dialog
         open={confirmDelete}

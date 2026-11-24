@@ -5,12 +5,12 @@
 // overwritten, pending prices block the save, and a concurrent change to the
 // saved table surfaces a banner instead of clobbering the draft.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { PricingStrategyScreen, resetPricingStrategyCategoryForTests } from "./PricingStrategyScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
 import { CategoryRulesConflictError } from "../../app/StoreProvider";
-import type { Category, Product, Store, StorePackaging } from "../../types";
+import type { Category, PricingRulesConfig, Product, Store, StorePackaging } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
@@ -33,6 +33,10 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
 
 const CAT = "store_olivia__relojes";
 const CAT2 = "store_olivia__perfumes";
+
+// #538: the band-table draft persists per signed-in person.
+const auth = vi.hoisted(() => ({ user: null as { uid: string; email: string } | null }));
+vi.mock("../../app/firebase/AuthProvider", () => ({ useAuth: () => ({ user: auth.user }) }));
 
 function oliviaStore(): Store {
   const store = { ...mocks.state!.stores[0] } as Store;
@@ -109,6 +113,9 @@ beforeEach(() => {
   // choice — keep every test on a clean address and an empty session.
   resetPricingStrategyCategoryForTests();
   window.history.replaceState({}, "", "/productos/estrategia");
+  // #538: a fresh storage per test, like a fresh browser profile.
+  localStorage.clear();
+  auth.user = { uid: "u-fer", email: "fer@demo.mx" };
   state = fixtureState();
   mocks.state = state;
   state.stores[0] = oliviaStore();
@@ -488,7 +495,11 @@ describe("#219 — contratos de captura de Estrategia (auditoría)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
     fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "999.005" } });
     expect(await screen.findByText(/máximo dos decimales/i)).toBeTruthy();
+    // #538: unsaved edits are a loss — the restore asks first.
     fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    expect(screen.getByText(/¿Restaurar la propuesta y perder tus cambios\?/)).toBeTruthy();
+    expect(screen.queryByText(/máximo dos decimales/i)).toBeTruthy(); // todavía nada se ha sustituido
+    fireEvent.click(screen.getAllByRole("button", { name: "Restaurar propuesta" }).pop()!);
     expect(screen.queryByText(/máximo dos decimales/i)).toBeNull();
     // A follow-up valid edit proves the editor is not dead-ended by a ghost.
     fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
@@ -903,5 +914,172 @@ describe("#531 ida y vuelta al simulador con concurrencia y entre tiendas", () =
     // El stash limpio cede: la tabla FRESCA (Hasta 80) se adopta, sin banner.
     expect((screen.getAllByLabelText("Hasta $")[0] as HTMLInputElement).value).toBe("80");
     expect(screen.queryByText(/cambiaron en otra sesión/i)).toBeNull();
+  });
+});
+
+// #538 rehecho sobre main (#531/#533): la categoría ya sobrevive por la URL y
+// por la memoria de sesión; este borrador persistido viaja con ella.
+describe("#538 borrador de Estrategia conservado", () => {
+  const STORE = "store_olivia";
+  const keyFor = (uid = "u-fer", cat = CAT) => `store-os:strategy-draft:${uid}:${STORE}:${cat}`;
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+  const stored = (key: string) => JSON.parse(localStorage.getItem(key) ?? "null") as { draft: { prices: Record<string, number[]> } } | null;
+
+  function editAndDirty(value = "165") {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value } });
+  }
+
+  it("cambiar de categoría y volver conserva las ediciones; nada se guarda en Firestore", () => {
+    editAndDirty();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "" } });
+    selectCategory();
+    expect(iconicFirst()).toBe("165");
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("F5 en la misma pestaña: vuelve la categoría y con ella el borrador, sin re-elegirla", async () => {
+    const view = mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    view.unmount();
+    // #531: la elección viaja en la URL; el borrador, en el almacenamiento de la persona.
+    expect(window.location.search).toBe(`?categoria=${encodeURIComponent(CAT)}`);
+    expect(stored(keyFor())?.draft.prices.t_iconic?.[0]).toBe(165);
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
+    expect(iconicFirst()).toBe("165");
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+  });
+
+  it("volver por el menú (URL limpia): la memoria de sesión trae la categoría y el borrador la sigue", async () => {
+    editAndDirty();
+    cleanup();
+    window.history.replaceState({}, "", "/productos/estrategia");
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
+    expect(iconicFirst()).toBe("165");
+  });
+
+  it("«Restaurar propuesta» con ediciones sin guardar pide confirmación; Cancelar conserva", () => {
+    editAndDirty();
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    expect(screen.getByText(/¿Restaurar la propuesta y perder tus cambios\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(iconicFirst()).toBe("165");
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("confirmar la restauración sustituye SOLO el borrador: la propuesta queda en el editor y en el almacenamiento, Firestore intacto", () => {
+    editAndDirty();
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Restaurar propuesta" }).pop()!);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(iconicFirst()).not.toBe("165");
+    // #531: la propuesta adoptada es un cambio guardable — por eso también es el borrador vigente.
+    expect(stored(keyFor())?.draft.prices.t_iconic?.[0]).not.toBe(165);
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("guardar la tabla limpia el borrador guardado", async () => {
+    editAndDirty();
+    expect(stored(keyFor())).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    expect(localStorage.getItem(keyFor())).toBeNull();
+  });
+
+  it("el borrador es de la persona: con otra sesión no se adopta ni se toca", async () => {
+    editAndDirty();
+    cleanup();
+    auth.user = { uid: "u-otra", email: "otra@demo.mx" };
+    mount();
+    selectCategory();
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    expect(iconicFirst()).not.toBe("165");
+    expect(stored(keyFor())?.draft.prices.t_iconic?.[0]).toBe(165);
+    // Sus propias ediciones sí se guardan, bajo su propia llave.
+    expect(stored(keyFor("u-otra"))?.draft.prices.t_iconic?.[0]).not.toBe(165);
+  });
+
+  it("el borrador es de la categoría: otra categoría de la misma persona no lo adopta", () => {
+    localStorage.setItem(keyFor("u-fer", CAT2), JSON.stringify({ v: 1, draftBase: "", savedAt: "", draft: { limits: [{ min: 0 }], prices: { t_iconic: [999] }, dirty: true } }));
+    editAndDirty();
+    expect(iconicFirst()).toBe("165");
+    expect(stored(keyFor("u-fer", CAT2))?.draft.prices.t_iconic?.[0]).toBe(999);
+  });
+
+  const savedTable = (max: number): PricingRulesConfig => ({
+    byTier: {},
+    byCategory: {
+      [CAT]: {
+        t_retail: { kind: "bands", bands: [{ min: 0, max, price: 290 }, { min: max, price: 310 }], rounding: "none" },
+        t_girly: { kind: "bands", bands: [{ min: 0, max, price: 230 }, { min: max, price: 260 }], rounding: "none" },
+        t_iconic: { kind: "bands", bands: [{ min: 0, max, price: 160 }, { min: max, price: 170 }], rounding: "none" },
+      },
+    },
+  });
+  function anotherSessionSaves(pricingRules: PricingRulesConfig) {
+    const other = fixtureState();
+    other.stores[0] = oliviaStore();
+    other.stores[0].pricingRules = pricingRules;
+    mocks.state = other;
+  }
+  const rerender = (view: ReturnType<typeof mount>) => view.rerender(<ToastProvider><PricingStrategyScreen /></ToastProvider>);
+
+  it("tras F5, una tabla guardada en otra sesión se advierte y el borrador recuperado no se pierde", async () => {
+    editAndDirty();
+    cleanup();
+    anotherSessionSaves(savedTable(50));
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(screen.getByText(/cambiaron en otra sesión/i)).toBeTruthy();
+    expect(iconicFirst()).toBe("165");
+  });
+
+  it("descartar explícitamente elimina el borrador guardado (con tabla guardada compatible)", () => {
+    editAndDirty();
+    cleanup();
+    const view = mount(); // F5: la URL trae la categoría y el almacenamiento, el borrador
+    anotherSessionSaves(savedTable(50));
+    rerender(view);
+    expect(screen.getByText(/cambiaron en otra sesión/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Descartar mis cambios y recargar/ }));
+    expect(localStorage.getItem(keyFor())).toBeNull();
+    expect(iconicFirst()).not.toBe("165");
+    cleanup();
+    mount(); // un F5 más: nada resucita
+    expect(iconicFirst()).not.toBe("165");
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+  });
+
+  it("descartar elimina también el borrador cuando la tabla ajena es incompatible (el editor queda sin tabla)", () => {
+    editAndDirty();
+    cleanup();
+    const view = mount();
+    anotherSessionSaves({ byTier: {}, byCategory: { [CAT]: { t_retail: { kind: "markup", percent: 10 } } } } as unknown as PricingRulesConfig);
+    rerender(view);
+    fireEvent.click(screen.getByRole("button", { name: /Descartar mis cambios y recargar/ }));
+    expect(screen.queryByLabelText(/Iconic \(pesos\)/)).toBeNull();
+    expect(localStorage.getItem(keyFor())).toBeNull();
+  });
+
+  it("eliminar la tabla guardada elimina también su borrador", async () => {
+    state.stores[0].pricingRules = savedTable(60);
+    mount();
+    selectCategory(); // con tabla guardada el editor abre solo
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "175" } });
+    expect(stored(keyFor())?.draft.prices.t_iconic?.[0]).toBe(175);
+    fireEvent.click(screen.getByRole("button", { name: /Quitar tabla de esta categoría/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Quitar tabla$/ }));
+    await screen.findByText("Tabla eliminada.");
+    expect(localStorage.getItem(keyFor())).toBeNull();
   });
 });
