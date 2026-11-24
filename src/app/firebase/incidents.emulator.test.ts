@@ -609,4 +609,17 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("posventa por combinación
     expect((await readShelves()).d5).toBe(2); // la talla hermana no se toca
     expect((await readShelves()).quarantined).toBe(1);
   });
+
+  it("cuarta revisión 24-nov (P2): el rastro del acuerdo sustituido registra 1 cuando el reemplazo cobraba diferencia", async () => {
+    await seed();
+    // Acuerdo atascado (sin talla en un color que ya vende por talla) cuyo reemplazo cobra diferencia.
+    await agree("ord-sz-return", "sz-10", "sz10", { kind: "replacement_with_difference" }, { productId: PRODUCT, productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", unitPriceCents: 45000, unitCostCents: 10000, chargeDifference: true });
+    await applyIncidentEventTx({
+      orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-10", event: event("sz10-e3", "resolution_agreed"),
+      resolution: { kind: "wait_restock", waitUntil: "2026-12-10" },
+    });
+    const agreed = (await orderOf("ord-sz-return")).incidents.find((incident: OrderIncident) => incident.id === "sz-10")!;
+    expect(agreed.replacement).toBeUndefined();
+    expect(agreed.events[agreed.events.length - 1]!.detail).toMatchObject({ supersededResolution: "replacement_with_difference", supersededReplacementPriceCents: 45000, supersededReplacementChargeDifference: 1 });
+  });
 });

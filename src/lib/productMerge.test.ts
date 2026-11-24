@@ -316,3 +316,51 @@ describe("mergeProductOperational — carreras de dos sesiones y corrección al 
     expect(mergeProductOperational(baseline, typed(4), fresh).variants![0].quantityOnHand).toBe(3); // sin corrección de más: 4 − 1
   });
 });
+
+// Cuarta revisión de código (24-nov, P1): la guardia de reparto compara el
+// estante campo por campo. Cada comparación se defiende por separado — quitar
+// una del código debe fallar SU prueba.
+describe("sameShelf — la guardia de reparto, un campo a la vez (#461)", () => {
+  const size = (id: string, label: string, quantityOnHand: number, extra: Partial<VariantSize> = {}): VariantSize =>
+    ({ id, size: label, cost: 10, sku: `G-${label}`, quantityOnHand, ...extra, createdAt: NOW, updatedAt: NOW });
+  const sized = (color: string, overrides: Partial<ProductVariant>) => ({ ...variant("v_gold", color), ...overrides });
+  const shelf = (sizes: VariantSize[]) => sized("Dorado", { quantityOnHand: 2, sizes });
+  // Fer reparte las 2 piezas «sin talla» en la talla 6 (3 → 5).
+  const base = () => product({ id: "p1", variants: [shelf([size("d6", "6", 3), size("d5", "5", 1)])] });
+  const next = () => product({ id: "p1", variants: [shelf([size("d6", "6", 5), size("d5", "5", 1)])] });
+
+  it("si otra sesión vendió de una talla mientras se repartía, el guardado se detiene (cantidad)", () => {
+    const fresh = product({ id: "p1", variants: [shelf([size("d6", "6", 3), size("d5", "5", 0)])] });
+    expect(() => mergeProductOperational(base(), next(), fresh)).toThrow(StaleProductError);
+    expect(() => mergeProductOperational(base(), next(), fresh)).toThrow(/piezas sin talla del color Dorado cambiaron/);
+  });
+
+  it("si otra sesión actualizó el costo de una talla mientras se repartía, el guardado se detiene (costo)", () => {
+    const fresh = product({ id: "p1", variants: [shelf([size("d6", "6", 3), size("d5", "5", 1, { cost: 12 })])] });
+    expect(() => mergeProductOperational(base(), next(), fresh)).toThrow(StaleProductError);
+  });
+
+  it("si otra sesión corrigió la etiqueta de una talla mientras se repartía, el guardado se detiene (etiqueta)", () => {
+    // La clave se deja igual: sólo cambia la etiqueta.
+    const fresh = product({ id: "p1", variants: [shelf([size("d6", "6", 3), size("d5", "5.5", 1, { sku: "G-5" })])] });
+    expect(() => mergeProductOperational(base(), next(), fresh)).toThrow(StaleProductError);
+  });
+
+  it("si otra sesión cambió la clave de una talla mientras se repartía, el guardado se detiene (clave)", () => {
+    const fresh = product({ id: "p1", variants: [shelf([size("d6", "6", 3), size("d5", "5", 1, { sku: "G-5-B" })])] });
+    expect(() => mergeProductOperational(base(), next(), fresh)).toThrow(StaleProductError);
+  });
+
+  it("las tallas se comparan por su id, no por posición: el mismo estante en otro orden NO detiene el guardado", () => {
+    const fresh = product({ id: "p1", variants: [shelf([size("d5", "5", 1), size("d6", "6", 3)])] });
+    const merged = mergeProductOperational(base(), next(), fresh).variants![0];
+    expect(merged.sizes!.find((s) => s.id === "d6")!.quantityOnHand).toBe(5);
+    expect(merged.quantityOnHand).toBeUndefined();
+  });
+
+  it("una talla distinta con las mismas cifras no pasa por la misma: se detiene", () => {
+    // La 5 desapareció y nació la 7 con su misma existencia.
+    const fresh = product({ id: "p1", variants: [shelf([size("d6", "6", 3), size("d7", "7", 1)])] });
+    expect(() => mergeProductOperational(base(), next(), fresh)).toThrow(StaleProductError);
+  });
+});
