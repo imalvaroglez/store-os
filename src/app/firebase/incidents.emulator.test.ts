@@ -610,6 +610,50 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("posventa por combinación
     expect((await readShelves()).quarantined).toBe(1);
   });
 
+  it("misión UX 24-nov (bloqueo): un reemplazo acordado de talla agotada se puede volver a acordar (esperar reposición)", async () => {
+    await seed();
+    // Acuerdo sobre la talla 6, que el pedido dejó en 0 (3 − 1 vendida... la semilla entrega 1: d6 queda 2 → se fuerza a 0).
+    await envSizes.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      // snapshot.data() returns a FRESH copy per call: mutate the one you write.
+      const data = (await getDoc(doc(db, "products/" + PRODUCT))).data() as { variants: Array<{ id: string; sizes: Array<{ id: string; quantityOnHand: number }> }> };
+      data.variants.find((v) => v.id === "v_gold")!.sizes.find((sz) => sz.id === "d6")!.quantityOnHand = 0;
+      await setDoc(doc(db, "products/" + PRODUCT), data);
+    });
+    // El acuerdo sobre la talla vacía: la app de hoy lo ACEPTA (la misión lo
+    // vivió así); la corrección avisa en la hoja ANTES de acordar, y si aún se
+    // acuerda, el confirmar sigue fallando cerrado y la solución se puede
+    // volver a acordar. Si este acuerdo llegara a rechazarse algún día, la
+    // misión ya no sería reproducible: actualiza este escenario.
+    let agreementAccepted = true;
+    try {
+      await agree("ord-sz-repl", "sz-11", "sz11", { kind: "replacement_equivalent" }, { productId: PRODUCT, productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", variantSizeId: "d6", variantSize: "6", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false });
+    } catch {
+      agreementAccepted = false;
+    }
+    if (agreementAccepted) {
+      await expect(
+        applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-11", event: event("sz11-e2", "confirmed") })
+      ).rejects.toThrow(/Solo hay 0 pieza/);
+    }
+    // …pero la solución atascada por agotamiento SÍ se puede volver a acordar.
+    await applyIncidentEventTx({
+      orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-11", event: event("sz11-e3", "resolution_agreed"),
+      resolution: { kind: "wait_restock", waitUntil: "2026-12-15" },
+    });
+    // Confirmar una espera exige que la pieza repuesta haya llegado: entra 1 a la talla vacía (la recepción real la haría Fer).
+    await envSizes.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const data = (await getDoc(doc(db, "products/" + PRODUCT))).data() as { variants: Array<{ id: string; sizes: Array<{ id: string; quantityOnHand: number }> }> };
+      data.variants.find((v) => v.id === "v_gold")!.sizes.find((sz) => sz.id === "d6")!.quantityOnHand = 1;
+      await setDoc(doc(db, "products/" + PRODUCT), data);
+    });
+    await applyIncidentEventTx({ orderId: "ord-sz-repl", storeId: STORE, incidentId: "sz-11", event: event("sz11-e4", "confirmed") });
+    const shelves = await readShelves();
+    expect(shelves.quarantined).toBe(1); // la pieza dañada quedó retenida: la espera se confirmó
+    expect(shelves.d6).toBe(0); // y la pieza repuesta salió hacia la clienta
+  });
+
   it("cuarta revisión 24-nov (P2): el rastro del acuerdo sustituido registra 1 cuando el reemplazo cobraba diferencia", async () => {
     await seed();
     // Acuerdo atascado (sin talla en un color que ya vende por talla) cuyo reemplazo cobra diferencia.

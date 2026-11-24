@@ -129,13 +129,17 @@ export function incidentEvidenceError(
 /**
  * #461 (review 23-nov): why the piece an AGREED solution hands over can no
  * longer be delivered as agreed — the ficha changed after the agreement (its
- * color now sells by talla without one, the talla or the color vanished). The
- * incident then lets Fer agree again; confirming an impossible replacement is
- * never the way out. Null when the solution can still be handed over.
+ * color now sells by talla without one, the talla or the color vanished), or
+ * the exact combination to hand over has a TRACKED shelf of zero (UX misión:
+ * a replacement was agreed on an agotada talla and only the final confirm
+ * failed, with no way out). The incident then lets Fer agree again;
+ * confirming an impossible replacement is never the way out. Null when the
+ * solution can still be handed over. wait_restock expects the piece to be
+ * agotada — stock never makes it stuck.
  */
 export function agreedSolutionStuckReason(
   incident: OrderIncident,
-  products: ReadonlyArray<Pick<Product, "id" | "variants">>
+  products: ReadonlyArray<Pick<Product, "id" | "variants" | "quantityOnHand">>
 ): string | null {
   const agreed = incident.resolution;
   if (!agreed || agreed.kind === "refund") return null; // a refund hands over no piece
@@ -154,6 +158,24 @@ export function agreedSolutionStuckReason(
   }
   if (variant && target.variantSizeId && !variant.sizes?.some((size) => size.id === target.variantSizeId)) {
     return "La talla que se iba a entregar ya no existe en ese color.";
+  }
+  if (agreed.kind === "wait_restock") return null; // restocking an agotada piece is the point
+  const outOfStock = (onHand: number | undefined) => onHand === 0;
+  if (variant && target.variantSizeId) {
+    const size = variant.sizes?.find((candidate) => candidate.id === target.variantSizeId);
+    if (size && outOfStock(size.quantityOnHand)) {
+      return `La talla ${size.size} del color ${color} está agotada: no hay piezas que entregar. Vuelve a acordar la solución.`;
+    }
+    return null;
+  }
+  if (variant) {
+    if (!variantHasSizes(variant) && outOfStock(variant.quantityOnHand)) {
+      return `El color ${color} está agotado: no hay piezas que entregar. Vuelve a acordar la solución.`;
+    }
+    return null;
+  }
+  if (outOfStock(product.quantityOnHand)) {
+    return "La pieza que se iba a entregar está agotada: no hay piezas que entregar. Vuelve a acordar la solución.";
   }
   return null;
 }

@@ -233,6 +233,26 @@ function IncidentCard({
     const size = replacementPick?.variants?.find((v) => v.id === variantId)?.sizes?.find((s) => s.id === incident.variantSizeId);
     return size && (typeof size.quantityOnHand !== "number" || size.quantityOnHand > 0) ? size.id : "";
   }
+  // #461 (UX misión, bloqueo): the exact combination to hand over is tracked
+  // and EMPTY — say so HERE, not at the final confirm, and offer waiting for
+  // restock as the one-tap alternative.
+  const replacementOutOfStock = (() => {
+    if (kind !== "replacement_equivalent" && kind !== "replacement_with_difference") return null;
+    if (!replacementPick) return null;
+    if (pickedSize) {
+      return typeof pickedSize.quantityOnHand === "number" && pickedSize.quantityOnHand <= 0
+        ? { what: `La talla ${pickedSize.size}`, adj: "agotada", talla: true } : null;
+    }
+    if (pickedVariant) {
+      return !variantHasSizes(pickedVariant) && typeof pickedVariant.quantityOnHand === "number" && pickedVariant.quantityOnHand <= 0
+        ? { what: `El color ${pickedVariant.color}`, adj: "agotado", talla: false } : null;
+    }
+    if (!replacementPick.variants) {
+      const onHand = products.find((candidate) => candidate.id === replacementPick.id)?.quantityOnHand;
+      return typeof onHand === "number" && onHand <= 0 ? { what: "Esta pieza", adj: "agotada", talla: false } : null;
+    }
+    return null;
+  })();
   const [chargeDifference, setChargeDifference] = useState(true);
   const [waitUntil, setWaitUntil] = useState("");
   const [dialog, setDialog] = useState<"confirm" | "none">("none");
@@ -372,7 +392,9 @@ function IncidentCard({
               {([incident.replacement.variantColor, incident.replacement.variantSize].filter(Boolean) as string[]).length > 0
                 ? ` (${[incident.replacement.variantColor, incident.replacement.variantSize].filter(Boolean).join(" · ")})`
                 : ""} (<Money exact amount={incident.replacement.unitPriceCents / 100} />
-            {incident.replacement.chargeDifference ? " · diferencia por cobrar" : " · diferencia absorbida"})</>
+            {info.resolution.kind === "replacement_with_difference"
+              ? incident.replacement.chargeDifference ? " · diferencia por cobrar" : " · diferencia absorbida"
+              : ""})</>
           )}
           {info.resolution.waitUntil && <> · acordado para {info.resolution.waitUntil}</>}
         </p>
@@ -409,7 +431,13 @@ function IncidentCard({
                     id: option.value,
                     name: option.label,
                     sku: product?.sku,
-                    priceCents: orderAmountCents(product?.price ?? Math.min(...Object.values(product?.prices ?? { base: 0 }).map(Number).filter((value) => Number.isFinite(value) && value >= 0))),
+                    // #461 (UX misión): replacing the SAME piece proposes the
+                    // price the clienta paid (an equivalent swaps no money), not
+                    // the cheapest tier. Any other piece keeps today's
+                    // suggestion; both stay editable.
+                    priceCents: product?.id === incident.productId
+                      ? incident.originalUnitPriceCents
+                      : orderAmountCents(product?.price ?? Math.min(...Object.values(product?.prices ?? { base: 0 }).map(Number).filter((value) => Number.isFinite(value) && value >= 0))),
                     cost: product?.cost ?? 0,
                     variants: product?.variants,
                   });
@@ -479,13 +507,30 @@ function IncidentCard({
                   <p className="text-xs text-on-surface-soft">Elige el color que entregas: sale del estante de ese color.</p>
                 </div>
               ) : null}
-              <p className="text-xs text-on-surface-soft">El precio de la alternativa se captura al confirmar la diferencia con la clienta.</p>
-              <CheckboxField
-                label="Cobrar la diferencia a la clienta"
-                caption="Si la absorbes como atención comercial, la venta no cambia."
-                checked={chargeDifference}
-                onChange={setChargeDifference}
-              />
+              {kind === "replacement_with_difference" && (
+                <>
+                  <p className="text-xs text-on-surface-soft">El precio de la alternativa se captura al confirmar la diferencia con la clienta.</p>
+                  <CheckboxField
+                    label="Cobrar la diferencia a la clienta"
+                    caption="Si la absorbes como atención comercial, la venta no cambia."
+                    checked={chargeDifference}
+                    onChange={setChargeDifference}
+                  />
+                </>
+              )}
+              {kind === "replacement_equivalent" && (
+                <p className="text-xs text-on-surface-soft">Un reemplazo equivalente no cambia el dinero de la venta.</p>
+              )}
+              {replacementOutOfStock && (
+                <div role="alert" className="space-y-2 rounded-xl bg-warning/5 p-3 ring-1 ring-warning/30">
+                  <p className="text-sm">
+                    {replacementOutOfStock.what} está {replacementOutOfStock.adj}: no hay piezas que entregar.
+                  </p>
+                  <Button size="sm" variant="secondary" onClick={() => { setKind("wait_restock"); setWaitUntil(""); }}>
+                    {replacementOutOfStock.talla ? "Esperar reposición por la talla agotada" : "Esperar reposición"}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
           {kind === "wait_restock" && (
@@ -527,7 +572,7 @@ function IncidentCard({
             full
             disabled={agreeing
               || ((kind === "replacement_equivalent" || kind === "replacement_with_difference")
-                && (!replacementPick || (!!replacementPick.variants?.length && replacementVariantId === "") || replacementNeedsSize))
+                && (!replacementPick || (!!replacementPick.variants?.length && replacementVariantId === "") || replacementNeedsSize || !!replacementOutOfStock))
               || (needsDestination && destination === "")}
             onClick={() => void agree()}
           >

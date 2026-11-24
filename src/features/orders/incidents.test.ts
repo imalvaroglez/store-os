@@ -222,4 +222,35 @@ describe("agreedSolutionStuckReason (#461)", () => {
   it("esperar reposición entrega la misma pieza: también se atasca si esa pieza ya no se puede nombrar", () => {
     expect(agreedSolutionStuckReason(agreedIncident({ kind: "wait_restock" }), [design])).toMatch(/se acordó sin talla/);
   });
+
+  // Misión UX #461 (bloqueo): se dejó acordar un reemplazo de una talla
+  // agotada y sólo al confirmar falló, sin salida. Una talla SIN piezas no es
+  // entregable: la solución acordada está atascada y se puede volver a acordar.
+  const sized = (d6: number | undefined, d8 = 2) =>
+    ({ ...design, variants: [{ ...design.variants![0], sizes: [
+      { id: "d6", size: "6", createdAt: "", updatedAt: "", ...(d6 !== undefined ? { quantityOnHand: d6 } : {}) },
+      { id: "d8", size: "8", createdAt: "", updatedAt: "", quantityOnHand: d8 },
+    ] }] }) as never as Product;
+  const plain = { id: "p-plain", storeId: "s1", quantityOnHand: 0 } as never as Product;
+
+  it("reemplazo acordado sobre una talla con 0 piezas: atascado, con la talla y el color en el mensaje", () => {
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, { ...replacement, variantSizeId: "d6" }), [sized(0)])).toBe(
+      "La talla 6 del color Dorado está agotada: no hay piezas que entregar. Vuelve a acordar la solución."
+    );
+  });
+
+  it("con piezas (o con la talla sin rastrear) no se atasca por existencia; esperar reposición nunca se atasca por agotarse", () => {
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_with_difference" }, { ...replacement, variantSizeId: "d6" }), [sized(4)])).toBeNull();
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, { ...replacement, variantSizeId: "d6" }), [sized(undefined)])).toBeNull();
+    const waiting = { ...agreedIncident({ kind: "wait_restock" }), variantSizeId: "d6" } as OrderIncident;
+    expect(agreedSolutionStuckReason(waiting, [sized(0)])).toBeNull(); // agotarse es el motivo de la espera
+  });
+
+  it("reemplazo simple o por color con 0 piezas: también atascado; con piezas, no", () => {
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, { ...replacement, productId: "p-plain", productName: "Liso", variantId: undefined, variantColor: undefined }), [plain])).toMatch(/agotada/);
+    const colored = { id: "p-col", storeId: "s1", variants: [{ id: "v_s", color: "Plata", createdAt: "", updatedAt: "", quantityOnHand: 0 }] } as never as Product;
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, { ...replacement, productId: "p-col", variantId: "v_s", variantColor: "Plata" }), [colored])).toMatch(/color Plata está agotado/);
+    const coloredStocked = { ...colored, variants: [{ ...colored.variants![0], quantityOnHand: 3 }] } as never as Product;
+    expect(agreedSolutionStuckReason(agreedIncident({ kind: "replacement_equivalent" }, { ...replacement, productId: "p-col", variantId: "v_s", variantColor: "Plata" }), [coloredStocked])).toBeNull();
+  });
 });
