@@ -167,9 +167,11 @@ function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: Pr
     // A hand-typed negative never lands (same clamp as a plain color).
     const typedValue = typeof next.quantityOnHand === "number" ? Math.max(0, next.quantityOnHand) : undefined;
     const correction = (typedValue ?? shownByForm) - shownByForm;
+    // The correction lands on the FRESH figures — and the result is floored at
+    // 0 too: with a concurrent sale, a typed 0 or −1 would otherwise go below.
     const quantityOnHand = tallas === undefined
       ? typedValue !== undefined && correction !== 0 ? typedValue : unassigned > 0 ? unassigned : current.quantityOnHand
-      : tallas + unassigned + correction;
+      : Math.max(0, tallas + unassigned + correction);
     return { ...next, quantityOnHand, cost };
   }
 

@@ -305,4 +305,14 @@ describe("mergeProductOperational — carreras de dos sesiones y corrección al 
     const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: -1 })] });
     expect(mergeProductOperational(baseline, next, baseline).variants![0].quantityOnHand).toBe(0);
   });
+
+  it("O6: lo mismo con una venta concurrente — 0 o −1 escritos a mano nunca dejan el color en negativo", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 5)] })] });
+    // El formulario veía 5; otra sesión vendió 1 (quedan 4) y Fer quitó la talla escribiendo 0.
+    const fresh = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 4)] })] });
+    const typed = (value: number) => product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: value })] });
+    expect(mergeProductOperational(baseline, typed(0), fresh).variants![0].quantityOnHand).toBe(0);
+    expect(mergeProductOperational(baseline, typed(-1), fresh).variants![0].quantityOnHand).toBe(0);
+    expect(mergeProductOperational(baseline, typed(4), fresh).variants![0].quantityOnHand).toBe(3); // sin corrección de más: 4 − 1
+  });
 });
