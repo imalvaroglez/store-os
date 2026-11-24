@@ -17,7 +17,7 @@ Pensado para que cualquiera lo use: un adolescente que vende por primera vez, un
   - **Bajo pedido** — no guardas inventario (perfumes, tenis, gorras). Un precio por producto.
   - **Inventario y precios** — tienes stock y precios por nivel: **Menudeo, Mayoreo, Emprendedora**.
 - **Catálogo** público y privado (con vista pública compartible por enlace).
-- **Pedidos** con flujo de estatus de principio a fin: _Preguntó → Confirmado → Comprar → Comprado → Llegó → Entregado → Cobrado_.
+- **Pedidos** con flujo de estatus de principio a fin: _Preguntó → Cotizado → Confirmado → Preparando → Listo → Entregado_ (o Cancelado), con estado de pago _Sin anticipo → Anticipo parcial → Pagado_.
 - **Clientes** con historial de ventas y saldos pendientes.
 - **Inventario** con ajustes rápidos (−1 / +1) y alertas de baja existencia (solo tiendas con inventario).
 - **Tres temas** intercambiables: **Paper Ledger**, **Maximalista** y **Lujo** — cada uno con su propia personalidad (color, tipografía, movimiento).
@@ -52,7 +52,7 @@ El navegador no carga tiendas ficticias automáticamente. Los datos controlados 
 src/
   app/            # App, AppShell (responsive), StoreProvider (estado), router
   design-system/  # sistema de diseño (tokens, primitivos, gate) + theme/
-  features/       # pantallas por dominio: stores, home, catalog, customers, orders, inventory
+  features/       # pantallas por dominio: stores, home, catalog, customers, orders, inventory, pricing, close, expenses, financial, packaging, users
   lib/            # ids, money, dates, storage, selectors, whatsapp, labels, router
   types/          # modelo de datos (Store, Product, Customer, Order)
 docs/
@@ -71,7 +71,13 @@ public/           # manifest, service worker, icono
 - ✅ Autenticación + backend (Firebase Auth + Firestore) + roles (super-admin + miembros por tienda)
 - ✅ Selector de tienda estilo "¿quién opera hoy?" + gestión completa de tiendas (crear / editar / cambiar tipo / invitar miembros / eliminar)
 - ✅ UI por rol (dueño vs. super-admin) + aislamiento de datos
+- ✅ Dinero del negocio: cobros y anticipos por pedido, compras y gastos, cierre mensual con revisión de ajustes, reparto de utilidades con simulador, y posición financiera desde la activación
+- ✅ Estrategia de precios por categoría (tabla de bandas, reglas de venta, diagnóstico y simulador de contribución)
+- ✅ Catálogo público cloud (proyecciones públicas) con carrito/arma-tu-lista por WhatsApp, niveles de precio y disponibilidad por existencias
+- ✅ Empaques por nivel y usuarios de plataforma (solo super-admin)
 - ✅ Listo para desplegar en Vercel — ver [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+
+Las capacidades liberadas por versión viven en `src/releases/releases.json` (fuente del pie de página y del control de versión); el tablero Store OS es la cola vigente de trabajo.
 
 ## Despliegue
 
@@ -88,7 +94,7 @@ Todo desarrollo conectado usa `store-os-dev`. Copia `.env.example` a `.env`
 y coloca ahí las credenciales de ese proyecto. Las pruebas con emulador usan el
 mismo ID y mantienen Auth, Firestore, Storage y Functions en localhost: ejecuta
 `npm run emulators` y `npm run e2e:firebase`. Producción usa
-`store-os-f7cf8` únicamente mediante releases por CI (persona o agente con la autorización permanente del PO, 2026-11-08).
+`store-os-f7cf8` mediante releases por CI (persona o agente con la autorización permanente del PO, 2026-11-08), con la excepción Sev-1 documentada en [`docs/runbook-sev1-hotfix.md`](docs/runbook-sev1-hotfix.md).
 
 ## Decisiones de diseño
 

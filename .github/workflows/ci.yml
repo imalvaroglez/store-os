@@ -87,6 +87,9 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # #484 P3: the regenerated lockfile needs npm 11 — npm 10's `npm ci`
+      # rejects foreign-platform optional deps (@esbuild/*) with EBADPLATFORM.
+      - run: npm install -g npm@11
       - run: npm ci
       - name: Lint (typecheck)
         run: npm run typecheck
@@ -118,6 +121,9 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # #484 P3: the regenerated lockfile needs npm 11 — npm 10's `npm ci`
+      # rejects foreign-platform optional deps (@esbuild/*) with EBADPLATFORM.
+      - run: npm install -g npm@11
       - run: npm ci
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -239,6 +245,9 @@ jobs:
           printf '{"projectId":"%s","orgId":"%s","projectName":"store-os"}' \
             "${{ secrets.VERCEL_PROJECT_ID }}" "${{ secrets.VERCEL_ORG_ID }}" > .vercel/project.json
           cat .vercel/project.json
+      # #484 P3: the regenerated lockfile needs npm 11 — npm 10's `npm ci`
+      # rejects foreign-platform optional deps (@esbuild/*) with EBADPLATFORM.
+      - run: npm install -g npm@11
       - run: npm ci
       - name: Install Vercel CLI
         # Pin the CLI: 59.11.2 pulled this project successfully on 2026-09-03;

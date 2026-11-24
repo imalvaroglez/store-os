@@ -445,3 +445,39 @@ describe("#455/#458 r4 — materializar el anticipo ES el cobro (una sola entrad
     expect(money.inheritedDepositMaterialized).toBe(true);
   });
 });
+
+describe("#219 Cobros — contratos de captura (auditoría del flujo)", () => {
+  const FUTURE = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+
+  it("rechaza una fecha de recepción futura (el dinero ya fue recibido)", () => {
+    expect(() =>
+      buildPaymentRecord(order(), { kind: "payment", id: "pay_f", method: "cash", date: FUTURE, amountText: "100" }, "u1")
+    ).toThrow(/futura/);
+  });
+
+  it("acecha la fecha de HOY sin ambigüedad (borde exacto)", () => {
+    const now = new Date().toISOString();
+    const record = buildPaymentRecord(order(), { kind: "payment", id: "pay_h", method: "cash", date: now.slice(0, 10), amountText: "100" }, "u1", now);
+    expect(record.date).toBe(now.slice(0, 10));
+  });
+
+  it("acepta montos grandes VÁLIDOS de dos decimales (regresión H1 del dictamen: 131072.02 / 262144.10)", () => {
+    for (const amountText of ["131072.02", "262144.10", "1000000.99"]) {
+      expect(() =>
+        buildPaymentRecord(order(), { kind: "payment", id: `pay_big_${amountText}`, method: "cash", amountText }, "u1")
+      ).not.toThrow();
+    }
+    expect(() =>
+      buildAdjustmentRecord(order(), { kind: "adjustment", id: "adj_big", direction: "subtract", amountText: "131072.02", note: "x" }, "u1")
+    ).not.toThrow();
+  });
+
+  it("rechaza precisión menor al centavo (0.001) con mensaje claro, también en ajustes", () => {
+    expect(() =>
+      buildPaymentRecord(order(), { kind: "payment", id: "pay_p", method: "cash", amountText: "0.001" }, "u1")
+    ).toThrow(/centavos|decimales/);
+    expect(() =>
+      buildAdjustmentRecord(order(), { kind: "adjustment", id: "adj_p", direction: "subtract", amountText: "0.001", note: "x" }, "u1")
+    ).toThrow(/centavos|decimales/);
+  });
+});

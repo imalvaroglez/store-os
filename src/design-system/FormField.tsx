@@ -9,7 +9,7 @@ import type {
 
 // Unified field styling. Every input/select/textarea in the app uses this base.
 export const fieldBase =
-  "w-full rounded-md border border-edge bg-surface px-3 py-2.5 text-base text-on-surface outline-none focus:border-terracotta focus:ring-2 focus:ring-terracotta/20 placeholder:text-on-surface-soft/60 transition-colors";
+  "w-full rounded-md border border-edge bg-surface px-3 py-2.5 text-base text-on-surface outline-hidden focus:border-terracotta focus:ring-2 focus:ring-terracotta/20 placeholder:text-on-surface-soft/60 transition-colors";
 
 export function FormField({
   label,
