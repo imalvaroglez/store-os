@@ -286,4 +286,23 @@ describe("mergeProductOperational — carreras de dos sesiones y corrección al 
     const next = product({ id: "p1", quantityOnHand: 5, variants: undefined });
     expect(() => mergeProductOperational(baseline, next, fresh)).toThrow(StaleProductError);
   });
+
+  it("O2: la guardia de reparto compara campo por campo — el orden de las claves no la dispara", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3), size("d5", "5", 1)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 5), size("d5", "5", 1)] })] });
+    // Misma talla, mismas cifras, claves en otro orden (como podría devolverlas el servidor).
+    const reordered = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [
+      { updatedAt: NOW, createdAt: NOW, quantityOnHand: 3, cost: 10, size: "6", id: "d6" },
+      { updatedAt: NOW, createdAt: NOW, quantityOnHand: 1, cost: 10, size: "5", id: "d5" },
+    ] })] });
+    const merged = mergeProductOperational(baseline, next, reordered).variants![0];
+    expect(merged.sizes!.find((s) => s.id === "d6")!.quantityOnHand).toBe(5);
+    expect(merged.quantityOnHand).toBeUndefined();
+  });
+
+  it("O4: tras quitar la última talla, un número negativo escrito a mano se recorta a 0 (como en un color simple)", () => {
+    const baseline = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: 2, sizes: [size("d6", "6", 3)] })] });
+    const next = product({ id: "p1", variants: [sized("Dorado", { quantityOnHand: -1 })] });
+    expect(mergeProductOperational(baseline, next, baseline).variants![0].quantityOnHand).toBe(0);
+  });
 });

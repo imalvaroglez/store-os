@@ -102,6 +102,22 @@ function mergeVariants(
   });
 }
 
+/** Same sellable shelf, field by field — never by key order (the server may
+ * return keys in another order than the client wrote them). */
+function sameShelf(a: ProductVariant, b: ProductVariant): boolean {
+  const left = a.sizes ?? [];
+  const right = b.sizes ?? [];
+  if (left.length !== right.length) return false;
+  return left.every((size) => {
+    const other = right.find((candidate) => candidate.id === size.id);
+    return !!other
+      && size.size === other.size
+      && size.sku === other.sku
+      && size.quantityOnHand === other.quantityOnHand
+      && size.cost === other.cost;
+  });
+}
+
 /** One color's shelf across a save, tallas included (#461):
  * - a plain color: untouched carries the fresh shelf, an edit lands as delta;
  * - a talla follows the same rule on ITS shelf and cost;
@@ -148,7 +164,8 @@ function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: Pr
     // (base tallas + base residual). A different number is a correction the
     // operator typed on purpose: it lands as a difference on the FRESH figures.
     const shownByForm = sum(baseSizes) + residual(base);
-    const typedValue = typeof next.quantityOnHand === "number" ? next.quantityOnHand : undefined;
+    // A hand-typed negative never lands (same clamp as a plain color).
+    const typedValue = typeof next.quantityOnHand === "number" ? Math.max(0, next.quantityOnHand) : undefined;
     const correction = (typedValue ?? shownByForm) - shownByForm;
     const quantityOnHand = tallas === undefined
       ? typedValue !== undefined && correction !== 0 ? typedValue : unassigned > 0 ? unassigned : current.quantityOnHand
@@ -202,7 +219,7 @@ function mergeColorShelf(base: ProductVariant, next: ProductVariant, current: Pr
     // The operator distributed the «sin talla» pieces she saw. Distributing
     // them requires that exact shelf: if another session touched this color
     // meanwhile (distributed too, sold, returned pieces), this view is stale.
-    if (residual(current) !== residual(base) || !same(current.sizes ?? [], base.sizes ?? [])) {
+    if (residual(current) !== residual(base) || !sameShelf(current, base)) {
       throw new StaleProductError(
         `Las piezas sin talla del color ${next.color} cambiaron en otro dispositivo mientras las repartías. Vuelve a abrir la ficha y repártelas de nuevo.`
       );

@@ -594,7 +594,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("posventa por combinación
   it("re-revisión 23-nov (N2, N3): volver a acordar con «esperar reposición» deja la incidencia con salida y guarda rastro del acuerdo sustituido", async () => {
     await seed();
     const withoutSize = { productId: PRODUCT, productName: "Anillo Sol", unitPriceCents: 40000, unitCostCents: 10000, chargeDifference: false, variantId: "v_gold", variantColor: "Dorado" };
-    await agree("ord-sz-return", "sz-9", "sz9", { kind: "replacement_with_difference" }, { ...withoutSize, unitPriceCents: 20000 });
+    await agree("ord-sz-return", "sz-9", "sz9", { kind: "replacement_with_difference" }, { ...withoutSize, unitPriceCents: 20000, chargeDifference: false });
     // Antes: el nuevo acuerdo conservaba el reemplazo atascado y confirmar fallaba para siempre.
     await applyIncidentEventTx({
       orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-9", event: event("sz9-e3", "resolution_agreed"),
@@ -602,7 +602,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("posventa por combinación
     });
     const agreed = (await orderOf("ord-sz-return")).incidents.find((incident: OrderIncident) => incident.id === "sz-9")!;
     expect(agreed.replacement).toBeUndefined();
-    expect(agreed.events[agreed.events.length - 1]!.detail).toMatchObject({ supersededResolution: "replacement_with_difference", supersededReplacementPriceCents: 20000 });
+    expect(agreed.events[agreed.events.length - 1]!.detail).toMatchObject({ supersededResolution: "replacement_with_difference", supersededReplacementPriceCents: 20000, supersededReplacementChargeDifference: 0 });
     // La salida existe: confirmar entrega la reposición de la MISMA combinación de la incidencia.
     await applyIncidentEventTx({ orderId: "ord-sz-return", storeId: STORE, incidentId: "sz-9", event: event("sz9-e4", "confirmed") });
     expect((await readShelves()).d6).toBe(2); // 3 − 1: la reposición sale de la combinación de la incidencia

@@ -2878,6 +2878,7 @@ export async function applyIncidentEventTx(params: {
         ...(superseded
           ? {
               supersededReplacementPriceCents: superseded.unitPriceCents,
+              supersededReplacementChargeDifference: superseded.chargeDifference ? 1 : 0,
               ...(superseded.productId ? { supersededReplacementProductId: superseded.productId } : {}),
               ...(superseded.variantId ? { supersededReplacementColorId: superseded.variantId } : {}),
               ...(superseded.variantSizeId ? { supersededReplacementSizeId: superseded.variantSizeId } : {}),

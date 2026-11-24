@@ -713,4 +713,16 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     expect(payload().variants![0].sizes![0]).toMatchObject({ size: "6.5", sku: "SOL-X-6" });
     expect(payload().variants![0].sizes![0].skuSuffix).toBeUndefined();
   });
+
+  it("M1: corregir la etiqueta de una talla normal ya guardada SÍ actualiza su clave (6 → 6.5)", async () => {
+    // Una talla guardada desde el editor trae clave y sufijo sugerido de su etiqueta.
+    const saved = sizedDesign(0) as Product;
+    const first = saved.variants![0].sizes![0];
+    saved.variants![0].sizes![0] = { ...first, skuSuffix: "6" };
+    render(<ProductForm product={saved} onDone={() => {}} />);
+    fireEvent.change(screen.getAllByLabelText(/^Talla$/)[0], { target: { value: "6.5" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar producto/ }));
+    await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
+    expect(payload().variants![0].sizes![0]).toMatchObject({ size: "6.5", skuSuffix: "6.5", sku: "SOL-D-6.5" });
+  });
 });

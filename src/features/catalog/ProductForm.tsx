@@ -279,8 +279,11 @@ export function ProductForm({
     const current = variants.find((v) => v.id === variantId)?.sizes?.find((s) => s.id === sizeId);
     if (!current) return;
     // The suffix follows the label only while it looks auto-suggested. A talla
-    // with its own clave and no suffix (inherited from a merged origin) keeps it.
-    const wasAuto = !current.sku && (!current.skuSuffix || current.skuSuffix === suggestSizeSkuSuffix(current.size));
+    // with a clave of its own and NO suffix (inherited from a merged origin)
+    // keeps that clave; a normal saved talla (suffix suggested from its label)
+    // keeps following its label when it is corrected.
+    const inheritedClave = !!current.sku && !current.skuSuffix;
+    const wasAuto = !inheritedClave && (!current.skuSuffix || current.skuSuffix === suggestSizeSkuSuffix(current.size));
     patchSize(variantId, sizeId, { size, ...(wasAuto ? { skuSuffix: size ? suggestSizeSkuSuffix(size) : "" } : {}) });
   }
   function removeSize(variantId: string, sizeId: string) {
