@@ -20,12 +20,13 @@ import { setReturnOrigin } from "../../lib/returnOrigin";
 import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
-import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
+import { ORDER_STATUS_LABELS, advancedMessage, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { OrderPaymentsSheet } from "../orders/OrderPaymentsSheet";
 import { FinancialPositionCard } from "../financial/FinancialPositionCard";
 import { DeliverySheet } from "../orders/DeliverySheet";
 import { pendingDeliveries } from "../../lib/deliveries";
 import { PrepareOrderDialog } from "../orders/PrepareOrderDialog";
+import { orderLineLabel } from "../orders/orderTicket";
 import { navigate } from "../../lib/router";
 import { useToast } from "../../design-system";
 
@@ -111,6 +112,9 @@ export function HomeScreen() {
     if (!advanced) return;
     try {
       await upsertOrder(advanced);
+      // Same notice as the Pedidos list: without it the operator cannot tell
+      // whether «Marcar listo» saved (UX misión #539).
+      toast.success(advancedMessage(advanced));
     } catch (error) {
       toast.error(error instanceof StaleOrderError ? error.message : "No se pudo actualizar el pedido.");
     }
@@ -241,7 +245,9 @@ export function HomeScreen() {
               const status = effectiveOrderStatus(o);
               const verb = nextActionVerb(status);
               const totals = orderTotals(o);
-              const preview = orderItems(o).slice(0, 2).map((item) => item.productName).join(", ");
+              // Same as the Pedidos list: quantity and color per line, so the
+              // card says what the order carries without opening it.
+              const preview = orderItems(o).slice(0, 2).map((item) => `${item.quantity} × ${orderLineLabel(item)}`).join(", ");
               return (
                 <Card
                   key={o.id}

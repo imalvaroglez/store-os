@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Button, Dialog, useToast } from "../../design-system";
 import { useStore } from "../../app/StoreProvider";
 import { StaleOrderError } from "../../app/firebase/firestoreData";
+import { orderLineLabel } from "./orderTicket";
 import { effectiveOrderStatus, orderItems, orderReference, orderTotals } from "../../lib/orders";
-import { ORDER_STATUS_LABELS, advanceOrder } from "./orderStatus";
+import { ORDER_STATUS_LABELS, advancedMessage, advanceOrder } from "./orderStatus";
 import type { Order } from "../../types";
 
 // #539 (QA verdict): «Preparar» is the one tap that changes an order's state
@@ -49,7 +50,7 @@ function PrepareConfirmation({ order, onClose }: { order: Order; onClose: () => 
   }, []);
   const customer = state.customers.find((c) => c.id === order.customerId && c.storeId === order.storeId);
   const items = orderItems(order);
-  const preview = items.slice(0, 2).map((item) => item.productName).join(", ");
+  const preview = items.slice(0, 2).map((item) => `${item.quantity} × ${orderLineLabel(item)}`).join(", ");
   const pieces = orderTotals(order).pieces;
 
   function confirm() {
@@ -67,7 +68,7 @@ function PrepareConfirmation({ order, onClose }: { order: Order; onClose: () => 
     if (!advanced) return;
     onClose();
     upsertOrder(advanced)
-      .then(() => toast.success(`Pedido #${orderReference(advanced.id)} avanzado a «${ORDER_STATUS_LABELS[advanced.orderStatus]}»`))
+      .then(() => toast.success(advancedMessage(advanced)))
       .catch((error: unknown) => {
         toast.error(error instanceof StaleOrderError ? error.message : "No se pudo actualizar el pedido.");
       });

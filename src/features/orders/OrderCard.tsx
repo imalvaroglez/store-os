@@ -21,7 +21,7 @@ import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
-import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
+import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, advancedMessage, nextActionVerb, advanceOrder } from "./orderStatus";
 import { installmentPlanView } from "./installments";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
 import { IncidentSheet } from "./IncidentSheet";
@@ -103,7 +103,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     if (!advanced) return;
     try {
       await upsertOrder(advanced);
-      toast.success(`Pedido avanzado a «${ORDER_STATUS_LABELS[advanced.orderStatus]}»`);
+      toast.success(advancedMessage(advanced));
     } catch (error) {
       toast.error(error instanceof StaleOrderError ? error.message : "No se pudo actualizar el pedido.");
     }

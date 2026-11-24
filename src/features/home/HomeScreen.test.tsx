@@ -496,6 +496,12 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
     expect(openCard.textContent).toContain(`#${orderReference("ord-539")}`);
   });
 
+  it("la tarjeta dice cuántas piezas lleva cada producto, como la lista de Pedidos (no hay que abrirlo)", async () => {
+    mountWith(confirmedOrder()); // 2 × Aro luna
+    const openCard = await screen.findByRole("button", { name: /Aro luna/ });
+    expect(openCard.textContent).toContain("2 × Aro luna");
+  });
+
   it("la mitad inferior de la tarjeta (Total/Saldo) también abre el pedido, sin cambiar su estado", async () => {
     const order = confirmedOrder();
     mountWith(order);
@@ -594,5 +600,7 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
     fireEvent.click(await screen.findByRole("button", { name: "Marcar listo" }));
     expect(mocks.upsertOrder).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog")).toBeNull();
+    // Misión UX #539: sin aviso no se sabía si había guardado; la lista sí avisaba.
+    expect(await screen.findByText(`Pedido #${orderReference("ord-539")} avanzado a «Listo»`)).toBeTruthy();
   });
 });
