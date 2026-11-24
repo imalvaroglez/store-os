@@ -32,9 +32,14 @@ session history — so it evaluates the work product, not the thought process.
 3. **Mobile-first.** Layouts assume a narrow phone. Tap targets ≥ ~40px. Inputs
    render at ≥16px (no iOS zoom-on-focus). Safe-area insets respected where the
    shell already handles them.
-4. **Local-first correctness.** No component touches `localStorage` except
-   `src/lib/storage.ts` (via `StoreProvider`). Store data is isolated by
-   `storeId` — selectors in `src/lib/selectors.ts` are the only path.
+4. **Administrative data lives in Auth + Firestore.** Every administrative
+   operation requires a Firebase Auth session and reads/writes Firestore; no
+   component opens or restores a local store for administrative data, and a
+   missing or failing Firebase shows an explicit error (never a fallback).
+   `localStorage` holds only preferences, the public cart and drafts tied to
+   a signed-in person (`src/lib/storage.ts`, `src/lib/cart.ts`, the theme).
+   Store data is isolated by `storeId` — selectors in
+   `src/lib/selectors.ts` are the only path.
 5. **Behavior-preserving polish.** Visual changes come through the DS tokens /
    primitives only; they must not change product behavior or data shapes.
 6. **Green gates.** `npm run typecheck`, `npm test` (incl. the design-system
@@ -55,8 +60,10 @@ Task tool (general-purpose, model opus, ultra effort):
        all UI imported from src/design-system, no duplicated image/pill/select patterns.
     2. Spanish-only UI strings; English code/types/comments. No enterprise jargon.
     3. Mobile-first: narrow-phone layouts, ≥40px tap targets, ≥16px inputs.
-    4. Local-first: only src/lib/storage.ts (via StoreProvider) touches localStorage;
-       store isolation via src/lib/selectors.ts only.
+    4. Administrative operations require Firebase Auth + Firestore; no local
+       persistence of administrative data (localStorage only for preferences, the
+       public cart and a signed-in person's drafts); store isolation via
+       src/lib/selectors.ts only.
     5. Polish is behavior-preserving and flows through DS tokens/primitives.
     6. `npm run typecheck`, `npm test`, `npm run build` pass.
 
