@@ -271,7 +271,10 @@ export function HomeScreen() {
                       onClick={(event) => { event.stopPropagation(); openOrder(o.id); }}
                     >
                       <span className="min-w-0">
-                        <span className="block font-semibold text-ink text-sm truncate">
+                        {/* UX misión r2 #539: with quantities a two-item order no longer
+                            fits one line on a phone — let it take a second one instead of
+                            hiding a product behind an ellipsis. */}
+                        <span className="block font-semibold text-ink text-sm line-clamp-2 break-words">
                           {preview || "Sin productos"}
                         </span>
                         {/* The folio is the app's order identity (#XXXXXX). */}
