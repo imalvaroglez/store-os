@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
@@ -472,16 +472,13 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
     render(<ToastProvider><HomeScreen /></ToastProvider>);
   }
 
-  // The dialog's confirm action only arms once it has settled — time is ours.
-  let now = 1_700_000_000_000;
-  const settle = () => { now += 1_000; };
   beforeEach(() => {
-    now = 1_700_000_000_000;
-    vi.spyOn(Date, "now").mockImplementation(() => now);
     navigateMock.mockClear();
     resetReturnOriginForTests();
   });
-  afterEach(() => vi.restoreAllMocks());
+  // The confirm action arms on a timer (the dialog's entry motion): let it pass.
+  const confirmButton = () => screen.getByRole("button", { name: "Preparar pedido" });
+  const settle = () => waitFor(() => expect(confirmButton()).toBeEnabled());
 
   it("tocar la tarjeta abre el pedido EXACTO sin cambiar su estado", async () => {
     const order = confirmedOrder();
@@ -558,9 +555,9 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
     const order = confirmedOrder();
     mountWith(order);
     fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
-    settle();
-    fireEvent.click(await screen.findByRole("button", { name: "Preparar pedido" }));
-    await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledOnce());
+    await settle();
+    fireEvent.click(confirmButton());
+    expect(mocks.upsertOrder).toHaveBeenCalledOnce();
     const saved = mocks.upsertOrder.mock.calls[0][0] as Order;
     expect(saved.id).toBe("ord-539");
     expect(saved.orderStatus).toBe("preparing");
@@ -572,29 +569,30 @@ describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () =>
     fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
     // otra sesión lo prepara mientras el diálogo está abierto
     (mocks.state!.orders[0] as Order).orderStatus = "ready";
-    settle();
-    fireEvent.click(await screen.findByRole("button", { name: "Preparar pedido" }));
-    await screen.findByText(/Listo para entrega|ya no está Confirmado/i);
+    await settle();
+    fireEvent.click(confirmButton());
+    expect(screen.getByText(/ya no está Confirmado: ahora está Listo\./)).toBeTruthy();
     expect(mocks.upsertOrder).not.toHaveBeenCalled();
   });
 
-  it("un doble toque sobre «Preparar» no confirma: el diálogo ignora el toque que cae sobre «Preparar pedido» al abrirse", async () => {
+  it("un doble toque sobre «Preparar» no confirma: mientras el diálogo entra, «Preparar pedido» está deshabilitado", async () => {
     mountWith(confirmedOrder());
     fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
     // El segundo toque de un doble toque cae donde acaba de aparecer «Preparar pedido».
-    fireEvent.click(await screen.findByRole("button", { name: "Preparar pedido" }));
+    expect(confirmButton()).toBeDisabled(); // a la vista: aún no contesta
+    fireEvent.click(confirmButton());
     expect(mocks.upsertOrder).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeTruthy(); // sigue abierto: nada se confirma sin leerlo
-    settle();
-    fireEvent.click(screen.getByRole("button", { name: "Preparar pedido" }));
-    await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledOnce());
+    await settle();
+    fireEvent.click(confirmButton());
+    expect(mocks.upsertOrder).toHaveBeenCalledOnce();
   });
 
   it("«Marcar listo» conserva su avance directo (sin confirmación)", async () => {
     const order = { ...confirmedOrder(), orderStatus: "preparing" as const };
     mountWith(order);
     fireEvent.click(await screen.findByRole("button", { name: "Marcar listo" }));
-    await waitFor(() => expect(mocks.upsertOrder).toHaveBeenCalledOnce());
+    expect(mocks.upsertOrder).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

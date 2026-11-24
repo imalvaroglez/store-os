@@ -17,6 +17,7 @@ import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
 import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderReference, orderTotals } from "../../lib/orders";
 import { setReturnOrigin } from "../../lib/returnOrigin";
+import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
 import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
@@ -110,8 +111,8 @@ export function HomeScreen() {
     if (!advanced) return;
     try {
       await upsertOrder(advanced);
-    } catch {
-      toast.error("No se pudo actualizar el pedido.");
+    } catch (error) {
+      toast.error(error instanceof StaleOrderError ? error.message : "No se pudo actualizar el pedido.");
     }
   }
 
@@ -254,7 +255,7 @@ export function HomeScreen() {
                         card, so a focus + Enter opens the order too. */}
                     <Button
                       variant="ghost"
-                      className="!min-w-0 !flex-1 !justify-start !px-0 !text-left"
+                      className="min-w-0! flex-1! justify-start! px-0! text-left!"
                       onClick={(event) => { event.stopPropagation(); openOrder(o.id); }}
                     >
                       <span className="min-w-0">

@@ -17,6 +17,7 @@ import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effecti
 import { cdmxToday } from "../../lib/monthlyClose";
 import { incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
 import { shortageByDimension } from "../../lib/inventory";
+import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
@@ -103,8 +104,8 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     try {
       await upsertOrder(advanced);
       toast.success(`Pedido avanzado a «${ORDER_STATUS_LABELS[advanced.orderStatus]}»`);
-    } catch {
-      toast.error("No se pudo actualizar el pedido.");
+    } catch (error) {
+      toast.error(error instanceof StaleOrderError ? error.message : "No se pudo actualizar el pedido.");
     }
   }
 
