@@ -427,7 +427,7 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
 
   it("cada talla muestra Disponible y Comprometido junto a su Físico editable", () => {
     abrirConTalla("6");
-    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/^Disponible$/), { target: { value: "5" } });
     expect(screen.getByText("Disponible 5 · Comprometido 0 · Físico 5")).toBeTruthy();
   });
 
@@ -437,11 +437,11 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     render(<ProductForm product={counted} onDone={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "+ Talla" }));
     fireEvent.change(screen.getByLabelText(/^Talla$/), { target: { value: "6" } });
-    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText(/^Disponible$/), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "+ Talla" }));
     const tallas = screen.getAllByLabelText(/^Talla$/);
     fireEvent.change(tallas[1], { target: { value: "7" } });
-    const fisicos = screen.getAllByLabelText(/Existencia de la talla/);
+    const fisicos = screen.getAllByLabelText(/^Disponible$/);
     fireEvent.change(fisicos[1], { target: { value: "2" } });
     // Costo confirmado por combinación (la sugerencia nunca cuenta como tal).
     const costos = screen.getAllByLabelText(/Costo de la talla/);
@@ -469,7 +469,7 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     expect(mocks.upsertProduct).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "0" } });
     // La talla recibe las 3 piezas que el color ya contaba.
-    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText(/^Disponible$/), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
     await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
     const saved = mocks.upsertProduct.mock.calls[0][0] as Product;
@@ -509,7 +509,7 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
       }],
     } as Product;
   }
-  const fisicoDe = (label: string) => screen.getAllByLabelText(/Existencia de la talla/)[["6", "5"].indexOf(label)];
+  const fisicoDe = (label: string) => screen.getAllByLabelText(/^Disponible$/)[["6", "5"].indexOf(label)];
 
   it("activar tallas sobre un color con 5 piezas: el aviso pide repartirlas y no guarda hasta que las tallas sumen 5", async () => {
     const counted = { ...variantDesign(), variants: [{ ...variantDesign().variants![0], quantityOnHand: 5 }] } as Product;
@@ -518,12 +518,12 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     fireEvent.change(screen.getByLabelText(/^Talla$/), { target: { value: "6" } });
     fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "100" } });
     expect(screen.getByRole("status")).toHaveTextContent("El color Dorado tenía 5 piezas contadas sin talla. Repártelas entre sus tallas para guardar (llevas 0 de 5). Revisa las tallas sin cantidad.");
-    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText(/^Disponible$/), { target: { value: "2" } });
     expect(screen.getByRole("status")).toHaveTextContent("(llevas 2 de 5)");
     fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("El color Dorado tenía 5 piezas contadas sin talla");
     expect(mocks.upsertProduct).not.toHaveBeenCalled(); // antes: guardaba y las 5 se volvían 2
-    fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/^Disponible$/), { target: { value: "5" } });
     expect(screen.queryByRole("status")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
     await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));
@@ -570,7 +570,7 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     try {
       abrirConTalla("6"); // clave sugerida SOL-D-6
       fireEvent.change(screen.getByLabelText(/Costo de la talla/), { target: { value: "100" } });
-      fireEvent.change(screen.getByLabelText(/Existencia de la talla/), { target: { value: "3" } });
+      fireEvent.change(screen.getByLabelText(/^Disponible$/), { target: { value: "3" } });
       fireEvent.click(screen.getByRole("button", { name: "Guardar producto" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("La clave SOL-D-6 ya la usa otra pieza, color o talla del catálogo. Elige otra.");
       expect(mocks.upsertProduct).not.toHaveBeenCalled();
@@ -624,7 +624,7 @@ describe("ProductForm #461 — tallas por color (corte 2)", () => {
     const last = (label: RegExp) => screen.getAllByLabelText(label).pop()!;
     fireEvent.change(last(/^Talla$/), { target: { value: "7" } });
     fireEvent.change(last(/Costo de la talla/), { target: { value: "100" } });
-    fireEvent.change(last(/Existencia de la talla/), { target: { value: "2" } });
+    fireEvent.change(last(/^Disponible$/), { target: { value: "2" } });
     expect(screen.queryByRole("status")).toBeNull();
     fireEvent.click(guardar());
     await waitFor(() => expect(mocks.upsertProduct).toHaveBeenCalledTimes(1));

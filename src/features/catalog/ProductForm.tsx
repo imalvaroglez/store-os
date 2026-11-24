@@ -936,7 +936,7 @@ export function ProductForm({
                               hint="Sugerencia del color; confírmalo o ajústalo para guardar."
                             />
                             <TextField
-                              label="Existencia de la talla"
+                              label="Disponible"
                               inputMode="numeric"
                               placeholder="0"
                               value={size.quantityOnHand?.toString() ?? ""}
