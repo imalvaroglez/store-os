@@ -1,4 +1,4 @@
-# Ledger de integración financiera — estado vigente
+# Ledger de integración financiera — estado al 14-nov (sección E actualizada el 24-nov)
 
 > #171 — Vista actual y comprobable de qué cambios financieros están listos para integrarse, qué depende de una decisión de negocio y cuál es el orden seguro de revisión. **Documento de coordinación**: no implementa nada; cada cambio conserva su issue/PR y compuertas. **Corte: 2026-11-14 23:25 UTC** (día y hora exactos: este tablero se mueve por horas — refrescar esta sección contra el tablero/PRs inmediatamente antes de cualquier merge que la use); el estado de verdad vive en las issues enlazadas.
 

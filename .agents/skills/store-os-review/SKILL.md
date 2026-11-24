@@ -38,8 +38,9 @@ session history — so it evaluates the work product, not the thought process.
    missing or failing Firebase shows an explicit error (never a fallback).
    `localStorage` holds only preferences, the public cart and drafts tied to
    a signed-in person (`src/lib/storage.ts`, `src/lib/cart.ts`, the theme).
-   Store data is isolated by `storeId` — selectors in
-   `src/lib/selectors.ts` are the only path.
+   Store data is isolated by `storeId`: use the selectors in
+   `src/lib/selectors.ts` when one exists, and scope any inline filter by the
+   active store the same way.
 5. **Behavior-preserving polish.** Visual changes come through the DS tokens /
    primitives only; they must not change product behavior or data shapes.
 6. **Green gates.** `npm run typecheck`, `npm test` (incl. the design-system
