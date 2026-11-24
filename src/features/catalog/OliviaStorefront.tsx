@@ -7,6 +7,7 @@ import "../../design-system/olivia-editorial.css";
 import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
 import { loadPublicStore, loadPublicCatalogSummary, loadPublicProduct, PublicCatalogNotFoundError, PublicCatalogUnpublishedError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
 import { navigate, type RouteMatch } from "../../lib/router";
+import { normalizeCatalogText } from "../../lib/catalogText";
 import { publicPrice } from "../../lib/money";
 import { createStorefrontBuyUrl, createStorefrontContactUrl, createStorefrontResaleUrl } from "../../lib/whatsapp";
 import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
@@ -30,9 +31,6 @@ function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSi
   return publicAvailabilitySignal(product, store.type) === "agotado";
 }
 
-function normalizeCatalogText(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-MX");
-}
 
 // Keep the catalog alive across category/product routes: two reads per visit,
 // then only the detail document when opening a piece. No global/stale cache.

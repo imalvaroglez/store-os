@@ -631,3 +631,18 @@ describe("CatalogScreen · no perder el editor por un cierre (#461)", () => {
     await waitFor(() => expect(screen.queryByLabelText(/Nombre/)).toBeNull());
   });
 });
+
+// #461 (UX misión, bloqueo 3): encontrar una ficha entre cientos.
+describe("CatalogScreen · buscador (#461)", () => {
+  it("busca por nombre sin acentos ni mayúsculas y por clave; cuenta y limpia", async () => {
+    await renderCatalog(sortFilterState());
+    fireEvent.change(await screen.findByLabelText("Buscar"), { target: { value: "BLOSSOM" } });
+    await waitFor(() => expect(cardNames()).toEqual(["Anillo Blossom"]));
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "ARETES" } });
+    await waitFor(() => expect(cardNames()).toEqual(["Aretes Luna"]));
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "zzz" } });
+    await waitFor(() => expect(screen.getByText(/Sin resultados/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar" }));
+    await waitFor(() => expect(cardNames().length).toBe(3));
+  });
+});

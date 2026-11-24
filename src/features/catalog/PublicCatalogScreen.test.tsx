@@ -616,3 +616,18 @@ describe("#461 el resumen REAL que publica la app alimenta la talla de la cuadr�
     expect(saved.lines[0]).toMatchObject({ productSlug: "anillo~v_dorado~s4", name: "Anillo Sol · Dorado · 4", qty: 1 });
   });
 });
+
+// #461 (UX misión, bloqueo): a clienta finds one design among hundreds.
+describe("PublicCatalogScreen · buscador (#461)", () => {
+  it("filtra por nombre y por clave; sin resultados lo dice", async () => {
+    render(<PublicCatalogScreen slug="santi" />);
+    await screen.findAllByRole("button", { name: "Agregar al carrito" });
+    const names = () => Array.from(document.querySelectorAll("h2")).map((h) => h.textContent);
+    fireEvent.change(screen.getByLabelText(/Buscar en el catálogo/), { target: { value: "perfume" } });
+    expect(names()).toEqual(["Perfume"]);
+    fireEvent.change(screen.getByLabelText(/Buscar en el catálogo/), { target: { value: "SAN-002" } });
+    expect(names()).toEqual(["Tenis"]);
+    fireEvent.change(screen.getByLabelText(/Buscar en el catálogo/), { target: { value: "zzz-inexistente" } });
+    expect(screen.getByText(/0 piezas con/)).toBeTruthy();
+  });
+});

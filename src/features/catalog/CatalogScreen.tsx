@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { useListRestore } from "../../lib/listRestore";
+import { normalizeCatalogText } from "../../lib/catalogText";
 import { useStore, newProduct } from "../../app/StoreProvider";
 import {
+  Badge,
   Button,
   Card,
-  Badge,
-  EmptyState,
-  ScreenHeader,
-  Screen,
-  Sheet,
-  ProductImage,
+  Dialog,
   Dropdown,
   DropdownItem,
   DropdownSeparator,
+  EmptyState,
   IconButton,
+  ProductImage,
+  Screen,
+  ScreenHeader,
   SelectField,
-  Dialog,
+  Sheet,
   StatRow,
+  TextField,
   useToast,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
@@ -329,7 +331,7 @@ export function CatalogScreen() {
   const [committedFor, setCommittedFor] = useState<Product | null>(null);
   // #233: keep sort/filter/scroll when returning from a product's editor.
   const { filters, setFilters, restoreScroll } = useListRestore(`products:${activeStore?.id ?? ""}:${activeStore?.type ?? ""}`, {
-    sortKey: "createdAt" as SortKey, sortDesc: true as boolean, categoryFilter: "", restockOnly: false as boolean,
+    sortKey: "createdAt" as SortKey, sortDesc: true as boolean, categoryFilter: "", restockOnly: false as boolean, q: "" as string,
   });
   useEffect(() => {
     restoreScroll();
@@ -338,6 +340,11 @@ export function CatalogScreen() {
   const sortDesc = filters.sortDesc;
   const categoryFilter = filters.categoryFilter;
   const restockOnly = filters.restockOnly;
+  // #461 (UX misión, bloqueo): with hundreds of fichas, finding one by name or
+  // clave is the difference between operating and hojeando. Accent/case
+  // insensitive, same normalization as the public catalog.
+  const search = (filters.q as string).trim();
+  const setSearch = (next: string) => setFilters((p) => ({ ...p, q: next }));
   const setSortKey = (next: SortKey) => setFilters((p) => ({ ...p, sortKey: next }));
   const setSortDesc = (next: boolean) => setFilters((p) => ({ ...p, sortDesc: next }));
   const setCategoryFilter = (next: string) => setFilters((p) => ({ ...p, categoryFilter: next }));
@@ -359,16 +366,18 @@ export function CatalogScreen() {
   // (stockAlertLevel — the saved threshold or the conservative default);
   // a hand-rolled lowStockAt-only check undercounted products without an
   // explicit threshold and disagreed with the number that sent Fer here.
+  const needle = normalizeCatalogText(search);
   const filtered = products.filter((product) =>
     (!categoryFilter || (product.categoryIds ?? []).includes(categoryFilter)) &&
-    (!isTiered || !restockOnly || stockAlertLevel(product) !== null)
+    (!isTiered || !restockOnly || stockAlertLevel(product) !== null) &&
+    (!needle || normalizeCatalogText(`${product.name} ${product.sku ?? ""}`).includes(needle))
   );
   const sorted = [...filtered].sort((a, b) => {
     const cmp = compareBy(effectiveSortKey, a, b, defaultId);
     if (cmp !== 0) return sortDesc ? -cmp : cmp;
     return a.name.localeCompare(b.name, "es");
   });
-  const filterActive = categoryFilter !== "" || (isTiered && restockOnly);
+  const filterActive = categoryFilter !== "" || (isTiered && restockOnly) || search !== "";
   const sortOptions = (Object.keys(SORT_DEFAULTS) as SortKey[])
     .filter((k) => k !== "stock" || isTiered)
     .map((k) => ({ value: k, label: SORT_DEFAULTS[k].label }));
@@ -423,7 +432,16 @@ export function CatalogScreen() {
       )}
 
       {products.length > 0 && (
-        <div className="flex items-end gap-2 overflow-x-auto pb-1 mb-5">
+        <div className="flex flex-wrap items-end gap-2 pb-1 mb-5">
+          <div className="min-w-44 flex-1 max-w-xs">
+            <TextField
+              label="Buscar"
+              type="search"
+              placeholder="Nombre o clave…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
           <div className="w-36 shrink-0">
             <SelectField
               label="Categoría"
@@ -461,7 +479,7 @@ export function CatalogScreen() {
             {sortDesc ? "↓" : "↑"}
           </IconButton>
           {filterActive && (
-            <Button variant="ghost" size="sm" onClick={() => { setCategoryFilter(""); setRestockOnly(false); }}>
+            <Button variant="ghost" size="sm" onClick={() => { setCategoryFilter(""); setRestockOnly(false); setSearch(""); }}>
               Limpiar
             </Button>
           )}

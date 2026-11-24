@@ -1,6 +1,6 @@
 import { publicAvailabilitySignal } from "../../lib/publicAvailability";
 import { useEffect, useState } from "react";
-import { Badge, Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
+import { Badge, Button, Card, EmptyState, ProductImage, SkeletonCard, TextField } from "../../design-system";
 import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
 import {
   loadPublicCatalog,
@@ -12,6 +12,7 @@ import {
 } from "../../app/firebase/publicCatalog";
 import { cartItemsForPublicProduct, cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 import { useCart } from "./useCart";
+import { normalizeCatalogText } from "../../lib/catalogText";
 import { useSeo } from "./useSeo";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
 
@@ -21,6 +22,9 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   const [data, setData] = useState<{ store: PublicStore; catalog: PublicCatalog } | null>(null);
   // #135: finish filter state — BEFORE the loading early-returns (rules of hooks).
   const [finishFilter, setFinishFilter] = useState("");
+  // #461 (UX misión, bloqueo): a clienta looking for one design among hundreds
+  // had to hojeando. Search by name or clave, accent/case insensitive.
+  const [query, setQuery] = useState("");
   // #137: chosen color per design (productSlug → variant id), GANNI-style
   // swatches on the card; defaults to the first color.
   const [chosenVariants, setChosenVariants] = useState<Record<string, string>>({});
@@ -122,9 +126,11 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
     return [...unique.values()];
   })();
   const finishKey = finishFilter ? normalizeFinish(finishFilter) : "";
-  const visibleProducts = finishKey
-    ? products.filter((product) => normalizeFinish((product as { finish?: string | null }).finish ?? "") === finishKey)
-    : products;
+  const needle = normalizeCatalogText(query.trim());
+  const visibleProducts = products.filter((product) =>
+    (!finishKey || normalizeFinish((product as { finish?: string | null }).finish ?? "") === finishKey) &&
+    (!needle || normalizeCatalogText(`${product.name} ${product.sku ?? ""}`).includes(needle))
+  );
   const visibleSlugs = new Set(products.map((product) => product.productSlug));
   const visibleLines = pruneCartLines(cart.lines, visibleSlugs);
   // #305: primary category name per product, from the SAME projection the
@@ -161,6 +167,22 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         </div>
       </header>
       <main className="p-4 md:p-8"><div className="mx-auto max-w-6xl">
+        <div className="max-w-xs mb-4">
+          <TextField
+            label="Buscar en el catálogo"
+            type="search"
+            placeholder="Nombre o clave…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        {(needle || visibleProducts.length === 0) && (
+          <p className="text-sm text-on-surface-soft -mt-2 mb-4">
+            {needle
+              ? `${visibleProducts.length} ${visibleProducts.length === 1 ? "pieza" : "piezas"} con «${query.trim()}»${finishKey ? " y el acabado elegido" : ""}`
+              : ""}
+          </p>
+        )}
         {finishes.length > 1 && (
           <div className="flex flex-wrap gap-2 mb-4">
             {finishes.map((finish) => (
