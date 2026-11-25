@@ -1411,3 +1411,70 @@ describe("#538 tercera revisión — rechazo de concurrencia con decisión visib
     expect(screen.getByText(/Tu guardado fue rechazado/i)).toBeTruthy();
   });
 });
+
+describe("#538 r2 — alcance y frescura del reintento", () => {
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+  const band = (price: number) => [{ min: 0, max: 60, price }, { min: 60, price: price + 10 }];
+  function savedTableWith(retail: number) {
+    const saved = fixtureState();
+    saved.stores[0] = oliviaStore();
+    saved.products = state.products;
+    saved.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: { [CAT]: {
+        t_retail: { kind: "bands", bands: band(retail), rounding: "none" },
+        t_girly: { kind: "bands", bands: band(240), rounding: "none" },
+        t_iconic: { kind: "bands", bands: band(180), rounding: "none" },
+      } },
+    };
+    return saved;
+  }
+  function dirtyDraftFromOtherTable() {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "170" } });
+    cleanup();
+  }
+
+  it("el rechazo no se fuga a otra categoría (H2)", async () => {
+    dirtyDraftFromOtherTable();
+    mocks.state = savedTableWith(300);
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText(/Tu guardado fue rechazado/i);
+    // cambia a otra categoría: el falso banner no viaja con ella
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: CAT2 } });
+    await screen.findByLabelText("Categoría");
+    expect(screen.queryByText(/Tu guardado fue rechazado/i)).toBeNull();
+  });
+
+  it("el reintento usa la firma fresca que entregó el listener, no la del cierre (H3)", async () => {
+    dirtyDraftFromOtherTable();
+    mocks.state = savedTableWith(300);
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(iconicFirst()).toBe("170");
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText(/Tu guardado fue rechazado/i);
+    // entre el render y el clic, el listener entrega la tabla fresca (290)
+    mocks.state = savedTableWith(290);
+    fireEvent.click(screen.getByRole("button", { name: /Guardar mis cambios sobre la tabla nueva/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar mis cambios" }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    const second = mocks.saveCategoryPricingRules.mock.calls[1];
+    expect(second[0]).toBe(CAT);
+    // el baseline del reintento debe ser la firma de la tabla 290 (fresca), no la 300 del cierre
+    const fresh = fixtureState();
+    fresh.stores[0] = oliviaStore();
+    fresh.products = state.products;
+    fresh.stores[0].pricingRules = savedTableWith(290).stores[0].pricingRules;
+    mocks.state = savedTableWith(290);
+    const { rulesSignature } = await import("../../lib/pricingRules");
+    const expected = rulesSignature((savedTableWith(290).stores[0].pricingRules as { byCategory: Record<string, Record<string, import("../../types").PricingRule>> }).byCategory[CAT]);
+    expect(second[2]).toBe(expected);
+  });
+});

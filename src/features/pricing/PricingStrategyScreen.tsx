@@ -253,6 +253,11 @@ export function PricingStrategyScreen() {
     () => (categoryId ? rulesSignature(activeStore?.pricingRules?.byCategory?.[categoryId] ?? null) : ""),
     [categoryId, activeStore?.pricingRules]
   );
+  // #538 (review r2, H3): the overwrite retry must send the signature the
+  // transaction will ACTUALLY see. A closure capture goes stale when the
+  // listener delivers the fresh table between render and click; read it live.
+  const savedSignatureNow = useRef(savedSignature);
+  savedSignatureNow.current = savedSignature;
   const concurrentChange = !!draft?.dirty && savedSignature !== draftBase;
 
   function loadFromProposal(bands: BandProposal[] | null) {
@@ -304,6 +309,11 @@ export function PricingStrategyScreen() {
     setCategoryId(categoryIdNext);
     lastChosenCategory = categoryIdNext;
     lastChosenStore = activeStore?.id ?? "";
+    // #538 (review r2, H2): a refusal belongs to the category it happened
+    // in — carrying it to another category shows a false rejection banner
+    // and an overwrite decision for a save that was never refused.
+    setConflictRefusal(false);
+    setConfirmOverwrite(false);
     setReplaceExisting(false);
     // #538: a new entry reads the chosen category's stored draft.
     const stored = readStoredDraft(categoryIdNext);
@@ -813,8 +823,9 @@ export function PricingStrategyScreen() {
             <p className="text-sm text-on-surface">
               {conflictRefusal ? (
                 <>
-                  <strong>Tu guardado fue rechazado:</strong> la tabla de esta categoría cambió en otra sesión mientras
-                  editabas, y tus cambios no se guardaron. Decide cuál conservas.
+                  <strong>Tu guardado fue rechazado:</strong> la tabla guardada de esta categoría ya no coincide con
+                  la que cargaste (pudo cambiar en otra ventana o sesión). Tus cambios no se guardaron; decide cuál
+                  conservas.
                 </>
               ) : (
                 <>
@@ -1130,10 +1141,11 @@ export function PricingStrategyScreen() {
               disabled={busy}
               onClick={() => {
                 setConfirmOverwrite(false);
-                // Re-send HER draft against the fresh baseline: the retry only
-                // touches this category's table, now built on what the other
-                // session actually saved.
-                void save(savedSignature);
+                // Re-send HER draft against the signature the transaction will
+                // actually compare against — read LIVE, because the closure's
+                // copy can be older than the listener's latest delivery. The
+                // retry only touches this category's table.
+                void save(savedSignatureNow.current);
               }}
             >
               Guardar mis cambios
@@ -1142,8 +1154,8 @@ export function PricingStrategyScreen() {
         }
       >
         <p className="text-sm text-on-surface-soft">
-          Tus bandas y precios sustituyen la tabla que guardó la otra sesión. Solo cambia la tabla de esta categoría;
-          los precios de tus productos no cambian. Si prefieres revisar primero, cancela y recarga la tabla nueva.
+          Tus bandas y precios sustituyen la tabla guardada actual de esta categoría. Solo cambia esta tabla; los
+          precios de tus productos no cambian. Si prefieres revisar primero, cancela y recarga la tabla guardada.
         </p>
       </Dialog>
     </Screen>
