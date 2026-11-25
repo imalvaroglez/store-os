@@ -276,8 +276,15 @@ export function reducer(state: AppState, action: Action): AppState {
           return reconcileOrderPayments(business, current);
         }),
       } : action.state;
-      return state.activeStoreId && incoming.stores.some((s) => s.id === state.activeStoreId)
-        ? { ...incoming, activeStoreId: state.activeStoreId } : incoming;
+      // #543: with the stores already loaded, an EMPTY selection means the
+      // person is choosing right now («Cambiar tienda» opened the chooser).
+      // A sync landing in that instant used to close it and put her in a
+      // store she did not pick. The first load (no stores yet) still takes
+      // the synced selection.
+      const choosing = !state.activeStoreId && state.stores.length > 0;
+      return choosing || (state.activeStoreId && incoming.stores.some((s) => s.id === state.activeStoreId))
+        ? { ...incoming, activeStoreId: state.activeStoreId }
+        : incoming;
     }
     case "UPSERT_SUPPLIER_LINK": {
       // #211: replace-by-id — an idempotent retry never duplicates.
