@@ -173,7 +173,18 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
 
   return (
     <>
-    <Card onClick={onEdit} className="p-4 sm:p-5">
+    <Card
+      onClick={order.convertedToPointId
+        ? () => {
+            // #524 (QA 25-nov, contrato): a converted order's merchandise is
+            // administered in Puntos de venta — the card must not open the
+            // commercial editor (an "Entregado" there would count the sale
+            // twice). Evidence stays readable through the sheets below.
+            toast.info("Este pedido se convirtió en surtido de un punto de venta; su mercancía se administra en Puntos de venta.");
+          }
+        : onEdit}
+      className="p-4 sm:p-5"
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="font-semibold text-ink truncate">#{orderReference(order.id)} · {order.customerName || customer?.name || "Sin cliente"}</h3>
