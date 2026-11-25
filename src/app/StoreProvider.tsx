@@ -29,6 +29,7 @@ import type {
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
+import { projectionProbeMarker } from "../lib/projectionProbe";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso, todayIso } from "../lib/dates";
@@ -441,13 +442,11 @@ const StoreContext = createContext<StoreContextValue | null>(null);
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const cloud = !!user;
-  // #488 r2: one heartbeat per provider mount proves the console channel the
-  // write probe relies on is alive. A failure diff with NO heartbeat and NO
-  // write markers means the record itself was lost (listener/page lifecycle),
-  // not that the write never ran — the two cases the 22-nov occurrence could
-  // not tell apart.
+  // #488 r2: one heartbeat per provider mount. NOTE: it only proves the
+  // channel of the document IT mounted in — the spec's per-document [channel]
+  // marker is the one that discriminates "never fired" from "record lost".
   useEffect(() => {
-    console.info(`#488-PROJ-WRITE[heartbeat] ready ts=${Date.now()}`);
+    console.info(projectionProbeMarker("heartbeat", "heartbeat"));
   }, []);
   const [state, dispatch] = useReducer(reducer, undefined, emptyAppState);
   // Background retries must use this render's catalog, not their old capture.
@@ -499,11 +498,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // #488 r2: every marker carries a ts= so the spec classifier can tell an
     // INTERRUPTED flight (threw) from one still IN FLIGHT (start without a
     // terminal marker inside the poll budget) or STUCK (unresolved past it).
-    const probeTag = `#488-PROJ-WRITE[${label}]`;
-    console.info(`${probeTag} start ts=${Date.now()}`);
+    // Markers come from the shared builder — the string contract is pinned by
+    // projectionProbe.test.ts, not by convention.
+    console.info(projectionProbeMarker("start", label));
     const flight = write().then(
-      (value) => { console.info(`${probeTag} ok ts=${Date.now()}`); return value; },
-      (error) => { console.info(`${probeTag} threw ts=${Date.now()} err=${String(error).slice(0, 120)}`); throw error; }
+      (value) => { console.info(projectionProbeMarker("ok", label)); return value; },
+      (error) => { console.info(projectionProbeMarker("threw", label, { err: error })); throw error; }
     );
     void flight.catch((error) => {
       console.error(`[Firestore] No se pudo ${label}:`, error);
