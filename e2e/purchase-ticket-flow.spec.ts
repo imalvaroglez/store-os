@@ -1,6 +1,41 @@
 import { test, expect, type Page } from "@playwright/test";
 import { adminToken, FIRESTORE_REST, ensureStoreActive, gotoClean, loginAsFirstAdmin, writeEmulatorDoc } from "./helpers";
 
+/**
+ * #488 r2 — classify a projection-poll failure from the write probe's markers.
+ * Pure on purpose: the four states the 22-nov occurrence could not tell apart
+ * become an explicit verdict printed in the failure diff.
+ *
+ *   INTERRUPTIDA  the flight started and THREW (the marker carries the error)
+ *   EN CURSO      start without a terminal marker, inside the poll budget
+ *   ATASCADA      start without a terminal marker, past the budget (lost flight)
+ *   NUNCA DISPARADA / REGISTRO PERDIDO
+ *                 no write markers; the heartbeat marker separates a write that
+ *                 never ran (heartbeat seen) from a lost console record (nothing)
+ *   ESCRITURA OK, FALLO DE LECTURA
+ *                 the flight finished but the poll never saw the doc (read side)
+ */
+export function classifyProjectionFailure(markers: string[], lastReadStatus: number, budgetMs: number): string {
+  const heartbeat = markers.some((m) => m.includes("[heartbeat]"));
+  const start = markers.find((m) => m.includes(" start ts="));
+  const ok = markers.some((m) => m.includes(" ok ts="));
+  const threw = markers.find((m) => m.includes(" threw ts="));
+  const tsOf = (marker: string | undefined) => {
+    const match = marker?.match(/ts=(\d+)/);
+    return match ? Number(match[1]) : undefined;
+  };
+  if (threw) return `ESCRITURA INTERRUMPIDA (${threw.slice(0, 110)})`;
+  if (ok) return `ESCRITURA OK, FALLO DE LECTURA (último status del sondeo: ${lastReadStatus})`;
+  if (start) {
+    const startedAt = tsOf(start);
+    const elapsed = startedAt !== undefined ? Date.now() - startedAt : -1;
+    if (elapsed >= 0 && elapsed < budgetMs) return `ESCRITURA EN CURSO (iniciada hace ${Math.round(elapsed / 1000)}s de ${Math.round(budgetMs / 1000)}s)`;
+    return `ESCRITURA ATASCADA (iniciada hace ${elapsed >= 0 ? Math.round(elapsed / 1000) : "?"}s sin resolución)`;
+  }
+  if (heartbeat) return "ESCRITURA NUNCA SE DISPARÓ (latido presente, sin arranque de escritura)";
+  return "REGISTRO PERDIDO (sin latido ni marcas: el canal de consola no entregó nada — listener o ciclo de vida de la página)";
+}
+
 async function openJourney(page: Page) {
   await gotoClean(page, "/productos/compras");
   await ensureStoreActive(page, "Joyería");
@@ -116,7 +151,7 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   const writeProbeLog: string[] = [];
   page.on("console", (msg) => {
     const text = msg.text();
-    if (text.includes("#488-PROJ-WRITE")) writeProbeLog.push(text.slice(0, 140));
+    if (text.includes("#488-PROJ-WRITE")) writeProbeLog.push(text.slice(0, 160));
   });
 
   await page.getByRole("button", { name: "Recibir mercancía", exact: true }).click();
@@ -165,7 +200,8 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
     .toEqual({ name: "Pieza QA por ticket", storeId: "store_joyeria", stockSignal: "disponible" });
   void writeProbeLog; // keeps the collector referenced on the happy path
   } catch (error) {
-    console.log(`#488-PROJ-WRITE-HISTORY: ${writeProbeLog.join(" | ") || "EMPTY (write never started)"}`);
+    console.log(`#488-PROJ-VERDICT: ${classifyProjectionFailure(writeProbeLog, pollProbe.status, 30_000)}`);
+    console.log(`#488-PROJ-WRITE-HISTORY: ${writeProbeLog.join(" | ") || "(sin marcas)"}`);
     throw error;
   }
 
