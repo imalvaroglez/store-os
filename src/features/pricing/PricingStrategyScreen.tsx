@@ -151,6 +151,12 @@ export function PricingStrategyScreen() {
   // #538 (review 24-nov, M3): «Reemplazar con la propuesta» is the same
   // replacement — when confirmed, it also flags the incompatible rules as replaced.
   const [restoreReplacesRules, setRestoreReplacesRules] = useState(false);
+  // #538 (QA 24-nov, bloqueante): a save refused by a concurrent change must
+  // stay VISIBLE — a transient toast let the operator believe it saved while
+  // Firestore kept the other session's table. The refusal is a decision, and
+  // the operator gets to finish her work on top of the fresh table.
+  const [conflictRefusal, setConflictRefusal] = useState(false);
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   // The category of the render in progress: a save that finishes later must
   // only settle the session it was sent from (review 24-nov, M1).
   const categoryIdNow = useRef(categoryId);
@@ -548,7 +554,7 @@ export function PricingStrategyScreen() {
     });
   }
 
-  async function save() {
+  async function save(baselineOverride?: string) {
     if (!categoryId || !draft || !serialized) return;
     if (captureInvalid) {
       toast.error(MONEY_CAPTURE_ERROR);
@@ -565,9 +571,10 @@ export function PricingStrategyScreen() {
     const savedCategoryId = categoryId;
     const draftSent = draft;
     const savedSignatureNow = rulesSignature(serialized);
+    const baseline = baselineOverride ?? draftBase;
     setBusy(true);
     try {
-      await saveCategoryPricingRules(savedCategoryId, serialized, draftBase, {
+      await saveCategoryPricingRules(savedCategoryId, serialized, baseline, {
         summary: `Tabla de bandas guardada (${categoryName ?? "categoría"}) — sin cambios de precio.`,
       });
       // #538: retire the stored copy BEFORE the draft turns clean — its update
@@ -583,11 +590,15 @@ export function PricingStrategyScreen() {
         setRawCaptures({});
         setRestoredFromDraft(false);
       }
+      setConflictRefusal(false);
       toast.success("Tabla guardada. Los precios de tus productos no cambiaron.");
     } catch (error) {
       // P0-2: a same-category concurrent edit REFUSES the save (nothing is
       // lost); the banner below then offers to reload the fresh table.
       if (error instanceof CategoryRulesConflictError) {
+        // #538 (QA 24-nov): a transient toast read as "saved" once it faded —
+        // the refusal stays on screen until the operator decides.
+        setConflictRefusal(true);
         toast.error(error.message);
         return;
       }
@@ -797,31 +808,48 @@ export function PricingStrategyScreen() {
           </Card>
         )}
 
-        {concurrentChange && (
+        {(concurrentChange || conflictRefusal) && (
           <Card className="space-y-2 border border-warning">
             <p className="text-sm text-on-surface">
-              Las reglas de esta categoría cambiaron en otra sesión mientras editabas. Tu guardado solo tocaría esta
-              categoría, pero conviene revisar antes de continuar.
+              {conflictRefusal ? (
+                <>
+                  <strong>Tu guardado fue rechazado:</strong> la tabla de esta categoría cambió en otra sesión mientras
+                  editabas, y tus cambios no se guardaron. Decide cuál conservas.
+                </>
+              ) : (
+                <>
+                  Las reglas de esta categoría cambiaron en otra sesión mientras editabas. Tu guardado solo tocaría esta
+                  categoría, pero conviene revisar antes de continuar.
+                </>
+              )}
             </p>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                // Rebuild directly from the CURRENT saved state — the adopt
-                // effect won't re-run (its deps didn't change) and leaving
-                // draft null would dead-end the editor.
-                setDraft(existing?.compatible ? existing.draft : null);
-                setDraftBase(savedSignature);
-                // #219 (dictamen #517): the discarded draft's rejected raw
-                // captures must go with it. #538: so does its stored copy —
-                // the discard is explicit, nothing may resurrect it.
-                setRawCaptures({});
-                forgetStoredDraft();
-                setRestoredFromDraft(false);
-              }}
-            >
-              Descartar mis cambios y recargar
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  // Rebuild directly from the CURRENT saved state — the adopt
+                  // effect won't re-run (its deps didn't change) and leaving
+                  // draft null would dead-end the editor.
+                  setDraft(existing?.compatible ? existing.draft : null);
+                  setDraftBase(savedSignature);
+                  // #219 (dictamen #517): the discarded draft's rejected raw
+                  // captures must go with it. #538: so does its stored copy —
+                  // the discard is explicit, nothing may resurrect it.
+                  setRawCaptures({});
+                  forgetStoredDraft();
+                  setRestoredFromDraft(false);
+                  setConflictRefusal(false);
+                }}
+              >
+                Descartar mis cambios y recargar
+              </Button>
+              {conflictRefusal && draft?.dirty && (
+                <Button size="sm" onClick={() => setConfirmOverwrite(true)}>
+                  Guardar mis cambios sobre la tabla nueva
+                </Button>
+              )}
+            </div>
           </Card>
         )}
 
@@ -1085,6 +1113,37 @@ export function PricingStrategyScreen() {
         <p className="text-sm text-on-surface-soft">
           Se elimina la tabla guardada; los precios de los productos no cambian. Las reglas de otras categorías y las
           excepciones por producto se quedan.
+        </p>
+      </Dialog>
+
+      {/* #538 (QA 24-nov): finishing her work over the fresh table is a
+          deliberate, confirmed replacement — never a silent overwrite. */}
+      <Dialog
+        open={confirmOverwrite}
+        title="¿Guardar tus cambios sobre la tabla nueva?"
+        onClose={() => setConfirmOverwrite(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setConfirmOverwrite(false)}>Cancelar</Button>
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                setConfirmOverwrite(false);
+                // Re-send HER draft against the fresh baseline: the retry only
+                // touches this category's table, now built on what the other
+                // session actually saved.
+                void save(savedSignature);
+              }}
+            >
+              Guardar mis cambios
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Tus bandas y precios sustituyen la tabla que guardó la otra sesión. Solo cambia la tabla de esta categoría;
+          los precios de tus productos no cambian. Si prefieres revisar primero, cancela y recarga la tabla nueva.
         </p>
       </Dialog>
     </Screen>

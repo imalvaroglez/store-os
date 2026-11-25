@@ -1281,3 +1281,133 @@ describe("#538 segunda revisión — el borrador se conserva de verdad", () => {
     expect(localStorage.getItem(keyFor(CAT3))).not.toBeNull();
   });
 });
+
+describe("#538 tercera revisión — guardar desde la recuperación persiste", () => {
+  const keyFor = (uid = "u-fer", cat = CAT) => `store-os:strategy-draft:${uid}:store_olivia:${cat}`;
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+
+  // QA 24-nov (dictamen BLOQUEADO): editar → Diagnóstico → volver → editar de
+  // nuevo → Guardar. La sesión nueva mostraba el último guardado limpio: el
+  // cambio post-recuperación se perdía en silencio.
+  it("guardar desde el estado recuperado envía a Firestore el último cambio (no el último guardado)", async () => {
+    // sesión 1: editar sin guardar y salir a Diagnóstico (desmonta la pantalla)
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    expect(JSON.parse(localStorage.getItem(keyFor())!).draft.prices.t_iconic[0]).toBe(165);
+    cleanup();
+
+    // sesión 2 (recuperada): vuelve con el aviso y las ediciones
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(iconicFirst()).toBe("165");
+
+    // editar de nuevo y guardar
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "170" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+
+    expect(mocks.saveCategoryPricingRules).toHaveBeenCalledTimes(1);
+    const [categoryId, rules] = mocks.saveCategoryPricingRules.mock.calls[0];
+    expect(categoryId).toBe(CAT);
+    expect((rules as Record<string, { bands: Array<{ price: number }> }>).t_iconic.bands[0].price).toBe(170);
+
+    // sesión 3 (nueva): sin borrador almacenado y la tabla guardada ya contiene el 170
+    expect(localStorage.getItem(keyFor())).toBeNull();
+    cleanup();
+    const saved = fixtureState();
+    saved.stores[0] = oliviaStore();
+    saved.products = state.products;
+    saved.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: { [CAT]: (rules as Record<string, PricingRule>) },
+    };
+    mocks.state = saved;
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(iconicFirst()).toBe("170");
+  });
+});
+
+describe("#538 tercera revisión — rechazo de concurrencia con decisión visible", () => {
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+
+  function mountDirtyRecoveredDraft() {
+    // sesión previa: borrador sucio almacenado con un draftBase VIEJO
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "170" } });
+    cleanup();
+  }
+
+  it("el rechazo por concurrencia deja una decisión persistente y permite guardar los cambios sobre la tabla nueva", async () => {
+    mountDirtyRecoveredDraft();
+    // la tabla guardada cambió "en otra sesión": la firma ya no coincide con el draftBase del borrador
+    const saved = fixtureState();
+    saved.stores[0] = oliviaStore();
+    saved.products = state.products;
+    const band = (price: number) => [{ min: 0, max: 60, price }, { min: 60, price: price + 10 }];
+    saved.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: { [CAT]: {
+        t_retail: { kind: "bands", bands: band(300), rounding: "none" },
+        t_girly: { kind: "bands", bands: band(240), rounding: "none" },
+        t_iconic: { kind: "bands", bands: band(180), rounding: "none" },
+      } },
+    };
+    mocks.state = saved;
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(iconicFirst()).toBe("170");
+
+    // el guardado es rechazado por la concurrencia
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    // decisión PERSISTENTE en pantalla (no sólo un toast que se apaga)
+    await screen.findByText(/Tu guardado fue rechazado/i);
+
+    // la operadora decide guardar SUS cambios sobre la tabla nueva (con confirmación)
+    fireEvent.click(screen.getByRole("button", { name: /Guardar mis cambios sobre la tabla nueva/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar mis cambios" }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+
+    expect(mocks.saveCategoryPricingRules).toHaveBeenCalledTimes(2);
+    const [categoryId, rules] = mocks.saveCategoryPricingRules.mock.calls[1];
+    expect(categoryId).toBe(CAT);
+    expect((rules as Record<string, { bands: Array<{ price: number }> }>).t_iconic.bands[0].price).toBe(170);
+    // la decisión desaparece tras guardar
+    expect(screen.queryByText(/Tu guardado fue rechazado/i)).toBeNull();
+  });
+
+  it("cancelar la decisión conserva el borrador y la tabla nueva intacta", async () => {
+    mountDirtyRecoveredDraft();
+    const saved = fixtureState();
+    saved.stores[0] = oliviaStore();
+    saved.products = state.products;
+    const band = (price: number) => [{ min: 0, max: 60, price }, { min: 60, price: price + 10 }];
+    saved.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: { [CAT]: {
+        t_retail: { kind: "bands", bands: band(300), rounding: "none" },
+        t_girly: { kind: "bands", bands: band(240), rounding: "none" },
+        t_iconic: { kind: "bands", bands: band(180), rounding: "none" },
+      } },
+    };
+    mocks.state = saved;
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText(/Tu guardado fue rechazado/i);
+    fireEvent.click(screen.getByRole("button", { name: /Guardar mis cambios sobre la tabla nueva/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    // sin confirmar no hay segundo intento; el borrador sigue en el editor
+    expect(mocks.saveCategoryPricingRules).toHaveBeenCalledTimes(1);
+    expect(iconicFirst()).toBe("170");
+    expect(screen.getByText(/Tu guardado fue rechazado/i)).toBeTruthy();
+  });
+});
