@@ -5,7 +5,7 @@
 // el método de pago se captura una sola vez en cada documento; el pago de
 // tarjeta reduce caja y adeudo y NUNCA duplica un gasto (el costo de la
 // compra vive en el inventario, no aquí).
-import type { CardPayment, LooseExpense, OrderPayment, Purchase, PurchasePaymentMethod } from "../../types";
+import type { CardPayment, LooseExpense, OrderPayment, Purchase, PurchasePaymentMethod, PointOperation } from "../../types";
 
 export const PURCHASE_PAYMENT_METHOD_LABEL: Record<PurchasePaymentMethod, string> = {
   credit_card: "Tarjeta de crédito",
@@ -19,6 +19,10 @@ export type FinancialPositionInput = {
   activatedAt: string;
   /** Money IN: order payments (already carry their real date). */
   payments: Array<{ date?: string; amountCents?: number; amount?: number }>;
+  /** #524 M3: money IN from point-of-sale collections — net received, real
+   * date, same activation cutoff as order payments. Optional so legacy
+   * callers/tests read as "no point collections yet". */
+  pointPayments?: Array<{ date?: string; amountCents?: number }>;
   /** Money OUT with a one-time payment method (total in decimal pesos). */
   purchases: Array<{ date: string; total: number; paymentMethod?: PurchasePaymentMethod }>;
   expenses: Array<{ date: string; amount: number; paymentMethod?: PurchasePaymentMethod }>;
@@ -57,7 +61,13 @@ export function financialPosition(input: FinancialPositionInput): FinancialPosit
 
   const collected = input.payments
     .filter((payment) => onOrAfter(payment.date, input.activatedAt))
-    .reduce((sum, payment) => sum + (payment.amountCents ?? centsOf(payment.amount)), 0);
+    .reduce((sum, payment) => sum + (payment.amountCents ?? centsOf(payment.amount)), 0)
+    // #524 M3 (QA 25-nov): the registered cash box must mirror the money
+    // physically in hand — point collections are cash/transfer IN on their
+    // real date, respecting the activation cutoff exactly like order payments.
+    + (input.pointPayments ?? [])
+      .filter((payment) => onOrAfter(payment.date, input.activatedAt))
+      .reduce((sum, payment) => sum + (payment.amountCents ?? 0), 0);
 
   let paidWithOwnMoney = 0;
   let cardCharged = 0;
@@ -108,9 +118,16 @@ export function positionOfStore(input: {
   purchases: Purchase[];
   expenses: LooseExpense[];
   cardPayments: CardPayment[];
+  /** #524 M3: auditable point operations — only confirmed collections carry
+   * money IN (an annulled cut never has one: the callable rejects annulling a
+   * collected cut). */
+  pointOperations?: PointOperation[];
 }): FinancialPosition {
   return financialPosition({
     activatedAt: input.activatedAt,
+    pointPayments: (input.pointOperations ?? [])
+      .filter((op) => op.storeId === input.storeId && op.kind === "cobro" && typeof op.amountCents === "number")
+      .map((op) => ({ date: op.date, amountCents: op.amountCents })),
     payments: input.payments
       .filter((payment) => payment.storeId === input.storeId)
       .map((payment) => ({ date: payment.date, amountCents: payment.amountCents ?? centsOf(payment.amount) })),

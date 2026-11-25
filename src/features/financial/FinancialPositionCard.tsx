@@ -50,6 +50,9 @@ export function FinancialPositionCard() {
         purchases: state.purchases.filter((purchase) => purchase.storeId === activeStore.id),
         expenses: state.expenses.filter((expense) => expense.storeId === activeStore.id),
         cardPayments: financial.cardPayments,
+        // #524 M3: point-of-sale collections are money IN for the registered
+        // cash box, on their real date.
+        pointOperations: state.pointOperations ?? [],
       })
     : null;
 
