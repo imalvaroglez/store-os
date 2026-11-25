@@ -220,6 +220,29 @@ export type ProductVariant = {
   lowStockAt?: number;
   createdAt: string;
   updatedAt: string;
+  /** #461 (PO 22-nov): optional sizes under this color. When present, stock
+   * lives PER COMBINATION here and the color's own quantityOnHand is ignored
+   * (derived via lib/variants.variantStock) — never double-written. */
+  sizes?: VariantSize[];
+};
+
+/** #461 (PO 22-nov, opción A): one sellable combination (color × size) with
+ * its own identity, clave and CONFIRMED acquisition cost. Untracked stock
+ * (undefined) stays distinct from zero — a missing datum never reads as 0. */
+export type VariantSize = {
+  /** Stable identity of the combination; order lines keep this exact id. */
+  id: string;
+  /** Size shown to clients ("4"…"10", "Chica") — distinct within its color. */
+  size: string;
+  /** Editable key suffix for the combination's clave. */
+  skuSuffix?: string;
+  /** Materialized full clave of the combination. */
+  sku?: string;
+  /** Confirmed acquisition cost; a color's known cost is only a suggestion. */
+  cost?: number;
+  quantityOnHand?: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ProductStatus = "draft" | "published" | "archived";
@@ -281,6 +304,11 @@ export type Product = {
   // Schema version for the idempotent migration. Absent = not yet migrated.
   schemaVersion?: number;
 
+  /** #461: this ficha was absorbed by the assisted conversion — it retired
+   * from sale (status "archived", public routes withdrawn) keeping identity
+   * and history; the note links internally to the unified design. */
+  mergedInto?: { productId: string; variantId: string; sizeId: string; at: string };
+
   createdAt: string;
   updatedAt: string;
 };
@@ -329,6 +357,12 @@ export type OrderItem = {
   variantId?: string;
   variantColor?: string;
   variantSku?: string;
+  /** #461: the exact color×size combination this line sold/reserves. The
+   * snapshot keeps tickets and history readable even if the size is later
+   * edited or removed; the id drives per-combination stock. */
+  variantSizeId?: string;
+  variantSize?: string;
+  variantSizeSku?: string;
   productName: string;
   quantity: number;
   priceTier?: string;
@@ -469,6 +503,9 @@ export type OrderDepositCorrection = {
 export type OrderDeliveryLine = {
   productId: string;
   variantId?: string;
+  /** #461: the delivered combination — a partial delivery discounts its OWN
+   * size dimension, never a sibling's. */
+  variantSizeId?: string;
   /** Integer pieces delivered in THIS event; strictly positive. */
   quantity: number;
 };
@@ -562,6 +599,10 @@ export type OrderIncident = {
   variantId?: string;
   variantColor?: string;
   variantSku?: string;
+  /** #461: the exact talla the incident is about (kept from the line). */
+  variantSizeId?: string;
+  variantSize?: string;
+  variantSizeSku?: string;
   productName: string;
   quantity: number;
   reason: string;
@@ -602,6 +643,12 @@ export type OrderIncident = {
     variantId?: string;
     variantColor?: string;
     variantSku?: string;
+    /** #461: the exact talla handed over, REQUIRED when the replacement's
+     * color sells by size — ITS combination moves at confirm. Confirming
+     * without it fails closed instead of guessing a talla. */
+    variantSizeId?: string;
+    variantSize?: string;
+    variantSizeSku?: string;
   };
   /** append-only history; every state is DERIVED from it, never stored twice. */
   events: OrderIncidentEvent[];
@@ -661,6 +708,10 @@ export type PurchaseLine = {
   /** #124 (decisión 2): the exact color this line bought — reception adjusts
    * THAT color's cost and shelf. Absent = whole-product line (legacy). */
   variantId?: string;
+  /** #461: the exact color×talla combination this line bought — reception
+   * adjusts THAT combination's shelf and confirmed cost. Required when the
+   * color sells by size (fail closed like #124/H2). */
+  variantSizeId?: string;
   name: string; // snapshot at purchase time
   quantity: number;
   unitCost: number;

@@ -14,6 +14,9 @@ export type PendingDeliveryLine = {
   key: string;
   productId: string;
   variantId?: string;
+  /** #461: the exact talla of the pending pieces when the color sells by
+   * size — two tallas of one color are two separate pending lines. */
+  variantSizeId?: string;
   quantity: number;
 };
 
@@ -25,7 +28,9 @@ function orderedDimensions(order: Order): Map<string, PendingDeliveryLine> {
   const ordered = new Map<string, PendingDeliveryLine>();
   for (const item of orderItems(order)) {
     if (!item.productId) continue;
-    const key = stockDimensionKey(item.productId, item.variantId);
+    // #461: the dimension is the exact combination — a talla of a color
+    // never merges with a sibling talla (the same key the reservation uses).
+    const key = stockDimensionKey(item.productId, item.variantId, item.variantSizeId);
     const current = ordered.get(key);
     if (current) current.quantity += item.quantity;
     else
@@ -33,6 +38,7 @@ function orderedDimensions(order: Order): Map<string, PendingDeliveryLine> {
         key,
         productId: item.productId,
         ...(item.variantId ? { variantId: item.variantId } : {}),
+        ...(item.variantSizeId ? { variantSizeId: item.variantSizeId } : {}),
         quantity: item.quantity,
       });
   }
@@ -77,7 +83,7 @@ export function deliveryValidationError(order: Order, event: Pick<OrderDelivery,
   const requested = new Map<string, number>();
   for (const line of event.lines) {
     if (!Number.isInteger(line.quantity) || line.quantity <= 0) return "Las cantidades entregadas deben ser piezas enteras mayores a cero.";
-    const key = stockDimensionKey(line.productId, line.variantId);
+    const key = stockDimensionKey(line.productId, line.variantId, line.variantSizeId);
     if (!pending.has(key)) return "Esa pieza ya está entregada por completo o no pertenece al pedido.";
     requested.set(key, (requested.get(key) ?? 0) + line.quantity);
   }

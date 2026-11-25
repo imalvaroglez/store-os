@@ -24,9 +24,12 @@ const clean = (value: string) => value.replace(/\*/g, "").replace(/\s+/g, " ").t
  * recorded. Homonymous fichas (individual vs. color design) stay tellable
  * apart in the orders list, the receipt and the shared text even if the
  * catalog ficha is later edited or removed; lines without a color (legacy
- * or free text) render exactly as before. */
+ * or free text) render exactly as before.
+ * #461: the talla too — two tallas of one color are two different pieces. */
 export function orderLineLabel(item: OrderItem): string {
-  return `${clean(item.productName)}${item.variantColor ? ` · ${clean(item.variantColor)}` : ""}`;
+  return `${clean(item.productName)}${item.variantColor ? ` · ${clean(item.variantColor)}` : ""}${
+    item.variantSize ? ` · ${clean(item.variantSize)}` : ""
+  }`;
 }
 
 export function orderTicketText(order: Order, storeName: string, currentCustomerName?: string): string {

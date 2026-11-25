@@ -1,6 +1,6 @@
 import { publicAvailabilitySignal } from "../../lib/publicAvailability";
 import { useEffect, useState } from "react";
-import { Badge, Button, Card, EmptyState, ProductImage, SkeletonCard } from "../../design-system";
+import { Badge, Button, Card, EmptyState, ProductImage, SkeletonCard, TextField } from "../../design-system";
 import { createWhatsAppStoreUrl } from "../../lib/whatsapp";
 import {
   loadPublicCatalog,
@@ -12,6 +12,7 @@ import {
 } from "../../app/firebase/publicCatalog";
 import { cartItemsForPublicProduct, cartItemFromPublicProduct, cartPieces, pruneCartLines } from "../../lib/cart";
 import { useCart } from "./useCart";
+import { normalizeCatalogText } from "../../lib/catalogText";
 import { useSeo } from "./useSeo";
 import { CartDrawer, CartFloatingButton, CartProductControl, PublicTierPrices } from "./CartDrawer";
 
@@ -21,9 +22,15 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
   const [data, setData] = useState<{ store: PublicStore; catalog: PublicCatalog } | null>(null);
   // #135: finish filter state — BEFORE the loading early-returns (rules of hooks).
   const [finishFilter, setFinishFilter] = useState("");
+  // #461 (UX misión, bloqueo): a clienta looking for one design among hundreds
+  // had to hojeando. Search by name or clave, accent/case insensitive.
+  const [query, setQuery] = useState("");
   // #137: chosen color per design (productSlug → variant id), GANNI-style
   // swatches on the card; defaults to the first color.
   const [chosenVariants, setChosenVariants] = useState<Record<string, string>>({});
+  // #461: chosen talla LABEL per design — kept on color change only while the
+  // same talla exists in the new color (effectiveSize falls back to the first).
+  const [chosenSizes, setChosenSizes] = useState<Record<string, string>>({});
   const normalizeFinish = (value: string) =>
     value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-MX");
   // #276: a missing store and a network failure are DIFFERENT things — a
@@ -119,9 +126,11 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
     return [...unique.values()];
   })();
   const finishKey = finishFilter ? normalizeFinish(finishFilter) : "";
-  const visibleProducts = finishKey
-    ? products.filter((product) => normalizeFinish((product as { finish?: string | null }).finish ?? "") === finishKey)
-    : products;
+  const needle = normalizeCatalogText(query.trim());
+  const visibleProducts = products.filter((product) =>
+    (!finishKey || normalizeFinish((product as { finish?: string | null }).finish ?? "") === finishKey) &&
+    (!needle || normalizeCatalogText(`${product.name} ${product.sku ?? ""}`).includes(needle))
+  );
   const visibleSlugs = new Set(products.map((product) => product.productSlug));
   const visibleLines = pruneCartLines(cart.lines, visibleSlugs);
   // #305: primary category name per product, from the SAME projection the
@@ -140,6 +149,11 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
     // line its OWN signal so the drawer explains exactly that color.
     for (const variant of product.variants ?? []) {
       signals[`${product.productSlug}~${variant.id}`] = isSoldOut(product) ? "agotado" : variant.stockSignal;
+      // #461: per-combination lines carry `slug~variantId~sizeId` — each
+      // talla explains itself in the drawer with its own coarse signal.
+      for (const size of variant.sizes ?? []) {
+        signals[`${product.productSlug}~${variant.id}~${size.id}`] = isSoldOut(product) || variant.stockSignal === "agotado" ? "agotado" : size.stockSignal;
+      }
     }
     return signals;
   }, {});
@@ -153,6 +167,22 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
         </div>
       </header>
       <main className="p-4 md:p-8"><div className="mx-auto max-w-6xl">
+        <div className="max-w-xs mb-4">
+          <TextField
+            label="Buscar en el catálogo"
+            type="search"
+            placeholder="Nombre o clave…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        {(needle || visibleProducts.length === 0) && (
+          <p className="text-sm text-on-surface-soft -mt-2 mb-4">
+            {needle
+              ? `${visibleProducts.length} ${visibleProducts.length === 1 ? "pieza" : "piezas"} con «${query.trim()}»${finishKey ? " y el acabado elegido" : ""}`
+              : ""}
+          </p>
+        )}
         {finishes.length > 1 && (
           <div className="flex flex-wrap gap-2 mb-4">
             {finishes.map((finish) => (
@@ -173,12 +203,19 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
             {visibleProducts.map((product) => {
               const variants = product.variants ?? [];
               const chosen = variants.find((v) => v.id === (chosenVariants[product.productSlug] ?? variants[0]?.id));
+              // #461: the exact talla of the chosen color — the saved talla
+              // survives a color change only while it still exists there.
+              const sizes = chosen?.sizes ?? [];
+              const chosenSize = sizes.find((s) => s.size === chosenSizes[product.productSlug]) ?? sizes[0];
               const variantSoldOut = chosen ? chosen.stockSignal === "agotado" : false;
               const designPaused = isSoldOut(product);
-              const soldOut = variants.length > 0 ? (designPaused || variantSoldOut) : designPaused;
+              const sizeSoldOut = chosenSize ? chosenSize.stockSignal === "agotado" : false;
+              const soldOut = variants.length > 0 ? (designPaused || variantSoldOut || sizeSoldOut) : designPaused;
               const cardImage = chosen?.imageUrl ?? product.imageUrl;
-              const lineName = chosen ? `${product.name} · ${chosen.color}` : product.name;
-              const lineSlug = chosen ? `${product.productSlug}~${chosen.id}` : product.productSlug;
+              const lineName = chosen ? `${product.name} · ${chosen.color}${chosenSize ? ` · ${chosenSize.size}` : ""}` : product.name;
+              const lineSlug = chosen
+                ? `${product.productSlug}~${chosen.id}${chosenSize ? `~${chosenSize.id}` : ""}`
+                : product.productSlug;
               const lineImage = cardImage ?? undefined;
               return <Card key={product.productSlug} className="overflow-hidden p-0">
               <ProductImage src={cardImage ?? undefined} alt={lineName} size="full" />
@@ -207,6 +244,29 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                     })}
                   </div>
                 )}
+                {/* #461: tallas del color elegido — la combinación exacta; una
+                    talla que no existe en este color nunca aparece. */}
+                {sizes.length > 0 && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    <span className="text-xs text-on-surface-soft mr-1">Talla</span>
+                    {sizes.map((size) => {
+                      const pressed = (chosenSize?.id ?? "") === size.id;
+                      return (
+                        <Button
+                          key={size.id}
+                          size="sm"
+                          variant={pressed ? "primary" : "secondary"}
+                          aria-pressed={pressed}
+                          title={size.stockSignal === "agotado" ? `Talla ${size.size} (agotada)` : `Talla ${size.size}`}
+                          onClick={() => setChosenSizes((current) => ({ ...current, [product.productSlug]: size.size }))}
+                          className={`!min-h-[40px] !min-w-[44px] ${size.stockSignal === "agotado" ? "line-through opacity-60" : ""}`}
+                        >
+                          {size.size}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                )}
                 {product.publicDescription && <p className="text-sm text-ink-soft mt-1">{product.publicDescription}</p>}
                 <PublicTierPrices store={store} product={product} />
                 {!soldOut ? (
@@ -221,8 +281,9 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                     className="mt-2"
                   />
                 ) : (
-                  // #135/#137: agotado (el diseño o el color elegido) SIGUE
-                  // solicitable por encargo — línea con el color inequívoco.
+                  // #135/#137: agotado (el diseño, el color o la talla elegida)
+                  // SIGUE solicitable por encargo — línea con la combinación
+                  // inequívoca.
                   <div className="mt-2">
                     <Button
                       variant="secondary"
@@ -232,7 +293,7 @@ export function PublicCatalogScreen({ slug }: { slug: string }) {
                       Pedir por encargo
                     </Button>
                     <p className="text-xs text-on-surface-soft mt-1">
-                      Agotado{chosen ? ` (${chosen.color})` : ""} · puedes pedirlo por encargo. Fecha de entrega por confirmar.
+                      Agotado{chosen ? ` (${chosen.color}${chosenSize ? ` · ${chosenSize.size}` : ""})` : ""} · puedes pedirlo por encargo. Fecha de entrega por confirmar.
                     </p>
                   </div>
                 )}

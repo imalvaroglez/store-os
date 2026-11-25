@@ -315,3 +315,91 @@ describe("#124 H2/H3 — hallazgos de revisión", () => {
     expect(gold.cost).toBeCloseTo((2 * 110 + 1 * 100) / 3, 6);
   });
 });
+
+describe("#461 recepción por combinación color × talla", () => {
+  const design = (overrides: Partial<import("../types").Product>): import("../types").Product =>
+    ({
+      id: "d1", storeId: "s1", name: "Anillo Sol", sku: "SOL", category: "jewelry", isPublic: true, status: "published",
+      cost: 100,
+      variants: [
+        {
+          id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "SOL-D", photos: [], createdAt: "", updatedAt: "",
+          sizes: [
+            { id: "s6", size: "6", skuSuffix: "6", sku: "SOL-D-6", cost: 110, quantityOnHand: 2, createdAt: "", updatedAt: "" },
+            { id: "s7", size: "7", skuSuffix: "7", sku: "SOL-D-7", cost: 111, quantityOnHand: 1, createdAt: "", updatedAt: "" },
+          ],
+        },
+        { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "SOL-P", cost: 90, quantityOnHand: 1, photos: [], createdAt: "", updatedAt: "" },
+      ],
+      createdAt: "", updatedAt: "",
+      ...overrides,
+    }) as import("../types").Product;
+
+  const purchase = (lines: Array<Partial<import("../types").PurchaseLine>>): import("../types").Purchase =>
+    ({
+      id: "p1", storeId: "s1", supplierId: "sup", supplierName: "Proveedor",
+      lines: lines.map((l, i) => ({ lineId: `l${i}`, productId: "d1", name: "Anillo Sol", quantity: 1, unitCost: 100, ...l })) as import("../types").Purchase["lines"],
+      createdAt: "", updatedAt: "",
+    }) as import("../types").Purchase;
+
+  const sizeOf = (result: ReturnType<typeof purchaseInventoryUpdates>, variantId: string, sizeId: string) =>
+    result.variantUpdates?.get("d1")?.variants.find((v) => v.id === variantId)!.sizes!.find((s) => s.id === sizeId)!;
+
+  it("una línea con talla ajusta SOLO esa combinación: existencia y costo ponderado de la combinación", () => {
+    const result = purchaseInventoryUpdates([design({})], purchase([{ variantId: "v_gold", variantSizeId: "s6", quantity: 2, unitCost: 120 }]));
+    expect(result.stockUpdates.size).toBe(0); // nada a nivel diseño
+    const s6 = sizeOf(result, "v_gold", "s6");
+    const s7 = sizeOf(result, "v_gold", "s7");
+    expect(s6.quantityOnHand).toBe(4); // 2 + 2: SOLO su estante
+    expect(s6.cost).toBeCloseTo((2 * 110 + 2 * 120) / 4, 6); // ponderado de la COMBINACIÓN
+    expect(s7.quantityOnHand).toBe(1); // intacto
+    expect(s7.cost).toBe(111);
+    // el nivel del color sigue derivado: la recepción no lo escribe
+    expect(result.variantUpdates?.get("d1")?.variants.find((v) => v.id === "v_gold")!.quantityOnHand).toBeUndefined();
+    // el color sin tallas sigue intacto
+    expect(result.variantUpdates?.get("d1")?.variants.find((v) => v.id === "v_silver")!.quantityOnHand).toBe(1);
+  });
+
+  it("H2 por talla: línea con color SIN talla sobre un color CON tallas falla cerrado nombrando el producto", () => {
+    expect(() => purchaseInventoryUpdates([design({})], purchase([{ variantId: "v_gold" }]))).toThrow(/Elige la talla comprada de Anillo Sol/);
+  });
+
+  it("talla desaparecida del color: falla cerrado", () => {
+    expect(() => purchaseInventoryUpdates([design({})], purchase([{ variantId: "v_gold", variantSizeId: "ghost" }]))).toThrow(/ya no existe/);
+  });
+
+  it("líneas mixtas: combinación a su estante y color sin tallas a nivel color", () => {
+    const result = purchaseInventoryUpdates([design({})], purchase([
+      { variantId: "v_gold", variantSizeId: "s6", quantity: 1, unitCost: 100 },
+      { variantId: "v_silver", quantity: 1, unitCost: 95 },
+    ]));
+    expect(sizeOf(result, "v_gold", "s6").quantityOnHand).toBe(3);
+    const silver = result.variantUpdates?.get("d1")?.variants.find((v) => v.id === "v_silver")!;
+    expect(silver.quantityOnHand).toBe(2);
+    expect(silver.cost).toBeCloseTo((1 * 90 + 1 * 95) / 2, 6);
+  });
+
+  it("dos tallas del mismo color en la MISMA compra: ambos estantes reciben (acumulación por producto)", () => {
+    const result = purchaseInventoryUpdates([design({})], purchase([
+      { variantId: "v_gold", variantSizeId: "s6", quantity: 2, unitCost: 100 },
+      { variantId: "v_gold", variantSizeId: "s7", quantity: 1, unitCost: 105 },
+    ]));
+    expect(sizeOf(result, "v_gold", "s6").quantityOnHand).toBe(4);
+    expect(sizeOf(result, "v_gold", "s7").quantityOnHand).toBe(2);
+  });
+
+  it("dos colores del mismo diseño en la MISMA compra: ambos reciben (regresión de acumulación preexistente)", () => {
+    const plain = design({
+      variants: [
+        { id: "v_a", color: "Dorado", skuSuffix: "D", sku: "SOL-D", cost: 110, quantityOnHand: 2, photos: [], createdAt: "", updatedAt: "" },
+        { id: "v_b", color: "Plateado", skuSuffix: "P", sku: "SOL-P", cost: 90, quantityOnHand: 1, photos: [], createdAt: "", updatedAt: "" },
+      ],
+    });
+    const result = purchaseInventoryUpdates([plain], purchase([
+      { variantId: "v_a", quantity: 2, unitCost: 100 },
+      { variantId: "v_b", quantity: 1, unitCost: 95 },
+    ]));
+    expect(result.variantUpdates?.get("d1")?.variants.find((v) => v.id === "v_a")!.quantityOnHand).toBe(4);
+    expect(result.variantUpdates?.get("d1")?.variants.find((v) => v.id === "v_b")!.quantityOnHand).toBe(2);
+  });
+});

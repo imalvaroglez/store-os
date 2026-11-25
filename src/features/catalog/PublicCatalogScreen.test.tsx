@@ -491,3 +491,143 @@ it("#489 keeps a sellable color visible despite an old aggregate shortage signal
   await screen.findByText("Perfume");
   expect(screen.getByRole("button", { name: "Agregar al carrito" })).toBeTruthy();
 });
+
+describe("#461 selección exacta color × talla en el catálogo genérico", () => {
+  const sizedStore: PublicStore = { ...store, type: "inventory_tiered" };
+  const sizedProduct = {
+    storeId: "store_santi", storeSlug: "santi", productSlug: "anillo", name: "Anillo Sol", sku: "SAN-010",
+    prices: { t_retail: 1400 },
+    variants: [
+      { id: "v_dorado", color: "Dorado", imageUrl: null, stockSignal: "disponible", sizes: [
+        { id: "s4", size: "4", stockSignal: "disponible" },
+        { id: "s6", size: "6", stockSignal: "agotado" },
+      ] },
+      { id: "v_plateado", color: "Plateado", imageUrl: null, stockSignal: "disponible", sizes: [
+        { id: "s8", size: "8", stockSignal: "disponible" },
+      ] },
+      { id: "v_rosa", color: "Rosa", imageUrl: null, stockSignal: "disponible" },
+    ],
+  };
+
+  function openSized() {
+    mocks.loadPublicCatalog.mockResolvedValue({ store: sizedStore, catalog: { categories: [], products: [sizedProduct as never] } });
+    render(<PublicCatalogScreen slug="santi" />);
+  }
+
+  it("la tarjeta ofrece las tallas del color elegido y nunca las de otro color; la línea es la combinación exacta", async () => {
+    openSized();
+    await screen.findByText("Anillo Sol");
+    // Dorado por defecto: tallas 4 y 6 (Plateado · 8 no aparece)
+    const talla4 = screen.getByRole("button", { name: "4" });
+    expect(screen.queryByRole("button", { name: "8" })).toBeNull();
+    fireEvent.click(talla4);
+    fireEvent.click(screen.getAllByRole("button", { name: /Agregar al carrito/i })[0]);
+    const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+    expect(saved.lines[0]).toMatchObject({ productSlug: "anillo~v_dorado~s4", name: "Anillo Sol · Dorado · 4", qty: 1 });
+  });
+
+  it("cambiar de color conserva la talla sólo si sigue siendo válida (etiqueta) y re-valida disponibilidad", async () => {
+    openSized();
+    await screen.findByText("Anillo Sol");
+    // Dorado talla 4 → Plateado (sin talla 4, con talla 8): cae a la primera de Plateado
+    fireEvent.click(screen.getByRole("button", { name: "4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Plateado" }));
+    expect(screen.getByRole("button", { name: "8", pressed: true })).toBeTruthy();
+    // Rosa no tiene tallas: el selector desaparece
+    fireEvent.click(screen.getByRole("button", { name: "Rosa" }));
+    expect(screen.queryByRole("button", { name: "8" })).toBeNull();
+  });
+
+  it("talla agotada muestra Agotado y ofrece encargo con la combinación inequívoca", async () => {
+    openSized();
+    await screen.findByText("Anillo Sol");
+    fireEvent.click(screen.getByRole("button", { name: "6" })); // agotada
+    expect(screen.getByText("Agotado")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Pedir por encargo/i }));
+    const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+    expect(saved.lines[0]).toMatchObject({ productSlug: "anillo~v_dorado~s6", name: "Anillo Sol · Dorado · 6", inquire: true });
+    expect(screen.getByText(/Agotado \(Dorado · 6\)/)).toBeTruthy();
+  });
+
+  it("dos tallas del mismo color quedan en renglones separados y el mensaje lleva producto, color y talla", async () => {
+    openSized();
+    await screen.findByText("Anillo Sol");
+    fireEvent.click(screen.getByRole("button", { name: "4" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Agregar al carrito/i })[0]);
+    // Volver a Dorado 6 (agotada → encargo) como segundo renglón
+    fireEvent.click(screen.getByRole("button", { name: "6" }));
+    fireEvent.click(screen.getByRole("button", { name: /Pedir por encargo/i }));
+    const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+    expect(saved.lines.map((l: { productSlug: string }) => l.productSlug)).toEqual(["anillo~v_dorado~s4", "anillo~v_dorado~s6"]);
+  });
+
+  it("una selección retirada (talla que dejó de existir) pide volver a elegir en la bolsa, sin sustituir", async () => {
+    localStorage.setItem("store-os:cart:santi", JSON.stringify({ v: 1, lines: [
+      { productSlug: "anillo~v_dorado~s6", name: "Anillo Sol · Dorado · 6", sku: "SAN-010", qty: 1 },
+    ] }));
+    // El catálogo actual ya no ofrece la talla 6 del Dorado (quedó s4 sola).
+    const withoutS6 = { ...sizedProduct, variants: sizedProduct.variants.map((v: { id: string; sizes?: unknown[] }) => v.id === "v_dorado" ? { ...v, sizes: [{ id: "s4", size: "4", stockSignal: "disponible" }] } : v) };
+    mocks.loadPublicCatalog.mockResolvedValue({ store: sizedStore, catalog: { categories: [], products: [withoutS6 as never] } });
+    render(<PublicCatalogScreen slug="santi" />);
+    await screen.findByText("Anillo Sol");
+    fireEvent.click(await screen.findByRole("button", { name: /Abrir pedido/ }));
+    expect(await screen.findByText(/ya no está disponible/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Enviar solicitud por WhatsApp/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Quitar/i }));
+    expect(await screen.findByText(/vacío/i)).toBeTruthy();
+  });
+});
+
+// Regresión (implementación, 23-nov): el resumen del catálogo (`publicCatalogs`)
+// es la fuente de ESTA cuadrícula — de ahí lee las tallas de cada tarjeta. Un
+// cambio en la proyección que quitara las tallas del resumen pasó todas las
+// pruebas porque los fixtures traían las tallas armadas a mano. Esta prueba
+// parte del resumen que la app publica de verdad.
+describe("#461 el resumen REAL que publica la app alimenta la talla de la cuadrícula", () => {
+  it("la tarjeta ofrece las tallas a partir de projectPublicProductSummary y la línea es la combinación exacta", async () => {
+    const { projectPublicProductSummary } = await import("../../app/firebase/firestoreData");
+    const product = {
+      id: "p_sol", storeId: "store_santi", slug: "anillo", name: "Anillo Sol", sku: "SAN-010", category: "other", isPublic: true, status: "published",
+      prices: { t_retail: 1400 },
+      variants: [
+        {
+          id: "v_dorado", color: "Dorado", skuSuffix: "D", sku: "SAN-010-D", cost: 100, createdAt: "", updatedAt: "",
+          sizes: [
+            { id: "s4", size: "4", sku: "SAN-010-D-4", cost: 100, quantityOnHand: 2, createdAt: "", updatedAt: "" },
+            { id: "s6", size: "6", sku: "SAN-010-D-6", cost: 100, quantityOnHand: 0, createdAt: "", updatedAt: "" },
+          ],
+        },
+        { id: "v_rosa", color: "Rosa", skuSuffix: "R", sku: "SAN-010-R", cost: 100, quantityOnHand: 3, createdAt: "", updatedAt: "" },
+      ],
+      createdAt: "", updatedAt: "",
+    };
+    const summary = projectPublicProductSummary(product as never, "santi", { defaultTierId: "t_retail" });
+    // Lo que la app publica: el resumen lleva las tallas del color con su señal gruesa.
+    expect((summary.variants as Array<{ sizes?: unknown[] }>)[0].sizes).toHaveLength(2);
+    mocks.loadPublicCatalog.mockResolvedValue({
+      store: { ...store, type: "inventory_tiered" },
+      catalog: { categories: [], products: [summary as never] },
+    });
+    render(<PublicCatalogScreen slug="santi" />);
+    await screen.findByText("Anillo Sol");
+    fireEvent.click(screen.getByRole("button", { name: "4" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Agregar al carrito/i })[0]);
+    const saved = JSON.parse(localStorage.getItem("store-os:cart:santi")!);
+    expect(saved.lines[0]).toMatchObject({ productSlug: "anillo~v_dorado~s4", name: "Anillo Sol · Dorado · 4", qty: 1 });
+  });
+});
+
+// #461 (UX misión, bloqueo): a clienta finds one design among hundreds.
+describe("PublicCatalogScreen · buscador (#461)", () => {
+  it("filtra por nombre y por clave; sin resultados lo dice", async () => {
+    render(<PublicCatalogScreen slug="santi" />);
+    await screen.findAllByRole("button", { name: "Agregar al carrito" });
+    const names = () => Array.from(document.querySelectorAll("h2")).map((h) => h.textContent);
+    fireEvent.change(screen.getByLabelText(/Buscar en el catálogo/), { target: { value: "perfume" } });
+    expect(names()).toEqual(["Perfume"]);
+    fireEvent.change(screen.getByLabelText(/Buscar en el catálogo/), { target: { value: "SAN-002" } });
+    expect(names()).toEqual(["Tenis"]);
+    fireEvent.change(screen.getByLabelText(/Buscar en el catálogo/), { target: { value: "zzz-inexistente" } });
+    expect(screen.getByText(/0 piezas con/)).toBeTruthy();
+  });
+});

@@ -8,7 +8,7 @@ import {
   pendingDeliveries,
   pendingDeliveryPieces,
 } from "./deliveries";
-import { reservationDeltasForOrderChange } from "./inventory";
+import { combinationReservationDeltasForOrderChange, reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "./inventory";
 
 // #333: delivery-evidence derivations — the monthly close's verifiable facts
 // (which pieces reached the clienta, and WHEN) plus the partial-cancellation
@@ -161,5 +161,66 @@ describe("cancelación tras entrega parcial (#333)", () => {
     );
     const cancelled = { ...open, orderStatus: "cancelled" as const };
     expect(reservationDeltasForOrderChange(open, cancelled).get("p1")).toBe(6); // 10 − 4 entregadas
+  });
+});
+
+// #461 (dictamen QA 23-nov, crítico 2): la entrega razona por COMBINACIÓN
+// exacta. Dos tallas del mismo color son dimensiones distintas; cada entrega
+// lleva su talla, y cancelar tras una entrega parcial devuelve solo lo
+// pendiente de cada combinación — nunca piezas ya entregadas.
+describe("entregas por combinación color × talla (#461)", () => {
+  const sized = (sizeId: string, size: string, quantity: number, lineId: string) => ({
+    productId: "p2",
+    variantId: "v_dorado",
+    variantColor: "Dorado",
+    variantSizeId: sizeId,
+    variantSize: size,
+    lineId,
+    productName: "Anillo Sol",
+    quantity,
+    unitPrice: 400,
+    subtotal: quantity * 400,
+  });
+
+  it("dos tallas del mismo color son pendientes distintos, no una fila por color", () => {
+    const order = orderOf([sized("d6", "6", 2, "l1"), sized("d5", "5", 1, "l2")]);
+    expect(pendingDeliveries(order)).toEqual([
+      { key: "p2:v_dorado:d6", productId: "p2", variantId: "v_dorado", variantSizeId: "d6", quantity: 2 },
+      { key: "p2:v_dorado:d5", productId: "p2", variantId: "v_dorado", variantSizeId: "d5", quantity: 1 },
+    ]);
+  });
+
+  it("entregar de la talla 6 no descuenta la talla 5; sobrantes y tallas ajenas se rechazan", () => {
+    const order = orderOf([sized("d6", "6", 2, "l1"), sized("d5", "5", 1, "l2")]);
+    expect(
+      deliveryValidationError(order, { lines: [{ productId: "p2", variantId: "v_dorado", variantSizeId: "d6", quantity: 3 }] })
+    ).toBe("No puedes entregar más piezas de las que siguen pendientes.");
+    expect(
+      deliveryValidationError(order, { lines: [{ productId: "p2", variantId: "v_dorado", variantSizeId: "d7", quantity: 1 }] })
+    ).toBe("Esa pieza ya está entregada por completo o no pertenece al pedido.");
+    // Sin talla ya no nombra una talla del pedido: el color alone no es una dimensión vendible aquí.
+    expect(
+      deliveryValidationError(order, { lines: [{ productId: "p2", variantId: "v_dorado", quantity: 1 }] })
+    ).toBe("Esa pieza ya está entregada por completo o no pertenece al pedido.");
+    expect(deliveryValidationError(order, { lines: [{ productId: "p2", variantId: "v_dorado", variantSizeId: "d6", quantity: 1 }] })).toBeNull();
+  });
+
+  it("cancelar tras entrega parcial devuelve SOLO lo pendiente de su combinación (dictamen: vs_d6 4→6, vs_d5 3→4)", () => {
+    const delivered = orderOf([sized("d6", "6", 2, "l1"), sized("d5", "5", 1, "l2")], [
+      delivery([{ productId: "p2", variantId: "v_dorado", variantSizeId: "d6", quantity: 1 }], "2026-11-20"),
+    ]);
+    expect(pendingDeliveries(delivered)).toEqual([
+      { key: "p2:v_dorado:d6", productId: "p2", variantId: "v_dorado", variantSizeId: "d6", quantity: 1 },
+      { key: "p2:v_dorado:d5", productId: "p2", variantId: "v_dorado", variantSizeId: "d5", quantity: 1 },
+    ]);
+    const cancelled: Order = { ...delivered, orderStatus: "cancelled" };
+    const released = combinationReservationDeltasForOrderChange(delivered, cancelled);
+    expect([...released.values()]).toEqual([
+      { productId: "p2", variantId: "v_dorado", sizeId: "d6", delta: 1 },
+      { productId: "p2", variantId: "v_dorado", sizeId: "d5", delta: 1 },
+    ]);
+    // La talla 6 entregada queda consumida: nada vuelve al color ni al diseño.
+    expect([...variantReservationDeltasForOrderChange(delivered, cancelled).values()]).toEqual([]);
+    expect([...reservationDeltasForOrderChange(delivered, cancelled).values()]).toEqual([]);
   });
 });

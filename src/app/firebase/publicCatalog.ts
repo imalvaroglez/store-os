@@ -33,12 +33,14 @@ export type PublicCategory = {
 };
 
 /** #124: one color of a design, public view — name + photo + a coarse
- * availability signal (never counts, never costs). */
+ * availability signal (never counts, never costs). #461: colors that sell by
+ * size list their public sizes with a coarse signal per combination. */
 export type PublicProductVariant = {
   id: string;
   color: string;
   imageUrl: string | null;
   stockSignal: PublicStockSignal;
+  sizes?: { id: string; size: string; stockSignal: PublicStockSignal }[];
 };
 
 export type PublicProductSummary = {

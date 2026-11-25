@@ -25,10 +25,25 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { getFirebase } from "./config";
-import { reservationDeltasForOrderChange, variantReservationDeltasForOrderChange } from "../../lib/inventory";
-import { applyVariantDelta, isVariantProduct, totalStock } from "../../lib/variants";
+import {
+  colorLevelLineMoves,
+  combinationReservationDeltasForOrderChange,
+  reservationDeltasForOrderChange,
+  variantReservationDeltasForOrderChange,
+} from "../../lib/inventory";
+import {
+  applyCombinationDelta,
+  applyVariantDelta,
+  isVariantProduct,
+  totalStock,
+  variantHasSizes,
+  variantStock,
+  type CombinationStockDelta,
+  type VariantStockDelta,
+} from "../../lib/variants";
 import { mergeProductOperational } from "../../lib/productMerge";
 import { purchaseExpenseAdjustment, purchaseInventoryUpdates } from "../../lib/purchases";
+import { applyConversion, buildConversionPreview, type ConversionMapping, type ConversionResult } from "../../lib/variantConversion";
 import { linkDocId, normalizeSupplierCode, type SupplierProductLink } from "../../lib/supplierLinks";
 import { effectivePurchaseStatus, recalcPurchaseStatus, type PurchaseExpense } from "../../types";
 import { todayIso } from "../../lib/dates";
@@ -48,9 +63,9 @@ import {
 } from "../../features/orders/payments";
 import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmountCents } from "../../lib/orderMoney";
 import { normalizeEmail, type AppUser } from "./auth";
-import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
+import type { AppState, Store, Storefront, Product, ProductVariant, VariantSize, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
-import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
+import { IncidentEvidenceError, agreedSolutionStuckReason, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
 import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
@@ -860,6 +875,49 @@ export function creditEditCoverageError(docData: Record<string, unknown> | undef
 export class CreditCoverageError extends Error {}
 export class CreditCustomerChangeError extends Error {}
 
+/**
+ * #461: a color-level delta on a color that NOW sells by size. That color has
+ * no sellable color-level shelf, so a reservation sold without talla has no
+ * obvious home:
+ * - Taking pieces without a talla fails closed (the person chooses the talla).
+ * - Lines re-assigned to a talla in this same change send their pieces to
+ *   THAT combination (routed into `combinationDeltas`).
+ * - The rest returns «sin talla» to the color's own field — the ficha shows
+ *   those pieces and asks to distribute them; nothing is ever dropped.
+ * Returns the delta that still belongs to the color's own field.
+ */
+function routeColorLevelDelta(params: {
+  previous: Order | undefined;
+  next: Order;
+  vDelta: VariantStockDelta;
+  combinationDeltas: Map<string, CombinationStockDelta>;
+  productName: string;
+}): number {
+  const { previous, next, vDelta, combinationDeltas, productName } = params;
+  const moves = colorLevelLineMoves(previous, next, vDelta.productId, vDelta.variantId);
+  if (moves.some((move) => move.remapBlocked)) {
+    throw new Error("Este pedido tiene una entrega registrada sin talla. Para asignar la talla, ajusta la existencia de esa talla desde la ficha del producto; el pedido conserva su registro de entrega.");
+  }
+  let toCombinations = 0;
+  for (const move of moves) {
+    if (!move.nextSizeId) continue;
+    toCombinations += move.previousHeld;
+    const key = `${move.productId}:${move.variantId}:${move.nextSizeId}`;
+    const existing = combinationDeltas.get(key);
+    combinationDeltas.set(key, {
+      productId: move.productId,
+      variantId: move.variantId,
+      sizeId: move.nextSizeId,
+      delta: (existing?.delta ?? 0) + move.previousHeld,
+    });
+  }
+  const residual = vDelta.delta - toCombinations;
+  if (residual < 0) {
+    throw new Error(`${productName} se vende por talla: elige la talla en el artículo del pedido.`);
+  }
+  return residual;
+}
+
 export async function saveOrderWithStockTx(
   user: AppUser,
   order: Order,
@@ -1050,6 +1108,9 @@ export async function saveOrderWithStockTx(
     // delta model). Fail-closed on a missing color: stock never lands on the
     // design level by accident.
     const variantDeltas = variantReservationDeltasForOrderChange(previous, next);
+    // #461: size lines move their EXACT color×size shelf in the same
+    // transaction — never the color's, never the design's.
+    const combinationDeltas = combinationReservationDeltasForOrderChange(previous, next);
     const canonical = new Map<string, number | undefined>();
     const shortages: { productId: string; missing: number }[] = [];
     for (const [productId, delta] of deltas) {
@@ -1107,6 +1168,14 @@ export async function saveOrderWithStockTx(
           ? "El color elegido ya no existe en este diseño."
           : "Esa pieza ya no se vende por color; revisa el pedido.");
       }
+      // #461: a color that sells by size has no sellable color-level shelf.
+      if (variantHasSizes(variant)) {
+        vDelta.delta = routeColorLevelDelta({
+          previous, next, vDelta, combinationDeltas,
+          productName: (product.data()?.name as string | undefined) ?? "Esta pieza",
+        });
+        if (vDelta.delta === 0) continue;
+      }
       if (next.installmentsReservedAt && vDelta.delta < 0) {
         const current = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
         if (current + vDelta.delta < 0) {
@@ -1119,6 +1188,47 @@ export async function saveOrderWithStockTx(
       const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);
       if (!nextVariants) throw new Error("El color elegido ya no existe en este diseño.");
       variantWrites.set(vDelta.productId, nextVariants);
+    }
+    // #461: combination writes share the same doc-level accumulation as color
+    // writes. A take of a vanished combination fails closed; a release of a
+    // vanished combination returns the real pieces to the visible design
+    // shelf (same rule as vanished colors, M3).
+    for (const cDelta of combinationDeltas.values()) {
+      const product = await tx.get(doc(db, "products", cDelta.productId));
+      if (product.exists() && product.data().storeId !== order.storeId) throw new Error("El producto pertenece a otra tienda.");
+      if (!product.exists() && cDelta.delta > 0) continue;
+      const data = product.exists() ? product.data() as Record<string, unknown> : {};
+      const variants = data.variants as Product["variants"];
+      const variant = variants?.find((v) => v.id === cDelta.variantId);
+      const size = variant?.sizes?.find((sz) => sz.id === cDelta.sizeId);
+      if (!isVariantProduct({ variants }) || !variant) {
+        if (cDelta.delta > 0) {
+          releases.set(cDelta.productId, (releases.get(cDelta.productId) ?? 0) + cDelta.delta);
+          continue;
+        }
+        throw new Error("La talla elegida ya no existe en este diseño.");
+      }
+      if (!size) {
+        if (cDelta.delta < 0) throw new Error("La talla elegida ya no existe en este diseño.");
+        // The talla is gone but its color remains: the real pieces return to
+        // the color «sin talla» — visible on the card, distributed from the
+        // ficha — never to the design shelf the app ignores for color designs.
+        const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];
+        const nextVariants = applyVariantDelta({ variants: working }, cDelta.variantId, cDelta.delta, at);
+        if (!nextVariants) throw new Error("El color elegido ya no existe en este diseño.");
+        variantWrites.set(cDelta.productId, nextVariants);
+        continue;
+      }
+      if (next.installmentsReservedAt && cDelta.delta < 0) {
+        const current = typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0;
+        if (current + cDelta.delta < 0) {
+          throw new InsufficientStockError([{ productId: cDelta.productId, missing: -(current + cDelta.delta) }]);
+        }
+      }
+      const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];
+      const nextSizes = applyCombinationDelta({ variants: working }, cDelta.variantId, cDelta.sizeId, cDelta.delta, at);
+      if (!nextSizes) throw new Error("La talla elegida ya no existe en este diseño.");
+      variantWrites.set(cDelta.productId, nextSizes);
     }
     const saved = { ...next, revision: (previous?.revision ?? 0) + 1, lastMutationId: mutationId, updatedAt: at };
     // Merge vanished-color releases into the same product-level updates (or
@@ -1579,6 +1689,9 @@ export async function deleteOrderWithStockTx(
     // #124: deleting releases COLOR shelves too — the same delta model, or
     // the exact-color pieces would never return to their shelf.
     const variantDeltas = variantReservationDeltasForOrderChange(previous, cancelled);
+    // #461: cancelling returns each combination's still-pending pieces to
+    // THEIR exact shelf.
+    const combinationDeltas = combinationReservationDeltasForOrderChange(previous, cancelled);
     const canonical = new Map<string, number | undefined>();
     for (const productId of deltas.keys()) {
       const product = await tx.get(doc(db, "products", productId));
@@ -1601,9 +1714,41 @@ export async function deleteOrderWithStockTx(
         releases.set(vDelta.productId, (releases.get(vDelta.productId) ?? 0) + vDelta.delta);
         continue;
       }
+      // #461: a color that sells by size has no sellable color-level shelf.
+      if (variantHasSizes(variant)) {
+        vDelta.delta = routeColorLevelDelta({
+          previous, next: cancelled, vDelta, combinationDeltas,
+          productName: (data.name as string | undefined) ?? "Esta pieza",
+        });
+        if (vDelta.delta === 0) continue;
+      }
       const working = (variantWrites.get(vDelta.productId) ?? variants!) as ProductVariant[];
       const nextVariants = applyVariantDelta({ variants: working }, vDelta.variantId, vDelta.delta, at);
       if (nextVariants) variantWrites.set(vDelta.productId, nextVariants);
+    }
+    for (const cDelta of combinationDeltas.values()) {
+      const product = await tx.get(doc(db, "products", cDelta.productId));
+      if (!product.exists()) continue;
+      const data = product.data();
+      if (data.storeId !== previous.storeId) throw new Error("El producto pertenece a otra tienda.");
+      const variants = data.variants as Product["variants"];
+      const variant = variants?.find((v) => v.id === cDelta.variantId);
+      const size = variant?.sizes?.find((sz) => sz.id === cDelta.sizeId);
+      if (!variant) {
+        // Vanished color: the real pieces return to the design shelf.
+        releases.set(cDelta.productId, (releases.get(cDelta.productId) ?? 0) + cDelta.delta);
+        continue;
+      }
+      if (!size) {
+        // Vanished talla, color still there: back to the color «sin talla» (visible).
+        const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];
+        const nextVariants = applyVariantDelta({ variants: working }, cDelta.variantId, cDelta.delta, at);
+        if (nextVariants) variantWrites.set(cDelta.productId, nextVariants);
+        continue;
+      }
+      const working = (variantWrites.get(cDelta.productId) ?? variants!) as ProductVariant[];
+      const nextSizes = applyCombinationDelta({ variants: working }, cDelta.variantId, cDelta.sizeId, cDelta.delta, at);
+      if (nextSizes) variantWrites.set(cDelta.productId, nextSizes);
     }
     const finalUpdates = [...updates];
     for (const [productId, release] of releases) {
@@ -1891,9 +2036,27 @@ function primaryImage(product: Product): string | null {
 }
 
 /** Coarse stock signal for the public catalog: NEVER an exact count. */
+/** #461: one combination's PUBLIC signal — same coarse rules as a color's,
+ * with the color's lowStockAt as the informative threshold. */
+function sizePublicStockSignal(s: VariantSize, lowStockAt?: number): "agotado" | "pocas" | "disponible" {
+  const qty = s.quantityOnHand;
+  if (typeof qty !== "number") return "disponible";
+  if (qty <= 0) return "agotado";
+  if (typeof lowStockAt === "number" && qty <= lowStockAt) return "pocas";
+  return "disponible";
+}
+
 /** #124: one color's PUBLIC signal — coarse like the design-level one
- * (never a count), derived from the variant's own shelf. */
+ * (never a count), derived from the variant's own shelf. #461: a color that
+ * sells by size derives from ITS combinations (each one its own shelf). */
 function variantPublicStockSignal(v: ProductVariant): "agotado" | "pocas" | "disponible" {
+  if (variantHasSizes(v)) {
+    if (v.sizes!.some((s) => typeof s.quantityOnHand !== "number")) return "disponible"; // untracked ≠ zero
+    const sellable = v.sizes!.filter((s) => (s.quantityOnHand ?? 0) > 0);
+    if (!sellable.length) return "agotado";
+    if (sellable.every((s) => sizePublicStockSignal(s, v.lowStockAt) === "pocas")) return "pocas";
+    return "disponible";
+  }
   const qty = v.quantityOnHand;
   if (typeof qty !== "number") return "disponible";
   if (qty <= 0) return "agotado";
@@ -1903,7 +2066,7 @@ function variantPublicStockSignal(v: ProductVariant): "agotado" | "pocas" | "dis
 
 /** #124: the public color list of a design — one product, N colors, each with
  * its photo; NEVER per-color counts or costs (same policy as the rest of the
- * projection). */
+ * projection). #461: colors that sell by size carry their public sizes too. */
 function publicVariants(product: Product) {
   if (!isVariantProduct(product)) return undefined;
   return product.variants!.map((v) => ({
@@ -1911,6 +2074,9 @@ function publicVariants(product: Product) {
     color: v.color,
     imageUrl: v.photos?.find((photo) => photo.isPrimary)?.url ?? v.photos?.[0]?.url ?? null,
     stockSignal: variantPublicStockSignal(v),
+    ...(variantHasSizes(v)
+      ? { sizes: v.sizes!.map((s) => ({ id: s.id, size: s.size, stockSignal: sizePublicStockSignal(s, v.lowStockAt) })) }
+      : {}),
   }));
 }
 
@@ -1918,13 +2084,15 @@ export function publicStockSignal(p: Product): "agotado" | "pocas" | "disponible
   // Each color is a separate shelf: a shortage cannot consume sellable
   // pieces of another color. Only this PUBLIC coarse signal uses the positive
   // shelves; canonical quantities and private shortage math stay untouched.
+  // #461: a color's shelf is the per-combination sum when sizes exist
+  // (variantStock) — the color's own quantityOnHand is derived and absent.
   const colors = isVariantProduct(p) ? p.variants! : undefined;
-  if (colors?.some((v) => typeof v.quantityOnHand !== "number")) return "disponible";
-  const qty = colors ? colors.reduce((sum, v) => sum + Math.max(0, v.quantityOnHand ?? 0), 0) : p.quantityOnHand;
+  if (colors?.some((v) => variantStock(v) === null)) return "disponible";
+  const qty = colors ? colors.reduce((sum, v) => sum + Math.max(0, variantStock(v) ?? 0), 0) : p.quantityOnHand;
   if (typeof qty !== "number") return "disponible"; // on-demand / not tracked
   if (qty <= 0) return "agotado";
   if (typeof p.lowStockAt === "number" && qty <= p.lowStockAt) return "pocas";
-  if (colors && colors.filter((v) => (v.quantityOnHand ?? 0) > 0).every((v) => variantPublicStockSignal(v) === "pocas")) return "pocas";
+  if (colors && colors.filter((v) => (variantStock(v) ?? 0) > 0).every((v) => variantPublicStockSignal(v) === "pocas")) return "pocas";
   return "disponible";
 }
 
@@ -2120,12 +2288,26 @@ function publicStockPatch(current: Product, existing: Record<string, unknown>, s
   const availability = publicAvailabilityValue({ availability: current.availability, stockSignal }, storeType);
   if (availability !== existing.availability) patch.availability = availability;
 
-  const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant.stockSignal]));
+  const signals = new Map((publicVariants(current) ?? []).map((variant) => [variant.id, variant]));
   if (signals.size && Array.isArray(existing.variants)) {
-    const variants = existing.variants as Array<{ id: string; stockSignal?: string }>;
+    const variants = existing.variants as Array<{ id: string; stockSignal?: string; sizes?: Array<{ id: string; stockSignal?: string }> }>;
     const next = variants.map((variant) => {
-      const signal = signals.get(variant.id);
-      return signal && signal !== variant.stockSignal ? { ...variant, stockSignal: signal } : variant;
+      const fresh = signals.get(variant.id);
+      if (!fresh) return variant;
+      let updated = variant;
+      if (fresh.stockSignal !== variant.stockSignal) updated = { ...updated, stockSignal: fresh.stockSignal };
+      // #461: a reception moves ONE combination's shelf — its public signal
+      // refreshes in place with the same coarse policy (structural size edits
+      // travel through the full republish, not this targeted patch).
+      if (fresh.sizes?.length && Array.isArray(variant.sizes)) {
+        const freshSizes = new Map(fresh.sizes.map((s) => [s.id, s.stockSignal]));
+        const sizes = variant.sizes.map((s) => {
+          const signal = freshSizes.get(s.id);
+          return signal && signal !== s.stockSignal ? { ...s, stockSignal: signal } : s;
+        });
+        if (sizes.some((s, index) => s !== variant.sizes![index])) updated = { ...updated, sizes };
+      }
+      return updated;
     });
     if (next.some((variant, index) => variant !== variants[index])) patch.variants = next;
   }
@@ -2153,11 +2335,29 @@ function preservePublicAvailability(
         .filter((v) => typeof v.id === "string" && typeof v.stockSignal === "string")
         .map((v) => [v.id as string, v.stockSignal as string])
     );
-    const variants = (next.variants as Array<Record<string, unknown>>).map((variant) =>
-      typeof variant.id === "string" && priorSignals.has(variant.id) && priorSignals.get(variant.id) !== variant.stockSignal
-        ? { ...variant, stockSignal: priorSignals.get(variant.id) }
-        : variant
+    // #461: prior per-combination signals are evidence the same way — a stale
+    // snapshot must not regress a freshly published size signal either.
+    const priorSizeSignals = new Map(
+      (prior.variants as Array<{ id?: string; sizes?: Array<{ id?: string; stockSignal?: string }> }>)
+        .filter((v) => typeof v.id === "string")
+        .map((v) => [v.id as string, new Map((v.sizes ?? []).filter((s) => typeof s.id === "string" && typeof s.stockSignal === "string").map((s) => [s.id as string, s.stockSignal as string]))])
     );
+    const variants = (next.variants as Array<Record<string, unknown>>).map((variant) => {
+      if (typeof variant.id !== "string") return variant;
+      let mergedVariant = priorSignals.has(variant.id) && priorSignals.get(variant.id) !== variant.stockSignal
+        ? { ...variant, stockSignal: priorSignals.get(variant.id) }
+        : variant;
+      const priorSizes = priorSizeSignals.get(variant.id);
+      if (priorSizes?.size && Array.isArray(variant.sizes)) {
+        const sizes = (variant.sizes as Array<Record<string, unknown>>).map((size) =>
+          typeof size.id === "string" && priorSizes.has(size.id) && priorSizes.get(size.id) !== size.stockSignal
+            ? { ...size, stockSignal: priorSizes.get(size.id) }
+            : size
+        );
+        if (sizes.some((size, index) => size !== (variant.sizes as unknown[])[index])) mergedVariant = { ...mergedVariant, sizes };
+      }
+      return mergedVariant;
+    });
     if (variants.some((variant, index) => variant !== (next.variants as unknown[])[index])) merged.variants = variants;
   }
   // A legacy summary without a signal has no evidence that the caller's
@@ -2455,6 +2655,148 @@ export async function rebuildPublicCatalog(
   });
 }
 
+// --- #461: assisted conversion of separated fichas into one design ----------
+
+/** The shelf moved or the ficha vanished since the preview — nothing was
+ * written; re-open the conversion on fresh data. */
+export class ConversionStaleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConversionStaleError";
+  }
+}
+
+/** Pending movements or structural problems — the conversion stops WHOLE and
+ * names what to resolve. */
+export class ConversionBlockedError extends Error {
+  constructor(readonly reasons: string[]) {
+    super(reasons.join(" "));
+    this.name = "ConversionBlockedError";
+  }
+}
+
+/**
+ * #461: one transaction moves every origin's shelf onto its exact combination
+ * in the main design and retires the origins from sale (archived + fusion
+ * note). Blockers and freshness are re-verified against the FRESH store data
+ * inside the transaction — a stale preview can never move pieces. Reads: main
+ * + origins + the store's orders/purchases (incidents ride inside orders);
+ * writes: those product docs only. The public side (origin links withdrawn,
+ * unified ficha republished) is finished by convertProductVariants —
+ * idempotently, so a retry after a failed publish never re-moves stock.
+ */
+export async function convertProductVariantsTx(params: {
+  storeId: string;
+  mainId: string;
+  mappings: ConversionMapping[];
+  expected: Record<string, { physical?: number; quarantine: number }>;
+}): Promise<ConversionResult> {
+  const { db } = getFirebase();
+  return runTransaction(db, async (tx) => {
+    const mainSnap = await tx.get(doc(db, "products", params.mainId));
+    if (!mainSnap.exists()) throw new ConversionStaleError("La ficha principal ya no existe; vuelve a abrir la conversión.");
+    const freshMain = { ...mainSnap.data(), id: mainSnap.id } as Product;
+    const freshSources: Product[] = [];
+    for (const mapping of params.mappings) {
+      const snap = await tx.get(doc(db, "products", mapping.productId));
+      if (!snap.exists()) throw new ConversionStaleError("Una ficha origen ya no existe; vuelve a abrir la conversión.");
+      freshSources.push({ ...snap.data(), id: snap.id } as Product);
+    }
+    // Freshness: the existence the preview showed must still be the existence now.
+    for (const source of freshSources) {
+      const seen = params.expected[source.id];
+      if (!seen) continue;
+      const physical = typeof source.quantityOnHand === "number" ? source.quantityOnHand : undefined;
+      if (physical !== seen.physical || (source.quantityQuarantined ?? 0) !== seen.quarantine) {
+        throw new ConversionStaleError(`${source.name} cambió de existencia desde la vista previa; revisa la conversión de nuevo.`);
+      }
+    }
+    // Blockers on FRESH store data — committed pieces, unreceived purchases
+    // and open incidents (they live inside the order docs). Plain reads run
+    // INSIDE the closure so every transaction retry re-runs them; this SDK's
+    // transactions cannot query, and the concurrent movements that matter all
+    // write the origin docs read above (freshness check) — Firestore retries
+    // the whole closure on that contention.
+    const ordersSnap = await getDocs(query(collection(db, "orders"), where("storeId", "==", params.storeId)));
+    const purchasesSnap = await getDocs(query(collection(db, "purchases"), where("storeId", "==", params.storeId)));
+    const orders = ordersSnap.docs.map((d) => ({ ...d.data(), id: d.id })) as Order[];
+    const incidents = orders.flatMap((order) => order.incidents ?? []);
+    const purchases = purchasesSnap.docs.map((d) => ({ ...d.data(), id: d.id })) as Purchase[];
+    const preview = buildConversionPreview(freshMain, freshSources, params.mappings, { orders, purchases, incidents });
+    if (!preview.canConvert) throw new ConversionBlockedError(preview.blockers);
+
+    const result = applyConversion(freshMain, freshSources, params.mappings);
+    const { id: mainId, ...mainData } = result.main;
+    tx.set(doc(db, "products", mainId), stripUndefined(mainData) as Record<string, unknown>, { merge: true });
+    for (const source of result.sources) {
+      const { id, ...data } = source;
+      const clean = stripUndefined(data) as Record<string, unknown>;
+      // The tracked shelf moved to the unified ficha — none stays here (an
+      // untracked origin keeps its untracked state, never zero).
+      clean.quantityOnHand = typeof source.quantityOnHand === "number" ? 0 : deleteField();
+      tx.set(doc(db, "products", id), clean, { merge: true });
+    }
+    return result;
+  });
+}
+
+/**
+ * #461 wrapper: transaction + public side. The public withdrawal of the
+ * absorbed fichas' links and the republication of the unified one are
+ * idempotent — after a failed publish, RETRYING finishes them without
+ * re-running the stock transaction (already-merged origins are detected and
+ * skipped). No silent partial states: a failure here leaves the inventory
+ * correct and names exactly what remains to finish.
+ */
+export async function convertProductVariants(params: {
+  store: Pick<Store, "id" | "slug"> & PublicPricingSource;
+  categories: Category[];
+  allStoreProducts: Product[];
+  mainId: string;
+  mappings: ConversionMapping[];
+  expected: Record<string, { physical?: number; quarantine: number }>;
+}): Promise<ConversionResult> {
+  const { db } = getFirebase();
+  // Retry detection: read the origins fresh.
+  const originSnaps = await Promise.all(params.mappings.map((m) => getDoc(doc(db, "products", m.productId))));
+  const origins = originSnaps.map((snap) => (snap.exists() ? ({ ...snap.data(), id: snap.id } as Product) : null));
+  const allMerged = origins.every((o) => o?.mergedInto);
+  let result: ConversionResult;
+  let freshMain: Product;
+  if (allMerged) {
+    // Stock already moved (a previous run committed the transaction): finish
+    // the public side only — never move pieces twice.
+    const mainSnap = await getDoc(doc(db, "products", params.mainId));
+    if (!mainSnap.exists()) throw new ConversionStaleError("La ficha principal ya no existe.");
+    freshMain = { ...mainSnap.data(), id: mainSnap.id } as Product;
+    result = { main: freshMain, sources: origins.filter((o): o is Product => !!o) };
+  } else {
+    if (origins.some((o) => o?.mergedInto)) {
+      throw new ConversionStaleError("La conversión quedó a medias (algunas fichas ya están fusionadas). Vuelve a abrir la conversión desde la ficha principal.");
+    }
+    result = await convertProductVariantsTx({ storeId: params.store.id, mainId: params.mainId, mappings: params.mappings, expected: params.expected });
+    const mainSnap = await getDoc(doc(db, "products", params.mainId));
+    freshMain = mainSnap.exists() ? ({ ...mainSnap.data(), id: mainSnap.id } as Product) : result.main;
+  }
+  // Public side — idempotent: delete is a no-op when the doc is gone.
+  const mergedById = new Map(result.sources.map((s) => [s.id, s]));
+  const nextProducts = params.allStoreProducts.map((p) => (p.id === freshMain.id ? freshMain : mergedById.get(p.id) ?? p));
+  try {
+    for (const source of result.sources) {
+      if (source.slug) await removePublicProductDoc(source.storeId, source.slug);
+    }
+    await upsertPublicProduct(freshMain, params.store.slug, nextProducts, params.categories, params.store);
+  } catch {
+    // The inventory side is already committed and stays right. Name the one
+    // step left instead of surfacing a raw error that invites unifying again
+    // (review 23-nov: the sheet no longer offers the merged origins).
+    throw new ConversionStaleError(
+      "Las fichas quedaron unificadas, pero el catálogo público no se actualizó. En Tienda → configuración, «Republicar catálogo» termina el paso (solo la dueña o la administración pueden hacerlo); no hace falta volver a unificar estas fichas."
+    );
+  }
+  return { ...result, main: freshMain };
+}
+
 /**
  * #203: open an incident on an order — appends the incident (with its
  * `opened` event) atomically. No inventory effect yet: the piece is still
@@ -2526,8 +2868,41 @@ export async function applyIncidentEventTx(params: {
     const quantity = Math.max(1, Math.round(incident.quantity || 1));
     // ── Validity from derived state (fail closed on nonsense sequences). ──
     const kind = event.kind;
+    if (kind === "resolution_agreed" && state.resolution && !state.confirmed) {
+      // Review 23-nov: an agreement that gets superseded leaves the terms it
+      // replaced on the new event — the history keeps what was agreed before.
+      const superseded = incident.replacement;
+      event.detail = {
+        ...(event.detail ?? {}),
+        supersededResolution: state.resolution.kind,
+        ...(superseded
+          ? {
+              supersededReplacementPriceCents: superseded.unitPriceCents,
+              supersededReplacementChargeDifference: superseded.chargeDifference ? 1 : 0,
+              ...(superseded.productId ? { supersededReplacementProductId: superseded.productId } : {}),
+              ...(superseded.variantId ? { supersededReplacementColorId: superseded.variantId } : {}),
+              ...(superseded.variantSizeId ? { supersededReplacementSizeId: superseded.variantSizeId } : {}),
+            }
+          : {}),
+      };
+    }
     if (kind === "resolution_agreed" && (state.resolution || !state.opened)) {
-      throw new Error("Esta incidencia ya tiene una resolución acordada.");
+      // #461 (review 23-nov): a solution that can no longer be handed over —
+      // the ficha changed after it was agreed — may be agreed again, read from
+      // the FRESH product doc. A solution that can is append-only, as always.
+      let stuck = false;
+      if (state.opened && state.resolution && !state.confirmed) {
+        const target = incident.resolution?.kind === "wait_restock"
+          ? { productId: incident.productId }
+          : { productId: incident.replacement?.productId };
+        if (target?.productId) {
+          const targetSnap = await tx.get(doc(db, "products", target.productId));
+          stuck = agreedSolutionStuckReason(incident, targetSnap.exists() ? [{ ...targetSnap.data(), id: targetSnap.id } as Product] : []) !== null;
+        } else {
+          stuck = agreedSolutionStuckReason(incident, []) !== null;
+        }
+      }
+      if (!state.opened || !stuck) throw new Error("Esta incidencia ya tiene una resolución acordada.");
     }
     // #203 r2: the AUTHORITATIVE money reconciliation happens HERE, against
     // the fresh order doc — the UI's numbers are only an estimate. The stored
@@ -2626,8 +3001,14 @@ export async function applyIncidentEventTx(params: {
       // #212 F4: wait_restock hands the restocked piece over at confirm — the
       // SAME piece leaves stock at its real stored cost, shortage included.
       // #364: the SAME COLOR when the incident is on a color line.
+      // #461: the restocked piece is the incident's exact combination.
       const effectiveTarget = agreed?.kind === "wait_restock"
-        ? (target ?? { productId: incident.productId, productName: incident.productName, unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false, ...(incident.variantId ? { variantId: incident.variantId } : {}) })
+        ? (target ?? {
+            productId: incident.productId, productName: incident.productName,
+            unitPriceCents: incident.originalUnitPriceCents, unitCostCents: 0, chargeDifference: false,
+            ...(incident.variantId ? { variantId: incident.variantId } : {}),
+            ...(incident.variantSizeId ? { variantSizeId: incident.variantSizeId } : {}),
+          })
         : target;
       if (quarantineProduct) {
         const productSnap = await tx.get(quarantineProduct);
@@ -2652,9 +3033,32 @@ export async function applyIncidentEventTx(params: {
             // actionable error, no movement, never another color.
             throw new Error("El reemplazo se vende por color y esta resolución no dice cuál. Ajusta la existencia del color desde el catálogo y registra esta entrega manualmente.");
           }
-          const onHand = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
-          if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del color ${variant.color}.`);
-          const nextVariants = applyVariantDelta({ variants }, variant.id, -quantity, event.at);
+          // #461: a color that sells by size hands over ONE combination — the
+          // talla is required (never guessed) and the shelf it leaves is its own.
+          const sizeId = effectiveTarget.variantSizeId ?? (agreed?.kind === "wait_restock" ? incident.variantSizeId : undefined);
+          const sellsBySize = variantHasSizes(variant);
+          if (sellsBySize && !sizeId) {
+            throw new Error(
+              `Esta solución se acordó sin talla y el color ${variant.color} ahora se vende por talla: no se puede confirmar así. Vuelve a acordar la solución eligiendo la talla que entregas.`
+            );
+          }
+          if (!sellsBySize && sizeId) {
+            throw new Error("Esa talla ya no se vende en ese color; revisa la incidencia.");
+          }
+          let nextVariants: Product["variants"] | null;
+          if (sizeId) {
+            const size = variant.sizes?.find((candidate) => candidate.id === sizeId);
+            if (!size) throw new Error(`La talla elegida ya no existe en el color ${variant.color}.`);
+            const onHand = typeof size.quantityOnHand === "number" ? size.quantityOnHand : 0;
+            if (onHand < quantity) {
+              throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) de la talla ${size.size} del color ${variant.color}.`);
+            }
+            nextVariants = applyCombinationDelta({ variants }, variant.id, sizeId, -quantity, event.at);
+          } else {
+            const onHand = typeof variant.quantityOnHand === "number" ? variant.quantityOnHand : 0;
+            if (onHand < quantity) throw new Error(`Solo hay ${onHand} pieza(s) disponible(s) del color ${variant.color}.`);
+            nextVariants = applyVariantDelta({ variants }, variant.id, -quantity, event.at);
+          }
           if (!nextVariants) throw new Error("El color del reemplazo ya no existe en este diseño.");
           replacementVariants = nextVariants;
         } else {
@@ -2684,12 +3088,21 @@ export async function applyIncidentEventTx(params: {
       const productSnap = await tx.get(quarantineProduct);
       const data = (productSnap.exists() ? productSnap.data() : {}) as Record<string, unknown>;
       const variants = data.variants as Product["variants"];
-      const nextVariants = incident.variantId
-        ? applyVariantDelta({ variants }, incident.variantId, quantity, event.at)
-        : null;
+      // #461: a piece sold with talla returns to ITS combination; one sold
+      // without talla on a color that now sells by size returns «sin talla» to
+      // the color (the ficha asks to distribute it) — never an invented talla.
+      const nextVariants = incident.variantSizeId
+        ? applyCombinationDelta({ variants }, incident.variantId!, incident.variantSizeId, quantity, event.at)
+        : incident.variantId
+          ? applyVariantDelta({ variants }, incident.variantId, quantity, event.at)
+          : null;
       if (incident.variantId || isVariantProduct({ variants })) {
         if (!nextVariants) {
-          throw new Error(`El diseño se vende por color y ${incident.variantId ? `el color ${incident.variantColor ?? "registrado"} ya no existe` : "esta incidencia no tiene color"}. No se puede devolver la pieza a la venta automáticamente: ajusta la existencia del color desde el catálogo y da de baja la pieza aquí.`);
+          throw new Error(
+            incident.variantSizeId
+              ? `La talla ${incident.variantSize ?? "registrada"} del color ${incident.variantColor ?? "registrado"} ya no existe en este diseño. No se puede devolver la pieza a la venta automáticamente: ajusta la existencia de la talla desde el catálogo y da de baja la pieza aquí.`
+              : `El diseño se vende por color y ${incident.variantId ? `el color ${incident.variantColor ?? "registrado"} ya no existe` : "esta incidencia no tiene color"}. No se puede devolver la pieza a la venta automáticamente: ajusta la existencia del color desde el catálogo y da de baja la pieza aquí.`
+          );
         }
         tx.update(quarantineProduct, { variants: nextVariants, quantityQuarantined: increment(-quantity), updatedAt: event.at });
       } else {
@@ -2731,10 +3144,15 @@ export async function applyIncidentEventTx(params: {
     }
 
     // ── Order doc: append the event (and the agreed resolution, once). ──
+    // Review 23-nov: a new agreement that hands over no replacement piece
+    // (refund, wait for restock) drops the stored one — keeping it left the
+    // incident pointing at a piece that can no longer be delivered.
+    const replacesAgreement = kind === "resolution_agreed" && !!resolution;
     const updated: OrderIncident = {
       ...incident,
-      ...(kind === "resolution_agreed" && resolution ? { resolution } : {}),
-      ...(kind === "resolution_agreed" && replacement ? { replacement } : {}),
+      ...(replacesAgreement ? { resolution } : {}),
+      ...(replacesAgreement && replacement ? { replacement } : {}),
+      ...(replacesAgreement && !replacement ? { replacement: undefined } : {}),
       events: [...(incident.events ?? []), event],
     };
     const nextIncidents = incidents.map((existing, i) => (i === index ? updated : existing));

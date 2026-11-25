@@ -7,6 +7,8 @@ import {
   setCartQty,
   removeCartLine,
   refreshCart,
+  refreshCartLines,
+  cartItemsForPublicProduct,
   pruneCartLines,
   cartPieces,
   cartItemFromPublicProduct,
@@ -130,5 +132,70 @@ describe("localStorage de solo-escritura-rota (#276)", () => {
     } finally {
       window.localStorage.setItem = original;
     }
+  });
+});
+
+describe("#461 combinaciones color × talla en la bolsa", () => {
+  const source = {
+    productSlug: "anillo-sol",
+    name: "Anillo Sol",
+    prices: { t_retail: 140 },
+    variants: [
+      { id: "v_dorado", color: "Dorado", stockSignal: "disponible", sizes: [
+        { id: "s4", size: "4", stockSignal: "disponible" },
+        { id: "s6", size: "6", stockSignal: "agotado" },
+      ] },
+      { id: "v_plateado", color: "Plateado", stockSignal: "disponible", sizes: [
+        { id: "s8", size: "8", stockSignal: "disponible" },
+      ] },
+      { id: "v_rosa", color: "Rosa", stockSignal: "disponible" },
+    ],
+  };
+
+  it("una línea por combinación: dos tallas del mismo color son renglones separados; sin tallas se queda a nivel color", () => {
+    const items = cartItemsForPublicProduct(source, "inventory_tiered");
+    expect(items.map((i) => i.productSlug)).toEqual([
+      "anillo-sol",
+      "anillo-sol~v_dorado~s4",
+      "anillo-sol~v_dorado~s6",
+      "anillo-sol~v_plateado~s8",
+      "anillo-sol~v_rosa",
+    ]);
+    expect(items.find((i) => i.productSlug === "anillo-sol~v_dorado~s6")).toMatchObject({
+      name: "Anillo Sol · Dorado · 6",
+      inquire: true, // talla agotada
+    });
+    expect(items.find((i) => i.productSlug === "anillo-sol~v_dorado~s4")).toMatchObject({
+      name: "Anillo Sol · Dorado · 4",
+      inquire: false,
+    });
+    expect(items.find((i) => i.productSlug === "anillo-sol~v_rosa")).toMatchObject({ name: "Anillo Sol · Rosa" });
+  });
+
+  it("prune conserva renglones de combinación mientras el diseño exista (slug base)", () => {
+    const lines = [line("anillo-sol~v_dorado~s4", "Anillo Sol · Dorado · 4", 2)];
+    expect(pruneCartLines(lines, new Set(["anillo-sol"]))).toHaveLength(1);
+  });
+
+  it("una selección retirada se marca para volver a elegir, sin sustituir ni borrar en silencio", () => {
+    const persisted = [
+      line("anillo-sol~v_dorado~s4", "Anillo Sol · Dorado · 4", 2),
+      line("anillo-sol~v_dorado~s6", "Anillo Sol · Dorado · 6", 1),
+    ];
+    // s6 retirada: ya no existe esa combinación en la proyección actual
+    const current = cartItemsForPublicProduct({
+      ...source,
+      variants: source.variants.map((v) => (v.id === "v_dorado" ? { ...v, sizes: [v.sizes![0]] } : v)),
+    }, "inventory_tiered");
+    const refreshed = refreshCartLines(persisted, current);
+    expect(refreshed.find((l) => l.productSlug.endsWith("~s4"))?.missingOption).toBeUndefined();
+    expect(refreshed.find((l) => l.productSlug.endsWith("~s6"))?.missingOption).toBe(true);
+    expect(refreshed.find((l) => l.productSlug.endsWith("~s6"))?.qty).toBe(1); // no se borra sola
+  });
+
+  it("la marca se retira cuando la combinación vuelve a existir", () => {
+    const persisted = [{ ...line("anillo-sol~v_dorado~s6", "Anillo Sol · Dorado · 6", 1), missingOption: true as const }];
+    const current = cartItemsForPublicProduct(source, "inventory_tiered");
+    expect(refreshCartLines(persisted, current).find((l) => l.productSlug.endsWith("~s6"))?.missingOption).toBeUndefined();
   });
 });

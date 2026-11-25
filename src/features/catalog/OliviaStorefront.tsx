@@ -7,6 +7,7 @@ import "../../design-system/olivia-editorial.css";
 import { Button, Badge, EmptyState, SkeletonCard, ProductImage, ProductGallery, TextField, SelectField, OLIVIA_BRAND } from "../../design-system";
 import { loadPublicStore, loadPublicCatalogSummary, loadPublicProduct, PublicCatalogNotFoundError, PublicCatalogUnpublishedError, type PublicStore, type PublicCatalog, type PublicProductSummary, type PublicProductDetail } from "../../app/firebase/publicCatalog";
 import { navigate, type RouteMatch } from "../../lib/router";
+import { normalizeCatalogText } from "../../lib/catalogText";
 import { publicPrice } from "../../lib/money";
 import { createStorefrontBuyUrl, createStorefrontContactUrl, createStorefrontResaleUrl } from "../../lib/whatsapp";
 import { OLIVIA_CONTENT } from "../../lib/oliviaContent";
@@ -30,9 +31,6 @@ function isSoldOut(product: Pick<PublicProductSummary, "availability" | "stockSi
   return publicAvailabilitySignal(product, store.type) === "agotado";
 }
 
-function normalizeCatalogText(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-MX");
-}
 
 // Keep the catalog alive across category/product routes: two reads per visit,
 // then only the detail document when opening a piece. No global/stale cache.
@@ -285,12 +283,20 @@ function ProductView({ initialStore, productSlug }: { initialStore: PublicStore;
 function ProductDetail({ product, store }: { product: PublicProductDetail; store: PublicStore }) {
   const { add, lines, setQty, notifyAdded } = useCartContext();
   const [chosenColor, setChosenColor] = useState(product.variants?.[0]?.id ?? "");
+  // #461: the exact talla of the chosen color. Saved as a LABEL: switching
+  // color keeps the talla only while it still exists there (same talla in the
+  // new color), else the first talla of that color — never an invented match.
+  const [chosenSize, setChosenSize] = useState<string | null>(null);
   const variant = product.variants?.find((v) => v.id === chosenColor) ?? product.variants?.[0];
-  const lineSlug = variant ? `${product.productSlug}~${variant.id}` : product.productSlug;
+  const sizes = variant?.sizes ?? [];
+  const effectiveSize = sizes.length ? (sizes.find((s) => s.size === chosenSize) ?? sizes[0]) : undefined;
+  const lineSlug = variant && effectiveSize
+    ? `${product.productSlug}~${variant.id}~${effectiveSize.id}`
+    : variant ? `${product.productSlug}~${variant.id}` : product.productSlug;
   const line = cartItemsForPublicProduct(product, store.type).find((item) => item.productSlug === lineSlug)!;
   const quantity = lines.find((item) => item.productSlug === lineSlug)?.qty ?? 0;
   const soldOut = variant
-    ? (store.type !== "inventory_tiered" && isSoldOut(product, store)) || variant.stockSignal === "agotado"
+    ? (store.type !== "inventory_tiered" && isSoldOut(product, store)) || variant.stockSignal === "agotado" || effectiveSize?.stockSignal === "agotado"
     : isSoldOut(product, store);
   const baseImages = [...product.images].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
   const images = variant?.imageUrl
@@ -303,6 +309,7 @@ function ProductDetail({ product, store }: { product: PublicProductDetail; store
       <div className="olv-detail-info"><p className="olv-eyebrow">Una pieza. Tu manera de llevarla.</p><h1>{product.name}</h1>
         <PublicTierPrices store={store} product={product} mode="detail" />
         {!!product.variants?.length && <SelectField label="Color" value={variant?.id ?? ""} onChange={setChosenColor} options={product.variants.map((v) => ({ value: v.id, label: `${v.color}${v.stockSignal === "agotado" ? " (agotado)" : ""}` }))} />}
+        {sizes.length > 0 && <SelectField label="Talla" value={effectiveSize?.id ?? ""} onChange={(value) => setChosenSize(sizes.find((s) => s.id === value)?.size ?? null)} options={sizes.map((s) => ({ value: s.id, label: `${s.size}${s.stockSignal === "agotado" ? " (agotada)" : ""}` }))} />}
         {soldOut && <Badge tone="neutral">Agotado</Badge>}
         {product.publicDescription && <p className="olv-body-copy">{product.publicDescription}</p>}
         <dl className="olv-specs">{([["Material", product.material], ["Acabado", product.finish], ["Medidas", product.dimensions], ["Cuidados", product.care]] as const).filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>

@@ -97,3 +97,57 @@ describe("#176 publications — publicStores sin datos de membresía (H3 de revi
     }
   });
 });
+
+describe("#461 — tallas públicas por color (señal gruesa, sin conteos)", () => {
+  const goldSizes = [
+    { id: "s4", size: "4", sku: "AUD-D-4", cost: 100, quantityOnHand: 2, createdAt: "", updatedAt: "" },
+    { id: "s6", size: "6", sku: "AUD-D-6", cost: 100, quantityOnHand: 0, createdAt: "", updatedAt: "" },
+    { id: "s7", size: "7", sku: "AUD-D-7", cost: 100, createdAt: "", updatedAt: "" }, // sin rastrear ≠ cero
+  ];
+  const sized: Product = {
+    ...loaded,
+    id: "p_sized",
+    lowStockAt: undefined, // el umbral del diseño heredado haría «pocas»; aquí se prueba la derivación por combinación
+    variants: [
+      { id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "AUD-D", photos: [], createdAt: "", updatedAt: "", sizes: goldSizes },
+      { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "AUD-P", quantityOnHand: 0, photos: [], createdAt: "", updatedAt: "" },
+    ],
+  } as Product;
+
+  it("la proyección expone las tallas del color con señal propia y sin datos privados", () => {
+    const summary = projectPublicProductSummary(sized, "x", { defaultTierId: "t_retail" }) as Record<string, unknown>;
+    const variants = summary.variants as Array<Record<string, unknown>>;
+    const gold = variants.find((v) => v.id === "v_gold")!;
+    const sizes = gold.sizes as Array<Record<string, unknown>>;
+    expect(sizes.map((s) => [s.id, s.size, s.stockSignal])).toEqual([
+      ["s4", "4", "disponible"],
+      ["s6", "6", "agotado"],
+      ["s7", "7", "disponible"], // sin rastrear nunca lee como cero
+    ]);
+    expect(sizes.map((s) => Object.keys(s).sort())).toEqual([["id", "size", "stockSignal"], ["id", "size", "stockSignal"], ["id", "size", "stockSignal"]]);
+    assertNoPrivateLeak(summary, "summary con tallas");
+    const detail = projectPublicProductDetail(sized, "x", [], { defaultTierId: "t_retail" }) as Record<string, unknown>;
+    assertNoPrivateLeak(detail, "detail con tallas");
+    expect(((detail.variants as Array<Record<string, unknown>>).find((v) => v.id === "v_gold")!.sizes as unknown[]).length).toBe(3);
+  });
+
+  it("la señal del color con tallas deriva de SUS combinaciones; el diseño agotado sólo si todo está agotado", async () => {
+    const { publicStockSignal } = await import("./firestoreData");
+    // gold tiene s4 disponible → color disponible aunque s6 agotada y s7 sin rastrear
+    const summary = projectPublicProductSummary(sized, "x") as Record<string, unknown>;
+    const variants = summary.variants as Array<Record<string, unknown>>;
+    expect(variants.find((v) => v.id === "v_gold")!.stockSignal).toBe("disponible");
+    expect(variants.find((v) => v.id === "v_silver")!.stockSignal).toBe("agotado");
+    // diseño: silver agotado pero gold disponible → disponible
+    expect(publicStockSignal(sized)).toBe("disponible");
+    // todas las combinaciones agotadas → color y diseño agotados
+    const allOut: Product = {
+      ...sized,
+      variants: [
+        { id: "v_gold", color: "Dorado", skuSuffix: "D", sku: "AUD-D", photos: [], createdAt: "", updatedAt: "", sizes: goldSizes.map((s) => ({ ...s, quantityOnHand: 0 })) },
+        { id: "v_silver", color: "Plateado", skuSuffix: "P", sku: "AUD-P", quantityOnHand: 0, photos: [], createdAt: "", updatedAt: "" },
+      ],
+    } as Product;
+    expect(publicStockSignal(allOut)).toBe("agotado");
+  });
+});

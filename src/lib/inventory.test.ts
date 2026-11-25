@@ -4,6 +4,7 @@ import {
   applyPurchaseLines,
   committedForProduct,
   committedBreakdownForProduct,
+  stockDimensionKey,
   reservationDeltas,
   reservationDeltasForOrderChange,
   DEFAULT_LOW_STOCK_AT,
@@ -14,6 +15,7 @@ import {
   projectedShortageByDimension,
   attributeProjectedShortageToLines,
   stockAlertText,
+  colorLevelLineMoves,
 } from "./inventory";
 import type { Product, PurchaseLine, Order, OrderItem } from "../types";
 
@@ -611,5 +613,166 @@ describe("projectedShortageByDimension / attributeProjectedShortageToLines (#325
     // Another order oversold p1 by 2 (stock −2); this draft adds 1 more piece.
     const perLine = attributeProjectedShortageToLines([{ key: "l1", productId: "p1", quantity: 1 }], undefined, true, [product("p1", -2)]);
     expect(perLine.get("l1")).toBe(3);
+  });
+});
+
+// #461 corte 3: per-combination committed — lines carrying variantSizeId
+// break down by their exact combination and partial deliveries discount
+// THEIR size, never a sibling's.
+describe("committedBreakdownForProduct por combinación (#461)", () => {
+  const line = (overrides: Partial<OrderItem> = {}): OrderItem =>
+    ({ lineId: "l", productId: "p1", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100, variantId: "v_gold", variantColor: "Dorado", ...overrides }) as OrderItem;
+  const order = (o: Partial<Order> = {}): Order =>
+    ({
+      id: "ord-aaa111", storeId: "s1", customerId: "c1", deposit: 0,
+      items: [line()], orderStatus: "confirmed", paymentStatus: "unpaid",
+      createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z", ...o,
+    }) as Order;
+
+  it("líneas con talla desglosan el comprometido por combinación exacta", () => {
+    const orders = [order({
+      items: [
+        line({ variantSizeId: "s6", variantSize: "6", quantity: 3 }),
+        line({ variantSizeId: "s5", variantSize: "5", quantity: 2 }),
+        line({ variantId: "v_silver", variantColor: "Plateado", quantity: 1 }),
+      ],
+    })];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    expect(breakdown.total).toBe(6);
+    const lines = breakdown.rows[0].lines;
+    expect(lines).toHaveLength(3);
+    const s6 = lines.find((l) => l.variantSizeId === "s6");
+    const s5 = lines.find((l) => l.variantSizeId === "s5");
+    const silver = lines.find((l) => l.variantId === "v_silver");
+    expect(s6).toMatchObject({ variantId: "v_gold", variantSizeId: "s6", variantSize: "6", quantity: 3 });
+    expect(s5).toMatchObject({ quantity: 2 });
+    expect(silver?.variantSizeId).toBeUndefined();
+  });
+
+  it("la entrega parcial descuenta SU combinación: 1 entregada de la 6 deja 6·2 y 5·2 intactas", () => {
+    const orders = [order({
+      items: [line({ variantSizeId: "s6", variantSize: "6", quantity: 3 }), line({ variantSizeId: "s5", variantSize: "5", quantity: 2 })],
+      deliveries: [{ id: "d1", at: "", by: "", lines: [{ productId: "p1", variantId: "v_gold", variantSizeId: "s6", quantity: 1 }] } as never],
+    })];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    const lines = breakdown.rows[0].lines;
+    expect(lines.find((l) => l.variantSizeId === "s6")?.quantity).toBe(2);
+    expect(lines.find((l) => l.variantSizeId === "s5")?.quantity).toBe(2);
+    expect(breakdown.total).toBe(4);
+  });
+
+  it("stockDimensionKey distingue la talla: la misma línea con y sin talla son dimensiones distintas", () => {
+    expect(stockDimensionKey("p1", "v_gold", "s6")).toBe("p1:v_gold:s6");
+    expect(stockDimensionKey("p1", "v_gold")).toBe("p1:v_gold");
+    expect(stockDimensionKey("p1")).toBe("p1");
+  });
+});
+
+// #461 (dictamen QA 23-nov): la proyección de faltantes lee el estante de la
+// COMBINACIÓN — nunca el campo del color, que con tallas está derivado.
+describe("faltantes por combinación (#461)", () => {
+  const design = (): Product =>
+    ({
+      id: "p1", storeId: "s1", name: "Anillo Sol", category: "jewelry", isPublic: true,
+      variants: [
+        {
+          id: "v_gold", color: "Dorado", createdAt: "", updatedAt: "",
+          sizes: [
+            { id: "d6", size: "6", quantityOnHand: 1, cost: 180, createdAt: "", updatedAt: "" },
+            { id: "d5", size: "5", quantityOnHand: 4, cost: 180, createdAt: "", updatedAt: "" },
+          ],
+        },
+      ],
+      createdAt: "", updatedAt: "",
+    }) as Product;
+  const draft = (variantSizeId: string, quantity: number, key = `l-${variantSizeId}`) => ({ key, productId: "p1", variantId: "v_gold", variantSizeId, quantity });
+
+  it("la talla 6 con 1 pieza proyecta falta al pedir 3; la talla 5 no se toca", () => {
+    const shortages = projectedShortageByDimension([draft("d6", 3)], undefined, true, [design()]);
+    expect([...shortages.values()]).toEqual([
+      { key: "p1:v_gold:d6", productId: "p1", variantId: "v_gold", variantSizeId: "d6", missing: 2 },
+    ]);
+    expect(projectedShortageByDimension([draft("d5", 4)], undefined, true, [design()]).size).toBe(0);
+  });
+
+  it("la insignia de faltante cae en la línea de SU talla (la atribución también conoce la talla)", () => {
+    const perLine = attributeProjectedShortageToLines([draft("d5", 1, "l-5"), draft("d6", 3, "l-6")], undefined, true, [design()]);
+    expect(perLine.get("l-6")).toBe(2);
+    expect(perLine.get("l-5")).toBeUndefined();
+  });
+
+  it("combinación sin rastrear estima desde 0, igual que el guardado", () => {
+    const product = design();
+    product.variants![0].sizes![0].quantityOnHand = undefined;
+    const shortages = projectedShortageByDimension([draft("d6", 2)], undefined, true, [product]);
+    expect(shortages.get("p1:v_gold:d6")?.missing).toBe(2);
+  });
+
+  it("una línea vendida sin talla en un color que ya se vende por talla no proyecta: no tiene estante", () => {
+    const legacy = { key: "l-legacy", productId: "p1", variantId: "v_gold", quantity: 99 };
+    expect(projectedShortageByDimension([legacy], undefined, true, [design()]).size).toBe(0);
+  });
+
+  it("el guardado de un faltante también nombra la talla (la tarjeta puede mostrarla)", () => {
+    const product = design();
+    product.variants![0].sizes![0].quantityOnHand = -2;
+    const shortages = shortageByDimension([{ productId: "p1", variantId: "v_gold", variantSizeId: "d6" }], [product]);
+    expect(shortages.get("p1:v_gold:d6")).toEqual({ key: "p1:v_gold:d6", productId: "p1", variantId: "v_gold", variantSizeId: "d6", missing: 2 });
+  });
+});
+
+// #461: líneas vendidas SIN talla cuyo color ahora se vende por talla. La
+// reserva no tiene a qué estante volver sola: si la persona asigna la talla en
+// el mismo cambio, las piezas van a ESA combinación; si no, quedan «sin talla»
+// en el color (la ficha pide repartirlas). Tomar piezas sin talla se rechaza.
+describe("colorLevelLineMoves (#461)", () => {
+  const line = (overrides: Partial<OrderItem> = {}): OrderItem =>
+    ({ lineId: "l1", productId: "p1", productName: "Anillo Sol", variantId: "v_gold", variantColor: "Dorado", quantity: 2, unitPrice: 400, subtotal: 800, ...overrides }) as OrderItem;
+  const order = (o: Partial<Order> = {}): Order =>
+    ({
+      id: "ord-461", storeId: "s1", customerId: "c1", deposit: 0,
+      items: [line()], orderStatus: "confirmed", paymentStatus: "unpaid",
+      createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z", ...o,
+    }) as Order;
+
+  it("cancelar sin asignar talla: toda la reserva queda sin talla (movimiento sin destino)", () => {
+    const previous = order();
+    const next = { ...previous, orderStatus: "cancelled" as const };
+    expect(colorLevelLineMoves(previous, next, "p1", "v_gold")).toEqual([
+      { lineId: "l1", productId: "p1", variantId: "v_gold", previousHeld: 2, nextHeld: 0 },
+    ]);
+  });
+
+  it("asignar la talla en el mismo cambio nombra el destino exacto", () => {
+    const previous = order();
+    const next = order({ items: [line({ variantSizeId: "d6", variantSize: "6" })] });
+    expect(colorLevelLineMoves(previous, next, "p1", "v_gold")).toEqual([
+      { lineId: "l1", productId: "p1", variantId: "v_gold", previousHeld: 2, nextHeld: 2, nextSizeId: "d6" },
+    ]);
+    // Cancelar ya con talla elegida: las 2 piezas vuelven a la combinación, no al limbo.
+    const cancelled = { ...next, orderStatus: "cancelled" as const };
+    expect(colorLevelLineMoves(next, cancelled, "p1", "v_gold")).toEqual([]);
+  });
+
+  it("con entrega registrada SIN talla, asignar la talla se reporta como bloqueado: la evidencia dejaría de descontar la línea", () => {
+    const previous = order({ items: [line({ quantity: 3 })], deliveries: [
+      { id: "d1", orderId: "ord-461", storeId: "s1", deliveredAt: "2026-11-20", recordedAt: "2026-11-20T10:00:00Z", by: "fer", lines: [{ productId: "p1", variantId: "v_gold", quantity: 1 }] },
+    ] });
+    const next = order({
+      items: [line({ quantity: 3, variantSizeId: "d6", variantSize: "6" })],
+      orderStatus: "cancelled",
+      deliveries: previous.deliveries,
+    });
+    expect(colorLevelLineMoves(previous, next, "p1", "v_gold")).toEqual([
+      { lineId: "l1", productId: "p1", variantId: "v_gold", previousHeld: 3, nextHeld: 0, remapBlocked: true },
+    ]);
+  });
+
+  it("líneas con talla o de otro color no entran", () => {
+    const previous = order({ items: [line(), line({ lineId: "l2", variantSizeId: "d6", variantSize: "6" })] });
+    const next = { ...previous, orderStatus: "cancelled" as const };
+    expect(colorLevelLineMoves(previous, next, "p1", "v_gold")).toEqual([
+      { lineId: "l1", productId: "p1", variantId: "v_gold", previousHeld: 2, nextHeld: 0 },
+    ]);
   });
 });

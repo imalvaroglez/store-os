@@ -291,13 +291,19 @@ export function CartDrawer({
   const shown = visibleSlugs ? pruneCartLines(lines, visibleSlugs) : lines;
   const [customerName, setCustomerName] = useState(() => loadCartName(store.slug));
 
+  // #461: a retired exact selection (color or combination) cannot be ordered —
+  // it stays visible with a "choose again" note, out of the estimate and the
+  // WhatsApp message. No silent substitution, no silent drop.
+  const orderable = shown.filter((l) => !l.missingOption);
+  const breakdownBySlug = new Map(orderable.map((l, index) => [l.productSlug, index]));
+
   const tiers: PublicPriceTier[] = store.priceTiers ?? [];
-  const qtyLines: CartQtyLine[] = shown.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
+  const qtyLines: CartQtyLine[] = orderable.map((l) => ({ qty: l.qty, unitPrices: l.unitPrices ?? {} }));
   // One estimate drives the drawer lines, summary and WhatsApp message.
   const request = cartRequestSummary(tiers, qtyLines);
   const pricing = calculateOrderPricing(tiers, qtyLines);
 
-  const orderLines: CartOrderLine[] = shown.map((l) => ({
+  const orderLines: CartOrderLine[] = orderable.map((l) => ({
     name: l.name,
     qty: l.qty,
     inquire: l.inquire || signalBySlug?.[l.productSlug] === "agotado",
@@ -314,11 +320,27 @@ export function CartDrawer({
       ) : (
         <div className="olv-cart-layout grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-start">
           <ul className="min-w-0 divide-y divide-(--olv-rule,var(--rule)) md:pr-2">
-            {shown.map((l, index) => {
+            {shown.map((l) => {
+              if (l.missingOption) {
+                return (
+                  <li key={l.productSlug} className="olv-cart-line flex gap-3 py-3">
+                    <ProductImage src={l.image} alt={l.name} size="thumb" natural />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-(--olv-ink,var(--ink)) wrap-break-word">{l.name}</p>
+                      <p className="text-xs text-(--olv-ink-soft,var(--ink-soft)) mt-1">
+                        Esta combinación ya no está disponible. Vuelve a elegirla en el catálogo para pedirla.
+                      </p>
+                      <Button size="sm" variant="secondary" className="mt-2" onClick={() => onSetQty(l.productSlug, 0)}>
+                        Quitar
+                      </Button>
+                    </div>
+                  </li>
+                );
+              }
               const signal = signalBySlug?.[l.productSlug];
               const legend = signal ? STOCK_LEGENDS[signal] : null;
               // Lines and the summary share one active price derivation.
-              const linePricing = request?.lineBreakdown[index];
+              const linePricing = request?.lineBreakdown[breakdownBySlug.get(l.productSlug) ?? -1];
               const unitPrice = linePricing?.unitPrice ?? l.unitPrice;
               const lineSubtotal = linePricing?.subtotal ?? (typeof unitPrice === "number" ? unitPrice * l.qty : undefined);
               return (
@@ -446,15 +468,18 @@ export function CartDrawer({
             />
             {/* 1.13.1: ONE semantic control — a single link styled as the
                 primary action. No nested button inside the anchor (invalid
-                HTML, two Tab stops for one action). */}
-            <a
-              href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex w-full items-center justify-center rounded-xl px-5 py-3.5 text-base font-semibold tracking-tight shadow-xs transition-all active:translate-y-px active:scale-[0.98] bg-(--olv-accent,var(--terracotta)) text-on-accent hover:opacity-90"
-            >
-              Enviar solicitud por WhatsApp
-            </a>
+                HTML, two Tab stops for one action). #461: nothing to send
+                while every line is a retired selection asking to re-choose. */}
+            {orderable.length > 0 && (
+              <a
+                href={buildCartOrderUrl(store, store.slug, orderLines, undefined, customerName, request)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex w-full items-center justify-center rounded-xl px-5 py-3.5 text-base font-semibold tracking-tight shadow-xs transition-all active:translate-y-px active:scale-[0.98] bg-(--olv-accent,var(--terracotta)) text-on-accent hover:opacity-90"
+              >
+                Enviar solicitud por WhatsApp
+              </a>
+            )}
           </div>
         </div>
       )}

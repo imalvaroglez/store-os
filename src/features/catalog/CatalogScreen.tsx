@@ -1,30 +1,33 @@
 import { useCallback, useEffect, useState } from "react";
 import { useListRestore } from "../../lib/listRestore";
+import { normalizeCatalogText } from "../../lib/catalogText";
 import { useStore, newProduct } from "../../app/StoreProvider";
 import {
+  Badge,
   Button,
   Card,
-  Badge,
-  EmptyState,
-  ScreenHeader,
-  Screen,
-  Sheet,
-  ProductImage,
+  Dialog,
   Dropdown,
   DropdownItem,
   DropdownSeparator,
+  EmptyState,
   IconButton,
+  ProductImage,
+  Screen,
+  ScreenHeader,
   SelectField,
-  Dialog,
+  Sheet,
   StatRow,
+  TextField,
   useToast,
 } from "../../design-system";
 import { ProductForm } from "./ProductForm";
+import { MergedIntoLink, ProductConversionSheet } from "./ProductConversionSheet";
 import { productCreationDefaults } from "./productDefaults";
 import { CATEGORY_LABELS } from "../../lib/labels";
 import { productsForStore, activeCategoriesForStore } from "../../lib/selectors";
 import { committedBreakdownForProduct, committedForProduct, stockAlertLevel, stockAlertText } from "../../lib/inventory";
-import { isVariantProduct, totalStock } from "../../lib/variants";
+import { isVariantProduct, totalStock, unassignedPieces } from "../../lib/variants";
 import { defaultTier, tiersForStore } from "../../lib/pricing";
 import type { PriceTierDef } from "../../types";
 import { navigate } from "../../lib/router";
@@ -101,6 +104,7 @@ function ProductCard({
   onEdit,
   onDelete,
   onAdjust,
+  mergedInto,
 }: {
   product: Product;
   isTiered: boolean;
@@ -111,6 +115,8 @@ function ProductCard({
   onEdit: () => void;
   onDelete: () => void;
   onAdjust: (delta: number) => void;
+  /** #461: fusion note of an absorbed ficha (Archivados view). */
+  mergedInto?: React.ReactNode;
 }) {
   const [menu, setMenu] = useState(false);
   // Stable callback so the Dropdown effect (which depends on `onClose`) does not
@@ -123,6 +129,10 @@ function ProductCard({
   // #124/M5 via #355: "sin dato" is NOT "agotado" — a color design with no
   // captured shelf shows no existence line at all, never a lying 0.
   const variantStock = isVariantProduct(product) ? totalStock(product) : null;
+  // #461: pieces of a color that sells by size but hold no talla yet (sold
+  // without talla before, or returned by such an order). Real pieces waiting
+  // for a talla — said out loud here, distributed from the ficha.
+  const unassigned = (product.variants ?? []).reduce((sum, variant) => sum + unassignedPieces(variant), 0);
 
   return (
     <Card onClick={onEdit} className="p-4 sm:p-5">
@@ -136,6 +146,7 @@ function ProductCard({
                 <Badge tone={statusTone(product)}>{statusLabel(product)}</Badge>
                 {product.isFeatured && <Badge tone="accent">★</Badge>}
                 {product.isNew && <Badge tone="info">Nuevo</Badge>}
+                {mergedInto}
               </div>
             </div>
             {/* Stop propagation so opening the menu / picking an item does not
@@ -187,11 +198,15 @@ function ProductCard({
                   );
                 })}
               </div>
-              <div className="flex gap-3 mt-1 text-xs">
+              {/* UX misión #461: at 1280px this single line overflowed the page
+                  («Comprometidas» pushed past the grid). Wrap like a sentence. */}
+              <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs">
                 {/* #294: the default price already rides the tier row above —
                     only the stock context remains here (nothing duplicated). */}
                 {isVariantProduct(product) ? (
-                  variantStock != null ? (
+                  <>
+                  {unassigned > 0 && <Badge tone="warning">Sin talla: {unassigned}</Badge>}
+                  {variantStock != null ? (
                     <>
                       <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
                         Existencia: {variantStock} en {product.variants!.length}{" "}
@@ -223,7 +238,8 @@ function ProductCard({
                         </Button>
                       )}
                     </>
-                  ) : null
+                  ) : null}
+                  </>
                 ) : typeof product.quantityOnHand === "number" ? (
                   <span className={alert ? "text-danger font-semibold" : "text-on-surface-soft"}>
                     Existencia: {product.quantityOnHand}
@@ -307,12 +323,17 @@ export function CatalogScreen() {
   const toast = useToast();
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
+  // #461 (UX misión): the editor captured something — ask before discarding.
+  const [formTouched, setFormTouched] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // #461: assisted conversion of separated fichas into one color×size design.
+  const [converting, setConverting] = useState(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
   // #463: the product whose committed pieces are being reconciled.
   const [committedFor, setCommittedFor] = useState<Product | null>(null);
   // #233: keep sort/filter/scroll when returning from a product's editor.
   const { filters, setFilters, restoreScroll } = useListRestore(`products:${activeStore?.id ?? ""}:${activeStore?.type ?? ""}`, {
-    sortKey: "createdAt" as SortKey, sortDesc: true as boolean, categoryFilter: "", restockOnly: false as boolean,
+    sortKey: "createdAt" as SortKey, sortDesc: true as boolean, categoryFilter: "", restockOnly: false as boolean, q: "" as string,
   });
   useEffect(() => {
     restoreScroll();
@@ -321,6 +342,11 @@ export function CatalogScreen() {
   const sortDesc = filters.sortDesc;
   const categoryFilter = filters.categoryFilter;
   const restockOnly = filters.restockOnly;
+  // #461 (UX misión, bloqueo): with hundreds of fichas, finding one by name or
+  // clave is the difference between operating and hojeando. Accent/case
+  // insensitive, same normalization as the public catalog.
+  const search = (filters.q as string).trim();
+  const setSearch = (next: string) => setFilters((p) => ({ ...p, q: next }));
   const setSortKey = (next: SortKey) => setFilters((p) => ({ ...p, sortKey: next }));
   const setSortDesc = (next: boolean) => setFilters((p) => ({ ...p, sortDesc: next }));
   const setCategoryFilter = (next: string) => setFilters((p) => ({ ...p, categoryFilter: next }));
@@ -342,16 +368,18 @@ export function CatalogScreen() {
   // (stockAlertLevel — the saved threshold or the conservative default);
   // a hand-rolled lowStockAt-only check undercounted products without an
   // explicit threshold and disagreed with the number that sent Fer here.
+  const needle = normalizeCatalogText(search);
   const filtered = products.filter((product) =>
     (!categoryFilter || (product.categoryIds ?? []).includes(categoryFilter)) &&
-    (!isTiered || !restockOnly || stockAlertLevel(product) !== null)
+    (!isTiered || !restockOnly || stockAlertLevel(product) !== null) &&
+    (!needle || normalizeCatalogText(`${product.name} ${product.sku ?? ""}`).includes(needle))
   );
   const sorted = [...filtered].sort((a, b) => {
     const cmp = compareBy(effectiveSortKey, a, b, defaultId);
     if (cmp !== 0) return sortDesc ? -cmp : cmp;
     return a.name.localeCompare(b.name, "es");
   });
-  const filterActive = categoryFilter !== "" || (isTiered && restockOnly);
+  const filterActive = categoryFilter !== "" || (isTiered && restockOnly) || search !== "";
   const sortOptions = (Object.keys(SORT_DEFAULTS) as SortKey[])
     .filter((k) => k !== "stock" || isTiered)
     .map((k) => ({ value: k, label: SORT_DEFAULTS[k].label }));
@@ -390,13 +418,32 @@ export function CatalogScreen() {
             >
               <Button variant="secondary" size="sm">Ver público</Button>
             </a>
-            <Button onClick={() => setCreating(true)}>+ Agregar</Button>
+            <Button onClick={() => { setFormTouched(false); setCreating(true); }}>+ Agregar</Button>
           </div>
         }
       />
 
+      {/* #461: one entry, one design at a time — the sheet previews everything
+          before any move. */}
+      {products.some((p) => p.variants?.length) && (
+        <div className="mb-4">
+          <Button variant="ghost" size="sm" onClick={() => setConverting(true)}>
+            Unificar fichas en un diseño
+          </Button>
+        </div>
+      )}
+
       {products.length > 0 && (
-        <div className="flex items-end gap-2 overflow-x-auto pb-1 mb-5">
+        <div className="flex flex-wrap items-end gap-2 pb-1 mb-5">
+          <div className="min-w-44 flex-1 max-w-xs">
+            <TextField
+              label="Buscar"
+              type="search"
+              placeholder="Nombre o clave…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
           <div className="w-36 shrink-0">
             <SelectField
               label="Categoría"
@@ -434,7 +481,7 @@ export function CatalogScreen() {
             {sortDesc ? "↓" : "↑"}
           </IconButton>
           {filterActive && (
-            <Button variant="ghost" size="sm" onClick={() => { setCategoryFilter(""); setRestockOnly(false); }}>
+            <Button variant="ghost" size="sm" onClick={() => { setCategoryFilter(""); setRestockOnly(false); setSearch(""); }}>
               Limpiar
             </Button>
           )}
@@ -463,8 +510,9 @@ export function CatalogScreen() {
               tiers={tiersForStore(activeStore)}
               committed={committedForProduct(state.orders, activeStore.id, p.id)}
               onCommitted={() => setCommittedFor(p)}
-              onEdit={() => setEditing(p)}
+              onEdit={() => { setFormTouched(false); setEditing(p); }}
               onDelete={() => setDeleting(p)}
+              mergedInto={p.mergedInto ? <MergedIntoLink product={p} onOpen={(mainId) => setEditing(products.find((x) => x.id === mainId) ?? null)} /> : undefined}
               onAdjust={(delta) => {
                 // Physical-count corrections floor at 0 (same rule the old
                 // InventoryScreen ± buttons had).
@@ -492,22 +540,44 @@ export function CatalogScreen() {
           onClose={() => setCommittedFor(null)}
         />
       )}
+      {/* #461 (UX misión): closing the editor with unsaved work used to
+          discard it silently — a whole count could vanish with the X. */}
       <Sheet
         open={creating}
-        onClose={() => setCreating(false)}
+        onClose={() => (formTouched ? setConfirmDiscard(true) : setCreating(false))}
         title="Agregar producto"
       >
         <ProductForm
+          key="creating"
           product={productCreationDefaults(newProduct(activeStore.id), activeStore.slug)}
           onDone={() => setCreating(false)}
+          onFirstCapture={() => setFormTouched(true)}
         />
       </Sheet>
 
       {editing && (
-        <Sheet open onClose={() => setEditing(null)} title="Editar producto">
-          <ProductForm product={editing} onDone={() => setEditing(null)} />
+        <Sheet open onClose={() => (formTouched ? setConfirmDiscard(true) : setEditing(null))} title="Editar producto">
+          <ProductForm product={editing} onDone={() => setEditing(null)} onFirstCapture={() => setFormTouched(true)} />
         </Sheet>
       )}
+
+      <Dialog
+        open={confirmDiscard}
+        title="¿Descartar los cambios sin guardar?"
+        onClose={() => setConfirmDiscard(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setConfirmDiscard(false)}>Seguir editando</Button>
+            <Button size="sm" variant="danger" onClick={() => { setConfirmDiscard(false); setCreating(false); setEditing(null); }}>Descartar cambios</Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Lo capturado en esta ficha todavía no se guarda y se perderá: conteos, precios, colores, tallas y fotos.
+        </p>
+      </Dialog>
+
+      <ProductConversionSheet open={converting} onClose={() => setConverting(false)} />
 
       <Dialog
         open={deleting !== null}
@@ -596,7 +666,7 @@ function CommittedSheet({
                     {row.lines.some((line) => line.variantId) && (
                       <span className="block text-xs text-on-surface-soft truncate">
                         {row.lines
-                          .map((line) => `${line.variantColor ?? "Color"} ×${line.quantity}`)
+                          .map((line) => `${line.variantColor ?? "Color"}${line.variantSize ? ` · ${line.variantSize}` : ""} ×${line.quantity}`)
                           .join(" · ")}
                       </span>
                     )}

@@ -24,6 +24,7 @@ FIRESTORE_FILES=(
   src/app/firebase/financialRules.emulator.test.ts
   src/app/firebase/closeAdjustments.emulator.test.ts
   src/app/firebase/staleWrites.emulator.test.ts
+  src/app/firebase/combinationSizes.emulator.test.ts
   src/app/firebase/rankingConfirmations.emulator.test.ts
   src/app/firebase/supplierLinks.emulator.test.ts
   src/app/firebase/storefrontSave.emulator.test.ts

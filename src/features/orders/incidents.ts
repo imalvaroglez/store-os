@@ -12,9 +12,10 @@
 //   provider replaces it. Every step is an append-only event; all state here
 //   is DERIVED, never stored twice.
 // Money flows through customerCredit (#189) — there is no second balance.
-import type { Order, OrderIncident, OrderItem } from "../../types";
+import type { Order, OrderIncident, OrderItem, Product } from "../../types";
 import { orderItems } from "../../lib/orders";
 import { orderAmountCents } from "../../lib/orderMoney";
+import { isVariantProduct, variantHasSizes } from "../../lib/variants";
 
 function eventsOf(incident: OrderIncident): OrderIncident["events"] {
   return Array.isArray(incident.events) ? incident.events : [];
@@ -99,18 +100,20 @@ export function incidentEvidenceError(
   if (!incidents?.length) return null;
   for (const incident of incidents) {
     const prevItems = orderItems(previous!);
-    const prevLine = incident.lineId
-      ? prevItems.find((item) => item.lineId === incident.lineId)
-      : prevItems.find((item) => item.productId === incident.productId && item.variantId === incident.variantId);
+    // #461: without lineId the evidence is the exact combination — two
+    // tallas of one color are two lines.
+    const isEvidence = (item: OrderItem) =>
+      item.productId === incident.productId && item.variantId === incident.variantId && item.variantSizeId === incident.variantSizeId;
+    const prevLine = incident.lineId ? prevItems.find((item) => item.lineId === incident.lineId) : prevItems.find(isEvidence);
     if (!prevLine) continue; // legacy drift: no resolvable evidence line to protect
-    const nextLine = incident.lineId
-      ? nextItems.find((item) => item.lineId === incident.lineId)
-      : nextItems.find((item) => item.productId === incident.productId && item.variantId === incident.variantId);
-    const where = `${incident.productName}${incident.variantColor ? ` · ${incident.variantColor}` : ""}`;
+    const nextLine = incident.lineId ? nextItems.find((item) => item.lineId === incident.lineId) : nextItems.find(isEvidence);
+    const where = `${incident.productName}${incident.variantColor ? ` · ${incident.variantColor}` : ""}${
+      incident.variantSize ? ` · ${incident.variantSize}` : ""
+    }`;
     if (!nextLine) {
       return `«${where}» tiene una incidencia registrada: esa línea es la evidencia de la solución y no se puede quitar del pedido. Los cambios de esa atención se registran desde la incidencia.`;
     }
-    if (nextLine.productId !== prevLine.productId || nextLine.variantId !== prevLine.variantId) {
+    if (nextLine.productId !== prevLine.productId || nextLine.variantId !== prevLine.variantId || nextLine.variantSizeId !== prevLine.variantSizeId) {
       return `«${where}» tiene una incidencia registrada: la pieza de esa línea sostiene la solución y no se puede cambiar por otra.`;
     }
     if ((nextLine.quantity ?? 0) !== (prevLine.quantity ?? 0)) {
@@ -119,6 +122,60 @@ export function incidentEvidenceError(
     if (orderAmountCents(nextLine.unitPrice) !== orderAmountCents(prevLine.unitPrice)) {
       return `«${where}» tiene una incidencia registrada: el precio de esa línea sostiene la solución registrada y no se puede cambiar en el editor.`;
     }
+  }
+  return null;
+}
+
+/**
+ * #461 (review 23-nov): why the piece an AGREED solution hands over can no
+ * longer be delivered as agreed — the ficha changed after the agreement (its
+ * color now sells by talla without one, the talla or the color vanished), or
+ * the exact combination to hand over has a TRACKED shelf of zero (UX misión:
+ * a replacement was agreed on an agotada talla and only the final confirm
+ * failed, with no way out). The incident then lets Fer agree again;
+ * confirming an impossible replacement is never the way out. Null when the
+ * solution can still be handed over. wait_restock expects the piece to be
+ * agotada — stock never makes it stuck.
+ */
+export function agreedSolutionStuckReason(
+  incident: OrderIncident,
+  products: ReadonlyArray<Pick<Product, "id" | "variants" | "quantityOnHand">>
+): string | null {
+  const agreed = incident.resolution;
+  if (!agreed || agreed.kind === "refund") return null; // a refund hands over no piece
+  const target = agreed.kind === "wait_restock"
+    ? { productId: incident.productId, variantId: incident.variantId, variantColor: incident.variantColor, variantSizeId: incident.variantSizeId }
+    : incident.replacement;
+  if (!target?.productId) return "La solución acordada no indica qué pieza entregar.";
+  const color = target.variantColor ?? "elegido";
+  const product = products.find((candidate) => candidate.id === target.productId);
+  if (!product) return "La ficha de la pieza que se iba a entregar ya no existe.";
+  if (target.variantId && !isVariantProduct(product)) return `La pieza que se iba a entregar ya no se vende por color (${color}).`;
+  const variant = target.variantId ? product.variants?.find((candidate) => candidate.id === target.variantId) : undefined;
+  if (target.variantId && !variant) return `El color ${color} ya no existe en la pieza que se iba a entregar.`;
+  if (variant && variantHasSizes(variant) && !target.variantSizeId) {
+    return `La solución se acordó sin talla y el color ${color} ahora se vende por talla.`;
+  }
+  if (variant && target.variantSizeId && !variant.sizes?.some((size) => size.id === target.variantSizeId)) {
+    return "La talla que se iba a entregar ya no existe en ese color.";
+  }
+  if (agreed.kind === "wait_restock") return null; // restocking an agotada piece is the point
+  const outOfStock = (onHand: number | undefined) => onHand === 0;
+  if (variant && target.variantSizeId) {
+    const size = variant.sizes?.find((candidate) => candidate.id === target.variantSizeId);
+    if (size && outOfStock(size.quantityOnHand)) {
+      return `La talla ${size.size} del color ${color} está agotada: no hay piezas que entregar. Vuelve a acordar la solución.`;
+    }
+    return null;
+  }
+  if (variant) {
+    if (!variantHasSizes(variant) && outOfStock(variant.quantityOnHand)) {
+      return `El color ${color} está agotado: no hay piezas que entregar. Vuelve a acordar la solución.`;
+    }
+    return null;
+  }
+  if (outOfStock(product.quantityOnHand)) {
+    return "La pieza que se iba a entregar está agotada: no hay piezas que entregar. Vuelve a acordar la solución.";
   }
   return null;
 }

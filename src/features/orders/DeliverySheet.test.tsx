@@ -171,3 +171,73 @@ describe("DeliverySheet (#333)", () => {
     expect(screen.getByText("Pendientes")).toBeTruthy();
   });
 });
+
+// #461 (dictamen QA 23-nov, crítico 2): la hoja de entrega fusionaba dos
+// tallas del mismo color en una fila y registraba la entrega sin talla; al
+// cancelar el remanente volvían piezas ya entregadas. Cada talla es su propia
+// fila y cada línea entregada lleva SU talla.
+describe("DeliverySheet — entrega por combinación color × talla (#461)", () => {
+  const sizedLine = (sizeId: string, size: string, quantity: number, lineId: string) => ({
+    lineId, productId: "p2", variantId: "v_dorado", variantColor: "Dorado", variantSizeId: sizeId, variantSize: size,
+    productName: "Anillo Sol", quantity, unitPrice: 400, subtotal: 400 * quantity,
+  });
+  const sizedOrder = (items = [sizedLine("d6", "6", 2, "l1"), sizedLine("d5", "5", 1, "l2")]): Order =>
+    ({ ...order, orderStatus: "ready", items }) as Order;
+
+  beforeEach(() => {
+    mocks.state.products = [
+      mocks.state.products[0],
+      {
+        id: "p2", storeId: "s1", name: "Anillo Sol",
+        variants: [{ id: "v_dorado", color: "Dorado", sizes: [{ id: "d6", size: "6" }, { id: "d5", size: "5" }] }],
+      },
+    ] as never;
+  });
+
+  it("dos tallas del mismo color son filas separadas y la entrega lleva SU talla en cada línea", async () => {
+    mocks.registerDelivery.mockResolvedValue({});
+    renderSheet(sizedOrder());
+    expect(screen.getByText("Anillo Sol · Dorado · 6")).toBeTruthy();
+    expect(screen.getByText("Anillo Sol · Dorado · 5")).toBeTruthy();
+    expect(screen.getAllByLabelText("Entregar")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Registrar entrega" }));
+    await waitFor(() => expect(mocks.registerDelivery).toHaveBeenCalledTimes(1));
+    const [, delivery] = mocks.registerDelivery.mock.calls[0];
+    expect(delivery.lines).toEqual([
+      { productId: "p2", variantId: "v_dorado", variantSizeId: "d6", quantity: 2 },
+      { productId: "p2", variantId: "v_dorado", variantSizeId: "d5", quantity: 1 },
+    ]);
+  });
+
+  it("entregar 1 pieza de la talla 6 registra SOLO esa combinación; la talla 5 sigue pendiente", async () => {
+    mocks.registerDelivery.mockResolvedValue({});
+    renderSheet(sizedOrder());
+    const inputs = screen.getAllByLabelText("Entregar");
+    fireEvent.change(inputs[0], { target: { value: "1" } });
+    fireEvent.change(inputs[1], { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar entrega" }));
+    await waitFor(() => expect(mocks.registerDelivery).toHaveBeenCalledTimes(1));
+    const [, delivery] = mocks.registerDelivery.mock.calls[0];
+    expect(delivery.lines).toEqual([{ productId: "p2", variantId: "v_dorado", variantSizeId: "d6", quantity: 1 }]);
+    expect(await screen.findByText("Entrega parcial registrada.")).toBeTruthy();
+  });
+
+  it("las entregas ya registradas nombran la talla (sin depender del catálogo vigente)", () => {
+    const delivered = {
+      ...sizedOrder([sizedLine("d6", "6", 1, "l1")]),
+      deliveries: [{ id: "d1", orderId: "o1", storeId: "s1", deliveredAt: "2026-11-22", recordedAt: "2026-11-22T10:00:00.000Z", by: "fer", lines: [{ productId: "p2", variantId: "v_dorado", variantSizeId: "d6", quantity: 1 }] }],
+    } as Order;
+    renderSheet(delivered);
+    expect(screen.getByText("1 × Anillo Sol · Dorado · 6")).toBeTruthy();
+  });
+
+  it("una pieza vendida sin talla en un color que ya se vende por talla se entrega tal como se vendió, nombrándolo", () => {
+    const legacy = {
+      ...order,
+      orderStatus: "ready",
+      items: [{ lineId: "l9", productId: "p2", variantId: "v_dorado", variantColor: "Dorado", productName: "Anillo Sol", quantity: 1, unitPrice: 400, subtotal: 400 }],
+    } as Order;
+    renderSheet(legacy);
+    expect(screen.getByText("Anillo Sol · Dorado (vendida sin talla)")).toBeTruthy();
+  });
+});

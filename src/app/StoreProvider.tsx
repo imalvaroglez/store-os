@@ -60,6 +60,7 @@ import {
   saveEntity,
   applyMembershipChangeTx,
   normalizePendingInvitesTx,
+  convertProductVariants as convertProductVariantsAdapter,
   saveProductPreservingConcurrentTx,
   savePurchaseTx,
   confirmSupplierLinkTx,
@@ -380,6 +381,14 @@ type StoreContextValue = {
   republishCatalog: (storeId: string) => Promise<void>;
   setActiveStore: (storeId: string | null) => void;
   upsertProduct: (product: Product, baseline?: Product) => Promise<Product>;
+  /** #461: assisted conversion — moves each origin's shelf onto its exact
+   * color×talla combination in the main design and retires the origins from
+   * sale (archived + fusion note + public links withdrawn). */
+  convertProductVariants: (params: {
+    mainId: string;
+    mappings: Array<{ productId: string; color: string; size: string }>;
+    expected: Record<string, { physical?: number; quarantine: number }>;
+  }) => Promise<void>;
   deleteProduct: (productId: string) => Promise<void>;
   upsertCategory: (category: Category) => Promise<void>;
   deleteCategory: (categoryId: string) => Promise<void>;
@@ -1107,6 +1116,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
       return saved;
+    },
+    convertProductVariants: async ({ mainId, mappings, expected }) => {
+      requireAuthenticatedUser();
+      const main = state.products.find((p) => p.id === mainId);
+      const store = state.stores.find((s) => s.id === main?.storeId);
+      if (!main || !store) throw new Error("No se encontró la ficha principal de esta tienda.");
+      // The adapter re-verifies freshness and blockers against fresh data and
+      // finishes the public side idempotently; its Conversion*Errors reach the
+      // UI verbatim (they name what to resolve).
+      const result = await convertProductVariantsAdapter({
+        store, categories: state.categories, allStoreProducts: state.products, mainId, mappings, expected,
+      });
+      dispatch({ type: "UPDATE_PRODUCT", product: result.main });
+      for (const source of result.sources) dispatch({ type: "UPDATE_PRODUCT", product: source });
     },
     deleteProduct: async (productId) => {
       const currentUser = requireAuthenticatedUser();

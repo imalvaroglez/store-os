@@ -321,6 +321,23 @@ describe("CatalogScreen filtro por categoría real", () => {
     expect(screen.queryByText(/Anillo Blossom/)).toBeNull();
   });
 
+  it("#461 piezas «sin talla» en un color que ya se vende por talla: la tarjeta las nombra (nunca se pierden a la vista)", async () => {
+    const state = sortFilterState();
+    state.products = [
+      tieredProduct({
+        id: "sol", name: "Anillo Sol", categoryIds: [CAT_ANILLOS], quantityOnHand: undefined,
+        variants: [
+          { id: "vg", color: "Dorado", quantityOnHand: 2, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z",
+            sizes: [{ id: "d6", size: "6", quantityOnHand: 3, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" }] },
+        ],
+      }),
+    ];
+    await renderCatalog(state);
+    // La existencia vendible son las 3 de la talla; las 2 sin talla se dicen aparte.
+    expect(screen.getByText(/Existencia: 3 en 1 color/)).toBeTruthy();
+    expect(screen.getByText("Sin talla: 2")).toBeTruthy();
+  });
+
   it("limpia Por surtir al cambiar de tienda", async () => {
     const state = sortFilterState();
     state.stores.find((store) => store.id === SANTI)!.type = "on_demand";
@@ -575,5 +592,57 @@ describe("#489 rejected quick stock correction", () => {
     await screen.findByText("No se pudo actualizar la existencia. Revisa tu conexión e intenta de nuevo.");
     expect(mocks.saveProduct).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Existencia: 5")).toBeTruthy();
+  });
+});
+
+
+// #461 (UX misión, bloqueo 1): cerrar el editor con trabajo sin guardar ya no
+// lo descarta en silencio.
+describe("CatalogScreen · no perder el editor por un cierre (#461)", () => {
+  async function openEditor() {
+    await renderCatalog(sortFilterState());
+    // La tarjeta abre el editor desde su menú «Acciones».
+    fireEvent.click((await screen.findAllByRole("button", { name: "Acciones" }))[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Editar" }));
+    return await screen.findByLabelText(/Nombre/);
+  }
+
+  it("cerrar con cambios capturados pregunta; «Seguir editando» conserva la ficha abierta", async () => {
+    const name = await openEditor();
+    fireEvent.change(name, { target: { value: "Anillo conteo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(screen.getByText(/¿Descartar los cambios sin guardar\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Seguir editando/ }));
+    expect((screen.getByLabelText(/Nombre/) as HTMLInputElement).value).toBe("Anillo conteo");
+  });
+
+  it("«Descartar cambios» cierra la ficha", async () => {
+    const name = await openEditor();
+    fireEvent.change(name, { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    fireEvent.click(screen.getByRole("button", { name: /Descartar cambios/ }));
+    await waitFor(() => expect(screen.queryByLabelText(/Nombre/)).toBeNull());
+  });
+
+  it("sin capturas, cerrar no pregunta", async () => {
+    await openEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(screen.queryByText(/¿Descartar los cambios/)).toBeNull();
+    await waitFor(() => expect(screen.queryByLabelText(/Nombre/)).toBeNull());
+  });
+});
+
+// #461 (UX misión, bloqueo 3): encontrar una ficha entre cientos.
+describe("CatalogScreen · buscador (#461)", () => {
+  it("busca por nombre sin acentos ni mayúsculas y por clave; cuenta y limpia", async () => {
+    await renderCatalog(sortFilterState());
+    fireEvent.change(await screen.findByLabelText("Buscar"), { target: { value: "BLOSSOM" } });
+    await waitFor(() => expect(cardNames()).toEqual(["Anillo Blossom"]));
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "ARETES" } });
+    await waitFor(() => expect(cardNames()).toEqual(["Aretes Luna"]));
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "zzz" } });
+    await waitFor(() => expect(screen.getByText(/Sin resultados/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar" }));
+    await waitFor(() => expect(cardNames().length).toBe(3));
   });
 });
