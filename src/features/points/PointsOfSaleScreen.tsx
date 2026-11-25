@@ -638,7 +638,7 @@ export function PointsOfSaleScreen() {
             </div>
             {openPoint ? (
               <div className="flex flex-wrap gap-2">
-                <Button variant="ghost" size="sm" onClick={() => { setStocking(true); setStockQuery(""); }}>
+                <Button variant="ghost" size="sm" onClick={() => { setStocking(true); setStockQuery(""); setStockIntentId(uid()); }}>
                   Surtir del almacén
                 </Button>
                 {summaryHasStock(cutRows) ? (

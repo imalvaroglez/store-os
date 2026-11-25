@@ -505,8 +505,8 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     await screen.findByText(/Corte registrado/i);
     expect(mocks.registerPointCut).toHaveBeenCalledTimes(2);
     const [first, second] = mocks.registerPointCut.mock.calls;
-    expect(second[0].intentId).toBe(first[0].intentId);
     expect(first[0].intentId).toBeTruthy();
+    expect(second[0].intentId).toBe(first[0].intentId);
     // un corte NUEVO (captura reabierta) recibe su propia intención
     fireEvent.click(screen.getByRole("button", { name: "Registrar corte" }));
     fireEvent.change(screen.getByLabelText("Vendidas"), { target: { value: "1" } });
@@ -534,6 +534,7 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     fireEvent.click(screen.getAllByRole("button", { name: "Registrar cobro" }).slice(-1)[0]);
     await screen.findByText(/Cobro registrado/i);
     const [first, second] = mocks.registerPointCutPayment.mock.calls;
+    expect(first[0].intentId).toBeTruthy();
     expect(second[0].intentId).toBe(first[0].intentId);
   });
 
@@ -557,6 +558,7 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     fireEvent.click(screen.getAllByRole("button", { name: "Anular corte" }).slice(-1)[0]);
     await screen.findByText(/Corte anulado/i);
     const [first, second] = mocks.annulPointCut.mock.calls;
+    expect(first[0].intentId).toBeTruthy();
     expect(second[0].intentId).toBe(first[0].intentId);
   });
 
@@ -575,6 +577,9 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
     await screen.findByText(/Surtido:/i);
     const [first, second] = mocks.stockPoint.mock.calls;
+    // #524 revisión: la intención debe EXISTIR — "" === "" sería una prueba vacía
+    // (así se detectó el botón de surtido que no acuñaba).
+    expect(first[0].intentId).toBeTruthy();
     expect(second[0].intentId).toBe(first[0].intentId);
   });
 
@@ -595,6 +600,7 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     fireEvent.click(screen.getByRole("button", { name: "Retirar piezas" }));
     await screen.findByText(/Retiro:/i);
     const [first, second] = mocks.withdrawFromPoint.mock.calls;
+    expect(first[0].intentId).toBeTruthy();
     expect(second[0].intentId).toBe(first[0].intentId);
   });
 });
