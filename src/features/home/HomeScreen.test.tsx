@@ -1,14 +1,23 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cleanup, render, screen, fireEvent, within } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { ToastProvider } from "../../design-system";
 import { HomeScreen } from "./HomeScreen";
 import { fixtureState } from "../../lib/testFixtures";
+import { orderReference } from "../../lib/orders";
+import { StaleOrderError } from "../../app/firebase/firestoreData";
+import { resetReturnOriginForTests, takeReturnOrigin } from "../../lib/returnOrigin";
 import type { AppState, Order, Product } from "../../types";
 
 // Direct useStore mock: synchronous mount, no hydration race (#111 removed
 // browser-storage state; the cloud mount is async and these are view tests).
 const mocks = vi.hoisted(() => ({ state: null as null | AppState, stateStatus: "ready", upsertOrder: vi.fn(), loadOrderPayments: vi.fn(async () => {}), registerOrderPayment: vi.fn() }));
+// #539: the Home card navigates to the exact order — assert the destination.
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
+vi.mock("../../lib/router", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../lib/router")>(),
+  navigate: navigateMock,
+}));
 vi.mock("../../app/StoreProvider", () => ({
   useStore: () => ({
     state: mocks.state,
@@ -50,9 +59,11 @@ function variant(id: string, color: string, quantityOnHand?: number) {
   return { id, color, quantityOnHand, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" };
 }
 
-/** Alert badge texts in DOM order (each restock badge joins name · label). */
+/** Alert badge texts in DOM order (each restock badge joins name · label).
+ * #539: matches only Badge spans (rounded-full) — order cards also join text
+ * with « · » and must not pollute the alert list. */
 function restockBadges(container: HTMLElement): string[] {
-  return Array.from(container.querySelectorAll("span"))
+  return Array.from(container.querySelectorAll("span.rounded-full"))
     .map((s) => s.textContent ?? "")
     .filter((t) => t.includes(" · "));
 }
@@ -441,5 +452,185 @@ describe("#455 r3 — el cierre visible desde Inicio", () => {
   it("la cabecera de Inicio ofrece «Cierre mensual» y navega a /productos/cierre", () => {
     render(<ToastProvider><HomeScreen /></ToastProvider>);
     expect(screen.getByRole("button", { name: "Cierre mensual" })).toBeTruthy();
+  });
+});
+
+describe("#539 Inicio → pedido exacto y «Preparar» con confirmación", () => {
+  function confirmedOrder(): Order {
+    return {
+      ...(fixtureState().orders[0] as Order),
+      id: "ord-539",
+      orderStatus: "confirmed",
+      installmentsReservedAt: undefined,
+      items: [{ lineId: "l1", productName: "Aro luna", quantity: 2, unitPrice: 500, subtotal: 1000 }],
+    };
+  }
+
+  function mountWith(order: Order) {
+    const state = fixtureState();
+    state.orders = [order];
+    mocks.state = state;
+    return render(<ToastProvider><HomeScreen /></ToastProvider>);
+  }
+
+  /** La misma pantalla con otro estado: como cuando la sincronización trae el pedido cambiado. */
+  function syncWith(view: ReturnType<typeof mountWith>, order: Order) {
+    const state = fixtureState();
+    state.orders = [order];
+    mocks.state = state;
+    view.rerender(<ToastProvider><HomeScreen /></ToastProvider>);
+  }
+
+  beforeEach(() => {
+    navigateMock.mockClear();
+    resetReturnOriginForTests();
+  });
+  // The confirm action arms on a timer (the dialog's entry motion): let it pass.
+  const confirmButton = () => screen.getByRole("button", { name: "Preparar pedido" });
+  const settle = () => waitFor(() => expect(confirmButton()).toBeEnabled());
+
+  it("tocar la tarjeta abre el pedido EXACTO sin cambiar su estado", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    const openCard = await screen.findByRole("button", { name: /Aro luna/ });
+    fireEvent.click(openCard);
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith("/pedidos/ord-539");
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("la tarjeta se identifica con su folio #XXXXXX (convención de la app)", async () => {
+    mountWith(confirmedOrder());
+    const openCard = await screen.findByRole("button", { name: /Aro luna/ });
+    expect(openCard.textContent).toContain(`#${orderReference("ord-539")}`);
+  });
+
+  it("la tarjeta dice cuántas piezas lleva cada producto, como la lista de Pedidos (no hay que abrirlo)", async () => {
+    mountWith(confirmedOrder()); // 2 × Aro luna
+    const openCard = await screen.findByRole("button", { name: /Aro luna/ });
+    expect(openCard.textContent).toContain("2 × Aro luna");
+  });
+
+  it("la mitad inferior de la tarjeta (Total/Saldo) también abre el pedido, sin cambiar su estado", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    await screen.findByRole("button", { name: /Aro luna/ });
+    // QA minor 2: the money half looked tappable and did nothing.
+    fireEvent.click(screen.getByText("Saldo"));
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith("/pedidos/ord-539");
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("abrir desde Inicio registra el retorno: el editor vuelve a Inicio, no a la lista", async () => {
+    mountWith(confirmedOrder());
+    fireEvent.click(await screen.findByRole("button", { name: /Aro luna/ }));
+    expect(takeReturnOrigin("ord-539")).toBe("/");
+  });
+
+  it("las acciones de la tarjeta no abren el pedido: «Preparar» solo confirma, «Cobrar» abre Cobros", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    // A delivered order with a pending balance offers «Cobrar» instead of a verb.
+    cleanup();
+    const delivered = { ...confirmedOrder(), id: "ord-539-cobrar", orderStatus: "delivered" } as Order;
+    mountWith(delivered);
+    fireEvent.click(await screen.findByRole("button", { name: "Cobrar" }));
+    await waitFor(() => expect(mocks.loadOrderPayments).toHaveBeenCalled());
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("«Preparar» abre confirmación que identifica el pedido y el paso Confirmado → Preparando", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toMatch(/Confirmado/);
+    expect(dialog.textContent).toMatch(/Preparando/);
+    expect(within(dialog).getByText(/Aro luna|ord-539/)).toBeTruthy();
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("Cancelar deja todo intacto", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+    expect((mocks.state!.orders[0] as Order).orderStatus).toBe("confirmed");
+  });
+
+  it("Confirmar cambia ÚNICAMENTE ese pedido a Preparando", async () => {
+    const order = confirmedOrder();
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    await settle();
+    fireEvent.click(confirmButton());
+    expect(mocks.upsertOrder).toHaveBeenCalledOnce();
+    const saved = mocks.upsertOrder.mock.calls[0][0] as Order;
+    expect(saved.id).toBe("ord-539");
+    expect(saved.orderStatus).toBe("preparing");
+  });
+
+  it("si el pedido cambió mientras la confirmación estaba abierta, muestra su estado actualizado y NO avanza", async () => {
+    const order = confirmedOrder();
+    const view = mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    // otra sesión lo prepara mientras el diálogo está abierto: la sincronización lo trae
+    syncWith(view, { ...order, orderStatus: "ready" });
+    await settle();
+    fireEvent.click(confirmButton());
+    expect(screen.getByText(/ya no está Confirmado: ahora está Listo\./)).toBeTruthy();
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+  });
+
+  it("un doble toque sobre «Preparar» no confirma: mientras el diálogo entra, «Preparar pedido» está deshabilitado", async () => {
+    mountWith(confirmedOrder());
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    // El segundo toque de un doble toque cae donde acaba de aparecer «Preparar pedido».
+    expect(confirmButton()).toBeDisabled(); // a la vista: aún no contesta
+    fireEvent.click(confirmButton());
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy(); // sigue abierto: nada se confirma sin leerlo
+    await settle();
+    fireEvent.click(confirmButton());
+    expect(mocks.upsertOrder).toHaveBeenCalledOnce();
+  });
+
+  it("«Marcar listo» conserva su avance directo (sin confirmación)", async () => {
+    const order = { ...confirmedOrder(), orderStatus: "preparing" as const };
+    mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Marcar listo" }));
+    expect(mocks.upsertOrder).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Misión UX #539: sin aviso no se sabía si había guardado; la lista sí avisaba.
+    expect(await screen.findByText(`Pedido #${orderReference("ord-539")} avanzado a «Listo»`)).toBeTruthy();
+  });
+
+  it("un avance directo rechazado porque el pedido cambió en otro dispositivo dice ese motivo", async () => {
+    mountWith({ ...confirmedOrder(), orderStatus: "preparing" });
+    mocks.upsertOrder.mockRejectedValueOnce(new StaleOrderError());
+    fireEvent.click(await screen.findByRole("button", { name: "Marcar listo" }));
+    expect(await screen.findByText("El pedido cambió en otro dispositivo. Vuelve a entrar para ver la versión reciente.")).toBeTruthy();
+  });
+
+  it("si el pedido de la confirmación sale de la tienda mientras el diálogo está abierto, se cierra y no reaparece al volver", async () => {
+    const order = confirmedOrder();
+    const view = mountWith(order);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    // deja el contexto de la tienda (otro la movió) y después regresa
+    syncWith(view, { ...order, storeId: "otra-tienda" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    syncWith(view, order);
+    await screen.findByRole("button", { name: "Preparar" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mocks.upsertOrder).not.toHaveBeenCalled();
   });
 });

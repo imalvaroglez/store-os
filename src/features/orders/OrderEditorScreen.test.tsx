@@ -58,6 +58,17 @@ describe("OrderEditorScreen back target (#463)", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it("#539: returns to Inicio when the pedido was opened from the Pedidos activos card", () => {
+    setReturnOrigin("o1", "/");
+    render(<ToastProvider><OrderEditorScreen /></ToastProvider>);
+    // The label names the REAL destination — «← Pedidos» sent the operator to
+    // the list instead of the Inicio she came from (QA minor 2).
+    const backSpy = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    screen.getByRole("button", { name: "← Inicio" }).click();
+    expect(backSpy).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("keeps the orders list as the default when no origin was recorded", () => {
     render(<ToastProvider><OrderEditorScreen /></ToastProvider>);
     expect(screen.getByRole("button", { name: "← Pedidos" })).toBeTruthy();

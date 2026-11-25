@@ -48,7 +48,7 @@ export function OrderEditorScreen() {
               else navigate("/pedidos");
             }}
           >
-            {returnTo === "/productos" ? "← Productos" : "← Pedidos"}
+            {returnTo === "/productos" ? "← Productos" : returnTo === "/" ? "← Inicio" : "← Pedidos"}
           </Button>
         )}
       />
