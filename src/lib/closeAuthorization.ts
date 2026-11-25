@@ -98,6 +98,13 @@ export function closeStatus(input: {
   if (c.linesWithoutCost.length > 0) {
     impediments.push({ reason: `Hay un costo desconocido que podría afectar ${monthName}`, queue: "costo" });
   }
+  // #524 M2 (QA 25-nov): a month with point cuts whose cost is still pending
+  // is a PARTIAL calculation — same discipline as linesWithoutCost. Sealing it
+  // would freeze the gap: the closed month blocks annulling the cut.
+  if (c.pointCortesWithoutCost.length > 0) {
+    const units = c.pointCortesWithoutCost.reduce((sum, corte) => sum + corte.pendingUnits, 0);
+    impediments.push({ reason: `Cortes de puntos de venta con costo de ${units} ${units === 1 ? "pieza pendiente" : "piezas pendientes"} que podrían afectar ${monthName}`, queue: "costo" });
+  }
   if (c.deliveredWithoutLine.length > 0 || c.unreadableData.length > 0) {
     impediments.push({ reason: "Hay entregas con evidencia que no se puede interpretar del todo", queue: "pedidos" });
   }

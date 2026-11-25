@@ -115,3 +115,21 @@ describe("#458 r2 — mayores de revisión", () => {
     expect(status.state).toBe("listo");
   });
 });
+
+describe("#524 M2 — costo de punto pendiente impide el cierre", () => {
+  it("un mes con cortes de punto sin costo queda en revisión (cola costo), igual que linesWithoutCost", () => {
+    const close = baseClose({
+      coverage: {
+        deliveredWithoutDate: [], linesWithoutCost: [], unconfirmedCollections: [],
+        deliveredWithoutLine: [], unreadableData: [],
+        pointCortesWithoutCost: [{ corteId: "corte_x", pointName: "Mostrador centro", pendingUnits: 3 }],
+        complete: false,
+      },
+      costCoverage: { partialByMissingCost: true },
+    });
+    const status = closeStatus({ month: NOV, today: "2026-12-02", close });
+    expect(status.state).toBe("en_revision");
+    expect(status.canClose).toBe(false);
+    expect(status.impediments.some((i) => /costo de punto|cortes de puntos/i.test(i.reason) && i.queue === "costo")).toBe(true);
+  });
+});
