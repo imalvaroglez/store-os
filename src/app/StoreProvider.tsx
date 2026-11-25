@@ -475,9 +475,9 @@ type StoreContextValue = {
   annulPointCut: (params: AnnulPointCutParams) => Promise<AnnulPointCutResult>;
   /** #524: move available warehouse pieces to the point (label price
    * confirmed by the operator); republishes public availability after. */
-  stockPoint: (params: { storeId: string; pointId: string; physicalDate: string; lines: StockPointLine[] }) => Promise<StockPointResult>;
+  stockPoint: (params: { storeId: string; pointId: string; physicalDate: string; intentId: string; lines: StockPointLine[] }) => Promise<StockPointResult>;
   /** #524: return sellable pieces from the point to their exact variant. */
-  withdrawFromPoint: (params: { storeId: string; pointId: string; lines: WithdrawLine[] }) => Promise<WithdrawResult>;
+  withdrawFromPoint: (params: { storeId: string; pointId: string; intentId: string; lines: WithdrawLine[] }) => Promise<WithdrawResult>;
   deleteExpense: (expenseId: string) => Promise<void>;
   assignExpense: (
     expense: LooseExpense,
@@ -1712,7 +1712,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     stockPoint: async (params) => {
       requireAuthenticatedUser();
-      const result = await stockPointTrusted({ ...params, intentId: uid() });
+      const result = await stockPointTrusted(params);
       // #524: warehouse stock moved — keep the public catalog's availability
       // in step (retryable alone through the sync notice, never blocking the
       // movement itself).
@@ -1727,7 +1727,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     withdrawFromPoint: async (params) => {
       requireAuthenticatedUser();
-      const result = await withdrawFromPointTrusted({ ...params, intentId: uid() });
+      const result = await withdrawFromPointTrusted(params);
       const store = state.stores.find((candidate) => candidate.id === params.storeId);
       if (store && result.withdrawn) {
         const changed = [...new Set(params.lines.map((line) => line.productId))];

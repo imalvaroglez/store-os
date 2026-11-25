@@ -478,3 +478,123 @@ describe("#524 anulación de corte en la ficha con mes-abierto", () => {
     expect(screen.queryByRole("button", { name: "Anular corte" })).toBeNull();
   });
 });
+
+describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intención", () => {
+  const ISSUE_ENTRY: PointEntry = {
+    id: "pe1", storeId: "store_olivia", pointId: "store_olivia__mostrador", productId: "p1",
+    productName: "Reloj Citizen", entryDate: "2026-11-01", quantity: 10, consumedQty: 0,
+    markedPriceCents: 10000, unitCostCents: 5000, createdAt: NOW, updatedAt: NOW,
+  };
+  function withPoint() {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [ISSUE_ENTRY];
+  }
+
+  it("corte: el reintento lleva el MISMO intentId; un corte nuevo lleva otro", async () => {
+    withPoint();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Registrar corte" }));
+    fireEvent.change(screen.getByLabelText("Vendidas"), { target: { value: "5" } });
+    mocks.registerPointCut.mockRejectedValueOnce(new Error("Network request failed"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Registrar corte" }).slice(-1)[0]);
+    await screen.findByText(/Network request failed/i);
+    fireEvent.click(screen.getAllByRole("button", { name: "Registrar corte" }).slice(-1)[0]);
+    await screen.findByText(/Corte registrado/i);
+    expect(mocks.registerPointCut).toHaveBeenCalledTimes(2);
+    const [first, second] = mocks.registerPointCut.mock.calls;
+    expect(second[0].intentId).toBe(first[0].intentId);
+    expect(first[0].intentId).toBeTruthy();
+    // un corte NUEVO (captura reabierta) recibe su propia intención
+    fireEvent.click(screen.getByRole("button", { name: "Registrar corte" }));
+    fireEvent.change(screen.getByLabelText("Vendidas"), { target: { value: "1" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Registrar corte" }).slice(-1)[0]);
+    await screen.findByText(/Corte registrado.*2|Quedan/i);
+    const third = mocks.registerPointCut.mock.calls[2];
+    expect(third[0].intentId).not.toBe(first[0].intentId);
+  });
+
+  it("cobro: el reintento lleva el MISMO intentId", async () => {
+    withPoint();
+    state.pointOperations = [
+      {
+        id: "corte_previo", storeId: "store_olivia", pointId: "store_olivia__mostrador", kind: "corte" as const,
+        status: "pendiente_de_cobro" as const, effectiveDate: "2026-11-21", confirmedBy: "u1", confirmedAt: NOW,
+        totals: { grossSaleCents: 50000, commissionCents: 10000, netCents: 40000, soldCostCents: 25000, pendingCostUnits: 0, writeOffCostCents: 0, writeOffPendingUnits: 0, resultCents: 15000, remainingUnits: 4 },
+      },
+    ];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    mocks.registerPointCutPayment.mockRejectedValueOnce(new Error("Network request failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Registrar cobro" }).slice(-1)[0]);
+    await screen.findByText(/Network request failed/i);
+    fireEvent.click(screen.getAllByRole("button", { name: "Registrar cobro" }).slice(-1)[0]);
+    await screen.findByText(/Cobro registrado/i);
+    const [first, second] = mocks.registerPointCutPayment.mock.calls;
+    expect(second[0].intentId).toBe(first[0].intentId);
+  });
+
+  it("anulación: el reintento lleva el MISMO intentId", async () => {
+    withPoint();
+    state.pointOperations = [
+      {
+        id: "corte_previo", storeId: "store_olivia", pointId: "store_olivia__mostrador", kind: "corte" as const,
+        status: "pendiente_de_cobro" as const, effectiveDate: "2026-11-21", confirmedBy: "u1", confirmedAt: NOW,
+        totals: { grossSaleCents: 50000, commissionCents: 10000, netCents: 40000, soldCostCents: 25000, pendingCostUnits: 0, writeOffCostCents: 0, writeOffPendingUnits: 0, resultCents: 15000, remainingUnits: 4 },
+      },
+    ];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Anular corte" }));
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Error de captura" } });
+    mocks.annulPointCut.mockRejectedValueOnce(new Error("Network request failed"));
+    const annulConfirm = screen.getAllByRole("button", { name: "Anular corte" }).slice(-1)[0];
+    fireEvent.click(annulConfirm);
+    await screen.findByText(/Network request failed/i);
+    fireEvent.click(screen.getAllByRole("button", { name: "Anular corte" }).slice(-1)[0]);
+    await screen.findByText(/Corte anulado/i);
+    const [first, second] = mocks.annulPointCut.mock.calls;
+    expect(second[0].intentId).toBe(first[0].intentId);
+  });
+
+  it("surtir: el reintento lleva el MISMO intentId", async () => {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
+    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "3" } });
+    mocks.stockPoint.mockRejectedValueOnce(new Error("Network request failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    await screen.findByText(/Network request failed/i);
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    await screen.findByText(/Surtido:/i);
+    const [first, second] = mocks.stockPoint.mock.calls;
+    expect(second[0].intentId).toBe(first[0].intentId);
+  });
+
+  it("retirar: el reintento lleva el MISMO intentId", async () => {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [
+      { id: "pe1", storeId: "store_olivia", pointId: "store_olivia__mostrador", productId: "p1", productName: "Perfume", entryDate: "2026-11-01", quantity: 4, consumedQty: 0, markedPriceCents: 95000, unitCostCents: 40000, createdAt: NOW, updatedAt: NOW } as PointEntry,
+    ];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Retirar" }));
+    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "2" } });
+    mocks.withdrawFromPoint.mockRejectedValueOnce(new Error("Network request failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Retirar piezas" }));
+    await screen.findByText(/Network request failed/i);
+    fireEvent.click(screen.getByRole("button", { name: "Retirar piezas" }));
+    await screen.findByText(/Retiro:/i);
+    const [first, second] = mocks.withdrawFromPoint.mock.calls;
+    expect(second[0].intentId).toBe(first[0].intentId);
+  });
+});

@@ -345,6 +345,19 @@ export function PointsOfSaleScreen() {
   // keeps the SAME id so the callable can answer alreadyConverted instead of
   // bouncing with "ya fue convertido".
   const [intentId, setIntentId] = useState("");
+  // #524 M1 (QA 25-nov): the SAME discipline for every money/stock operation.
+  // The intent is minted when the dialog OPENS and survives failed attempts;
+  // a retry reuses it, so a commit whose response was lost answers
+  // already-applied instead of applying the cut/charge twice. Only a
+  // CONFIRMED outcome (applied or already-applied) retires it — the next
+  // session mints a fresh one. Editing rows between attempts keeps the
+  // intent: if the lost attempt committed, the retry refuses (never
+  // double-applies).
+  const [cutIntentId, setCutIntentId] = useState("");
+  const [payIntentId, setPayIntentId] = useState("");
+  const [annulIntentId, setAnnulIntentId] = useState("");
+  const [stockIntentId, setStockIntentId] = useState("");
+  const [withdrawIntentId, setWithdrawIntentId] = useState("");
   const previewEntries = useMemo(
     () =>
       surtidoOrder && openPoint
@@ -422,7 +435,7 @@ export function PointsOfSaleScreen() {
       const result = await registerPointCut({
         storeId,
         pointId: openPoint.id,
-        intentId: uid(),
+        intentId: cutIntentId,
         effectiveDate: cutDate,
         commissionRate: effectiveCommission,
         lines,
@@ -441,6 +454,7 @@ export function PointsOfSaleScreen() {
       setBajas([]);
       setCommissionPct("");
       setCutDate(todayIso());
+      setCutIntentId("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo registrar el corte.");
     } finally {
@@ -456,7 +470,7 @@ export function PointsOfSaleScreen() {
         storeId,
         pointId: openPoint.id,
         corteId: payingCorteOp.id,
-        intentId: uid(),
+        intentId: payIntentId,
         method: payMethod,
         date: payDate,
       });
@@ -468,6 +482,7 @@ export function PointsOfSaleScreen() {
       setPayingCorte(null);
       setPayDate(todayIso());
       setPayMethod("cash");
+      setPayIntentId("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo registrar el cobro.");
     } finally {
@@ -499,6 +514,7 @@ export function PointsOfSaleScreen() {
         storeId,
         pointId: openPoint.id,
         physicalDate: todayIso(),
+        intentId: stockIntentId,
         lines,
       });
       toast.success(
@@ -510,6 +526,7 @@ export function PointsOfSaleScreen() {
       setStockQty({});
       setStockPrice({});
       setStockQuery("");
+      setStockIntentId("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo surtir el punto.");
     } finally {
@@ -530,7 +547,7 @@ export function PointsOfSaleScreen() {
     if (lines.length === 0) return;
     setBusy(true);
     try {
-      const result = await withdrawFromPoint({ storeId, pointId: openPoint.id, lines });
+      const result = await withdrawFromPoint({ storeId, pointId: openPoint.id, intentId: withdrawIntentId, lines });
       toast.success(
         result.withdrawn
           ? `Retiro: ${result.units} piezas de vuelta al almacén.`
@@ -538,6 +555,7 @@ export function PointsOfSaleScreen() {
       );
       setWithdrawing(false);
       setWithdrawQty({});
+      setWithdrawIntentId("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo retirar la mercancía.");
     } finally {
@@ -553,12 +571,13 @@ export function PointsOfSaleScreen() {
         storeId,
         pointId: openPoint.id,
         corteId: annulTarget.id,
-        intentId: uid(),
+        intentId: annulIntentId,
         motive: annulMotive.trim(),
       });
       toast.success(result.registered ? "Corte anulado: las piezas vuelven al punto." : "Este corte ya estaba anulado.");
       setAnnulling(null);
       setAnnulMotive("");
+      setAnnulIntentId("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo anular el corte.");
     } finally {
@@ -623,12 +642,12 @@ export function PointsOfSaleScreen() {
                   Surtir del almacén
                 </Button>
                 {summaryHasStock(cutRows) ? (
-                  <Button variant="ghost" size="sm" onClick={() => setWithdrawing(true)}>
+                  <Button variant="ghost" size="sm" onClick={() => { setWithdrawing(true); setWithdrawIntentId(uid()); }}>
                     Retirar
                   </Button>
                 ) : null}
                 {latestUnpaidCorte ? (
-                  <Button variant="ghost" size="sm" onClick={() => { setAnnulling(latestUnpaidCorte.id); setAnnulMotive(""); }}>
+                  <Button variant="ghost" size="sm" onClick={() => { setAnnulling(latestUnpaidCorte.id); setAnnulMotive(""); setAnnulIntentId(uid()); }}>
                     Anular corte
                   </Button>
                 ) : null}
@@ -639,7 +658,8 @@ export function PointsOfSaleScreen() {
               <Button
                 variant="secondary"
                 onClick={() => {
-                  setCutOpen((value) => !value);
+                  if (!cutOpen) setCutIntentId(uid());
+                  setCutOpen(!cutOpen);
                   setCutDate(todayIso());
                 }}
               >
@@ -660,6 +680,7 @@ export function PointsOfSaleScreen() {
                       size="sm"
                       onClick={() => {
                         setPayingCorte(corte.id);
+                        setPayIntentId(uid());
                         setPayDate(todayIso());
                       }}
                     >
