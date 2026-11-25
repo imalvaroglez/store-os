@@ -1,5 +1,5 @@
 import type { Order, OrderStatus, PaymentStatus } from "../../types";
-import { effectiveOrderStatus } from "../../lib/orders";
+import { effectiveOrderStatus, orderReference } from "../../lib/orders";
 
 // Spanish labels for order statuses + the linear next step in the flow.
 // Labels are the product language; the enum stays in English.
@@ -54,6 +54,11 @@ export function nextActionVerb(status: OrderStatus): string | null {
   const next = nextStatus(status);
   if (!next) return null;
   return ORDER_ACTION_VERBS[next];
+}
+
+/** What the operator reads after an advance: WHICH order (folio) and the status it reached. */
+export function advancedMessage(order: Order): string {
+  return `Pedido #${orderReference(order.id)} avanzado a «${ORDER_STATUS_LABELS[effectiveOrderStatus(order)]}»`;
 }
 
 /** One order advanced to its next status (new updatedAt), or null when terminal.

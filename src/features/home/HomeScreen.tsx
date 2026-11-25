@@ -15,14 +15,18 @@ import { ordersForStore, productsToRestock, customersForStore } from "../../lib/
 import { monthRanking, currentMonth } from "../../lib/resellerRanking";
 import { stockAlertLevel, stockAlertText } from "../../lib/inventory";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
-import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderTotals } from "../../lib/orders";
+import { effectiveOrderStatus, orderCountsTowardToPay, orderItems, orderReference, orderTotals } from "../../lib/orders";
+import { setReturnOrigin } from "../../lib/returnOrigin";
+import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { iconicStatus } from "../../lib/iconic";
 import { formatDate } from "../../lib/dates";
-import { ORDER_STATUS_LABELS, nextActionVerb, advanceOrder } from "../orders/orderStatus";
+import { ORDER_STATUS_LABELS, advancedMessage, nextActionVerb, advanceOrder } from "../orders/orderStatus";
 import { OrderPaymentsSheet } from "../orders/OrderPaymentsSheet";
 import { FinancialPositionCard } from "../financial/FinancialPositionCard";
 import { DeliverySheet } from "../orders/DeliverySheet";
 import { pendingDeliveries } from "../../lib/deliveries";
+import { PrepareOrderDialog } from "../orders/PrepareOrderDialog";
+import { orderLineLabel } from "../orders/orderTicket";
 import { navigate } from "../../lib/router";
 import { useToast } from "../../design-system";
 
@@ -38,6 +42,10 @@ export function HomeScreen() {
   const [expressPrefillCents, setExpressPrefillCents] = useState<number | null>(null);
   // #333: delivery-evidence sheet for the "Entregar" rows (same as the card).
   const [deliveryOrderId, setDeliveryOrderId] = useState<string | null>(null);
+  // #539: «Preparar» is the one Home action that CHANGES an order's state on
+  // its own — it confirms first, naming the order and the exact step. The
+  // dialog is shared with the Pedidos list (QA verdict: one contract).
+  const [prepareOrderId, setPrepareOrderId] = useState<string | null>(null);
   if (!activeStore) return null;
   const isTiered = activeStore.type === "inventory_tiered";
   const orders = ordersForStore(state.orders, activeStore.id);
@@ -90,6 +98,19 @@ export function HomeScreen() {
         .sort((a, b) => a.status!.until.localeCompare(b.status!.until))
     : [];
 
+  /** Opens the EXACT order and remembers Inicio as the way back: the editor's
+   * back action returns here (#463 origin contract), not to the orders list. */
+  function openOrder(orderId: string) {
+    setReturnOrigin(orderId, "/");
+    navigate(`/pedidos/${orderId}`);
+  }
+
+  // The order the «Preparar» confirmation names. One that left the store
+  // context while its dialog was open closes it for good — otherwise the
+  // dialog would pop up again if the order came back (review note #539).
+  const prepareOrder = prepareOrderId ? orders.find((o) => o.id === prepareOrderId) ?? null : null;
+  if (prepareOrderId && !prepareOrder) setPrepareOrderId(null);
+
   async function advance(orderId: string) {
     const o = orders.find((x) => x.id === orderId);
     if (!o) return;
@@ -97,8 +118,11 @@ export function HomeScreen() {
     if (!advanced) return;
     try {
       await upsertOrder(advanced);
-    } catch {
-      toast.error("No se pudo actualizar el pedido.");
+      // Same notice as the Pedidos list: without it the operator cannot tell
+      // whether «Marcar listo» saved (UX misión #539).
+      toast.success(advancedMessage(advanced));
+    } catch (error) {
+      toast.error(error instanceof StaleOrderError ? error.message : "No se pudo actualizar el pedido.");
     }
   }
 
@@ -227,26 +251,50 @@ export function HomeScreen() {
               const status = effectiveOrderStatus(o);
               const verb = nextActionVerb(status);
               const totals = orderTotals(o);
-              const preview = orderItems(o).slice(0, 2).map((item) => item.productName).join(", ");
+              // Same as the Pedidos list: quantity and color per line, so the
+              // card says what the order carries without opening it.
+              const preview = orderItems(o).slice(0, 2).map((item) => `${item.quantity} × ${orderLineLabel(item)}`).join(", ");
               return (
-                <Card key={o.id}>
+                <Card
+                  key={o.id}
+                  // #539 (QA minor): the WHOLE card opens the EXACT order — the
+                  // route mental «veo mi pedido → lo toco» — Total/Saldo included.
+                  // It never changes state; the actions below stop the tap.
+                  onClick={() => openOrder(o.id)}
+                >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-ink text-sm truncate">
-                        {preview || "Sin productos"}
-                      </p>
-                      <p className="text-xs text-ink-soft truncate">
-                        {customer?.name ?? "—"} · {ORDER_STATUS_LABELS[status]}
-                      </p>
-                    </div>
+                    {/* The keyboard/assistive entry: same destination as the
+                        card, so a focus + Enter opens the order too. */}
+                    <Button
+                      variant="ghost"
+                      className="min-w-0! flex-1! justify-start! px-0! text-left!"
+                      onClick={(event) => { event.stopPropagation(); openOrder(o.id); }}
+                    >
+                      <span className="min-w-0">
+                        {/* UX misión r2 #539: with quantities a two-item order no longer
+                            fits one line on a phone — let it take a second one instead of
+                            hiding a product behind an ellipsis. */}
+                        <span className="block font-semibold text-ink text-sm line-clamp-2 break-words">
+                          {preview || "Sin productos"}
+                        </span>
+                        {/* The folio is the app's order identity (#XXXXXX). */}
+                        <span className="block text-xs text-ink-soft truncate">
+                          #{orderReference(o.id)} · {customer?.name ?? "—"} · {ORDER_STATUS_LABELS[status]}
+                        </span>
+                      </span>
+                    </Button>
                     {verb ? (
                       <Button
                         size="sm"
                         className="shrink-0 whitespace-nowrap"
-                        onClick={() => {
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          // #539: preparing is the money-adjacent step that
+                          // changed an order with one touch — confirm first.
+                          if (verb === "Preparar") setPrepareOrderId(o.id);
                           // #333: delivering registers the evidence (per piece,
                           // effective date) — Home must not bypass the sheet.
-                          if (verb === "Entregar" && pendingDeliveries(o).length > 0) setDeliveryOrderId(o.id);
+                          else if (verb === "Entregar" && pendingDeliveries(o).length > 0) setDeliveryOrderId(o.id);
                           else void advance(o.id);
                         }}
                       >
@@ -254,7 +302,12 @@ export function HomeScreen() {
                       </Button>
                     ) : o.installments ? (
                       totals.balance > 0 && (
-                        <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => setPaymentsOrderId(o.id)}>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="shrink-0 whitespace-nowrap"
+                          onClick={(event) => { event.stopPropagation(); setPaymentsOrderId(o.id); }}
+                        >
                           Abonar
                         </Button>
                       )
@@ -263,9 +316,11 @@ export function HomeScreen() {
                         size="sm"
                         variant="secondary"
                         className="shrink-0 whitespace-nowrap"
-                        onClick={() =>
-                          typeof o.paymentsReceivedCents === "number" ? setPaymentsOrderId(o.id) : collect(o.id)
-                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (typeof o.paymentsReceivedCents === "number") setPaymentsOrderId(o.id);
+                          else collect(o.id);
+                        }}
                       >
                         Cobrar
                       </Button>
@@ -307,6 +362,9 @@ export function HomeScreen() {
           <DeliverySheet key={deliveryOrderId} order={deliveryOrder} open onClose={() => setDeliveryOrderId(null)} />
         ) : null;
       })()}
+      {/* #539: the confirmation names the order and the exact step; on confirm
+          the CURRENT state decides (shared with the Pedidos list). */}
+      <PrepareOrderDialog order={prepareOrder} onClose={() => setPrepareOrderId(null)} />
 
     {paymentsOrder && (
       <OrderPaymentsSheet

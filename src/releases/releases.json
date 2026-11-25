@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.21.2",
+    "date": "2026.11.25",
+    "title": "Pedidos a un toque y cambio de tienda sin bloqueos",
+    "notes": [
+      "En Inicio, tocar la tarjeta de un pedido abre ese pedido exacto; «← Inicio» te regresa sin pasar por la lista.",
+      "«Preparar» pide confirmación con folio, clienta y productos —con sus cantidades— antes de avanzar el pedido, en Inicio y en Pedidos; cancelar lo deja igual.",
+      "«Marcar listo» avisa qué pedido guardó, como ya ocurría en la lista.",
+      "El menú de «Cambiar tienda» se cierra al tocar fuera o con Escape; elegir tu tienda ya no deja la app trabada.",
+      "Con el selector «¿Quién opera hoy?» abierto, una actualización desde otra sesión ya no te cambia de tienda."
+    ]
+  },
+  {
     "version": "1.21.1",
     "date": "2026.11.23",
     "title": "Precios por categoría más claros",

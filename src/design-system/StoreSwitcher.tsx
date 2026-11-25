@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { STORE_TYPE_LABELS } from "../lib/labels";
 import type { Store } from "../types";
 
@@ -16,9 +16,30 @@ export function StoreSwitcher({
   onSelect: (storeId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // #543: close on an outside press or Escape, the way BottomNav's area menus
+  // do. A `fixed inset-0` click catcher does NOT work here: both rails that
+  // host this switcher (the mobile header and the desktop sidebar) carry a
+  // backdrop-filter, which makes them the containing block of a fixed
+  // descendant — the catcher shrank to the bar, swallowed every control in it
+  // (the whole navigation on desktop) and never saw an outside click.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   return (
-    <div className="relative">
+    <div className="relative" ref={rootRef}>
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2 bg-surface ring-1 ring-edge rounded-xl pl-3 pr-2 py-1.5 shadow-card"
@@ -40,9 +61,7 @@ export function StoreSwitcher({
       </button>
 
       {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute z-30 mt-2 w-60 bg-surface text-on-surface rounded-2xl ring-1 ring-edge shadow-lift overflow-hidden p-1.5">
+        <div className="absolute z-30 mt-2 w-60 bg-surface text-on-surface rounded-2xl ring-1 ring-edge shadow-lift overflow-hidden p-1.5">
             {stores.map((s) => (
               <button
                 key={s.id}
@@ -68,8 +87,7 @@ export function StoreSwitcher({
                 )}
               </button>
             ))}
-          </div>
-        </>
+        </div>
       )}
     </div>
   );

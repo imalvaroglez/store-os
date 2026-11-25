@@ -17,14 +17,16 @@ import { orderItems, orderReference, orderTotals, paymentStatusForOrder, effecti
 import { cdmxToday } from "../../lib/monthlyClose";
 import { incidentsSaleAdjustmentCents } from "../../lib/orderMoney";
 import { shortageByDimension } from "../../lib/inventory";
+import { StaleOrderError } from "../../app/firebase/firestoreData";
 import { orderLineLabel, orderTicketData, orderTicketText, receiptFileName } from "./orderTicket";
 import { OrderReceipt } from "./OrderReceipt";
 import { orderProfitBreakdown } from "../../lib/saleProfit";
-import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, nextActionVerb, advanceOrder } from "./orderStatus";
+import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, advancedMessage, nextActionVerb, advanceOrder } from "./orderStatus";
 import { installmentPlanView } from "./installments";
 import { OrderPaymentsSheet } from "./OrderPaymentsSheet";
 import { IncidentSheet } from "./IncidentSheet";
 import { DeliverySheet, deliveryProgressLabel } from "./DeliverySheet";
+import { PrepareOrderDialog } from "./PrepareOrderDialog";
 import { pendingDeliveries, effectiveDeliveryDate } from "../../lib/deliveries";
 import { PackagingSheet } from "./PackagingSheet";
 import type { Order } from "../../types";
@@ -37,6 +39,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
+  // #539 (QA verdict): in the list, «Preparar» also confirms before changing
+  // an order — the same dialog as Inicio. One stray tap never advances it.
+  const [prepareOpen, setPrepareOpen] = useState(false);
   const [packagingOpen, setPackagingOpen] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const toast = useToast();
@@ -100,9 +105,9 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     if (!advanced) return;
     try {
       await upsertOrder(advanced);
-      toast.success(`Pedido avanzado a «${ORDER_STATUS_LABELS[advanced.orderStatus]}»`);
-    } catch {
-      toast.error("No se pudo actualizar el pedido.");
+      toast.success(advancedMessage(advanced));
+    } catch (error) {
+      toast.error(error instanceof StaleOrderError ? error.message : "No se pudo actualizar el pedido.");
     }
   }
 
@@ -291,7 +296,8 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
                   // #333: delivering registers WHAT was handed (per piece, with
                   // its effective date) instead of a bare status flip. Orders
                   // without product lines keep the plain advance.
-                  if (verb === "Entregar" && pendingDeliveries(order).length > 0) setDeliveryOpen(true);
+                  if (verb === "Preparar") setPrepareOpen(true);
+                  else if (verb === "Entregar" && pendingDeliveries(order).length > 0) setDeliveryOpen(true);
                   else void advance();
                 }}
               >
@@ -366,6 +372,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
     />
     <IncidentSheet order={order} open={incidentOpen} onClose={() => setIncidentOpen(false)} />
     <DeliverySheet order={order} open={deliveryOpen} onClose={() => setDeliveryOpen(false)} />
+    <PrepareOrderDialog order={prepareOpen ? order : null} onClose={() => setPrepareOpen(false)} />
     {packagingOpen && <PackagingSheet order={order} onClose={() => setPackagingOpen(false)} />}
     </>
   );

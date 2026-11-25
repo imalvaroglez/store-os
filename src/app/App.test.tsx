@@ -56,7 +56,8 @@ describe("HomeScreen store isolation render", () => {
     render(<Wrapper><HomeScreen /></Wrapper>);
 
     await waitFor(() => expect(screen.getByText("+ Nuevo pedido")).toBeTruthy());
-    expect(screen.getByText("Anillo de plata 925")).toBeTruthy();
+    // #539: the card names quantity × line, like the Pedidos list.
+    expect(screen.getByText(/Anillo de plata 925/)).toBeTruthy();
     expect(screen.queryByText("Perfume Baccarat Rouge 540")).toBeNull();
   });
 

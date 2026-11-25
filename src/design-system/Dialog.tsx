@@ -29,8 +29,11 @@ export function Dialog({
     if (!open) return;
     lastFocused.current = document.activeElement as HTMLElement;
     const panel = panelRef.current;
+    // A DISABLED control is not a stop: the browser skips it. Counting it made
+    // the trap miss Tab from the last usable control, and the focus escaped
+    // behind a dialog whose confirm had not armed yet (#539).
     const focusables = () =>
-      panel?.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])') ?? [];
+      panel?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])') ?? [];
 
     const first = focusables()[0];
     first?.focus();
