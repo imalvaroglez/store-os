@@ -114,6 +114,21 @@ describe("automatic saldo a favor compensation (#189)", () => {
     expect(hooks.apply).toHaveBeenCalledTimes(1);
   });
 
+  it("#524: an order converted to a point of sale never receives the automatic credit — the real order does", async () => {
+    hooks.load.mockResolvedValue(stateWith([
+      creditor(),
+      // Older than `debtor` and still "confirmed": without the rule it soaks up the $15.
+      { ...debtor(), id: "converted", createdAt: "2026-11-01T12:00:00Z", convertedToPointId: "point-1" },
+      debtor(),
+    ]));
+    await mount();
+    await waitFor(() => expect(hooks.apply).toHaveBeenCalledTimes(1));
+    const call = hooks.apply.mock.calls[0][0];
+    expect(call.orderId).toBe("debtor");
+    expect(call.entry.fromOrderId).toBe("creditor");
+    expect(call.entry.amountCents).toBe(1500);
+  });
+
   it("surfaces a failed application through the sync error with an idempotent retry", async () => {
     hooks.apply.mockRejectedValueOnce(new Error("offline"));
     await mount();

@@ -11,6 +11,9 @@
 // - Cancelling an order that used credit restitutes it (release entries).
 // - Refunds and partial returns are OUT of scope here (#203 owns them);
 //   cancelled orders are excluded from both sides and shown as information.
+// - #524: an order converted into a point's first surtido is history too —
+//   its sale and cobro live in the point's cut — so it is excluded the same
+//   way: it never gives, receives or owes credit.
 //
 // Age and tie-break (agent decision, recorded per the issue): orders rank by
 // `createdAt`, ties broken by `id` — deterministic and stable across sessions.
@@ -82,15 +85,20 @@ function byAge(a: { id: string; createdAt: string }, b: { id: string; createdAt:
   return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 }
 
+/** #524: cancelled and converted orders never give, receive or owe credit. */
+function excludedFromCompensation(order: OrderLike): boolean {
+  return order.orderStatus === "cancelled" || Boolean(order.convertedToPointId);
+}
+
 /**
  * The pure reconciliation plan over one customer's orders: oldest debt first,
  * oldest credit first, never over-applying on either side. Re-running after a
  * successful application yields an empty plan (idempotent by construction:
  * the persisted accumulators feed the next computation).
- * Cancelled orders never give or receive credit.
+ * Cancelled and converted (#524) orders never give or receive credit.
  */
 export function planCreditApplications(orders: Order[]): PlannedCreditApplication[] {
-  const active = orders.filter((order) => order.orderStatus !== "cancelled");
+  const active = orders.filter((order) => !excludedFromCompensation(order));
   const credits = active
     .filter((order) => creditAvailableCents(order) > 0)
     .sort(byAge);
@@ -126,9 +134,9 @@ export type CustomerOrderBalance = {
 };
 
 export type CustomerBalanceSummary = {
-  /** Σ pending across the customer's non-cancelled orders. */
+  /** Σ pending across the customer's non-cancelled, non-converted (#524) orders. */
   pendingCents: number;
-  /** Σ unconsumed credit across her non-cancelled orders. */
+  /** Σ unconsumed credit across her non-cancelled, non-converted (#524) orders. */
   creditCents: number;
   /** pending − credit: the net amount to collect from her today. */
   netCents: number;
@@ -142,15 +150,20 @@ export type CustomerBalanceSummary = {
 /** The read model for the per-customer balance view. */
 export function customerBalanceSummary(orders: Order[], storeId: string, customerId: string): CustomerBalanceSummary {
   const mine = ordersForCustomer(orders, storeId, customerId).slice().sort(byAge);
-  const rows = mine.map((order) => ({
-    orderId: order.id,
-    orderStatus: order.orderStatus,
-    pendingCents: order.orderStatus === "cancelled" ? 0 : pendingCents(order),
-    creditCents: order.orderStatus === "cancelled" ? 0 : creditAvailableCents(order),
-    creditAppliedCents: creditAppliedCents(order),
-  }));
-  const pending = rows.filter((row) => row.orderStatus !== "cancelled").reduce((sum, row) => sum + row.pendingCents, 0);
-  const credit = rows.filter((row) => row.orderStatus !== "cancelled").reduce((sum, row) => sum + row.creditCents, 0);
+  const rows = mine.map((order) => {
+    // #524: a converted order reports like a cancelled one — 0/0, kept as history.
+    const excluded = excludedFromCompensation(order);
+    return {
+      orderId: order.id,
+      orderStatus: order.orderStatus,
+      pendingCents: excluded ? 0 : pendingCents(order),
+      creditCents: excluded ? 0 : creditAvailableCents(order),
+      creditAppliedCents: creditAppliedCents(order),
+    };
+  });
+  // Excluded rows already carry 0/0, so they add nothing to the totals.
+  const pending = rows.reduce((sum, row) => sum + row.pendingCents, 0);
+  const credit = rows.reduce((sum, row) => sum + row.creditCents, 0);
   const cancelledWithPaymentsCents = mine
     .filter((order) => order.orderStatus === "cancelled")
     .reduce((sum, order) => sum + Math.max(0, docReceivedCents(order)), 0);
