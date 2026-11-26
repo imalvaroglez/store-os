@@ -24,7 +24,7 @@ import type { Order, OrderIncident } from "../../types";
 // every fixture must produce identical cents on both sides. If they ever
 // diverge, the callable must not ship.
 
-const incident = (resolution: OrderIncident["resolution"], replacement?: OrderIncident["replacement"]): OrderIncident => ({
+const incident = (resolution: OrderIncident["resolution"], replacement?: OrderIncident["replacement"], events: OrderIncident["events"] = []): OrderIncident => ({
   id: "i1",
   productId: "p1",
   productName: "Pieza",
@@ -32,7 +32,7 @@ const incident = (resolution: OrderIncident["resolution"], replacement?: OrderIn
   reason: "R",
   originalUnitPriceCents: 12000,
   ...(replacement ? { replacement } : {}),
-  events: [],
+  events,
   ...(resolution ? { resolution } : {}),
 });
 
@@ -50,6 +50,9 @@ const fixtures: Fixture[] = [
   { name: "charged replacement adjusts total", order: { items: [{ productName: "A", quantity: 1, unitPrice: 100, subtotal: 100 }], paymentsReceivedCents: 30000, inheritedDepositMaterialized: true, incidents: [incident({ kind: "replacement_with_difference", saleAdjustmentUnitCents: 12000 }, { productId: "p2", productName: "B", unitPriceCents: 18000, unitCostCents: 0, chargeDifference: true })] } },
   { name: "legacy refund fields", order: { items: [{ productName: "A", quantity: 1, unitPrice: 100, subtotal: 100 }], paymentsReceivedCents: 30000, inheritedDepositMaterialized: true, incidents: [incident({ kind: "refund", refundUnitPriceCents: 8000 })] } },
   { name: "legacy flat order", order: { productName: "Legacy", quantity: 2, price: 75 } },
+  // #560: corrected $760 sale, $820 received, $30 already consumed, the
+  // desisted incident closed without change → $30 still available.
+  { name: "#560 corrected line after sin cambio", order: { items: [{ productName: "A", quantity: 1, unitPrice: 760, subtotal: 760 }], paymentsReceivedCents: 82000, inheritedDepositMaterialized: true, creditConsumedCents: 3000, incidents: [incident({ kind: "replacement_with_difference", saleAdjustmentUnitCents: 3000 }, { productId: "p2", productName: "B", unitPriceCents: 6000, unitCostCents: 0, chargeDifference: true }, [{ id: "e1", kind: "closed_no_change", at: "2026-11-21T10:00:00Z", by: "u" }])] } },
 ];
 
 describe("#380 prototype — el puerto de matemáticas de crédito coincide con la fuente de verdad TS", () => {
@@ -71,6 +74,9 @@ describe("#380 prototype — el puerto de matemáticas de crédito coincide con 
       [incident({ kind: "refund", refundUnitPriceCents: 8000 })],
       [incident({ kind: "wait_restock", waitUntil: "2026-12-01" })],
       [incident({ kind: "replacement_with_difference", saleAdjustmentUnitCents: 12000 }, { productId: "p2", productName: "B", unitPriceCents: 18000, unitCostCents: 0, chargeDifference: true })],
+      // #560: a closed-without-change incident annuls its agreed resolution.
+      [incident({ kind: "replacement_with_difference", saleAdjustmentUnitCents: 12000 }, { productId: "p2", productName: "B", unitPriceCents: 18000, unitCostCents: 0, chargeDifference: true }, [{ id: "e1", kind: "closed_no_change", at: "2026-11-21T10:00:00Z", by: "u" }])],
+      [incident({ kind: "refund", refundOwedCents: 5000 }, undefined, [{ id: "e1", kind: "closed_no_change", at: "2026-11-21T10:00:00Z", by: "u" }])],
     ] as OrderIncident[][];
     for (const set of incidentSets) {
       expect(portSaleAdjust(set)).toBe(incidentsSaleAdjustmentCents(set));
