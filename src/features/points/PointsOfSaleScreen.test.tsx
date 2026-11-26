@@ -3,7 +3,7 @@
 // pieces/valuation, point creation with pilot defaults, and the
 // «Usar como surtido inicial» preview + trusted conversion call.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { PointsOfSaleScreen } from "./PointsOfSaleScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   stockPoint: vi.fn(),
   withdrawFromPoint: vi.fn(),
   annulPointCut: vi.fn(),
+  deliverPointExhibitors: vi.fn(),
+  confirmExhibitorCost: vi.fn(),
+  withdrawPointExhibitors: vi.fn(),
   closes: [] as Array<{ period: string }>,
 }));
 
@@ -42,6 +45,9 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
       stockPoint: mocks.stockPoint,
       withdrawFromPoint: mocks.withdrawFromPoint,
       annulPointCut: mocks.annulPointCut,
+      deliverPointExhibitors: mocks.deliverPointExhibitors,
+      confirmExhibitorCost: mocks.confirmExhibitorCost,
+      withdrawPointExhibitors: mocks.withdrawPointExhibitors,
     }),
   };
 });
@@ -134,6 +140,12 @@ beforeEach(() => {
   mocks.withdrawFromPoint.mockResolvedValue({ withdrawn: true, units: 1 });
   mocks.annulPointCut.mockReset();
   mocks.annulPointCut.mockResolvedValue({ registered: true });
+  mocks.deliverPointExhibitors.mockReset();
+  mocks.deliverPointExhibitors.mockResolvedValue({ delivered: true, pieces: 4 });
+  mocks.confirmExhibitorCost.mockReset();
+  mocks.confirmExhibitorCost.mockResolvedValue({ confirmed: 1 });
+  mocks.withdrawPointExhibitors.mockReset();
+  mocks.withdrawPointExhibitors.mockResolvedValue({ withdrawn: true, pieces: 1 });
   mocks.closes = [];
 });
 
@@ -602,5 +614,172 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     const [first, second] = mocks.withdrawFromPoint.mock.calls;
     expect(first[0].intentId).toBeTruthy();
     expect(second[0].intentId).toBe(first[0].intentId);
+  });
+});
+
+describe("#524 Exhibidores: pestaña, entrega, costo y retiro", () => {
+  const POINT_ID = "store_olivia__mostrador";
+
+  function withPoint() {
+    state.points = [
+      { id: POINT_ID, storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+  }
+
+  function exhibitor(over: Partial<import("../../types").PointExhibitor> = {}): import("../../types").PointExhibitor {
+    return {
+      id: "pex_d1_0",
+      storeId: "store_olivia",
+      pointId: POINT_ID,
+      deliveryId: "d1",
+      lineIndex: 0,
+      name: "Tabla",
+      deliveredAt: "2026-11-01",
+      opening: true,
+      unitCostCents: 10400,
+      deliveredBy: "u1",
+      createdAt: NOW,
+      ...over,
+    };
+  }
+
+  /** La misión del PO: apertura 2×$104 + $58 + $72 = $338; +$90 posterior. */
+  function missionPieces(): Array<import("../../types").PointExhibitor> {
+    return [
+      exhibitor({ id: "pex_d1_0" }),
+      exhibitor({ id: "pex_d1_1" }),
+      exhibitor({ id: "pex_d1_2", lineIndex: 1, name: "Exhibidor chico", unitCostCents: 5800 }),
+      exhibitor({ id: "pex_d1_3", lineIndex: 2, name: "Exhibidor grande", unitCostCents: 7200 }),
+      exhibitor({ id: "pex_d2_0", deliveryId: "d2", lineIndex: 0, name: "Exhibidor mediano", deliveredAt: "2026-11-15", opening: false, unitCostCents: 9000 }),
+    ];
+  }
+
+  function openExhibidoresTab() {
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("tab", { name: "Exhibidores" }));
+  }
+
+  it("la pestaña arranca vacía y ofrece registrar la primera entrega", () => {
+    withPoint();
+    openExhibidoresTab();
+    expect(screen.getByText("Este punto todavía no tiene exhibidores")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Registrar entrega" })).toBeTruthy();
+    // La pestaña Mercancía sigue disponible y es la predeterminada.
+    expect(screen.getByRole("tab", { name: "Mercancía" })).toBeTruthy();
+  });
+
+  it("misión viva: apertura $338 y asignado $338; retirar una tabla deja 338/324", () => {
+    withPoint();
+    state.pointExhibitors = missionPieces();
+    openExhibidoresTab();
+    expect(screen.getByText(/Costo de apertura/).textContent).toContain("338");
+    expect(screen.getByText(/Costo de exhibidores asignados/).textContent).toContain("428");
+    // Retiro de una tabla: la pieza más antigua sale; la apertura no se reduce.
+    cleanup();
+    state.pointExhibitors = missionPieces().map((piece, index) =>
+      index === 0 ? { ...piece, withdrawnAt: "2026-11-20", withdrawnBy: "u2", withdrawalIntentionId: "w1" } : piece
+    );
+    openExhibidoresTab();
+    expect(screen.getByText(/Costo de apertura/).textContent).toContain("338");
+    expect(screen.getByText(/Costo de exhibidores asignados/).textContent).toContain("324");
+    expect(screen.getByText(/entregado 1 nov/).textContent).toContain("retirado 20 nov");
+  });
+
+  it("entrega con renglones y apertura: llamada exacta al callable", async () => {
+    withPoint();
+    openExhibidoresTab();
+    fireEvent.click(screen.getByRole("button", { name: "Registrar entrega" }));
+    fireEvent.change(screen.getAllByLabelText("Exhibidor")[0], { target: { value: "Tabla" } });
+    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "2" } });
+    fireEvent.change(screen.getAllByLabelText("Costo por pieza")[0], { target: { value: "104" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar exhibidor" }));
+    fireEvent.change(screen.getAllByLabelText("Exhibidor")[1], { target: { value: "Exhibidor chico" } });
+    fireEvent.change(screen.getAllByLabelText("Piezas")[1], { target: { value: "1" } });
+    fireEvent.change(screen.getAllByLabelText("Costo por pieza")[1], { target: { value: "58" } });
+    fireEvent.click(screen.getByLabelText(/Entrega de apertura/));
+    fireEvent.click(screen.getByRole("button", { name: "Entregar" }));
+    await screen.findByText(/Entrega registrada: \d+ exhibidores de apertura\./i);
+    expect(mocks.deliverPointExhibitors).toHaveBeenCalledTimes(1);
+    expect(mocks.deliverPointExhibitors.mock.calls[0][0]).toMatchObject({
+      storeId: "store_olivia",
+      pointId: POINT_ID,
+      opening: true,
+      lines: [
+        { name: "Tabla", quantity: 2, unitCostCents: 10400 },
+        { name: "Exhibidor chico", quantity: 1, unitCostCents: 5800 },
+      ],
+    });
+    expect(mocks.deliverPointExhibitors.mock.calls[0][0].physicalDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(mocks.deliverPointExhibitors.mock.calls[0][0].intentId).toBeTruthy();
+  });
+
+  it("costo pendiente: el total lo nombra y la confirmación va por pieza", async () => {
+    withPoint();
+    state.pointExhibitors = [
+      ...missionPieces(),
+      exhibitor({ id: "pex_d3_0", deliveryId: "d3", lineIndex: 0, name: "Barral", deliveredAt: "2026-11-18", opening: false, unitCostCents: undefined }),
+    ];
+    openExhibidoresTab();
+    expect(screen.getByText(/Costo de exhibidores asignados/).textContent).toContain("428");
+    expect(screen.getByText(/1 sin valorar/)).toBeTruthy();
+    expect(screen.getByText(/1 con costo pendiente/)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Confirmar costo" })[0]);
+    fireEvent.change(screen.getByLabelText("Costo por pieza"), { target: { value: "58" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Confirmar costo" }).slice(-1)[0]);
+    await screen.findByText(/Costo confirmado/i);
+    expect(mocks.confirmExhibitorCost).toHaveBeenCalledTimes(1);
+    expect(mocks.confirmExhibitorCost.mock.calls[0][0]).toMatchObject({
+      storeId: "store_olivia",
+      pointId: POINT_ID,
+      items: [{ exhibitorId: "pex_d3_0", unitCostCents: 5800 }],
+    });
+  });
+
+  it("retirar exhibidores: la línea lleva entrega y renglón exactos", async () => {
+    withPoint();
+    state.pointExhibitors = missionPieces();
+    openExhibidoresTab();
+    fireEvent.click(screen.getByRole("button", { name: "Retirar exhibidores" }));
+    const tablaRow = screen.getAllByLabelText("Piezas")[0];
+    fireEvent.change(tablaRow, { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Retirar" }));
+    await screen.findByText(/Retiro registrado: 1 exhibidor/i);
+    expect(mocks.withdrawPointExhibitors).toHaveBeenCalledTimes(1);
+    expect(mocks.withdrawPointExhibitors.mock.calls[0][0]).toMatchObject({
+      storeId: "store_olivia",
+      pointId: POINT_ID,
+      lines: [{ deliveryId: "d1", lineIndex: 0, quantity: 1 }],
+    });
+    expect(mocks.withdrawPointExhibitors.mock.calls[0][0].intentId).toBeTruthy();
+  });
+
+  it("entrega: el reintento lleva el MISMO intentId no vacío", async () => {
+    withPoint();
+    openExhibidoresTab();
+    fireEvent.click(screen.getByRole("button", { name: "Registrar entrega" }));
+    fireEvent.change(screen.getAllByLabelText("Exhibidor")[0], { target: { value: "Tabla" } });
+    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "2" } });
+    mocks.deliverPointExhibitors.mockRejectedValueOnce(new Error("Network request failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Entregar" }));
+    await screen.findByText(/Network request failed/i);
+    fireEvent.click(screen.getByRole("button", { name: "Entregar" }));
+    await screen.findByText(/Entrega registrada/i);
+    const [first, second] = mocks.deliverPointExhibitors.mock.calls;
+    expect(first[0].intentId).toBeTruthy();
+    expect(second[0].intentId).toBe(first[0].intentId);
+  });
+
+  it("los exhibidores no tocan las cifras de mercancía de la ficha", () => {
+    withPoint();
+    state.pointExhibitors = missionPieces();
+    state.pointEntries = [
+      { id: "pe1", storeId: "store_olivia", pointId: POINT_ID, productId: "p1", productName: "Perfume", entryDate: "2026-11-01", quantity: 5, consumedQty: 0, markedPriceCents: 10000, unitCostCents: 5000, createdAt: NOW, updatedAt: NOW } as PointEntry,
+    ];
+    openExhibidoresTab();
+    fireEvent.click(screen.getByRole("tab", { name: "Mercancía" }));
+    // Valor al costo sigue siendo el de las ENTRADAS de mercancía (5 × $50).
+    expect(screen.getByText(/Valor al costo/).textContent).toContain("250");
+    expect(screen.getByText(/Valor al precio marcado/).textContent).toContain("500");
   });
 });

@@ -51,10 +51,18 @@ import {
   annulPointCutTrusted,
   stockPointTrusted,
   withdrawFromPointTrusted,
+  deliverExhibitorsTrusted,
+  confirmExhibitorCostTrusted,
+  withdrawExhibitorsTrusted,
   type StockPointLine,
   type StockPointResult,
   type WithdrawLine,
   type WithdrawResult,
+  type DeliverExhibitorLine,
+  type DeliverExhibitorsResult,
+  type ConfirmExhibitorCostResult,
+  type WithdrawExhibitorLine,
+  type WithdrawExhibitorsResult,
 } from "./firebase/pointFunctions";
 import {
   ensureStoreFinancials,
@@ -478,6 +486,32 @@ type StoreContextValue = {
   stockPoint: (params: { storeId: string; pointId: string; physicalDate: string; intentId: string; lines: StockPointLine[] }) => Promise<StockPointResult>;
   /** #524: return sellable pieces from the point to their exact variant. */
   withdrawFromPoint: (params: { storeId: string; pointId: string; intentId: string; lines: WithdrawLine[] }) => Promise<WithdrawResult>;
+  /** #524 Exhibidores: register one fixture delivery (rows of name + pieces
+   * + optional unit cost; apertura flag) through the trusted callable. */
+  deliverPointExhibitors: (params: {
+    storeId: string;
+    pointId: string;
+    intentId: string;
+    physicalDate: string;
+    opening: boolean;
+    lines: DeliverExhibitorLine[];
+  }) => Promise<DeliverExhibitorsResult>;
+  /** #524 Exhibidores: seal the pending unit cost of pieces (immutable once
+   * confirmed; same value = idempotent no-op). */
+  confirmExhibitorCost: (params: {
+    storeId: string;
+    pointId: string;
+    items: Array<{ exhibitorId: string; unitCostCents: number }>;
+  }) => Promise<ConfirmExhibitorCostResult>;
+  /** #524 Exhibidores: retire assigned pieces (oldest of each row first),
+   * keeping the full history. Operational registry only. */
+  withdrawPointExhibitors: (params: {
+    storeId: string;
+    pointId: string;
+    intentId: string;
+    physicalDate: string;
+    lines: WithdrawExhibitorLine[];
+  }) => Promise<WithdrawExhibitorsResult>;
   deleteExpense: (expenseId: string) => Promise<void>;
   assignExpense: (
     expense: LooseExpense,
@@ -1736,6 +1770,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         );
       }
       return result;
+    },
+    // #524 Exhibidores: operational registry — no stock, no public catalog
+    // projection, no money path. The pieces land via the entity listeners.
+    deliverPointExhibitors: async (params) => {
+      requireAuthenticatedUser();
+      return deliverExhibitorsTrusted(params);
+    },
+    confirmExhibitorCost: async (params) => {
+      requireAuthenticatedUser();
+      return confirmExhibitorCostTrusted(params);
+    },
+    withdrawPointExhibitors: async (params) => {
+      requireAuthenticatedUser();
+      return withdrawExhibitorsTrusted(params);
     },
     saveExpense: async (expense) => {
       requireAuthenticatedUser();

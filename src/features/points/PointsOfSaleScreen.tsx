@@ -18,6 +18,7 @@ import {
   Screen,
   ScreenHeader,
   SelectField,
+  TabList,
   TextField,
   useToast,
 } from "../../design-system";
@@ -44,6 +45,11 @@ import {
   planCorte,
   pointSummaries,
 } from "../../lib/pointOfSale";
+import {
+  exhibitorDeliveryImpediments,
+  exhibitorSummary,
+  groupExhibitorsByLine,
+} from "../../lib/pointExhibitors";
 import type { Order, PointEntry, PointOfSale } from "../../types";
 
 /** A real calendar date (YYYY-MM-DD), semantics checked before confirming. */
@@ -56,7 +62,20 @@ function isRealDate(text: string): boolean {
 }
 
 export function PointsOfSaleScreen() {
-  const { state, activeStore, savePoint, convertOrderToFirstSurtido, registerPointCut, registerPointCutPayment, stockPoint, withdrawFromPoint, annulPointCut } = useStore();
+  const {
+    state,
+    activeStore,
+    savePoint,
+    convertOrderToFirstSurtido,
+    registerPointCut,
+    registerPointCutPayment,
+    stockPoint,
+    withdrawFromPoint,
+    annulPointCut,
+    deliverPointExhibitors,
+    confirmExhibitorCost: confirmExhibitorCostCall,
+    withdrawPointExhibitors,
+  } = useStore();
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -87,6 +106,21 @@ export function PointsOfSaleScreen() {
   const [sealedPeriods, setSealedPeriods] = useState<Set<string>>(new Set());
   const [payDate, setPayDate] = useState(todayIso());
   const [payMethod, setPayMethod] = useState<"cash" | "transfer">("cash");
+  // #524 Exhibidores: the ficha's tab + delivery/cost/withdrawal capture.
+  const [pointTab, setPointTab] = useState<"mercancia" | "exhibidores">("mercancia");
+  const [delivering, setDelivering] = useState(false);
+  const [exhibDate, setExhibDate] = useState(todayIso());
+  const [exhibOpening, setExhibOpening] = useState(false);
+  const [exhibLines, setExhibLines] = useState<Array<{ key: string; name: string; qty: string; cost: string }>>([
+    { key: uid("exl"), name: "", qty: "", cost: "" },
+  ]);
+  const [deliverIntentId, setDeliverIntentId] = useState("");
+  const [confirmingCostKey, setConfirmingCostKey] = useState<string | null>(null);
+  const [confirmCostValue, setConfirmCostValue] = useState("");
+  const [withdrawingExhibitors, setWithdrawingExhibitors] = useState(false);
+  const [exhibWithdrawDate, setExhibWithdrawDate] = useState(todayIso());
+  const [exhibWithdrawQty, setExhibWithdrawQty] = useState<Record<string, string>>({});
+  const [exhibWithdrawIntentId, setExhibWithdrawIntentId] = useState("");
 
   const storeId = activeStore?.id ?? "";
   const points = useMemo(
@@ -257,6 +291,60 @@ export function PointsOfSaleScreen() {
         : [],
     [state.pointOperations, openPoint]
   );
+
+  // #524 Exhibidores: this point's fixture registry — summaries, row groups
+  // and the withdrawal history all derive from the piece docs.
+  const pointExhibitorPieces = useMemo(
+    () => (openPoint ? state.pointExhibitors.filter((piece) => piece.pointId === openPoint.id) : []),
+    [state.pointExhibitors, openPoint]
+  );
+  const exhibitorTotals = useMemo(() => exhibitorSummary(pointExhibitorPieces), [pointExhibitorPieces]);
+  const exhibitorGroups = useMemo(() => groupExhibitorsByLine(pointExhibitorPieces), [pointExhibitorPieces]);
+  const assignedExhibitorGroups = useMemo(
+    () => exhibitorGroups.filter((group) => group.pieces.some((piece) => piece.withdrawnAt === undefined)),
+    [exhibitorGroups]
+  );
+  const assignedExhibitorCount = useMemo(
+    () => pointExhibitorPieces.filter((piece) => piece.withdrawnAt === undefined).length,
+    [pointExhibitorPieces]
+  );
+  const withdrawnExhibitorPieces = useMemo(
+    () =>
+      pointExhibitorPieces
+        .filter((piece) => piece.withdrawnAt !== undefined)
+        .sort((a, b) => (b.withdrawnAt ?? "").localeCompare(a.withdrawnAt ?? "") || a.id.localeCompare(b.id)),
+    [pointExhibitorPieces]
+  );
+
+  // Delivery dialog plan: filled rows only; the lib rules out bad input and
+  // the button waits for a clean verdict (dates included).
+  const exhibitorPlan = useMemo(() => {
+    if (!delivering) return null;
+    const filled = exhibLines
+      .filter((line) => line.name.trim() !== "" || line.qty.trim() !== "" || line.cost.trim() !== "")
+      .map((line) => {
+        const costText = line.cost.trim();
+        const cost = costText === "" ? undefined : parseAmount(costText);
+        return {
+          name: line.name,
+          quantity: Number(line.qty),
+          ...(cost !== undefined ? { unitCostCents: orderAmountCents(cost, 1) } : {}),
+        };
+      });
+    return { filled, check: exhibitorDeliveryImpediments(filled, exhibDate) };
+  }, [delivering, exhibLines, exhibDate]);
+  const exhibitorDialogTotal = useMemo(() => {
+    if (!exhibitorPlan) return null;
+    let cents = 0;
+    let pending = 0;
+    for (let index = 0; index < exhibitorPlan.filled.length; index += 1) {
+      const line = exhibitorPlan.filled[index];
+      const qty = Math.max(0, Math.floor(line.quantity));
+      if (line.unitCostCents !== undefined) cents += qty * line.unitCostCents;
+      else pending += qty;
+    }
+    return { cents, pending };
+  }, [exhibitorPlan]);
   const pendingCortes = pointOperations.filter((op) => op.kind === "corte" && op.status === "pendiente_de_cobro");
   // #524: annulment applies to the LATEST corte still without cobro; a month
   // with an AUTHORIZED close is history — the adjustments review owns it.
@@ -585,6 +673,105 @@ export function PointsOfSaleScreen() {
     }
   }
 
+  async function confirmExhibitorDelivery() {
+    if (!openPoint || !exhibitorPlan || !exhibitorPlan.check.canDeliver || exhibitorPlan.filled.length === 0) return;
+    setBusy(true);
+    try {
+      const result = await deliverPointExhibitors({
+        storeId,
+        pointId: openPoint.id,
+        intentId: deliverIntentId,
+        physicalDate: exhibDate,
+        opening: exhibOpening,
+        lines: exhibitorPlan.filled,
+      });
+      toast.success(
+        result.delivered
+          ? `Entrega registrada: ${result.pieces} ${result.pieces === 1 ? "exhibidor" : "exhibidores"}${exhibOpening ? " de apertura" : ""}.`
+          : "Esta entrega ya estaba registrada; no se hizo ningún cambio."
+      );
+      setDelivering(false);
+      setExhibLines([{ key: uid("exl"), name: "", qty: "", cost: "" }]);
+      setExhibOpening(false);
+      setExhibDate(todayIso());
+      setDeliverIntentId("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo registrar la entrega.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmExhibitorCost() {
+    if (!openPoint || confirmingCostKey === null) return;
+    const group = exhibitorGroups.find((candidate) => candidate.key === confirmingCostKey) ?? null;
+    const cost = parseAmount(confirmCostValue.trim());
+    if (!group || cost === undefined) return;
+    // The row's still-assigned pieces without a confirmed cost.
+    const pending = group.pieces.filter((piece) => piece.withdrawnAt === undefined && piece.unitCostCents === undefined);
+    if (pending.length === 0) return;
+    setBusy(true);
+    try {
+      const result = await confirmExhibitorCostCall({
+        storeId,
+        pointId: openPoint.id,
+        items: pending.map((piece) => ({ exhibitorId: piece.id, unitCostCents: orderAmountCents(cost, 1) })),
+      });
+      const applied = result.confirmed ?? 0;
+      toast.success(
+        applied > 0
+          ? `Costo confirmado: ${formatMoneyExact(cost)} por pieza (${applied} ${applied === 1 ? "pieza" : "piezas"}).`
+          : "Esas piezas ya tenían el costo confirmado; no se hizo ningún cambio."
+      );
+      setConfirmingCostKey(null);
+      setConfirmCostValue("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo confirmar el costo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmExhibitorWithdrawal() {
+    if (!openPoint) return;
+    const lines = assignedExhibitorGroups
+      .map((group) => ({
+        group,
+        qty: Number(exhibWithdrawQty[group.key] ?? ""),
+      }))
+      .filter(
+        (item) =>
+          Number.isFinite(item.qty) &&
+          item.qty > 0 &&
+          item.qty <= item.group.pieces.filter((piece) => piece.withdrawnAt === undefined).length
+      )
+      .map((item) => ({ deliveryId: item.group.deliveryId, lineIndex: item.group.lineIndex, quantity: Math.floor(item.qty) }));
+    if (lines.length === 0) return;
+    setBusy(true);
+    try {
+      const result = await withdrawPointExhibitors({
+        storeId,
+        pointId: openPoint.id,
+        intentId: exhibWithdrawIntentId,
+        physicalDate: exhibWithdrawDate,
+        lines,
+      });
+      toast.success(
+        result.withdrawn
+          ? `Retiro registrado: ${result.pieces} ${result.pieces === 1 ? "exhibidor" : "exhibidores"} de vuelta contigo.`
+          : "Este retiro ya estaba aplicado; no se hizo ningún cambio."
+      );
+      setWithdrawingExhibitors(false);
+      setExhibWithdrawQty({});
+      setExhibWithdrawDate(todayIso());
+      setExhibWithdrawIntentId("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo retirar el exhibidor.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Screen>
       <ScreenHeader
@@ -636,6 +823,19 @@ export function PointsOfSaleScreen() {
               <h3 className="font-semibold text-ink">{openPoint.name}</h3>
               <Badge>{(() => { const oldest = summaries.get(openPoint.id)?.oldestEntryDate; return oldest ? `Pieza más antigua desde el ${formatDate(oldest)}` : "Ficha"; })()}</Badge>
             </div>
+            <TabList
+              id={`${openPoint.id}-ficha`}
+              label="Secciones del punto"
+              value={pointTab}
+              items={[
+                { value: "mercancia", label: "Mercancía" },
+                { value: "exhibidores", label: "Exhibidores" },
+              ]}
+              onChange={(value) => setPointTab(value === "exhibidores" ? "exhibidores" : "mercancia")}
+            />
+            <section id={`${openPoint.id}-ficha-panel`} role="tabpanel" aria-labelledby={`${openPoint.id}-ficha-tab-${pointTab}`} className="space-y-3">
+            {pointTab === "mercancia" ? (
+              <>
             {openPoint ? (
               <div className="flex flex-wrap gap-2">
                 <Button variant="ghost" size="sm" onClick={() => { setStocking(true); setStockQuery(""); setStockIntentId(uid()); }}>
@@ -876,6 +1076,108 @@ export function PointsOfSaleScreen() {
                 })}
               </div>
             )}
+              </>
+            ) : (
+              <div className="space-y-3">
+                {pointExhibitorPieces.length === 0 ? (
+                  <EmptyState
+                    title="Este punto todavía no tiene exhibidores"
+                    subtitle="Registra los exhibidores que le entregas a este punto: tablas, vitrinas, barrales. Su costo se lleva aparte de la mercancía."
+                    action={
+                      <Button onClick={() => { setDelivering(true); setDeliverIntentId(uid("pex")); }}>
+                        Registrar entrega
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                      <p className="text-on-surface-soft">
+                        Costo de apertura:{" "}
+                        <span className="font-semibold text-on-surface"><Money exact amount={pesos(exhibitorTotals.openingCostCents)} /></span>
+                        {exhibitorTotals.openingPendingUnits > 0 ? ` (${exhibitorTotals.openingPendingUnits} sin valorar)` : ""}
+                      </p>
+                      <p className="text-on-surface-soft">
+                        Costo de exhibidores asignados:{" "}
+                        <span className="font-semibold text-on-surface"><Money exact amount={pesos(exhibitorTotals.assignedCostCents)} /></span>
+                        {exhibitorTotals.assignedPendingUnits > 0 ? ` (${exhibitorTotals.assignedPendingUnits} sin valorar)` : ""}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() => { setDelivering(true); setDeliverIntentId(uid("pex")); }}
+                      >
+                        Registrar entrega
+                      </Button>
+                      {assignedExhibitorCount > 0 ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setWithdrawingExhibitors(true);
+                            setExhibWithdrawDate(todayIso());
+                            setExhibWithdrawIntentId(uid("pexw"));
+                          }}
+                        >
+                          Retirar exhibidores
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div className="space-y-1">
+                      {assignedExhibitorGroups.map((group) => {
+                        const assigned = group.pieces.filter((piece) => piece.withdrawnAt === undefined);
+                        const pending = assigned.filter((piece) => piece.unitCostCents === undefined);
+                        const knownCost = assigned.find((piece) => piece.unitCostCents !== undefined)?.unitCostCents;
+                        return (
+                          <div key={group.key} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule pb-1 text-sm last:border-0">
+                            <span className="min-w-0 flex-1 truncate">
+                              <span className="font-medium text-on-surface">{assigned.length} × {group.name}</span>
+                              {group.opening ? <Badge>Apertura</Badge> : ""}
+                            </span>
+                            <span className="text-on-surface-soft">{formatDate(group.deliveredAt)}</span>
+                            {pending.length === 0 && knownCost !== undefined ? (
+                              <span className="text-on-surface-soft">costo {formatMoneyExact(pesos(knownCost))} c/u</span>
+                            ) : (
+                              <>
+                                <Badge tone="warning">{pending.length} con costo pendiente</Badge>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => { setConfirmingCostKey(group.key); setConfirmCostValue(""); }}
+                                >
+                                  Confirmar costo
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {withdrawnExhibitorPieces.length > 0 ? (
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold text-on-surface">Retirados</p>
+                        {withdrawnExhibitorPieces.map((piece) => (
+                          <div key={piece.id} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule pb-1 text-sm last:border-0">
+                            <span className="min-w-0 flex-1 truncate text-on-surface-soft">
+                              {piece.name}
+                              {piece.opening ? " (apertura)" : ""}
+                            </span>
+                            <span className="text-on-surface-soft">
+                              entregado {formatDate(piece.deliveredAt)} · retirado {formatDate(piece.withdrawnAt ?? "")}
+                            </span>
+                            <span className="text-on-surface-soft">
+                              {piece.unitCostCents !== undefined ? `costo ${formatMoneyExact(pesos(piece.unitCostCents))}` : "sin costo"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            )}
+            </section>
           </Card>
         ) : null}
       </div>
@@ -1170,6 +1472,180 @@ export function PointsOfSaleScreen() {
             </p>
           </div>
         ) : null}
+      </Dialog>
+
+      <Dialog
+        open={delivering}
+        onClose={() => setDelivering(false)}
+        title="Registrar entrega de exhibidores"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDelivering(false)}>Cancelar</Button>
+            <Button
+              disabled={busy || !exhibitorPlan || exhibitorPlan.filled.length === 0 || !exhibitorPlan.check.canDeliver}
+              onClick={() => void confirmExhibitorDelivery()}
+            >
+              Entregar
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <TextField
+            label="Fecha de entrega"
+            inputMode="numeric"
+            placeholder="AAAA-MM-DD"
+            value={exhibDate}
+            onChange={(e) => setExhibDate(e.target.value)}
+          />
+          <CheckboxField
+            label="Entrega de apertura"
+            caption="Identifica los exhibidores con los que abrió este punto; su costo se conserva como apertura aunque después se retiren."
+            checked={exhibOpening}
+            onChange={(checked) => setExhibOpening(checked)}
+          />
+          <div className="space-y-2">
+            {exhibLines.map((line, index) => (
+              <div key={line.key} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_5rem_7rem_auto] sm:items-end">
+                <TextField
+                  label="Exhibidor"
+                  placeholder="p. ej. Tabla plegable"
+                  value={line.name}
+                  onChange={(e) => setExhibLines((prev) => prev.map((item, i) => (i === index ? { ...item, name: e.target.value } : item)))}
+                />
+                <TextField
+                  label="Piezas"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={line.qty}
+                  onChange={(e) => setExhibLines((prev) => prev.map((item, i) => (i === index ? { ...item, qty: e.target.value } : item)))}
+                />
+                <TextField
+                  label="Costo por pieza"
+                  inputMode="decimal"
+                  placeholder="pendiente"
+                  value={line.cost}
+                  onChange={(e) => setExhibLines((prev) => prev.map((item, i) => (i === index ? { ...item, cost: e.target.value } : item)))}
+                />
+                <Button
+                  variant="ghost"
+                  onClick={() => setExhibLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev))}
+                >
+                  Quitar
+                </Button>
+              </div>
+            ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setExhibLines((prev) => [...prev, { key: uid("exl"), name: "", qty: "", cost: "" }])}
+            >
+              + Agregar exhibidor
+            </Button>
+          </div>
+          {exhibitorDialogTotal && exhibitorDialogTotal.cents > 0 ? (
+            <p className="text-sm text-on-surface-soft">
+              Total de la entrega:{" "}
+              <span className="font-semibold text-on-surface"><Money exact amount={pesos(exhibitorDialogTotal.cents)} /></span>
+              {exhibitorDialogTotal.pending > 0 ? ` · ${exhibitorDialogTotal.pending} ${exhibitorDialogTotal.pending === 1 ? "pieza queda" : "piezas quedan"} por valorar` : ""}
+            </p>
+          ) : null}
+          {exhibitorPlan && exhibitorPlan.check.errors.length > 0 ? (
+            <p className="text-xs text-danger">{exhibitorPlan.check.errors.join(" ")}</p>
+          ) : null}
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={confirmingCostKey !== null}
+        onClose={() => setConfirmingCostKey(null)}
+        title="Confirmar costo del exhibidor"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmingCostKey(null)}>Cancelar</Button>
+            <Button disabled={busy || parseAmount(confirmCostValue.trim()) === undefined} onClick={() => void confirmExhibitorCost()}>
+              Confirmar costo
+            </Button>
+          </>
+        }
+      >
+        {(() => {
+          const group = exhibitorGroups.find((candidate) => candidate.key === confirmingCostKey) ?? null;
+          if (!group) return null;
+          const pending = group.pieces.filter((piece) => piece.withdrawnAt === undefined && piece.unitCostCents === undefined);
+          return (
+            <div className="space-y-3">
+              <p className="text-sm text-on-surface-soft">
+                {pending.length} {pending.length === 1 ? "pieza" : "piezas"} de «{group.name}» (entrega del {formatDate(group.deliveredAt)}) esperan su costo.
+                Una vez confirmado, el importe queda sellado como evidencia.
+              </p>
+              <TextField
+                label="Costo por pieza"
+                inputMode="decimal"
+                placeholder="p. ej. 104"
+                value={confirmCostValue}
+                onChange={(e) => setConfirmCostValue(e.target.value)}
+              />
+            </div>
+          );
+        })()}
+      </Dialog>
+
+      <Dialog
+        open={withdrawingExhibitors}
+        onClose={() => setWithdrawingExhibitors(false)}
+        title="Retirar exhibidores"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setWithdrawingExhibitors(false)}>Cancelar</Button>
+            <Button
+              disabled={busy || !Object.values(exhibWithdrawQty).some((value) => Number(value) > 0) || !isRealDate(exhibWithdrawDate)}
+              onClick={() => void confirmExhibitorWithdrawal()}
+            >
+              Retirar
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <TextField
+            label="Fecha del retiro"
+            inputMode="numeric"
+            placeholder="AAAA-MM-DD"
+            value={exhibWithdrawDate}
+            onChange={(e) => setExhibWithdrawDate(e.target.value)}
+          />
+          <p className="text-sm text-on-surface-soft">
+            Los exhibidores retirados dejan de contar en el costo asignado, pero la entrega y su fecha quedan en el historial.
+          </p>
+          <div className="max-h-80 space-y-1 overflow-y-auto">
+            {assignedExhibitorGroups.map((group) => {
+              const assigned = group.pieces.filter((piece) => piece.withdrawnAt === undefined);
+              return (
+                <div key={group.key} className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-1 last:border-0">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-on-surface">
+                      {group.name}
+                      {group.opening ? " (apertura)" : ""}
+                    </p>
+                    <p className="text-xs text-on-surface-soft">
+                      {assigned.length} asignado{assigned.length === 1 ? "" : "s"} · desde {formatDate(group.deliveredAt)}
+                    </p>
+                  </div>
+                  <div className="w-24">
+                    <TextField
+                      label="Piezas"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={exhibWithdrawQty[group.key] ?? ""}
+                      onChange={(e) => setExhibWithdrawQty((prev) => ({ ...prev, [group.key]: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </Dialog>
     </Screen>
   );
