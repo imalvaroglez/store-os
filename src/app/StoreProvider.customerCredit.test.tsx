@@ -45,6 +45,7 @@ const stateWith = (orders: Order[]): AppState => ({
   points: [],
   pointEntries: [],
   pointOperations: [],
+  pointExhibitors: [],
 });
 
 let context: ReturnType<typeof useStore>;

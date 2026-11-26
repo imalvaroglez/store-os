@@ -73,6 +73,7 @@ const testState: AppState = {
   points: [],
   pointEntries: [],
   pointOperations: [],
+  pointExhibitors: [],
 };
 
 function Wrapper({ children }: { children: React.ReactNode }) {

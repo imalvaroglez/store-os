@@ -33,6 +33,7 @@ export function fixtureState(): AppState {
     points: [],
     pointEntries: [],
     pointOperations: [],
+    pointExhibitors: [],
     products: [
       product("prod_olivia_1", oliviaId, "Anillo de plata 925", true),
       product("prod_santi_1", santiId, "Perfume Baccarat Rouge 540", true),

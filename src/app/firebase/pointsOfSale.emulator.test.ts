@@ -54,6 +54,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 puntos de venta (reg
         confirmedBy: "pt-owner",
         confirmedAt: "2026-11-21T00:00:00.000Z",
       });
+      await setDoc(doc(fs, "pointExhibitors/pex1"), {
+        id: "pex1",
+        storeId: "pt-store",
+        pointId: "pt-store__mostrador",
+        deliveryId: "pex-int-1",
+        lineIndex: 0,
+        name: "Tabla plegable",
+        deliveredAt: "2026-11-21",
+        opening: true,
+        unitCostCents: 10400,
+        deliveredBy: "pt-owner",
+        createdAt: "2026-11-21T00:00:00.000Z",
+      });
     });
   });
   afterAll(async () => {
@@ -65,6 +78,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 puntos de venta (reg
     expect((await getDoc(doc(owner, "points/pt-store__mostrador"))).exists()).toBe(true);
     expect((await getDoc(doc(owner, "pointEntries/pe1"))).exists()).toBe(true);
     expect((await getDoc(doc(owner, "pointOperations/pop1"))).exists()).toBe(true);
+    expect((await getDoc(doc(owner, "pointExhibitors/pex1"))).exists()).toBe(true);
   });
 
   it("un miembro de OTRA tienda no lee ni lista puntos, entradas ni operaciones ajenas", async () => {
@@ -73,6 +87,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 puntos de venta (reg
     await expect(getDoc(doc(foreign, "pointEntries/pe1"))).rejects.toThrow();
     await expect(getDoc(doc(foreign, "pointOperations/pop1"))).rejects.toThrow();
     await expect(getDocs(collection(foreign, "pointEntries"))).rejects.toThrow();
+    await expect(getDoc(doc(foreign, "pointExhibitors/pex1"))).rejects.toThrow();
+    await expect(getDocs(collection(foreign, "pointExhibitors"))).rejects.toThrow();
   });
 
   it("nadie escribe la evidencia del punto desde el cliente (sólo el callable)", async () => {
@@ -88,6 +104,16 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 puntos de venta (reg
     })).rejects.toThrow();
     await expect(updateDoc(doc(owner, "pointOperations/pop1"), { kind: "corte" })).rejects.toThrow();
     await expect(deleteDoc(doc(owner, "pointOperations/pop1"))).rejects.toThrow();
+    // Exhibidores: entrega, confirmación de costo y retiro también son solo
+    // del callable — ni crear, ni editar costo, ni marcar retiro.
+    await expect(setDoc(doc(owner, "pointExhibitors/pex2"), {
+      id: "pex2", storeId: "pt-store", pointId: "pt-store__mostrador", deliveryId: "x",
+      lineIndex: 0, name: "Barral", deliveredAt: "2026-11-21", opening: false,
+      deliveredBy: "pt-owner", createdAt: "2026-11-21T00:00:00.000Z",
+    })).rejects.toThrow();
+    await expect(updateDoc(doc(owner, "pointExhibitors/pex1"), { unitCostCents: 1 })).rejects.toThrow();
+    await expect(updateDoc(doc(owner, "pointExhibitors/pex1"), { withdrawnAt: "2026-11-22" })).rejects.toThrow();
+    await expect(deleteDoc(doc(owner, "pointExhibitors/pex1"))).rejects.toThrow();
   });
 
   it("el punto es configuración de la tienda: el dueño lo crea/edita, el ajeno no; nadie lo borra", async () => {
@@ -116,5 +142,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("#524 puntos de venta (reg
     const anon = env.unauthenticatedContext().firestore();
     await expect(getDoc(doc(anon, "points/pt-store__mostrador"))).rejects.toThrow();
     await expect(getDoc(doc(anon, "pointEntries/pe1"))).rejects.toThrow();
+    await expect(getDoc(doc(anon, "pointExhibitors/pex1"))).rejects.toThrow();
   });
 });

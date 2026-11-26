@@ -39,6 +39,7 @@ function emptyState(products: Product[]): AppState {
   points: [],
   pointEntries: [],
   pointOperations: [],
+  pointExhibitors: [],
   };
 }
 

@@ -39,6 +39,7 @@ const state = (): AppState => ({
   points: [],
   pointEntries: [],
   pointOperations: [],
+  pointExhibitors: [],
 });
 const receipt: OrderPayment = {
   id: "same-intent", orderId: order.id, storeId: order.storeId, amount: 400, kind: "payment", method: "cash",

@@ -1793,7 +1793,8 @@ export function emptyAppState(): AppState {
   return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [],
   points: [],
   pointEntries: [],
-  pointOperations: [], supplierLinks: [] };
+  pointOperations: [],
+  pointExhibitors: [], supplierLinks: [] };
 }
 
 export function useStore(): StoreContextValue {

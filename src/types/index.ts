@@ -1190,11 +1190,13 @@ export type AppState = {
   supplierLinks?: SupplierProductLink[];
   /** #132: confirmed monthly reseller rankings (append-only, owner-only). */
   rankingConfirmations?: RankingConfirmation[];
-  /** #524: physical points of sale (config), their stock entries and the
-   * auditable operation evidence (cortes, cobros, anulaciones, conversiones). */
+  /** #524: physical points of sale (config), their stock entries, the
+   * auditable operation evidence (cortes, cobros, anulaciones, conversiones)
+   * and the Exhibidores registry (operational, separate from money flows). */
   points: PointOfSale[];
   pointEntries: PointEntry[];
   pointOperations: PointOperation[];
+  pointExhibitors: PointExhibitor[];
 };
 
 export type { SupplierProductLink };
