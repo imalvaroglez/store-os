@@ -144,3 +144,71 @@ export async function withdrawFromPointTrusted(params: {
   const res = await call(params);
   return res.data;
 }
+
+// #524 Exhibidores tab: same trusted-callable contract as the stock moves —
+// the registry is evidence, so the client never writes pointExhibitors.
+
+export interface DeliverExhibitorLine {
+  name: string;
+  quantity: number;
+  /** Absent = pending valuation, confirmable later on the same record. */
+  unitCostCents?: number;
+}
+
+export interface DeliverExhibitorsResult {
+  delivered: boolean;
+  alreadyDelivered?: boolean;
+  pieces?: number;
+}
+
+export async function deliverExhibitorsTrusted(params: {
+  storeId: string;
+  pointId: string;
+  intentId: string;
+  physicalDate: string;
+  opening: boolean;
+  lines: DeliverExhibitorLine[];
+}): Promise<DeliverExhibitorsResult> {
+  const call = httpsCallable<Parameters<typeof deliverExhibitorsTrusted>[0], DeliverExhibitorsResult>(functionsInstance(), "deliverPointExhibitors");
+  const res = await call(params);
+  return res.data;
+}
+
+export interface ConfirmExhibitorCostResult {
+  confirmed?: number;
+  alreadyConfirmed?: number;
+}
+
+export async function confirmExhibitorCostTrusted(params: {
+  storeId: string;
+  pointId: string;
+  items: Array<{ exhibitorId: string; unitCostCents: number }>;
+}): Promise<ConfirmExhibitorCostResult> {
+  const call = httpsCallable<Parameters<typeof confirmExhibitorCostTrusted>[0], ConfirmExhibitorCostResult>(functionsInstance(), "confirmPointExhibitorCost");
+  const res = await call(params);
+  return res.data;
+}
+
+export interface WithdrawExhibitorLine {
+  deliveryId: string;
+  lineIndex: number;
+  quantity: number;
+}
+
+export interface WithdrawExhibitorsResult {
+  withdrawn: boolean;
+  alreadyWithdrawn?: boolean;
+  pieces?: number;
+}
+
+export async function withdrawExhibitorsTrusted(params: {
+  storeId: string;
+  pointId: string;
+  intentId: string;
+  physicalDate: string;
+  lines: WithdrawExhibitorLine[];
+}): Promise<WithdrawExhibitorsResult> {
+  const call = httpsCallable<Parameters<typeof withdrawExhibitorsTrusted>[0], WithdrawExhibitorsResult>(functionsInstance(), "withdrawPointExhibitors");
+  const res = await call(params);
+  return res.data;
+}

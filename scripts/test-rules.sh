@@ -43,6 +43,7 @@ CALLABLE_FILES=(
   src/app/firebase/pointConversion.emulator.test.ts
   src/app/firebase/pointCut.emulator.test.ts
   src/app/firebase/pointStock.emulator.test.ts
+  src/app/firebase/pointExhibitors.emulator.test.ts
 )
 # Storage suites (#176): the emulator loads each file's rules explicitly, so
 # they do NOT use firebase.emulator.json's storage.rules.emulator swap.

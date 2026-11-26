@@ -14,6 +14,7 @@ export { applyCredit, releaseCredit } from "./applyCredit.mjs";
 export { convertOrderToFirstSurtido } from "./convertOrderToPoint.mjs";
 export { registerPointCut, registerPointCutPayment, annulPointCut } from "./pointCut.mjs";
 export { stockPointFromWarehouse, withdrawFromPoint } from "./pointStock.mjs";
+export { deliverPointExhibitors, confirmPointExhibitorCost, withdrawPointExhibitors } from "./pointExhibitors.mjs";
 
 // Initialize the default Admin app once (the emulator may re-evaluate this
 // module on reload; guard against double init).
