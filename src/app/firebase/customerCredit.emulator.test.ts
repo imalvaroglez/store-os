@@ -597,7 +597,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit through t
       await env.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(doc(ctx.firestore(), "orders/conv-origin"), orderDoc("conv-origin", {
           items: [{ productName: "Aro", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "conv-origin_L0" }],
-          paymentsReceivedCents: 21500, // overpaid: $215 received on a $100 order → $15 credit
+          paymentsReceivedCents: 21500, // overpaid: $215 received on a $100 order → $115 of surplus; the tests move $15 of it
         }));
         // Still "confirmed" and on paper owing $200: only convertedToPointId sets it apart.
         await setDoc(doc(ctx.firestore(), "orders/conv-converted"), orderDoc("conv-converted", { convertedToPointId: "credit-point" }));
@@ -605,7 +605,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit through t
         // the ORIGIN side against a drifted document.
         await setDoc(doc(ctx.firestore(), "orders/conv-converted-origin"), orderDoc("conv-converted-origin", {
           items: [{ productName: "Aro", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "conv-converted-origin_L0" }],
-          paymentsReceivedCents: 21500,
+          paymentsReceivedCents: 21500, // the same $115 of surplus on paper — it must never move
           convertedToPointId: "credit-point",
         }));
         await setDoc(doc(ctx.firestore(), "orders/conv-next"), orderDoc("conv-next")); // the real debt: $200
