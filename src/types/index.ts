@@ -550,6 +550,43 @@ export type PointEntry = {
   updatedAt: string;
 };
 
+/** #524 Exhibidores tab — one fixture piece (display furniture) assigned to a
+ * point of sale. Operational registry ONLY, separate from cash, cortes,
+ * monthly close and merchandise inventory. One doc per piece (grouped by
+ * delivery line in the UI); the ONLY writers are the trusted callables, so
+ * rules deny every client write. Money is exact cents; `unitCostCents`
+ * absent = valuation pending. Physical dates are day-granularity. */
+export type PointExhibitor = {
+  id: string;
+  storeId: string;
+  pointId: string;
+  /** Delivery intent id: groups every piece of one entrega. */
+  deliveryId: string;
+  /** Row within the entrega — pieces of a row share name and unit cost. */
+  lineIndex: number;
+  /** Row name snapshot («Tabla plegable»), readable after any rename. */
+  name: string;
+  /** Physical delivery date (YYYY-MM-DD). */
+  deliveredAt: string;
+  /** True when the entrega carried the «Entrega de apertura» flag. */
+  opening: boolean;
+  /** Known unit cost, cents; absent = pending valuation. */
+  unitCostCents?: number;
+  /** Who registered the entrega (uid), stamped by the callable. */
+  deliveredBy: string;
+  createdAt: string;
+  updatedAt?: string;
+  /** Cost confirmation evidence; once set, the cost is immutable audit. */
+  costConfirmedBy?: string;
+  costConfirmedAt?: string;
+  /** Physical withdrawal date; absent = still assigned to the point. */
+  withdrawnAt?: string;
+  /** Who withdrew the piece (uid). */
+  withdrawnBy?: string;
+  /** Groups the pieces of one withdrawal intent. */
+  withdrawalIntentionId?: string;
+};
+
 /** How money was received. "unknown" is ONLY for the inherited legacy deposit
  * (decision i on #123): real receptions always carry cash or transfer. */
 export type OrderPaymentMethod = "cash" | "transfer" | "unknown";
