@@ -18,6 +18,7 @@ import {
   useToast,
 } from "../../design-system";
 import { orderItems } from "../../lib/orders";
+import { formatDate } from "../../lib/dates";
 import { uid } from "../../lib/ids";
 import { orderAmountCents } from "../../lib/orderMoney";
 import { totalStock, variantSku } from "../../lib/variants";
@@ -50,6 +51,7 @@ export function IncidentSheet({ order, open, onClose }: { order: Order; open: bo
   const [opening, setOpening] = useState(false);
   const [agreeingId, setAgreeingId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [closingId, setClosingId] = useState<string | null>(null);
 
   const incidents = order.incidents ?? [];
   const products = activeStore
@@ -123,8 +125,10 @@ export function IncidentSheet({ order, open, onClose }: { order: Order; open: bo
             products={products}
             agreeing={agreeingId === incident.id}
             confirming={confirmingId === incident.id}
+            closing={closingId === incident.id}
             onAgreeing={setAgreeingId}
             onConfirming={setConfirmingId}
+            onClosing={setClosingId}
             run={run}
           />
         ))}
@@ -159,8 +163,10 @@ function IncidentCard({
   products,
   agreeing,
   confirming,
+  closing,
   onAgreeing,
   onConfirming,
+  onClosing,
   run,
 }: {
   order: Order;
@@ -168,8 +174,10 @@ function IncidentCard({
   products: { id: string; name: string; sku?: string; quantityOnHand?: number; cost?: number; price?: number; prices?: Record<string, number>; variants?: ProductVariant[] }[];
   agreeing: boolean;
   confirming: boolean;
+  closing: boolean;
   onAgreeing: (id: string | null) => void;
   onConfirming: (id: string | null) => void;
+  onClosing: (id: string | null) => void;
   run: (action: () => Promise<void>, success: string) => Promise<boolean>;
 }) {
   const { applyIncidentEvent } = useStore();
@@ -206,7 +214,9 @@ function IncidentCard({
   const [replacementVariantId, setReplacementVariantId] = useState("");
   const [chargeDifference, setChargeDifference] = useState(true);
   const [waitUntil, setWaitUntil] = useState("");
-  const [dialog, setDialog] = useState<"confirm" | "none">("none");
+  const [dialog, setDialog] = useState<"confirm" | "no_change" | "none">("none");
+  // #560: the mandatory motive behind a «Sin cambio» close.
+  const [noChangeReason, setNoChangeReason] = useState("");
   const [refundExecuted, setRefundExecuted] = useState(false);
   const [compensationText, setCompensationText] = useState("");
 
@@ -301,6 +311,23 @@ function IncidentCard({
     onConfirming(null);
   }
 
+  // #560: close the incident with NO change — the clienta backed out before
+  // any fact. Evidence only (who/when/why); the agreed-but-unexecuted
+  // resolution stops having effects and the line becomes editable again.
+  async function closeNoChange() {
+    setDialog("none");
+    onClosing(incident.id);
+    await run(
+      () => applyIncidentEvent(order, incident.id, {
+        id: uid("iev"),
+        kind: "closed_no_change",
+        detail: { reason: noChangeReason.trim() },
+      }),
+      "Incidencia cerrada sin cambio."
+    );
+    onClosing(null);
+  }
+
   async function later(kindLater: "repaired" | "provider_replacement" | "written_off" | "returned_to_sale" | "refund_executed" | "provider_compensation") {
     const detail: Record<string, string | number> | undefined =
       kindLater === "refund_executed"
@@ -336,7 +363,7 @@ function IncidentCard({
         </p>
       )}
 
-      {!info.resolution && (
+      {!info.resolution && !info.closedNoChange && (
         <div className="space-y-3 border-t border-edge pt-3">
           <SelectField
             label="Solución acordada con la clienta"
@@ -458,7 +485,7 @@ function IncidentCard({
         </div>
       )}
 
-      {info.resolution && !info.confirmed && (
+      {info.resolution && !info.confirmed && !info.closedNoChange && (
         <div className="space-y-2 border-t border-edge pt-3">
           <Button full variant="secondary" disabled={confirming} onClick={() => setDialog("confirm")}>
             Confirmar recepción de la pieza + entrega
@@ -515,6 +542,33 @@ function IncidentCard({
         </div>
       )}
 
+      {!info.confirmed && !info.closedNoChange && (
+        <div className="border-t border-edge pt-3">
+          <Button size="sm" variant="ghost" disabled={closing} onClick={() => setDialog("no_change")}>
+            Cerrar sin cambio
+          </Button>
+          <p className="text-xs text-on-surface-soft mt-1">
+            La clienta desistió y el cambio no llegó a ocurrir: nada se recibió ni se entregó. Queda en el historial con el motivo.
+          </p>
+        </div>
+      )}
+
+      {info.closedNoChange && (() => {
+        const closeEvent = (incident.events ?? []).find((event) => event.kind === "closed_no_change");
+        return (
+          <div className="space-y-1 border-t border-edge pt-3">
+            <Badge tone="neutral">Cerrada sin cambio · {formatDate(closeEvent?.at)}</Badge>
+            <p className="text-xs text-ink-soft">
+              {closeEvent?.detail?.reason ? String(closeEvent.detail.reason) : "Sin motivo registrado"}
+            </p>
+            <p className="text-xs text-on-surface-soft">
+              El cambio no llegó a ocurrir: no se movieron piezas ni dinero. Si este pedido cargó una pieza sólo
+              para ese cambio, ya puedes retirarla o corregirla desde el editor del pedido.
+            </p>
+          </div>
+        );
+      })()}
+
       <Dialog
         open={dialog === "confirm"}
         title="Confirmar recepción y entrega"
@@ -541,6 +595,36 @@ function IncidentCard({
             onChange={setRefundExecuted}
           />
         )}
+      </Dialog>
+
+      <Dialog
+        open={dialog === "no_change"}
+        title="Cerrar sin cambio"
+        onClose={() => setDialog("none")}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDialog("none")}>Cancelar</Button>
+            <Button disabled={!noChangeReason.trim() || closing} onClick={() => void closeNoChange()}>
+              Cerrar sin cambio
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-on-surface-soft">
+          Registra que el cambio no se realizó: no se recibió la pieza dañada, no se entregó reemplazo y no hubo
+          reembolso. {info.resolution ? "El acuerdo registrado queda sin efecto." : ""} El motivo queda firmado en el
+          historial.
+        </p>
+        <TextField
+          label="Motivo"
+          placeholder="p. ej. la clienta ya no quiere el cambio"
+          value={noChangeReason}
+          onChange={(event) => setNoChangeReason(event.target.value)}
+        />
+        <p className="text-xs text-on-surface-soft">
+          Si este pedido cargó una pieza sólo para ese cambio, al cerrar podrás retirarla desde el editor y el total
+          se corrige con el efecto a la vista.
+        </p>
       </Dialog>
     </Card>
   );
