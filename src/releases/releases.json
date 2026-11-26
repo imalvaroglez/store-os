@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.23.0",
+    "date": "2026.11.26",
+    "title": "Puntos de venta físicos",
+    "notes": [
+      "Llega «Puntos de venta» en el menú Ventas para tiendas con inventario: cada punto muestra sus piezas, su último corte y lo pendiente de cobrar, y su ficha reúne el corte, el surtido desde el almacén, el retiro y el historial.",
+      "Con «Usar como surtido inicial» un pedido confirmado se vuelve el primer surtido de un punto, tras revisar en una vista previa punto, fecha, piezas y precios. El pedido queda como historial con la leyenda «Mercancía en …» y sale de «Falta cobrar».",
+      "En cada visita, «Registrar corte» parte de las existencias del punto: capturas sólo lo vendido y las bajas con motivo, y ves qué piezas quedan, venta bruta, comisión, neto a cobrar y resultado. «Registrar cobro» guarda el cobro en su fecha real, en el momento o después.",
+      "La pestaña «Exhibidores» lleva el mobiliario que entregas a cada punto: costo de apertura, costo de lo asignado y retiro de piezas con su historial.",
+      "El Cierre mensual suma la venta de los puntos con su comisión como gasto y las bajas como pérdida; los Cobros y la Caja registrada incluyen lo cobrado en cada punto."
+    ]
+  },
+  {
     "version": "1.22.0",
     "date": "2026.11.26",
     "title": "Cerrar un cambio que no se realizó",
