@@ -548,7 +548,13 @@ export type OrderIncidentEvent = {
     | "returned_to_sale"
     /** #203: the pending refund was actually handed back to the clienta
      * (releases the credit block exactly once; detail.refundExecutedCents). */
-    | "refund_executed";
+    | "refund_executed"
+    /** #560: the clienta backed out BEFORE any fact happened — nothing was
+     * received, replaced or refunded. The incident stays in history with who,
+     * when and why (detail.reason, mandatory); the agreed-but-unexecuted
+     * resolution stops having effects and the line no longer blocks the
+     * editor. Rejected once any executed fact exists (confirmed and beyond). */
+    | "closed_no_change";
   /** Event-specific evidence (amounts in exact cents, ids, motive). */
   detail?: Record<string, string | number>;
 };

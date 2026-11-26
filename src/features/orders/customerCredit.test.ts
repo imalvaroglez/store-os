@@ -168,3 +168,62 @@ describe("ordersForCustomer + customerBalanceSummary (the clienta view)", () => 
     expect(rowB.creditAppliedCents).toBe(1500);
   });
 });
+
+// ── #560: la corrección del renglón tras el cierre «Sin cambio» ──────────────
+describe("corrección del renglón tras cierre sin cambio (#560)", () => {
+  const closedNoChangeIncident = {
+    id: "inc1",
+    lineId: "l30",
+    productId: "p30",
+    productName: "Aro cambio",
+    quantity: 1,
+    reason: "Piedra fallada",
+    originalUnitPriceCents: 3000,
+    events: [
+      { id: "e1", kind: "opened" as const, at: "2026-11-20T10:00:00Z", by: "fer" },
+      { id: "e2", kind: "closed_no_change" as const, at: "2026-11-21T10:00:00Z", by: "fer", detail: { reason: "La clienta ya no quiere el cambio" } },
+    ],
+  };
+
+  it("regresión $790 cobrados $820: al retirar el renglón de $30 quedan $60 de excedente; con $30 ya aplicados, quedan $30", () => {
+    // Antes de corregir: total $790, recibido $820 → saldo a favor $30.
+    const uncorrected = priced("a", 790, 820, "2026-11-20T10:00:00Z");
+    expect(creditAvailableCents(uncorrected)).toBe(3000);
+    // Los $30 ya se aplicaron a otro pedido → nada disponible todavía.
+    expect(creditAvailableCents({ ...uncorrected, creditConsumedCents: 3000 })).toBe(0);
+    // Tras el cierre sin cambio la operadora retira el renglón: total $760.
+    // El cobro original queda intacto → excedente real $60, $30 adicionales.
+    const corrected = priced("a", 760, 820, "2026-11-20T10:00:00Z", {
+      incidents: [closedNoChangeIncident] as Order["incidents"],
+    });
+    expect(creditAvailableCents(corrected)).toBe(6000);
+    expect(creditAvailableCents({ ...corrected, creditConsumedCents: 3000 })).toBe(3000);
+  });
+
+  it("el reembolso acordado y luego anulado por el cierre no bloquea el crédito", () => {
+    const anulledRefund = priced("a", 760, 820, "2026-11-20T10:00:00Z", {
+      incidents: [{
+        ...closedNoChangeIncident,
+        resolution: { kind: "refund", saleAdjustmentUnitCents: 3000, refundOwedCents: 3000, destination: "refund_pending" },
+      }] as Order["incidents"],
+    });
+    expect(creditAvailableCents(anulledRefund)).toBe(6000);
+  });
+
+  it("el crédito reconciliado se aplica al siguiente pedido elegible (#189)", () => {
+    const corrected = priced("a", 760, 820, "2026-11-20T10:00:00Z", {
+      creditConsumedCents: 3000,
+      incidents: [closedNoChangeIncident] as Order["incidents"],
+    });
+    const next = priced("n", 50, 0, "2026-11-22T10:00:00Z");
+    expect(planCreditApplications([next, corrected])).toEqual([
+      { fromOrderId: "a", toOrderId: "n", amountCents: 3000 },
+    ]);
+    // Tras la aplicación (acumuladores espejo #189 escritos en la misma
+    // transacción), el destino debe $20 y el plan queda vacío (idempotente).
+    const applied = { ...next, creditAppliedCents: 3000 };
+    const consumed = { ...corrected, creditConsumedCents: 6000 };
+    expect(pendingCents(applied)).toBe(2000);
+    expect(planCreditApplications([applied, consumed])).toEqual([]);
+  });
+});
