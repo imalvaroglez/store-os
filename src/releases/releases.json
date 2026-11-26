@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.22.0",
+    "date": "2026.11.26",
+    "title": "Cerrar un cambio que no se realizó",
+    "notes": [
+      "En la incidencia de un pedido, «Cerrar sin cambio» deja sin efecto la solución acordada cuando la clienta desistió antes de que pasara algo: pide el motivo y guarda quién la cerró y cuándo.",
+      "Tras cerrarla, el renglón que se había agregado solo para ese cambio vuelve a poder quitarse, y el resumen del pedido muestra «A favor» junto a Total, Recibido y Saldo para ver el efecto antes de guardar.",
+      "El cobro original no se toca. Si la clienta ya recibió la pieza, el reemplazo o su reembolso, la incidencia sigue protegida y no se puede cerrar así."
+    ]
+  },
+  {
     "version": "1.21.2",
     "date": "2026.11.25",
     "title": "Pedidos a un toque y cambio de tienda sin bloqueos",
