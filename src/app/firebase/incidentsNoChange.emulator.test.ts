@@ -226,4 +226,35 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("cierre «Sin cambio» con
       saveOrderWithStockTx({ uid: "inc560-user" } as never, asOrder("inc560-order-b", []), revision, "mut-560-guard")
     ).rejects.toThrow(IncidentEvidenceError);
   });
+
+  it("una incidencia abierta sin resolución también se cierra sin cambio", async () => {
+    // The acceptance's "incidencia abierta sin efecto": no agreement at all,
+    // the clienta backs out immediately.
+    await setDoc(doc(holder.db, "orders/inc560-order-c"), {
+      storeId: "inc560-store", customerId: "inc560-clienta",
+      items: [line("C1", 200)],
+      deposit: 0, orderStatus: "confirmed", revision: 1,
+      createdAt: "2026-11-19T10:00:00Z", updatedAt: "2026-11-19T10:00:00Z",
+    });
+    await openIncidentTx({
+      orderId: "inc560-order-c", storeId: "inc560-store",
+      incident: {
+        id: "inc560-i3", lineId: "C1", productId: "p-L1", productName: "Collar",
+        quantity: 1, reason: "Reporte inicial", originalUnitPriceCents: 20000,
+        events: [event("inc560-open-c", "opened")],
+      },
+    });
+    await applyIncidentEventTx({
+      orderId: "inc560-order-c", storeId: "inc560-store", incidentId: "inc560-i3",
+      event: event("inc560-close-c", "closed_no_change", { reason: "Se confundió: era otra pieza" }),
+    });
+    const order = (await getDoc(doc(holder.db, "orders/inc560-order-c"))).data()!;
+    const incident = (order.incidents as OrderIncident[]).find((i) => i.id === "inc560-i3")!;
+    expect(incident.events.filter((e) => e.kind === "closed_no_change")).toHaveLength(1);
+    expect(incident.resolution).toBeUndefined();
+    // Its line is editable right away (nothing was ever agreed nor executed).
+    const revision = order.revision as number;
+    const saved = await saveOrderWithStockTx({ uid: "inc560-user" } as never, asOrder("inc560-order-c", [line("C1", 180)]), revision, "mut-560-open");
+    expect(saved.order.items).toHaveLength(1);
+  });
 });

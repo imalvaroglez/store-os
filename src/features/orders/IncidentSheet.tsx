@@ -314,17 +314,22 @@ function IncidentCard({
   // #560: close the incident with NO change — the clienta backed out before
   // any fact. Evidence only (who/when/why); the agreed-but-unexecuted
   // resolution stops having effects and the line becomes editable again.
+  // One STABLE event id per intent (the #380 confirm pattern): a retry after
+  // a lost response replays the same id instead of dying on «ya está cerrada».
+  const closeEventIdRef = useRef<string | null>(null);
   async function closeNoChange() {
     setDialog("none");
     onClosing(incident.id);
-    await run(
+    closeEventIdRef.current ??= uid("iev");
+    const landed = await run(
       () => applyIncidentEvent(order, incident.id, {
-        id: uid("iev"),
+        id: closeEventIdRef.current!,
         kind: "closed_no_change",
         detail: { reason: noChangeReason.trim() },
       }),
       "Incidencia cerrada sin cambio."
     );
+    if (landed) closeEventIdRef.current = null;
     onClosing(null);
   }
 
