@@ -613,3 +613,25 @@ describe("projectedShortageByDimension / attributeProjectedShortageToLines (#325
     expect(perLine.get("l1")).toBe(3);
   });
 });
+
+describe("pedido convertido a punto de venta (#524)", () => {
+  const line = (overrides: Partial<OrderItem> = {}): OrderItem =>
+    ({ lineId: "l", productId: "p1", productName: "Pieza", quantity: 1, unitPrice: 100, subtotal: 100, ...overrides }) as OrderItem;
+  const order = (o: Partial<Order> = {}): Order =>
+    ({
+      id: "ord-abc123", storeId: "s1", customerId: "c1", deposit: 0,
+      items: [line()], orderStatus: "confirmed", paymentStatus: "unpaid",
+      createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z", ...o,
+    }) as Order;
+
+  it("deja de contar como comprometido: sus piezas viven en el punto", () => {
+    const orders = [
+      order({ id: "ord-aaa111", items: [line({ quantity: 3 })], convertedToPointId: "pt1" }),
+      order({ id: "ord-bbb222", items: [line({ quantity: 1 })] }),
+    ];
+    const breakdown = committedBreakdownForProduct(orders, "s1", "p1");
+    expect(breakdown.total).toBe(1);
+    expect(breakdown.rows).toHaveLength(1);
+    expect(committedForProduct(orders, "s1", "p1")).toBe(1);
+  });
+});

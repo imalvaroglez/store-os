@@ -13,7 +13,8 @@ describe("#454 áreas de navegación", () => {
       "Compras y abastecimiento",
       "Administración",
     ]);
-    expect(nav.areas[0].children.map((c) => c.label)).toEqual(["Pedidos", "Clientes", "Top emprendedoras"]);
+    // #524 extiende el contrato #454: Puntos de venta bajo Ventas.
+    expect(nav.areas[0].children.map((c) => c.label)).toEqual(["Pedidos", "Clientes", "Puntos de venta", "Top emprendedoras"]);
     expect(nav.areas[1].children.map((c) => c.label)).toEqual([
       "Productos",
       "Categorías",
@@ -30,7 +31,7 @@ describe("#454 áreas de navegación", () => {
     const nav = visibleNav("inventory_tiered", "member");
     const paths = nav.areas.flatMap((a) => a.children.map((c) => c.path));
     expect(paths).toEqual([
-      "/pedidos", "/clientes", "/productos/ranking",
+      "/pedidos", "/clientes", "/ventas/puntos", "/productos/ranking",
       "/productos", "/productos/categorias", "/productos/reglas", "/productos/estrategia",
       "/productos/compras", "/productos/empaques",
       "/productos/gastos", "/productos/cierre", "/productos/reparto", "/productos/simulador",

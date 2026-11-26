@@ -50,9 +50,10 @@ import { incidentsRefundCommittedCents, incidentsSaleAdjustmentCents, orderAmoun
 import { normalizeEmail, type AppUser } from "./auth";
 import type { AppState, Store, Storefront, Product, ProductVariant, Customer, Order, Category, Supplier, Purchase, OrderPayment, OrderCreditLedgerEntry, LooseExpense, ExpenseAssignment, OrderSaleExpense, SupplyConsumption, StorePackaging, PricingRulesConfig, PricingRule, OrderDelivery, CardPayment, StoreFinancials } from "../../types";
 import { applyCreditTrusted, releaseCreditTrusted } from "./creditFunctions";
+import { convertOrderTrusted, type ConvertOrderResult } from "./pointFunctions";
 import { IncidentEvidenceError, incidentEvidenceError, incidentState } from "../../features/orders/incidents";
 import { reconcileIncidentMoney, restitutionReleasedCents } from "../../features/orders/incidentMoney";
-import type { OrderIncident, OrderIncidentEvent, RankingConfirmation } from "../../types";
+import type { OrderIncident, OrderIncidentEvent, RankingConfirmation, PointEntry, PointOfSale, PointExhibitor, PointOperation } from "../../types";
 import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
@@ -72,7 +73,11 @@ export class PublicCatalogProjectionError extends Error {
 // stores; a member sees only stores whose memberUids include them). Writes go to
 // the entity's own doc; security rules enforce membership server-side.
 
-export const COLLECTIONS = ["stores", "products", "categories", "suppliers", "purchases", "customers", "orders", "expenses"] as const;
+export const COLLECTIONS = ["stores", "products", "categories", "suppliers", "purchases", "customers", "orders", "expenses", "points"] as const;
+// #524: point-of-sale config (client-savable via saveEntity) + evidence
+// (callable-only writes; never in COLLECTIONS) — merchandise entries and
+// operations, plus the Exhibidores registry (pointExhibitors).
+const POINT_LISTENERS = ["points", "pointEntries", "pointOperations", "pointExhibitors"] as const;
 type CollectionName = (typeof COLLECTIONS)[number];
 
 /** Load all cloud data visible to the user. */
@@ -97,7 +102,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   // Fetch each entity collection scoped to the accessible stores. For a
   // super_admin this is the full collection (no `in`-query size limit); for
   // members it remains scoped to their store set.
-  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks" | "rankingConfirmations"): Promise<T[]> {
+  async function forStores<T extends { storeId: string }>(name: "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "supplierLinks" | "rankingConfirmations" | "points" | "pointEntries" | "pointOperations" | "pointExhibitors"): Promise<T[]> {
     if (storeIds.length === 0) return [];
     const q = user.role === "super_admin"
       ? collection(db, name)
@@ -106,7 +111,7 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     return snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }));
   }
 
-  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks, rankingConfirmations] = await Promise.all([
+  const [products, categories, suppliers, purchases, customers, orders, expenses, supplierLinks, rankingConfirmations, points, pointEntries, pointOperations, pointExhibitors] = await Promise.all([
     forStores<Product>("products"),
     forStores<Category>("categories"),
     forStores<Supplier>("suppliers"),
@@ -117,6 +122,11 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     // #211: confirmed supplier-code associations, same store scoping.
     forStores<SupplierProductLink>("supplierLinks" as never),
     forStores<RankingConfirmation>("rankingConfirmations" as never),
+    // #524: points of sale, their stock evidence and the Exhibidores registry.
+    forStores<PointOfSale>("points"),
+    forStores<PointEntry>("pointEntries"),
+    forStores<PointOperation>("pointOperations"),
+    forStores<PointExhibitor>("pointExhibitors"),
   ]);
 
   return {
@@ -131,6 +141,10 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
     expenses,
     supplierLinks,
     rankingConfirmations,
+    points,
+    pointEntries,
+    pointOperations,
+    pointExhibitors,
   };
 }
 
@@ -191,7 +205,7 @@ export function subscribeCloudState(
   function registerEntityListeners(storeIds: string[]) {
     if (tornDown) return;
     if (storeIds.length === 0 && user.role !== "super_admin") return;
-    for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders", "expenses"] as const) {
+    for (const name of ["products", "categories", "suppliers", "purchases", "customers", "orders", "expenses", ...POINT_LISTENERS] as const) {
       const entityQ = user.role === "super_admin"
         ? collection(db, name)
         : query(collection(db, name), where("storeId", "in", storeIds));
@@ -984,6 +998,9 @@ export async function saveOrderWithStockTx(
       // #184: saleExpenses (loose-expense charges and supply consumptions)
       // belong to the expense transactions — same verbatim carry (review F1).
       saleExpenses: Array.isArray(docData?.saleExpenses) ? (docData.saleExpenses as Order["saleExpenses"]) : undefined,
+      // #524: the point link belongs to the conversion callable — an ordinary
+      // save carries it verbatim and can never drop or invent it.
+      convertedToPointId: typeof docData?.convertedToPointId === "string" ? docData.convertedToPointId : undefined,
     };
     next.paymentStatus = paymentStatusForOrder(next);
     // Received money per the doc: the stored accumulator plus the deposit in
@@ -3347,4 +3364,30 @@ export async function loadRankingConfirmation(
 /** Deterministic doc id: store + month + revision (append-only versions). */
 export function rankingConfirmationId(storeId: string, year: number, month: number, revision: number): string {
   return `${storeId}__${year}-${String(month).padStart(2, "0")}${revision > 1 ? `__r${revision}` : ""}`;
+}
+
+/**
+ * #524: convert a confirmed order into a point's first surtido
+ * («Usar como surtido inicial»). The TRUSTED convertOrderToFirstSurtido
+ * callable owns the whole movement in one Admin transaction (order link,
+ * point entries with exact cents, operation evidence); this wrapper only
+ * checks the call shape so an obvious client bug fails fast with a clear
+ * message instead of a callable round-trip. Idempotent per intentId: a
+ * retry after success reports alreadyConverted and writes nothing.
+ */
+export async function convertOrderToFirstSurtidoTx(params: {
+  storeId: string;
+  pointId: string;
+  orderId: string;
+  physicalDate: string;
+  intentId: string;
+}): Promise<ConvertOrderResult> {
+  const { storeId, pointId, orderId, physicalDate, intentId } = params;
+  if (!storeId || !pointId || !orderId || !intentId) {
+    throw new Error("La conversión necesita tienda, punto, pedido e identificador de intento.");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(physicalDate)) {
+    throw new Error("La fecha física de entrega no es válida.");
+  }
+  return convertOrderTrusted({ storeId, pointId, orderId, physicalDate, intentId });
 }

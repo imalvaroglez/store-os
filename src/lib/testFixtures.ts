@@ -29,6 +29,11 @@ export function fixtureState(): AppState {
       store(joyeriaId, "Joyería", "joyeria", "inventory_tiered"),
     ],
     activeStoreId: oliviaId,
+    // #524: points of sale start empty in every fixture world.
+    points: [],
+    pointEntries: [],
+    pointOperations: [],
+    pointExhibitors: [],
     products: [
       product("prod_olivia_1", oliviaId, "Anillo de plata 925", true),
       product("prod_santi_1", santiId, "Perfume Baccarat Rouge 540", true),

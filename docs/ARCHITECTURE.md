@@ -91,6 +91,6 @@ Router de historia mínimo y sin dependencias (`src/lib/router.ts` + hook `useRo
 ## Límites entre capas
 
 - **Autenticación:** `AuthProvider` observa la sesión de Firebase y protege las rutas privadas.
-- **Datos cloud:** `firestoreData.ts` contiene las lecturas y escrituras; las reglas de Firestore aplican el aislamiento por tienda.
+- **Datos cloud:** `firestoreData.ts` contiene las lecturas y escrituras; las reglas de Firestore aplican el aislamiento por tienda. Los puntos de venta físicos (#524) viven en `points` (configuración por tienda) y su evidencia en `pointEntries`/`pointOperations`: legibles por miembros, escritas sólo por el callable autenticado.
 - **Estado de interfaz:** `StoreProvider` coordina los cambios visibles y las operaciones administrativas de Firestore. La persistencia administrativa local fue erradicada (spec 2026-10-30-eradicate-local-mode): al arrancar se retira la clave legada `store_os_state_v1` y nunca se vuelve a escribir estado administrativo en el navegador.
 - **Temas:** cada tema es un archivo en `src/design-system/theme/` que implementa el mismo tipo `Theme`.

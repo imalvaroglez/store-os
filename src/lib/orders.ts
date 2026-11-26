@@ -148,6 +148,11 @@ export function orderStatusIsOpen(status: OrderStatus | undefined): boolean {
 export type OrderBucket = "pending" | "active" | "completed" | "cancelled" | "other";
 
 export function orderBucket(order: Partial<Order> & Record<string, unknown>): OrderBucket {
+  // #524: a converted order's pieces live at a point of sale — its money
+  // story continues in cortes/cobros there. It is HISTORY here: it must not
+  // count toward "Falta cobrar" or active buckets anywhere (Home, Pedidos,
+  // clienta cards) — one truth for the whole app.
+  if (order.convertedToPointId) return "other";
   const status = effectiveOrderStatus(order);
   if (status === "cancelled") return "cancelled";
   if (status === "asked" || status === "quoted") return "pending";
@@ -157,8 +162,11 @@ export function orderBucket(order: Partial<Order> & Record<string, unknown>): Or
 }
 
 /** One predicate for "Falta cobrar": every unresolved sale (pending or active)
- * counts, so Home and the customer card can never disagree. */
+ * counts, so Home and the customer card can never disagree. #524: an order
+ * converted into a point's first surtido left the money story on the POINT
+ * (cortes/cobros), so it must leave this list even while still "confirmed". */
 export function orderCountsTowardToPay(order: Partial<Order> & Record<string, unknown>): boolean {
+  if (order.convertedToPointId) return false;
   const bucket = orderBucket(order);
   return bucket === "pending" || bucket === "active";
 }
@@ -277,6 +285,9 @@ export function migrateOrder(rawOrder: unknown, now = new Date().toISOString()):
     storeId: String(raw.storeId ?? ""),
     customerId: String(raw.customerId ?? ""),
     ...(typeof raw.customerName === "string" && raw.customerName ? { customerName: raw.customerName } : {}),
+    // #524: the point-of-sale conversion link is order evidence — losing it
+    // on migration resurrected converted orders as collectible after reload.
+    ...(typeof raw.convertedToPointId === "string" && raw.convertedToPointId ? { convertedToPointId: raw.convertedToPointId } : {}),
     items,
     // v1 advanced to status='paid' without ever raising deposit; a migrated
     // collected sale must not show a phantom balance ("Falta cobrar").

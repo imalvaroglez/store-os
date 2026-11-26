@@ -389,3 +389,23 @@ describe("entregar con evidencia (#333)", () => {
     second.unmount();
   });
 });
+
+describe("OrderCard — pedido convertido a punto de venta (#524)", () => {
+  it("muestra el distintivo del punto y cierra las acciones comerciales (sin Cobrar)", async () => {
+    const converted: Order = { ...order, orderStatus: "confirmed", convertedToPointId: "store_olivia__mostrador" };
+    render(<ToastProvider><OrderCard order={converted} onEdit={() => {}} /></ToastProvider>);
+    expect(screen.getByText(/Mercancía en/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cobrar" })).toBeNull();
+    // La evidencia sigue legible.
+    expect(screen.getByRole("button", { name: /Cobros/ })).toBeTruthy();
+  });
+
+  it("#524 QA menor→contrato: tocar la tarjeta de un convertido NO abre el editor comercial; explica dónde se administra", async () => {
+    const converted: Order = { ...order, orderStatus: "confirmed", convertedToPointId: "store_olivia__mostrador" };
+    let opened = 0;
+    render(<ToastProvider><OrderCard order={converted} onEdit={() => { opened += 1; }} /></ToastProvider>);
+    fireEvent.click(screen.getByText(/Mercancía en/));
+    expect(opened).toBe(0);
+    await screen.findByText(/se administra en Puntos de venta/i);
+  });
+});

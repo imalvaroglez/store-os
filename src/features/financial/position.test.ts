@@ -167,3 +167,25 @@ describe("positionOfStore — aislamiento por tienda (#279 QA MAYOR-1)", () => {
     expect(result.registeredCashCents).toBe(200000);
   });
 });
+
+describe("#524 M3 — la caja incluye los cobros de puntos", () => {
+  it("un cobro de punto cobrado suma a la caja en su fecha real y respeta la activación", () => {
+    const position = financialPosition({
+      activatedAt: "2026-11-01T00:00:00.000Z",
+      payments: [],
+      pointPayments: [{ date: "2026-12-03", amountCents: 40000 }],
+      purchases: [], expenses: [], cardPayments: [],
+    });
+    expect(position.registeredCashCents).toBe(40000);
+  });
+
+  it("un cobro de punto ANTERIOR a la activación no cuenta; uno sin fecha tampoco", () => {
+    const position = financialPosition({
+      activatedAt: "2026-11-01T00:00:00.000Z",
+      payments: [],
+      pointPayments: [{ date: "2026-10-20", amountCents: 40000 }, { amountCents: 10000 }],
+      purchases: [], expenses: [], cardPayments: [],
+    });
+    expect(position.registeredCashCents).toBe(0);
+  });
+});

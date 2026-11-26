@@ -42,6 +42,10 @@ const debtor = (extra: Partial<Order> = {}): Order => ({
 const stateWith = (orders: Order[]): AppState => ({
   stores: [{ id: "s1", name: "Tienda", slug: "tienda", type: "on_demand", createdAt: "", updatedAt: "" }],
   activeStoreId: "s1", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders, expenses: [],
+  points: [],
+  pointEntries: [],
+  pointOperations: [],
+  pointExhibitors: [],
 });
 
 let context: ReturnType<typeof useStore>;
@@ -108,6 +112,21 @@ describe("automatic saldo a favor compensation (#189)", () => {
     // only write; the listener round-trip replans the remainder.
     await act(async () => { await Promise.resolve(); });
     expect(hooks.apply).toHaveBeenCalledTimes(1);
+  });
+
+  it("#524: an order converted to a point of sale never receives the automatic credit — the real order does", async () => {
+    hooks.load.mockResolvedValue(stateWith([
+      creditor(),
+      // Older than `debtor` and still "confirmed": without the rule it soaks up the $15.
+      { ...debtor(), id: "converted", createdAt: "2026-11-01T12:00:00Z", convertedToPointId: "point-1" },
+      debtor(),
+    ]));
+    await mount();
+    await waitFor(() => expect(hooks.apply).toHaveBeenCalledTimes(1));
+    const call = hooks.apply.mock.calls[0][0];
+    expect(call.orderId).toBe("debtor");
+    expect(call.entry.fromOrderId).toBe("creditor");
+    expect(call.entry.amountCents).toBe(1500);
   });
 
   it("surfaces a failed application through the sync error with an idempotent retry", async () => {

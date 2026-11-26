@@ -100,13 +100,21 @@ export const applyCredit = onCall(
       const origin = await readOrderOrThrow(tx, db, fromOrderId, storeId, "el pedido con el saldo a favor");
       const dest = await readOrderOrThrow(tx, db, toOrderId, storeId, "el pedido a compensar");
 
-      // Same clienta, same store, nobody cancelled.
+      // Same clienta, same store, nobody cancelled or converted.
       const customerId = dest.data.customerId;
       if (!customerId || (origin.data.customerId ?? "") !== customerId) {
         throw new HttpsError("failed-precondition", "El saldo a favor solo compensa pedidos de la misma clienta.");
       }
       if (dest.data.orderStatus === "cancelled" || origin.data.orderStatus === "cancelled") {
         throw new HttpsError("failed-precondition", "Un pedido cancelado no participa en la compensación.");
+      }
+      // #524: a converted order is history — its sale and cobro live in the
+      // point's cut — so it never gives or receives credit, on either side.
+      if (dest.data.convertedToPointId || origin.data.convertedToPointId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Un pedido convertido a un punto de venta no participa en la compensación de saldo a favor: su cobro se registra en el corte del punto."
+        );
       }
 
       // Idempotency first: this exact intent already landed → nothing to do.

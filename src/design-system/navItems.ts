@@ -19,6 +19,7 @@ export type Tab =
   | "productos_diagnostico"
   | "productos_simulador_contribucion"
   | "productos_ranking"
+  | "ventas_puntos"
   | "pedidos"
   | "clientes"
   | "usuarios"
@@ -42,6 +43,8 @@ const NAV_AREAS: NavArea[] = [
     children: [
       { id: "pedidos", label: "Pedidos", path: "/pedidos" },
       { id: "clientes", label: "Clientes", path: "/clientes" },
+      // #524 extends the #454 contract: points of sale live under Ventas.
+      { id: "ventas_puntos", label: "Puntos de venta", path: "/ventas/puntos" },
       { id: "productos_ranking", label: "Top emprendedoras", path: "/productos/ranking" },
     ],
   },
@@ -87,7 +90,7 @@ export type VisibleNav = { flat: NavLeaf[]; areas: NavArea[] };
 export function visibleNav(storeType: StoreType, userRole?: PlatformRole): VisibleNav {
   const tieredOnly = (leaf: NavLeaf) =>
     storeType === "inventory_tiered" ||
-    (leaf.id !== "productos_compras" && leaf.id !== "productos_reglas" && leaf.id !== "productos_estrategia");
+    (leaf.id !== "productos_compras" && leaf.id !== "productos_reglas" && leaf.id !== "productos_estrategia" && leaf.id !== "ventas_puntos");
   const areas = NAV_AREAS.map((area) => ({ ...area, children: area.children.filter(tieredOnly) })).filter(
     (area) => area.children.length > 0
   );

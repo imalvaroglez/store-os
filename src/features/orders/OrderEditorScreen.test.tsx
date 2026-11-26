@@ -76,3 +76,39 @@ describe("OrderEditorScreen back target (#463)", () => {
     expect(navigate).toHaveBeenCalledWith("/pedidos");
   });
 });
+
+// #524: a converted order is history — the commercial editor must not open it.
+describe("OrderEditorScreen with a converted order (#524)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetReturnOriginForTests();
+    sub = "o1";
+    store.activeStore = activeStore;
+  });
+
+  it("does not open the form: shows the read-only notice and the way to Puntos de venta", () => {
+    store.state = { orders: [{ ...order, convertedToPointId: "p1" }], customers: [], products: [], categories: [], expenses: [], stores: [activeStore] } as never;
+    render(<ToastProvider><OrderEditorScreen /></ToastProvider>);
+    // No commercial actions: nothing to save.
+    expect(screen.queryByRole("button", { name: "Guardar pedido" })).toBeNull();
+    // Same wording the order card uses when tapped.
+    expect(screen.getByText("Este pedido se convirtió en surtido de un punto de venta")).toBeTruthy();
+    expect(screen.getByText("Su mercancía se administra en Puntos de venta.")).toBeTruthy();
+    screen.getByRole("button", { name: "Ir a Puntos de venta" }).click();
+    expect(navigate).toHaveBeenCalledWith("/ventas/puntos");
+  });
+
+  it("keeps the header's way back exactly as it is for any other order", () => {
+    store.state = { orders: [{ ...order, convertedToPointId: "p1" }], customers: [], products: [], categories: [], expenses: [], stores: [activeStore] } as never;
+    render(<ToastProvider><OrderEditorScreen /></ToastProvider>);
+    screen.getByRole("button", { name: "← Pedidos" }).click();
+    expect(navigate).toHaveBeenCalledWith("/pedidos");
+  });
+
+  it("still opens the form for an ordinary order", () => {
+    store.state = { orders: [order], customers: [], products: [], categories: [], expenses: [], stores: [activeStore] } as never;
+    render(<ToastProvider><OrderEditorScreen /></ToastProvider>);
+    expect(screen.getByRole("button", { name: "Guardar pedido" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Ir a Puntos de venta" })).toBeNull();
+  });
+});

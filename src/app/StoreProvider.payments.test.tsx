@@ -36,6 +36,10 @@ const order: Order = {
 const state = (): AppState => ({
   stores: [{ id: "retry-store", name: "Tienda de prueba", slug: "retry-store", type: "on_demand", createdAt: "2026-11-03", updatedAt: "2026-11-03" }],
   activeStoreId: "retry-store", products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [order], expenses: [],
+  points: [],
+  pointEntries: [],
+  pointOperations: [],
+  pointExhibitors: [],
 });
 const receipt: OrderPayment = {
   id: "same-intent", orderId: order.id, storeId: order.storeId, amount: 400, kind: "payment", method: "cash",

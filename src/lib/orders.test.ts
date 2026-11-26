@@ -6,6 +6,7 @@ import {
   migrateOrder,
   migrateOrders,
   orderBucket,
+  orderCountsTowardToPay,
   orderReference,
   orderTotals,
   paymentStatusForOrder,
@@ -247,5 +248,34 @@ describe("legacyCollectDeposit (#362: Home/card one-tap collect)", () => {
 
   it("a corrupt deposit never poisons the collect", () => {
     expect(legacyCollectDeposit(base({ deposit: Number.NaN }))).toBe(1000);
+  });
+});
+
+describe("orderCountsTowardToPay — pedido convertido a punto de venta (#524)", () => {
+  it("sale de «Falta cobrar» aunque siga confirmado; el pedido ordinario sigue contando", () => {
+    expect(orderCountsTowardToPay(base({ orderStatus: "confirmed", convertedToPointId: "pt1" }))).toBe(false);
+    expect(orderCountsTowardToPay(base({ orderStatus: "confirmed" }))).toBe(true);
+  });
+});
+
+describe("orderBucket — pedido convertido (#524 una sola verdad de dinero)", () => {
+  it("un pedido convertido es historial: no cuenta como activo ni pendiente", () => {
+    const converted = base({ orderStatus: "confirmed", convertedToPointId: "store_olivia__mostrador" });
+    expect(orderBucket(converted)).toBe("other");
+    expect(orderCountsTowardToPay(converted)).toBe(false);
+  });
+});
+
+describe("migrateOrder conserva el vínculo de conversión (#524)", () => {
+  it("un pedido recargado no resucita como cobrable: convertedToPointId sobrevive a la migración", () => {
+    const migrated = migrateOrder({
+      id: "order_x", storeId: "s1", customerId: "c1",
+      items: [{ productName: "Anillo", quantity: 1, unitPrice: 100, subtotal: 100 }],
+      deposit: 0, orderStatus: "confirmed", paymentStatus: "unpaid",
+      convertedToPointId: "s1__mostrador", createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    });
+    expect(migrated.convertedToPointId).toBe("s1__mostrador");
+    expect(orderBucket(migrated)).toBe("other");
+    expect(orderCountsTowardToPay(migrated)).toBe(false);
   });
 });

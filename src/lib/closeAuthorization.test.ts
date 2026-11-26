@@ -14,10 +14,15 @@ const baseClose = (over: Partial<MonthlyClose> = {}): MonthlyClose => ({
   expensesCents: 5000, operatingResultCents: 25000, collectionsCents: 35000,
   coverage: {
     deliveredWithoutDate: [], linesWithoutCost: [], unconfirmedCollections: [],
-    deliveredWithoutLine: [], unreadableData: [], complete: true,
+    deliveredWithoutLine: [], unreadableData: [],
+    pointCortesWithoutCost: [], complete: true,
   },
   details: { sales: [], costs: [], expenses: [], collections: [], excludedCollections: [] },
   collectionGroups: [], costCoverage: { partialByMissingCost: false },
+  salesByChannel: [
+    { channel: "pedidos", label: "Pedidos entregados", totalCents: 50000 },
+    { channel: "puntos_fisicos", label: "Puntos de venta", totalCents: 0 },
+  ],
   ...over,
 });
 
@@ -108,5 +113,23 @@ describe("#458 r2 — mayores de revisión", () => {
   it("mes completo ANTERIOR a la activación: sin marca de parcialidad", () => {
     const status = closeStatus({ month: NOV, today: "2026-12-01", close: baseClose(), activationDate: "2026-08-02" });
     expect(status.state).toBe("listo");
+  });
+});
+
+describe("#524 M2 — costo de punto pendiente impide el cierre", () => {
+  it("un mes con cortes de punto sin costo queda en revisión (cola costo), igual que linesWithoutCost", () => {
+    const close = baseClose({
+      coverage: {
+        deliveredWithoutDate: [], linesWithoutCost: [], unconfirmedCollections: [],
+        deliveredWithoutLine: [], unreadableData: [],
+        pointCortesWithoutCost: [{ corteId: "corte_x", pointName: "Mostrador centro", pendingUnits: 3 }],
+        complete: false,
+      },
+      costCoverage: { partialByMissingCost: true },
+    });
+    const status = closeStatus({ month: NOV, today: "2026-12-02", close });
+    expect(status.state).toBe("en_revision");
+    expect(status.canClose).toBe(false);
+    expect(status.impediments.some((i) => /costo de punto|cortes de puntos/i.test(i.reason) && i.queue === "costo")).toBe(true);
   });
 });

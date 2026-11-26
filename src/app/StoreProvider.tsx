@@ -26,6 +26,7 @@ import type {
   OrderDeliveryLine,
   CardPayment,
   PurchasePaymentMethod,
+  PointOfSale,
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
@@ -35,7 +36,40 @@ import { nowIso, todayIso } from "../lib/dates";
 import { reservationDeltasForOrderChange } from "../lib/inventory";
 import { receivedProductsFromStockUpdates } from "../lib/purchases";
 import { ruleChangeEvent } from "../lib/priceDiagnostics";
-import { ensureStoreFinancials, loadCardPayments, saveCardPayment } from "./firebase/firestoreData";
+import type {
+  ConvertOrderResult,
+  RegisterPointCutParams,
+  RegisterPointCutResult,
+  RegisterPointCutPaymentParams,
+  RegisterPointCutPaymentResult,
+  AnnulPointCutParams,
+  AnnulPointCutResult,
+} from "./firebase/pointFunctions";
+import {
+  registerPointCutTrusted,
+  registerPointCutPaymentTrusted,
+  annulPointCutTrusted,
+  stockPointTrusted,
+  withdrawFromPointTrusted,
+  deliverExhibitorsTrusted,
+  confirmExhibitorCostTrusted,
+  withdrawExhibitorsTrusted,
+  type StockPointLine,
+  type StockPointResult,
+  type WithdrawLine,
+  type WithdrawResult,
+  type DeliverExhibitorLine,
+  type DeliverExhibitorsResult,
+  type ConfirmExhibitorCostResult,
+  type WithdrawExhibitorLine,
+  type WithdrawExhibitorsResult,
+} from "./firebase/pointFunctions";
+import {
+  ensureStoreFinancials,
+  loadCardPayments,
+  saveCardPayment,
+  convertOrderToFirstSurtidoTx,
+} from "./firebase/firestoreData";
 import { effectiveOrderStatus, migrateOrder, paymentStatusForOrder } from "../lib/orders";
 import { deliveryWithBalanceBlocked, sameInstallmentPlan, uncoveredBalanceCents } from "../features/orders/installments";
 import {
@@ -110,6 +144,7 @@ import { deleteProductImage, deletePurchasePdf } from "./firebase/storage";
 export type Action =
   | { type: "ADD_EXPENSE"; expense: LooseExpense }
   | { type: "UPDATE_EXPENSE"; expense: LooseExpense }
+  | { type: "UPSERT_POINT"; point: PointOfSale }
   | { type: "DELETE_EXPENSE"; expenseId: string }
   | { type: "ADD_STORE"; store: Store }
   | { type: "UPDATE_STORE"; store: Store }
@@ -148,6 +183,13 @@ export type Action =
 // cascade deletes, entity CRUD) without spinning up a React tree.
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case "UPSERT_POINT": {
+      const { point } = action;
+      const nextPoints = state.points.some((p) => p.id === point.id)
+        ? state.points.map((p) => (p.id === point.id ? point : p))
+        : [...state.points, point];
+      return { ...state, points: nextPoints };
+    }
     case "ADD_EXPENSE": {
       if (state.expenses.some((e) => e.id === action.expense.id)) return state;
       return { ...state, expenses: [...state.expenses, action.expense] };
@@ -427,6 +469,49 @@ type StoreContextValue = {
   ) => Promise<void>;
   /** #184 loose expenses. */
   saveExpense: (expense: LooseExpense) => Promise<void>;
+  /** #524: create/update a point of sale (config doc, client-writable). */
+  savePoint: (point: PointOfSale) => Promise<void>;
+  /** #524: convert a confirmed order into a point's first surtido (trusted
+   * callable; idempotent per intentId). */
+  convertOrderToFirstSurtido: (params: { storeId: string; pointId: string; orderId: string; physicalDate: string; intentId: string }) => Promise<ConvertOrderResult>;
+  /** #524: register a point's corte (sales + write-offs + confirmed
+   * commission, effective date) through the trusted callable. */
+  registerPointCut: (params: RegisterPointCutParams) => Promise<RegisterPointCutResult>;
+  /** #524: register a corte's full payment on its real date + method. */
+  registerPointCutPayment: (params: RegisterPointCutPaymentParams) => Promise<RegisterPointCutPaymentResult>;
+  /** #524: annul the latest unpaid corte (motive required). */
+  annulPointCut: (params: AnnulPointCutParams) => Promise<AnnulPointCutResult>;
+  /** #524: move available warehouse pieces to the point (label price
+   * confirmed by the operator); republishes public availability after. */
+  stockPoint: (params: { storeId: string; pointId: string; physicalDate: string; intentId: string; lines: StockPointLine[] }) => Promise<StockPointResult>;
+  /** #524: return sellable pieces from the point to their exact variant. */
+  withdrawFromPoint: (params: { storeId: string; pointId: string; intentId: string; lines: WithdrawLine[] }) => Promise<WithdrawResult>;
+  /** #524 Exhibidores: register one fixture delivery (rows of name + pieces
+   * + optional unit cost; apertura flag) through the trusted callable. */
+  deliverPointExhibitors: (params: {
+    storeId: string;
+    pointId: string;
+    intentId: string;
+    physicalDate: string;
+    opening: boolean;
+    lines: DeliverExhibitorLine[];
+  }) => Promise<DeliverExhibitorsResult>;
+  /** #524 Exhibidores: seal the pending unit cost of pieces (immutable once
+   * confirmed; same value = idempotent no-op). */
+  confirmExhibitorCost: (params: {
+    storeId: string;
+    pointId: string;
+    items: Array<{ exhibitorId: string; unitCostCents: number }>;
+  }) => Promise<ConfirmExhibitorCostResult>;
+  /** #524 Exhibidores: retire assigned pieces (oldest of each row first),
+   * keeping the full history. Operational registry only. */
+  withdrawPointExhibitors: (params: {
+    storeId: string;
+    pointId: string;
+    intentId: string;
+    physicalDate: string;
+    lines: WithdrawExhibitorLine[];
+  }) => Promise<WithdrawExhibitorsResult>;
   deleteExpense: (expenseId: string) => Promise<void>;
   assignExpense: (
     expense: LooseExpense,
@@ -663,7 +748,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, user?.uid, state.stores]);
 
-  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses", entity: { id: string } & Record<string, unknown>): Promise<void> {
+  function persistEntity(name: "stores" | "products" | "categories" | "suppliers" | "purchases" | "customers" | "orders" | "expenses" | "points", entity: { id: string } & Record<string, unknown>): Promise<void> {
     const currentUser = requireAuthenticatedUser();
     return saveEntity(currentUser, name, entity).catch((error) => {
       // Log with context for debugging, then re-throw so callers can surface a
@@ -1637,6 +1722,69 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     // #184 loose expenses: register/classify; assignment and consumption run
     // through their transactions and land via the entity listeners.
+    savePoint: async (point) => {
+      requireAuthenticatedUser();
+      const stamped = { ...point, updatedAt: nowIso() };
+      await persistEntity("points", stamped);
+      dispatch({ type: "UPSERT_POINT", point: stamped });
+    },
+    convertOrderToFirstSurtido: async (params) => {
+      requireAuthenticatedUser();
+      return convertOrderToFirstSurtidoTx(params);
+    },
+    registerPointCut: async (params) => {
+      requireAuthenticatedUser();
+      return registerPointCutTrusted(params);
+    },
+    registerPointCutPayment: async (params) => {
+      requireAuthenticatedUser();
+      return registerPointCutPaymentTrusted(params);
+    },
+    annulPointCut: async (params) => {
+      requireAuthenticatedUser();
+      return annulPointCutTrusted(params);
+    },
+    stockPoint: async (params) => {
+      requireAuthenticatedUser();
+      const result = await stockPointTrusted(params);
+      // #524: warehouse stock moved — keep the public catalog's availability
+      // in step (retryable alone through the sync notice, never blocking the
+      // movement itself).
+      const store = state.stores.find((candidate) => candidate.id === params.storeId);
+      if (store && result.stocked) {
+        const changed = [...new Set(params.lines.map((line) => line.productId))];
+        persistInBackground("actualizar la disponibilidad pública", () =>
+          republishStockSignals(store, state.products, state.categories, changed)
+        );
+      }
+      return result;
+    },
+    withdrawFromPoint: async (params) => {
+      requireAuthenticatedUser();
+      const result = await withdrawFromPointTrusted(params);
+      const store = state.stores.find((candidate) => candidate.id === params.storeId);
+      if (store && result.withdrawn) {
+        const changed = [...new Set(params.lines.map((line) => line.productId))];
+        persistInBackground("actualizar la disponibilidad pública", () =>
+          republishStockSignals(store, state.products, state.categories, changed)
+        );
+      }
+      return result;
+    },
+    // #524 Exhibidores: operational registry — no stock, no public catalog
+    // projection, no money path. The pieces land via the entity listeners.
+    deliverPointExhibitors: async (params) => {
+      requireAuthenticatedUser();
+      return deliverExhibitorsTrusted(params);
+    },
+    confirmExhibitorCost: async (params) => {
+      requireAuthenticatedUser();
+      return confirmExhibitorCostTrusted(params);
+    },
+    withdrawPointExhibitors: async (params) => {
+      requireAuthenticatedUser();
+      return withdrawExhibitorsTrusted(params);
+    },
     saveExpense: async (expense) => {
       requireAuthenticatedUser();
       const existing = state.expenses.find((candidate) => candidate.id === expense.id);
@@ -1690,7 +1838,11 @@ function storeWithMembership(store: Store, user: AppUser): Store & { ownerUid?: 
 }
 
 export function emptyAppState(): AppState {
-  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [], supplierLinks: [] };
+  return { stores: [], activeStoreId: null, products: [], categories: [], suppliers: [], purchases: [], customers: [], orders: [], expenses: [],
+  points: [],
+  pointEntries: [],
+  pointOperations: [],
+  pointExhibitors: [], supplierLinks: [] };
 }
 
 export function useStore(): StoreContextValue {

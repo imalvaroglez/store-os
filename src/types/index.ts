@@ -437,6 +437,13 @@ export type Order = {
    * profit, never its sale total or the clienta's balance. */
   saleExpenses?: OrderSaleExpense[];
 
+  /** #524: set when the operator used this confirmed order as the FIRST
+   * surtido of a point of sale ("Usar como surtido inicial"). The order keeps
+   * its reference and content as history; from that moment it stops counting
+   * as committed and "Falta cobrar", and its commercial actions are closed.
+   * Conversion happens exactly once (the rules reject a second attempt). */
+  convertedToPointId?: string;
+
   // Read-only compatibility for one migration pass and old local fixtures.
   // New writes never include these fields.
   productId?: string;
@@ -446,6 +453,138 @@ export type Order = {
   price?: number;
   priceTier?: string;
   status?: LegacyOrderStatus;
+};
+
+// #524 — physical points of sale. First verifiable cut: the model and the
+// rules of the first surtido. Point money is ALWAYS integer cents (marked
+// price, unit cost, commission); physical dates are day-granularity.
+
+/** A physical point where the store exhibits merchandise (showcase, desk).
+ * Merchandise stays the store's own until it sells at the point. */
+export type PointOfSale = {
+  id: string;
+  storeId: string;
+  name: string;
+  /** Label price level used when stocking the point (pilot: Regular). */
+  priceTierId?: string;
+  /** Suggested commission fraction (0–1) confirmed per corte; pilot: 20%. */
+  commissionRate?: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** #524 auditable point operation — the ONLY writers are the trusted
+ * callables (rules deny every client write). Kind tells the story; the
+ * detail fields travel per kind and totals are exact cents. */
+export type PointOperation = {
+  id: string;
+  storeId: string;
+  pointId: string;
+  kind: "first_surtido" | "surtido" | "retiro" | "corte" | "cobro" | "anulacion";
+  intentionId?: string;
+  confirmedBy: string;
+  confirmedAt: string;
+  updatedAt?: string;
+  // first_surtido
+  orderId?: string;
+  physicalDate?: string;
+  entryCount?: number;
+  units?: number;
+  // corte
+  effectiveDate?: string;
+  commissionRate?: number;
+  lines?: Array<{ productId: string; variantId?: string; markedPriceCents: number; soldQty: number }>;
+  writeOffs?: Array<{ productId: string; variantId?: string; qty: number; reason: string }>;
+  saleAllocations?: Array<{ lineIndex: number; allocations: Array<{ entryId: string; quantity: number }> }>;
+  writeOffAllocations?: Array<{ lineIndex: number; allocations: Array<{ entryId: string; quantity: number }> }>;
+  totals?: {
+    grossSaleCents: number;
+    commissionCents: number;
+    netCents: number;
+    soldCostCents: number | null;
+    pendingCostUnits: number;
+    writeOffCostCents: number | null;
+    writeOffPendingUnits: number;
+    resultCents: number | null;
+    remainingUnits: number;
+  };
+  status?: "pendiente_de_cobro" | "sin_cobro" | "cobrado" | "anulado";
+  // cobro
+  corteId?: string;
+  amountCents?: number;
+  method?: "cash" | "transfer";
+  date?: string;
+  // anulacion
+  motive?: string;
+  // retiro: which entries the returned pieces left (FIFO evidence).
+  entryAllocations?: Array<{ entryId: string; quantity: number }>;
+  originOperationId?: string;
+};
+
+/** One merchandise entry at a point: physical date, quantity, marked price
+ * and the KNOWN unit cost (absent = valuation pending). Units leave in FIFO
+ * order (oldest entry first); `consumedQty` accumulates sold + written-off. */
+export type PointEntry = {
+  id: string;
+  storeId: string;
+  pointId: string;
+  productId: string;
+  variantId?: string;
+  /** Snapshots keep point history readable after renames (OrderItem idiom). */
+  productName: string;
+  variantColor?: string;
+  /** Physical entry date (YYYY-MM-DD). */
+  entryDate: string;
+  /** Pieces that entered on this entry. */
+  quantity: number;
+  /** Pieces already sold or written off from THIS entry. */
+  consumedQty: number;
+  /** Label price of this entry's pieces, cents. */
+  markedPriceCents: number;
+  /** Known unit cost, cents; absent = pending cost valuation. */
+  unitCostCents?: number;
+  /** Set when the entry came from "Usar como surtido inicial" (converted order). */
+  originOrderId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** #524 Exhibidores tab — one fixture piece (display furniture) assigned to a
+ * point of sale. Operational registry ONLY, separate from cash, cortes,
+ * monthly close and merchandise inventory. One doc per piece (grouped by
+ * delivery line in the UI); the ONLY writers are the trusted callables, so
+ * rules deny every client write. Money is exact cents; `unitCostCents`
+ * absent = valuation pending. Physical dates are day-granularity. */
+export type PointExhibitor = {
+  id: string;
+  storeId: string;
+  pointId: string;
+  /** Delivery intent id: groups every piece of one entrega. */
+  deliveryId: string;
+  /** Row within the entrega — pieces of a row share name and unit cost. */
+  lineIndex: number;
+  /** Row name snapshot («Tabla plegable»), readable after any rename. */
+  name: string;
+  /** Physical delivery date (YYYY-MM-DD). */
+  deliveredAt: string;
+  /** True when the entrega carried the «Entrega de apertura» flag. */
+  opening: boolean;
+  /** Known unit cost, cents; absent = pending valuation. */
+  unitCostCents?: number;
+  /** Who registered the entrega (uid), stamped by the callable. */
+  deliveredBy: string;
+  createdAt: string;
+  updatedAt?: string;
+  /** Cost confirmation evidence; once set, the cost is immutable audit. */
+  costConfirmedBy?: string;
+  costConfirmedAt?: string;
+  /** Physical withdrawal date; absent = still assigned to the point. */
+  withdrawnAt?: string;
+  /** Who withdrew the piece (uid). */
+  withdrawnBy?: string;
+  /** Groups the pieces of one withdrawal intent. */
+  withdrawalIntentionId?: string;
 };
 
 /** How money was received. "unknown" is ONLY for the inherited legacy deposit
@@ -1057,6 +1196,13 @@ export type AppState = {
   supplierLinks?: SupplierProductLink[];
   /** #132: confirmed monthly reseller rankings (append-only, owner-only). */
   rankingConfirmations?: RankingConfirmation[];
+  /** #524: physical points of sale (config), their stock entries, the
+   * auditable operation evidence (cortes, cobros, anulaciones, conversiones)
+   * and the Exhibidores registry (operational, separate from money flows). */
+  points: PointOfSale[];
+  pointEntries: PointEntry[];
+  pointOperations: PointOperation[];
+  pointExhibitors: PointExhibitor[];
 };
 
 export type { SupplierProductLink };

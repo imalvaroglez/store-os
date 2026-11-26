@@ -33,6 +33,8 @@ import type { Order } from "../../types";
 
 export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void }) {
   const { upsertOrder, registerOrderPayment, state, activeStore } = useStore();
+  // #524: resolved point name for the converted-order badge.
+  const pointName = (pointId: string) => state.points?.find((p) => p.id === pointId)?.name;
   const [ticketOpen, setTicketOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
@@ -171,7 +173,18 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
 
   return (
     <>
-    <Card onClick={onEdit} className="p-4 sm:p-5">
+    <Card
+      onClick={order.convertedToPointId
+        ? () => {
+            // #524 (QA 25-nov, contrato): a converted order's merchandise is
+            // administered in Puntos de venta — the card must not open the
+            // commercial editor (an "Entregado" there would count the sale
+            // twice). Evidence stays readable through the sheets below.
+            toast.info("Este pedido se convirtió en surtido de un punto de venta; su mercancía se administra en Puntos de venta.");
+          }
+        : onEdit}
+      className="p-4 sm:p-5"
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="font-semibold text-ink truncate">#{orderReference(order.id)} · {order.customerName || customer?.name || "Sin cliente"}</h3>
@@ -262,6 +275,11 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       )}
       {profitView && profitView.profitCents == null && <p className="text-xs text-ink-soft mt-2">Ganancia estimada: sin costo registrado.</p>}
       {shortages.length > 0 && <Badge tone="warning">Faltan {shortages.reduce((sum, shortage) => sum + shortage.missing, 0)} piezas</Badge>}
+      {/* #524: converted order — the merchandise (and its money) lives at a
+          point of sale now; history stays readable, commercial actions close. */}
+      {order.convertedToPointId && (
+        <Badge tone="info">Mercancía en {pointName(order.convertedToPointId) ?? "punto de venta"}</Badge>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
         <Button variant="ghost" onClick={() => { setCopyFailed(false); setTicketOpen(true); }}>Ver detalle para compartir</Button>
@@ -278,7 +296,7 @@ export function OrderCard({ order, onEdit }: { order: Order; onEdit: () => void 
       </div>
       {/* #369: a cancelled order admits no new cobros — hide the charge row;
           the Cobros sheet stays reachable as read-only evidence. */}
-      {status !== "cancelled" && (verb || owed) && (
+      {status !== "cancelled" && !order.convertedToPointId && (verb || owed) && (
         <div className="mt-3 flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
           <div className="flex gap-2">
             {verb && (

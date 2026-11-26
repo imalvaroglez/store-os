@@ -329,6 +329,48 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // #524 points/{id} — physical points of sale, a private store-scoped
+    // config entity (categories idiom: id carries storeId, doc repeats it).
+    // Deletes are denied on purpose: a point is deactivated (`active`) so its
+    // entries and operations keep a reachable parent.
+    match /points/{id} {
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
+      // The doc PATH is the identity (saveEntity keeps ids out of the body);
+      // the storeId prefix keeps the `${storeId}__slug` id contract.
+      allow create: if canOperateStore(request.resource.data.storeId)
+        && request.resource.data.storeId == id.split('__')[0];
+      allow update: if canOperateStore(resource.data.storeId)
+        && resource.data.storeId == request.resource.data.storeId;
+      allow delete: if false;
+    }
+    // #524 pointEntries/{id} and pointOperations/{id} — AUDITABLE EVIDENCE of
+    // the point's stock and money story. Members may read their store's
+    // evidence; NO client ever writes it: the authenticated callable owns
+    // every create/update/delete inside its Firestore transaction (the Admin
+    // SDK bypasses these rules), so quantity, cost and money trails cannot be
+    // hand-edited from the app.
+    match /pointEntries/{id} {
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create, update, delete: if false;
+    }
+    match /pointOperations/{id} {
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create, update, delete: if false;
+    }
+    // #524 pointExhibitors/{id} — Exhibidores tab evidence, same contract as
+    // pointEntries/pointOperations: one doc per fixture piece, readable by the
+    // store's members and written ONLY by the authenticated callables (Admin
+    // SDK bypasses rules), so costs, confirmations and withdrawals cannot be
+    // hand-edited from the app.
+    match /pointExhibitors/{id} {
+      allow get: if (resource == null && isSignedIn()) || canOperateStore(resource.data.storeId);
+      allow list: if canOperateStore(resource.data.storeId);
+      allow create, update, delete: if false;
+    }
+
     match /purchases/{id} {
       // #373: same null-safe get as orders/products — the revision-aware save
       // transaction reads the doc BEFORE deciding create-vs-update, so a

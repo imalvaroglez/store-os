@@ -1,4 +1,4 @@
-import type { LooseExpense, Order, OrderPayment } from "../types";
+import type { LooseExpense, Order, OrderPayment, PointOperation } from "../types";
 import { orderAmountCents } from "./orderMoney";
 import { effectiveOrderStatus, orderItems } from "./orders";
 import { LOOSE_EXPENSE_CATEGORY_LABEL } from "../types";
@@ -29,6 +29,9 @@ export type MonthlyCloseCoverage = {
    *  data too corrupt to interpret — BOTH visible, never silent. */
   deliveredWithoutLine: Array<{ orderId: string; reference: string; quantity: number }>;
   unreadableData: Array<{ orderId: string; reference: string; reason: string }>;
+  /** #524: cortes whose sold (or written-off) pieces carry no known cost —
+   * the sale counts, the cost/loss stays pending, never invented. */
+  pointCortesWithoutCost: Array<{ corteId: string; pointName?: string; pendingUnits: number }>;
   /** false = hay vacíos a la vista; NO habilita un cierre oficial. */
   complete: boolean;
 };
@@ -52,14 +55,15 @@ export type CloseContribution = {
   evidence: "verified" | "pending";
 };
 
-export type CollectionGroupKey = "anticipos_del_mes" | "liquidaciones_del_mes" | "pagos_de_ventas_previas" | "sin_clasificar" | "reembolsos_posventa";
+export type CollectionGroupKey = "anticipos_del_mes" | "liquidaciones_del_mes" | "pagos_de_ventas_previas" | "sin_clasificar" | "reembolsos_posventa" | "cobros_de_puntos";
 
 export const COLLECTION_GROUP_LABELS: Record<CollectionGroupKey, string> = {
   anticipos_del_mes: "Anticipos del mes",
   liquidaciones_del_mes: "Liquidaciones del mes",
   pagos_de_ventas_previas: "Pagos de ventas previas",
   sin_clasificar: "Origen pendiente de clasificar",
-  reembolsos_posventa: "Reembolsos de posventa (salida)",
+  reembolsos_posventa: "Reembolso de posventa (salida)",
+  cobros_de_puntos: "Cobros de puntos físicos",
 };
 
 export type CollectionGroup = { group: CollectionGroupKey; label: string; totalCents: number; count: number };
@@ -95,6 +99,9 @@ export type MonthlyClose = {
   /** True when pieces were sold with UNKNOWN cost: the operating result is a
    * partial estimate, never presented as final. */
   costCoverage: { partialByMissingCost: boolean };
+  /** #524: sales split by channel — delivered orders vs physical points —
+   * reconciling to salesCents exactly. */
+  salesByChannel: Array<{ channel: "pedidos" | "puntos_fisicos"; label: string; totalCents: number }>;
 };
 
 export type CloseInputs = {
@@ -106,6 +113,9 @@ export type CloseInputs = {
   expenses: LooseExpense[];
   /** #456 r2: clienta names for the traceable rows (optional — Sin clienta). */
   customers?: Array<{ id: string; name: string }>;
+  /** #524: point-of-sale evidence (cortes/cobros) and point names. */
+  pointOperations?: PointOperation[];
+  points?: Array<{ id: string; name: string }>;
 };
 
 const MONTH_NAMES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -158,6 +168,7 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     unconfirmedCollections: [],
     deliveredWithoutLine: [],
     unreadableData: [],
+    pointCortesWithoutCost: [],
     complete: true,
   };
 
@@ -422,12 +433,89 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
     }
   }
 
+  // ── #524 Puntos de venta: la venta bruta entra al mes EFECTIVO del corte
+  // (con su canal), la comisión es gasto operativo, la baja una pérdida
+  // identificable, el costo de lo vendido entra UNA vez — y el cobro sólo
+  // existe en su fecha real, por más que la venta quedara en otro mes.
+  let pointSalesCents = 0;
+  const pointNameOf = (pointId: string) => inputs.points?.find((p) => p.id === pointId)?.name;
+  const METHOD_LABEL: Record<string, string> = { cash: "efectivo", transfer: "transferencia" };
+  for (const op of inputs.pointOperations ?? []) {
+    if (op.storeId !== storeId) continue;
+    if (op.kind === "corte" && op.status !== "anulado" && op.effectiveDate && cdmxMonthKey(op.effectiveDate) === monthKey) {
+      const pointName = pointNameOf(op.pointId) ?? "punto";
+      const totals = op.totals;
+      if (!totals) continue;
+      salesCents += totals.grossSaleCents;
+      pointSalesCents += totals.grossSaleCents;
+      details.sales.push({
+        date: op.effectiveDate,
+        kind: "sale",
+        reference: op.id,
+        concept: `Punto · ${pointName}`,
+        amountCents: totals.grossSaleCents,
+        evidence: "verified",
+      });
+      if (typeof totals.soldCostCents === "number") {
+        costCents += totals.soldCostCents;
+        details.costs.push({
+          date: op.effectiveDate,
+          kind: "cost",
+          reference: op.id,
+          concept: `Costo de venta en punto · ${pointName}`,
+          amountCents: -totals.soldCostCents,
+          evidence: "verified",
+        });
+      } else {
+        coverage.pointCortesWithoutCost.push({ corteId: op.id, pointName, pendingUnits: totals.pendingCostUnits });
+      }
+      expensesCents += totals.commissionCents;
+      details.expenses.push({
+        date: op.effectiveDate,
+        kind: "expense",
+        reference: op.id,
+        concept: `Comisión de punto · ${pointName}`,
+        amountCents: -totals.commissionCents,
+        evidence: "verified",
+      });
+      if (typeof totals.writeOffCostCents === "number") {
+        expensesCents += totals.writeOffCostCents;
+        details.expenses.push({
+          date: op.effectiveDate,
+          kind: "expense",
+          reference: op.id,
+          concept: `Pérdida por bajas en punto · ${pointName}`,
+          amountCents: -totals.writeOffCostCents,
+          evidence: "verified",
+        });
+      } else if (totals.writeOffPendingUnits > 0) {
+        coverage.pointCortesWithoutCost.push({ corteId: op.id, pointName, pendingUnits: totals.writeOffPendingUnits });
+      }
+    }
+    if (op.kind === "cobro" && op.date && cdmxMonthKey(op.date) === monthKey && typeof op.amountCents === "number") {
+      collectionsCents += op.amountCents;
+      const bucket = groupTotals.get("cobros_de_puntos") ?? { totalCents: 0, count: 0 };
+      bucket.totalCents += op.amountCents;
+      bucket.count += 1;
+      groupTotals.set("cobros_de_puntos", bucket);
+      details.collections.push({
+        date: op.date,
+        kind: "collection",
+        reference: op.id,
+        concept: `${COLLECTION_GROUP_LABELS.cobros_de_puntos} · ${METHOD_LABEL[op.method ?? ""] ?? ""}`.trim(),
+        amountCents: op.amountCents,
+        evidence: "verified",
+      });
+    }
+  }
+
   coverage.complete =
     coverage.deliveredWithoutDate.length === 0 &&
     coverage.linesWithoutCost.length === 0 &&
     coverage.unconfirmedCollections.length === 0 &&
     coverage.deliveredWithoutLine.length === 0 &&
-    coverage.unreadableData.length === 0;
+    coverage.unreadableData.length === 0 &&
+    coverage.pointCortesWithoutCost.length === 0;
 
   return {
     month,
@@ -447,7 +535,11 @@ export function monthlyClose(inputs: CloseInputs): MonthlyClose {
       totalCents: bucket.totalCents,
       count: bucket.count,
     })),
-    costCoverage: { partialByMissingCost: coverage.linesWithoutCost.length > 0 },
+    costCoverage: { partialByMissingCost: coverage.linesWithoutCost.length > 0 || coverage.pointCortesWithoutCost.length > 0 },
+    salesByChannel: [
+      { channel: "pedidos", label: "Pedidos entregados", totalCents: salesCents - pointSalesCents },
+      { channel: "puntos_fisicos", label: "Puntos de venta", totalCents: pointSalesCents },
+    ],
   };
 }
 

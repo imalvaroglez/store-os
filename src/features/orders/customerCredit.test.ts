@@ -227,3 +227,48 @@ describe("corrección del renglón tras cierre sin cambio (#560)", () => {
     expect(planCreditApplications([applied, consumed])).toEqual([]);
   });
 });
+
+// ── #524: a converted order is history — it never gives, receives or owes credit
+describe("converted orders stay out of the saldo a favor compensation (#524)", () => {
+  const origin = priced("origin", 760, 820, "2026-11-01T10:00:00Z"); // credit 6000
+  // Its sale and cobro live in the point's cut; on paper it still "owes" 500000.
+  const converted = priced("converted", 5000, 0, "2026-11-02T10:00:00Z", { convertedToPointId: "point_a" });
+  const next = priced("next", 500, 0, "2026-11-03T10:00:00Z"); // the real debt: pending 50000
+
+  it("the credit reaches the next real order, never the converted one (release repro)", () => {
+    // Older than `next`, the converted order used to soak up the $60 first.
+    expect(planCreditApplications([origin, converted, next])).toEqual([
+      { fromOrderId: "origin", toOrderId: "next", amountCents: 6000 },
+    ]);
+  });
+
+  it("a converted order holding a surplus never acts as a credit source", () => {
+    const convertedCredit = priced("cc", 100, 115, "2026-11-01T10:00:00Z", { convertedToPointId: "point_a" }); // surplus 1500
+    expect(planCreditApplications([convertedCredit, next])).toEqual([]);
+  });
+
+  it("the clienta view reports it like a cancelled order: nothing pending, no credit, no totals", () => {
+    const summary = customerBalanceSummary([origin, converted, next], "store_a", "clienta_1");
+    expect(summary.orders.map((o) => o.orderId)).toEqual(["origin", "converted", "next"]); // still listed as history
+    expect(summary.orders.find((o) => o.orderId === "converted")).toMatchObject({ pendingCents: 0, creditCents: 0 });
+    expect(summary.pendingCents).toBe(50000); // `next` only
+    expect(summary.creditCents).toBe(6000); // `origin` only
+    expect(summary.netCents).toBe(44000);
+  });
+
+  it("a stray application that landed on a converted order is evidence, never debt", () => {
+    // Written before this rule existed (the release repro): origin's $60 sits
+    // on the converted order. It stays visible for its restitution through
+    // releaseCredit, without turning the converted order into what she owes.
+    const stray = customerBalanceSummary(
+      [{ ...origin, creditConsumedCents: 6000 }, { ...converted, creditAppliedCents: 6000 }, next],
+      "store_a", "clienta_1",
+    );
+    expect(stray.orders.find((o) => o.orderId === "converted")).toMatchObject({
+      pendingCents: 0, creditCents: 0, creditAppliedCents: 6000,
+    });
+    expect(stray.pendingCents).toBe(50000); // `next` only
+    expect(stray.creditCents).toBe(0); // origin's surplus is parked on the converted order
+    expect(stray.netCents).toBe(50000);
+  });
+});

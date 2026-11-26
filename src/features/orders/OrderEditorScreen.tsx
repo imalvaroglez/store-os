@@ -52,15 +52,26 @@ export function OrderEditorScreen() {
           </Button>
         )}
       />
-      <div className="mx-auto max-w-5xl">
-        <OrderForm
-          key={`${draftOwnerId}::${activeStore.id}::${sub}`}
-          order={order}
-          isNew={sub === "nuevo"}
-          onDone={() => { if (returnTo) window.history.back(); else navigate("/pedidos"); }}
-          onCancel={() => { if (returnTo) window.history.back(); else navigate("/pedidos"); }}
+      {/* #524: a converted order is history — its merchandise is administered in
+          Puntos de venta. The commercial editor must not open it: an ordinary
+          save here dropped the point link. Same wording as the order card. */}
+      {order.convertedToPointId ? (
+        <EmptyState
+          title="Este pedido se convirtió en surtido de un punto de venta"
+          subtitle="Su mercancía se administra en Puntos de venta."
+          action={<Button onClick={() => navigate("/ventas/puntos")}>Ir a Puntos de venta</Button>}
         />
-      </div>
+      ) : (
+        <div className="mx-auto max-w-5xl">
+          <OrderForm
+            key={`${draftOwnerId}::${activeStore.id}::${sub}`}
+            order={order}
+            isNew={sub === "nuevo"}
+            onDone={() => { if (returnTo) window.history.back(); else navigate("/pedidos"); }}
+            onCancel={() => { if (returnTo) window.history.back(); else navigate("/pedidos"); }}
+          />
+        </div>
+      )}
     </Screen>
   );
 }

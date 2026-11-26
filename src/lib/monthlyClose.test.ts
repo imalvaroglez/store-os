@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cdmxMonthKey, monthKeyOf, monthlyClose, type CloseInputs } from "./monthlyClose";
-import type { LooseExpense, Order, OrderIncident, OrderPayment } from "../types";
+import type { LooseExpense, Order, OrderIncident, OrderPayment, PointOperation } from "../types";
 
 // #129 (etapa lista): vista previa de cierre mensual — solo lectura.
 // Ventas/costos reconocidos por ENTREGAS verificables (#333), cobros por su
@@ -600,5 +600,78 @@ describe("#458 r3 — cobros con ajustes correctivos", () => {
       expenses: [],
     });
     expect(close.collectionsCents).toBe(0);
+  });
+});
+
+describe("monthlyClose + puntos de venta (#524)", () => {
+  const corteOp = (over: Partial<PointOperation> = {}): PointOperation =>
+    ({
+      id: "corte_p1", storeId: "s1", pointId: "pt1", kind: "corte", status: "cobrado",
+      effectiveDate: "2026-11-21", confirmedBy: "u1", confirmedAt: "2026-11-21T12:00:00.000Z",
+      totals: {
+        grossSaleCents: 50000, commissionCents: 10000, netCents: 40000,
+        soldCostCents: 25000, pendingCostUnits: 0,
+        writeOffCostCents: 5000, writeOffPendingUnits: 0,
+        resultCents: 10000, remainingUnits: 4,
+      },
+      ...over,
+    });
+  const cobroOp = (over: Partial<PointOperation> = {}): PointOperation =>
+    ({
+      id: "cobro_c1", storeId: "s1", pointId: "pt1", kind: "cobro",
+      corteId: "corte_p1", amountCents: 40000, method: "cash", date: "2026-12-03",
+      confirmedBy: "u1", confirmedAt: "2026-12-03T10:00:00.000Z",
+      ...over,
+    });
+
+  const baseInputs = (month: { year: number; month: number }, ops: PointOperation[]): CloseInputs =>
+    ({
+      storeId: "s1", month, orders: [], paymentsByOrder: {}, expenses: [],
+      pointOperations: ops,
+      points: [{ id: "pt1", name: "Mostrador centro" }],
+    });
+
+  it("noviembre: venta por canal puntos, comisión como gasto, costo una vez y pérdida identificable; sin cobro", () => {
+    const close = monthlyClose(baseInputs({ year: 2026, month: 11 }, [corteOp(), cobroOp()]));
+    expect(close.salesCents).toBe(50000);
+    expect(close.costCents).toBe(25000);
+    expect(close.expensesCents).toBe(15000); // comisión 10000 + pérdida 5000
+    expect(close.collectionsCents).toBe(0); // el cobro es de diciembre
+    expect(close.salesByChannel).toEqual([
+      { channel: "pedidos", label: "Pedidos entregados", totalCents: 0 },
+      { channel: "puntos_fisicos", label: "Puntos de venta", totalCents: 50000 },
+    ]);
+    const concepts = close.details.expenses.map((row) => row.concept);
+    expect(concepts.some((c) => c.includes("Comisión"))).toBe(true);
+    expect(concepts.some((c) => c.includes("pérdida") || c.includes("Pérdida"))).toBe(true);
+    expect(close.details.sales.some((row) => row.concept.includes("Mostrador centro"))).toBe(true);
+    expect(close.operatingResultCents).toBe(50000 - 25000 - 15000);
+  });
+
+  it("diciembre: sólo el cobro en su fecha real; el cobro no genera otra venta", () => {
+    const close = monthlyClose(baseInputs({ year: 2026, month: 12 }, [corteOp(), cobroOp()]));
+    expect(close.salesCents).toBe(0);
+    expect(close.collectionsCents).toBe(40000);
+    expect(close.details.collections.some((row) => row.concept.includes("efectivo") || row.concept.includes("Efectivo"))).toBe(true);
+    const group = close.collectionGroups.find((g) => g.group === "cobros_de_puntos");
+    expect(group?.totalCents).toBe(40000);
+  });
+
+  it("un corte anulado no aporta nada", () => {
+    const close = monthlyClose(baseInputs({ year: 2026, month: 11 }, [corteOp({ status: "anulado" }), cobroOp()]));
+    expect(close.salesCents).toBe(0);
+    expect(close.expensesCents).toBe(0);
+    expect(close.costCents).toBe(0);
+  });
+
+  it("costo de venta pendiente: la cobertura lo nombra y el resultado queda como estimado parcial", () => {
+    const close = monthlyClose(
+      baseInputs({ year: 2026, month: 11 }, [
+        corteOp({ id: "corte_x", totals: { ...corteOp().totals!, soldCostCents: null, pendingCostUnits: 5 } }),
+      ])
+    );
+    expect(close.coverage.pointCortesWithoutCost.length).toBe(1);
+    expect(close.coverage.pointCortesWithoutCost[0].corteId).toBe("corte_x");
+    expect(close.costCoverage.partialByMissingCost).toBe(true);
   });
 });

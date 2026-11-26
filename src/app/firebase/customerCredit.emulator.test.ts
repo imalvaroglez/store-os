@@ -585,4 +585,75 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("customer credit through t
     expect(origin.creditAppliedCents ?? 0).toBe(0);
     expect(origin.creditConsumedCents ?? 0).toBe(0);
   });
+
+  // #524: an order converted into a point's first surtido is HISTORY — its
+  // sale and cobro live in the point's cut. It never gives, receives or owes
+  // saldo a favor, so the callable (the real authority) refuses it on either
+  // side and leaves every document untouched.
+  describe("#524 converted orders stay out of the saldo a favor", () => {
+    const ids = ["conv-origin", "conv-converted", "conv-converted-origin", "conv-next"];
+
+    beforeAll(async () => {
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "orders/conv-origin"), orderDoc("conv-origin", {
+          items: [{ productName: "Aro", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "conv-origin_L0" }],
+          paymentsReceivedCents: 21500, // overpaid: $215 received on a $100 order → $115 of surplus; the tests move $15 of it
+        }));
+        // Still "confirmed" and on paper owing $200: only convertedToPointId sets it apart.
+        await setDoc(doc(ctx.firestore(), "orders/conv-converted"), orderDoc("conv-converted", { convertedToPointId: "credit-point" }));
+        // Unreachable through the app (conversion requires zero money): it pins
+        // the ORIGIN side against a drifted document.
+        await setDoc(doc(ctx.firestore(), "orders/conv-converted-origin"), orderDoc("conv-converted-origin", {
+          items: [{ productName: "Aro", quantity: 1, unitPrice: 100, subtotal: 100, lineId: "conv-converted-origin_L0" }],
+          paymentsReceivedCents: 21500, // the same $115 of surplus on paper — it must never move
+          convertedToPointId: "credit-point",
+        }));
+        await setDoc(doc(ctx.firestore(), "orders/conv-next"), orderDoc("conv-next")); // the real debt: $200
+      });
+    });
+
+    /** Whole documents, before and after: a refused application must not touch a byte. */
+    const snapshotOrders = async (): Promise<Record<string, unknown>> =>
+      Object.fromEntries(await Promise.all(ids.map(async (id) => [id, (await getDoc(doc(holder.db, "orders", id))).data()] as const)));
+
+    /** The wrapper's rejection exactly as the app receives it: code and text. */
+    async function applyFailure(params: Parameters<typeof applyCustomerCreditTx>[0]): Promise<{ code?: string; message: string }> {
+      try {
+        await applyCustomerCreditTx(params);
+      } catch (error) {
+        return error as { code?: string; message: string };
+      }
+      throw new Error("applyCustomerCreditTx should have refused the application");
+    }
+
+    it("refuses a converted DESTINATION with failed-precondition and no document changes", async () => {
+      const before = await snapshotOrders();
+      const failure = await applyFailure({
+        entry: entry("conv_dest", 1500, "conv-origin"), orderId: "conv-converted", storeId: "credit-store",
+      });
+      expect(failure.code).toBe("functions/failed-precondition");
+      expect(failure.message).toMatch(/convertido a un punto de venta/);
+      expect(await snapshotOrders()).toEqual(before);
+    });
+
+    it("refuses a converted ORIGIN the same way and no document changes", async () => {
+      const before = await snapshotOrders();
+      const failure = await applyFailure({
+        entry: entry("conv_src", 1500, "conv-converted-origin"), orderId: "conv-next", storeId: "credit-store",
+      });
+      expect(failure.code).toBe("functions/failed-precondition");
+      expect(failure.message).toMatch(/convertido a un punto de venta/);
+      expect(await snapshotOrders()).toEqual(before);
+    });
+
+    it("still applies the credit between the two real orders", async () => {
+      await applyCustomerCreditTx({ entry: entry("conv_real", 1500, "conv-origin"), orderId: "conv-next", storeId: "credit-store" });
+      const next = (await getDoc(doc(holder.db, "orders/conv-next"))).data()!;
+      const origin = (await getDoc(doc(holder.db, "orders/conv-origin"))).data()!;
+      expect(next.creditAppliedCents).toBe(1500);
+      expect(origin.creditConsumedCents).toBe(1500);
+      const converted = (await getDoc(doc(holder.db, "orders/conv-converted"))).data()!;
+      expect(converted.creditAppliedCents ?? 0).toBe(0);
+    });
+  });
 });
