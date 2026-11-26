@@ -54,6 +54,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("credit edit invariants wi
       await setDoc(doc(ctx.firestore(), "orders/inv366-o6"), orderDoc([line("o6-a", 1000)], {
         orderStatus: "confirmed", paymentsReceivedCents: 150000, creditConsumedCents: 50000, revision: 1,
       }));
+      // O7/O9 — #524: converted into a point's first surtido. O8 — ordinary.
+      // Each on its own doc so the point-link tests stay order-independent.
+      await setDoc(doc(ctx.firestore(), "orders/inv366-o7"), orderDoc([line("o7-a", 1000)], {
+        orderStatus: "confirmed", revision: 1, convertedToPointId: "inv366-point",
+      }));
+      await setDoc(doc(ctx.firestore(), "orders/inv366-o8"), orderDoc([line("o8-a", 400)], { revision: 1 }));
+      await setDoc(doc(ctx.firestore(), "orders/inv366-o9"), orderDoc([line("o9-a", 1000)], {
+        orderStatus: "confirmed", revision: 1, convertedToPointId: "inv366-point",
+      }));
     });
     holder.db = env.authenticatedContext("inv366-user").firestore();
   });
@@ -143,5 +152,29 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("credit edit invariants wi
     ).rejects.toThrow(/sostiene \$500\.00 de saldo a favor|otro dispositivo|stale/i);
     const after = (await getDoc(doc(holder.db, "orders/inv366-o5"))).data();
     expect(after?.revision).toBe(2); // nothing was written
+  });
+
+  it("#524: an ordinary save carries the point link verbatim — the editor's payload cannot drop it", async () => {
+    // OrderForm builds its payload WITHOUT convertedToPointId; the full-document
+    // write used to wipe the link, returning the order to «Falta cobrar».
+    const saved = await saveOrderWithStockTx({ uid: "inv366-user" } as never, asOrder("inv366-o7", [line("o7-a", 1000)]), 1, "mut-524-a");
+    expect(saved.order.convertedToPointId).toBe("inv366-point"); // the in-memory reconcile keeps it too
+    const after = (await getDoc(doc(holder.db, "orders/inv366-o7"))).data();
+    expect(after?.convertedToPointId).toBe("inv366-point"); // verbatim, like the credit fields
+    expect(after?.revision).toBe(2);
+  });
+
+  it("#524: the link belongs to the conversion callable — a save never rewrites or invents it", async () => {
+    // A payload claiming ANOTHER point cannot move a converted order.
+    const saved = await saveOrderWithStockTx(
+      { uid: "inv366-user" } as never, asOrder("inv366-o9", [line("o9-a", 900)], { convertedToPointId: "another-point" }), 1, "mut-524-b"
+    );
+    expect(saved.order.convertedToPointId).toBe("inv366-point");
+    // An ordinary order stays ordinary: the doc never had a link to carry.
+    await saveOrderWithStockTx(
+      { uid: "inv366-user" } as never, asOrder("inv366-o8", [line("o8-a", 400)], { convertedToPointId: "invented-point" }), 1, "mut-524-c"
+    );
+    const after = (await getDoc(doc(holder.db, "orders/inv366-o8"))).data();
+    expect(after?.convertedToPointId).toBeUndefined();
   });
 });

@@ -998,6 +998,9 @@ export async function saveOrderWithStockTx(
       // #184: saleExpenses (loose-expense charges and supply consumptions)
       // belong to the expense transactions — same verbatim carry (review F1).
       saleExpenses: Array.isArray(docData?.saleExpenses) ? (docData.saleExpenses as Order["saleExpenses"]) : undefined,
+      // #524: the point link belongs to the conversion callable — an ordinary
+      // save carries it verbatim and can never drop or invent it.
+      convertedToPointId: typeof docData?.convertedToPointId === "string" ? docData.convertedToPointId : undefined,
     };
     next.paymentStatus = paymentStatusForOrder(next);
     // Received money per the doc: the stored accumulator plus the deposit in
