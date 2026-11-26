@@ -63,8 +63,15 @@ function incidentQuantity(incident) {
   return Math.max(1, Math.round(numberOr(incident.quantity, 1)));
 }
 
+/** #560: closed «Sin cambio» — the desisted resolution never happened
+ * (mirror of src/lib/orderMoney.ts incidentClosedNoChange). */
+function incidentClosedNoChange(incident) {
+  return (incident.events ?? []).some((event) => event?.kind === "closed_no_change");
+}
+
 /** One incident's sale adjustment (mirror of src/lib/orderMoney.ts). */
 function incidentSaleAdjustmentCents(incident) {
+  if (incidentClosedNoChange(incident)) return 0;
   const resolution = incident.resolution;
   if (!resolution || resolution.kind === "wait_restock") return 0;
   const quantity = incidentQuantity(incident);
@@ -90,6 +97,8 @@ export function incidentsSaleAdjustmentCents(incidents) {
 
 export function incidentsRefundCommittedCents(incidents) {
   return (incidents ?? []).reduce((sum, incident) => {
+    // #560: closed with no change — the desisted commitment never blocks credit.
+    if (incidentClosedNoChange(incident)) return sum;
     const resolution = incident.resolution;
     if (!resolution) return sum;
     if (typeof resolution.refundOwedCents === "number") {

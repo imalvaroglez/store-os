@@ -14,7 +14,7 @@
 // Money flows through customerCredit (#189) — there is no second balance.
 import type { Order, OrderIncident, OrderItem } from "../../types";
 import { orderItems } from "../../lib/orders";
-import { orderAmountCents } from "../../lib/orderMoney";
+import { incidentClosedNoChange, orderAmountCents } from "../../lib/orderMoney";
 
 function eventsOf(incident: OrderIncident): OrderIncident["events"] {
   return Array.isArray(incident.events) ? incident.events : [];
@@ -38,6 +38,9 @@ export type IncidentState = {
   resolution?: NonNullable<OrderIncident["resolution"]>;
   /** Recepción de la pieza dañada + entrega de la solución, juntas. */
   confirmed: boolean;
+  /** #560: closed «Sin cambio» — the clienta backed out before any fact; the
+   * agreed resolution stopped having effects and the line is editable again. */
+  closedNoChange: boolean;
   pieceLocation: IncidentPieceLocation;
   /** Damaged pieces currently not sellable (quarantine effect). */
   quarantinedQuantity: number;
@@ -69,6 +72,7 @@ export function incidentState(incident: OrderIncident): IncidentState {
     opened: kinds.has("opened"),
     resolution: incident.resolution,
     confirmed,
+    closedNoChange: kinds.has("closed_no_change"),
     pieceLocation,
     quarantinedQuantity: pieceLocation === "quarantined" || pieceLocation === "repaired_held" ? Math.max(1, Math.round(incident.quantity || 1)) : 0,
     replacementOutQuantity: confirmed && incident.resolution?.kind !== "refund" && !incident.resolution?.waitUntil ? Math.max(1, Math.round(incident.quantity || 1)) : 0,
@@ -98,6 +102,13 @@ export function incidentEvidenceError(
   const incidents = previous?.incidents;
   if (!incidents?.length) return null;
   for (const incident of incidents) {
+    // #560: a «Sin cambio» close with NO executed fact releases the line —
+    // the desisted resolution no longer sustains anything, so the operator can
+    // correct the wrongly-charged renglón from the editor. Fail closed: a
+    // drift that somehow carries BOTH a close and executed facts stays
+    // protected (the transaction rejects that sequence, this is read-side
+    // defense).
+    if (incidentClosedNoChange(incident) && !eventsOf(incident).some((event) => event.kind === "confirmed" || event.kind === "refund_executed")) continue;
     const prevItems = orderItems(previous!);
     const prevLine = incident.lineId
       ? prevItems.find((item) => item.lineId === incident.lineId)
@@ -124,4 +135,4 @@ export function incidentEvidenceError(
 }
 
 // re-exported here so the incident domain stays one import away.
-export { incidentsSaleAdjustmentCents, incidentsRefundPendingCents } from "../../lib/orderMoney";
+export { incidentClosedNoChange, incidentsSaleAdjustmentCents, incidentsRefundPendingCents } from "../../lib/orderMoney";

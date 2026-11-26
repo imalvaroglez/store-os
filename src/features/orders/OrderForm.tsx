@@ -27,7 +27,7 @@ import { formatOrderUnitPrice, orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
 import { CreditCoverageError, CreditCustomerChangeError, DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
-import { IncidentEvidenceError } from "./incidents";
+import { IncidentEvidenceError, incidentClosedNoChange } from "./incidents";
 import { pendingDeliveries } from "../../lib/deliveries";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
 import { groupOrderLines } from "./orderGrouping";
@@ -371,11 +371,12 @@ export function OrderForm({
   );
   // #368: lines that sustain an incident carry its story — the save rejects
   // changes to them, so the link must be VISIBLE on the line, not discovered
-  // at save time.
+  // at save time. #560: a «Sin cambio» close without executed facts releases
+  // the line — the badge (and its "cannot remove" promise) must go with it.
   const incidentLines = useMemo(() => {
     const byLine = new Map<string, OrderIncident>();
     for (const incident of order.incidents ?? []) {
-      if (incident.lineId) byLine.set(incident.lineId, incident);
+      if (incident.lineId && !incidentClosedNoChange(incident)) byLine.set(incident.lineId, incident);
     }
     return byLine;
   }, [order.incidents]);
@@ -1181,6 +1182,11 @@ export function OrderForm({
           <StatRow label="Total">{totals ? <Money exact amount={totals.estimatedTotal} /> : "—"}</StatRow>
           <StatRow label="Recibido">{totals ? <Money exact amount={totals.paid} /> : "—"}</StatRow>
           <StatRow label="Saldo" tone={totals && totals.balance > 0 ? "danger" : "success"}>{totals ? <Money exact amount={totals.balance} /> : "—"}</StatRow>
+          {/* #560: the draft's effect on the clienta's saldo a favor — visible
+              BEFORE saving (retiring a wrongly-charged line grows it live). */}
+          {totals && totals.availableCredit > 0 && (
+            <StatRow label="A favor" tone="success"><Money exact amount={totals.availableCredit} /></StatRow>
+          )}
           <StatRow
             label="Ganancia"
             tone={profitView?.profitCents != null && profitView.profitCents < 0 ? "danger" : "default"}

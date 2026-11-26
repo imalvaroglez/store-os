@@ -2511,6 +2511,8 @@ export async function openIncidentTx(params: {
  * - written_off: the piece leaves quarantine (identifiable loss, no cash).
  * - refund_executed / provider_compensation: evidence only (money and its
  *   valuation belong to #123/#128-#129, never duplicated here).
+ * - closed_no_change (#560): evidence only (mandatory motive) — the clienta
+ *   backed out before any fact; rejected once anything was executed.
  * `resolution`/`replacement` ride along ONLY for resolution_agreed.
  */
 export async function applyIncidentEventTx(params: {
@@ -2540,6 +2542,24 @@ export async function applyIncidentEventTx(params: {
     const quantity = Math.max(1, Math.round(incident.quantity || 1));
     // ── Validity from derived state (fail closed on nonsense sequences). ──
     const kind = event.kind;
+    // #560: a closed-without-change incident is history — no further actions.
+    if (state.closedNoChange && kind !== "closed_no_change") {
+      throw new Error("Esta incidencia está cerrada sin cambio y no admite más acciones.");
+    }
+    if (kind === "closed_no_change") {
+      if (state.closedNoChange) {
+        throw new Error("Esta incidencia ya está cerrada sin cambio.");
+      }
+      // Only a NOTHING-happened incident may close this way: any executed
+      // fact (piece received, replacement delivered, refund handed back)
+      // keeps its protections and its own flow.
+      if (state.confirmed) {
+        throw new Error("Esta incidencia ya tiene hechos ejecutados (recepción de la pieza, reemplazo o reembolso). No se puede cerrar sin cambio.");
+      }
+      if (!String(event.detail?.reason ?? "").trim()) {
+        throw new Error("Escribe el motivo del cierre: la clienta desistió del cambio antes de que ocurriera algo.");
+      }
+    }
     if (kind === "resolution_agreed" && (state.resolution || !state.opened)) {
       throw new Error("Esta incidencia ya tiene una resolución acordada.");
     }

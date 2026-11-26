@@ -58,6 +58,16 @@ function incidentQuantity(incident: OrderIncident): number {
 }
 
 /**
+ * #560: the clienta backed out and the incident was closed with NO change.
+ * The agreed-but-unexecuted resolution stops having money effects (no sale
+ * adjustment, no refund commitment) and the line stops being protected
+ * evidence. Derived from the event — never a second stored state.
+ */
+export function incidentClosedNoChange(incident: OrderIncident): boolean {
+  return (incident.events ?? []).some((event) => event.kind === "closed_no_change");
+}
+
+/**
  * #203: how the incidents change the order's EFFECTIVE total (exact cents).
  * Charged upgrades add the price difference vs the historical price frozen at
  * open; a refund removes the piece at its historical price; equivalent
@@ -72,6 +82,8 @@ function incidentQuantity(incident: OrderIncident): number {
  * price; charged replacement → ±price difference; anything else → 0.
  */
 export function incidentSaleAdjustmentCents(incident: OrderIncident): number {
+  // #560: closed with no change — the agreed resolution never happened.
+  if (incidentClosedNoChange(incident)) return 0;
   const resolution = incident.resolution;
   if (!resolution || resolution.kind === "wait_restock") return 0;
   const quantity = incidentQuantity(incident);
@@ -103,6 +115,8 @@ export function incidentsSaleAdjustmentCents(incidents: OrderIncident[] | undefi
  */
 export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefined | null): number {
   return (incidents ?? []).reduce((sum, incident) => {
+    // #560: closed with no change — nothing was ever owed nor handed back.
+    if (incidentClosedNoChange(incident)) return sum;
     const resolution = incident.resolution;
     if (!resolution) return sum;
     if (typeof resolution.refundOwedCents === "number") {
@@ -131,6 +145,8 @@ export function incidentsRefundPendingCents(incidents: OrderIncident[] | undefin
  */
 export function incidentsRefundCommittedCents(incidents: OrderIncident[] | undefined | null): number {
   return (incidents ?? []).reduce((sum, incident) => {
+    // #560: closed with no change — the desisted commitment never blocks credit.
+    if (incidentClosedNoChange(incident)) return sum;
     const resolution = incident.resolution;
     if (!resolution) return sum;
     if (typeof resolution.refundOwedCents === "number") {
