@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  incidentClosedNoChange,
   incidentEvidenceError,
   incidentState,
   incidentsRefundPendingCents,
   incidentsSaleAdjustmentCents,
 } from "./incidents";
+import { incidentsRefundCommittedCents } from "../../lib/orderMoney";
 import type { OrderIncident } from "../../types";
 
 const ev = (kind: OrderIncident["events"][number]["kind"], id: string, detail?: Record<string, string | number>) => ({
@@ -170,5 +172,77 @@ describe("incidentEvidenceError (#368)", () => {
     // otra variedad de la misma ficha NO sostiene la incidencia
     const otherColor = [{ lineId: "old", productId: "p1", variantId: "v2", productName: "Aro Sol", quantity: 1, unitPrice: 1000, subtotal: 1000 }];
     expect(incidentEvidenceError(legacy, otherColor)).toBeTruthy();
+  });
+});
+
+// ── #560: cierre «Sin cambio» — la clienta desistió antes de cualquier hecho ─
+describe("cierre «Sin cambio» (#560)", () => {
+  const closed = (extra: Partial<OrderIncident> = {}): OrderIncident => base({
+    events: [ev("opened", "e1"), ev("closed_no_change", "e22", { reason: "La clienta ya no quiere el cambio" })],
+    ...extra,
+  });
+
+  it("queda en el historial como hecho derivado, sin efectos de pieza ni dinero", () => {
+    const state = incidentState(closed());
+    expect(state.closedNoChange).toBe(true);
+    expect(state.confirmed).toBe(false);
+    expect(state.pieceLocation).toBe("with_customer");
+    expect(state.quarantinedQuantity).toBe(0);
+    expect(state.replacementOutQuantity).toBe(0);
+    expect(incidentClosedNoChange(closed())).toBe(true);
+    expect(incidentClosedNoChange(base())).toBe(false);
+  });
+
+  it("anula el ajuste de venta de la resolución acordada que nunca se ejecutó", () => {
+    const agreed = base({
+      resolution: { kind: "replacement_with_difference", saleAdjustmentUnitCents: 12000 },
+      replacement: { productId: "p2", productName: "Aro", unitPriceCents: 16000, unitCostCents: 6000, chargeDifference: true },
+      events: [ev("opened", "e1"), ev("resolution_agreed", "e2")],
+    });
+    expect(incidentsSaleAdjustmentCents([agreed])).toBe(4000);
+    const closedAgreed = closed({ resolution: agreed.resolution, replacement: agreed.replacement, events: [...agreed.events, ev("closed_no_change", "e33", { reason: "Desistió" })] });
+    expect(incidentsSaleAdjustmentCents([closedAgreed])).toBe(0);
+  });
+
+  it("anula el compromiso de reembolso acordado pero nunca confirmado ni entregado", () => {
+    const agreedRefund = base({
+      resolution: { kind: "refund", saleAdjustmentUnitCents: 12000, refundOwedCents: 12000, destination: "refund_pending" },
+      events: [ev("opened", "e1"), ev("resolution_agreed", "e2")],
+    });
+    expect(incidentsRefundPendingCents([agreedRefund])).toBe(12000);
+    expect(incidentsRefundCommittedCents([agreedRefund])).toBe(12000);
+    const closedRefund = closed({ resolution: agreedRefund.resolution, events: [...agreedRefund.events, ev("closed_no_change", "e33", { reason: "Desistió" })] });
+    expect(incidentsRefundPendingCents([closedRefund])).toBe(0);
+    expect(incidentsRefundCommittedCents([closedRefund])).toBe(0);
+  });
+
+  it("permite retirar el renglón que sostenía la incidencia (regresión $790 → $760)", () => {
+    // Pedido de $790 con un renglón de $30 agregado solo para el cambio.
+    const line30 = { lineId: "l30", productId: "p30", productName: "Aro cambio", quantity: 1, unitPrice: 30, subtotal: 30 };
+    const other = { lineId: "l1", productId: "p1", productName: "Collar", quantity: 1, unitPrice: 760, subtotal: 760 };
+    const before = {
+      items: [other, line30],
+      incidents: [closed({ lineId: "l30", quantity: 1, originalUnitPriceCents: 3000 })],
+    } as any;
+    // Aún abierta (sin cierre), la línea es evidencia protegida.
+    const open = { ...before, incidents: [base({ lineId: "l30", quantity: 1, originalUnitPriceCents: 3000 })] } as any;
+    expect(incidentEvidenceError(open, [other])).toMatch(/no se puede quitar/);
+    // Cerrada sin cambio: el editor ya puede retirar el renglón.
+    expect(incidentEvidenceError(before, [other])).toBeNull();
+    // Y también puede editar otras cosas conservando la línea (venta válida).
+    expect(incidentEvidenceError(before, [other, line30])).toBeNull();
+  });
+
+  it("una incidencia con efectos ejecutados nunca se considera cerrada sin cambio", () => {
+    const drift = base({
+      resolution: { kind: "replacement_equivalent" },
+      // Drift imposible por la transacción: cierre registrado DESPUÉS de una
+      // confirmación. La lectura sigue protegiendo la evidencia (fail closed).
+      events: [ev("opened", "e1"), ev("resolution_agreed", "e2"), ev("confirmed", "e33"), ev("closed_no_change", "e4")],
+    });
+    expect(incidentState(drift).confirmed).toBe(true);
+    expect(incidentState(drift).closedNoChange).toBe(true);
+    const items = [{ lineId: "l1", productId: "p1", productName: "Aro Sol", quantity: 2, unitPrice: 1000, subtotal: 2000 }];
+    expect(incidentEvidenceError({ items, incidents: [drift] } as any, [])).toMatch(/no se puede quitar/);
   });
 });
