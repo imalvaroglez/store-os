@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.25.0",
+    "date": "2026.11.27",
+    "title": "Surtir puntos de venta directo del almacén",
+    "notes": [
+      "Puntos de venta. En un punto vacío, «Surtir del almacén» es la acción principal: buscas por producto o por variante, agregas varias piezas con su cantidad y su precio, revisas todo el movimiento y confirmas en una sola operación. También resurtir un punto que ya tiene mercancía.",
+      "Cada variante se elige con su nombre completo, su existencia y su precio sugerido propios; las agotadas quedan visibles con la captura deshabilitada, y si a una variante le falta precio del nivel del punto, se lo pides en el momento.",
+      "La captura en lote se cuida sola: cambiar la búsqueda no pierde lo agregado, un renglón inválido detiene el lote completo sin mover nada, y un reintento repetido no descuenta dos veces."
+    ]
+  },
+  {
     "version": "1.24.0",
     "date": "2026.11.27",
     "title": "Los adeudos anteriores, a la vista al cobrar",
