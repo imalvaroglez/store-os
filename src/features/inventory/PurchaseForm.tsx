@@ -154,23 +154,38 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const locked = effectivePurchaseStatus(draft) === "received";
   const editDisabled = locked || saving || receiving || bulkCreating;
   const tickets = draft.tickets ?? [legacyPurchaseTicket(draft)];
-  // #558: per-ticket classification state — the uniform method (all tickets
-  // agree) mirrors the purchase level for the suggestion engine; a legacy
-  // received purchase without ticket evidence keeps its historical label.
-  const ticketMethods = tickets.map((ticket) => ticket.paymentMethod);
+  // #558: per-ticket classification state. Effective method = the received
+  // evidence overlay first (#558), then the ticket's own field (editable
+  // captures); the uniform method (all tickets agree) mirrors the purchase
+  // level for the suggestion engine; a legacy received purchase without
+  // ticket evidence keeps its historical label.
+  const effectiveTicketMethod = (ticket: PurchaseTicket) =>
+    draft.ticketPaymentMethods?.[ticket.id] ?? ticket.paymentMethod;
+  const ticketMethods = tickets.map(effectiveTicketMethod);
   const uniformTicketMethod = ticketMethods.length > 0
     && ticketMethods.every((method) => method !== undefined && method === ticketMethods[0])
     ? ticketMethods[0]
     : undefined;
-  const hasTicketEvidence = (purchase.tickets ?? []).some((ticket) => ticket.paymentMethod !== undefined);
+  const hasTicketEvidence = (purchase.tickets ?? []).some((ticket) =>
+    purchase.ticketPaymentMethods?.[ticket.id] !== undefined || ticket.paymentMethod !== undefined);
   const legacyWholePurchase = !hasTicketEvidence && purchase.paymentMethod !== undefined;
   const classificationDirty = locked && (
     uniformTicketMethod !== purchase.paymentMethod
     || tickets.some((ticket) => {
       const saved = (purchase.tickets ?? []).find((candidate) => candidate.id === ticket.id);
-      return (ticket.paymentMethod ?? undefined) !== (saved?.paymentMethod ?? undefined);
+      return effectiveTicketMethod(ticket) !== (saved ? purchase.ticketPaymentMethods?.[ticket.id] ?? saved.paymentMethod : undefined);
     })
   );
+  /** The overlay sent on a received correction: every ticket's effective
+   * method (undefined entries stay pending by absence). */
+  const classificationOverlay = () => {
+    const overlay: Record<string, PurchasePaymentMethod> = {};
+    for (const ticket of tickets) {
+      const method = effectiveTicketMethod(ticket);
+      if (method) overlay[ticket.id] = method;
+    }
+    return overlay;
+  };
   // #211 r3 (UX review): the real weekly flow TYPES the supplier instead of
   // picking it from the list. A typed name that matches an existing supplier
   // resolves to its id — without this, the suggestion and «Recordar» were
@@ -845,8 +860,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   <div><dt className="text-ink-soft">Diferencia</dt><dd>{formatMoneyExact(Math.abs(totals.calculated - ticket.totalConfirmed))}</dd></div>
                   <div>
                     <dt className="text-ink-soft">Forma de pago</dt>
-                    <dd>{ticket.paymentMethod
-                      ? PURCHASE_PAYMENT_METHOD_LABEL[ticket.paymentMethod]
+                    <dd>{effectiveTicketMethod(ticket)
+                      ? PURCHASE_PAYMENT_METHOD_LABEL[effectiveTicketMethod(ticket)!]
                       : locked && legacyWholePurchase
                         ? `${PURCHASE_PAYMENT_METHOD_LABEL[purchase.paymentMethod!]} (toda la compra)`
                         : "Pendiente de clasificar"}</dd>
@@ -946,9 +961,17 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           />
           <SelectField
             label="Forma de pago"
-            value={activeTicket.paymentMethod ?? ""}
+            value={effectiveTicketMethod(activeTicket) ?? ""}
             disabled={saving || receiving || bulkCreating}
-            onChange={(value) => updateTicket({ paymentMethod: value ? (value as PurchasePaymentMethod) : undefined })}
+            onChange={(value) => locked
+              ? setDraft((prev) => {
+                  // Overlay sobre evidencia recibida: sin método = sin entrada.
+                  const overlay = { ...prev.ticketPaymentMethods };
+                  if (value) overlay[activeTicket.id] = value as PurchasePaymentMethod;
+                  else delete overlay[activeTicket.id];
+                  return { ...prev, ticketPaymentMethods: overlay };
+                })
+              : updateTicket({ paymentMethod: value ? (value as PurchasePaymentMethod) : undefined })}
             hint={locked ? "Clasificar mueve el dinero entre caja y adeudo de tarjeta; el inventario no cambia." : undefined}
             options={[
               { value: "", label: "Pendiente de clasificar" },
@@ -966,9 +989,8 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
               disabled={savingLate}
               onClick={() => {
                 setSavingLate(true);
-                classifyPurchasePayment(purchase, { paymentMethod: uniformTicketMethod, tickets, revision: revisionRef.current })
-                  .then((saved) => {
-                    revisionRef.current = saved?.revision ?? (revisionRef.current ?? 0) + 1;
+                classifyPurchasePayment(purchase, { paymentMethod: uniformTicketMethod, ticketPaymentMethods: classificationOverlay() })
+                  .then(() => {
                     toast.success("Forma de pago guardada.");
                   })
                   .catch((error) => {

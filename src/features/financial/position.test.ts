@@ -270,3 +270,28 @@ describe("#558 — forma de pago por ticket de surtido", () => {
     expect(result.unclassifiedOutflowsCents).toBe(55000);
   });
 });
+
+describe("#558 — el overlay reclasifica evidencia recibida", () => {
+  it("una compra recibida corrige un ticket vía overlay sin tocar el arreglo de tickets", () => {
+    const received = {
+      id: "pr1", storeId: "s1", date: NOV(12), lines: [], subtotal: 630, totalConfirmed: 630,
+      paymentMethod: "cash", // histórico: el overlay manda
+      tickets: [
+        { id: "t1", totalConfirmed: 180, paymentMethod: "cash" as const },
+        { id: "t2", totalConfirmed: 450, paymentMethod: "credit_card" as const },
+      ],
+      ticketPaymentMethods: { t1: "credit_card" as const },
+    } as unknown as Purchase;
+    const result = positionOfStore({
+      activatedAt: T0,
+      storeId: "s1",
+      payments: [],
+      purchases: [received],
+      expenses: [],
+      cardPayments: [],
+    });
+    expect(result.cardDebtCents).toBe(63000); // ambos tickets a tarjeta
+    expect(result.registeredCashCents).toBe(0);
+    expect(result.notes.join(" ")).not.toMatch(/toda la compra/); // ya hay evidencia por ticket
+  });
+});

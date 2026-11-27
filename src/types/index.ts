@@ -1063,6 +1063,11 @@ export type Purchase = {
   /** #279: how this purchase was paid — captured once, feeds the
    * from-activation position (card debt / own-money outflow). */
   paymentMethod?: PurchasePaymentMethod;
+  /** #558: per-ticket classification overlay for RECEIVED evidence —
+   * ticketId → method. Wins over each ticket's own field (which editable
+   * captures write); the tickets array itself stays immutable after
+   * reception, so corrections land here (rules allow only this field). */
+  ticketPaymentMethods?: Record<string, PurchasePaymentMethod>;
   createdAt: string;
   updatedAt: string;
 };

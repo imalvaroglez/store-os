@@ -17,7 +17,6 @@ import type {
   Category,
   Supplier,
   Purchase,
-  PurchaseTicket,
   OrderPayment,
   PurchaseExpense,
   Storefront,
@@ -432,7 +431,7 @@ type StoreContextValue = {
   /** #279 QA (MAYOR-3): classify (or reclassify) a received purchase's
    * payment method — the only edit received evidence allows besides
    * saleCostAdjustments (rules-enforced). */
-  classifyPurchasePayment: (purchase: Purchase, classification: { paymentMethod?: PurchasePaymentMethod; tickets: PurchaseTicket[]; revision?: number | null }) => Promise<Purchase>;
+  classifyPurchasePayment: (purchase: Purchase, classification: { paymentMethod?: PurchasePaymentMethod; ticketPaymentMethods: Record<string, PurchasePaymentMethod> }) => Promise<Purchase>;
   /**
    * Bulk-create private draft products and save the purchase that links them
    * in one atomic commit (cloud-only: the PDF import flow requires cloud).
@@ -1267,19 +1266,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await deleteEntity(currentUser, "suppliers", supplierId);
     },
     classifyPurchasePayment: async (purchase, classification) => {
-      // #558: payment classification only — date, costs, stock, reception and
-      // append-only evidence travel verbatim from the fresh doc inside the
-      // SAME transaction, under the #373 revision contract (a conflict
-      // rejects instead of silently winning; the caller preserves its capture).
+      // #558: payment classification only — the per-ticket overlay is the
+      // report-only field the rules accept on RECEIVED evidence (MAYOR-3
+      // extension): date, costs, stock, tickets and append-only evidence stay
+      // byte-identical; nothing here can touch inventory.
       const built: Purchase = {
         ...purchase,
         paymentMethod: classification.paymentMethod,
-        tickets: classification.tickets,
+        ticketPaymentMethods: classification.ticketPaymentMethods,
         updatedAt: nowIso(),
       };
-      const saved = await savePurchaseTx(built, classification.revision ?? purchase.revision ?? null);
-      dispatch({ type: "UPDATE_PURCHASE", purchase: saved });
-      return saved;
+      await persistEntity("purchases", built as unknown as { id: string } & Record<string, unknown>);
+      dispatch({ type: "UPDATE_PURCHASE", purchase: built });
+      return built;
     },
     upsertPurchase: async (purchase, expectedRevision, baseline) => {
       requireAuthenticatedUser();

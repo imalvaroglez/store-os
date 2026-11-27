@@ -83,6 +83,9 @@ export function financialPosition(input: FinancialPositionInput): FinancialPosit
   // (identified as historical, never double-counted with the tickets).
   let historicalWholePurchase = 0;
   const purchaseOutflows = input.purchases.flatMap((purchase) => {
+    // #558: any ticket-level method (already overlay-resolved by
+    // positionOfStore for received evidence) makes the per-ticket
+    // classification authoritative for the whole purchase.
     const ticketEvidence = (purchase.tickets ?? []).filter((ticket) => ticket.paymentMethod !== undefined);
     if (ticketEvidence.length > 0) {
       return (purchase.tickets ?? []).map((ticket) => ({
@@ -159,7 +162,10 @@ export function positionOfStore(input: {
       date: purchase.date,
       total: purchase.totalConfirmed,
       paymentMethod: purchase.paymentMethod,
-      tickets: purchase.tickets?.map((ticket) => ({ total: ticket.totalConfirmed, paymentMethod: ticket.paymentMethod })),
+      tickets: purchase.tickets?.map((ticket) => ({
+        total: ticket.totalConfirmed,
+        paymentMethod: purchase.ticketPaymentMethods?.[ticket.id] ?? ticket.paymentMethod,
+      })),
     })),
     expenses: input.expenses.map((expense) => ({ date: expense.date, amount: expense.amount, paymentMethod: expense.paymentMethod })),
     cardPayments: input.cardPayments.map((payment) => ({ date: payment.date, amountCents: payment.amountCents })),

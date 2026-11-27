@@ -593,7 +593,7 @@ describe("#279 QA (MAYOR-2/3) — forma de pago honesta y clasificable", () => {
     fireEvent.change(select, { target: { value: "credit_card" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar forma de pago" }));
     await waitFor(() => expect(classifyPurchasePayment).toHaveBeenCalledTimes(1));
-    expect(classifyPurchasePayment.mock.calls[0][1]).toMatchObject({ paymentMethod: "credit_card", tickets: [{ id: "ticket:purchase", paymentMethod: "credit_card" }] });
+    expect(classifyPurchasePayment.mock.calls[0][1]).toMatchObject({ paymentMethod: "credit_card", ticketPaymentMethods: { "ticket:purchase": "credit_card" } });
     expect(await screen.findByText("Forma de pago guardada.")).toBeTruthy();
   });
 });
@@ -670,9 +670,8 @@ describe("#558 — forma de pago por ticket de surtido", () => {
     await waitFor(() => expect(classifyPurchasePayment).toHaveBeenCalledTimes(1));
     const [argPurchase, classification] = classifyPurchasePayment.mock.calls[0];
     expect(argPurchase.status).toBe("received");
-    expect(classification.tickets.map((ticket: { id: string; paymentMethod?: string }) =>
-      ticket.id === "tk1" ? ticket.paymentMethod : ticket.paymentMethod ?? null
-    ).filter(Boolean)).toEqual(["credit_card"]);
+    // Overlay: sólo el ticket reclassificado; tk2 sin entrada sigue pendiente.
+    expect(classification.ticketPaymentMethods).toEqual({ tk1: "credit_card" });
     expect(classification.paymentMethod).toBeUndefined(); // mixto: tk2 sigue pendiente
     expect(await screen.findByText("Forma de pago guardada.")).toBeTruthy();
     expect(receivePurchase).not.toHaveBeenCalled();

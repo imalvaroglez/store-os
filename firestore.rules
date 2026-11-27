@@ -398,6 +398,10 @@ service cloud.firestore {
           // received purchase can still receive — classification corrects
           // where the money came from; inventory evidence stays identical.
           || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'paymentMethod', 'updatedAt'])
+          // #558: per-ticket classification on received evidence travels in a
+          // report-only overlay — the tickets array (totals, folios, docs) and
+          // every inventory field stay byte-identical.
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saleCostAdjustments', 'paymentMethod', 'ticketPaymentMethods', 'updatedAt'])
         );
       allow delete: if canOperateStore(resource.data.storeId)
         && resource.data.status != 'received';
