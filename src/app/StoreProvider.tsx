@@ -17,6 +17,7 @@ import type {
   Category,
   Supplier,
   Purchase,
+  PurchaseTicket,
   OrderPayment,
   PurchaseExpense,
   Storefront,
@@ -431,7 +432,7 @@ type StoreContextValue = {
   /** #279 QA (MAYOR-3): classify (or reclassify) a received purchase's
    * payment method — the only edit received evidence allows besides
    * saleCostAdjustments (rules-enforced). */
-  classifyPurchasePayment: (purchase: Purchase, paymentMethod: PurchasePaymentMethod | undefined) => Promise<void>;
+  classifyPurchasePayment: (purchase: Purchase, classification: { paymentMethod?: PurchasePaymentMethod; tickets: PurchaseTicket[]; revision?: number | null }) => Promise<Purchase>;
   /**
    * Bulk-create private draft products and save the purchase that links them
    * in one atomic commit (cloud-only: the PDF import flow requires cloud).
@@ -1265,9 +1266,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "DELETE_SUPPLIER", supplierId });
       await deleteEntity(currentUser, "suppliers", supplierId);
     },
-    classifyPurchasePayment: async (purchase, paymentMethod) => {
-      await persistEntity("purchases", { ...purchase, paymentMethod, updatedAt: nowIso() } as unknown as { id: string } & Record<string, unknown>);
-      dispatch({ type: "REPLACE_CLOUD_STATE", state: { ...state, purchases: state.purchases.map((existing) => (existing.id === purchase.id ? { ...existing, paymentMethod, updatedAt: nowIso() } : existing)) } });
+    classifyPurchasePayment: async (purchase, classification) => {
+      // #558: payment classification only — date, costs, stock, reception and
+      // append-only evidence travel verbatim from the fresh doc inside the
+      // SAME transaction, under the #373 revision contract (a conflict
+      // rejects instead of silently winning; the caller preserves its capture).
+      const built: Purchase = {
+        ...purchase,
+        paymentMethod: classification.paymentMethod,
+        tickets: classification.tickets,
+        updatedAt: nowIso(),
+      };
+      const saved = await savePurchaseTx(built, classification.revision ?? purchase.revision ?? null);
+      dispatch({ type: "UPDATE_PURCHASE", purchase: saved });
+      return saved;
     },
     upsertPurchase: async (purchase, expectedRevision, baseline) => {
       requireAuthenticatedUser();

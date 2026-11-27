@@ -189,3 +189,84 @@ describe("#524 M3 — la caja incluye los cobros de puntos", () => {
     expect(position.registeredCashCents).toBe(0);
   });
 });
+
+describe("#558 — forma de pago por ticket de surtido", () => {
+  const ticket = (total: number, paymentMethod?: PurchasePaymentMethod) => ({ total, paymentMethod });
+
+  it("la prueba de aceptación: 3 tickets en efectivo y 1 a tarjeta — $730 propio y $450 de tarjeta, una sola vez", () => {
+    const result = financialPosition({
+      ...base,
+      payments: [{ date: NOV(10), amountCents: 500000 }],
+      purchases: [{
+        date: NOV(12),
+        total: 1180,
+        paymentMethod: "cash", // histórico a nivel compra: los tickets mandan
+        tickets: [ticket(180, "cash"), ticket(240, "cash"), ticket(310, "cash"), ticket(450, "credit_card")],
+      }],
+      expenses: [],
+      cardPayments: [],
+    });
+    expect(result.registeredCashCents).toBe(500000 - 73000); // cobros − $730 propio
+    expect(result.cardDebtCents).toBe(45000); // $450 a tarjeta, una sola vez
+    expect(result.thirdPartyDebtCents).toBe(0);
+    expect(result.unclassifiedOutflowsCents).toBe(0);
+  });
+
+  it("un ticket sin forma de pago queda pendiente de clasificar: ni caja ni adeudo, visible", () => {
+    const result = financialPosition({
+      ...base,
+      purchases: [{
+        date: NOV(12),
+        total: 490,
+        tickets: [ticket(180, "cash"), ticket(310)],
+      }],
+    });
+    expect(result.registeredCashCents).toBe(-18000); // sólo el ticket clasificado sale de caja
+    expect(result.cardDebtCents).toBe(0);
+    expect(result.unclassifiedOutflowsCents).toBe(31000);
+    expect(result.notes.join(" ")).toMatch(/salidas sin método de pago/);
+  });
+
+  it("sin evidencia por ticket se conserva la clasificación histórica a nivel compra y se identifica", () => {
+    const result = financialPosition({
+      ...base,
+      purchases: [{ date: NOV(12), total: 400, paymentMethod: "credit_card" }],
+    });
+    expect(result.cardDebtCents).toBe(40000);
+    expect(result.notes.join(" ")).toMatch(/con la forma de pago capturada para toda la compra/);
+  });
+
+  it("nunca cuenta a la vez lo clasificado por ticket y por compra: el total no se duplica", () => {
+    const result = financialPosition({
+      ...base,
+      purchases: [{
+        date: NOV(12),
+        total: 620,
+        paymentMethod: "cash",
+        tickets: [ticket(620, "credit_card")],
+      }],
+    });
+    expect(result.cardDebtCents).toBe(62000);
+    expect(result.registeredCashCents).toBe(0); // el método a nivel compra NO vuelve a descontar
+  });
+
+  it("positionOfStore mapea los tickets de cada compra con su importe confirmado", () => {
+    const purchase = {
+      id: "p1", storeId: "s1", date: NOV(12), lines: [], subtotal: 0, totalConfirmed: 730,
+      tickets: [
+        { id: "t1", totalConfirmed: 180, paymentMethod: "cash" as const },
+        { id: "t2", totalConfirmed: 550 },
+      ],
+    } as unknown as Purchase;
+    const result = positionOfStore({
+      activatedAt: T0,
+      storeId: "s1",
+      payments: [],
+      purchases: [purchase],
+      expenses: [],
+      cardPayments: [],
+    });
+    expect(result.registeredCashCents).toBe(-18000);
+    expect(result.unclassifiedOutflowsCents).toBe(55000);
+  });
+});

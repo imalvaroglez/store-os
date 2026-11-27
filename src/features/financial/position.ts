@@ -23,8 +23,12 @@ export type FinancialPositionInput = {
    * date, same activation cutoff as order payments. Optional so legacy
    * callers/tests read as "no point collections yet". */
   pointPayments?: Array<{ date?: string; amountCents?: number }>;
-  /** Money OUT with a one-time payment method (total in decimal pesos). */
-  purchases: Array<{ date: string; total: number; paymentMethod?: PurchasePaymentMethod }>;
+  /** Money OUT with a one-time payment method (total in decimal pesos).
+   * #558: a purchase may carry per-TICKET methods — when any ticket has one,
+   * each ticket classifies its own confirmed total (a ticket without a method
+   * stays pending) and the purchase-level method is historical only, never
+   * counted twice. */
+  purchases: Array<{ date: string; total: number; paymentMethod?: PurchasePaymentMethod; tickets?: Array<{ total: number; paymentMethod?: PurchasePaymentMethod }> }>;
   expenses: Array<{ date: string; amount: number; paymentMethod?: PurchasePaymentMethod }>;
   /** Card payments: reduce cash AND card debt — never a second expense. */
   cardPayments: Array<{ date: string; amountCents: number }>;
@@ -73,8 +77,25 @@ export function financialPosition(input: FinancialPositionInput): FinancialPosit
   let cardCharged = 0;
   let thirdParty = 0;
   let unclassified = 0;
+  // #558: expand each purchase into its classification units — per-ticket
+  // methods win as soon as ONE ticket carries evidence; the purchase-level
+  // method only classifies purchases that never got ticket-level capture
+  // (identified as historical, never double-counted with the tickets).
+  let historicalWholePurchase = 0;
+  const purchaseOutflows = input.purchases.flatMap((purchase) => {
+    const ticketEvidence = (purchase.tickets ?? []).filter((ticket) => ticket.paymentMethod !== undefined);
+    if (ticketEvidence.length > 0) {
+      return (purchase.tickets ?? []).map((ticket) => ({
+        date: purchase.date,
+        cents: centsOf(ticket.total),
+        method: ticket.paymentMethod,
+      }));
+    }
+    if (purchase.paymentMethod !== undefined) historicalWholePurchase += 1;
+    return [{ date: purchase.date, cents: centsOf(purchase.total), method: purchase.paymentMethod }];
+  });
   for (const outflow of [
-    ...input.purchases.map((purchase) => ({ date: purchase.date, cents: centsOf(purchase.total), method: purchase.paymentMethod })),
+    ...purchaseOutflows,
     ...input.expenses.map((expense) => ({ date: expense.date, cents: centsOf(expense.amount), method: expense.paymentMethod })),
   ]) {
     if (!onOrAfter(outflow.date, input.activatedAt)) continue;
@@ -97,6 +118,9 @@ export function financialPosition(input: FinancialPositionInput): FinancialPosit
   }
   if (unclassified > 0) {
     notes.push(`Hay salidas sin método de pago (${(unclassified / 100).toLocaleString("es-MX", { style: "currency", "currency": "MXN" })}) que no entran ni en caja ni en adeudos: clasifícalas editando su compra o gasto.`);
+  }
+  if (historicalWholePurchase > 0) {
+    notes.push(`${historicalWholePurchase} compra${historicalWholePurchase === 1 ? "" : "s"} con la forma de pago capturada para toda la compra (histórico${historicalWholePurchase === 1 ? "" : "s"}): clasifícala${historicalWholePurchase === 1 ? "" : "s"} por ticket para distinguir locales.`);
   }
 
   return {
@@ -131,7 +155,12 @@ export function positionOfStore(input: {
     payments: input.payments
       .filter((payment) => payment.storeId === input.storeId)
       .map((payment) => ({ date: payment.date, amountCents: payment.amountCents ?? centsOf(payment.amount) })),
-    purchases: input.purchases.map((purchase) => ({ date: purchase.date, total: purchase.totalConfirmed, paymentMethod: purchase.paymentMethod })),
+    purchases: input.purchases.map((purchase) => ({
+      date: purchase.date,
+      total: purchase.totalConfirmed,
+      paymentMethod: purchase.paymentMethod,
+      tickets: purchase.tickets?.map((ticket) => ({ total: ticket.totalConfirmed, paymentMethod: ticket.paymentMethod })),
+    })),
     expenses: input.expenses.map((expense) => ({ date: expense.date, amount: expense.amount, paymentMethod: expense.paymentMethod })),
     cardPayments: input.cardPayments.map((payment) => ({ date: payment.date, amountCents: payment.amountCents })),
   });

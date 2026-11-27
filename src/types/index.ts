@@ -873,6 +873,11 @@ export type PurchaseTicket = {
   tax?: number;
   documentPath?: string;
   documentFingerprint?: string;
+  /** #558: how THIS ticket was paid. As soon as one ticket carries a method,
+   * the from-activation position classifies each ticket's confirmed total on
+   * its own and the purchase-level method stays historical (never counted
+   * twice). Absent = pending classification. */
+  paymentMethod?: PurchasePaymentMethod;
 };
 
 export type PurchaseCostAllocation = {
