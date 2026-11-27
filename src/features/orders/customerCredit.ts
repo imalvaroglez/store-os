@@ -175,3 +175,51 @@ export function customerBalanceSummary(orders: Order[], storeId: string, custome
     orders: rows,
   };
 }
+
+// ── #559: adeudos anteriores al consultar cuánto cobrar ─────────────────────
+
+/** One prior pending order of the clienta — a traceable adeudo row. */
+export type PriorDebtRow = {
+  orderId: string;
+  orderStatus: Order["orderStatus"];
+  pendingCents: number;
+};
+
+/** What the clienta owes and holds OUTSIDE the order being consulted. */
+export type PriorDebtsView = {
+  /** Her other pending orders, oldest first (#189 compensation order). */
+  rows: PriorDebtRow[];
+  /** Σ pending across those rows — each counted exactly once. */
+  priorPendingCents: number;
+  /** Σ unconsumed credit on her other orders — available to auto-compensate. */
+  priorCreditCents: number;
+};
+
+/**
+ * #559: everything the operator needs NEXT TO an order's saldo: what the
+ * clienta still owes on her OTHER orders and the credit those orders hold.
+ * Pure derivation over already-loaded orders — no reads, writes or listeners.
+ * Settled, cancelled and converted (#524) priors carry 0 and never appear.
+ */
+export function priorDebtsView(
+  orders: Order[],
+  storeId: string,
+  customerId: string,
+  currentOrderId: string,
+): PriorDebtsView {
+  const rows: PriorDebtRow[] = [];
+  let priorCreditCents = 0;
+  // `orders` comes sorted oldest-first; the rows keep that #189 order.
+  for (const row of customerBalanceSummary(orders, storeId, customerId).orders) {
+    if (row.orderId === currentOrderId) continue;
+    if (row.pendingCents > 0) {
+      rows.push({ orderId: row.orderId, orderStatus: row.orderStatus, pendingCents: row.pendingCents });
+    }
+    priorCreditCents += row.creditCents;
+  }
+  return {
+    rows,
+    priorPendingCents: rows.reduce((sum, row) => sum + row.pendingCents, 0),
+    priorCreditCents,
+  };
+}

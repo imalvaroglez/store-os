@@ -6,6 +6,7 @@ import {
   ordersForCustomer,
   pendingCents,
   planCreditApplications,
+  priorDebtsView,
 } from "./customerCredit";
 import type { Order } from "../../types";
 
@@ -225,6 +226,82 @@ describe("corrección del renglón tras cierre sin cambio (#560)", () => {
     const consumed = { ...corrected, creditConsumedCents: 6000 };
     expect(pendingCents(applied)).toBe(2000);
     expect(planCreditApplications([applied, consumed])).toEqual([]);
+  });
+});
+
+// ── #559: adeudos anteriores al consultar cuánto cobrar ─────────────────────
+describe("priorDebtsView (#559)", () => {
+  // The reported case: a prior $850 order with $750 received left $100 owed;
+  // consulting a NEW $350 order must show both figures next to its saldo.
+  const prior = priced("prior", 850, 750, "2026-11-20T10:00:00Z"); // pending 10000
+
+  it("the reported case: the $100 prior debt is a traceable row, oldest first", () => {
+    const view = priorDebtsView([prior], "store_a", "clienta_1", "nuevo");
+    expect(view.priorPendingCents).toBe(10000);
+    expect(view.rows).toEqual([{ orderId: "prior", orderStatus: "confirmed", pendingCents: 10000 }]);
+  });
+
+  it("each prior order counts once (partial payments included) and the current order is excluded", () => {
+    const older = priced("older", 200, 0, "2026-11-18T10:00:00Z");
+    const newer = priced("newer", 100, 40, "2026-11-25T10:00:00Z"); // partial payment → pending 6000
+    const current = priced("current", 350, 0, "2026-11-26T10:00:00Z");
+    const view = priorDebtsView([prior, older, newer, current], "store_a", "clienta_1", "current");
+    expect(view.rows.map((row) => row.orderId)).toEqual(["older", "prior", "newer"]);
+    expect(view.priorPendingCents).toBe(20000 + 10000 + 6000);
+  });
+
+  it("settled, cancelled and converted priors are not adeudos; delivered with authorized balance IS", () => {
+    const settled = priced("settled", 300, 300, "2026-11-19T10:00:00Z");
+    const cancelled = priced("cx", 500, 0, "2026-11-19T11:00:00Z", { orderStatus: "cancelled" });
+    const converted = priced("cv", 500, 0, "2026-11-19T12:00:00Z", { convertedToPointId: "point_x" });
+    const deliveredWithBalance = priced("dwb", 400, 250, "2026-11-19T13:00:00Z", {
+      orderStatus: "delivered",
+      deliveredWithBalanceCents: 15000,
+    });
+    const view = priorDebtsView([settled, cancelled, converted, deliveredWithBalance], "store_a", "clienta_1", "actual");
+    expect(view.rows.map((row) => row.orderId)).toEqual(["dwb"]);
+    expect(view.rows[0].orderStatus).toBe("delivered");
+    expect(view.priorPendingCents).toBe(15000);
+  });
+
+  it("never mixes clientas or stores", () => {
+    const otherStore = { ...priced("os", 900, 0, "2026-11-19T10:00:00Z"), storeId: "store_b" };
+    const otherCustomer = { ...priced("oc", 900, 0, "2026-11-19T10:00:00Z"), customerId: "clienta_2" };
+    expect(priorDebtsView([otherStore, otherCustomer], "store_a", "clienta_1", "actual").rows).toEqual([]);
+  });
+
+  it("exposes her OTHER orders' available credit so the caller nets it exactly once (#189)", () => {
+    const surplus = priced("surplus", 100, 115, "2026-11-01T10:00:00Z"); // credit 1500
+    const debt = priced("debt", 200, 0, "2026-11-02T10:00:00Z"); // pending 20000
+    const view = priorDebtsView([surplus, debt], "store_a", "clienta_1", "actual");
+    expect(view.priorPendingCents).toBe(20000);
+    expect(view.priorCreditCents).toBe(1500);
+  });
+
+  it("credit already applied to a prior order is never counted twice", () => {
+    // The surplus was consumed by the prior debt: its pending is already net
+    // of the application, and the consumed credit is not available again.
+    const surplus = priced("s", 100, 115, "2026-11-01T10:00:00Z", { creditConsumedCents: 1500 });
+    const debt = priced("d", 200, 0, "2026-11-02T10:00:00Z", { creditAppliedCents: 1500 }); // pending 18500
+    const view = priorDebtsView([surplus, debt], "store_a", "clienta_1", "actual");
+    expect(view.priorPendingCents).toBe(18500);
+    expect(view.priorCreditCents).toBe(0);
+  });
+
+  it("a converted order's stray credit is not surfaced as available (#524)", () => {
+    const convertedSurplus = priced("cs", 100, 115, "2026-11-01T10:00:00Z", { convertedToPointId: "p" });
+    expect(priorDebtsView([convertedSurplus], "store_a", "clienta_1", "actual").priorCreditCents).toBe(0);
+  });
+
+  it("nets to exactly the clienta view's netCents — allocation-independent (#189)", () => {
+    // Whatever order the oldest-first compensation lands on, the TOTAL the
+    // operator must collect is the same: Σ pending − Σ available credit.
+    const current = priced("current", 350, 0, "2026-11-26T10:00:00Z");
+    const orders = [prior, priced("favor", 100, 115, "2026-11-01T10:00:00Z"), current];
+    const view = priorDebtsView(orders, "store_a", "clienta_1", "current");
+    const panelTotal = view.priorPendingCents + pendingCents(current)
+      - view.priorCreditCents - creditAvailableCents(current);
+    expect(panelTotal).toBe(customerBalanceSummary(orders, "store_a", "clienta_1").netCents); // 350 + 100 − 15
   });
 });
 
