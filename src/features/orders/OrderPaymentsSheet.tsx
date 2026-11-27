@@ -14,8 +14,10 @@ import { todayIso } from "../../lib/dates";
 import { effectiveOrderStatus, orderReference } from "../../lib/orders";
 import { uid } from "../../lib/ids";
 import { formatMoneyExact, parseAmount, sanitizeMoneyInput } from "../../lib/money";
+import { navigate } from "../../lib/router";
 import type { Order, OrderPayment } from "../../types";
 import { PAYMENT_METHOD_LABELS, maxAdjustmentSubtractCents, paymentSummary, signedAmountCents } from "./payments";
+import { PriorDebtsPanel } from "./PriorDebtsPanel";
 import { INSTALLMENT_FREQUENCY_LABELS, installmentPlanView } from "./installments";
 
 function paymentDateLabel(p: OrderPayment): string {
@@ -281,6 +283,22 @@ export function OrderPaymentsSheet({
             <Money exact amount={Math.abs(summary.balanceCents) / 100} />
           </StatRow>
         </div>
+
+        {/* #559: how much of this saldo is TODAY's order and how much comes
+            from her previous ones — the cobro registered below still targets
+            THIS order only, under the standing per-order contract. */}
+        <PriorDebtsPanel
+          storeId={order.storeId}
+          customerId={order.customerId}
+          currentOrderId={order.id}
+          currentPendingCents={Math.max(0, summary.balanceCents)}
+          currentCreditCents={Math.max(0, -summary.balanceCents)}
+          expanded
+          onVisitOrder={(orderId) => {
+            onClose();
+            navigate(`/pedidos/${orderId}`);
+          }}
+        />
 
         {summary.creditAppliedCents > 0 && (
           <div className="space-y-1 rounded-xl bg-surface p-3 ring-1 ring-edge">
