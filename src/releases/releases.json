@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.24.1",
+    "date": "2026.11.27",
+    "title": "Surtido directo con variantes y captura en lote",
+    "notes": [
+      "Puntos de venta. Para llenar un punto desde el almacén, «Surtir del almacén» es ahora la acción principal de la ficha: buscas por producto o color y cada diseño aparece una sola vez, con sus variantes en renglones propios — existencia, cantidad, precio sugerido y «Agregar».",
+      "Lo que agregas se queda visible en «Piezas para surtir» mientras cambias de búsqueda: editas cantidades y precios, quitas renglones y confirmas todo el conjunto en una sola operación. Si un renglón está mal, la app te dice qué corregir y no se mueve ninguna pieza.",
+      "En escritorio la ventana es más ancha para ver resultados y captura al mismo tiempo; en el celular se acomoda en una sola columna. El punto queda abierto tras surtir, listo para cortes y retiros."
+    ]
+  },
+  {
     "version": "1.24.0",
     "date": "2026.11.27",
     "title": "Los adeudos anteriores, a la vista al cobrar",
