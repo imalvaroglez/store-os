@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.24.2",
+    "date": "2026.11.27",
+    "title": "Recuperas tu captura si el pedido ya estaba guardado",
+    "notes": [
+      "Pedidos. Si al guardar un pedido nuevo la app te avisa que ya está guardado —porque un guardado anterior quedó a medias—, el aviso ya no habla de «otro dispositivo»: ves el pedido guardado (folio, clienta, estado, piezas y total) y tu captura sigue abierta e intacta.",
+      "Al volver a guardar, ese mismo pedido se actualiza con lo que tienes en pantalla: sin duplicados y sin apartar existencias dos veces. Repetir un guardado ya confirmado no crea otro pedido.",
+      "Una edición realmente desactualizada sigue bloqueada, pero ahora puedes consultar la versión vigente sin perder tu captura."
+    ]
+  },
+  {
     "version": "1.24.1",
     "date": "2026.11.27",
     "title": "Surtido directo con variantes y captura en lote",
