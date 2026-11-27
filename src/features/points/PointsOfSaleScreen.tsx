@@ -36,12 +36,47 @@ function summaryHasStock(rows: Array<{ left: number }>): boolean {
   return rows.some((row) => row.left > 0);
 }
 
+/** One sellable row per product + color + marked price with pieces left —
+ * the shared aggregation of the corte capture and the #583 correction. */
+type SellableRow = { key: string; entry: PointEntry; label: string; left: number };
+function sellableRows(entries: PointEntry[]): SellableRow[] {
+  const byKey = new Map<string, SellableRow>();
+  for (const entry of entries) {
+    const left = Math.max(0, entry.quantity - entry.consumedQty);
+    if (left <= 0) continue;
+    const key = `${entry.productId}|${entry.variantId ?? ""}|${entry.markedPriceCents}`;
+    const existing = byKey.get(key);
+    if (existing) existing.left += left;
+    else
+      byKey.set(key, {
+        key,
+        entry,
+        label: `${entry.productName}${entry.variantColor ? ` · ${entry.variantColor}` : ""}`,
+        left,
+      });
+  }
+  return [...byKey.values()];
+}
+
+/** #583: operator-facing status of a corte registro. */
+const CORTE_STATUS_LABEL: Record<string, string> = {
+  pendiente_de_cobro: "por cobrar",
+  sin_cobro: "sin cobro",
+  cobrado: "cobrado",
+  anulado: "anulado",
+};
+function corteStatusLabel(corte: PointOperation): string {
+  if (corte.status === "anulado" && corte.replacedByCorteId) return "corregido";
+  return CORTE_STATUS_LABEL[corte.status ?? ""] ?? "";
+}
+
 /** Cents → pesos for the Money component (whole-peso rounding, exact cents kept). */
 const pesos = (cents: number): number => Math.round(cents) / 100;
 import { uid } from "../../lib/ids";
 import { orderReference } from "../../lib/orders";
 import {
   buildFirstSurtidoFromOrder,
+  corteUndoImpediments,
   orderConversionImpediments,
   planCorte,
   pointSummaries,
@@ -51,7 +86,7 @@ import {
   exhibitorSummary,
   groupExhibitorsByLine,
 } from "../../lib/pointExhibitors";
-import type { Order, PointEntry, PointOfSale } from "../../types";
+import type { Order, PointEntry, PointOfSale, PointOperation } from "../../types";
 
 /** A real calendar date (YYYY-MM-DD), semantics checked before confirming. */
 const VALID_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -72,6 +107,7 @@ export function PointsOfSaleScreen() {
     registerPointCutPayment,
     withdrawFromPoint,
     annulPointCut,
+    correctPointCut,
     deliverPointExhibitors,
     confirmExhibitorCost: confirmExhibitorCostCall,
     withdrawPointExhibitors,
@@ -102,6 +138,15 @@ export function PointsOfSaleScreen() {
   const [annulling, setAnnulling] = useState<string | null>(null);
   const [annulMotive, setAnnulMotive] = useState("");
   const [sealedPeriods, setSealedPeriods] = useState<Set<string>>(new Set());
+  // #583 correction: the dialog recovers the corte's own capture (per-row
+  // sold quantities + bajas), shows the effect before confirming and keeps
+  // everything if the replacement fails.
+  const [correcting, setCorrecting] = useState<string | null>(null);
+  const [correctQtyByRow, setCorrectQtyByRow] = useState<Record<string, string>>({});
+  const [correctBajas, setCorrectBajas] = useState<Array<{ rowKey: string; qty: string; reason: string }>>([]);
+  const [correctQuery, setCorrectQuery] = useState("");
+  const [correctMotive, setCorrectMotive] = useState("");
+  const [correctIntentId, setCorrectIntentId] = useState("");
   const [payDate, setPayDate] = useState(todayIso());
   const [payMethod, setPayMethod] = useState<"cash" | "transfer">("cash");
   // #524 Exhibidores: the ficha's tab + delivery/cost/withdrawal capture.
@@ -144,24 +189,7 @@ export function PointsOfSaleScreen() {
   // #524 corte capture rows: one sellable row per product + color + marked
   // price with pieces remaining (coexisting prices stay separate rows so the
   // operator sells at the price she actually charged).
-  const cutRows = useMemo(() => {
-    const byKey = new Map<string, { key: string; entry: PointEntry; label: string; left: number }>();
-    for (const entry of pointEntries) {
-      const left = Math.max(0, entry.quantity - entry.consumedQty);
-      if (left <= 0) continue;
-      const key = `${entry.productId}|${entry.variantId ?? ""}|${entry.markedPriceCents}`;
-      const existing = byKey.get(key);
-      if (existing) existing.left += left;
-      else
-        byKey.set(key, {
-          key,
-          entry,
-          label: `${entry.productName}${entry.variantColor ? ` · ${entry.variantColor}` : ""}`,
-          left,
-        });
-    }
-    return [...byKey.values()];
-  }, [pointEntries]);
+  const cutRows = useMemo(() => sellableRows(pointEntries), [pointEntries]);
 
   const effectiveCommission = useMemo(() => {
     // An EMPTY field is "use the point's suggestion" — Number("") === 0, so
@@ -294,11 +322,71 @@ export function PointsOfSaleScreen() {
     }
     return { cents, pending };
   }, [exhibitorPlan]);
-  const pendingCortes = pointOperations.filter((op) => op.kind === "corte" && op.status === "pendiente_de_cobro");
-  // #524: annulment applies to the LATEST corte still without cobro; a month
-  // with an AUTHORIZED close is history — the adjustments review owns it.
-  const latestUnpaidCorte =
-    pointOperations.find((op) => op.kind === "corte" && (op.status === "pendiente_de_cobro" || op.status === "sin_cobro")) ?? null;
+  // #583: the ficha's corte registros — every corte of the point, newest
+  // first, each identified by date, status and net. Undo actions (corregir /
+  // anular) live ON the registro, offered only when the shared eligibility
+  // (mirror of the server guard) says the transaction will accept it.
+  const pointCortes = useMemo(() => pointOperations.filter((op) => op.kind === "corte"), [pointOperations]);
+  const correctTarget = pointOperations.find((op) => op.id === correcting) ?? null;
+  // The correction re-captures over the RESTORED availability: what the
+  // original corte consumed comes back for its replacement.
+  const correctedEntries = useMemo(() => {
+    if (!correctTarget) return [];
+    const restored = new Map<string, number>();
+    for (const group of [...(correctTarget.saleAllocations ?? []), ...(correctTarget.writeOffAllocations ?? [])]) {
+      for (const allocation of group.allocations ?? []) {
+        restored.set(allocation.entryId, (restored.get(allocation.entryId) ?? 0) + allocation.quantity);
+      }
+    }
+    return pointEntries.map((entry) => ({
+      ...entry,
+      consumedQty: Math.max(0, entry.consumedQty - (restored.get(entry.id) ?? 0)),
+    }));
+  }, [correctTarget, pointEntries]);
+  const correctRows = useMemo(
+    () => (correctTarget ? sellableRows(correctedEntries) : []),
+    [correctTarget, correctedEntries]
+  );
+  const correctCommission = correctTarget?.commissionRate ?? openPoint?.commissionRate ?? 0.2;
+  const correctPlan = useMemo(() => {
+    if (!correctTarget) return null;
+    const lines = correctRows
+      .map((row) => ({ row, sold: Number(correctQtyByRow[row.key] ?? "") }))
+      .filter((item) => Number.isFinite(item.sold) && item.sold > 0)
+      .map((item) => ({
+        productId: item.row.entry.productId,
+        ...(item.row.entry.variantId ? { variantId: item.row.entry.variantId } : {}),
+        markedPriceCents: item.row.entry.markedPriceCents,
+        soldQty: Math.floor(item.sold),
+      }));
+    const writeOffs = correctBajas
+      .map((baja) => {
+        const row = correctRows.find((candidate) => candidate.key === baja.rowKey);
+        const qty = Number(baja.qty);
+        if (!row || !Number.isFinite(qty) || qty <= 0 || !baja.reason.trim()) return null;
+        return {
+          productId: row.entry.productId,
+          ...(row.entry.variantId ? { variantId: row.entry.variantId } : {}),
+          markedPriceCents: row.entry.markedPriceCents,
+          qty: Math.floor(qty),
+          reason: baja.reason.trim(),
+        };
+      })
+      .filter((writeOff): writeOff is NonNullable<typeof writeOff> => writeOff !== null);
+    return planCorte(correctedEntries, lines, writeOffs, correctCommission);
+  }, [correctTarget, correctRows, correctQtyByRow, correctBajas, correctedEntries, correctCommission]);
+  const correctHasInput = useMemo(
+    () => Object.values(correctQtyByRow).some((value) => Number(value) > 0) || correctBajas.some((baja) => Number(baja.qty) > 0),
+    [correctQtyByRow, correctBajas]
+  );
+  const originalPieces = (correctTarget?.lines ?? []).reduce((sum, line) => sum + (line.soldQty ?? 0), 0);
+  const originalBajas = (correctTarget?.writeOffs ?? []).reduce((sum, writeOff) => sum + (writeOff.qty ?? 0), 0);
+  const correctedPieces = correctPlan
+    ? correctPlan.saleAllocations.reduce((sum, group) => sum + group.allocations.reduce((inner, allocation) => inner + allocation.quantity, 0), 0)
+    : 0;
+  const correctedBajas = correctPlan
+    ? correctPlan.writeOffAllocations.reduce((sum, group) => sum + group.allocations.reduce((inner, allocation) => inner + allocation.quantity, 0), 0)
+    : 0;
   useEffect(() => {
     if (!openPoint || !storeId) return;
     let alive = true;
@@ -577,6 +665,90 @@ export function PointsOfSaleScreen() {
     }
   }
 
+  /** #583: open the correction ON the corte's registro — the capture comes
+   * back exactly as it was confirmed (quantities per row, bajas with their
+   * motives) over the restored availability, and the intent is minted here
+   * so a retry after a lost response reuses it. */
+  function openCorrection(corte: PointOperation) {
+    const keyOf = (productId: string, variantId: string | undefined, price: number) =>
+      `${productId}|${variantId ?? ""}|${price}`;
+    const qty: Record<string, string> = {};
+    for (const line of corte.lines ?? []) {
+      qty[keyOf(line.productId, line.variantId, line.markedPriceCents)] = String(line.soldQty);
+    }
+    setCorrectQtyByRow(qty);
+    setCorrectBajas(
+      (corte.writeOffs ?? []).map((writeOff) => ({
+        rowKey: keyOf(writeOff.productId, writeOff.variantId, writeOff.markedPriceCents),
+        qty: String(writeOff.qty),
+        reason: writeOff.reason,
+      }))
+    );
+    setCorrectQuery("");
+    setCorrectMotive("");
+    setCorrectIntentId(uid());
+    setCorrecting(corte.id);
+  }
+
+  async function confirmCorrectCut() {
+    if (!openPoint || !correctTarget || !correctPlan || correctPlan.errors.length > 0 || !correctMotive.trim()) return;
+    setBusy(true);
+    try {
+      const lines = correctRows
+        .map((row) => ({ row, sold: Number(correctQtyByRow[row.key] ?? "") }))
+        .filter((item) => Number.isFinite(item.sold) && item.sold > 0)
+        .map((item) => ({
+          productId: item.row.entry.productId,
+          ...(item.row.entry.variantId ? { variantId: item.row.entry.variantId } : {}),
+          markedPriceCents: item.row.entry.markedPriceCents,
+          soldQty: Math.floor(item.sold),
+        }));
+      const writeOffs = correctBajas
+        .map((baja) => {
+          const row = correctRows.find((candidate) => candidate.key === baja.rowKey);
+          const qty = Number(baja.qty);
+          if (!row || !Number.isFinite(qty) || qty <= 0 || !baja.reason.trim()) return null;
+          return {
+            productId: row.entry.productId,
+            ...(row.entry.variantId ? { variantId: row.entry.variantId } : {}),
+            markedPriceCents: row.entry.markedPriceCents,
+            qty: Math.floor(qty),
+            reason: baja.reason.trim(),
+          };
+        })
+        .filter((writeOff): writeOff is NonNullable<typeof writeOff> => writeOff !== null);
+      const result = await correctPointCut({
+        storeId,
+        pointId: openPoint.id,
+        corteId: correctTarget.id,
+        intentId: correctIntentId,
+        motive: correctMotive.trim(),
+        lines,
+        writeOffs,
+      });
+      const net = result.totals?.netCents;
+      toast.success(
+        result.corrected
+          ? typeof net === "number" && net > 0
+            ? `Corte corregido. Neto por cobrar: ${formatMoneyExact(pesos(net))}.`
+            : "Corte corregido sin cobro pendiente."
+          : "Esta corrección ya estaba aplicada; no se hizo ningún cambio."
+      );
+      setCorrecting(null);
+      setCorrectQtyByRow({});
+      setCorrectBajas([]);
+      setCorrectMotive("");
+      setCorrectQuery("");
+      setCorrectIntentId("");
+    } catch (error) {
+      // The callable re-validates authoritatively; its Spanish message names
+      // the real impediment — the capture stays for a retry, never lost.
+      toast.error(error instanceof Error ? error.message : "No se pudo corregir el corte.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function confirmExhibitorDelivery() {
     if (!openPoint || !exhibitorPlan || !exhibitorPlan.check.canDeliver || exhibitorPlan.filled.length === 0) return;
     setBusy(true);
@@ -752,11 +924,6 @@ export function PointsOfSaleScreen() {
                     Retirar
                   </Button>
                 ) : null}
-                {latestUnpaidCorte ? (
-                  <Button variant="ghost" size="sm" onClick={() => { setAnnulling(latestUnpaidCorte.id); setAnnulMotive(""); setAnnulIntentId(uid()); }}>
-                    Anular corte
-                  </Button>
-                ) : null}
               </div>
             ) : null}
 
@@ -773,27 +940,46 @@ export function PointsOfSaleScreen() {
               </Button>
             ) : null}
 
-            {pendingCortes.length > 0 ? (
+            {pointCortes.length > 0 ? (
               <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
-                <p className="text-sm font-semibold text-on-surface">Cortes por cobrar</p>
-                {pendingCortes.map((corte) => (
-                  <div key={corte.id} className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                    <span className="text-on-surface-soft">
-                      {formatDate(corte.effectiveDate ?? "")} · neto{" "}
-                      <span className="font-semibold text-on-surface"><Money exact amount={pesos(corte.totals?.netCents ?? 0)} /></span>
-                    </span>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setPayingCorte(corte.id);
-                        setPayIntentId(uid());
-                        setPayDate(todayIso());
-                      }}
-                    >
-                      Registrar cobro
-                    </Button>
-                  </div>
-                ))}
+                <p className="text-sm font-semibold text-on-surface">Cortes del punto</p>
+                {pointCortes.map((corte) => {
+                  // #583: eligibility mirrors the server's transactional
+                  // guard — the ficha never offers what it would reject.
+                  const undo = corteUndoImpediments(corte, pointOperations, sealedPeriods);
+                  return (
+                    <div key={corte.id} className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                      <span className="text-on-surface-soft">
+                        {formatDate(corte.effectiveDate ?? "")} · {corteStatusLabel(corte)} · neto{" "}
+                        <span className="font-semibold text-on-surface"><Money exact amount={pesos(corte.totals?.netCents ?? 0)} /></span>
+                      </span>
+                      {undo.canUndo ? (
+                        <span className="flex flex-wrap gap-2">
+                          {corte.status === "pendiente_de_cobro" ? (
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                setPayingCorte(corte.id);
+                                setPayIntentId(uid());
+                                setPayDate(todayIso());
+                              }}
+                            >
+                              Registrar cobro
+                            </Button>
+                          ) : null}
+                          <Button variant="ghost" size="sm" onClick={() => openCorrection(corte)}>
+                            Corregir corte
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => { setAnnulling(corte.id); setAnnulMotive(""); setAnnulIntentId(uid()); }}>
+                            Anular corte
+                          </Button>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-on-surface-soft">{undo.reasons[0]}</span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
 
@@ -1235,6 +1421,128 @@ export function PointsOfSaleScreen() {
               />
             </div>
           )
+        ) : null}
+      </Dialog>
+
+      <Dialog
+        open={!!correctTarget}
+        onClose={() => setCorrecting(null)}
+        title="Corregir corte"
+        tone="danger"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setCorrecting(null)}>Cancelar</Button>
+            <Button
+              variant="secondary"
+              disabled={busy || !correctHasInput || !correctMotive.trim() || !correctPlan || correctPlan.errors.length > 0}
+              onClick={() => void confirmCorrectCut()}
+            >
+              Corregir corte
+            </Button>
+          </>
+        }
+      >
+        {correctTarget ? (
+          <div className="space-y-3">
+            <p className="text-sm text-on-surface-soft">
+              Corte del {formatDate(correctTarget.effectiveDate ?? "")} · original {originalPieces}{" "}
+              {originalPieces === 1 ? "pieza" : "piezas"}
+              {originalBajas > 0 ? ` + ${originalBajas} de baja` : ""} · neto{" "}
+              <Money exact amount={pesos(correctTarget.totals?.netCents ?? 0)} />. La corrección reemplaza la captura
+              en un solo paso: la fecha efectiva y la comisión se conservan, el original queda anulado y vinculado.
+            </p>
+            <TextField
+              label="Buscar"
+              placeholder="Nombre o clave…"
+              value={correctQuery}
+              onChange={(e) => setCorrectQuery(e.target.value)}
+            />
+            <div className="max-h-80 space-y-1 overflow-y-auto">
+              {correctRows
+                .filter((row) => {
+                  const needle = correctQuery.trim().toLowerCase();
+                  if (!needle) return true;
+                  return row.label.toLowerCase().includes(needle) || row.entry.productName.toLowerCase().includes(needle);
+                })
+                .map((row) => (
+                  <div key={row.key} className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-1 last:border-0">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-on-surface">{row.label}</p>
+                      <p className="text-xs text-on-surface-soft">
+                        {row.left} disponibles · <Money exact amount={pesos(row.entry.markedPriceCents)} />
+                      </p>
+                    </div>
+                    <div className="w-28">
+                      <TextField
+                        label="Vendidas"
+                        inputMode="numeric"
+                        placeholder="0"
+                        value={correctQtyByRow[row.key] ?? ""}
+                        onChange={(e) => setCorrectQtyByRow((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                ))}
+              <div className="space-y-2 pt-2">
+                <p className="text-sm font-semibold text-on-surface">Bajas (daño o pérdida)</p>
+                {correctBajas.map((baja, index) => (
+                  <div key={index} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_5rem_1fr_auto] sm:items-end">
+                    <SelectField
+                      label="Pieza"
+                      value={baja.rowKey}
+                      onChange={(value) =>
+                        setCorrectBajas((prev) => prev.map((item, i) => (i === index ? { ...item, rowKey: value } : item)))
+                      }
+                      options={correctRows.map((candidate) => ({ value: candidate.key, label: candidate.label }))}
+                    />
+                    <TextField
+                      label="Cantidad"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={baja.qty}
+                      onChange={(e) => setCorrectBajas((prev) => prev.map((item, i) => (i === index ? { ...item, qty: e.target.value } : item)))}
+                    />
+                    <TextField
+                      label="Motivo"
+                      placeholder="p. ej. dañada en mostrador"
+                      value={baja.reason}
+                      onChange={(e) => setCorrectBajas((prev) => prev.map((item, i) => (i === index ? { ...item, reason: e.target.value } : item)))}
+                    />
+                    <Button variant="ghost" onClick={() => setCorrectBajas((prev) => prev.filter((_, i) => i !== index))}>
+                      Quitar
+                    </Button>
+                  </div>
+                ))}
+                <Button variant="ghost" size="sm" onClick={() => setCorrectBajas((prev) => [...prev, { rowKey: correctRows[0]?.key ?? "", qty: "", reason: "" }])}>
+                  + Agregar baja
+                </Button>
+              </div>
+            </div>
+            {correctPlan ? (
+              <div className="space-y-1 rounded-xl bg-paper p-3 ring-1 ring-edge text-sm">
+                <p className="text-on-surface-soft">
+                  Original: {originalPieces} {originalPieces === 1 ? "pieza" : "piezas"}
+                  {originalBajas > 0 ? ` + ${originalBajas} de baja` : ""} · neto {formatMoneyExact(pesos(correctTarget.totals?.netCents ?? 0))}
+                </p>
+                <p className="font-semibold text-on-surface">
+                  Corregido: {correctedPieces} {correctedPieces === 1 ? "pieza" : "piezas"}
+                  {correctedBajas > 0 ? ` + ${correctedBajas} de baja` : ""} · neto {formatMoneyExact(pesos(correctPlan.totals.netCents))}
+                </p>
+                <p className="text-xs text-on-surface-soft">
+                  Quedan {correctPlan.totals.remainingUnits} piezas en el punto.
+                </p>
+                {correctPlan.errors.length > 0 ? (
+                  <p className="text-xs text-danger">{correctPlan.errors.join(" ")}</p>
+                ) : null}
+              </div>
+            ) : null}
+            <TextField
+              label="Motivo de la corrección"
+              placeholder="p. ej. eran 2 piezas, no 3"
+              value={correctMotive}
+              onChange={(e) => setCorrectMotive(e.target.value)}
+            />
+          </div>
         ) : null}
       </Dialog>
 

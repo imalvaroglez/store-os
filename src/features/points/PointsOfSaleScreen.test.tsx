@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   convertOrderToFirstSurtido: vi.fn(),
   registerPointCut: vi.fn(),
   registerPointCutPayment: vi.fn(),
+  correctPointCut: vi.fn(),
   stockPoint: vi.fn(),
   withdrawFromPoint: vi.fn(),
   annulPointCut: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
       convertOrderToFirstSurtido: mocks.convertOrderToFirstSurtido,
       registerPointCut: mocks.registerPointCut,
       registerPointCutPayment: mocks.registerPointCutPayment,
+      correctPointCut: mocks.correctPointCut,
       stockPoint: mocks.stockPoint,
       withdrawFromPoint: mocks.withdrawFromPoint,
       annulPointCut: mocks.annulPointCut,
@@ -134,6 +136,8 @@ beforeEach(() => {
   mocks.registerPointCut.mockResolvedValue({ registered: true, corteId: "corte_x", totals: { netCents: 40000 } });
   mocks.registerPointCutPayment.mockReset();
   mocks.registerPointCutPayment.mockResolvedValue({ registered: true, amountCents: 40000 });
+  mocks.correctPointCut.mockReset();
+  mocks.correctPointCut.mockResolvedValue({ corrected: true, corteId: "corte_corr_n1", totals: { netCents: 108800 } });
   mocks.stockPoint.mockReset();
   mocks.stockPoint.mockResolvedValue({ stocked: true, entryCount: 1, units: 2 });
   mocks.withdrawFromPoint.mockReset();
@@ -346,7 +350,7 @@ describe("#524 corte en la ficha: captura, resumen vivo y cobro diferido", () =>
     ];
     mount();
     fireEvent.click(screen.getByText("Mostrador centro"));
-    expect(screen.getByText("Cortes por cobrar")).toBeTruthy();
+    expect(screen.getByText("Cortes del punto")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Registrar cobro" }));
     expect(screen.getAllByText(/\$400/).length).toBeGreaterThan(0); // importe propuesto completo
     fireEvent.change(screen.getByLabelText("Fecha real del cobro"), { target: { value: "2026-12-03" } });
@@ -471,13 +475,17 @@ describe("#524 anulación de corte en la ficha con mes-abierto", () => {
     );
   });
 
-  it("mes con cierre autorizado: no hay formulario, dirige a la revisión de ajustes", async () => {
+  it("mes con cierre autorizado: no ofrece anulación ni corrección y dirige a la revisión de ajustes", async () => {
     withCorte();
     mocks.closes = [{ period: "2026-11" }];
     mount();
     fireEvent.click(screen.getByText("Mostrador centro"));
-    fireEvent.click(screen.getByRole("button", { name: "Anular corte" }));
+    // #583: el registro informa el impedimento en la fila — jamás ofrece una
+    // confirmación que el servidor rechazaría.
     await screen.findByText(/cierre autorizado/i);
+    expect(screen.queryByRole("button", { name: "Anular corte" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Corregir corte" })).toBeNull();
+    expect(screen.getByText(/cierre autorizado/i)).toBeTruthy();
     expect(screen.getByText(/revisi[oó]n de ajustes/i)).toBeTruthy();
     expect(screen.queryByLabelText("Motivo")).toBeNull();
     expect(mocks.annulPointCut).not.toHaveBeenCalled();
@@ -987,5 +995,209 @@ describe("#569 surtido directo con variantes y captura en lote", () => {
     fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
     expect(screen.queryByText(/renglones/)).toBeNull();
     expect(mocks.stockPoint).not.toHaveBeenCalled();
+  });
+});
+
+// #583 — corregir el último corte de un punto sin perder la captura: la
+// ficha identifica el corte concreto (fecha, estado, importe) y ofrece la
+// corrección DESDE el registro, con la captura original recuperada, el
+// efecto visible en piezas e importe, motivo y confirmación única.
+describe("#583 corregir el corte desde su registro en la ficha", () => {
+  const POINT = { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, commissionRate: 0.2, createdAt: NOW, updatedAt: NOW };
+  const CORTE_3P = {
+    id: "corte_3p",
+    storeId: "store_olivia",
+    pointId: "store_olivia__mostrador",
+    kind: "corte" as const,
+    status: "pendiente_de_cobro" as const,
+    effectiveDate: "2026-11-26",
+    commissionRate: 0.2,
+    confirmedBy: "u1",
+    confirmedAt: "2026-11-26T12:00:00.000Z",
+    lines: [{ productId: "p2", variantId: "v-cafe", markedPriceCents: 68000, soldQty: 3 }],
+    writeOffs: [],
+    saleAllocations: [{ lineIndex: 0, allocations: [{ entryId: "pe-cafe", quantity: 3 }] }],
+    writeOffAllocations: [],
+    totals: { grossSaleCents: 204000, commissionCents: 40800, netCents: 163200, soldCostCents: 90000, pendingCostUnits: 0, writeOffCostCents: 0, writeOffPendingUnits: 0, resultCents: 73200, remainingUnits: 8 },
+  };
+
+  function withCorteOf3() {
+    state.points = [POINT];
+    state.pointEntries = [
+      { id: "pe-cafe", storeId: "store_olivia", pointId: POINT.id, productId: "p2", variantId: "v-cafe", productName: "Cartera de piel", variantColor: "Café", entryDate: "2026-11-20", quantity: 10, consumedQty: 3, markedPriceCents: 68000, unitCostCents: 30000, createdAt: NOW, updatedAt: NOW } as PointEntry,
+      { id: "pe-negra", storeId: "store_olivia", pointId: POINT.id, productId: "p2", variantId: "v-negra", productName: "Cartera de piel", variantColor: "Negra", entryDate: "2026-11-20", quantity: 4, consumedQty: 0, markedPriceCents: 68000, unitCostCents: 30000, createdAt: NOW, updatedAt: NOW } as PointEntry,
+    ];
+    state.pointOperations = [CORTE_3P];
+  }
+
+  it("la ficha lista el corte concreto con fecha, estado e importe y ofrece corregirlo desde el registro", () => {
+    withCorteOf3();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    expect(screen.getByText("Cortes del punto")).toBeTruthy();
+    expect(screen.getByText(/26 nov.*2026/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Corregir corte" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Anular corte" })).toBeTruthy();
+  });
+
+  it("recupera la captura original: cantidad por variante, disponibilidad restaurada y resumen original", () => {
+    withCorteOf3();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Corregir corte" }));
+    // La fila de Café vuelve a ver las 10 piezas (7 actuales + 3 del corte).
+    expect(screen.getByText(/10 disponibles/)).toBeTruthy();
+    expect(screen.getByText(/4 disponibles/)).toBeTruthy();
+    const vendidas = screen.getAllByLabelText("Vendidas");
+    expect((vendidas[0] as HTMLInputElement).value).toBe("3");
+    expect((vendidas[1] as HTMLInputElement).value).toBe("");
+    expect(screen.getByText(/Original: 3 piezas/)).toBeTruthy();
+    // Al abrir, original y corregido coinciden: el efecto se revisa al editar.
+    expect(screen.getAllByText(/neto \$1,632/).length).toBe(2);
+    // Sin motivo no hay confirmación posible.
+    const confirm = screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0];
+    expect(confirm).toBeDisabled();
+  });
+
+  it("corregir 3 → 2: revisa el efecto (piezas e importe) y envía las líneas exactas con fecha y comisión del original", async () => {
+    withCorteOf3();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Corregir corte" }));
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[0], { target: { value: "2" } });
+    // Efecto visible antes de confirmar: neto nuevo vs original.
+    expect(screen.getByText(/Corregido: 2 piezas/)).toBeTruthy();
+    expect(screen.getByText(/neto \$1,088/)).toBeTruthy();
+    expect(screen.getByText(/Quedan 12 piezas/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Eran 2, no 3" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0]);
+    await screen.findByText(/Corte corregido/i);
+    expect(mocks.correctPointCut).toHaveBeenCalledTimes(1);
+    expect(mocks.correctPointCut.mock.calls[0][0]).toMatchObject({
+      storeId: "store_olivia",
+      pointId: POINT.id,
+      corteId: "corte_3p",
+      lines: [{ productId: "p2", variantId: "v-cafe", markedPriceCents: 68000, soldQty: 2 }],
+      writeOffs: [],
+    });
+    expect(mocks.correctPointCut.mock.calls[0][0].intentId).toBeTruthy();
+    // La fecha y la comisión viven en el original: el cliente no las re-envía.
+    expect(mocks.correctPointCut.mock.calls[0][0].effectiveDate).toBeUndefined();
+    expect(mocks.correctPointCut.mock.calls[0][0].commissionRate).toBeUndefined();
+  });
+
+  it("corregir la variante: mover una pieza de Café a Negra viaja en las líneas", async () => {
+    withCorteOf3();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Corregir corte" }));
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[0], { target: { value: "2" } });
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[1], { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Una era Negra" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0]);
+    await screen.findByText(/Corte corregido/i);
+    expect(mocks.correctPointCut.mock.calls[0][0].lines).toEqual([
+      { productId: "p2", variantId: "v-cafe", markedPriceCents: 68000, soldQty: 2 },
+      { productId: "p2", variantId: "v-negra", markedPriceCents: 68000, soldQty: 1 },
+    ]);
+  });
+
+  it("una baja sigue distinguiéndose de una venta dentro de la corrección", async () => {
+    withCorteOf3();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Corregir corte" }));
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[0], { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar baja" }));
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Dañada en mostrador" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Ajuste de corte" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0]);
+    await screen.findByText(/Corte corregido/i);
+    expect(mocks.correctPointCut.mock.calls[0][0].writeOffs).toEqual([
+      { productId: "p2", variantId: "v-cafe", markedPriceCents: 68000, qty: 1, reason: "Dañada en mostrador" },
+    ]);
+  });
+
+  it("movimiento posterior: ni corregir ni anular se ofrecen y el motivo es comprobable (el caso rojo de la interfaz)", () => {
+    withCorteOf3();
+    state.pointOperations = [
+      CORTE_3P,
+      { ...CORTE_3P, id: "corte_4p", status: "cobrado" as const, confirmedAt: "2026-11-27T09:00:00.000Z", effectiveDate: "2026-11-27", lines: [], saleAllocations: [] },
+    ];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    expect(screen.queryByRole("button", { name: "Corregir corte" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Anular corte" })).toBeNull();
+    expect(screen.getByText(/movimientos posteriores/i)).toBeTruthy();
+  });
+
+  it("corte cobrado: informa el motivo; un punto sin cortes no muestra la sección", () => {
+    withCorteOf3();
+    state.pointOperations = [{ ...CORTE_3P, status: "cobrado" as const }];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    expect(screen.queryByRole("button", { name: "Corregir corte" })).toBeNull();
+    expect(screen.getByText(/cobro registrado/i)).toBeTruthy();
+    // Sin cortes: la sección no existe (no es lo mismo «sin cortes» que «no elegible»).
+    state.pointOperations = [];
+    cleanup();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    expect(screen.queryByText("Cortes del punto")).toBeNull();
+  });
+
+  it("doble envío: mientras confirma el botón se deshabilita y no hay segunda llamada", async () => {
+    withCorteOf3();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Corregir corte" }));
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[0], { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Eran 2" } });
+    let release: (value: unknown) => void = () => {};
+    mocks.correctPointCut.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const confirm = screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0];
+    fireEvent.click(confirm);
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    release({ corrected: true });
+    await screen.findByText(/Corte corregido/i);
+    expect(mocks.correctPointCut).toHaveBeenCalledTimes(1);
+  });
+
+  it("reintento tras respuesta perdida: MISMO intentId, captura intacta y «ya aplicada» cierra sin duplicar", async () => {
+    withCorteOf3();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Corregir corte" }));
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[0], { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Eran 2" } });
+    mocks.correctPointCut.mockRejectedValueOnce(new Error("Network request failed"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0]);
+    await screen.findByText(/Network request failed/i);
+    // La captura sobrevive al fallo: nada se recaptura.
+    expect((screen.getAllByLabelText("Vendidas")[0] as HTMLInputElement).value).toBe("2");
+    expect((screen.getByLabelText("Motivo de la corrección") as HTMLInputElement).value).toBe("Eran 2");
+    mocks.correctPointCut.mockResolvedValueOnce({ corrected: false, alreadyApplied: true, corteId: "corte_corr_n1" });
+    fireEvent.click(screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0]);
+    await screen.findByText(/ya estaba aplicada/i);
+    expect(mocks.correctPointCut).toHaveBeenCalledTimes(2);
+    const [first, second] = mocks.correctPointCut.mock.calls;
+    expect(second[0].intentId).toBe(first[0].intentId);
+    expect(first[0].intentId).toBeTruthy();
+  });
+
+  it("el rechazo del servidor conserva la captura y explica el impedimento", async () => {
+    withCorteOf3();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Corregir corte" }));
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[0], { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Eran 2" } });
+    mocks.correctPointCut.mockRejectedValueOnce(new Error("Hay movimientos posteriores en este punto."));
+    fireEvent.click(screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0]);
+    await screen.findByText(/movimientos posteriores en este punto/i);
+    // El diálogo sigue abierto con la captura: el fallo no anonada nada.
+    expect((screen.getAllByLabelText("Vendidas")[0] as HTMLInputElement).value).toBe("2");
   });
 });
