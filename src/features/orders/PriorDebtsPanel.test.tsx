@@ -69,7 +69,8 @@ describe("PriorDebtsPanel (#559)", () => {
   it("keeps the per-order list collapsed until asked (editor compactness)", () => {
     renderPanel();
     expect(screen.queryByRole("button", { name: /^Ver pedido$/ })).toBeNull();
-    expect(screen.getByText(/Ver pedidos pendientes/)).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: /Ver pedidos pendientes/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false"); // UX review: announce the state
   });
 
   it("lists several prior debts once each", () => {
@@ -134,5 +135,25 @@ describe("PriorDebtsPanel (#559)", () => {
     );
     expect(screen.getByText("$900.00")).toBeInTheDocument(); // only c2's debt
     expect(screen.getByText("$1,250.00")).toBeInTheDocument(); // 350 + 900
+  });
+
+  it("follows a later payment on the origin order (derived from loaded orders — a reload reads the same)", () => {
+    const { rerender } = renderPanel();
+    expect(screen.getByText("$450.00")).toBeInTheDocument(); // 350 + 100
+    // $50 more received on the origin AFTER the new order exists: the already-
+    // loaded orders carry it; the panel recomputes with no listeners of its own.
+    state.orders = [priced("prior850", 850, 800, "2026-11-20T10:00:00Z")];
+    rerender(
+      <PriorDebtsPanel
+        storeId="s1"
+        customerId="c1"
+        currentOrderId="nuevo"
+        currentPendingCents={35000}
+        onVisitOrder={() => {}}
+      />,
+    );
+    expect(screen.queryByText("$100.00")).toBeNull();
+    expect(screen.getByText("$50.00")).toBeInTheDocument(); // adeudo anterior
+    expect(screen.getByText("$400.00")).toBeInTheDocument(); // 350 + 50
   });
 });

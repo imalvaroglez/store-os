@@ -62,7 +62,7 @@ export function PriorDebtsPanel({
   if (grossCents <= 0) return null;
 
   return (
-    <div data-prior-debts className="space-y-1.5 border-t border-edge pt-2" aria-label="Adeudos anteriores de la clienta">
+    <div data-prior-debts role="group" aria-label="Adeudos anteriores de la clienta" className="space-y-1.5 border-t border-edge pt-2">
       {view.rows.length > 0 && (
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-xs uppercase tracking-wide text-on-surface-soft">
@@ -90,11 +90,14 @@ export function PriorDebtsPanel({
       )}
       {view.rows.length > 0 && (
         <div className="space-y-1">
-          <Button variant="ghost" size="sm" onClick={() => setOpen((value) => !value)}>
+          <Button variant="ghost" size="sm" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
             {open ? "Ocultar pedidos pendientes" : `Ver pedidos pendientes${view.rows.length > 1 ? ` (${view.rows.length})` : ""}`}
           </Button>
           {open && (
-            <ul className="space-y-1">
+            // Same height cap as the cuotas calendar in this form: a long
+            // debt list must never cover the form fields inside the sticky
+            // summary on mobile (code review #566 finding 2).
+            <ul className="max-h-48 space-y-1 overflow-y-auto">
               {view.rows.map((row) => (
                 <li key={row.orderId} className="flex items-center justify-between gap-3">
                   <span className="min-w-0 truncate text-sm text-on-surface">
