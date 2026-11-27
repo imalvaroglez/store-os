@@ -21,12 +21,12 @@ import { defaultTier, tiersForStore } from "../../lib/pricing";
 import { isVariantProduct } from "../../lib/variants";
 import { variantEffectivePrice } from "../../lib/variantPrice";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
-import { effectiveOrderStatus, orderItems, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
+import { effectiveOrderStatus, orderItems, orderReference, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
 import { attributeProjectedShortageToLines, orderWillHoldPieces } from "../../lib/inventory";
 import { formatOrderUnitPrice, orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
-import { CreditCoverageError, CreditCustomerChangeError, DeliveryWithBalanceError, StaleOrderError } from "../../app/firebase/firestoreData";
+import { CreditCoverageError, CreditCustomerChangeError, DeliveryWithBalanceError, OrderAlreadySavedError, StaleOrderError } from "../../app/firebase/firestoreData";
 import { IncidentEvidenceError, incidentClosedNoChange } from "./incidents";
 import { pendingDeliveries } from "../../lib/deliveries";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
@@ -167,6 +167,10 @@ export function OrderForm({
   // R9 (PO 2026-11-03): delivering with an uncovered saldo waits here for the
   // operator's explicit confirmation; the confirmed save records the evidence.
   const [pendingDeliveryCents, setPendingDeliveryCents] = useState<number | null>(null);
+  // #552: the canonical version a conflicted save answered with — shown in a
+  // read-only dialog so the operator can review it WITHOUT losing her
+  // capture (the form below stays open and editable).
+  const [savedVersion, setSavedVersion] = useState<{ order: Order; kind: "already-saved" | "stale" } | null>(null);
   const pendingOrderRef = useRef<Order | null>(null);
   // #271: the delivery-with-balance retry replays the SAME save — the deposit
   // correction motive must survive it.
@@ -778,7 +782,29 @@ export function OrderForm({
     } catch (error) {
       if (error instanceof StaleOrderError) {
         toast.error(error.message);
+        // #552: the canonical current version travels in the error — offer it
+        // read-only so she can reconcile WITHOUT losing her capture. The edit
+        // stays blocked (never auto-adopts a foreign revision).
+        if (error.current) setSavedVersion({ order: error.current, kind: "stale" });
         return; // keep the editor open — the operator reconciles from the fresh copy
+      }
+      // #552: a «Nuevo pedido» save that finds the order already stored is
+      // this draft's own earlier save (lost response / kept editing). The
+      // state is VERIFIED, not "another device": describe it, keep the
+      // capture, and reconcile the editor onto the saved revision so a
+      // reviewed retry becomes a legitimate edit (one order, one net
+      // reservation — the transaction re-validates and fails closed again if
+      // anything moved in between).
+      if (error instanceof OrderAlreadySavedError) {
+        expectedRevision.current = error.current.revision ?? 0;
+        setSavedVersion({ order: error.current, kind: "already-saved" });
+        // The reconciled revision must survive a reload with the capture.
+        draftSaved.current = saveOrderDraft(draftKey, {
+          ...(JSON.parse(snapshotDraft()) as Omit<OrderDraftSnapshot, "savedAt">),
+          savedAt: new Date().toISOString(),
+        });
+        toast.error("Este pedido ya está guardado con tu captura anterior. Revisa la comparación; al volver a guardar, la versión guardada tomará tus cambios.");
+        return;
       }
       // #368: the incident-evidence guard explains itself — show WHY the save
       // was rejected instead of a generic failure (the capture stays here).
@@ -1291,6 +1317,43 @@ export function OrderForm({
             >
               Entregar con saldo
             </Button>
+          </div>
+        </Dialog>
+      )}
+      {savedVersion && (
+        <Dialog
+          open
+          title={savedVersion.kind === "already-saved" ? "Este pedido ya está guardado" : "Versión vigente del pedido"}
+          onClose={() => setSavedVersion(null)}
+          footer={
+            savedVersion.kind === "already-saved" ? (
+              <Button variant="ghost" onClick={() => setSavedVersion(null)}>Seguir con mi captura</Button>
+            ) : undefined
+          }
+        >
+          <div className="space-y-2">
+            <p className="text-sm text-on-surface-soft">
+              {savedVersion.kind === "already-saved"
+                ? "Tu captura anterior ya quedó guardada como este pedido. No se creó un duplicado ni se descartó tu captura nueva: al volver a guardar, la versión guardada tomará tus cambios."
+                : "Tu captura parte de una revisión anterior; esta es la versión vigente del pedido. Tu captura sigue abierta en el formulario."}
+            </p>
+            <p className="text-sm text-on-surface-soft">
+              {orderReference(savedVersion.order.id)} · {savedVersion.order.customerName ?? savedVersion.order.customerId ?? "clienta"} ·{" "}
+              {ORDER_STATUS_LABELS[effectiveOrderStatus(savedVersion.order)] ?? effectiveOrderStatus(savedVersion.order)} · revisión{" "}
+              {savedVersion.order.revision ?? 0}
+            </p>
+            <div className="space-y-1">
+              {orderItems(savedVersion.order).map((item, index) => (
+                <div key={index} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule pb-1 text-sm last:border-0">
+                  <span className="min-w-0 flex-1">{item.productName}</span>
+                  <span className="text-on-surface-soft">{item.quantity} pzas</span>
+                  <span className="font-semibold text-on-surface"><Money exact amount={item.unitPrice} /></span>
+                </div>
+              ))}
+            </div>
+            <StatRow label="Total estimado">
+              <Money exact amount={orderTotals(savedVersion.order).estimatedTotal} />
+            </StatRow>
           </div>
         </Dialog>
       )}

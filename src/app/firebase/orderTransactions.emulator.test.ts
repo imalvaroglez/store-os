@@ -6,7 +6,7 @@ import type { Order } from "../../types";
 
 const holder = vi.hoisted(() => ({ db: null as any }));
 vi.mock("./config", () => ({ FIREBASE_EMULATOR_ENABLED: false, getFirebase: () => ({ db: holder.db }) }));
-import { deleteOrderWithStockTx, saveOrderWithStockTx, StaleOrderError } from "./firestoreData";
+import { deleteOrderWithStockTx, saveOrderWithStockTx, OrderAlreadySavedError, StaleOrderError } from "./firestoreData";
 import { creditAvailableCents } from "../../features/orders/customerCredit";
 
 let env: RulesTestEnvironment;
@@ -43,6 +43,39 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("order transactions with F
     await saveOrderWithStockTx(user, order, null, "op1");
     expect((await getDoc(doc(holder.db, "products/p1"))).data()?.quantityOnHand).toBe(8);
     expect((await getDoc(doc(holder.db, "orders/duplicate"))).data()?.revision).toBe(1);
+  });
+
+  it("#552 recupera la captura cuando el pedido ya existe: reintento idéntico, borrador cambiado y edición desactualizada", async () => {
+    const stockBefore = (await getDoc(doc(holder.db, "products/p1"))).data()?.quantityOnHand as number;
+    // Creación normal: el pedido nuevo guarda y aparta una sola vez.
+    const created = await saveOrderWithStockTx(user, makeOrder("recover", "p1", 2), null, "op-r1");
+    expect(created.order.revision).toBe(1);
+    // Reintento con la MISMA identidad de operación (respuesta perdida):
+    // un solo pedido, un solo movimiento de existencias.
+    const again = await saveOrderWithStockTx(user, makeOrder("recover", "p1", 2), null, "op-r1");
+    expect(again.order.id).toBe("recover");
+    expect(again.stock).toEqual([]);
+    expect((await getDoc(doc(holder.db, "products/p1"))).data()?.quantityOnHand).toBe(stockBefore - 2);
+    // Borrador CAMBIADO que aún cree que crea: la transacción entrega la
+    // versión guardada (estado verificado), no un conflicto de dispositivo.
+    const changed = makeOrder("recover", "p1", 5);
+    const err = await saveOrderWithStockTx(user, changed, null, "op-r2").catch((e) => e);
+    expect(err).toBeInstanceOf(OrderAlreadySavedError);
+    expect(err.current.revision).toBe(1);
+    expect(err.current.items[0].quantity).toBe(2);
+    // Sin duplicado ni movimiento adicional mientras decide.
+    expect((await getDoc(doc(holder.db, "products/p1"))).data()?.quantityOnHand).toBe(stockBefore - 2);
+    // Reconciliación: reintenta SOBRE la revisión vigente como edición —
+    // la reserva NETA queda en la captura nueva, sin doble apartado.
+    const reconciled = await saveOrderWithStockTx(user, changed, err.current.revision!, "op-r2b");
+    expect(reconciled.order.revision).toBe(2);
+    expect((await getDoc(doc(holder.db, "products/p1"))).data()?.quantityOnHand).toBe(stockBefore - 5);
+    // Edición realmente desactualizada: sigue bloqueada y la versión
+    // vigente viaja en el error para consultarla sin lecturas extra.
+    const stale = await saveOrderWithStockTx(user, makeOrder("recover", "p1", 3), 1, "op-r3").catch((e) => e);
+    expect(stale).toBeInstanceOf(StaleOrderError);
+    expect(stale.current?.revision).toBe(2);
+    expect((await getDoc(doc(holder.db, "products/p1"))).data()?.quantityOnHand).toBe(stockBefore - 5);
   });
 
   it("reserves distinct orders concurrently and refuses stale updates and deletion", async () => {

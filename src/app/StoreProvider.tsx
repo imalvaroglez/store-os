@@ -1442,10 +1442,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // stale edit of THIS order aborts with StaleOrderError. Local state
       // commits only on success, so a failed save leaves no phantom order and
       // the retry the toast invites replays the FULL delta set.
+      // #552: an EXPLICIT expectedRevision (even null — "I believe I'm
+      // creating") is the caller's contract; ?? would swallow that null and
+      // substitute the shell's revision, turning a recoverable already-saved
+      // create into a misleading cross-device conflict.
+      const callerRevision = options && "expectedRevision" in options ? options.expectedRevision : undefined;
       const result = await saveOrderWithStockTx(
         currentUser,
         nextOrder,
-        options?.expectedRevision ?? (prev ? (order.revision ?? 0) : null),
+        callerRevision !== undefined ? callerRevision : prev ? (order.revision ?? 0) : null,
         options?.mutationId ?? uid("mutation"),
         {
           confirmDeliveredWithBalance: options?.confirmDeliveredWithBalance,

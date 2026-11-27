@@ -788,11 +788,26 @@ export async function retainStoreEvidence(_user: AppUser, storeId: string): Prom
   });
 }
 
-/** The order changed on another device after this editor loaded it. */
+/** The order changed on another device after this editor loaded it. #552:
+ * carries the CANONICAL current order (read inside the same transaction) so
+ * the editor can offer "consult the current version" without extra reads —
+ * absent when the doc belongs to another store (its data must not leak). */
 export class StaleOrderError extends Error {
-  constructor() {
+  constructor(public readonly current?: Order) {
     super("El pedido cambió en otro dispositivo. Vuelve a entrar para ver la versión reciente.");
     this.name = "StaleOrderError";
+  }
+}
+
+/** #552: a «Nuevo pedido» save that finds the order ALREADY stored — this
+ * draft's own earlier save committed, then the session lost the response or
+ * the operator kept editing. NOT a cross-device conflict: the transaction
+ * answers with the saved order so the editor can describe the verified
+ * state and reconcile the pending capture onto it. */
+export class OrderAlreadySavedError extends Error {
+  constructor(public readonly current: Order) {
+    super("Este pedido ya está guardado.");
+    this.name = "OrderAlreadySavedError";
   }
 }
 
@@ -907,7 +922,11 @@ export async function saveOrderWithStockTx(
     if (previous && previous.storeId !== order.storeId) throw new StaleOrderError();
     if (previous?.lastMutationId === mutationId) return { order: previous, stock: [] };
     if (previous ? expectedRevision == null || (previous.revision ?? 0) !== expectedRevision : expectedRevision != null) {
-      throw new StaleOrderError();
+      // #552: a create that finds the doc already stored is this draft's own
+      // earlier save, not a cross-device conflict — answer with the saved
+      // order so the editor can reconcile the pending capture.
+      if (previous && expectedRevision == null) throw new OrderAlreadySavedError(previous);
+      throw new StaleOrderError(previous);
     }
     // #368: the line an incident sits on is EVIDENCE of the agreed solution
     // (piece, quantity, historical price sustain the sale adjustment — and
