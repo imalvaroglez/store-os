@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.24.0",
+    "date": "2026.11.27",
+    "title": "Los adeudos anteriores, a la vista al cobrar",
+    "notes": [
+      "Cobros. Al consultar cuánto cobrar, junto al saldo del pedido ves cuánto viene de pedidos anteriores de la misma clienta y cuánto queda por cobrar en total — en el editor del pedido y en la hoja de Cobros.",
+      "Cada adeudo muestra el pedido que lo originó, con su referencia, estado e importe, y «Ver pedido» te lleva directo a él. El total descuenta una sola vez el saldo a favor disponible de la clienta.",
+      "Sólo visibilidad: no se registran cobros ni se mueve deuda; cada cobro sigue viviendo en su propio pedido."
+    ]
+  },
+  {
     "version": "1.23.1",
     "date": "2026.11.26",
     "title": "Estrategia recuerda tus cambios y el arranque avisa si falla",
