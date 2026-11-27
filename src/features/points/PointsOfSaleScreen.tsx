@@ -117,6 +117,11 @@ export function PointsOfSaleScreen() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [openPointId, setOpenPointId] = useState<string | null>(null);
+  // #574: the ficha is its own view — remember where the list was so
+  // «Volver a puntos» lands the operator back in the same position.
+  const [listScrollY, setListScrollY] = useState(0);
+  // #574: search the open ficha's entries by product or variant.
+  const [fichaQuery, setFichaQuery] = useState("");
   const [surtidoOrder, setSurtidoOrder] = useState<Order | null>(null);
   const [pickingOrder, setPickingOrder] = useState(false);
   const [physicalDate, setPhysicalDate] = useState(todayIso());
@@ -176,6 +181,7 @@ export function PointsOfSaleScreen() {
   );
 
   const openPoint = points.find((p) => p.id === openPointId) ?? null;
+  const openSummary = openPoint ? summaries.get(openPoint.id) ?? null : null;
   const pointEntries = useMemo(
     () =>
       openPoint
@@ -185,6 +191,18 @@ export function PointsOfSaleScreen() {
         : [],
     [state.pointEntries, openPoint]
   );
+
+  // #574: the ficha's visible entries — the search narrows what the operator
+  // SEES, never the underlying historial (clearing the box brings it back).
+  const visibleEntries = useMemo(() => {
+    const needle = fichaQuery.trim().toLowerCase();
+    if (!needle) return pointEntries;
+    return pointEntries.filter(
+      (entry) =>
+        entry.productName.toLowerCase().includes(needle) ||
+        (entry.variantColor ?? "").toLowerCase().includes(needle)
+    );
+  }, [pointEntries, fichaQuery]);
 
   // #524 corte capture rows: one sellable row per product + color + marked
   // price with pieces remaining (coexisting prices stay separate rows so the
@@ -428,6 +446,20 @@ export function PointsOfSaleScreen() {
     );
   }
 
+  // #574: opening a point swaps the list for its ficha and remembers the
+  // scroll position; «Volver a puntos» restores it and clears the search.
+  function openPointById(id: string) {
+    setListScrollY(window.scrollY);
+    setFichaQuery("");
+    setOpenPointId(id);
+  }
+
+  function backToPoints() {
+    setOpenPointId(null);
+    setFichaQuery("");
+    window.scrollTo(0, listScrollY);
+  }
+
   async function createPoint() {
     const clean = name.trim();
     if (!clean || !storeId) return;
@@ -451,7 +483,7 @@ export function PointsOfSaleScreen() {
       toast.success(`Punto «${clean}» creado.`);
       setCreating(false);
       setName("");
-      setOpenPointId(point.id);
+      openPointById(point.id);
     } catch {
       toast.error("No se pudo crear el punto de venta. Intenta de nuevo.");
     } finally {
@@ -867,21 +899,22 @@ export function PointsOfSaleScreen() {
         action={<Button size="sm" onClick={() => setCreating(true)}>+ Nuevo punto</Button>}
       />
       <div className="space-y-4">
-        {points.length === 0 ? (
+        {!openPoint && points.length === 0 ? (
           <EmptyState
             title="Aún no tienes puntos de venta"
             subtitle="Un punto de venta es un mostrador o vitrina donde dejas mercancía. Crea el primero y dale su surtido inicial."
             action={<Button onClick={() => setCreating(true)}>Crear el primer punto</Button>}
           />
-        ) : (
-          points.map((point) => {
+        ) : null}
+        {!openPoint
+          ? points.map((point) => {
             const summary = summaries.get(point.id);
             return (
               <Card key={point.id} className="space-y-2">
                 <Button
                   variant="ghost"
                   className="flex w-full flex-wrap items-baseline justify-between gap-2 text-left"
-                  onClick={() => setOpenPointId(point.id === openPointId ? null : point.id)}
+                  onClick={() => openPointById(point.id)}
                 >
                   <span className="font-semibold text-ink">{point.name}</span>
                   <span className="text-sm text-on-surface-soft">
@@ -902,14 +935,33 @@ export function PointsOfSaleScreen() {
               </Card>
             );
           })
-        )}
+          : null}
 
         {openPoint ? (
           <Card className="space-y-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h3 className="font-semibold text-ink">{openPoint.name}</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button variant="ghost" size="sm" onClick={backToPoints}>
+                Volver a puntos
+              </Button>
               <Badge>{(() => { const oldest = summaries.get(openPoint.id)?.oldestEntryDate; return oldest ? `Pieza más antigua desde el ${formatDate(oldest)}` : "Ficha"; })()}</Badge>
             </div>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="font-semibold text-ink">{openPoint.name}</h3>
+              <span className="text-sm text-on-surface-soft">
+                {openSummary ? `${openSummary.units} piezas` : "Sin mercancía"}
+              </span>
+            </div>
+            {openSummary ? (
+              <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                <p className="text-on-surface-soft">
+                  Valor al precio marcado: <span className="font-semibold text-on-surface"><Money exact amount={pesos(openSummary.markedValueCents)} /></span>
+                </p>
+                <p className="text-on-surface-soft">
+                  Valor al costo: <span className="font-semibold text-on-surface"><Money exact amount={pesos(openSummary.costValueCents)} /></span>
+                  {openSummary.pendingCostUnits > 0 ? ` (${openSummary.pendingCostUnits} con costo pendiente)` : ""}
+                </p>
+              </div>
+            ) : null}
             <TabList
               id={`${openPoint.id}-ficha`}
               label="Secciones del punto"
@@ -1172,23 +1224,88 @@ export function PointsOfSaleScreen() {
                 }
               />
             ) : (
-              <div className="space-y-1">
-                {pointEntries.map((entry) => {
-                  const left = Math.max(0, entry.quantity - entry.consumedQty);
-                  return (
-                    <div key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule pb-1 text-sm last:border-0">
-                      <span className="min-w-0 flex-1 truncate">
-                        {entry.productName}
-                        {entry.variantColor ? ` · ${entry.variantColor}` : ""}
-                      </span>
-                      <span className="text-on-surface-soft">{left} de {entry.quantity} · {formatDate(entry.entryDate)}</span>
-                      <span className="font-semibold text-on-surface"><Money exact amount={pesos(entry.markedPriceCents)} /></span>
-                      <span className="text-on-surface-soft">
-                        {entry.unitCostCents !== undefined ? `costo ${formatMoneyExact(pesos(entry.unitCostCents))}` : "costo pendiente"}
-                      </span>
+              <div className="space-y-3">
+                <TextField
+                  label="Buscar"
+                  placeholder="Producto o variante…"
+                  value={fichaQuery}
+                  onChange={(e) => setFichaQuery(e.target.value)}
+                />
+                {visibleEntries.length === 0 ? (
+                  <p className="text-sm text-on-surface-soft">Sin resultados para esta búsqueda.</p>
+                ) : (
+                  <>
+                    {/* Escritorio: columnas con encabezados estables y cifras a la derecha. */}
+                    <div className="hidden overflow-x-auto md:block">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-rule text-left text-xs text-on-surface-soft">
+                            <th scope="col" className="py-2 pr-3 font-medium">Producto y variante</th>
+                            <th scope="col" className="px-2 py-2 text-right font-medium">Disponibles</th>
+                            <th scope="col" className="px-2 py-2 text-right font-medium">Precio marcado</th>
+                            <th scope="col" className="px-2 py-2 text-right font-medium">Costo unitario</th>
+                            <th scope="col" className="py-2 pl-2 text-right font-medium">Fecha de entrada</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visibleEntries.map((entry) => {
+                            const left = Math.max(0, entry.quantity - entry.consumedQty);
+                            return (
+                              <tr key={entry.id} className="border-b border-rule last:border-0">
+                                <td className="py-2 pr-3">
+                                  <p className="font-medium text-on-surface">{entry.productName}</p>
+                                  {entry.variantColor ? (
+                                    <p className="text-xs text-on-surface-soft">{entry.variantColor}</p>
+                                  ) : null}
+                                </td>
+                                <td className="px-2 py-2 text-right text-on-surface">
+                                  {left}
+                                  {entry.consumedQty > 0 ? ` de ${entry.quantity}` : ""}
+                                </td>
+                                <td className="px-2 py-2 text-right font-semibold text-on-surface">
+                                  <Money exact amount={pesos(entry.markedPriceCents)} />
+                                </td>
+                                <td className="px-2 py-2 text-right text-on-surface-soft">
+                                  {entry.unitCostCents !== undefined ? formatMoneyExact(pesos(entry.unitCostCents)) : "costo pendiente"}
+                                </td>
+                                <td className="py-2 pl-2 text-right text-on-surface-soft">{formatDate(entry.entryDate)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
-                  );
-                })}
+                    {/* Móvil: renglones compactos, etiquetas claras y variantes completas. */}
+                    <div className="space-y-2 md:hidden">
+                      {visibleEntries.map((entry) => {
+                        const left = Math.max(0, entry.quantity - entry.consumedQty);
+                        return (
+                          <div key={entry.id} className="border-b border-rule pb-2 last:border-0">
+                            <p className="text-sm font-medium text-on-surface">{entry.productName}</p>
+                            {entry.variantColor ? (
+                              <p className="text-xs text-on-surface-soft">{entry.variantColor}</p>
+                            ) : null}
+                            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
+                              <p className="text-on-surface-soft">Disponibles</p>
+                              <p className="text-right font-semibold text-on-surface">
+                                {left}
+                                {entry.consumedQty > 0 ? ` de ${entry.quantity}` : ""}
+                              </p>
+                              <p className="text-on-surface-soft">Precio marcado</p>
+                              <p className="text-right font-semibold text-on-surface"><Money exact amount={pesos(entry.markedPriceCents)} /></p>
+                              <p className="text-on-surface-soft">Costo unitario</p>
+                              <p className="text-right font-semibold text-on-surface">
+                                {entry.unitCostCents !== undefined ? formatMoneyExact(pesos(entry.unitCostCents)) : "costo pendiente"}
+                              </p>
+                              <p className="text-on-surface-soft">Fecha de entrada</p>
+                              <p className="text-right text-on-surface-soft">{formatDate(entry.entryDate)}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             )}
               </>

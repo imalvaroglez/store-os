@@ -3,7 +3,7 @@
 // pieces/valuation, point creation with pilot defaults, and the
 // «Usar como surtido inicial» preview + trusted conversion call.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { PointsOfSaleScreen } from "./PointsOfSaleScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
@@ -238,7 +238,8 @@ describe("Puntos de venta (#524 primer corte UI)", () => {
     expect(screen.getByText(/Valor al precio marcado/)).toBeTruthy();
     fireEvent.click(screen.getByText("Mostrador centro"));
     expect(screen.getAllByText(/costo pendiente/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/3 de 5/).length).toBe(2); // una por entrada
+    // #574: una por entrada en cada presentación (tabla de escritorio + renglón móvil).
+    expect(screen.getAllByText(/3 de 5/).length).toBe(4);
   });
 });
 
@@ -920,8 +921,10 @@ describe("#569 surtido directo con variantes y captura en lote", () => {
     ]);
     expect(mocks.stockPoint.mock.calls[0][0].intentId).toBeTruthy();
     expect(mocks.stockPoint.mock.calls[0][0].pointId).toBe("store_olivia__mostrador");
-    // El punto sigue abierto tras el surtido.
-    expect(screen.getAllByText("Mostrador centro").length).toBeGreaterThan(1);
+    // #574: la ficha sigue abierta tras el surtido (la vista propia reemplaza
+    // al listado, así que el nombre aparece una vez: el título de la ficha).
+    expect(screen.getByText("Mostrador centro")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Volver a puntos" })).toBeInTheDocument();
   });
 
   it("un renglón agregado queda «Agregado» (sin duplicar) y «Quitar» lo libera", () => {
@@ -1224,5 +1227,166 @@ describe("#583 corregir el corte desde su registro en la ficha", () => {
     await screen.findByText(/movimientos posteriores en este punto/i);
     // El diálogo sigue abierto con la captura: el fallo no anonada nada.
     expect((screen.getAllByLabelText("Vendidas")[0] as HTMLInputElement).value).toBe("2");
+  });
+});
+
+describe("#574 ficha del punto: vista propia, columnas y búsqueda", () => {
+  const VITRINA = "store_olivia__vitrina";
+  const MOSTRADOR = "store_olivia__mostrador";
+
+  const COLLAR = "Collar Baúl Vintage con Dije de Moneda Antigua y Cadena Eslabón Largo";
+  const RELOJ = "Reloj de Bolsillo con Tapa Grabada y Cadena Extra Larga";
+  const ARETES = "Aretes Largos de Aro con Cuentas de Vidrio Soplado Artesanal";
+
+  function pointDoc(id: string, name: string) {
+    return {
+      id,
+      storeId: "store_olivia",
+      name,
+      active: true,
+      priceTierId: "t_retail",
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+  }
+
+  function entryDoc(id: string, extra: Partial<PointEntry> = {}): PointEntry {
+    return {
+      id,
+      storeId: "store_olivia",
+      pointId: VITRINA,
+      productId: "p1",
+      productName: "Producto",
+      quantity: 3,
+      consumedQty: 0,
+      markedPriceCents: 12000,
+      entryDate: "2026-11-12",
+      createdAt: NOW,
+      updatedAt: NOW,
+      ...extra,
+    } as PointEntry;
+  }
+
+  beforeEach(() => {
+    state.points = [pointDoc(VITRINA, "Vitrina fondo"), pointDoc(MOSTRADOR, "Mostrador entrada")];
+    state.pointEntries = [
+      entryDoc("e1", { productId: "p1", productName: COLLAR, variantId: "v_champan", variantColor: "Dorado champán", quantity: 5, consumedQty: 1, markedPriceCents: 22000, unitCostCents: 8000, entryDate: "2026-11-03" }),
+      entryDoc("e2", { productId: "p1", productName: COLLAR, variantId: "v_rhodium", variantColor: "Plateado rhodium", quantity: 3, markedPriceCents: 22000, unitCostCents: 8200, entryDate: "2026-11-03" }),
+      entryDoc("e3", { productId: "p_reloj", productName: RELOJ, quantity: 4, markedPriceCents: 12000, unitCostCents: 4500, entryDate: "2026-11-10" }),
+      entryDoc("e4", { productId: "p_aretes", productName: ARETES, variantId: "v_turquesa", variantColor: "Turquesa hilado a mano", quantity: 2, markedPriceCents: 9500, entryDate: "2026-11-17" }),
+      entryDoc("e5", { productId: "p_reloj", productName: RELOJ, quantity: 2, markedPriceCents: 12500, unitCostCents: 4500, entryDate: "2026-11-24" }),
+    ];
+    state.pointOperations = [];
+    state.pointExhibitors = [];
+  });
+
+  const abrirVitrina = () => {
+    fireEvent.click(screen.getByText("Vitrina fondo"));
+  };
+
+  it("1a. seleccionar un punto abre su propia ficha y «Volver a puntos» regresa al listado", () => {
+    mount();
+    expect(screen.getByText("Vitrina fondo")).toBeInTheDocument();
+    expect(screen.getByText("Mostrador entrada")).toBeInTheDocument();
+    abrirVitrina();
+    // La ficha es la vista: el otro punto ya no está a la vista.
+    expect(screen.queryByText("Mostrador entrada")).toBeNull();
+    expect(screen.getByRole("button", { name: "Volver a puntos" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
+    expect(screen.getByText("Mostrador entrada")).toBeInTheDocument();
+    expect(screen.getByText("Vitrina fondo")).toBeInTheDocument();
+  });
+
+  it("1b. «Volver a puntos» restaura la posición guardada del listado", () => {
+    const scrollTo = vi.fn();
+    Object.defineProperty(window, "scrollTo", { value: scrollTo, configurable: true });
+    Object.defineProperty(window, "scrollY", { value: 320, configurable: true });
+    mount();
+    abrirVitrina();
+    fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
+    expect(scrollTo).toHaveBeenCalledWith(0, 320);
+    Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+  });
+
+  it("2. escritorio: encabezados de columna estables y cifras a la derecha", () => {
+    mount();
+    abrirVitrina();
+    const encabezados = ["Producto y variante", "Disponibles", "Precio marcado", "Costo unitario", "Fecha de entrada"];
+    for (const nombre of encabezados) {
+      expect(screen.getByRole("columnheader", { name: nombre })).toBeInTheDocument();
+    }
+    for (const nombre of encabezados.slice(1)) {
+      expect(screen.getByRole("columnheader", { name: nombre }).className).toContain("text-right");
+    }
+    // Disponibles con consumo muestra el disponible de la entrada (4 de 5).
+    expect(screen.getAllByText(/^4( de 5)?$/).length).toBeGreaterThan(0);
+    // El costo pendiente se nombra dentro de la ficha.
+    expect(screen.getAllByText(/costo pendiente/i).length).toBeGreaterThan(0);
+  });
+
+  it("3. móvil: renglones con etiquetas claras y variante completa", () => {
+    mount();
+    abrirVitrina();
+    // Cada renglón móvil etiqueta sus cifras (además del encabezado de tabla).
+    for (const etiqueta of ["Disponibles", "Precio marcado", "Fecha de entrada"]) {
+      expect(screen.getAllByText(etiqueta).length).toBeGreaterThanOrEqual(2);
+    }
+    // Las variantes largas se leen completas en ambas presentaciones.
+    const dorado = screen.getAllByText("Dorado champán");
+    expect(dorado.length).toBeGreaterThan(0);
+    for (const elemento of dorado) {
+      expect(elemento.className).not.toContain("truncate");
+    }
+    expect(screen.getAllByText("Turquesa hilado a mano").length).toBeGreaterThan(0);
+  });
+
+  it("4a. la búsqueda de la ficha encuentra por producto o variante; sin resultados lo dice", () => {
+    mount();
+    abrirVitrina();
+    const buscar = screen.getByPlaceholderText("Producto o variante…");
+    // Por variante: sólo la entrada con esa variante.
+    fireEvent.change(buscar, { target: { value: "champán" } });
+    expect(screen.getAllByText("Dorado champán").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Plateado rhodium")).toBeNull();
+    // Por producto: ambas variantes del collar, sin el resto.
+    fireEvent.change(buscar, { target: { value: "collar baúl" } });
+    expect(screen.getAllByText("Dorado champán").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Plateado rhodium").length).toBeGreaterThan(0);
+    expect(screen.queryByText(RELOJ)).toBeNull();
+    // Sin coincidencias.
+    fireEvent.change(buscar, { target: { value: "noexiste" } });
+    expect(screen.getByText(/sin resultados/i)).toBeInTheDocument();
+  });
+
+  it("4b. abrir → leer → surtir → volver conserva contexto, totales e historial", () => {
+    mount();
+    abrirVitrina();
+    // Leer: totales del punto dentro de la ficha (15 = 4+3+4+2+2 disponibles).
+    expect(screen.getAllByText(/Valor al precio marcado/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/Valor al costo/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("15 piezas")).toBeInTheDocument();
+    // Surtir: se abre el diálogo del almacén y se cancela sin mover nada.
+    fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
+    const dialogo = screen.getByRole("dialog");
+    expect(dialogo).toBeInTheDocument();
+    fireEvent.click(within(dialogo).getByRole("button", { name: "Cancelar" }));
+    // La ficha sigue abierta con su historial completo.
+    expect(screen.getByRole("button", { name: "Volver a puntos" })).toBeInTheDocument();
+    expect(screen.getAllByText("Dorado champán").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Plateado rhodium").length).toBeGreaterThan(0);
+    expect(mocks.stockPoint).not.toHaveBeenCalled();
+    // Volver y reabrir: el contexto del punto se conserva.
+    fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
+    expect(screen.getByText("Mostrador entrada")).toBeInTheDocument();
+    abrirVitrina();
+    expect(screen.getAllByText("Dorado champán").length).toBeGreaterThan(0);
+  });
+
+  it("regresión: la ficha vacía sigue ofreciendo su surtido inicial en la vista propia", () => {
+    mount();
+    fireEvent.click(screen.getByText("Mostrador entrada"));
+    expect(screen.getByRole("button", { name: "Volver a puntos" })).toBeInTheDocument();
+    expect(screen.getByText("Este punto todavía no tiene mercancía")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Usar como surtido inicial" })).toBeInTheDocument();
   });
 });
