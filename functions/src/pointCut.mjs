@@ -353,3 +353,166 @@ export const annulPointCut = onCall(
     });
   }
 );
+
+/**
+ * Correct a corte (#583): replace its capture in ONE atomic transaction —
+ * the original turns «anulado» linked to its replacement, the entries go
+ * back to exactly what the operator sees (restore + new plan applied as a
+ * single net delta), and the motive + responsable ride on the correction
+ * evidence. The effective date and commission stay the ORIGINAL's (no new
+ * monetary rules); eligibility mirrors annulPointCut: latest corte, still
+ * unpaid, no later movements, month open. Idempotent per intentId.
+ * data: { storeId, pointId, corteId, intentId, motive,
+ *         lines: [{productId, variantId?, markedPriceCents, soldQty}],
+ *         writeOffs: [{productId, variantId?, qty, reason}] }
+ */
+export const correctPointCut = onCall(
+  { region: "us-east1", maxInstances: 3, retry: false, memory: "256MiB", timeoutSeconds: 30, minInstances: 0 },
+  async (req) => {
+    const { storeId, pointId, corteId, intentId, motive } = req.data ?? {};
+    const lines = Array.isArray(req.data?.lines) ? req.data.lines : [];
+    const writeOffs = Array.isArray(req.data?.writeOffs) ? req.data.writeOffs : [];
+    if (typeof storeId !== "string" || !storeId) throw new HttpsError("invalid-argument", "Falta la tienda.");
+    if (typeof pointId !== "string" || !pointId) throw new HttpsError("invalid-argument", "Falta el punto de venta.");
+    if (typeof corteId !== "string" || !corteId) throw new HttpsError("invalid-argument", "Falta el corte.");
+    if (typeof intentId !== "string" || !intentId) throw new HttpsError("invalid-argument", "Falta el identificador de intento.");
+    if (typeof motive !== "string" || !motive.trim()) throw new HttpsError("invalid-argument", "La corrección necesita su motivo.");
+    if (lines.length === 0 && writeOffs.length === 0) {
+      throw new HttpsError("invalid-argument", "El corte no tiene ventas ni bajas.");
+    }
+    validateLines(lines, writeOffs);
+
+    const db = getFirestore();
+    await requireOperator(db, storeId, req.auth);
+
+    const corrOpId = `corr_${intentId}`;
+    const newCorteId = `corte_corr_${intentId}`;
+    return db.runTransaction(async (tx) => {
+      // Idempotency first: this exact intent already landed → nothing to do.
+      const corrRef = db.collection("pointOperations").doc(corrOpId);
+      const savedCorr = await tx.get(corrRef);
+      if (savedCorr.exists) {
+        return { corrected: false, alreadyApplied: true, corteId: savedCorr.get("newCorteId") };
+      }
+      await readPoint(tx, db, storeId, pointId);
+
+      const corteRef = db.collection("pointOperations").doc(corteId);
+      const corteSnap = await tx.get(corteRef);
+      if (!corteSnap.exists || corteSnap.get("kind") !== "corte" || (corteSnap.get("pointId") ?? "") !== pointId) {
+        throw new HttpsError("not-found", "No se encontró el corte de este punto.");
+      }
+      if (corteSnap.get("status") === "cobrado") {
+        throw new HttpsError("failed-precondition", "Un corte ya cobrado no se puede corregir.");
+      }
+      if (corteSnap.get("status") === "anulado") {
+        throw new HttpsError("failed-precondition", "Este corte ya está anulado.");
+      }
+      // The replacement keeps the original's month; an authorized close on
+      // that month keeps both sides out of reach (cierre cut parity).
+      const sealed = await sealedPeriods(tx, db, storeId);
+      assertOpenPeriod(sealed, corteSnap.get("effectiveDate"), "corregir un corte de un mes cerrado");
+      const commissionRate = corteSnap.get("commissionRate");
+      if (typeof commissionRate !== "number" || !Number.isFinite(commissionRate) || commissionRate < 0 || commissionRate > 1) {
+        throw new HttpsError("failed-precondition", "El corte original no conserva una comisión válida; no se puede corregir.");
+      }
+
+      // Only the LATEST corte with no later movements — same guard as the
+      // annulment: restoring entries under newer moves would rewrite history.
+      const corteAt = corteSnap.get("confirmedAt") ?? "";
+      const opsSnap = await tx.get(db.collection("pointOperations").where("pointId", "==", pointId));
+      for (const opDoc of opsSnap.docs) {
+        if (opDoc.id === corteId) continue;
+        const data = opDoc.data();
+        if ((data.confirmedAt ?? "") > corteAt && data.kind !== "cobro") {
+          throw new HttpsError(
+            "failed-precondition",
+            "Hay movimientos posteriores en este punto; la corrección sólo aplica al último corte sin cobrar."
+          );
+        }
+        if (data.kind === "cobro" && data.corteId === corteId) {
+          throw new HttpsError("failed-precondition", "El corte ya tiene cobro registrado.");
+        }
+      }
+
+      // What the original consumed, per entry — the restore half of the delta.
+      const restored = new Map();
+      for (const group of [...(corteSnap.get("saleAllocations") ?? []), ...(corteSnap.get("writeOffAllocations") ?? [])]) {
+        for (const allocation of group.allocations ?? []) {
+          restored.set(allocation.entryId, (restored.get(allocation.entryId) ?? 0) + allocation.quantity);
+        }
+      }
+      // Fresh entries with the restore applied: the new plan is re-derived
+      // server-side on the same availability the operator previewed.
+      const entriesSnap = await tx.get(db.collection("pointEntries").where("pointId", "==", pointId));
+      const entryIds = new Set(entriesSnap.docs.map((docSnap) => docSnap.id));
+      for (const entryId of restored.keys()) {
+        if (!entryIds.has(entryId)) {
+          throw new HttpsError("failed-precondition", "Las piezas del corte ya no están en el punto; no se puede corregir.");
+        }
+      }
+      const adjusted = entriesSnap.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return { ...data, consumedQty: Math.max(0, (data.consumedQty ?? 0) - (restored.get(docSnap.id) ?? 0)) };
+      });
+      const plan = planCortePort(adjusted, lines, writeOffs, commissionRate);
+      if (plan.errors.length > 0) {
+        throw new HttpsError("failed-precondition", plan.errors.join(" "));
+      }
+
+      const at = isoNow();
+      const by = req.auth.uid;
+      // Net consumption delta per entry: new plan minus restore — one write.
+      const delta = new Map();
+      for (const [entryId, quantity] of restored) delta.set(entryId, (delta.get(entryId) ?? 0) - quantity);
+      for (const group of [...plan.saleAllocations, ...plan.writeOffAllocations]) {
+        for (const allocation of group.allocations) {
+          delta.set(allocation.entryId, (delta.get(allocation.entryId) ?? 0) + allocation.quantity);
+        }
+      }
+      for (const [entryId, quantity] of delta) {
+        if (quantity === 0) continue;
+        tx.update(db.collection("pointEntries").doc(entryId), {
+          consumedQty: FieldValue.increment(quantity),
+          updatedAt: at,
+        });
+      }
+      // The replacement is a NORMAL corte (cobros treat it as such) linked to
+      // its original; the correction op carries motive + restore evidence.
+      const totals = plan.totals;
+      tx.set(db.collection("pointOperations").doc(newCorteId), {
+        id: newCorteId,
+        storeId,
+        pointId,
+        kind: "corte",
+        intentionId: intentId,
+        replacesCorteId: corteId,
+        effectiveDate: corteSnap.get("effectiveDate"),
+        commissionRate,
+        lines,
+        writeOffs,
+        saleAllocations: plan.saleAllocations,
+        writeOffAllocations: plan.writeOffAllocations,
+        totals,
+        status: totals.netCents === 0 ? "sin_cobro" : "pendiente_de_cobro",
+        confirmedBy: by,
+        confirmedAt: at,
+      });
+      tx.set(corrRef, {
+        id: corrOpId,
+        storeId,
+        pointId,
+        kind: "correccion",
+        intentionId: intentId,
+        corteId,
+        newCorteId,
+        motive: motive.trim(),
+        restoredAllocations: corteSnap.get("saleAllocations") ?? [],
+        restoredWriteOffAllocations: corteSnap.get("writeOffAllocations") ?? [],
+        confirmedBy: by,
+        confirmedAt: at,
+      });
+      tx.update(corteRef, { status: "anulado", replacedByCorteId: newCorteId, annulmentOperationId: corrOpId, updatedAt: at });
+      return { corrected: true, corteId: newCorteId, totals };
+    });
+  }
+);

@@ -12,7 +12,7 @@ import { getStorage } from "firebase-admin/storage";
 import { parseSupplierOrder } from "./parser.js";
 export { applyCredit, releaseCredit } from "./applyCredit.mjs";
 export { convertOrderToFirstSurtido } from "./convertOrderToPoint.mjs";
-export { registerPointCut, registerPointCutPayment, annulPointCut } from "./pointCut.mjs";
+export { registerPointCut, registerPointCutPayment, annulPointCut, correctPointCut } from "./pointCut.mjs";
 export { stockPointFromWarehouse, withdrawFromPoint } from "./pointStock.mjs";
 export { deliverPointExhibitors, confirmPointExhibitorCost, withdrawPointExhibitors } from "./pointExhibitors.mjs";
 

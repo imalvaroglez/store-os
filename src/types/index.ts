@@ -481,7 +481,7 @@ export type PointOperation = {
   id: string;
   storeId: string;
   pointId: string;
-  kind: "first_surtido" | "surtido" | "retiro" | "corte" | "cobro" | "anulacion";
+  kind: "first_surtido" | "surtido" | "retiro" | "corte" | "cobro" | "anulacion" | "correccion";
   intentionId?: string;
   confirmedBy: string;
   confirmedAt: string;
@@ -495,7 +495,7 @@ export type PointOperation = {
   effectiveDate?: string;
   commissionRate?: number;
   lines?: Array<{ productId: string; variantId?: string; markedPriceCents: number; soldQty: number }>;
-  writeOffs?: Array<{ productId: string; variantId?: string; qty: number; reason: string }>;
+  writeOffs?: Array<{ productId: string; variantId?: string; markedPriceCents: number; qty: number; reason: string }>;
   saleAllocations?: Array<{ lineIndex: number; allocations: Array<{ entryId: string; quantity: number }> }>;
   writeOffAllocations?: Array<{ lineIndex: number; allocations: Array<{ entryId: string; quantity: number }> }>;
   totals?: {
@@ -515,8 +515,14 @@ export type PointOperation = {
   amountCents?: number;
   method?: "cash" | "transfer";
   date?: string;
-  // anulacion
+  // anulacion / correccion
   motive?: string;
+  /** #583 correccion: the replacement corte this original points to. */
+  replacedByCorteId?: string;
+  /** #583 correccion: on the replacement corte, the original it corrects. */
+  replacesCorteId?: string;
+  /** #583 correccion: the corte the correction op rewrote (newCorteId links forward). */
+  newCorteId?: string;
   // retiro: which entries the returned pieces left (FIFO evidence).
   entryAllocations?: Array<{ entryId: string; quantity: number }>;
   originOperationId?: string;
