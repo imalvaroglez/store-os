@@ -95,6 +95,29 @@ export async function annulPointCutTrusted(params: AnnulPointCutParams): Promise
   return res.data;
 }
 
+export interface CorrectPointCutParams {
+  storeId: string;
+  pointId: string;
+  corteId: string;
+  intentId: string;
+  motive: string;
+  lines: Array<{ productId: string; variantId?: string; markedPriceCents: number; soldQty: number }>;
+  writeOffs: Array<{ productId: string; variantId?: string; qty: number; reason: string }>;
+}
+
+export interface CorrectPointCutResult {
+  corrected: boolean;
+  alreadyApplied?: boolean;
+  corteId?: string;
+  totals?: Record<string, unknown>;
+}
+
+export async function correctPointCutTrusted(params: CorrectPointCutParams): Promise<CorrectPointCutResult> {
+  const call = httpsCallable<CorrectPointCutParams, CorrectPointCutResult>(functionsInstance(), "correctPointCut");
+  const res = await call(params);
+  return res.data;
+}
+
 export interface StockPointLine {
   productId: string;
   variantId?: string;

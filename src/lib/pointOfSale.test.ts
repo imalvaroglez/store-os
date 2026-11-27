@@ -3,6 +3,7 @@ import type { Order, Product } from "../types";
 import {
   buildFirstSurtidoFromOrder,
   consumeFromEntries,
+  corteUndoImpediments,
   oldestRemainingDate,
   orderConversionImpediments,
   planCorte,
@@ -440,5 +441,82 @@ describe("planCorte (#524): venta, bajas, comisión y resultado con centavos exa
     // 29997 × 0.2 = 5999.4 → 5999 (una sola vez).
     expect(plan.totals.commissionCents).toBe(5999);
     expect(plan.totals.netCents).toBe(23998);
+  });
+});
+
+// #583 — corregir el último corte sin perder la captura: la elegibilidad
+// compartida de anular/corregir (espejo cliente de la guarda transaccional
+// de annulPointCut/correctPointCut — la ficha nunca ofrece lo que el
+// servidor va a rechazar).
+describe("corteUndoImpediments (#583): elegibilidad de anular o corregir", () => {
+  const CORTE = {
+    id: "corte_1",
+    kind: "corte" as const,
+    status: "pendiente_de_cobro" as const,
+    confirmedAt: "2026-11-20T10:00:00.000Z",
+    effectiveDate: "2026-11-20",
+  };
+
+  it("último corte sin cobro en mes abierto: sin impedimentos", () => {
+    const check = corteUndoImpediments(CORTE, [CORTE], new Set());
+    expect(check.canUndo).toBe(true);
+    expect(check.reasons).toEqual([]);
+  });
+
+  it("corte cobrado: motivo comprobable", () => {
+    const check = corteUndoImpediments({ ...CORTE, status: "cobrado" }, [{ ...CORTE, status: "cobrado" }], new Set());
+    expect(check.canUndo).toBe(false);
+    expect(check.reasons[0]).toMatch(/cobro registrado/i);
+  });
+
+  it("corte anulado: motivo comprobable (no se re-anula ni se corrige lo ya anulado)", () => {
+    const check = corteUndoImpediments({ ...CORTE, status: "anulado" }, [{ ...CORTE, status: "anulado" }], new Set());
+    expect(check.canUndo).toBe(false);
+    expect(check.reasons[0]).toMatch(/anulado/i);
+  });
+
+  it("mes con cierre autorizado: dirige a la revisión de ajustes", () => {
+    const check = corteUndoImpediments(CORTE, [CORTE], new Set(["2026-11"]));
+    expect(check.canUndo).toBe(false);
+    expect(check.reasons[0]).toMatch(/cierre autorizado/i);
+    expect(check.reasons[0]).toMatch(/revisi[oó]n de ajustes/i);
+  });
+
+  it("movimiento posterior: el impedimento que la interfaz base no veía (caso rojo de #583)", () => {
+    // Corte A pendiente de cobro + corte B cobrado DESPUÉS: la ficha base
+    // ofrecía «Anular corte» sobre A; el servidor lo rechaza.
+    const laterCorte = {
+      id: "corte_2",
+      kind: "corte" as const,
+      status: "cobrado" as const,
+      confirmedAt: "2026-11-21T10:00:00.000Z",
+      effectiveDate: "2026-11-21",
+    };
+    const check = corteUndoImpediments(CORTE, [CORTE, laterCorte], new Set());
+    expect(check.canUndo).toBe(false);
+    expect(check.reasons[0]).toMatch(/movimientos posteriores/i);
+  });
+
+  it("un cobro posterior de un corte ANTERIOR no bloquea (paridad con annulPointCut)", () => {
+    const cobroAnterior = {
+      id: "cobro_1",
+      kind: "cobro" as const,
+      corteId: "corte_0",
+      confirmedAt: "2026-11-21T10:00:00.000Z",
+    };
+    const check = corteUndoImpediments(CORTE, [CORTE, cobroAnterior], new Set());
+    expect(check.canUndo).toBe(true);
+  });
+
+  it("un cobro registrado del propio corte bloquea aunque el estado no lo refleje", () => {
+    const cobroPropio = {
+      id: "cobro_2",
+      kind: "cobro" as const,
+      corteId: "corte_1",
+      confirmedAt: "2026-11-21T10:00:00.000Z",
+    };
+    const check = corteUndoImpediments(CORTE, [CORTE, cobroPropio], new Set());
+    expect(check.canUndo).toBe(false);
+    expect(check.reasons[0]).toMatch(/cobro registrado/i);
   });
 });
