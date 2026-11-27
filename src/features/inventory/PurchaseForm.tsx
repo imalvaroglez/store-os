@@ -158,7 +158,10 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   // agree) mirrors the purchase level for the suggestion engine; a legacy
   // received purchase without ticket evidence keeps its historical label.
   const ticketMethods = tickets.map((ticket) => ticket.paymentMethod);
-  const uniformTicketMethod = ticketMethods.length > 0 && ticketMethods.every((method) => method !== undefined) ? ticketMethods[0] : undefined;
+  const uniformTicketMethod = ticketMethods.length > 0
+    && ticketMethods.every((method) => method !== undefined && method === ticketMethods[0])
+    ? ticketMethods[0]
+    : undefined;
   const hasTicketEvidence = (purchase.tickets ?? []).some((ticket) => ticket.paymentMethod !== undefined);
   const legacyWholePurchase = !hasTicketEvidence && purchase.paymentMethod !== undefined;
   const classificationDirty = locked && (
