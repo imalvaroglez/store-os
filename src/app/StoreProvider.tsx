@@ -30,6 +30,7 @@ import type {
 } from "../types";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../types";
 import { loadPreferredStoreId, savePreferredStoreId } from "../lib/storage";
+import { projectionProbeMarker } from "../lib/projectionProbe";
 import { migrateCatalog } from "../lib/catalog";
 import { uid } from "../lib/ids";
 import { nowIso, todayIso } from "../lib/dates";
@@ -533,6 +534,12 @@ const StoreContext = createContext<StoreContextValue | null>(null);
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const cloud = !!user;
+  // #488 r2: one heartbeat per provider mount. NOTE: it only proves the
+  // channel of the document IT mounted in — the spec's per-document [channel]
+  // marker is the one that discriminates "never fired" from "record lost".
+  useEffect(() => {
+    console.info(projectionProbeMarker("heartbeat", "heartbeat"));
+  }, []);
   const [state, dispatch] = useReducer(reducer, undefined, emptyAppState);
   // Background retries must use this render's catalog, not their old capture.
   const latestState = useRef(state);
@@ -576,7 +583,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     retryWrite: () => Promise<unknown> = write
   ) {
     const ownerUid = user?.uid;
-    void write().catch((error) => {
+    // #488 write-side probe: pairs with the read-side poll probe. A flake
+    // failure will now tell whether the projection write STARTED, FINISHED
+    // or THREW — distinguishing a lost write from one that never ran.
+    // Single flight: the ORIGINAL call is observed, never repeated.
+    // #488 r2: every marker carries a ts= so the spec classifier can tell an
+    // INTERRUPTED flight (threw) from one still IN FLIGHT (start without a
+    // terminal marker inside the poll budget) or STUCK (unresolved past it).
+    // Markers come from the shared builder — the string contract is pinned by
+    // projectionProbe.test.ts, not by convention.
+    console.info(projectionProbeMarker("start", label));
+    const flight = write().then(
+      (value) => { console.info(projectionProbeMarker("ok", label)); return value; },
+      (error) => { console.info(projectionProbeMarker("threw", label, { err: error })); throw error; }
+    );
+    void flight.catch((error) => {
       console.error(`[Firestore] No se pudo ${label}:`, error);
       if (!ownerUid || currentUid.current !== ownerUid) return;
       const version = ++syncErrorVersion.current;

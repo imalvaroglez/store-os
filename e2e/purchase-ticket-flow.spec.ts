@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { adminToken, FIRESTORE_REST, ensureStoreActive, gotoClean, loginAsFirstAdmin, writeEmulatorDoc } from "./helpers";
+import { classifyProjectionFailure, projectionProbeMarker } from "../src/lib/projectionProbe";
 
 async function openJourney(page: Page) {
   await gotoClean(page, "/productos/compras");
@@ -108,6 +109,24 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   }
   await page.screenshot({ path: `test-results/ticket-capture-${testInfo.project.name}.png` });
 
+  // #488 write-side probe log (console from the app under test). Attached
+  // BEFORE «Recibir mercancía» — the action that triggers the background
+  // projection write — so a flake occurrence captures start/ok/threw from
+  // the very first flight instead of joining mid-run (the 22-nov occurrence
+  // printed EMPTY with the listener attached after the click).
+  const writeProbeLog: string[] = [];
+  page.on("console", (msg) => {
+    const text = msg.text();
+    if (text.includes("#488-PROJ-WRITE")) writeProbeLog.push(text.slice(0, 160));
+  });
+
+  // #488 r2: the channel marker is emitted BY THE SPEC from the same document
+  // the write runs in, at attach time — a heartbeat from a later navigation
+  // proves nothing about this document (review F1). If the listener catches
+  // this but no start ever arrives, the write truly never fired.
+  await page.evaluate(() => {
+    console.info(`#488-PROJ-WRITE[channel] alive ts=${Date.now()}`);
+  });
   await page.getByRole("button", { name: "Recibir mercancía", exact: true }).click();
   await expect(page.getByText("Compra recibida: el inventario se actualizó.")).toBeVisible({ timeout: 30_000 });
   // #386: a failed background projection surfaces HERE (sync banner with
@@ -132,7 +151,8 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
   // diff tells absent (404), denied (403), server error (5xx) or a thrown
   // fetch apart — the deciding evidence for the flake's root cause.
   const pollProbe = { status: 0, checks: 0 };
-  await expect.poll(async () => {
+  try {
+    await expect.poll(async () => {
     pollProbe.checks += 1;
     let response: Response;
     try {
@@ -151,6 +171,12 @@ test("seven tickets: capture, targeted errors, save/reopen, one scroll and recei
     };
   }, { timeout: 30_000, message: "La proyección pública de la compra por ticket no llegó (escritura tardía o ausente; el diff muestra el último estado del sondeo)" })
     .toEqual({ name: "Pieza QA por ticket", storeId: "store_joyeria", stockSignal: "disponible" });
+  void writeProbeLog; // keeps the collector referenced on the happy path
+  } catch (error) {
+    console.log(`#488-PROJ-VERDICT: ${classifyProjectionFailure(writeProbeLog, pollProbe.status, 30_000, "actualizar la disponibilidad pública")}`);
+    console.log(`#488-PROJ-WRITE-HISTORY: ${writeProbeLog.join(" | ") || "(sin marcas)"}`);
+    throw error;
+  }
 
   await gotoClean(page, "/pedidos/nuevo");
   await ensureStoreActive(page, "Joyería");
