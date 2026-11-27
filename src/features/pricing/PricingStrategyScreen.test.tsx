@@ -5,12 +5,14 @@
 // overwritten, pending prices block the save, and a concurrent change to the
 // saved table surfaces a banner instead of clobbering the draft.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { StrictMode } from "react";
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PricingStrategyScreen, resetPricingStrategyCategoryForTests } from "./PricingStrategyScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
+import { rulesSignature } from "../../lib/pricingRules";
 import { CategoryRulesConflictError } from "../../app/StoreProvider";
-import type { Category, Product, Store, StorePackaging } from "../../types";
+import type { Category, PricingRule, PricingRulesConfig, Product, Store, StorePackaging } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   state: null as ReturnType<typeof fixtureState> | null,
@@ -33,6 +35,10 @@ vi.mock("../../app/StoreProvider", async (importOriginal) => {
 
 const CAT = "store_olivia__relojes";
 const CAT2 = "store_olivia__perfumes";
+
+// #538: the band-table draft persists per signed-in person.
+const auth = vi.hoisted(() => ({ user: null as { uid: string; email: string } | null }));
+vi.mock("../../app/firebase/AuthProvider", () => ({ useAuth: () => ({ user: auth.user }) }));
 
 function oliviaStore(): Store {
   const store = { ...mocks.state!.stores[0] } as Store;
@@ -109,6 +115,9 @@ beforeEach(() => {
   // choice — keep every test on a clean address and an empty session.
   resetPricingStrategyCategoryForTests();
   window.history.replaceState({}, "", "/productos/estrategia");
+  // #538: a fresh storage per test, like a fresh browser profile.
+  localStorage.clear();
+  auth.user = { uid: "u-fer", email: "fer@demo.mx" };
   state = fixtureState();
   mocks.state = state;
   state.stores[0] = oliviaStore();
@@ -488,7 +497,11 @@ describe("#219 — contratos de captura de Estrategia (auditoría)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
     fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "999.005" } });
     expect(await screen.findByText(/máximo dos decimales/i)).toBeTruthy();
+    // #538: unsaved edits are a loss — the restore asks first.
     fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    expect(screen.getByText(/¿Restaurar la propuesta y perder tus cambios\?/)).toBeTruthy();
+    expect(screen.queryByText(/máximo dos decimales/i)).toBeTruthy(); // todavía nada se ha sustituido
+    fireEvent.click(screen.getAllByRole("button", { name: "Restaurar propuesta" }).pop()!);
     expect(screen.queryByText(/máximo dos decimales/i)).toBeNull();
     // A follow-up valid edit proves the editor is not dead-ended by a ghost.
     fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
@@ -903,5 +916,565 @@ describe("#531 ida y vuelta al simulador con concurrencia y entre tiendas", () =
     // El stash limpio cede: la tabla FRESCA (Hasta 80) se adopta, sin banner.
     expect((screen.getAllByLabelText("Hasta $")[0] as HTMLInputElement).value).toBe("80");
     expect(screen.queryByText(/cambiaron en otra sesión/i)).toBeNull();
+  });
+});
+
+// #538 rehecho sobre main (#531/#533): la categoría ya sobrevive por la URL y
+// por la memoria de sesión; este borrador persistido viaja con ella.
+describe("#538 borrador de Estrategia conservado", () => {
+  const STORE = "store_olivia";
+  const keyFor = (uid = "u-fer", cat = CAT) => `store-os:strategy-draft:${uid}:${STORE}:${cat}`;
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+  const stored = (key: string) => JSON.parse(localStorage.getItem(key) ?? "null") as { draft: { prices: Record<string, number[]> } } | null;
+
+  function editAndDirty(value = "165") {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value } });
+  }
+
+  it("cambiar de categoría y volver conserva las ediciones; nada se guarda en Firestore", () => {
+    editAndDirty();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: "" } });
+    selectCategory();
+    expect(iconicFirst()).toBe("165");
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("F5 en la misma pestaña: vuelve la categoría y con ella el borrador, sin re-elegirla", async () => {
+    const view = mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    view.unmount();
+    // #531: la elección viaja en la URL; el borrador, en el almacenamiento de la persona.
+    expect(window.location.search).toBe(`?categoria=${encodeURIComponent(CAT)}`);
+    expect(stored(keyFor())?.draft.prices.t_iconic?.[0]).toBe(165);
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
+    expect(iconicFirst()).toBe("165");
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+  });
+
+  it("volver por el menú (URL limpia): la memoria de sesión trae la categoría y el borrador la sigue", async () => {
+    editAndDirty();
+    cleanup();
+    window.history.replaceState({}, "", "/productos/estrategia");
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
+    expect(iconicFirst()).toBe("165");
+    // La categoría recuperada también queda en la URL…
+    expect(window.location.search).toBe(`?categoria=${encodeURIComponent(CAT)}`);
+  });
+
+  it("menú → F5: la recarga conserva la categoría (la memoria de sesión no cruza el documento)", async () => {
+    editAndDirty();
+    cleanup();
+    window.history.replaceState({}, "", "/productos/estrategia");
+    mount(); // re-entrada por el menú
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    cleanup();
+    resetPricingStrategyCategoryForTests(); // un F5 empieza un documento sin memoria
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect((screen.getByLabelText("Categoría") as HTMLSelectElement).value).toBe(CAT);
+    expect(iconicFirst()).toBe("165");
+  });
+
+  it("«Restaurar propuesta» con ediciones sin guardar pide confirmación; Cancelar conserva", () => {
+    editAndDirty();
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    expect(screen.getByText(/¿Restaurar la propuesta y perder tus cambios\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(iconicFirst()).toBe("165");
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("confirmar la restauración sustituye SOLO el borrador: la propuesta queda en el editor y en el almacenamiento, Firestore intacto", () => {
+    editAndDirty();
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar propuesta/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Restaurar propuesta" }).pop()!);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(iconicFirst()).not.toBe("165");
+    // #531: la propuesta adoptada es un cambio guardable — por eso también es el borrador vigente.
+    expect(stored(keyFor())?.draft.prices.t_iconic?.[0]).not.toBe(165);
+    expect(mocks.saveCategoryPricingRules).not.toHaveBeenCalled();
+  });
+
+  it("al guardar, la tabla que entrega Firestore en el mismo instante no resucita el borrador recién guardado", async () => {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    expect(stored(keyFor())).not.toBeNull();
+    const band = (price: number) => [{ min: 0, max: 60, price }, { min: 60, price: price + 10 }];
+    // La escucha de Firestore entrega la tabla guardada antes de que el guardado termine de asentarse.
+    mocks.saveCategoryPricingRules.mockImplementation(async () => {
+      await Promise.resolve();
+      const saved = fixtureState();
+      saved.stores[0] = oliviaStore();
+      saved.categories = state.categories;
+      saved.products = state.products;
+      saved.stores[0].pricingRules = {
+        byTier: {},
+        byCategory: { [CAT]: {
+          t_retail: { kind: "bands", bands: band(290), rounding: "none" },
+          t_girly: { kind: "bands", bands: band(230), rounding: "none" },
+          t_iconic: { kind: "bands", bands: band(165), rounding: "none" },
+        } },
+      };
+      mocks.state = saved;
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    await screen.findByRole("button", { name: "Sin cambios" });
+    expect(iconicFirst()).toBe("165");
+    expect(localStorage.getItem(keyFor())).toBeNull();
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+  });
+
+  it("guardar la tabla limpia el borrador guardado", async () => {
+    editAndDirty();
+    expect(stored(keyFor())).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    expect(localStorage.getItem(keyFor())).toBeNull();
+  });
+
+  it("el borrador es de la persona: con otra sesión no se adopta ni se toca", async () => {
+    editAndDirty();
+    cleanup();
+    auth.user = { uid: "u-otra", email: "otra@demo.mx" };
+    mount();
+    selectCategory();
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    expect(iconicFirst()).not.toBe("165");
+    expect(stored(keyFor())?.draft.prices.t_iconic?.[0]).toBe(165);
+    // Sus propias ediciones sí se guardan, bajo su propia llave.
+    expect(stored(keyFor("u-otra"))?.draft.prices.t_iconic?.[0]).not.toBe(165);
+  });
+
+  it("el borrador es de la categoría: otra categoría de la misma persona no lo adopta", () => {
+    localStorage.setItem(keyFor("u-fer", CAT2), JSON.stringify({ v: 1, draftBase: "", savedAt: "", draft: { limits: [{ min: 0 }], prices: { t_iconic: [999] }, dirty: true } }));
+    editAndDirty();
+    expect(iconicFirst()).toBe("165");
+    expect(stored(keyFor("u-fer", CAT2))?.draft.prices.t_iconic?.[0]).toBe(999);
+  });
+
+  const savedTable = (max: number): PricingRulesConfig => ({
+    byTier: {},
+    byCategory: {
+      [CAT]: {
+        t_retail: { kind: "bands", bands: [{ min: 0, max, price: 290 }, { min: max, price: 310 }], rounding: "none" },
+        t_girly: { kind: "bands", bands: [{ min: 0, max, price: 230 }, { min: max, price: 260 }], rounding: "none" },
+        t_iconic: { kind: "bands", bands: [{ min: 0, max, price: 160 }, { min: max, price: 170 }], rounding: "none" },
+      },
+    },
+  });
+  function anotherSessionSaves(pricingRules: PricingRulesConfig) {
+    const other = fixtureState();
+    other.stores[0] = oliviaStore();
+    other.stores[0].pricingRules = pricingRules;
+    mocks.state = other;
+  }
+  const rerender = (view: ReturnType<typeof mount>) => view.rerender(<ToastProvider><PricingStrategyScreen /></ToastProvider>);
+
+  it("tras F5, una tabla guardada en otra sesión se advierte y el borrador recuperado no se pierde", async () => {
+    editAndDirty();
+    cleanup();
+    anotherSessionSaves(savedTable(50));
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(screen.getByText(/cambiaron en otra sesión/i)).toBeTruthy();
+    expect(iconicFirst()).toBe("165");
+  });
+
+  it("descartar explícitamente elimina el borrador guardado (con tabla guardada compatible)", () => {
+    editAndDirty();
+    cleanup();
+    const view = mount(); // F5: la URL trae la categoría y el almacenamiento, el borrador
+    anotherSessionSaves(savedTable(50));
+    rerender(view);
+    expect(screen.getByText(/cambiaron en otra sesión/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Descartar mis cambios y recargar/ }));
+    expect(localStorage.getItem(keyFor())).toBeNull();
+    expect(iconicFirst()).not.toBe("165");
+    cleanup();
+    mount(); // un F5 más: nada resucita
+    expect(iconicFirst()).not.toBe("165");
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+  });
+
+  it("descartar elimina también el borrador cuando la tabla ajena es incompatible (el editor queda sin tabla)", () => {
+    editAndDirty();
+    cleanup();
+    const view = mount();
+    anotherSessionSaves({ byTier: {}, byCategory: { [CAT]: { t_retail: { kind: "markup", percent: 10 } } } } as unknown as PricingRulesConfig);
+    rerender(view);
+    fireEvent.click(screen.getByRole("button", { name: /Descartar mis cambios y recargar/ }));
+    expect(screen.queryByLabelText(/Iconic \(pesos\)/)).toBeNull();
+    expect(localStorage.getItem(keyFor())).toBeNull();
+  });
+
+  it("eliminar la tabla guardada elimina también su borrador", async () => {
+    state.stores[0].pricingRules = savedTable(60);
+    mount();
+    selectCategory(); // con tabla guardada el editor abre solo
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "175" } });
+    expect(stored(keyFor())?.draft.prices.t_iconic?.[0]).toBe(175);
+    fireEvent.click(screen.getByRole("button", { name: /Quitar tabla de esta categoría/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Quitar tabla$/ }));
+    await screen.findByText("Tabla eliminada.");
+    expect(localStorage.getItem(keyFor())).toBeNull();
+  });
+});
+
+// Segunda revisión de código de #538 (24-nov): menores que rompían la promesa
+// de conservar el borrador. Cada prueba reproduce el escenario del revisor.
+describe("#538 segunda revisión — el borrador se conserva de verdad", () => {
+  const STORE = "store_olivia";
+  const CAT2 = "store_olivia__perfumes";
+  const CAT3 = "store_olivia__minimo";
+  const keyFor = (cat = CAT) => `store-os:strategy-draft:u-fer:${STORE}:${cat}`;
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+  const saveButton = () => screen.getByRole("button", { name: /Guardar tabla|Guardando…|Sin cambios/ });
+  const twoBands = { limits: [{ min: 0, max: 60 }, { min: 60 }], prices: { t_retail: [290, 310], t_girly: [230, 260], t_iconic: [160, 170] }, dirty: true };
+  // The base a real stored draft carries: the signature of what was saved when it was written.
+  const store = (cat: string, iconic: number[], base = rulesSignature(null)) => localStorage.setItem(keyFor(cat), JSON.stringify({ v: 1, draftBase: base, savedAt: "", draft: { ...twoBands, prices: { ...twoBands.prices, t_iconic: iconic } } }));
+  const category = (id: string, name: string, sortOrder: number) => ({ id, storeId: STORE, name, slug: id, sortOrder, active: true, createdAt: "", updatedAt: "" } as Category);
+  const savedTable = (max: number): PricingRulesConfig => {
+    const band = (price: number) => [{ min: 0, max, price }, { min: max, price: price + 10 }];
+    return { byTier: {}, byCategory: { [CAT]: {
+      t_retail: { kind: "bands", bands: band(290), rounding: "none" },
+      t_girly: { kind: "bands", bands: band(230), rounding: "none" },
+      t_iconic: { kind: "bands", bands: band(160), rounding: "none" },
+    } } };
+  };
+  /** El mismo estado con otra tabla guardada: como cuando la sincronización la trae. */
+  const syncSavedTable = (view: ReturnType<typeof mount>, pricingRules: PricingRulesConfig) => {
+    const next = fixtureState();
+    next.stores[0] = oliviaStore();
+    next.categories = state.categories;
+    next.products = state.products;
+    next.stores[0].pricingRules = pricingRules;
+    mocks.state = next;
+    view.rerender(<ToastProvider><PricingStrategyScreen /></ToastProvider>);
+  };
+
+  function editAndDirty(value = "165") {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value } });
+  }
+  function deferredSave() {
+    let resolve!: () => void;
+    mocks.saveCategoryPricingRules.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+    return () => resolve();
+  }
+
+  it("cambiar de categoría mientras guarda no pierde el borrador de la otra", async () => {
+    state.categories = [categoryFixture(), category(CAT2, "Perfumes", 2)];
+    store(CAT2, [180, 170]);
+    editAndDirty();
+    const finish = deferredSave();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    // mientras guarda, Fer se va a otra categoría
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: CAT2 } });
+    await waitFor(() => expect(iconicFirst()).toBe("180"));
+    finish();
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    expect(iconicFirst()).toBe("180");
+    expect(saveButton().textContent).toMatch(/Guardar tabla|Guardando…/); // sigue pendiente: nunca se envió
+    expect(localStorage.getItem(keyFor(CAT2))).not.toBeNull();
+    // ...y su firma base es la suya: el guardado ajeno no la convierte en "cambiada en otra sesión".
+    expect(screen.queryByText(/cambiaron en otra sesión/i)).toBeNull();
+  });
+
+  it("en modo desarrollo (StrictMode) el borrador guardado también se recupera", async () => {
+    store(CAT, [165, 170]);
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${encodeURIComponent(CAT)}`); // ya en la categoría al montar
+    render(<StrictMode><ToastProvider><PricingStrategyScreen /></ToastProvider></StrictMode>);
+    selectCategory();
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(localStorage.getItem(keyFor())).not.toBeNull();
+  });
+
+  it("en modo desarrollo, con tabla guardada, el borrador recuperado no se da por guardado", async () => {
+    state.stores[0].pricingRules = savedTable(60);
+    store(CAT, [165, 170], rulesSignature(savedTable(60).byCategory![CAT]));
+    window.history.replaceState({}, "", `/productos/estrategia?categoria=${encodeURIComponent(CAT)}`);
+    render(<StrictMode><ToastProvider><PricingStrategyScreen /></ToastProvider></StrictMode>);
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    expect(localStorage.getItem(keyFor())).not.toBeNull();
+  });
+
+  it("«Reemplazar con la propuesta» también pide confirmación sobre un borrador recuperado", async () => {
+    state.stores[0].pricingRules = { byTier: {}, byCategory: { [CAT]: { t_retail: { kind: "markup", percent: 10 } } } } as unknown as PricingRulesConfig;
+    store(CAT, [165, 170]);
+    mount();
+    selectCategory();
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    fireEvent.click(screen.getByRole("button", { name: /Reemplazar con la propuesta/ }));
+    expect(screen.getByText(/¿Restaurar la propuesta y perder tus cambios\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(iconicFirst()).toBe("165");
+  });
+
+  it("si la pantalla se deja con un guardado en curso, al volver no aparecen avisos falsos ni resucita lo ya guardado", async () => {
+    editAndDirty("165");
+    const finish = deferredSave();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    const rulesSent = mocks.saveCategoryPricingRules.mock.calls[mocks.saveCategoryPricingRules.mock.calls.length - 1][1] as Record<string, PricingRule>;
+    cleanup(); // se va (Diagnóstico) antes de que termine
+    const view = mount(); // y vuelve antes de que termine
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    // el guardado termina: Firestore entrega exactamente lo que se envió
+    syncSavedTable(view, { byTier: {}, byCategory: { [CAT]: rulesSent } });
+    finish();
+    await screen.findByRole("button", { name: "Sin cambios" });
+    expect(screen.queryByText(/cambiaron en otra sesión/i)).toBeNull();
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+    expect(localStorage.getItem(keyFor())).toBeNull();
+  });
+
+  it("el aviso de recuperación no reaparece tras guardar ni sigue tras descartar", async () => {
+    state.stores[0].pricingRules = savedTable(60);
+    mount(); // con tabla guardada el editor abre solo
+    selectCategory();
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    await waitFor(() => expect(localStorage.getItem(keyFor())).not.toBeNull()); // el propio editor lo guardó con su firma base
+    cleanup();
+    mount();
+    selectCategory();
+    await waitFor(() => expect(iconicFirst()).toBe("165"));
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "175" } });
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull(); // edición nueva: no es una recuperación
+    // y tras descartar explícitamente un borrador recuperado tampoco queda
+    cleanup();
+    const again = mount();
+    selectCategory();
+    await waitFor(() => expect(iconicFirst()).toBe("175"));
+    syncSavedTable(again, savedTable(50));
+    fireEvent.click(screen.getByRole("button", { name: /Descartar mis cambios y recargar/ }));
+    expect(screen.queryByText(/Recuperamos tus cambios sin guardar/)).toBeNull();
+  });
+
+  it("sin propuesta calculada, «Restaurar propuesta» no promete un reemplazo que no existe", async () => {
+    state.categories = [categoryFixture(), category(CAT3, "Mínimo", 2)];
+    state.products = [...clusterProducts(), ...Array.from({ length: 2 }, () => product(50, { t_retail: 180, t_girly: 150, t_iconic: 120 }, 1, CAT3))];
+    store(CAT3, [120, 110]);
+    mount();
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: CAT3 } });
+    await waitFor(() => expect(iconicFirst()).toBe("120"));
+    expect(screen.getByRole("button", { name: /Restaurar propuesta/ })).toBeDisabled();
+    expect(localStorage.getItem(keyFor(CAT3))).not.toBeNull();
+  });
+});
+
+describe("#538 tercera revisión — guardar desde la recuperación persiste", () => {
+  const keyFor = (uid = "u-fer", cat = CAT) => `store-os:strategy-draft:${uid}:store_olivia:${cat}`;
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+
+  // QA 24-nov (dictamen BLOQUEADO): editar → Diagnóstico → volver → editar de
+  // nuevo → Guardar. La sesión nueva mostraba el último guardado limpio: el
+  // cambio post-recuperación se perdía en silencio.
+  it("guardar desde el estado recuperado envía a Firestore el último cambio (no el último guardado)", async () => {
+    // sesión 1: editar sin guardar y salir a Diagnóstico (desmonta la pantalla)
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "165" } });
+    expect(JSON.parse(localStorage.getItem(keyFor())!).draft.prices.t_iconic[0]).toBe(165);
+    cleanup();
+
+    // sesión 2 (recuperada): vuelve con el aviso y las ediciones
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(iconicFirst()).toBe("165");
+
+    // editar de nuevo y guardar
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "170" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+
+    expect(mocks.saveCategoryPricingRules).toHaveBeenCalledTimes(1);
+    const [categoryId, rules] = mocks.saveCategoryPricingRules.mock.calls[0];
+    expect(categoryId).toBe(CAT);
+    expect((rules as Record<string, { bands: Array<{ price: number }> }>).t_iconic.bands[0].price).toBe(170);
+
+    // sesión 3 (nueva): sin borrador almacenado y la tabla guardada ya contiene el 170
+    expect(localStorage.getItem(keyFor())).toBeNull();
+    cleanup();
+    const saved = fixtureState();
+    saved.stores[0] = oliviaStore();
+    saved.products = state.products;
+    saved.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: { [CAT]: (rules as Record<string, PricingRule>) },
+    };
+    mocks.state = saved;
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(iconicFirst()).toBe("170");
+  });
+});
+
+describe("#538 tercera revisión — rechazo de concurrencia con decisión visible", () => {
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+
+  function mountDirtyRecoveredDraft() {
+    // sesión previa: borrador sucio almacenado con un draftBase VIEJO
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "170" } });
+    cleanup();
+  }
+
+  it("el rechazo por concurrencia deja una decisión persistente y permite guardar los cambios sobre la tabla nueva", async () => {
+    mountDirtyRecoveredDraft();
+    // la tabla guardada cambió "en otra sesión": la firma ya no coincide con el draftBase del borrador
+    const saved = fixtureState();
+    saved.stores[0] = oliviaStore();
+    saved.products = state.products;
+    const band = (price: number) => [{ min: 0, max: 60, price }, { min: 60, price: price + 10 }];
+    saved.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: { [CAT]: {
+        t_retail: { kind: "bands", bands: band(300), rounding: "none" },
+        t_girly: { kind: "bands", bands: band(240), rounding: "none" },
+        t_iconic: { kind: "bands", bands: band(180), rounding: "none" },
+      } },
+    };
+    mocks.state = saved;
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(screen.getByText(/Recuperamos tus cambios sin guardar/)).toBeTruthy();
+    expect(iconicFirst()).toBe("170");
+
+    // el guardado es rechazado por la concurrencia
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    // decisión PERSISTENTE en pantalla (no sólo un toast que se apaga)
+    await screen.findByText(/Tu guardado fue rechazado/i);
+
+    // la operadora decide guardar SUS cambios sobre la tabla nueva (con confirmación)
+    fireEvent.click(screen.getByRole("button", { name: /Guardar mis cambios sobre la tabla nueva/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar mis cambios" }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+
+    expect(mocks.saveCategoryPricingRules).toHaveBeenCalledTimes(2);
+    const [categoryId, rules] = mocks.saveCategoryPricingRules.mock.calls[1];
+    expect(categoryId).toBe(CAT);
+    expect((rules as Record<string, { bands: Array<{ price: number }> }>).t_iconic.bands[0].price).toBe(170);
+    // la decisión desaparece tras guardar
+    expect(screen.queryByText(/Tu guardado fue rechazado/i)).toBeNull();
+  });
+
+  it("cancelar la decisión conserva el borrador y la tabla nueva intacta", async () => {
+    mountDirtyRecoveredDraft();
+    const saved = fixtureState();
+    saved.stores[0] = oliviaStore();
+    saved.products = state.products;
+    const band = (price: number) => [{ min: 0, max: 60, price }, { min: 60, price: price + 10 }];
+    saved.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: { [CAT]: {
+        t_retail: { kind: "bands", bands: band(300), rounding: "none" },
+        t_girly: { kind: "bands", bands: band(240), rounding: "none" },
+        t_iconic: { kind: "bands", bands: band(180), rounding: "none" },
+      } },
+    };
+    mocks.state = saved;
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText(/Tu guardado fue rechazado/i);
+    fireEvent.click(screen.getByRole("button", { name: /Guardar mis cambios sobre la tabla nueva/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    // sin confirmar no hay segundo intento; el borrador sigue en el editor
+    expect(mocks.saveCategoryPricingRules).toHaveBeenCalledTimes(1);
+    expect(iconicFirst()).toBe("170");
+    expect(screen.getByText(/Tu guardado fue rechazado/i)).toBeTruthy();
+  });
+});
+
+describe("#538 r2 — alcance y frescura del reintento", () => {
+  const iconicFirst = () => (screen.getAllByLabelText(/Iconic \(pesos\)/)[0] as HTMLInputElement).value;
+  const band = (price: number) => [{ min: 0, max: 60, price }, { min: 60, price: price + 10 }];
+  function savedTableWith(retail: number) {
+    const saved = fixtureState();
+    saved.stores[0] = oliviaStore();
+    saved.products = state.products;
+    saved.stores[0].pricingRules = {
+      byTier: {},
+      byCategory: { [CAT]: {
+        t_retail: { kind: "bands", bands: band(retail), rounding: "none" },
+        t_girly: { kind: "bands", bands: band(240), rounding: "none" },
+        t_iconic: { kind: "bands", bands: band(180), rounding: "none" },
+      } },
+    };
+    return saved;
+  }
+  function dirtyDraftFromOtherTable() {
+    mount();
+    selectCategory();
+    fireEvent.click(screen.getByRole("button", { name: /Editar esta propuesta/ }));
+    fireEvent.change(screen.getAllByLabelText(/Iconic \(pesos\)/)[0], { target: { value: "170" } });
+    cleanup();
+  }
+
+  it("el rechazo no se fuga a otra categoría (H2)", async () => {
+    dirtyDraftFromOtherTable();
+    mocks.state = savedTableWith(300);
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText(/Tu guardado fue rechazado/i);
+    // cambia a otra categoría: el falso banner no viaja con ella
+    fireEvent.change(screen.getByLabelText("Categoría"), { target: { value: CAT2 } });
+    await screen.findByLabelText("Categoría");
+    expect(screen.queryByText(/Tu guardado fue rechazado/i)).toBeNull();
+  });
+
+  it("el reintento usa la firma fresca que entregó el listener, no la del cierre (H3)", async () => {
+    dirtyDraftFromOtherTable();
+    mocks.state = savedTableWith(300);
+    mount();
+    await screen.findAllByLabelText(/Iconic \(pesos\)/);
+    expect(iconicFirst()).toBe("170");
+    mocks.saveCategoryPricingRules.mockRejectedValueOnce(new CategoryRulesConflictError());
+    fireEvent.click(screen.getByRole("button", { name: /Guardar tabla/ }));
+    await screen.findByText(/Tu guardado fue rechazado/i);
+    // entre el render y el clic, el listener entrega la tabla fresca (290)
+    mocks.state = savedTableWith(290);
+    fireEvent.click(screen.getByRole("button", { name: /Guardar mis cambios sobre la tabla nueva/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar mis cambios" }));
+    await screen.findByText("Tabla guardada. Los precios de tus productos no cambiaron.");
+    const second = mocks.saveCategoryPricingRules.mock.calls[1];
+    expect(second[0]).toBe(CAT);
+    // el baseline del reintento debe ser la firma de la tabla 290 (fresca), no la 300 del cierre
+    const fresh = fixtureState();
+    fresh.stores[0] = oliviaStore();
+    fresh.products = state.products;
+    fresh.stores[0].pricingRules = savedTableWith(290).stores[0].pricingRules;
+    mocks.state = savedTableWith(290);
+    const { rulesSignature } = await import("../../lib/pricingRules");
+    const expected = rulesSignature((savedTableWith(290).stores[0].pricingRules as { byCategory: Record<string, Record<string, import("../../types").PricingRule>> }).byCategory[CAT]);
+    expect(second[2]).toBe(expected);
   });
 });
