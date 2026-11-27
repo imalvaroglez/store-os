@@ -10,6 +10,7 @@ export function Dialog({
   onClose,
   children,
   footer,
+  wide = false,
 }: {
   open: boolean;
   title: string;
@@ -17,6 +18,10 @@ export function Dialog({
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** #569: task dialogs that work with parallel columns on desktop (e.g.
+   * warehouse stocking) get a wider panel; every other dialog keeps the
+   * compact default. */
+  wide?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const lastFocused = useRef<HTMLElement | null>(null);
@@ -89,7 +94,7 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative bg-paper rounded-sheet w-full max-w-sm shadow-lift p-5 max-h-[92vh] overflow-y-auto"
+        className={`relative bg-paper rounded-sheet w-full ${wide ? "max-w-3xl" : "max-w-sm"} shadow-lift p-5 max-h-[92vh] overflow-y-auto`}
         style={{ animation: "dialogPop var(--motion-base) var(--ease-spring)" }}
       >
         <h2 className={`serif-display text-xl font-semibold mb-2 ${tone === "danger" ? "text-danger" : "text-ink"}`}>

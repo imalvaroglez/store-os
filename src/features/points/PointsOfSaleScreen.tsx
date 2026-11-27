@@ -7,6 +7,7 @@
 // Surtir/Retirar arrive in later cuts.
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
+import { StockPointDialog } from "./StockPointDialog";
 import {
   Badge,
   Button,
@@ -69,7 +70,6 @@ export function PointsOfSaleScreen() {
     convertOrderToFirstSurtido,
     registerPointCut,
     registerPointCutPayment,
-    stockPoint,
     withdrawFromPoint,
     annulPointCut,
     deliverPointExhibitors,
@@ -93,11 +93,9 @@ export function PointsOfSaleScreen() {
   const [commissionPct, setCommissionPct] = useState<string>("");
   const [bajas, setBajas] = useState<Array<{ rowKey: string; qty: string; reason: string }>>([]);
   const [payingCorte, setPayingCorte] = useState<string | null>(null);
-  // #524 manual movements: warehouse → point (stocking) and point → warehouse.
+  // #524/#569 manual movements: warehouse → point (stocking) lives in
+  // StockPointDialog; point → warehouse (retreat) stays here.
   const [stocking, setStocking] = useState(false);
-  const [stockQuery, setStockQuery] = useState("");
-  const [stockQty, setStockQty] = useState<Record<string, string>>({});
-  const [stockPrice, setStockPrice] = useState<Record<string, string>>({});
   const [withdrawing, setWithdrawing] = useState(false);
   const [withdrawQty, setWithdrawQty] = useState<Record<string, string>>({});
   // #524 annulment: the latest unpaid corte, with the open-month check.
@@ -209,58 +207,9 @@ export function PointsOfSaleScreen() {
     [soldByRow, bajas]
   );
 
-  // Warehouse rows for «Surtir del almacén»: sellable shelf per product or
-  // color, with the point's tier price proposed (pilot: Regular).
-  // #524 multilínea: allWarehouseRows is the FULL shelf; the search narrows
-  // what the operator SEES, never what a confirmation saves. Quantities
-  // captured under earlier searches stay keyed in stockQty, so confirmStock
-  // walks the full set and one confirmation saves every captured line even
-  // while the last search is still active.
+  // The point's price level drives every suggested label price (#569: the
+  // stocking dialog resolves each variant's own/shared price with it).
   const tierId = openPoint?.priceTierId ?? activeStore?.defaultTierId ?? "t_retail";
-  const allWarehouseRows = useMemo(() => {
-    if (!stocking) return [];
-    const rows: Array<{ key: string; productId: string; variantId?: string; label: string; available: number; suggestedPrice: number; cost?: number }> = [];
-    for (const product of state.products.filter((p) => p.storeId === storeId)) {
-      const variants = product.variants ?? [];
-      if (variants.length > 0) {
-        for (const variant of variants) {
-          const available = variant.quantityOnHand ?? 0;
-          if (available <= 0) continue;
-          rows.push({
-            key: `${product.id}|${variant.id}`,
-            productId: product.id,
-            variantId: variant.id,
-            label: `${product.name} · ${variant.color}`,
-            available,
-            suggestedPrice: product.prices?.[tierId] ?? 0,
-            cost: variant.cost ?? product.cost,
-          });
-        }
-      } else {
-        const available = product.quantityOnHand ?? 0;
-        if (available <= 0) continue;
-        rows.push({
-          key: `${product.id}|`,
-          productId: product.id,
-          label: product.name,
-          available,
-          suggestedPrice: product.prices?.[tierId] ?? 0,
-          cost: product.cost,
-        });
-      }
-    }
-    return rows;
-  }, [stocking, state.products, storeId, tierId]);
-  const warehouseRows = useMemo(() => {
-    const needle = stockQuery.trim().toLowerCase();
-    return needle === "" ? allWarehouseRows : allWarehouseRows.filter((row) => row.label.toLowerCase().includes(needle));
-  }, [allWarehouseRows, stockQuery]);
-  // Captured lines the active search hides: the confirmation will save them
-  // too, so the count keeps that proposal reviewable (density: one line,
-  // only while it applies).
-  const capturedLineCount = allWarehouseRows.filter((row) => Number(stockQty[row.key] ?? "") > 0).length;
-  const hiddenCapturedLineCount =
-    capturedLineCount - warehouseRows.filter((row) => Number(stockQty[row.key] ?? "") > 0).length;
 
   // Point rows for «Retirar»: per product + color (any price), pieces left.
   const withdrawRows = useMemo(() => {
@@ -444,7 +393,6 @@ export function PointsOfSaleScreen() {
   const [cutIntentId, setCutIntentId] = useState("");
   const [payIntentId, setPayIntentId] = useState("");
   const [annulIntentId, setAnnulIntentId] = useState("");
-  const [stockIntentId, setStockIntentId] = useState("");
   const [withdrawIntentId, setWithdrawIntentId] = useState("");
   const previewEntries = useMemo(
     () =>
@@ -573,50 +521,6 @@ export function PointsOfSaleScreen() {
       setPayIntentId("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo registrar el cobro.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function confirmStock() {
-    if (!openPoint) return;
-    // Full shelf, not the search-filtered view: lines captured under earlier
-    // searches must survive the confirmation (#524 multilínea).
-    const lines = allWarehouseRows
-      .map((row) => ({ row, qty: Number(stockQty[row.key] ?? "") }))
-      .filter((item) => Number.isFinite(item.qty) && item.qty > 0 && item.qty <= item.row.available)
-      .map((item) => {
-        const priceText = stockPrice[item.row.key]?.trim();
-        const price = priceText !== undefined && priceText !== "" ? parseAmount(priceText) : undefined;
-        return {
-          productId: item.row.productId,
-          ...(item.row.variantId ? { variantId: item.row.variantId } : {}),
-          qty: Math.floor(item.qty),
-          markedPriceCents: orderAmountCents(price ?? item.row.suggestedPrice, 1),
-        };
-      });
-    if (lines.length === 0) return;
-    setBusy(true);
-    try {
-      const result = await stockPoint({
-        storeId,
-        pointId: openPoint.id,
-        physicalDate: todayIso(),
-        intentId: stockIntentId,
-        lines,
-      });
-      toast.success(
-        result.stocked
-          ? `Surtido: ${result.units} piezas al punto.`
-          : "Este surtido ya estaba aplicado; no se hizo ningún cambio."
-      );
-      setStocking(false);
-      setStockQty({});
-      setStockPrice({});
-      setStockQuery("");
-      setStockIntentId("");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo surtir el punto.");
     } finally {
       setBusy(false);
     }
@@ -838,9 +742,11 @@ export function PointsOfSaleScreen() {
               <>
             {openPoint ? (
               <div className="flex flex-wrap gap-2">
-                <Button variant="ghost" size="sm" onClick={() => { setStocking(true); setStockQuery(""); setStockIntentId(uid()); }}>
-                  Surtir del almacén
-                </Button>
+                {pointEntries.length > 0 ? (
+                  <Button variant="ghost" size="sm" onClick={() => setStocking(true)}>
+                    Surtir del almacén
+                  </Button>
+                ) : null}
                 {summaryHasStock(cutRows) ? (
                   <Button variant="ghost" size="sm" onClick={() => { setWithdrawing(true); setWithdrawIntentId(uid()); }}>
                     Retirar
@@ -1043,17 +949,21 @@ export function PointsOfSaleScreen() {
             {pointEntries.length === 0 ? (
               <EmptyState
                 title="Este punto todavía no tiene mercancía"
-                subtitle="Dale su primer surtido desde un pedido confirmado: las piezas reservadas pasan al punto con su precio y su costo."
+                subtitle="Súrtelo directamente del almacén eligiendo piezas y variantes, o convierte un pedido confirmado: las piezas reservadas pasan al punto con su precio y su costo."
                 action={
-                  <Button
-                    onClick={() => {
-                      setSurtidoOrder(null);
-                      setPhysicalDate(todayIso());
-                      setPickingOrder(true);
-                    }}
-                  >
-                    Usar como surtido inicial
-                  </Button>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button onClick={() => setStocking(true)}>Surtir del almacén</Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setSurtidoOrder(null);
+                        setPhysicalDate(todayIso());
+                        setPickingOrder(true);
+                      }}
+                    >
+                      Usar como surtido inicial
+                    </Button>
+                  </div>
                 }
               />
             ) : (
@@ -1328,72 +1238,13 @@ export function PointsOfSaleScreen() {
         ) : null}
       </Dialog>
 
-      <Dialog
+      <StockPointDialog
         open={stocking}
+        point={openPoint}
+        products={state.products.filter((p) => p.storeId === storeId)}
+        tierId={tierId}
         onClose={() => setStocking(false)}
-        title="Surtir del almacén"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setStocking(false)}>Cancelar</Button>
-            <Button disabled={busy || !Object.values(stockQty).some((value) => Number(value) > 0)} onClick={() => void confirmStock()}>
-              Surtir piezas
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-on-surface-soft">
-          Mueve piezas disponibles del almacén a este punto. El precio de etiqueta se propone del nivel del punto; confírmalo o ajústalo por fila.
-        </p>
-        <TextField
-          label="Buscar"
-          placeholder="Nombre…"
-          value={stockQuery}
-          onChange={(e) => setStockQuery(e.target.value)}
-        />
-        {hiddenCapturedLineCount > 0 ? (
-          <p className="text-xs text-on-surface-soft">
-            Se surtirán {capturedLineCount} {capturedLineCount === 1 ? "línea" : "líneas"} en total; {hiddenCapturedLineCount}{" "}
-            {hiddenCapturedLineCount === 1 ? "queda fuera" : "quedan fuera"} de esta búsqueda y también se guarda{hiddenCapturedLineCount === 1 ? "" : "n"} al confirmar.
-          </p>
-        ) : null}
-        <div className="max-h-80 space-y-1 overflow-y-auto">
-          {allWarehouseRows.length === 0 ? (
-            <p className="text-sm text-on-surface-soft">No hay piezas disponibles en el almacén.</p>
-          ) : warehouseRows.length === 0 ? (
-            <p className="text-sm text-on-surface-soft">Sin resultados para esta búsqueda.</p>
-          ) : (
-            warehouseRows.map((row) => (
-              <div key={row.key} className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-1 last:border-0">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-on-surface">{row.label}</p>
-                  <p className="text-xs text-on-surface-soft">
-                    {row.available} en almacén · sugerido <Money amount={row.suggestedPrice} />
-                    {row.cost !== undefined ? ` · costo ${formatMoneyExact(row.cost)}` : " · costo pendiente"}
-                  </p>
-                </div>
-                <div className="w-24">
-                  <TextField
-                    label="Piezas"
-                    inputMode="numeric"
-                    placeholder="0"
-                    value={stockQty[row.key] ?? ""}
-                    onChange={(e) => setStockQty((prev) => ({ ...prev, [row.key]: e.target.value }))}
-                  />
-                </div>
-                <div className="w-28">
-                  <TextField
-                    label="Etiqueta"
-                    inputMode="decimal"
-                    placeholder={String(row.suggestedPrice)}
-                    value={stockPrice[row.key] ?? ""}
-                    onChange={(e) => setStockPrice((prev) => ({ ...prev, [row.key]: e.target.value }))}
-                  />
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </Dialog>
+      />
 
       <Dialog
         open={withdrawing}

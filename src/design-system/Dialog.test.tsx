@@ -44,3 +44,25 @@ describe("Dialog · trampa de foco con controles deshabilitados (#539)", () => {
     expect(document.activeElement).toBe(cancelar);
   });
 });
+
+// #569: the warehouse stocking dialog works with two parallel columns on
+// desktop (results + capture), so it needs a WIDER panel — every other
+// dialog keeps its compact size.
+describe("Dialog · variante de ancho (#569)", () => {
+  it("wide ensancha el panel; sin wide el diálogo conserva su tamaño", () => {
+    const { container, rerender } = render(
+      <Dialog open onClose={() => {}} title="Normal">
+        <p>Contenido</p>
+      </Dialog>
+    );
+    const panel = () => container.querySelector('[role="dialog"]') as HTMLElement;
+    expect(panel().className).toContain("max-w-sm");
+    rerender(
+      <Dialog open wide onClose={() => {}} title="Surtir del almacén">
+        <p>Contenido</p>
+      </Dialog>
+    );
+    expect(panel().className).toContain("max-w-3xl");
+    expect(panel().className).not.toContain("max-w-sm");
+  });
+});

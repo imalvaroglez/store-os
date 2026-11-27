@@ -370,10 +370,11 @@ describe("#524 surtir del almacén y retirar en la ficha", () => {
     mount();
     fireEvent.click(screen.getByText("Mostrador centro"));
     fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
-    // El perfume del almacén (6 disponibles, Regular $950) aparece con su precio sugerido.
+    // El perfume del almacén (4 disponibles, Regular $950) aparece con su precio sugerido.
     expect(screen.getByText(/4 en almacén/)).toBeTruthy();
-    const piezas = screen.getAllByLabelText("Piezas");
-    fireEvent.change(piezas[0], { target: { value: "2" } });
+    expect((screen.getByLabelText("Precio de etiqueta de Perfume Chanel Chance 100 ml") as HTMLInputElement).value).toBe("950");
+    fireEvent.change(screen.getByLabelText("Cantidad de Perfume Chanel Chance 100 ml"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar Perfume Chanel Chance 100 ml" }));
     fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
     await screen.findByText(/Surtido: 2 piezas/i);
     expect(mocks.stockPoint).toHaveBeenCalledTimes(1);
@@ -394,13 +395,15 @@ describe("#524 surtir del almacén y retirar en la ficha", () => {
     mount();
     fireEvent.click(screen.getByText("Mostrador centro"));
     fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
-    // Búsqueda 1: el perfume; captura 2 piezas.
+    // Búsqueda 1: el perfume; agrega 2 piezas.
     fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "Perfume" } });
-    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "2" } });
-    // Búsqueda 2: la cartera; captura 1 pieza. La búsqueda anterior sigue
+    fireEvent.change(screen.getByLabelText("Cantidad de Perfume Chanel Chance 100 ml"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar Perfume Chanel Chance 100 ml" }));
+    // Búsqueda 2: la cartera; agrega 1 pieza. La búsqueda anterior sigue
     // filtrando lo visible, pero la captura ya hecha no se pierde.
     fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "Cartera" } });
-    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Cantidad de Cartera de piel · Café"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar Cartera de piel · Café" }));
     fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
     await screen.findByText(/Surtido: 3 piezas/i);
     expect(mocks.stockPoint).toHaveBeenCalledTimes(1);
@@ -574,7 +577,7 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     expect(second[0].intentId).toBe(first[0].intentId);
   });
 
-  it("surtir: el reintento lleva el MISMO intentId", async () => {
+  it("surtir: el reintento lleva el MISMO intentId y la MISMA carga", async () => {
     state.points = [
       { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
     ];
@@ -582,7 +585,8 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     mount();
     fireEvent.click(screen.getByText("Mostrador centro"));
     fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
-    fireEvent.change(screen.getAllByLabelText("Piezas")[0], { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Cantidad de Perfume Chanel Chance 100 ml"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar Perfume Chanel Chance 100 ml" }));
     mocks.stockPoint.mockRejectedValueOnce(new Error("Network request failed"));
     fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
     await screen.findByText(/Network request failed/i);
@@ -593,6 +597,10 @@ describe("#524 M1 — el reintento tras respuesta perdida reutiliza la intenció
     // (así se detectó el botón de surtido que no acuñaba).
     expect(first[0].intentId).toBeTruthy();
     expect(second[0].intentId).toBe(first[0].intentId);
+    // #569: la carga del reintento es idéntica — una edición tras respuesta
+    // perdida nunca se envía como confirmación nueva.
+    expect(second[0].lines).toEqual(first[0].lines);
+    expect(second[0].physicalDate).toBe(first[0].physicalDate);
   });
 
   it("retirar: el reintento lleva el MISMO intentId", async () => {
@@ -781,5 +789,203 @@ describe("#524 Exhibidores: pestaña, entrega, costo y retiro", () => {
     // Valor al costo sigue siendo el de las ENTRADAS de mercancía (5 × $50).
     expect(screen.getByText(/Valor al costo/).textContent).toContain("250");
     expect(screen.getByText(/Valor al precio marcado/).textContent).toContain("500");
+  });
+});
+
+describe("#569 surtido directo con variantes y captura en lote", () => {
+  const ANILLO = "Anillo Ajustable Nombre Largo Brillante";
+
+  /** El ejemplo de la issue: dos variantes con precio propio, una agotada,
+   * un producto sin variantes y un diseño con precio compartido/ausente. */
+  function surtidoProducts(): Product[] {
+    const variant = (id: string, color: string, quantityOnHand: number, cost: number | undefined, prices?: Record<string, number>) =>
+      ({ id, color, quantityOnHand, ...(cost !== undefined ? { cost } : {}), ...(prices ? { prices } : {}), createdAt: NOW, updatedAt: NOW });
+    return [
+      {
+        id: "p-anillo",
+        storeId: "store_olivia",
+        name: ANILLO,
+        category: "jewelry",
+        isPublic: true,
+        quantityOnHand: undefined,
+        variants: [
+          variant("v-dorado", "Dorado", 8, 65, { t_retail: 160 }),
+          variant("v-plateado", "Plateado", 8, 68, { t_retail: 165 }),
+          variant("v-rosa", "Rosa", 0, 70, { t_retail: 170 }),
+        ],
+      },
+      {
+        id: "p-reloj",
+        storeId: "store_olivia",
+        name: "Reloj B",
+        category: "jewelry",
+        isPublic: true,
+        quantityOnHand: 12,
+        cost: 45,
+        prices: { t_retail: 120 },
+      },
+      {
+        id: "p-arete",
+        storeId: "store_olivia",
+        name: "Arete C",
+        category: "jewelry",
+        isPublic: true,
+        quantityOnHand: undefined,
+        prices: { t_retail: 100 },
+        variants: [
+          variant("v-oro", "Oro", 5, undefined), // comparte el precio del diseño
+          variant("v-perla", "Perla", 5, 40, { t_girly: 90 }), // mapa propio SIN el nivel del punto
+        ],
+      },
+    ] as Product[];
+  }
+
+  function withEmptyPoint(products: Product[] = surtidoProducts()) {
+    state.points = [
+      { id: "store_olivia__mostrador", storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [];
+    state.orders = [];
+    state.products = products;
+  }
+
+  function openDialog() {
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
+  }
+
+  it("ficha vacía: «Surtir del almacén» es la acción principal y abre sin pedidos; la conversión queda como alternativa", () => {
+    withEmptyPoint();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    const surtir = screen.getByRole("button", { name: "Surtir del almacén" });
+    expect(surtir).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Usar como surtido inicial" })).toBeTruthy();
+    fireEvent.click(surtir);
+    // El diálogo abre sobre el almacén disponible, sin pedir un pedido.
+    expect(screen.getByText("Dorado")).toBeTruthy();
+    expect(screen.getByRole("button", { name: `Agregar ${ANILLO} · Dorado` })).toBeEnabled();
+  });
+
+  it("buscar «Dorado» muestra el diseño una vez con sus hermanas; la variante agotada queda visible sin captura", () => {
+    withEmptyPoint();
+    openDialog();
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "Dorado" } });
+    expect(screen.getAllByText(ANILLO).length).toBe(1);
+    expect(screen.getByText("Dorado")).toBeTruthy();
+    expect(screen.getByText("Plateado")).toBeTruthy(); // la hermana llega con la coincidencia
+    expect(screen.getByText("Rosa")).toBeTruthy(); // la agotada no se esconde tras la búsqueda
+    expect(screen.getByText(/Sin existencias/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: `Agregar ${ANILLO} · Rosa` })).toBeDisabled();
+    expect(screen.queryByText("Reloj B")).toBeNull(); // los demás diseños no
+  });
+
+  it("misión del ejemplo: dos variantes con precios propios + producto sin variantes en UNA confirmación exacta", async () => {
+    withEmptyPoint();
+    mocks.stockPoint.mockResolvedValue({ stocked: true, entryCount: 3, units: 5 });
+    openDialog();
+    // La vista inicial prioriza lo disponible: Rosa (agotada) no aparece.
+    expect(screen.queryByText("Rosa")).toBeNull();
+    fireEvent.change(screen.getByLabelText(`Cantidad de ${ANILLO} · Dorado`), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText(`Precio de etiqueta de ${ANILLO} · Dorado`), { target: { value: "169.50" } });
+    fireEvent.click(screen.getByRole("button", { name: `Agregar ${ANILLO} · Dorado` }));
+    // Plateado conserva su sugerido propio (165), no el de su hermana.
+    fireEvent.change(screen.getByLabelText(`Cantidad de ${ANILLO} · Plateado`), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: `Agregar ${ANILLO} · Plateado` }));
+    // Una búsqueda nueva no quita ni confirma lo ya capturado.
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "Reloj B" } });
+    fireEvent.change(screen.getByLabelText("Cantidad de Reloj B"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar Reloj B" }));
+    // El foco cae en el renglón recién agregado, no se pierde.
+    expect(document.activeElement).toBe(screen.getByLabelText("Cantidad a surtir de Reloj B"));
+    expect(screen.getByText("Piezas para surtir")).toBeTruthy();
+    expect(screen.getByText(/5 piezas en 3 renglones/)).toBeTruthy();
+    expect(screen.getByText(/destino Mostrador centro/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    await screen.findByText(/Surtido: 5 piezas/i);
+    expect(mocks.stockPoint).toHaveBeenCalledTimes(1);
+    expect(mocks.stockPoint.mock.calls[0][0].lines).toEqual([
+      { productId: "p-anillo", variantId: "v-dorado", qty: 2, markedPriceCents: 16950 },
+      { productId: "p-anillo", variantId: "v-plateado", qty: 1, markedPriceCents: 16500 },
+      { productId: "p-reloj", qty: 2, markedPriceCents: 12000 },
+    ]);
+    expect(mocks.stockPoint.mock.calls[0][0].intentId).toBeTruthy();
+    expect(mocks.stockPoint.mock.calls[0][0].pointId).toBe("store_olivia__mostrador");
+    // El punto sigue abierto tras el surtido.
+    expect(screen.getAllByText("Mostrador centro").length).toBeGreaterThan(1);
+  });
+
+  it("un renglón agregado queda «Agregado» (sin duplicar) y «Quitar» lo libera", () => {
+    withEmptyPoint();
+    openDialog();
+    fireEvent.change(screen.getByLabelText(`Cantidad de ${ANILLO} · Dorado`), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: `Agregar ${ANILLO} · Dorado` }));
+    expect(screen.getByRole("button", { name: "Agregado" })).toBeDisabled();
+    expect(screen.getByText(/1 pieza en 1 renglón/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `Quitar ${ANILLO} · Dorado` }));
+    expect(screen.queryByRole("button", { name: "Agregado" })).toBeNull();
+    expect(screen.getByRole("button", { name: `Agregar ${ANILLO} · Dorado` })).toBeEnabled();
+    // Sin renglones, el bloque de captura no ocupa espacio.
+    expect(screen.queryByText("Piezas para surtir")).toBeNull();
+  });
+
+  it("precios: la variante que comparte el del diseño lo trae sugerido; la de mapa propio sin el nivel lo pide", () => {
+    withEmptyPoint();
+    openDialog();
+    // Renglones disponibles: Dorado, Plateado, Reloj B, Oro (comparte el del
+    // diseño) y Perla (mapa propio SIN el nivel del punto).
+    const priceOf = (name: string) =>
+      (screen.getByLabelText(`Precio de etiqueta de ${name}`) as HTMLInputElement).value;
+    expect(priceOf(`${ANILLO} · Dorado`)).toBe("160");
+    expect(priceOf(`${ANILLO} · Plateado`)).toBe("165");
+    expect(priceOf("Reloj B")).toBe("120");
+    expect(priceOf("Arete C · Oro")).toBe("100");
+    expect(priceOf("Arete C · Perla")).toBe("");
+    expect(screen.getAllByText(/Sin precio sugerido en este nivel/).length).toBe(1);
+    // Sin precio válido no se agrega: el renglón explica qué falta.
+    fireEvent.change(screen.getByLabelText("Cantidad de Arete C · Perla"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar Arete C · Perla" }));
+    expect(screen.getByText("Captura el precio de etiqueta.")).toBeTruthy();
+    expect(screen.queryByText(/renglones/)).toBeNull();
+  });
+
+  it("un renglón inválido detiene el lote completo: el callable recibe cero llamadas hasta corregir", async () => {
+    withEmptyPoint();
+    mocks.stockPoint.mockResolvedValue({ stocked: true, entryCount: 2, units: 3 });
+    openDialog();
+    fireEvent.change(screen.getByLabelText(`Cantidad de ${ANILLO} · Dorado`), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: `Agregar ${ANILLO} · Dorado` }));
+    fireEvent.change(screen.getByLabelText(`Cantidad de ${ANILLO} · Plateado`), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: `Agregar ${ANILLO} · Plateado` }));
+    // Edita la captura: más piezas que la existencia del almacén.
+    fireEvent.change(screen.getByLabelText(`Cantidad a surtir de ${ANILLO} · Plateado`), { target: { value: "99" } });
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    expect(await screen.findByText("Sólo hay 8 en almacén.")).toBeTruthy();
+    expect(mocks.stockPoint).not.toHaveBeenCalled();
+    // Precio vacío: el mismo freno para todo el lote.
+    fireEvent.change(screen.getByLabelText(`Precio de etiqueta a surtir de ${ANILLO} · Dorado`), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    expect(await screen.findByText("Captura el precio de etiqueta.")).toBeTruthy();
+    expect(mocks.stockPoint).not.toHaveBeenCalled();
+    // Corrige y la confirmación sale completa.
+    fireEvent.change(screen.getByLabelText(`Cantidad a surtir de ${ANILLO} · Plateado`), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText(`Precio de etiqueta a surtir de ${ANILLO} · Dorado`), { target: { value: "169.50" } });
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    await screen.findByText(/Surtido: 3 piezas/i);
+    expect(mocks.stockPoint).toHaveBeenCalledTimes(1);
+    expect(mocks.stockPoint.mock.calls[0][0].lines).toHaveLength(2);
+  });
+
+  it("cancelar descarta la captura: al reabrir no aparece nada de otra sesión", () => {
+    withEmptyPoint();
+    openDialog();
+    fireEvent.change(screen.getByLabelText(`Cantidad de ${ANILLO} · Dorado`), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: `Agregar ${ANILLO} · Dorado` }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByText("Piezas para surtir")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
+    expect(screen.queryByText(/renglones/)).toBeNull();
+    expect(mocks.stockPoint).not.toHaveBeenCalled();
   });
 });
