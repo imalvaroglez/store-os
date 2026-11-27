@@ -58,6 +58,8 @@ import { formatMoneyExact, publicPrice } from "../../lib/money";
 import { tiersForStore, defaultTier } from "../../lib/pricing";
 
 /** Private writes may succeed before this public projection is denied/fails. */
+import { emptySnapshotFromCacheIsFailure, STARTUP_LOAD_ERROR } from "./startupOutage";
+
 export class PublicCatalogProjectionError extends Error {
   readonly originalError?: unknown;
 
@@ -90,10 +92,14 @@ export async function loadCloudState(user: AppUser): Promise<AppState> {
   let stores: Store[] = [];
   if (user.role === "super_admin") {
     const snap = await getDocs(collection(db, "stores"));
+    // #554: an empty answer served from cache means the backend was
+    // unreachable and nothing is cached — a load FAILURE, not "no stores".
+    if (emptySnapshotFromCacheIsFailure(snap)) throw new Error(STARTUP_LOAD_ERROR);
     stores = snap.docs.map((d) => ({ ...(d.data() as Store), id: d.id }));
   } else {
     const q = query(collection(db, "stores"), where("memberUids", "array-contains", user.uid));
     const snap = await getDocs(q);
+    if (emptySnapshotFromCacheIsFailure(snap)) throw new Error(STARTUP_LOAD_ERROR);
     stores = snap.docs.map((d) => ({ ...(d.data() as Store), id: d.id }));
   }
 
@@ -195,7 +201,19 @@ export function subscribeCloudState(
   let tornDown = false;
 
   // Stores listener is always live — storesQ is already role-scoped above.
-  unsubscribers.push(onSnapshot(storesQ, triggerReload, onError));
+  // #554: an empty-from-cache delivery (backend unreachable, nothing cached)
+  // is an error to surface, never a "0 stores" ready state.
+  unsubscribers.push(onSnapshot(
+    storesQ,
+    (snap) => {
+      if (emptySnapshotFromCacheIsFailure(snap)) {
+        onError?.(new Error(STARTUP_LOAD_ERROR));
+        return;
+      }
+      triggerReload();
+    },
+    onError
+  ));
 
   // Members use storeId-filtered listeners because Firestore rules cannot use
   // rules as filters. Super_admins can use full collection listeners because
