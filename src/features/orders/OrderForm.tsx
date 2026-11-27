@@ -40,6 +40,8 @@ import {
   type InstallmentFrequency,
 } from "./installments";
 import { CustomerForm } from "../customers/CustomerForm";
+import { PriorDebtsPanel } from "./PriorDebtsPanel";
+import { navigate } from "../../lib/router";
 import { CURRENT_ORDER_SCHEMA_VERSION } from "../../types";
 import type { Customer, Order, OrderItem, OrderStatus, Product , OrderIncident} from "../../types";
 
@@ -1192,6 +1194,18 @@ export function OrderForm({
             tone={profitView?.profitCents != null && profitView.profitCents < 0 ? "danger" : "default"}
           >{profitView?.profitCents == null ? "—" : <Money exact amount={profitView.profitCents / 100} />}</StatRow>
         </div>
+        {/* #559: next to the saldo, what the clienta owes on her OTHER
+            orders and the total to collect — visibility only; cobros stay
+            per-order under the standing contract. */}
+        <PriorDebtsPanel
+          storeId={order.storeId}
+          customerId={customerId ?? undefined}
+          currentOrderId={restoredDraft?.orderId ?? order.id}
+          currentPendingCents={totals ? Math.round(totals.balance * 100) : 0}
+          currentCreditCents={totals ? Math.round(totals.availableCredit * 100) : 0}
+          pendingSync
+          onVisitOrder={(orderId) => navigate(`/pedidos/${orderId}`)}
+        />
         {profitView?.profitCents != null && profitView.linesWithoutCost > 0 && (
           <p className="text-xs text-on-surface-soft mt-1">
             {profitView.linesWithoutCost} {profitView.linesWithoutCost === 1 ? "línea sin costo no cuenta" : "líneas sin costo no cuentan"} en la ganancia.
