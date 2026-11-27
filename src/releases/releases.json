@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.23.1",
+    "date": "2026.11.26",
+    "title": "Estrategia recuerda tus cambios y el arranque avisa si falla",
+    "notes": [
+      "Estrategia. Puedes retomar los cambios sin guardar de tu tabla de precios al volver a la categoría o recargar. Si la tabla cambió en otra sesión, Store OS conserva tu borrador y te pide confirmar antes de reemplazarla.",
+      "Inicio de sesión. Si Store OS no puede cargar tus tiendas, muestra un aviso claro y te ofrece «Reintentar»."
+    ]
+  },
+  {
     "version": "1.23.0",
     "date": "2026.11.26",
     "title": "Puntos de venta físicos",
