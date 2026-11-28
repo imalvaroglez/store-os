@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.24.3",
+    "date": "2026.11.27",
+    "title": "Corrige el corte de tu punto sin volver a capturar",
+    "notes": [
+      "Puntos de venta. Si capturaste mal un corte —por ejemplo, anotaste 3 piezas vendidas y eran 2—, ahora lo corriges desde la ficha del punto: cada corte aparece en una lista con su fecha, estado e importe, y «Corregir corte» te regresa la captura tal como la hiciste.",
+      "Antes de confirmar ves qué cambia: cuántas piezas quedan en el punto y el monto nuevo por cobrar, junto al original. Escribes el motivo y el corte queda corregido en un solo paso, sin anular y recapturar todo.",
+      "El corte original no se pierde: queda marcado como corregido, con su motivo a la vista y ligado al reemplazo. Si el corte ya tiene cobro, ya hubo movimientos después o el mes ya está cerrado, la ficha te lo explica en lugar de ofrecer la corrección.",
+      "El cobro sigue disponible para todo corte pendiente, aunque ya no se pueda corregir; y la anulación sigue ahí para cortes capturados dos veces."
+    ]
+  },
+  {
     "version": "1.24.2",
     "date": "2026.11.27",
     "title": "Recuperas tu captura si el pedido ya estaba guardado",
