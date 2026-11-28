@@ -1297,37 +1297,32 @@ describe("#574 ficha del punto: vista propia, columnas y búsqueda", () => {
     expect(screen.getByText("Vitrina fondo")).toBeInTheDocument();
   });
 
-  it("1b. «Volver a puntos» restaura la posición tras el commit y re-aterriza si se pierde", async () => {
-    let y = 320;
-    let clampedOnce = true;
-    const scrollTo = vi.fn((arg: number | { top?: number }) => {
-      y = typeof arg === "number" ? arg : (arg.top ?? 0);
-      // Un agente tardío (retorno de foco, re-flow del listado) come la
-      // primera posición: el aterrizaje debe reintentar hasta que pegue.
-      if (clampedOnce) {
-        y = 0;
-        clampedOnce = false;
-      }
+  it.each([0, 320])("1b. «Volver a puntos» restaura la posición %i tras volver al listado", async (target) => {
+    const detailScroll = target === 0 ? 48 : 0;
+    let y = target;
+    let interrupted = true;
+    const scrollTo = vi.fn(({ top = 0 }: ScrollToOptions) => {
+      y = interrupted ? detailScroll : top;
+      interrupted = false;
     });
+    const originalScrollY = Object.getOwnPropertyDescriptor(window, "scrollY")!;
+    const originalScrollTo = Object.getOwnPropertyDescriptor(window, "scrollTo")!;
     Object.defineProperty(window, "scrollY", { get: () => y, configurable: true });
     Object.defineProperty(window, "scrollTo", { value: scrollTo, configurable: true });
-    mount();
-    abrirVitrina(); // guarda 320
-    y = 0; // el cambio de vista dejó el documento arriba
-    fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
-    // El aterrizaje NO vive en el handler del clic: corre tras el commit que
-    // re-pinta el listado (Mayor de QA — dentro del handler se perdía 6/6
-    // con clics reales).
-    expect(scrollTo).not.toHaveBeenCalled();
-    await waitFor(
-      () => {
-        expect(y).toBe(320);
+    try {
+      mount();
+      abrirVitrina();
+      y = detailScroll;
+      fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
+      expect(scrollTo).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(y).toBe(target);
         expect(scrollTo.mock.calls.length).toBeGreaterThanOrEqual(2);
-      },
-      { timeout: 2000 }
-    );
-    Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
-    Object.defineProperty(window, "scrollTo", { value: () => {}, configurable: true });
+      });
+    } finally {
+      Object.defineProperty(window, "scrollY", originalScrollY);
+      Object.defineProperty(window, "scrollTo", originalScrollTo);
+    }
   });
 
   it("1c. crear un punto desde dentro de una ficha conserva la posición del listado al volver", async () => {

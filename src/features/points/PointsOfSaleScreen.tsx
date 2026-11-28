@@ -175,6 +175,15 @@ export function PointsOfSaleScreen() {
   const [exhibWithdrawQty, setExhibWithdrawQty] = useState<Record<string, string>>({});
   const [exhibWithdrawIntentId, setExhibWithdrawIntentId] = useState("");
 
+  // Restore after React has put the list back in the DOM. Zero is a saved
+  // position too: the operator can scroll the detail after opening it.
+  useEffect(() => {
+    const target = pendingRestoreY.current;
+    if (openPointId !== null || target === null) return;
+    pendingRestoreY.current = null;
+    landScrollTop(target);
+  }, [openPointId]);
+
   const storeId = activeStore?.id ?? "";
   const points = useMemo(
     () => state.points.filter((p) => p.storeId === storeId && p.active),
@@ -467,16 +476,6 @@ export function PointsOfSaleScreen() {
     setOpenPointId(null);
     setFichaQuery("");
   }
-
-  // #574: restore once the list is actually back in the DOM. The effect
-  // runs after React committed the re-mount; landScrollTop waits two frames
-  // and re-lands if a late agent moves the document.
-  useEffect(() => {
-    const target = pendingRestoreY.current;
-    if (openPointId !== null || target === null) return;
-    pendingRestoreY.current = null;
-    if (target > 0) landScrollTop(target);
-  }, [openPointId]);
 
   async function createPoint() {
     const clean = name.trim();
