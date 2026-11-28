@@ -3,7 +3,7 @@
 // pieces/valuation, point creation with pilot defaults, and the
 // «Usar como surtido inicial» preview + trusted conversion call.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within, waitFor } from "@testing-library/react";
 import { PointsOfSaleScreen } from "./PointsOfSaleScreen";
 import { ToastProvider } from "../../design-system";
 import { fixtureState } from "../../lib/testFixtures";
@@ -1297,15 +1297,80 @@ describe("#574 ficha del punto: vista propia, columnas y búsqueda", () => {
     expect(screen.getByText("Vitrina fondo")).toBeInTheDocument();
   });
 
-  it("1b. «Volver a puntos» restaura la posición guardada del listado", () => {
-    const scrollTo = vi.fn();
+  it("1b. «Volver a puntos» restaura la posición tras el commit y re-aterriza si se pierde", async () => {
+    let y = 320;
+    let clampedOnce = true;
+    const scrollTo = vi.fn((arg: number | { top?: number }) => {
+      y = typeof arg === "number" ? arg : (arg.top ?? 0);
+      // Un agente tardío (retorno de foco, re-flow del listado) come la
+      // primera posición: el aterrizaje debe reintentar hasta que pegue.
+      if (clampedOnce) {
+        y = 0;
+        clampedOnce = false;
+      }
+    });
+    Object.defineProperty(window, "scrollY", { get: () => y, configurable: true });
     Object.defineProperty(window, "scrollTo", { value: scrollTo, configurable: true });
-    Object.defineProperty(window, "scrollY", { value: 320, configurable: true });
+    mount();
+    abrirVitrina(); // guarda 320
+    y = 0; // el cambio de vista dejó el documento arriba
+    fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
+    // El aterrizaje NO vive en el handler del clic: corre tras el commit que
+    // re-pinta el listado (Mayor de QA — dentro del handler se perdía 6/6
+    // con clics reales).
+    expect(scrollTo).not.toHaveBeenCalled();
+    await waitFor(
+      () => {
+        expect(y).toBe(320);
+        expect(scrollTo.mock.calls.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 2000 }
+    );
+    Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+    Object.defineProperty(window, "scrollTo", { value: () => {}, configurable: true });
+  });
+
+  it("1c. crear un punto desde dentro de una ficha conserva la posición del listado al volver", async () => {
+    let y = 120;
+    const landed: number[] = [];
+    Object.defineProperty(window, "scrollY", { get: () => y, configurable: true });
+    Object.defineProperty(window, "scrollTo", {
+      // Cubre ambas formas: scrollTo(x, y) (Dialog) y scrollTo({top}) (re-aterrizaje).
+      value: (arg: number | { top?: number }, second?: number) => {
+        const top = second ?? (typeof arg === "number" ? arg : (arg.top ?? 0));
+        landed.push(top);
+        y = top;
+      },
+      configurable: true,
+    });
+    mocks.savePoint.mockImplementation(async (point: { id: string }) => {
+      // Nueva referencia: el useMemo de la pantalla compara por identidad.
+      mocks.state!.points = [...mocks.state!.points, point as never];
+    });
+    mount();
+    abrirVitrina(); // guarda la posición del listado: 120
+    y = 480; // la ficha se desplazó; crear desde aquí no debe pisar el 120
+    fireEvent.click(screen.getByRole("button", { name: "+ Nuevo punto" }));
+    fireEvent.change(screen.getByLabelText("Nombre del punto"), { target: { value: "Mostrador nuevo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear punto" }));
+    await screen.findByText(/creado/i);
+    fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
+    // El Dialog de creación restaura su propia posición (480) al cerrarse;
+    // tras «Volver a puntos» el listado queda en 120, la posición original.
+    await waitFor(() => expect(landed[landed.length - 1]).toBe(120), { timeout: 2000 });
+    Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+    Object.defineProperty(window, "scrollTo", { value: () => {}, configurable: true });
+  });
+
+  it("1d. con la captura de corte abierta sólo existe un campo «Buscar»", () => {
     mount();
     abrirVitrina();
-    fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
-    expect(scrollTo).toHaveBeenCalledWith(0, 320);
-    Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+    expect(screen.getAllByLabelText("Buscar").length).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Registrar corte" }));
+    // La captura trae su propia búsqueda: la de la ficha se retira para no
+    // convivir dos campos con la misma etiqueta.
+    expect(screen.getAllByLabelText("Buscar").length).toBe(1);
+    expect(screen.getByLabelText("Buscar").closest("div")?.textContent).not.toContain("Producto o variante");
   });
 
   it("2. escritorio: encabezados de columna estables y cifras a la derecha", () => {

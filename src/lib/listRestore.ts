@@ -70,29 +70,9 @@ export function useListRestore<F extends ListFilters>(key: string, defaults: F) 
     const target = scrollY.current;
     scrollY.current = 0; // one-shot: later navigation starts from a clean slate
     if (target > 0) {
-      // #463: land the position and VERIFY it stuck. Late agents (the route
-      // reset on navigation, a Dialog/Sheet focus-return scrolling its
-      // trigger into view) can zero the document after the first landing;
-      // a fixed double-rAF lost that race 3 of 5 times in QA. Re-landing on
-      // the next frame until the document actually holds the target makes
-      // the restoration deterministic — bounded so a pathological page can
-      // never loop forever.
-      let attempts = 0;
-      const land = () => {
-        attempts += 1;
-        window.scrollTo({ top: target });
-        // A programmatic instant scroll may not fire the listener in every
-        // engine; re-sync the tracker so a later unmount saves the real
-        // position instead of the consumed zero.
+      landScrollTop(target, () => {
         scrollY.current = target;
-        requestAnimationFrame(() => {
-          if (Math.abs(window.scrollY - target) > 1 && attempts < 12) land();
-        });
-      };
-      // Double rAF before the first landing: land AFTER same-commit focus
-      // restorations (Dialog/Sheet return focus to the opening control,
-      // which scrolls it into view).
-      requestAnimationFrame(() => requestAnimationFrame(land));
+      });
     }
     return target;
   }, []);
@@ -108,6 +88,35 @@ export function useListRestore<F extends ListFilters>(key: string, defaults: F) 
   }, []);
 
   return { filters: state.filters, setFilters, restoreScroll, hadSavedState: hadSavedState.current };
+}
+
+/**
+ * #463/#574: land a saved scroll position and VERIFY it stuck. Late agents
+ * (the route reset on navigation, a Dialog/Sheet focus-return scrolling its
+ * trigger into view, the re-flow of a list that just re-mounted) can zero the
+ * document after the first landing; a fixed double-rAF lost that race 3 of 5
+ * times in QA. Re-landing on the next frame until the document actually holds
+ * the target makes the restoration deterministic — bounded so a pathological
+ * page can never loop forever.
+ */
+export function landScrollTop(target: number, onLand?: () => void): void {
+  let attempts = 0;
+  const land = () => {
+    attempts += 1;
+    window.scrollTo({ top: target });
+    // A programmatic instant scroll may not fire the listener in every
+    // engine; re-sync trackers so a later unmount saves the real position
+    // instead of the consumed zero.
+    onLand?.();
+    requestAnimationFrame(() => {
+      if (Math.abs(window.scrollY - target) > 1 && attempts < 12) land();
+    });
+  };
+  // Double rAF before the first landing: land AFTER same-commit focus
+  // restorations and AFTER the commit that re-mounts the list — scrolling
+  // inside the handler loses the position when the document re-flows
+  // (#574 QA Mayor: trusted clicks failed 6/6 with the handler-scroll).
+  requestAnimationFrame(() => requestAnimationFrame(land));
 }
 
 /** Test seam: wipe the session cache between cases. */

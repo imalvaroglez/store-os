@@ -5,7 +5,7 @@
 // prices (from the order, exact cents), and the TRUSTED callable does the
 // whole movement in one transaction. Cortes/cobros/anulación and manual
 // Surtir/Retirar arrive in later cuts.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../../app/StoreProvider";
 import { StockPointDialog } from "./StockPointDialog";
 import {
@@ -24,6 +24,7 @@ import {
   useToast,
 } from "../../design-system";
 import { slugify } from "../../lib/catalog";
+import { landScrollTop } from "../../lib/listRestore";
 import { loadClosesForStore } from "../../app/firebase/firestoreData";
 import { formatDate, todayIso } from "../../lib/dates";
 import { orderTotals } from "../../lib/orders";
@@ -118,8 +119,12 @@ export function PointsOfSaleScreen() {
   const [busy, setBusy] = useState(false);
   const [openPointId, setOpenPointId] = useState<string | null>(null);
   // #574: the ficha is its own view — remember where the list was so
-  // «Volver a puntos» lands the operator back in the same position.
-  const [listScrollY, setListScrollY] = useState(0);
+  // «Volver a puntos» lands the operator back in the same position. The
+  // restore runs AFTER the commit that re-mounts the list (effect with
+  // verified re-landing): scrolling inside the click handler fires before
+  // the re-flow and the position is lost (QA Mayor, trusted clicks 6/6).
+  const savedListScrollY = useRef(0);
+  const pendingRestoreY = useRef<number | null>(null);
   // #574: search the open ficha's entries by product or variant.
   const [fichaQuery, setFichaQuery] = useState("");
   const [surtidoOrder, setSurtidoOrder] = useState<Order | null>(null);
@@ -449,16 +454,29 @@ export function PointsOfSaleScreen() {
   // #574: opening a point swaps the list for its ficha and remembers the
   // scroll position; «Volver a puntos» restores it and clears the search.
   function openPointById(id: string) {
-    setListScrollY(window.scrollY);
+    // Only the list → ficha hop saves the position: creating a point from
+    // inside another ficha must not overwrite it with the ficha's own scroll
+    // (QA Menor 2 — «Volver a puntos» would land somewhere in the middle).
+    if (openPointId === null) savedListScrollY.current = window.scrollY;
     setFichaQuery("");
     setOpenPointId(id);
   }
 
   function backToPoints() {
+    pendingRestoreY.current = savedListScrollY.current;
     setOpenPointId(null);
     setFichaQuery("");
-    window.scrollTo(0, listScrollY);
   }
+
+  // #574: restore once the list is actually back in the DOM. The effect
+  // runs after React committed the re-mount; landScrollTop waits two frames
+  // and re-lands if a late agent moves the document.
+  useEffect(() => {
+    const target = pendingRestoreY.current;
+    if (openPointId !== null || target === null) return;
+    pendingRestoreY.current = null;
+    if (target > 0) landScrollTop(target);
+  }, [openPointId]);
 
   async function createPoint() {
     const clean = name.trim();
@@ -1225,12 +1243,17 @@ export function PointsOfSaleScreen() {
               />
             ) : (
               <div className="space-y-3">
-                <TextField
-                  label="Buscar"
-                  placeholder="Producto o variante…"
-                  value={fichaQuery}
-                  onChange={(e) => setFichaQuery(e.target.value)}
-                />
+                {/* #574 QA Menor 3: while the corte capture is open its own
+                    «Buscar» covers finding rows — a second field with the
+                    same label only breeds doubt about which one filters. */}
+                {!cutOpen ? (
+                  <TextField
+                    label="Buscar"
+                    placeholder="Producto o variante…"
+                    value={fichaQuery}
+                    onChange={(e) => setFichaQuery(e.target.value)}
+                  />
+                ) : null}
                 {visibleEntries.length === 0 ? (
                   <p className="text-sm text-on-surface-soft">Sin resultados para esta búsqueda.</p>
                 ) : (
