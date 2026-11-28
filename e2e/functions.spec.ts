@@ -319,6 +319,22 @@ test("@functions #583 corrige 3 → 2 en una transacción: entradas, vínculos y
   expect(corr.motive).toBe("Eran 2 piezas, no 3");
   expect(corr.confirmedBy).toBe(auth.uid);
   expect(corr.corteId).toBe(cut.corteId);
+
+  // Eslabón de dinero: el reemplazo es un corte normal — se cobra como tal.
+  const pay = await callCut("registerPointCutPayment", {
+    storeId,
+    pointId,
+    corteId: "corte_corr_i583happy_corr",
+    intentId: "i583happy_pay",
+    method: "transfer",
+    date: "2026-11-27",
+  }, auth.token);
+  expect(pay.ok).toBe(true);
+  const paid = (await pay.json()).result;
+  expect(paid.registered).toBe(true);
+  expect(paid.amountCents).toBe(108800);
+  const cobrado = await readDoc("pointOperations/corte_corr_i583happy_corr", auth.token);
+  expect(cobrado.status).toBe("cobrado");
 });
 
 test("@functions #583 reintento con el MISMO intentId → alreadyApplied sin duplicar", async () => {

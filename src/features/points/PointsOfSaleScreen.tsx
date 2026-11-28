@@ -957,6 +957,9 @@ export function PointsOfSaleScreen() {
                 {pointCortes.map((corte) => {
                   // #583: eligibility mirrors the server's transactional
                   // guard — the ficha never offers what it would reject.
+                  // Cobro is SEPARATE: every pendiente_de_cobro corte keeps
+                  // its payment path (the server only needs the payment's
+                  // own month open — later movements never block charging).
                   const undo = corteUndoImpediments(corte, pointOperations, sealedPeriods);
                   return (
                     <div key={corte.id} className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
@@ -964,20 +967,20 @@ export function PointsOfSaleScreen() {
                         {formatDate(corte.effectiveDate ?? "")} · {corteStatusLabel(corte)} · neto{" "}
                         <span className="font-semibold text-on-surface"><Money exact amount={pesos(corte.totals?.netCents ?? 0)} /></span>
                       </span>
+                      {corte.status === "pendiente_de_cobro" ? (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setPayingCorte(corte.id);
+                            setPayIntentId(uid());
+                            setPayDate(todayIso());
+                          }}
+                        >
+                          Registrar cobro
+                        </Button>
+                      ) : null}
                       {undo.canUndo ? (
                         <span className="flex flex-wrap gap-2">
-                          {corte.status === "pendiente_de_cobro" ? (
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                setPayingCorte(corte.id);
-                                setPayIntentId(uid());
-                                setPayDate(todayIso());
-                              }}
-                            >
-                              Registrar cobro
-                            </Button>
-                          ) : null}
                           <Button variant="ghost" size="sm" onClick={() => openCorrection(corte)}>
                             Corregir corte
                           </Button>

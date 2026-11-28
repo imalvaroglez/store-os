@@ -1130,6 +1130,19 @@ describe("#583 corregir el corte desde su registro en la ficha", () => {
     expect(screen.queryByRole("button", { name: "Corregir corte" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Anular corte" })).toBeNull();
     expect(screen.getByText(/movimientos posteriores/i)).toBeTruthy();
+    // #583 code review (Mayor): el cobro es una vía independiente — un corte
+    // por cobrar CON movimientos posteriores conserva su ruta de cobro.
+    expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeTruthy();
+  });
+
+  it("un corte por cobrar de un mes cerrado conserva su ruta de cobro aunque no se pueda corregir", async () => {
+    withCorteOf3();
+    mocks.closes = [{ period: "2026-11" }];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    await screen.findByText(/cierre autorizado/i);
+    expect(screen.queryByRole("button", { name: "Corregir corte" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Registrar cobro" })).toBeTruthy();
   });
 
   it("corte cobrado: informa el motivo; un punto sin cortes no muestra la sección", () => {
