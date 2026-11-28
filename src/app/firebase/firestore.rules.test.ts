@@ -753,6 +753,35 @@ describe("purchase-ux2 — received purchases are immutable evidence", () => {
     await assertFails(updateDoc(doc(db, "purchases/recv1"), { status: "draft" }));
   });
 
+  // #558: per-ticket classification on received evidence lives in a
+  // report-only overlay — the tickets array itself stays immutable.
+  it("member can reclassify a received purchase per ticket (overlay only)", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "purchases/recv-tk"), {
+        storeId: "s1", status: "received", receivedAt: "2026-08-20T00:00:00Z",
+        tickets: [{ id: "t1", totalConfirmed: 180 }, { id: "t2", totalConfirmed: 450 }],
+      });
+    });
+    const db = await asUser("u1");
+    await assertSucceeds(updateDoc(doc(db, "purchases/recv-tk"), {
+      ticketPaymentMethods: { t1: "cash", t2: "credit_card" },
+      updatedAt: "2026-11-27T00:00:00Z",
+    }));
+  });
+
+  it("the overlay cannot smuggle ticket totals on received evidence", async () => {
+    const db = await asUser("u1");
+    await assertFails(updateDoc(doc(db, "purchases/recv-tk"), {
+      ticketPaymentMethods: { t1: "cash" },
+      tickets: [{ id: "t1", totalConfirmed: 999 }, { id: "t2", totalConfirmed: 450 }],
+      updatedAt: "2026-11-27T00:00:00Z",
+    }));
+    await assertFails(updateDoc(doc(db, "purchases/recv-tk"), {
+      ticketPaymentMethods: { t1: "cash" },
+      revision: 5,
+    }));
+  });
+
   it("the receive transaction itself can mark a purchase received (update draft → received)", async () => {
     await env.withSecurityRulesDisabled(async (c) => {
       await setDoc(doc(c.firestore(), "purchases/draft1"), { storeId: "s1", status: "ready" });

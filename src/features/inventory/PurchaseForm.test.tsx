@@ -593,7 +593,119 @@ describe("#279 QA (MAYOR-2/3) — forma de pago honesta y clasificable", () => {
     fireEvent.change(select, { target: { value: "credit_card" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar forma de pago" }));
     await waitFor(() => expect(classifyPurchasePayment).toHaveBeenCalledTimes(1));
-    expect(classifyPurchasePayment.mock.calls[0][1]).toBe("credit_card");
+    expect(classifyPurchasePayment.mock.calls[0][1]).toMatchObject({ paymentMethod: "credit_card", ticketPaymentMethods: { "ticket:purchase": "credit_card" } });
     expect(await screen.findByText("Forma de pago guardada.")).toBeTruthy();
+  });
+});
+
+describe("#558 — forma de pago por ticket de surtido", () => {
+  function multiTicketPurchase(): Purchase {
+    return {
+      ...purchase(),
+      tickets: [
+        { id: "tk1", totalConfirmed: 180 },
+        { id: "tk2", totalConfirmed: 450 },
+      ],
+      lines: [
+        { lineId: "l1", ticketId: "tk1", productId: "ring", name: "Pieza uno", quantity: 2, unitCost: 90 },
+        { lineId: "l2", ticketId: "tk2", productId: "ring", name: "Pieza dos", quantity: 3, unitCost: 150 },
+      ],
+      subtotal: 630, totalConfirmed: 630,
+    };
+  }
+
+  it("cada ticket captura su forma de pago y la conserva al cambiar de ticket; el guardado clasifica por ticket", async () => {
+    upsertPurchase.mockResolvedValueOnce(undefined);
+    open(multiTicketPurchase());
+    const select = screen.getByLabelText("Forma de pago") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "cash" } });
+    // Cambia al segundo ticket: la primera selección permanece.
+    fireEvent.click(screen.getByRole("tab", { name: /Ticket 2/ }));
+    const second = screen.getByLabelText("Forma de pago") as HTMLSelectElement;
+    fireEvent.change(second, { target: { value: "credit_card" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(1));
+    const saved = upsertPurchase.mock.calls[0][0] as Purchase;
+    expect(saved.tickets?.map((ticket) => ticket.paymentMethod)).toEqual(["cash", "credit_card"]);
+    // Métodos mixtos: el nivel compra no afirma una sola forma.
+    expect(saved.paymentMethod).toBeUndefined();
+  });
+
+  it("todos los tickets con la misma forma espejan el nivel de compra (compatibilidad con sugerencia)", async () => {
+    upsertPurchase.mockResolvedValueOnce(undefined);
+    open(multiTicketPurchase());
+    fireEvent.change(screen.getByLabelText("Forma de pago"), { target: { value: "cash" } });
+    fireEvent.click(screen.getByRole("tab", { name: /Ticket 2/ }));
+    fireEvent.change(screen.getByLabelText("Forma de pago"), { target: { value: "cash" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(1));
+    const saved = upsertPurchase.mock.calls[0][0] as Purchase;
+    expect(saved.tickets?.every((ticket) => ticket.paymentMethod === "cash")).toBe(true);
+    expect(saved.paymentMethod).toBe("cash");
+  });
+
+  it("la revisión muestra la forma de cada ticket y nombra la pendiente", () => {
+    open(multiTicketPurchase());
+    fireEvent.change(screen.getByLabelText("Forma de pago"), { target: { value: "cash" } });
+    fireEvent.click(screen.getByRole("button", { name: "Revisar toda la compra" }));
+    expect(screen.getAllByText("Efectivo").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Pendiente de clasificar").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("una compra RECIBIDA corrige la clasificación por ticket sin tocar el inventario", async () => {
+    classifyPurchasePayment.mockClear().mockResolvedValueOnce({ ...purchase(), revision: 2 });
+    const received = {
+      ...multiTicketPurchase(),
+      status: "received" as const,
+      receivedAt: "2026-11-01T12:00:00Z",
+      costingMethod: "latest_purchase" as const,
+      costAllocations: [
+        { lineId: "l1", merchandiseCents: 18000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, totalCents: 18000 },
+        { lineId: "l2", merchandiseCents: 45000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, totalCents: 45000 },
+      ],
+    };
+    open(received);
+    fireEvent.change(screen.getByLabelText(/Forma de pago/), { target: { value: "credit_card" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar forma de pago" }));
+    await waitFor(() => expect(classifyPurchasePayment).toHaveBeenCalledTimes(1));
+    const [argPurchase, classification] = classifyPurchasePayment.mock.calls[0];
+    expect(argPurchase.status).toBe("received");
+    // Overlay: sólo el ticket reclassificado; tk2 sin entrada sigue pendiente.
+    expect(classification.ticketPaymentMethods).toEqual({ tk1: "credit_card" });
+    expect(classification.paymentMethod).toBeUndefined(); // mixto: tk2 sigue pendiente
+    expect(await screen.findByText("Forma de pago guardada.")).toBeTruthy();
+    expect(receivePurchase).not.toHaveBeenCalled();
+  });
+
+  it("la compra histórica a nivel compra se identifica como tal en la ficha recibida", () => {
+    const legacy = {
+      ...purchase(),
+      status: "received" as const,
+      receivedAt: "2026-11-01T12:00:00Z",
+      paymentMethod: "cash" as const,
+      tickets: [{ id: "tk1", totalConfirmed: 65.8 }, { id: "tk2", totalConfirmed: 65.8 }],
+    };
+    open(legacy);
+    expect(screen.getByText(/clasificada históricamente como Efectivo \(toda la compra\)/)).toBeTruthy();
+  });
+
+  it("un conflicto de revisión al corregir muestra el aviso y preserva la captura", async () => {
+    classifyPurchasePayment.mockClear().mockRejectedValueOnce(new StalePurchaseError());
+    const received = {
+      ...multiTicketPurchase(),
+      status: "received" as const,
+      receivedAt: "2026-11-01T12:00:00Z",
+      costingMethod: "latest_purchase" as const,
+      costAllocations: [
+        { lineId: "l1", merchandiseCents: 18000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, totalCents: 18000 },
+        { lineId: "l2", merchandiseCents: 45000, supplierAdjustmentCents: 0, sourcingExpenseCents: 0, totalCents: 45000 },
+      ],
+    };
+    open(received);
+    fireEvent.change(screen.getByLabelText(/Forma de pago/), { target: { value: "cash" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar forma de pago" }));
+    expect(await screen.findByText(/cambió en otra pestaña o dispositivo/i)).toBeTruthy();
+    // La captura sobrevive: el selector conserva la elección hecha.
+    expect((screen.getByLabelText(/Forma de pago/) as HTMLSelectElement).value).toBe("cash");
   });
 });

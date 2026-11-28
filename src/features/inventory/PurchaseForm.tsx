@@ -99,13 +99,21 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const baselineRef = useRef<Purchase>(purchase);
   const [draft, setDraft] = useState<Purchase>(() => {
     const editable = effectivePurchaseStatus(purchase) !== "received";
-    const tickets = purchase.tickets?.length ? purchase.tickets : [legacyPurchaseTicket(purchase)];
+    // #558: the TICKET is the classification unit. Editing seeds each ticket
+    // with the contextual suggestion (#279 MAYOR-2: what the form shows is
+    // what it saves); a received purchase keeps its historical, purchase-level
+    // classification until the operator reclassifies ticket by ticket.
+    const suggested = editable ? purchase.paymentMethod ?? defaultMethod : undefined;
+    const tickets = (purchase.tickets?.length ? purchase.tickets : [legacyPurchaseTicket(purchase)]).map((ticket) =>
+      ticket.paymentMethod || !suggested ? ticket : { ...ticket, paymentMethod: suggested }
+    );
     return {
       ...purchase,
-      ...(editable ? { tickets, costingMethod: "latest_purchase" as const } : {}),
+      tickets,
+      ...(editable ? { costingMethod: "latest_purchase" as const } : {}),
       // #279 QA (MAYOR-2): the contextual default is SELECTED — what the
       // form displays is what it saves (an untouched capture classifies).
-      ...(editable && !purchase.paymentMethod && defaultMethod ? { paymentMethod: defaultMethod } : {}),
+      ...(editable && suggested ? { paymentMethod: suggested } : {}),
       lines: purchase.lines.map((line) => ({ ...line, lineId: line.lineId ?? uid("pl"), ...(editable ? { ticketId: line.ticketId ?? tickets[0].id } : {}) })),
     };
   });
@@ -146,6 +154,38 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
   const locked = effectivePurchaseStatus(draft) === "received";
   const editDisabled = locked || saving || receiving || bulkCreating;
   const tickets = draft.tickets ?? [legacyPurchaseTicket(draft)];
+  // #558: per-ticket classification state. Effective method = the received
+  // evidence overlay first (#558), then the ticket's own field (editable
+  // captures); the uniform method (all tickets agree) mirrors the purchase
+  // level for the suggestion engine; a legacy received purchase without
+  // ticket evidence keeps its historical label.
+  const effectiveTicketMethod = (ticket: PurchaseTicket) =>
+    draft.ticketPaymentMethods?.[ticket.id] ?? ticket.paymentMethod;
+  const ticketMethods = tickets.map(effectiveTicketMethod);
+  const uniformTicketMethod = ticketMethods.length > 0
+    && ticketMethods.every((method) => method !== undefined && method === ticketMethods[0])
+    ? ticketMethods[0]
+    : undefined;
+  const hasTicketEvidence = (purchase.tickets ?? []).some((ticket) =>
+    purchase.ticketPaymentMethods?.[ticket.id] !== undefined || ticket.paymentMethod !== undefined);
+  const legacyWholePurchase = !hasTicketEvidence && purchase.paymentMethod !== undefined;
+  const classificationDirty = locked && (
+    uniformTicketMethod !== purchase.paymentMethod
+    || tickets.some((ticket) => {
+      const saved = (purchase.tickets ?? []).find((candidate) => candidate.id === ticket.id);
+      return effectiveTicketMethod(ticket) !== (saved ? purchase.ticketPaymentMethods?.[ticket.id] ?? saved.paymentMethod : undefined);
+    })
+  );
+  /** The overlay sent on a received correction: every ticket's effective
+   * method (undefined entries stay pending by absence). */
+  const classificationOverlay = () => {
+    const overlay: Record<string, PurchasePaymentMethod> = {};
+    for (const ticket of tickets) {
+      const method = effectiveTicketMethod(ticket);
+      if (method) overlay[ticket.id] = method;
+    }
+    return overlay;
+  };
   // #211 r3 (UX review): the real weekly flow TYPES the supplier instead of
   // picking it from the list. A typed name that matches an existing supplier
   // resolves to its id — without this, the suggestion and «Recordar» were
@@ -474,6 +514,14 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
       subtotal: merchandise,
       totalConfirmed: purchaseConfirmedTotal(draft),
       status: receive ? "ready" : status,
+      // #558: the purchase level only asserts a method when EVERY ticket
+      // agrees on the same one; mixed or pending classifications stay per
+      // ticket.
+      paymentMethod: tickets.length > 0
+        && tickets.every((ticket) => ticket.paymentMethod !== undefined)
+        && tickets.every((ticket) => ticket.paymentMethod === tickets[0].paymentMethod)
+        ? (tickets[0].paymentMethod as PurchasePaymentMethod)
+        : undefined,
       updatedAt: nowIso(),
     };
     setSaving(true);
@@ -806,10 +854,18 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
                   <h3 className="font-semibold text-ink">{ticketLabel(ticket, index)}</h3>
                   <Badge tone={issues.length ? "warning" : "success"}>{issues.length ? `${issues.length} pendientes` : locked ? "Recibido" : "Completo"}</Badge>
                 </div>
-                <dl className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                <dl className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-sm">
                   <div><dt className="text-ink-soft">Calculado</dt><dd>{formatMoneyExact(totals.calculated)}</dd></div>
                   <div><dt className="text-ink-soft">Pagado</dt><dd>{formatMoneyExact(ticket.totalConfirmed)}</dd></div>
                   <div><dt className="text-ink-soft">Diferencia</dt><dd>{formatMoneyExact(Math.abs(totals.calculated - ticket.totalConfirmed))}</dd></div>
+                  <div>
+                    <dt className="text-ink-soft">Forma de pago</dt>
+                    <dd>{effectiveTicketMethod(ticket)
+                      ? PURCHASE_PAYMENT_METHOD_LABEL[effectiveTicketMethod(ticket)!]
+                      : locked && legacyWholePurchase
+                        ? `${PURCHASE_PAYMENT_METHOD_LABEL[purchase.paymentMethod!]} (toda la compra)`
+                        : "Pendiente de clasificar"}</dd>
+                  </div>
                 </dl>
                 {issues.length > 0 && <ul className="space-y-1">{issues.slice(0, 3).map((issue, i) => (
                   <li key={`${issue.target}:${i}`}><Button variant="ghost" className="text-left text-danger! whitespace-normal" onClick={() => openIssue(issue)}>
@@ -889,37 +945,11 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
           {draft.dateInferred && <p className="text-xs text-on-surface-soft mt-1">Año sugerido según el documento — edítalo si no es correcto.</p>}
         </div>
         <div>
-          <SelectField
-            label="Forma de pago"
-            value={draft.paymentMethod ?? ""}
-            onChange={(value) => setDraft({ ...draft, ...(value ? { paymentMethod: value as PurchasePaymentMethod } : { paymentMethod: undefined }) })}
-            hint={editDisabled ? "Clasificar la compra mueve el dinero entre caja y adeudo de tarjeta; el inventario no cambia." : undefined}
-            options={[
-              { value: "", label: "Sin clasificar" },
-              ...PAYMENT_METHOD_OPTIONS.map((option) => (
-                option.value === defaultMethod && !purchase.paymentMethod
-                  ? { ...option, label: `${option.label} (última)` }
-                  : option
-              )),
-            ]}
-          />
-          {editDisabled && draft.paymentMethod !== purchase.paymentMethod && (
-            <Button
-              className="mt-2"
-              size="sm"
-              variant="secondary"
-              disabled={savingLate}
-              onClick={() => {
-                setSavingLate(true);
-                classifyPurchasePayment(purchase, draft.paymentMethod)
-                  .then(() => toast.success("Forma de pago guardada."))
-                  .catch(() => toast.error("No se pudo guardar la forma de pago. Inténtalo de nuevo."))
-                  .finally(() => setSavingLate(false));
-              }}
-            >
-              Guardar forma de pago
-            </Button>
-          )}
+          {locked && legacyWholePurchase ? (
+            <p className="text-xs text-on-surface-soft">
+              Compra clasificada históricamente como {PURCHASE_PAYMENT_METHOD_LABEL[purchase.paymentMethod!]} (toda la compra).
+            </p>
+          ) : null}
         </div>
         <div className="space-y-1">
           <TextField
@@ -929,6 +959,53 @@ export function PurchaseForm({ purchase, onDone }: { purchase: Purchase; onDone:
             disabled={editDisabled}
             onChange={(e) => updateTicket({ folio: e.target.value || undefined })}
           />
+          <SelectField
+            label="Forma de pago"
+            value={effectiveTicketMethod(activeTicket) ?? ""}
+            disabled={saving || receiving || bulkCreating}
+            onChange={(value) => locked
+              ? setDraft((prev) => {
+                  // Overlay sobre evidencia recibida: sin método = sin entrada.
+                  const overlay = { ...prev.ticketPaymentMethods };
+                  if (value) overlay[activeTicket.id] = value as PurchasePaymentMethod;
+                  else delete overlay[activeTicket.id];
+                  return { ...prev, ticketPaymentMethods: overlay };
+                })
+              : updateTicket({ paymentMethod: value ? (value as PurchasePaymentMethod) : undefined })}
+            hint={locked ? "Clasificar mueve el dinero entre caja y adeudo de tarjeta; el inventario no cambia." : undefined}
+            options={[
+              { value: "", label: "Pendiente de clasificar" },
+              ...PAYMENT_METHOD_OPTIONS.map((option) =>
+                option.value === defaultMethod && !activeTicket.paymentMethod && !purchase.paymentMethod
+                  ? { ...option, label: `${option.label} (última)` }
+                  : option
+              ),
+            ]}
+          />
+          {locked && classificationDirty ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={savingLate}
+              onClick={() => {
+                setSavingLate(true);
+                classifyPurchasePayment(purchase, { paymentMethod: uniformTicketMethod, ticketPaymentMethods: classificationOverlay() })
+                  .then(() => {
+                    toast.success("Forma de pago guardada.");
+                  })
+                  .catch((error) => {
+                    // #558: a revision conflict explains itself and the
+                    // capture stays open on the form.
+                    toast.error(error instanceof StalePurchaseError
+                      ? error.message
+                      : "No se pudo guardar la forma de pago. Inténtalo de nuevo.");
+                  })
+                  .finally(() => setSavingLate(false));
+              }}
+            >
+              Guardar forma de pago
+            </Button>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-soft">
             {draft.origin === "pdf" && <Badge tone="info">PDF importado</Badge>}
             {locked && <Badge tone="success">Recibida</Badge>}

@@ -879,6 +879,11 @@ export type PurchaseTicket = {
   tax?: number;
   documentPath?: string;
   documentFingerprint?: string;
+  /** #558: how THIS ticket was paid. As soon as one ticket carries a method,
+   * the from-activation position classifies each ticket's confirmed total on
+   * its own and the purchase-level method stays historical (never counted
+   * twice). Absent = pending classification. */
+  paymentMethod?: PurchasePaymentMethod;
 };
 
 export type PurchaseCostAllocation = {
@@ -1064,6 +1069,11 @@ export type Purchase = {
   /** #279: how this purchase was paid — captured once, feeds the
    * from-activation position (card debt / own-money outflow). */
   paymentMethod?: PurchasePaymentMethod;
+  /** #558: per-ticket classification overlay for RECEIVED evidence —
+   * ticketId → method. Wins over each ticket's own field (which editable
+   * captures write); the tickets array itself stays immutable after
+   * reception, so corrections land here (rules allow only this field). */
+  ticketPaymentMethods?: Record<string, PurchasePaymentMethod>;
   createdAt: string;
   updatedAt: string;
 };
