@@ -1390,3 +1390,146 @@ describe("#574 ficha del punto: vista propia, columnas y búsqueda", () => {
     expect(screen.getByRole("button", { name: "Usar como surtido inicial" })).toBeInTheDocument();
   });
 });
+
+// #574 × #583 — regression of the crossing: the ficha became its own view
+// (#574) while «Corregir corte» and the registros landed on that same ficha
+// (#583). Both must compose: the full visita (corte → retiro → resurtido) and
+// the correction of the last eligible corte happen FROM the own view, keep it
+// open, and keep its context (historial, búsqueda, regreso al listado).
+describe("#574 × #583 cruce: visita completa y corrección desde la ficha como vista propia", () => {
+  const PUNTO = "store_olivia__mostrador";
+
+  function entrada(id: string, extra: Partial<PointEntry> = {}): PointEntry {
+    return {
+      id,
+      storeId: "store_olivia",
+      pointId: PUNTO,
+      productId: "p1",
+      productName: "Perfume",
+      quantity: 5,
+      consumedQty: 0,
+      markedPriceCents: 95000,
+      unitCostCents: 40000,
+      entryDate: "2026-11-20",
+      createdAt: NOW,
+      updatedAt: NOW,
+      ...extra,
+    } as PointEntry;
+  }
+
+  function withVisitaStock() {
+    state.points = [
+      { id: PUNTO, storeId: "store_olivia", name: "Mostrador centro", active: true, priceTierId: "t_retail", commissionRate: 0.2, createdAt: NOW, updatedAt: NOW },
+      { id: "store_olivia__bodega", storeId: "store_olivia", name: "Bodega", active: true, createdAt: NOW, updatedAt: NOW },
+    ];
+    state.pointEntries = [
+      entrada("pe-perfume"),
+      entrada("pe-cartera", { productId: "p2", variantId: "v-cafe", productName: "Cartera", variantColor: "Café", quantity: 3, consumedQty: 1, markedPriceCents: 68000, unitCostCents: 30000 }),
+    ];
+    state.pointOperations = [];
+  }
+
+  it("visita corte → retiro → resurtido: cada operación devuelve a la misma ficha y el contexto sobrevive", async () => {
+    withVisitaStock();
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    const enLaFicha = () => screen.getByRole("button", { name: "Volver a puntos" });
+    expect(enLaFicha()).toBeInTheDocument();
+
+    // 1. Corte: 2 perfumes vendidos (de 5 disponibles).
+    fireEvent.click(screen.getByRole("button", { name: "Registrar corte" }));
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[0], { target: { value: "2" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Registrar corte" }).slice(-1)[0]);
+    await screen.findByText(/Corte registrado/i);
+    expect(mocks.registerPointCut).toHaveBeenCalledTimes(1);
+    expect(mocks.registerPointCut.mock.calls[0][0]).toMatchObject({
+      storeId: "store_olivia",
+      pointId: PUNTO,
+      lines: [{ productId: "p1", markedPriceCents: 95000, soldQty: 2 }],
+    });
+    expect(enLaFicha()).toBeInTheDocument();
+
+    // 2. Retiro: 1 cartera Café devuelta al almacén (quedan 2 de 3).
+    fireEvent.click(screen.getByRole("button", { name: "Retirar" }));
+    fireEvent.change(screen.getAllByLabelText("Piezas")[1], { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Retirar piezas" }));
+    await screen.findByText(/Retiro: 1 piezas/i);
+    expect(mocks.withdrawFromPoint).toHaveBeenCalledWith(
+      expect.objectContaining({ storeId: "store_olivia", pointId: PUNTO, lines: [{ productId: "p2", variantId: "v-cafe", qty: 1 }] })
+    );
+    expect(enLaFicha()).toBeInTheDocument();
+
+    // 3. Resurtido: 2 perfumes desde el almacén al mismo punto.
+    fireEvent.click(screen.getByRole("button", { name: "Surtir del almacén" }));
+    fireEvent.change(screen.getByLabelText("Cantidad de Perfume Chanel Chance 100 ml"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar Perfume Chanel Chance 100 ml" }));
+    fireEvent.click(screen.getByRole("button", { name: "Surtir piezas" }));
+    await screen.findByText(/Surtido: 2 piezas/i);
+    expect(mocks.stockPoint).toHaveBeenCalledWith(
+      expect.objectContaining({ storeId: "store_olivia", pointId: PUNTO, lines: [{ productId: "p1", qty: 2, markedPriceCents: 95000 }] })
+    );
+    expect(enLaFicha()).toBeInTheDocument();
+
+    // 4. El contexto de la ficha sobrevivió a las tres operaciones: el
+    // historial sigue a la vista y la búsqueda sigue acotando por variante.
+    expect(screen.getAllByText("Café").length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByPlaceholderText("Producto o variante…"), { target: { value: "Café" } });
+    expect(screen.getAllByText("Café").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^Perfume$/)).toBeNull();
+
+    // 5. Volver: el listado reaparece con el segundo punto (control).
+    fireEvent.click(enLaFicha());
+    expect(screen.getByText("Bodega")).toBeInTheDocument();
+    expect(screen.getByText("Mostrador centro")).toBeInTheDocument();
+  });
+
+  it("corrección del último corte elegible desde la ficha nueva: la vista propia y su búsqueda sobreviven a corregir", async () => {
+    const CORTE_VIEJO = {
+      id: "corte_viejo", storeId: "store_olivia", pointId: PUNTO, kind: "corte" as const,
+      status: "cobrado" as const, effectiveDate: "2026-11-25", commissionRate: 0.2, confirmedBy: "u1", confirmedAt: "2026-11-25T10:00:00.000Z",
+      lines: [], writeOffs: [], saleAllocations: [], writeOffAllocations: [],
+      totals: { grossSaleCents: 68000, commissionCents: 13600, netCents: 54400, soldCostCents: 30000, pendingCostUnits: 0, writeOffCostCents: 0, writeOffPendingUnits: 0, resultCents: 24400, remainingUnits: 10 },
+    };
+    const CORTE_ULTIMO = {
+      ...CORTE_VIEJO, id: "corte_ultimo", status: "pendiente_de_cobro" as const, effectiveDate: "2026-11-26", confirmedAt: "2026-11-26T12:00:00.000Z",
+      lines: [{ productId: "p2", variantId: "v-cafe", markedPriceCents: 68000, soldQty: 3 }],
+      saleAllocations: [{ lineIndex: 0, allocations: [{ entryId: "pe-cafe", quantity: 3 }] }],
+      totals: { ...CORTE_VIEJO.totals, grossSaleCents: 204000, commissionCents: 40800, netCents: 163200, soldCostCents: 90000, resultCents: 73200, remainingUnits: 8 },
+    };
+    state.points = [{ id: PUNTO, storeId: "store_olivia", name: "Mostrador centro", active: true, commissionRate: 0.2, createdAt: NOW, updatedAt: NOW }];
+    state.pointEntries = [
+      entrada("pe-cafe", { productId: "p2", variantId: "v-cafe", productName: "Cartera de piel", variantColor: "Café", quantity: 10, consumedQty: 3, markedPriceCents: 68000, unitCostCents: 30000 }),
+      entrada("pe-negra", { productId: "p2", variantId: "v-negra", productName: "Cartera de piel", variantColor: "Negra", quantity: 4, consumedQty: 0, markedPriceCents: 68000, unitCostCents: 30000 }),
+    ];
+    state.pointOperations = [CORTE_VIEJO, CORTE_ULTIMO];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    expect(screen.getByText("Cortes del punto")).toBeInTheDocument();
+    // Elegibilidad compartida: sólo el ÚLTIMO corte sin movimiento posterior
+    // ofrece corregirse; el cobrado anterior no.
+    expect(screen.getAllByRole("button", { name: "Corregir corte" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Corregir corte" }));
+    // La captura original se recupera sobre la disponibilidad restaurada (7 + 3).
+    expect((screen.getAllByLabelText("Vendidas")[0] as HTMLInputElement).value).toBe("3");
+    expect(screen.getByText(/10 disponibles/)).toBeTruthy();
+    fireEvent.change(screen.getAllByLabelText("Vendidas")[0], { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Eran 2, no 3" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Corregir corte" }).slice(-1)[0]);
+    await screen.findByText(/Corte corregido/i);
+    expect(mocks.correctPointCut).toHaveBeenCalledTimes(1);
+    expect(mocks.correctPointCut.mock.calls[0][0]).toMatchObject({
+      storeId: "store_olivia",
+      pointId: PUNTO,
+      corteId: "corte_ultimo",
+      lines: [{ productId: "p2", variantId: "v-cafe", markedPriceCents: 68000, soldQty: 2 }],
+    });
+    // El cruce con #574: tras corregir, la ficha sigue siendo la vista propia
+    // y su búsqueda por variante sigue viva (nada regresó al listado solo).
+    expect(screen.getByRole("button", { name: "Volver a puntos" })).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Producto o variante…"), { target: { value: "Negra" } });
+    expect(screen.getAllByText("Negra").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Café")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Volver a puntos" }));
+    expect(screen.getByText("Mostrador centro")).toBeInTheDocument();
+  });
+});
