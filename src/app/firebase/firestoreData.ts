@@ -35,7 +35,7 @@ import { todayIso } from "../../lib/dates";
 import { creditFieldCents, effectiveOrderStatus, migrateOrder, orderItems, orderTotals, paymentStatusForOrder } from "../../lib/orders";
 import { rulesSignature } from "../../lib/pricingRules";
 import { deliveryWithBalanceBlocked, uncoveredBalanceCents } from "../../features/orders/installments";
-import { deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
+import { DeliveryEvidenceError, deliveryEvidenceError, deliveryValidationError, orderFullyDelivered } from "../../lib/deliveries";
 import { buildManualPriceEvents, priceChangeEvent, type PriceChangeEvent, type RuleChangeEvent } from "../../lib/priceDiagnostics";
 import { buildCloseSnapshot, type CloseSnapshotDoc } from "../../lib/closeAuthorization";
 import { buildProfitDistributionDoc, type ProfitDistributionDoc } from "../../lib/profitDistribution";
@@ -936,6 +936,13 @@ export async function saveOrderWithStockTx(
     // unrelated to the evidence (notes, other lines) pass untouched.
     const evidenceError = incidentEvidenceError(previous, orderItems(order));
     if (evidenceError) throw new IncidentEvidenceError(evidenceError);
+    // #584: delivered pieces are evidence of what the clienta received — an
+    // edit that removes their line, swaps the piece, or drops below the
+    // delivered count strands the append-only delivery ledger (orphan
+    // evidence `pendingDeliveries` then ignores). Fail closed BEFORE any
+    // money/stock math runs, same discipline as the incident guard above.
+    const deliveryStrandError = previous ? deliveryEvidenceError(previous, orderItems(order)) : null;
+    if (deliveryStrandError) throw new DeliveryEvidenceError(deliveryStrandError);
     // #168: the money fields belong to the payment path — an order save carries
     // them through VERBATIM from the doc read here, so a full-document write
     // can never wipe a concurrent abono's accumulator (Firestore retries this
