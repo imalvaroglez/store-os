@@ -327,6 +327,17 @@ export function PointsOfSaleScreen() {
   // anular) live ON the registro, offered only when the shared eligibility
   // (mirror of the server guard) says the transaction will accept it.
   const pointCortes = useMemo(() => pointOperations.filter((op) => op.kind === "corte"), [pointOperations]);
+  // #583: the undo motive (anulación o corrección) rides on the evidence op —
+  // the registro keeps it consultable next to the corte it rewrote.
+  const undoMotiveByCorte = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const op of pointOperations) {
+      if ((op.kind === "anulacion" || op.kind === "correccion") && op.corteId && op.motive) {
+        map.set(op.corteId, op.motive);
+      }
+    }
+    return map;
+  }, [pointOperations]);
   const correctTarget = pointOperations.find((op) => op.id === correcting) ?? null;
   // The correction re-captures over the RESTORED availability: what the
   // original corte consumed comes back for its replacement.
@@ -975,7 +986,12 @@ export function PointsOfSaleScreen() {
                           </Button>
                         </span>
                       ) : (
-                        <span className="text-xs text-on-surface-soft">{undo.reasons[0]}</span>
+                        <span className="text-xs text-on-surface-soft">
+                          {undo.reasons[0]}
+                          {corte.status === "anulado" && undoMotiveByCorte.get(corte.id)
+                            ? ` Motivo: ${undoMotiveByCorte.get(corte.id)}`
+                            : ""}
+                        </span>
                       )}
                     </div>
                   );

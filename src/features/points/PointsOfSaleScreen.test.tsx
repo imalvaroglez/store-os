@@ -1147,6 +1147,18 @@ describe("#583 corregir el corte desde su registro en la ficha", () => {
     expect(screen.queryByText("Cortes del punto")).toBeNull();
   });
 
+  it("el motivo de la corrección queda consultable en la fila del corte que reemplazó", () => {
+    withCorteOf3();
+    state.pointOperations = [
+      { ...CORTE_3P, status: "anulado" as const, replacedByCorteId: "corte_corr_m1" },
+      { id: "corr_m1", storeId: "store_olivia", pointId: POINT.id, kind: "correccion" as const, intentionId: "i", corteId: "corte_3p", newCorteId: "corte_corr_m1", motive: "Eran 2 piezas, no 3", confirmedBy: "u1", confirmedAt: "2026-11-26T13:00:00.000Z" },
+      { ...CORTE_3P, id: "corte_corr_m1", status: "pendiente_de_cobro" as const, replacesCorteId: "corte_3p", confirmedAt: "2026-11-26T13:00:00.000Z" },
+    ];
+    mount();
+    fireEvent.click(screen.getByText("Mostrador centro"));
+    expect(screen.getByText(/Este corte ya está anulado\. Motivo: Eran 2 piezas, no 3/)).toBeTruthy();
+  });
+
   it("doble envío: mientras confirma el botón se deshabilita y no hay segunda llamada", async () => {
     withCorteOf3();
     mount();
