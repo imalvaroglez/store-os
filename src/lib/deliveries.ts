@@ -1,4 +1,4 @@
-import type { Order, OrderDelivery } from "../types";
+import type { Order, OrderDelivery, OrderItem } from "../types";
 import { orderItems } from "./orders";
 import { deliveredByDimension, stockDimensionKey } from "./inventory";
 
@@ -83,6 +83,53 @@ export function deliveryValidationError(order: Order, event: Pick<OrderDelivery,
   }
   for (const [key, quantity] of requested) {
     if (quantity > (pending.get(key) ?? 0)) return "No puedes entregar más piezas de las que siguen pendientes.";
+  }
+  return null;
+}
+
+/** #584: the save was rejected because a line with delivered pieces would be
+ * rewritten — the editor shows THIS message; the capture and the delivery
+ * evidence stay intact. */
+export class DeliveryEvidenceError extends Error {}
+
+/**
+ * #584: delivered pieces are delivery EVIDENCE — the append-only ledger names
+ * what the clienta actually received. An edit that removes the line, swaps
+ * the piece, or drops the quantity below the delivered count strands that
+ * evidence (orphan deliveries that `pendingDeliveries` then ignores, so the
+ * order could "read" delivered without backing). Derives the constraint from
+ * the SAVED doc (the truth), dimension by dimension — splitting a dimension
+ * across lines keeps its backing as long as the TOTAL stays ≥ delivered.
+ * Returns the operator-facing error, or null when every delivered piece
+ * keeps its line.
+ */
+export function deliveryEvidenceError(
+  previous: Pick<Order, "items" | "deliveries"> | undefined,
+  nextItems: OrderItem[]
+): string | null {
+  if (!previous) return null;
+  const delivered = deliveredByDimension(previous as Order);
+  if (delivered.size === 0) return null;
+  const savedItems = orderItems(previous);
+  const savedDimensions = new Set(
+    savedItems.flatMap((item) => (item.productId ? [stockDimensionKey(item.productId, item.variantId)] : []))
+  );
+  const orderedNext = new Map<string, number>();
+  for (const item of nextItems) {
+    if (!item.productId) continue;
+    const key = stockDimensionKey(item.productId, item.variantId);
+    orderedNext.set(key, (orderedNext.get(key) ?? 0) + item.quantity);
+  }
+  for (const [key, quantity] of delivered) {
+    // Legacy drift (evidence without a resolvable saved line) has nothing to
+    // protect — same criterion as the incident guard.
+    if (!savedDimensions.has(key)) continue;
+    if ((orderedNext.get(key) ?? 0) >= quantity) continue;
+    const line = savedItems.find(
+      (item) => item.productId && stockDimensionKey(item.productId, item.variantId) === key
+    );
+    const where = `${line?.productName ?? "La pieza"}${line?.variantColor ? ` · ${line.variantColor}` : ""}`;
+    return `«${where}» ya tiene ${quantity} ${quantity === 1 ? "pieza entregada" : "piezas entregadas"}: no se puede quitar la línea ni bajar la cantidad por debajo de lo entregado, porque la entrega quedaría sin respaldo. Si esas piezas no se entregaron, registra la diferencia desde la incidencia del pedido.`;
   }
   return null;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Order, OrderDelivery } from "../types";
 import {
   deliveredByDimension,
+  deliveryEvidenceError,
   deliveryValidationError,
   effectiveDeliveryDate,
   orderFullyDelivered,
@@ -161,5 +162,64 @@ describe("cancelación tras entrega parcial (#333)", () => {
     );
     const cancelled = { ...open, orderStatus: "cancelled" as const };
     expect(reservationDeltasForOrderChange(open, cancelled).get("p1")).toBe(6); // 10 − 4 entregadas
+  });
+});
+
+describe("deliveryEvidenceError (#584)", () => {
+  const parcial = orderOf(
+    [
+      { ...RING, lineId: "l1" },
+      { productId: "p2", variantId: "v_cafe", variantColor: "Café", productName: "Guante", quantity: 1, unitPrice: 80, subtotal: 80, lineId: "l2" },
+    ],
+    [delivery([{ productId: "p1", quantity: 2 }], "2026-11-10")]
+  );
+
+  it("sin eventos o sin pedido previo, cualquier edición pasa", () => {
+    expect(deliveryEvidenceError(undefined, [])).toBeNull();
+    expect(deliveryEvidenceError(orderOf([{ ...RING }]), [])).toBeNull();
+  });
+
+  it("quitar la línea con entrega se rechaza nombrando la pieza y la vía de salida", () => {
+    const error = deliveryEvidenceError(parcial, [
+      { productId: "p2", variantId: "v_cafe", variantColor: "Café", productName: "Guante", quantity: 1, unitPrice: 80, subtotal: 80, lineId: "l2" },
+    ]);
+    expect(error).toContain("Anillo");
+    expect(error).toContain("2 piezas entregadas");
+    expect(error).toContain("incidencia del pedido");
+  });
+
+  it("reducir por debajo de lo entregado se rechaza; subir o mantener pasa", () => {
+    const reduce = deliveryEvidenceError(parcial, [
+      { ...RING, quantity: 1, subtotal: 100, lineId: "l1" },
+      { productId: "p2", variantId: "v_cafe", variantColor: "Café", productName: "Guante", quantity: 1, unitPrice: 80, subtotal: 80, lineId: "l2" },
+    ]);
+    expect(reduce).toContain("no se puede quitar la línea ni bajar la cantidad");
+    const raise = deliveryEvidenceError(parcial, [
+      { ...RING, quantity: 6, subtotal: 600, lineId: "l1" },
+      { productId: "p2", variantId: "v_cafe", variantColor: "Café", productName: "Guante", quantity: 1, unitPrice: 80, subtotal: 80, lineId: "l2" },
+    ]);
+    expect(raise).toBeNull();
+  });
+
+  it("cambiar la pieza de la línea entregada se rechaza (la dimensión pierde respaldo)", () => {
+    const swapped = deliveryEvidenceError(parcial, [
+      { productId: "p9", productName: "Otra cosa", quantity: 5, unitPrice: 100, subtotal: 500, lineId: "l1" },
+      { productId: "p2", variantId: "v_cafe", variantColor: "Café", productName: "Guante", quantity: 1, unitPrice: 80, subtotal: 80, lineId: "l2" },
+    ]);
+    expect(swapped).toContain("Anillo");
+  });
+
+  it("repartir la dimensión en varias líneas conserva el respaldo si el total alcanza", () => {
+    const split = deliveryEvidenceError(parcial, [
+      { ...RING, quantity: 1, subtotal: 100, lineId: "l1a" },
+      { ...RING, quantity: 4, subtotal: 400, lineId: "l1b" },
+      { productId: "p2", variantId: "v_cafe", variantColor: "Café", productName: "Guante", quantity: 1, unitPrice: 80, subtotal: 80, lineId: "l2" },
+    ]);
+    expect(split).toBeNull();
+  });
+
+  it("deriva histórica (entrega sin línea guardada) no bloquea el editor", () => {
+    const drift = orderOf([{ ...RING }], [delivery([{ productId: "p7", quantity: 3 }], "2026-11-10")]);
+    expect(deliveryEvidenceError(drift, [{ ...RING }])).toBeNull();
   });
 });

@@ -22,13 +22,13 @@ import { isVariantProduct } from "../../lib/variants";
 import { variantEffectivePrice } from "../../lib/variantPrice";
 import { formatMoney, parseAmount, sanitizeDecimalInput, sanitizeIntegerInput } from "../../lib/money";
 import { effectiveOrderStatus, orderItems, orderReference, orderTotals, paymentStatusForOrder, tierWarning } from "../../lib/orders";
-import { attributeProjectedShortageToLines, orderWillHoldPieces } from "../../lib/inventory";
+import { attributeProjectedShortageToLines, orderWillHoldPieces, stockDimensionKey } from "../../lib/inventory";
 import { formatOrderUnitPrice, orderAmountCents } from "../../lib/orderMoney";
 import { itemsProfitBreakdown } from "../../lib/saleProfit";
 import { uid } from "../../lib/ids";
 import { CreditCoverageError, CreditCustomerChangeError, DeliveryWithBalanceError, OrderAlreadySavedError, StaleOrderError } from "../../app/firebase/firestoreData";
 import { IncidentEvidenceError, incidentClosedNoChange } from "./incidents";
-import { pendingDeliveries } from "../../lib/deliveries";
+import { DeliveryEvidenceError, deliveredByDimension, deliveryEvidenceError, pendingDeliveries } from "../../lib/deliveries";
 import { orderDraftKey, loadOrderDraft, saveOrderDraft, clearOrderDraft, type OrderDraftSnapshot } from "./orderDraft";
 import { groupOrderLines } from "./orderGrouping";
 import { ORDER_STATUS_LABELS } from "./orderStatus";
@@ -386,6 +386,20 @@ export function OrderForm({
     }
     return byLine;
   }, [order.incidents]);
+  // #584: delivered pieces per draft line — the evidence must be VISIBLE on
+  // the line (same contract as incident lines), not discovered at save time.
+  // Dimension-keyed: a line shows the delivered count of its product+variant.
+  const deliveredByLine = useMemo(() => {
+    const delivered = deliveredByDimension(order);
+    const byLine = new Map<string, number>();
+    if (delivered.size === 0) return byLine;
+    for (const line of lines) {
+      if (!line.productId) continue;
+      const quantity = delivered.get(stockDimensionKey(line.productId, line.variantId)) ?? 0;
+      if (quantity > 0) byLine.set(line.key, quantity);
+    }
+    return byLine;
+  }, [lines, order]);
   const lineShortage = useMemo(
     () =>
       attributeProjectedShortageToLines(
@@ -679,6 +693,14 @@ export function OrderForm({
       toast.error("Revisa el anticipo.");
       return;
     }
+    // #584: an edit may not strand delivery evidence — reject before saving
+    // (same fail-closed contract as the incident guard; the transaction
+    // re-checks against the saved doc for two-session safety).
+    const deliveredStrandError = deliveryEvidenceError(order, normalizedItems);
+    if (deliveredStrandError) {
+      toast.error(deliveredStrandError);
+      return;
+    }
     // #333: "Entregado" is EARNED by delivery evidence, not typed by hand —
     // pieces still pending would become untrackable (review P2).
     if (
@@ -809,6 +831,12 @@ export function OrderForm({
       // #368: the incident-evidence guard explains itself — show WHY the save
       // was rejected instead of a generic failure (the capture stays here).
       if (error instanceof IncidentEvidenceError) {
+        toast.error(error.message);
+        return;
+      }
+      // #584: the delivery-evidence guard explains itself the same way — the
+      // capture stays and the delivered pieces keep their backing line.
+      if (error instanceof DeliveryEvidenceError) {
         toast.error(error.message);
         return;
       }
@@ -985,6 +1013,14 @@ export function OrderForm({
                   {line.lineId && incidentLines.has(line.lineId) && (
                     <span className="cursor-help" title="Incidencia registrada: esta línea sustenta la solución acordada. No se puede quitar ni cambiar pieza, cantidad o precio aquí; los cambios de esa atención se registran desde la incidencia del pedido.">
                       <Badge tone="info">Incidencia</Badge>
+                    </span>
+                  )}
+                  {(deliveredByLine.get(line.key) ?? 0) > 0 && (
+                    <span
+                      className="cursor-help"
+                      title={`Entrega registrada: la clienta ya recibió ${deliveredByLine.get(line.key)} ${deliveredByLine.get(line.key) === 1 ? "pieza" : "piezas"} de esta línea. No se puede quitar ni bajar la cantidad por debajo de lo entregado, porque la entrega quedaría sin respaldo; si esas piezas no se entregaron, registra la diferencia desde la incidencia del pedido.`}
+                    >
+                      <Badge tone="info">Entregadas {deliveredByLine.get(line.key)}</Badge>
                     </span>
                   )}
                 </span>
