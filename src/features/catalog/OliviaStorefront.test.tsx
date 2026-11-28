@@ -172,7 +172,17 @@ describe("filtro por acabado", () => {
     // #252: CI runners can take longer than the default 1s to settle that
     // re-render; an explicit generous timeout removes the flake without
     // weakening the assertion.
-    await waitFor(() => expect(grid.queryByRole("article", { name: "Anillo Blossom" })).toBeNull(), { timeout: 5000 });
+    // #544 (3rd reopened flake): the failure itself carries the deciding
+    // evidence — if the filtered card is still there, the error embeds the
+    // select's live value and option count, telling a controlled-select clamp
+    // (value="" opts=1: options missing at event time) apart from a filter
+    // that applied and was reset (value="plateado" opts=3).
+    await waitFor(() => {
+      if (grid.queryByRole("article", { name: "Anillo Blossom" })) {
+        const select = view.container.querySelector("select") as HTMLSelectElement | null;
+        throw new Error(`#544 flake diag: filtered card still present. select=${select ? `value="${select.value}" opts=${[...select.options].map((o) => o.value).join(",")}` : "none"}`);
+      }
+    }, { timeout: 5000 });
   });
 });
 

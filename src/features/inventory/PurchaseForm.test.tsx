@@ -511,7 +511,13 @@ describe("#373 revisión de compras en el formulario", () => {
     fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
     await waitFor(() => expect(upsertPurchase).toHaveBeenCalledTimes(2));
     expect(upsertPurchase.mock.calls[1][1]).toBe(1); // la revisión viva del primer guardado
-    expect(await screen.findByText("Borrador guardado.")).toBeVisible();
+    // #550: el aviso vive 3.5 s (Toast.push) y se DESMONTA por temporizador.
+    // findByText resolvía con el <span> justo cuando ese temporizador lo
+    // desmontaba y el toBeVisible posterior leía una referencia separada del
+    // documento («not in the document»). Presencia+visibilidad en UN solo
+    // paso: si la lectura cae en el desmonte, waitFor reintenta la aserción
+    // completa en vez de leer la referencia muerta.
+    await waitFor(() => expect(screen.getByText("Borrador guardado.")).toBeVisible());
   });
 });
 
